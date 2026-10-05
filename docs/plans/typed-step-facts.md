@@ -1,5 +1,8 @@
 # Define Typed Step Facts
 
+Flow syntax and value rules in this historical plan are superseded by
+[Flow Array Semantics](flow-array-semantics.md).
+
 ## Goal
 
 Replace loose Step `given`, `noted`, and placement dictionaries with typed,

@@ -1,5 +1,8 @@
 # Adopt Toolang Grammar 0.3.0
 
+Flow syntax and value rules in this historical plan are superseded by
+[Flow Array Semantics](flow-array-semantics.md).
+
 ## Status and Goal
 
 Scope approved on 2026-09-06, including source and persisted-data compatibility

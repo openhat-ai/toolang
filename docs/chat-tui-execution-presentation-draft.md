@@ -2,6 +2,11 @@
 
 Status: draft implemented for live presentation; durable history restoration pending
 
+Historical presentation draft. Current rendering rules live in
+[Execution Presentation](execution-presentation.md); current statement names,
+array semantics, and syntax live in [Flow Statement Syntax](flow-syntax.md).
+Examples below retain their original design vocabulary and are not current source syntax.
+
 This document defines the proposed execution presentation for Toolang's
 terminal chat UI. It is intentionally self-contained so the interaction,
 transcript, state, and implementation boundaries can be reviewed together.

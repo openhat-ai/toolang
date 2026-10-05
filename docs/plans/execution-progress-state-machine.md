@@ -1,5 +1,8 @@
 # Execution Progress Projection
 
+Flow syntax and value rules in this historical plan are superseded by
+[Flow Array Semantics](flow-array-semantics.md).
+
 ## Status
 
 Approved feature definition. Implementation is in progress in pull request #283.

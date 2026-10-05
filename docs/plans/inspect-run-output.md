@@ -1,5 +1,8 @@
 # Inspect Run Output
 
+Flow syntax and value rules in this historical plan are superseded by
+[Flow Array Semantics](flow-array-semantics.md).
+
 ## Status
 
 Approved by the human on 2026-10-02: add only an `output` view that extracts

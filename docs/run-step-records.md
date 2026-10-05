@@ -106,7 +106,8 @@ references. Executor locals separately retain evaluation and provenance metadata
 output = Output(value=input_value, binding="_")
 ```
 
-Array operations select only outer items, using the complete value type.
+Map/reduce/keep/drop/sort consume only outer array items, using the complete
+value type.
 An absent output (`None`) differs from `Output(value=None)`, whose value is
 JSON null. There is no Local wrapper or shape/dim flag.
 

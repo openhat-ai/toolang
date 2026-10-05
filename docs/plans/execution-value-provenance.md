@@ -1,5 +1,8 @@
 # Define Execution Value Provenance
 
+Flow syntax and value rules in this historical plan are superseded by
+[Flow Array Semantics](flow-array-semantics.md).
+
 ## Goal
 
 Represent accepted run arguments, step dependencies, and run/step results with

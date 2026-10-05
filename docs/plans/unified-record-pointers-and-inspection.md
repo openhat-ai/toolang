@@ -1,5 +1,8 @@
 # Unified Record Pointers and Historical Inspection
 
+Flow syntax and value rules in this historical plan are superseded by
+[Flow Array Semantics](flow-array-semantics.md).
+
 ## Goal
 
 Make `Pointer` the single address for durable execution records and their

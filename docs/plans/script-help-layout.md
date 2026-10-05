@@ -1,5 +1,8 @@
 # Script Help Layout
 
+Flow syntax and value rules in this historical plan are superseded by
+[Flow Array Semantics](flow-array-semantics.md).
+
 ## Status and Goal
 
 Approved for implementation on 2026-09-08, following the merged Script CLI

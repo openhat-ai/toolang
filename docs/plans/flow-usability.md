@@ -1,5 +1,8 @@
 # Flow Rules Outline
 
+Flow syntax and value rules in this historical plan are superseded by
+[Flow Array Semantics](flow-array-semantics.md).
+
 Goal: local signatures, validated operation contracts, consistent runtime scheduling,
 and bounded iteration/thread context.
 Grammar integration is covered in section 11.

@@ -5,6 +5,21 @@ statements and their observable semantics; executor, trace, and lowering
 details remain in their owning documents.
 
 
+## Terminology
+
+A **Flow statement** is an authored instruction such as `run`, `generate`,
+`map`, `reduce`, `keep`, `drop`, `sort`, `let`, `repeat`, or `exec`.
+Use **array operation** when discussing the semantics of
+`generate/map/reduce/keep/drop/sort`; this category does not imply an array input.
+Generate produces an array from repeated calls. The other five consume an array.
+
+Use **operator** for symbolic syntax such as `=`, `+=`, and `-=`, rather than
+as another name for a statement. `stmt` and `FlowStmt` are implementation names
+used in code and AST documentation. A **Step** is a recorded execution unit;
+a **runnable** is an agic or flow invoked by a statement. These terms are not
+synonyms for a Flow statement.
+
+
 ## Notation
 
 ```text
@@ -15,7 +30,7 @@ P          positive concurrency limit
 VALUE_STMT a result-producing statement (excludes repeat and exec)
 RUNNABLE   named agic or flow
 AGENT      agent selector
-MAPPER     per-input runnable returning one item
+MAPPER     per-input runnable returning one complete result
 REDUCER    per-item runnable updating an accumulator
 FILTER     per-item runnable returning Boolean
 SCORER     per-item runnable returning Number
@@ -86,9 +101,11 @@ identity, resource ceiling, accounting, and original output contract.
 Named and inline targets use the same forms and input binding as `run`.
 Exec has no result binding, argument list, or modifiers. Named targets must
 exist in the accepted caller's definitions and keep compatible contracts.
-Current and ancestor targets are rejected on each branch; earlier handoffs may
-be called again. Failed validation leaves the binding unchanged and fails the
-Flow normally.
+A root Run with no active descendants may exec its own entry runnable when the
+latest published implementation has the same normalized contract. Child
+self-exec and other active ancestor targets remain rejected; earlier inactive
+handoffs may be called again. Failed validation leaves the binding unchanged
+and fails the Flow normally.
 
 ## Statements
 
@@ -106,7 +123,7 @@ exec RUNNABLE
 exec [-> T]: BODY
 
 # Generate an outer array of complete results
-generate N [in P lanes] using MAPPER
+generate N [in P lanes] using RUNNABLE
 generate N [in P lanes] [-> T]: BODY
 
 # Reduce the outer array sequentially
@@ -120,11 +137,11 @@ reduce [-> T]:
   TEXT
   [from: BODY]
 
-# Transform every list item
+# Transform every outer array item
 map [in P lanes] using MAPPER
 map [in P lanes] [-> T]: BODY
 
-# Select or sort list items
+# Select or sort outer array items
 keep first N
 keep last N
 keep [in P lanes] if FILTER
@@ -198,8 +215,9 @@ returns one complete result per outer input item. Neither flattens array results
 
 ### Results
 
-- Array operations use the actual outermost array. `Text[][]` supplies `Text[]`
-  items; open `Json` arrays supply `Json` items; `Part[]` supplies `Part` items.
+- Map/reduce/keep/drop/sort consume the actual outermost array. `Text[][]`
+  supplies `Text[]` items; open `Json` arrays supply `Json` items; `Part[]`
+  supplies `Part` items.
   Parameters, run results, helper Flows, exec, and restored values follow the
   same rule. Scalars, objects, null, and absent values are rejected; operations
   do not parse JSON strings or traverse object fields.
@@ -240,6 +258,37 @@ returns one complete result per outer input item. Neither flattens array results
   bindings. Zero iterations leave locals unchanged.
 
 
+### Array Input And Empty Results
+
+| Statement | Primary input | Empty input / zero count | Child calls for N items |
+| --- | --- | --- | --- |
+| `generate K` | Whatever the runnable signature accepts; may be absent | `K=0` produces an empty `U[]`; an array input is passed whole to every call | K |
+| `map` | An outer array | Returns empty `U[]` | N |
+| `keep` / `drop` with a predicate | An outer array | Returns an empty value with the source type | N |
+| Positional `keep` / `drop` | An outer array | Returns an empty value with the source type | 0 |
+| `sort` | An outer array | Returns an empty value with the source type | N |
+| `reduce` without `from` | A nonempty outer array | Rejects empty input; one item is returned as the seed | N - 1 |
+| `reduce` with `from` | A nonempty outer array | Rejects empty input before evaluating the initializer | N |
+
+Here `U` is the child output type. Zero-call generation, mapping, predicate
+selection, and sorting still validate the target, its output contract, and
+required named arguments; they make no model calls.
+Array consumers skip per-element conversion when there are no elements.
+Generate validates its complete call inputs even when its count is zero.
+
+For map/reduce/keep/drop/sort, known non-array or missing inputs are rejected
+during source checking. Open `Json` or unknown inputs are checked inside the
+executing Step before child calls. JSON strings, objects, null, and absent input are not arrays. For nested
+arrays only the outermost level is selected, and array-valued child results
+stay nested. Predicate selection and sorting preserve the original items;
+sorting is stable for equal scores.
+
+Generation and positional selection counts are non-negative integers; lane
+limits are positive integers. `keep first/last 0` returns an empty array;
+`drop first/last 0` retains the input. Selection counts beyond the input length
+are clipped: keep retains everything and drop removes everything.
+
+
 ### Runs
 
 - `run RUNNABLE` resolves in the current program. Inline `run` creates an
@@ -272,7 +321,7 @@ returns one complete result per outer input item. Neither flattens array results
 
 - Generate/map/reduce require `using` for named targets and must omit it for
   inline bodies. The rule also applies to named and discarded `let` results.
-  Their lane clause precedes the target: `map in 2 lanes using worker`.
+  Generate/map lane clauses precede the target: `map in 2 lanes using worker`.
   Run/exec/seek use direct targets; keep/drop retain `if`, sort retains `by`.
 
 - `in P lanes` limits independent child work without changing result order.
@@ -371,7 +420,7 @@ left `_` unchanged. Re-author those flows with explicit binding boundaries.
 A helper Flow can return the complete array type to preserve the same behavior.
 
 
-## Migration to Array Operators
+## Migration to Current Flow Statements
 
 Scatter/gather are removed; run retains its existing single-call behavior and
 input/output contracts. Existing programs can express those calls with `run R`

@@ -258,16 +258,17 @@ Steps record execution truth. They do not define transport behavior.
 
 ## Local
 
-A local is one runtime value inside a run. It contains a value and one shape:
+A local is a named runtime value inside a Run. It retains its complete type;
+there is no separate item/list shape. An absent local differs from JSON null.
+`T[]` is an array and `T[][]` is an array of arrays. Map/reduce/keep/drop/sort
+consume only the outermost array; generate creates an array from repeated calls.
 
-```text
-none | item | list
-```
-
-`_` is the primary local. Run input initializes it, ordinary flow statements
-replace it, and run output reads it. Named parameters and `let` bindings use
-other local names. Durable input and output refs are persistence metadata, not
-part of a local.
+`_` is the primary local. Run input initializes it, ordinary Flow statements
+replace it, and Run output reads it. Named parameters and `let` bindings use
+other local names. The executor retains reference provenance alongside resolved
+values. Persisted outputs use `Output(value, binding)` without a Local wrapper.
+See [Flow statement terminology](flow-syntax.md#terminology) and
+[execution records](run-step-records.md) for the syntax and storage boundaries.
 
 
 ## Content Evaluation And Coercion

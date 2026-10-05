@@ -1,4 +1,4 @@
-# Simplify Flow Calls and Array Operators
+# Simplify Flow Statements and Array Operations
 
 Status: Approved in #684 and refined during implementation: preserve run's
 existing behavior, remove the durable Local wrapper, and provide no compatibility

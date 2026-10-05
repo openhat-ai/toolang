@@ -1,5 +1,8 @@
 # Consolidate current documentation
 
+Flow syntax and value rules in this historical plan are superseded by
+[Flow Array Semantics](flow-array-semantics.md).
+
 Status: documentation ownership and reader split confirmed on 2026-10-04;
 implementation remains a separate step.
 

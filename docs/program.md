@@ -313,10 +313,12 @@ Packages outside `toolang.lang` use `PerceptPart` and `Percept` for the same
 runtime values. `Message` is a model-call and chat-projection type, not a
 Toolang language value.
 
-Locals preserve their complete value type, with no shape/dim flag. Array
-operations use the outermost array: mapping `Text[][]` supplies `Text[]` items.
+Locals preserve their complete value type, with no shape/dim flag.
+Map/reduce/keep/drop/sort consume the outermost array: mapping `Text[][]` supplies
+`Text[]` items. Generate produces an array without requiring an array input.
 Arrays from parameters, ordinary calls, and helper Flows behave identically.
-See [Flow syntax](flow-syntax.md) for array operators and migration guidance.
+See [Flow syntax](flow-syntax.md) for Flow statements, array operations, and
+migration guidance.
 
 
 ### Output
