@@ -1,14 +1,19 @@
-# Simplify Flow Calls and Array Operators
+# Simplify Flow Statements and Array Operations
 
-Status: Proposed; feature definition, group 1 of 4. The human confirmed this
-group includes removing shape/dim, the final generate/reduce names, and the
-using rule. The complete definition remains subject to human approval.
+Status: Approved in #684 and refined during implementation: preserve run's
+existing behavior, remove the durable Local wrapper, and provide no compatibility
+reader for old storage, statement records, or output references. The approved
+empty-input rule returns the initializer when present and otherwise rejects
+an empty reduction. The AST uses `initial`; switching the source clause from
+`from:` to `initial:` is approved but deferred to a separate grammar update.
+This PR implements the runtime behavior with the currently published grammar.
 
 ## Goal and Scope
 
-Use one ordinary call statement, `run`, and make collection behavior depend on
-the outermost array value. Remove scatter/gather, rename storm to generate and
-settle to reduce, and give generate/map/reduce one runnable-target syntax.
+Remove scatter/gather while preserving run's existing single-call behavior and
+input/output contracts. Make collection behavior depend on the outermost array
+value, rename storm to generate and settle to reduce, and give
+generate/map/reduce one runnable-target syntax.
 
 Success means arrays from parameters, run results, helper Flows, and restored
 locals behave identically; nested arrays stay nested. This group owns the value
@@ -29,7 +34,7 @@ one another. Do not implement later groups as incidental work in an earlier PR.
 This supersedes the affected rules in [Flow Usability](flow-usability.md) and
 [Flat Call Input](flat-call-input.md); unrelated behavior remains unchanged.
 
-## Verified Current Behavior
+## Verified Baseline Behavior
 
 - Run and scatter use the same child-run executor. Scatter requires an array
   output and marks it as list shape; run marks even an array as item shape.
@@ -69,11 +74,13 @@ This supersedes the affected rules in [Flow Usability](flow-usability.md) and
    the input's complete type, inner values, order contracts, and provenance.
 4. Empty map/keep/drop/sort and generate 0 make zero child calls and return
    correctly typed empty arrays; normal target/contract preflight still applies.
-   Run passes an empty array and calls once. Reduce retains settle's nonempty
-   input requirement, including with from.
-5. Without from, reduce seeds from the first element, requires the reducer output
-   to equal the element type, and makes N-1 calls. With from, coerce the initializer
-   to the reducer output type and make N calls. Preserve iteration history and
+   Run passes an empty array and calls once. Reduce without an initializer
+   rejects an empty array. With an initializer, evaluate and coerce it and
+   return it without child calls. Target and named-input contracts still apply; skip
+   element conversion and unused reducer history templates.
+5. Without an initializer, reduce seeds from the first element, requires the
+   reducer output to equal the element type, and makes N-1 calls. With an
+   initializer, coerce it to the reducer output type and make N calls. Preserve iteration history and
    treat an array accumulator as one complete value.
 6. Part[] follows the same array rule. Ordinary calls and prompt/model transport
    still render the complete content value using its type, without shape flags.
@@ -81,7 +88,7 @@ This supersedes the affected rules in [Flow Usability](flow-usability.md) and
    ordering, error boundaries, cancellation, and history. Recursive mapping or
    flattening requires explicit helper Flows.
 
-Proposed source:
+Example source:
 
 ```too
 flow summarize(_: Text) -> Text:
@@ -138,15 +145,16 @@ The formatter and statement-head descriptions must agree on the target rule.
 - Preserve full types, typed refs, selected-item pointers, multimodal Parts, and
   provenance through calls, exec, seek, inline capture, and retry restoration.
   Progress and presentation count outer items using value/type.
-- Public locals contain type and value; stored locals contain the existing
-  self-describing value. Preserve Output's local/binding wrapper and value codecs.
-  Read legacy dim 0/1 after validating its old invariants, then use value semantics.
-  Write only the new form; do not rewrite historical records.
-- Keep legacy scatter/gather/storm/settle statement records readable, including
-  historical scatter counts. Historical decoding does not enable old execution.
-  Invalidate affected prepared caches and reject executable/retry/rerun snapshots
+- Remove the durable Local wrapper. Output holds `value: Value | TypedRef` and
+  `binding: str | None`. Stored outputs contain value/binding; public outputs
+  contain derived type/value/binding. Preserve the self-describing value codec.
+  References use `output/value`, with no aliases for removed wrapper paths.
+- Bump RunStore to schema 51 and reject older stores before mutation. Do not
+  migrate old records or decode legacy dim and removed statement kinds. Existing
+  stores remain available to their matching runtime; new runs need a fresh store.
+- Invalidate affected prepared caches and reject executable/retry/rerun snapshots
   containing removed or invalid old syntax before child calls, with migration
-  guidance. Keep source parsing in lang and legacy record decoding in execution.
+  guidance. Source parsing remains in lang.
 
 | Old source | Replacement |
 | --- | --- |
@@ -164,12 +172,12 @@ The formatter and statement-head descriptions must agree on the target rule.
 Keep result bindings, explicit types, lane clauses, and from blocks when
 migrating. Scatter's implicit Text[] must become explicit on run. A former
 gather can now receive []; move any required nonempty check into its runnable.
-Public clients must stop requiring/sending dim.
+Public clients must use type/value/binding and update references to output/value.
 
 A published Tree-sitter release is required for generate/reduce and the strict
 target syntax; pin that dependency and update its lock artifacts. No alternate
 handwritten parser. Reserve later async/await/spawn syntax only in their own
-feature groups. This PR changes definitions, not current product documentation.
+feature groups.
 
 ## Implementation Touchpoints
 
@@ -180,8 +188,8 @@ feature groups. This PR changes definitions, not current product documentation.
 - `src/toolang/execution/executor/{common,executor,content,iteration}.py`,
   `runs/{flow,agic}.py`, and `stmts/`: array checks and bindings; remove
   scatter/gather executors and rename storm/settle owners to generate/reduce.
-- `src/toolang/execution/{types,records,schemas,store}.py`: Local codecs,
-  legacy reads, provenance, and public projections; `src/toolang/state/cache.py`.
+- `src/toolang/execution/{types,records,schemas,store}.py`: Output codecs,
+  provenance, and public projections; `src/toolang/state/cache.py`.
 - CLI execution progress, language/execution/API/record tests, current Flow docs,
   and tracked examples. Generate the implementation's breaking-change entry
   through `too aide.too update_changelog` and obtain maintainer verification.
@@ -198,11 +206,15 @@ feature groups. This PR changes definitions, not current product documentation.
    for empty/singleton/multiple arrays, Json arrays, Part[], nested arrays, and
    array-valued child results. Reject scalar/object/null/missing collection input.
 4. Generate and reduce preserve storm/settle's count, seed, history, lane,
-   cancellation, and error contracts. Test zero generation and both empty-reduce
-   failures, N-1 unseeded calls, and N seeded calls.
-5. Round-trip new locals without dim and legacy records with dim; preserve
-   historical inspection. Retry restores complete values and bindings. Removed
-   source snapshots and stale caches cannot bypass migration checks.
+   cancellation, and error contracts except the approved empty-input change.
+   Test zero generation, rejection of empty unseeded reduction, and typed
+   initializers returned by empty seeded reduction with zero calls. Cover named
+   and inline reducers, invalid initializers, required named inputs, and skipped
+   child history. Verify N-1 unseeded calls and N seeded calls.
+5. Round-trip flat outputs without Local/dim; distinguish absent output from
+   JSON null. Reject old store versions without mutation, old wrappers, statement
+   records, and reference paths. Retry restores complete values and bindings.
+   Removed source snapshots and stale caches cannot bypass migration checks.
 6. Check tracked examples and documentation links. During implementation run
    the default ruff, format, ty, and offline pytest checks before every commit.
 
@@ -212,9 +224,12 @@ This is a breaking source and Local-protocol change. Main risks are lost array
 levels/provenance, content-array regressions, changed gather empty-input behavior,
 and inconsistent parser/formatter target rules. Acceptance tests cover these.
 
-Out of scope: automatic source rewriting, flattening, new reduce-empty behavior,
-new concurrency operators, futures, root spawning, and a legacy execution engine.
-No unresolved design choice is needed for this group's implementation. The human
-must approve the complete definition and the grammar release must exist before
-implementation. Documentation-only validation is source inspection, offline
-syntax/value probes, link checks, and git diff --check; no release entry is needed.
+The existing seek executor has no agent execution bridge. This group covers its
+shared complete-value transformation; end-to-end seek array checks require that
+separate bridge implementation and must not be reported as passing here.
+
+Out of scope: automatic source rewriting, flattening, new concurrency operators,
+futures, root spawning, and a legacy execution engine.
+The approved definition and published tree-sitter-toolang 0.4.0a1 provide the
+implementation prerequisites. Update current documentation and the changelog
+alongside the implementation.

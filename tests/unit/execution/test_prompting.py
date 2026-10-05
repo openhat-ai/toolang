@@ -297,7 +297,7 @@ def test_messages_select_one_history_for_adapter_and_recording(recall, monkeypat
     near = (Message.user("Earlier {{literal}}"),)
 
     def resolve(ref):
-        assert ref.ref == FieldRef.from_path(horizon, "output", "local", "value")
+        assert ref.ref == FieldRef.from_path(horizon, "output", "value")
         return "Summary {{literal}}"
 
     history = MessageHistory(

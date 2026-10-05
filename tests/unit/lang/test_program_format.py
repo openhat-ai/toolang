@@ -34,11 +34,11 @@ flow work:
   let run action
   seek reviewer action
   ask: Continue?
-  scatter using pieces
-  storm 3 using action in 2 lanes
-  let gather using action
-  let settle using action
-  map using action in 4 lanes
+  run pieces
+  generate 3 in 2 lanes using action
+  let run action
+  let reduce using action
+  map in 4 lanes using action
   keep first 2
   keep if predicate in 2 lanes
   drop last 1
@@ -58,10 +58,10 @@ flow work:
         "let run action",
         "seek reviewer action",
         "ask",
-        "scatter using pieces",
-        "storm 3 in 2 lanes using action",
-        "let gather using action",
-        "let settle using action",
+        "run pieces",
+        "generate 3 in 2 lanes using action",
+        "let run action",
+        "let reduce using action",
         "map in 4 lanes using action",
         "keep first 2",
         "keep in 2 lanes if predicate",
@@ -76,8 +76,8 @@ def test_format_statement_head_hides_generated_inline_agic_names() -> None:
     program = Program.from_source(
         """
 flow work:
-  scatter: Draft report sections.
-  map in 3 lanes using: Rewrite {{_}}.
+  run -> Text[]: Draft report sections.
+  map in 3 lanes: Rewrite {{_}}.
   sort descending in 3 lanes by: Score {{_}}.
   keep first 2
 """
@@ -86,8 +86,8 @@ flow work:
     assert [
         format_statement_head(statement) for statement in program.flows[0].stmts
     ] == [
-        "scatter using",
-        "map in 3 lanes using",
+        "run",
+        "map in 3 lanes",
         "sort descending in 3 lanes by",
         "keep first 2",
     ]
@@ -707,7 +707,7 @@ agic review( _,focus ? : Text)->Result[]:
 
 flow pipeline( _:Part[])->Result:
     tools+= shell,fs
-    let drafts= scatter   using review
+    let drafts= run review
     repeat 2 times:
         run review
         until:
@@ -749,7 +749,7 @@ agic review(_, focus?: Text) -> Result[]:
 
 flow pipeline(_: Part[]) -> Result:
   tools += shell, fs
-  let drafts = scatter using review
+  let drafts = run review
   repeat 2 times:
     run review
     until:
@@ -767,7 +767,7 @@ flow pipeline(_: Part[]) -> Result:
         "Part[]",
     )
     assert [statement.kind for statement in program.flows[0].stmts] == [
-        "scatter",
+        "run",
         "repeat",
     ]
 

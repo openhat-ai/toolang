@@ -27,7 +27,7 @@ _CONTEXTS = {
     "agic": "agic block",
     "struct": "struct declaration",
     "repeat_statement": "repeat block",
-    "settle_statement": "settle block",
+    "reduce_statement": "reduce block",
     "skill": "skill declaration",
     "service": "service declaration",
     "psyche": "psyche declaration",
@@ -118,6 +118,47 @@ def _context(node: Node) -> str:
     return "source"
 
 
+def _flow_migration_hint(node: Node, source: bytes) -> str | None:
+    replacements = {
+        "scatter": "run (add -> Text[] for implicit array output)",
+        "gather": "run",
+        "storm": "generate",
+        "settle": "reduce",
+    }
+    pending = [node]
+    while pending:
+        child = pending.pop()
+        keyword = child.type.removeprefix("flow_").removesuffix("_keyword")
+        if (
+            child.type == "local_name"
+            and child.parent is not None
+            and child.parent.is_error
+            and any(
+                sibling.type == "flow_let_keyword" for sibling in child.parent.children
+            )
+        ):
+            keyword = source[child.start_byte : child.end_byte].decode("utf-8").strip()
+        if keyword in replacements:
+            return f"Removed Flow statement {keyword!r}; use {replacements[keyword]}"
+        if child.type in {
+            "flow_generate_keyword",
+            "flow_map_keyword",
+            "flow_reduce_keyword",
+        }:
+            return f"{keyword.capitalize()} requires 'using' for a named runnable; omit 'using' for an inline body"
+        pending.extend(reversed(child.children))
+    for parent in _ancestors(node):
+        if parent.type in {"generate_statement", "map_statement", "reduce_statement"}:
+            target = parent.child_by_field_name("runnable")
+            if (
+                target is not None
+                and target.type == "inline_agic"
+                and any(child.type == "flow_using_keyword" for child in node.children)
+            ):
+                return "Inline runnable bodies must omit 'using'"
+    return None
+
+
 def syntax_diagnostic(node: Node, source: bytes) -> SourceDiagnostic:
     """Describe evidence, not the parser's arbitrary recovery-token choice."""
     context = _context(node)
@@ -153,6 +194,8 @@ def syntax_diagnostic(node: Node, source: bytes) -> SourceDiagnostic:
         reason = "Parse error"
         if context != "source":
             reason += f" in {context}"
+    if hint := _flow_migration_hint(node, source):
+        reason = hint
     line, column = source_position(node, source)
     end_line, end_column = node.end_point
     if node.end_byte > len(source):

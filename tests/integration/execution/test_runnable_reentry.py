@@ -30,11 +30,9 @@ from toolang.state.prepare import prepare_agent_state
         for statement in [
             "run outer",
             "exec outer",
-            "map using outer in 2 lanes",
-            "storm 2 using outer in 2 lanes",
-            "scatter using outer",
-            "gather using outer",
-            "settle using outer",
+            "map in 2 lanes using outer",
+            "generate 2 in 2 lanes using outer",
+            "reduce using outer",
             "keep if outer",
             "drop if outer",
             "sort ascending by outer",
@@ -60,7 +58,7 @@ def test_flow_statements_reject_active_targets_even_after_publication(
         "agic seed() -> Text[]:\n  Seed the collection.\n"
         + declaration
         + ("  run inner\nflow inner():\n" if ancestor else "")
-        + "  scatter using seed\n"
+        + "  run seed\n"
         + body
     )
     gate = AsyncGate()
@@ -128,8 +126,8 @@ agic worker(_: Text) -> Text:
   handoffs = *
   Old worker body. Input: {{_}}
 flow outer() -> Text[]:
-  scatter using seed
-  map using worker in 2 lanes
+  run seed
+  map in 2 lanes using worker
 """
     gates = [AsyncGate(), AsyncGate()]
     harness = ExecutionHarness.create(

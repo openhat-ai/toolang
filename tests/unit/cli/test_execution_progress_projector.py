@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from toolang.execution.types import ModelCost
+from toolang.execution.types import ModelCost, value_for_type
 
 from toolang.execution.types import ModelAccounting
 
@@ -38,7 +38,6 @@ from toolang.execution.types import (
     ErrorRef,
     FieldRef,
     IterationOccurrence,
-    Local,
     LoopStepNoted,
     LoopTermination,
     ModelStepGiven,
@@ -59,10 +58,9 @@ from toolang.lang.ast import (
     SortStmt,
     RepeatStmt,
     RunStmt,
-    ScatterStmt,
-    SettleStmt,
+    ReduceStmt,
     Span,
-    StormStmt,
+    GenerateStmt,
 )
 
 SPAN = Span(line=1)
@@ -88,11 +86,11 @@ def _tool(name: str = "web.search", *, summary: str = "") -> ToolStepGiven:
 
 
 def _parts(text: str) -> Output:
-    return Output(Local.typed("Part[]", (TextPart(text),), 0), "_")
+    return Output(value_for_type("Part[]", (TextPart(text),)), "_")
 
 
 def _part_output(*parts: Part) -> Output:
-    return Output(Local.typed("Part[]", parts, 0), "_")
+    return Output(value_for_type("Part[]", parts), "_")
 
 
 def _tool_call_part() -> ToolCallPart:
@@ -248,7 +246,7 @@ def test_positional_collection_steps_describe_the_transform(
             "• Mapped 0 items",
         ),
         (
-            StormStmt(span=SPAN, count=6, runnable="brainstorm"),
+            GenerateStmt(span=SPAN, count=6, runnable="brainstorm"),
             CollectionStepNoted(6, 6),
             "• Generated 6 items",
         ),
@@ -299,7 +297,7 @@ def test_positional_collection_steps_describe_the_transform(
     ],
 )
 def test_parallel_collection_steps_describe_the_result(
-    statement: MapStmt | StormStmt | KeepStmt | DropStmt | SortStmt,
+    statement: MapStmt | GenerateStmt | KeepStmt | DropStmt | SortStmt,
     noted: CollectionStepNoted,
     expected: str,
 ) -> None:
@@ -935,7 +933,7 @@ def test_tool_output_is_not_projected(
             kind="tool",
             status="succeeded",
             output=Output(
-                Local.typed(
+                value_for_type(
                     "Part[]",
                     (
                         ToolResultPart(
@@ -945,7 +943,6 @@ def test_tool_output_is_not_projected(
                             output=output,
                         ),
                     ),
-                    0,
                 ),
                 "_",
             ),
@@ -1053,7 +1050,7 @@ def test_flow_scalar_output_is_displayed_in_its_normal_output_slot() -> None:
             step=StepRef.parse("run_root.0"),
             kind="value",
             status="succeeded",
-            output=Output(Local.typed("Text", "agent runtimes", 0), "topic"),
+            output=Output(value_for_type("Text", "agent runtimes"), "topic"),
         )
     )
 
@@ -1087,7 +1084,7 @@ def test_flow_list_output_uses_presentation_data_without_storage_tags() -> None:
             kind="value",
             status="succeeded",
             output=Output(
-                Local.typed("Text[]", ("query one", "query two"), 1), "queries"
+                value_for_type("Text[]", ("query one", "query two")), "queries"
             ),
         )
     )
@@ -1119,15 +1116,14 @@ def test_flow_pointer_backed_output_is_not_displayed() -> None:
             kind="value",
             status="succeeded",
             output=Output(
-                Local.typed(
+                value_for_type(
                     "Text",
                     TypedRef(
                         FieldRef.from_path(
-                            StepRef.parse("run_source.0"), "output", "local", "value"
+                            StepRef.parse("run_source.0"), "output", "value"
                         ),
                         "Text",
                     ),
-                    0,
                 ),
                 "topic",
             ),
@@ -1663,7 +1659,7 @@ def test_nested_cancellation_is_rendered_once_at_the_leaf() -> None:
         StepBegin(
             step=flow,
             kind="run",
-            given=ScatterStmt(
+            given=RunStmt(
                 span=SPAN,
                 runnable="expand_queries",
                 doc="Expand the research question into diverse search queries",
@@ -1865,7 +1861,7 @@ def test_nested_flow_inside_parallel_stays_in_one_reusable_lane() -> None:
             kind="tool",
             status="succeeded",
             output=Output(
-                Local.typed(
+                value_for_type(
                     "Part[]",
                     (
                         ToolResultPart(
@@ -1875,7 +1871,6 @@ def test_nested_flow_inside_parallel_stays_in_one_reusable_lane() -> None:
                             output={"results": [{}, {}]},
                         ),
                     ),
-                    0,
                 ),
                 "_",
             ),
@@ -1919,7 +1914,7 @@ def test_nested_flow_inside_parallel_stays_in_one_reusable_lane() -> None:
             step=par,
             kind="par",
             status="succeeded",
-            output=Output(Local.typed("Part[]", (TextPart("done"),), 1), "_"),
+            output=Output(value_for_type("Part[]", (TextPart("done"),)), "_"),
         )
     )
 
@@ -2113,11 +2108,11 @@ def test_settle_uses_the_shared_loop_iteration_boundary() -> None:
         StepBegin(
             step=loop,
             kind="loop",
-            given=SettleStmt(span=SPAN, runnable="merge_pair"),
+            given=ReduceStmt(span=SPAN, runnable="merge_pair"),
         )
     )
     assert _rows(header.committed) == [
-        ["[0] Settle all items into one with merge_pair sequentially", ""]
+        ["[0] Reduce all items into one with merge_pair sequentially", ""]
     ]
     projector.handle(
         RunBegin(

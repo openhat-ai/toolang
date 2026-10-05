@@ -38,7 +38,7 @@ async def execute(
                 else range(max(len(items) - count, 0), len(items))
             )
             matches = [index in selected for index in range(len(items))]
-            return Local(matches, "list", type_name="Boolean")
+            return Local(matches, type_name="Boolean[]")
         else:
             if statement.runnable is None:
                 raise ToolangError(f"{statement.kind} requires a predicate")

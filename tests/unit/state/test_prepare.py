@@ -201,7 +201,8 @@ def test_state_rejects_legacy_headers_in_published_cache(tmp_path, monkeypatch):
         old = prepare_agent_state(layout)
     with pytest.raises(StatePreparationError, match="line 1:1: Parse error"):
         prepare_agent_state(layout)
-    assert load_agent_state(layout, old.revision).modules == old.modules
+    with pytest.raises(ValueError, match="source migration"):
+        load_agent_state(layout, old.revision)
 
 
 def _prepare_revisions_in_process(toolang_root: str) -> tuple[str, str, str]:
@@ -1184,7 +1185,7 @@ def test_prepare_discovers_independent_flow_module_exports(tmp_path: Path) -> No
     flows.mkdir(parents=True)
     (home / "agent.too").write_text("# Agent alice\n", encoding="utf-8")
     (flows / "research.too").write_text(
-        "agic helper:\n  Research.\n\nflow:\n  storm 2 using helper\n  settle using helper\n",
+        "agic helper:\n  Research.\n\nflow:\n  generate 2 using helper\n  reduce using helper\n",
         encoding="utf-8",
     )
 
@@ -1276,7 +1277,7 @@ def test_flow_module_names_reject_casefold_collisions() -> None:
 @pytest.mark.parametrize(
     ("source", "layer"),
     [
-        ("flow research:\n  settle using missing\n", "program"),
+        ("flow research:\n  reduce using missing\n", "program"),
         ("flow other:\n  pass\n", "flow-extension"),
         ("flow:\n  pass\n\nflow research:\n  pass\n", "flow-extension"),
     ],
@@ -1467,3 +1468,52 @@ def test_main_composition_does_not_import_private_helpers_or_types(tmp_path):
     layout.program.write_text("flow parent(_: Secret):\n  run research\n")
     with pytest.raises(StatePreparationError, match="Unknown Toolang type"):
         prepare_agent_state(layout)
+
+
+@pytest.mark.parametrize(
+    "old_body,new_body",
+    [
+        ("scatter: Items", "run -> Text[]: Items"),
+        ("storm 2 using: Items", "generate 2: Items"),
+        (
+            "run -> Text[]: Items\n  settle: {{_}}",
+            "run -> Text[]: Items\n  reduce: {{_}}",
+        ),
+        (
+            "run -> Text[]: Items\n  map using: {{_}}",
+            "run -> Text[]: Items\n  map: {{_}}",
+        ),
+    ],
+)
+def test_obsolete_flow_snapshot_requires_migration_even_with_current_ast(
+    tmp_path, monkeypatch, old_body, new_body
+):
+    layout = _layout(tmp_path)
+    layout.home.mkdir(parents=True)
+    old_source = f"flow main():\n  {old_body}\n"
+    new_source = f"flow main():\n  {new_body}\n"
+    layout.program.write_text(old_source)
+    current_ast = Program.from_source(new_source)
+    with monkeypatch.context() as legacy:
+        legacy.setattr(state_cache, "LAYER_SCHEMA", LAYER_SCHEMA - 1)
+        legacy.setattr(state_prepare, "LAYER_SCHEMA", LAYER_SCHEMA - 1)
+        legacy.setattr(ProgramSource, "parse", lambda _: current_ast)
+        old = prepare_agent_state(layout)
+    revision_dir = layer_revision_dir(layout, "home", old.home_revision)
+    before = {
+        path.relative_to(revision_dir): path.read_bytes()
+        for path in revision_dir.rglob("*")
+        if path.is_file()
+    }
+    with pytest.raises(ValueError, match="source migration"):
+        load_agent_state(layout, old.revision)
+    with pytest.raises(StatePreparationError):
+        prepare_agent_state(layout)
+    layout.program.write_text(new_source)
+    current = prepare_agent_state(layout)
+    assert current.revision != old.revision
+    assert before == {
+        path.relative_to(revision_dir): path.read_bytes()
+        for path in revision_dir.rglob("*")
+        if path.is_file()
+    }

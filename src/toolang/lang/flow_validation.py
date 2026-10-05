@@ -2,7 +2,6 @@
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Literal
 
 from toolang.common.template import require_template_inputs, template_history_depth
 
@@ -15,7 +14,6 @@ from .errors import ToolangValidationError, source_location
 class _Local:
     # Full value type: Text[][] for a list of Text[] elements.
     type_name: str | None = None
-    shape: Literal["item", "list"] | None = None
     length: int | None = None
 
 
@@ -26,9 +24,9 @@ _Runnables = Mapping[str, ast.AgicDecl | ast.FlowDecl]
 def validate_flows(program: ast.Program, runnables: _Runnables) -> None:
     checker = _FlowChecker(program, runnables)
     for flow in program.flows:
-        locals = {p.name: _Local(p.type_name, "item") for p in flow.params}
+        locals = {p.name: _Local(p.type_name) for p in flow.params}
         if flow.input is not None:
-            locals["_"] = _Local(flow.input.type_name, "item")
+            locals["_"] = _Local(flow.input.type_name)
         checker.statements(
             flow.stmts,
             locals,
@@ -47,7 +45,6 @@ def _join(left: _Locals, right: _Locals) -> _Locals:
         a, b = left.get(name, _Local()), right.get(name, _Local())
         result[name] = _Local(
             a.type_name if a.type_name == b.type_name else None,
-            a.shape if a.shape == b.shape else None,
             a.length if a.length == b.length else None,
         )
     return result
@@ -173,28 +170,29 @@ class _FlowChecker:
                 locals,
                 window,
             )
-            return _Local("Part[]", "item")
+            return _Local("Part[]")
 
         source = locals.get("_")
         collection = isinstance(
             stmt,
-            ast.MapStmt
-            | ast.KeepStmt
-            | ast.DropStmt
-            | ast.SortStmt
-            | ast.GatherStmt
-            | ast.SettleStmt,
+            ast.MapStmt | ast.KeepStmt | ast.DropStmt | ast.SortStmt | ast.ReduceStmt,
         )
         if collection:
-            if source is None or source.shape not in {None, "list"}:
-                actual = "none" if source is None else source.shape
+            if source is None or (
+                source.type_name is not None
+                and source.type_name != "Json"
+                and not source.type_name.endswith("[]")
+            ):
+                actual = "missing input" if source is None else source.type_name
                 raise ToolangValidationError(
-                    f"{stmt.kind.capitalize()} requires current shape list, got {actual}"
+                    f"{stmt.kind.capitalize()} requires an outer array, got {actual}"
                 )
-            if isinstance(stmt, ast.GatherStmt | ast.SettleStmt) and source.length == 0:
-                raise ToolangValidationError(
-                    f"{stmt.kind.capitalize()} requires a nonempty list"
-                )
+            if (
+                isinstance(stmt, ast.ReduceStmt)
+                and stmt.initial is None
+                and source.length == 0
+            ):
+                raise ToolangValidationError("Reduce requires a nonempty array")
 
         child_name = getattr(stmt, "runnable", None)
         child = self.runnables.get(child_name) if child_name else None
@@ -210,43 +208,47 @@ class _FlowChecker:
         child_locals = dict(locals)
         element_type = (
             source.type_name[:-2]
-            if source
-            and source.shape == "list"
-            and source.type_name
-            and source.type_name.endswith("[]")
+            if source and source.type_name and source.type_name.endswith("[]")
+            else "Json"
+            if source and source.type_name == "Json"
             else None
         )
-        if collection and not isinstance(stmt, ast.GatherStmt):
-            child_locals["_"] = _Local(element_type, "item")
-        if isinstance(stmt, ast.SettleStmt):
+        if collection:
+            child_locals["_"] = _Local(element_type)
+        if isinstance(stmt, ast.ReduceStmt):
             if stmt.initial is None:
                 if element_type is not None and element_type != output:
                     raise ToolangValidationError(
-                        f"Settle without from requires {element_type} output, got {output}"
+                        f"Reduce without an initializer requires {element_type} output, got {output}"
                     )
             else:
                 self.content(stmt.initial, locals, window)
         no_calls = (
-            isinstance(stmt, ast.StormStmt)
+            isinstance(stmt, ast.GenerateStmt)
             and stmt.count == 0
             or isinstance(
-                stmt, ast.MapStmt | ast.KeepStmt | ast.DropStmt | ast.SortStmt
+                stmt,
+                ast.MapStmt
+                | ast.KeepStmt
+                | ast.DropStmt
+                | ast.SortStmt
+                | ast.ReduceStmt,
             )
             and source is not None
             and source.length == 0
-            or isinstance(stmt, ast.SettleStmt)
+            or isinstance(stmt, ast.ReduceStmt)
             and stmt.initial is None
             and source is not None
             and source.length == 1
         )
         if child is not None:
             # Zero-call operations still preflight inputs, but never render the
-            # child's history templates (including implicit-seed singleton settle).
+            # child's history templates (including implicit-seed singleton reduce).
             self.inputs(child, child_locals)
             if not no_calls:
                 self.history(
                     child,
-                    1 if isinstance(stmt, ast.SettleStmt) else window,
+                    1 if isinstance(stmt, ast.ReduceStmt) else window,
                     settings,
                 )
 
@@ -267,17 +269,14 @@ class _FlowChecker:
                     )
                 elif length is not None:
                     length = max(0, length - stmt.count)
-            return _Local(source.type_name, "list", length)
+            return _Local(source.type_name, length)
         if transform == "list":
-            if isinstance(stmt, ast.ScatterStmt):
-                return _Local(output, "list")
             return _Local(
                 f"{output}[]" if output else None,
-                "list",
                 stmt.count
-                if isinstance(stmt, ast.StormStmt)
+                if isinstance(stmt, ast.GenerateStmt)
                 else source.length
                 if source
                 else None,
             )
-        return _Local(output, "item")
+        return _Local(output)

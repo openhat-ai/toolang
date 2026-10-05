@@ -5,8 +5,8 @@ import pytest
 from toolang.lang import Program, format_source, to_data
 from toolang.lang.ast import (
     RepeatStmt,
-    ScatterStmt,
-    SettleStmt,
+    RunStmt,
+    ReduceStmt,
     Span,
     flow_stmt_from_data,
 )
@@ -53,7 +53,7 @@ def test_invalid_configuration_is_rejected_before_execution(directive):
 @pytest.mark.parametrize("named", [True, False])
 def test_settle_initializer_and_repeat_survive_formatting(tab_size, named):
     head = (
-        "settle using merge:" if named else "settle:\n      Merge {{_}} with {{_1._}}."
+        "reduce using merge:" if named else "reduce:\n      Merge {{_}} with {{_1._}}."
     )
     source = f"""agic merge(_):
   Merge {{{{_}}}} with {{{{_1._}}}}.
@@ -61,7 +61,7 @@ flow work(_):
   lanes=default
   instruct=default
   repeat 5 times windowing 2:
-    scatter:
+    run -> Text[]:
       Split {{{{_}}}}.
     {head}
       from:
@@ -74,24 +74,21 @@ flow work(_):
     loop = program.flows[0].stmts[0]
     assert isinstance(loop, RepeatStmt)
     assert loop.window == 2 and loop.count == 5
-    settle = loop.stmts[1]
-    assert isinstance(settle, SettleStmt)
-    assert settle.initial == "Initial content."
+    reduce = loop.stmts[1]
+    assert isinstance(reduce, ReduceStmt)
+    assert reduce.initial == "Initial content."
     if not named:
-        reducer = program.find_agic(settle.runnable)
+        reducer = program.find_agic(reduce.runnable)
         assert reducer is not None
         assert reducer.messages[0].content == "Merge {{_}} with {{_1._}}."
 
 
-def test_legacy_scatter_records_decode_without_reintroducing_source_count():
-    statement = ScatterStmt(span=Span(line=2), runnable="expand")
-    encoded = to_data(statement)
-    assert isinstance(encoded, dict) and "count" not in encoded
-    legacy = {**encoded, "count": 4}
-    assert flow_stmt_from_data(legacy) == statement
-    for bad in (True, -1, "4", 4.5):
-        with pytest.raises(ValueError):
-            flow_stmt_from_data({**legacy, "count": bad})
+def test_legacy_scatter_is_rejected_by_executable_ast():
+    encoded = to_data(RunStmt(span=Span(line=2), runnable="expand"))
+    assert isinstance(encoded, dict)
+    legacy = {**encoded, "kind": "scatter", "count": 4}
+    with pytest.raises(ValueError, match="migrate source to 'run'"):
+        flow_stmt_from_data(legacy)
     with pytest.raises(ToolangError):
         Program.from_source("flow work:\n  scatter 4 using expand\n")
 
@@ -102,8 +99,8 @@ def test_settle_comments_keep_their_authored_scope(named, tab_size):
     reducer = "" if named else "      Merge {{_}} with {{_1._}}.\n"
     source = (
         "agic merge(_):\n  Merge {{_}} with {{_1._}}.\n"
-        "flow work(_):\n  repeat 2 times:\n    scatter: Items\n"
-        f"    settle{' using merge' if named else ''}:\n"
+        "flow work(_):\n  repeat 2 times:\n    run -> Text[]: Items\n"
+        f"    reduce{' using merge' if named else ''}:\n"
         "      # Reducer or initializer comment.\n"
         f"{reducer}      from: Initial content.\n"
         "    # Next statement comment.\n"
@@ -118,7 +115,7 @@ def test_settle_comments_keep_their_authored_scope(named, tab_size):
 
 @pytest.mark.parametrize("kind", ["agic", "flow"])
 def test_lane_literals_use_the_same_integer_rules_as_statement_clauses(kind):
-    body = "user: Work." if kind == "agic" else "storm 1 in 04 lanes using: Work."
+    body = "user: Work." if kind == "agic" else "generate 1 in 04 lanes: Work."
     program = Program.from_source(f"{kind} work:\n  lanes = 04\n  {body}\n")
     runnable = program.agics[0] if kind == "agic" else program.flows[0]
     assert resolve_settings(runnable, "agent").lanes == 4

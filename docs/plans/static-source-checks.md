@@ -1,5 +1,8 @@
 # Static Source Checks
 
+Flow syntax and value rules in this historical plan are superseded by
+[Flow Array Semantics](flow-array-semantics.md).
+
 Approved for implementation in the conversation. Expose source-determined errors
 through the shared language validator and `too parse --check` before execution.
 

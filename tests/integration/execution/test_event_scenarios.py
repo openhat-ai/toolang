@@ -23,7 +23,7 @@ from toolang.execution.types import (
     ToolStepGiven,
     ToolStepNoted,
 )
-from toolang.lang.ast import StormStmt
+from toolang.lang.ast import GenerateStmt
 from toolang.lang.input import resolve_input_parts
 
 
@@ -187,7 +187,7 @@ agic worker(_: Text) -> Text:
 
 flow parallel(_: Text) -> Text[]:
   ## Run workers in parallel.
-  storm 3 using worker in 3 lanes
+  generate 3 in 3 lanes using worker
 """,
         responses=[
             ModelCallResult(message=Message.assistant(f"item {index}"))
@@ -234,7 +234,7 @@ flow parallel(_: Text) -> Text[]:
             )
             parent_event = tracer.events[parent_begin]
             assert isinstance(parent_event, StepBegin)
-            assert isinstance(parent_event.given, StormStmt)
+            assert isinstance(parent_event.given, GenerateStmt)
             assert parent_event.given.doc == "Run workers in parallel."
             for child in children:
                 begin_event = next(

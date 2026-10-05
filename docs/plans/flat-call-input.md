@@ -1,5 +1,8 @@
 # Flat Call Input and Output Bindings
 
+Flow syntax and value rules in this historical plan are superseded by
+[Flow Array Semantics](flow-array-semantics.md).
+
 ## Goal and Scope
 
 Approved on 2026-09-08 as a refactor with a breaking protocol and storage

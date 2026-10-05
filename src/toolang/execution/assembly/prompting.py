@@ -47,12 +47,11 @@ from ..types import (
     MessageTemplate,
     StepRef,
     WorkspaceRecallTarget,
-    Local,
     PsycheRecallTarget,
     SkillTriggerRecallTarget,
     ServiceTriggerRecallTarget,
 )
-from ..values import parts_from_local
+from ..values import parts_from_value
 
 __all__ = ["instructions", "messages", "tools", "output_schema"]
 
@@ -410,7 +409,7 @@ class PromptInputs:
             ):
                 primary = tuple(cast(Sequence[Part], value))
             else:
-                primary = parts_from_local(Local(cast(Value, value)))
+                primary = parts_from_value(cast(Value, value))
         prompt_context = "\n".join(
             part
             for part in (

@@ -32,10 +32,10 @@ from toolang.execution.schemas import (
     ThreadPeerInfo,
 )
 from toolang.execution.types import (
+    value_for_type,
     Output,
     AllowOverride,
     ControlRef,
-    Local,
     ModelOverride,
     LimitOverride,
     RunOverride,
@@ -323,7 +323,7 @@ def _json(value: object) -> object:
 def test_remote_chat_non_run_operations_and_executor_metadata() -> None:
     requests: list[tuple[str, str, object | None]] = []
     result = _detail(
-        output=Output(Local.typed("Part[]", (TextPart("remote answer"),)), "_"),
+        output=Output(value_for_type("Part[]", (TextPart("remote answer"),)), "_"),
     )
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -829,7 +829,7 @@ def test_remote_chat_recovers_without_replaying_or_retrying(
     monkeypatch.setattr(remote, "_RECOVERY_DELAYS", (0.0, 0.0, 0.0))
     monkeypatch.setattr(remote, "_RECOVERY_INTERVAL", 0.0)
     terminal = _detail(
-        output=Output(Local.typed("Part[]", (TextPart("durable"),)), "_"),
+        output=Output(value_for_type("Part[]", (TextPart("durable"),)), "_"),
     )
     details = iter(
         (

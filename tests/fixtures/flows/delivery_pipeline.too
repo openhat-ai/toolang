@@ -41,13 +41,13 @@ flow delivery(_: Text, constraints?):
   recall = none
   tools = none
   let project = {{_}}
-  scatter using decompose
-  map using plan_workstream in 4 lanes
-  gather using assemble_plan
+  run decompose
+  map in 4 lanes using plan_workstream
+  run assemble_plan
   let draft = {{_}}
-  scatter using review_lenses
-  map using review_plan in 3 lanes
-  settle using apply_review:
+  run review_lenses
+  map in 3 lanes using review_plan
+  reduce using apply_review:
     from: {{draft}}
   repeat 2 times:
     run improve_plan

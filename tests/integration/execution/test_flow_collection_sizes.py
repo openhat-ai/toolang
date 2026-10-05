@@ -61,8 +61,8 @@ flow main() -> {output_type}:
                 assert step.status == "failed" and step.output is None
             else:
                 assert run.status == "succeeded", run.error
-                assert run.output is not None and run.output.local.type == output_type
-                assert step.output is not None and step.output.local.type == output_type
+                assert run.output is not None and run.output.type == output_type
+                assert step.output is not None and step.output.type == output_type
                 assert harness.store.run_output_text(run_id=run.id) == expected
 
     asyncio.run(scenario())
@@ -73,7 +73,7 @@ flow main() -> {output_type}:
     "operation,answers,expected,output_type",
     [
         (
-            "map using -> Number[]",
+            "map -> Number[]",
             ["[1,10]", "[2,20]", "[3,30]"],
             ["[]", "[[1,10]]", "[[1,10],[2,20],[3,30]]"],
             "Number[][]",
@@ -110,7 +110,7 @@ def test_collection_size_preserves_types_order_and_call_count(
     statement = f"{operation}: {{{{_}}}}" if answers else operation
     _check(
         tmp_path,
-        body=f"scatter: Items\n  {statement}",
+        body=f"run -> Text[]: Items\n  {statement}",
         responses=[source, *answers[:size]],
         output_type=output_type,
         expected=expected[[0, 1, 3].index(size)],
@@ -118,46 +118,46 @@ def test_collection_size_preserves_types_order_and_call_count(
 
 
 @pytest.mark.parametrize("size", [0, 1, 3], ids=["empty", "singleton", "multiple"])
-@pytest.mark.parametrize("operation", ["gather", "settle", "settle-from"])
+@pytest.mark.parametrize("operation", ["run", "reduce", "reduce-from"])
 def test_reduction_size_controls_seed_and_child_call_count(
     tmp_path: Path, size: int, operation: str
 ) -> None:
     items = ["a", "b", "c"][:size]
-    if operation == "gather":
-        statement = "gather using: {{_}}"
-        answers = ["joined"] if size else []
+    if operation == "run":
+        statement = "run: {{_}}"
+        answers = ["joined"]
     else:
-        statement = "settle:\n    {{_}} {{_1._}}"
-        if operation == "settle-from":
+        statement = "reduce:\n    {{_}} {{_1._}}"
+        if operation == "reduce-from":
             statement += "\n    from: seed"
-        calls = size if operation == "settle-from" else max(0, size - 1)
+        calls = size if operation == "reduce-from" else max(0, size - 1)
         answers = [f"merged-{index}" for index in range(1, calls + 1)]
-    expected = answers[-1] if answers else "a" if size else None
+    expected = answers[-1] if answers else "a" if size else "seed"
     _check(
         tmp_path,
-        body=f"scatter: Items\n  {statement}",
+        body=f"run -> Text[]: Items\n  {statement}",
         responses=[json.dumps(items), *answers],
         output_type="Text",
         expected=expected,
-        error=f"{operation.split('-')[0]} requires a nonempty list"
-        if not size
+        error=f"{operation.split('-')[0]} requires a nonempty array"
+        if not size and operation == "reduce"
         else None,
     )
 
 
 @pytest.mark.parametrize("size", [0, 1, 3], ids=["empty", "singleton", "multiple"])
-@pytest.mark.parametrize("operation", ["scatter", "storm"])
+@pytest.mark.parametrize("operation", ["run", "generate"])
 def test_producer_size_preserves_empty_and_nested_array_results(
     tmp_path: Path, size: int, operation: str
 ) -> None:
     items = ["a", "b", "c"][:size]
-    if operation == "scatter":
-        body = "scatter: Items"
+    if operation == "run":
+        body = "run -> Text[]: Items"
         responses = [json.dumps(items)]
         expected = json.dumps(items, separators=(",", ":"))
         output_type = "Text[]"
     else:
-        body = f"storm {size} using -> Text[]: Items"
+        body = f"generate {size} -> Text[]: Items"
         responses = [json.dumps([item]) for item in items]
         expected = json.dumps([[item] for item in items], separators=(",", ":"))
         output_type = "Text[][]"

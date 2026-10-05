@@ -104,11 +104,11 @@ flow pipeline:
   run action
   seek reviewer action
   ask: Continue?
-  scatter using pieces
-  storm 3 using action in 2 lanes
-  let gather using action
-  let settle using action
-  map using action in 4 lanes
+  run pieces
+  generate 3 in 2 lanes using action
+  let run action
+  let reduce using action
+  map in 4 lanes using action
   keep first 2
   drop last 1
   sort descending by score in 2 lanes
@@ -142,10 +142,10 @@ flow pipeline:
         "run",
         "seek",
         "ask",
-        "scatter",
-        "storm",
-        "gather",
-        "settle",
+        "run",
+        "generate",
+        "run",
+        "reduce",
         "map",
         "keep",
         "drop",

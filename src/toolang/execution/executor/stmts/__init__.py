@@ -10,7 +10,6 @@ from toolang.lang.ast import (
     AskStmt,
     DropStmt,
     FlowStmt,
-    GatherStmt,
     KeepStmt,
     LetStmt,
     MapStmt,
@@ -18,10 +17,9 @@ from toolang.lang.ast import (
     RepeatStmt,
     RunStmt,
     ExecStmt,
-    ScatterStmt,
     SeekStmt,
-    SettleStmt,
-    StormStmt,
+    ReduceStmt,
+    GenerateStmt,
 )
 
 from ...records import ControlRecord, StepRef
@@ -31,17 +29,15 @@ from ..common import Local
 from . import (
     ask,
     filter,
-    gather,
     let,
     map,
     sort,
     repeat,
     run,
     exec as exec_stmt,
-    scatter,
     seek,
-    settle,
-    storm,
+    reduce,
+    generate,
 )
 
 if TYPE_CHECKING:
@@ -76,20 +72,12 @@ async def execute(
         return await ask.execute(
             execution, binding, locals, path, statement, controls, occurrence
         )
-    if isinstance(statement, ScatterStmt):
-        return await scatter.execute(
+    if isinstance(statement, GenerateStmt):
+        return await generate.execute(
             execution, binding, locals, path, statement, controls, occurrence
         )
-    if isinstance(statement, StormStmt):
-        return await storm.execute(
-            execution, binding, locals, path, statement, controls, occurrence
-        )
-    if isinstance(statement, GatherStmt):
-        return await gather.execute(
-            execution, binding, locals, path, statement, controls, occurrence
-        )
-    if isinstance(statement, SettleStmt):
-        return await settle.execute(
+    if isinstance(statement, ReduceStmt):
+        return await reduce.execute(
             execution, binding, locals, path, statement, controls, occurrence
         )
     if isinstance(statement, MapStmt):

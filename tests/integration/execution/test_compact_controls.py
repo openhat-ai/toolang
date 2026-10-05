@@ -23,8 +23,8 @@ from toolang.execution.records import (
 from toolang.execution.store import RunStore
 from toolang.execution.schemas import record_to_data
 from toolang.execution.types import (
+    value_for_type,
     FieldRef,
-    Local,
     ModelStepGiven,
     StepRef,
     RunRef,
@@ -207,16 +207,16 @@ def test_compact_rejects_inactive_run_without_writing_a_control(tmp_path: Path) 
 @pytest.mark.parametrize(
     ("reference", "output"),
     (
-        ("run_missing", Output(Local({"thread": "term_target"}), None)),
+        ("run_missing", Output({"thread": "term_target"}, None)),
         ("run_summary", None),
-        ("run_summary/control", Output(Local({"thread": "term_target"}), None)),
-        ("term_target/id", Output(Local({"thread": "term_target"}), None)),
-        ("run_summary", Output(Local({"thread": "term_other"}), None)),
-        ("run_summary", Output(Local("not a compact result"), None)),
+        ("run_summary/control", Output({"thread": "term_target"}, None)),
+        ("term_target/id", Output({"thread": "term_target"}, None)),
+        ("run_summary", Output({"thread": "term_other"}, None)),
+        ("run_summary", Output("not a compact result", None)),
         (
             "run_summary",
             Output(
-                Local.typed("Json", FieldRef.parse("run_missing/output/local/value")),
+                value_for_type("Json", FieldRef.parse("run_missing/output/value")),
                 None,
             ),
         ),

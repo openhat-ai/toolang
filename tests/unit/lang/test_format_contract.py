@@ -93,7 +93,7 @@ agic work:
     "header, depth",
     [
         ("flow work:\n  run:", 4),
-        ("flow work:\n  scatter: Items\n  map using:", 4),
+        ("flow work:\n  run -> Text[]: Items\n  map:", 4),
         ("flow work:\n  repeat 2 times:\n    run: Work.\n    until:", 6),
         ("flow work:\n  let note =", 4),
         ("flow work:\n  ask:", 4),
@@ -117,7 +117,7 @@ agic work:
 def test_text_consumers_share_the_formatting_contract(
     tab_size: int, header: str, depth: int, body: str
 ) -> None:
-    if "map using:" in header:
+    if "map:" in header:
         body += "\n{{_}}"
     source = (
         header

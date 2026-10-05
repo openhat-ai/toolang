@@ -93,7 +93,6 @@ from ..types import (
     ErrorRef,
     FieldRef,
     RecallTarget,
-    Local as RecordLocal,
     Output,
     ControlKind,
     StepRef,
@@ -119,9 +118,10 @@ from ..runnables import (
 )
 from .steps import loop as loop_step
 from .common import (
+    Local,
+    _MISSING,
     BoundRun,
     EventEmitter,
-    Local,
     _ExecutionFailed,
     _ExecuteCommitted,
     _RunRejected,
@@ -1603,7 +1603,9 @@ class _Execution:
         self._validate_child_contract(step, name, runnable)
         _bind_child_input(
             runnable if include_primary else replace(runnable, input=None),
-            locals,
+            locals
+            if include_primary
+            else {name: local for name, local in locals.items() if name != "_"},
             reference=name,
             structs={
                 item.name: item for item in state_program(state, target.module).structs
@@ -2124,8 +2126,7 @@ class _Execution:
             if statement.binding == "_":
                 self.record_output(
                     binding.run_id,
-                    local.ref
-                    or FieldRef.from_path(step.ref, "output", "local", "value"),
+                    local.ref or FieldRef.from_path(step.ref, "output", "value"),
                 )
         return current, len(committed)
 
@@ -2144,7 +2145,7 @@ class _Execution:
         if step.output.binding == "_":
             self.record_output(
                 run_id,
-                local.ref or FieldRef.from_path(step.ref, "output", "local", "value"),
+                local.ref or FieldRef.from_path(step.ref, "output", "value"),
             )
 
     async def execute_child(
@@ -2484,21 +2485,20 @@ class _Execution:
             raise _ExecutionFailed(
                 ErrorRef(FieldRef.from_path(RunRef(binding.run_id), "error")), exc
             ) from exc
-        pointer = FieldRef.from_path(RunRef(binding.run_id), "output", "local", "value")
+        pointer = FieldRef.from_path(RunRef(binding.run_id), "output", "value")
         item_type = result.type_name or "Json"
         source_pointer = (
             result.ref
             if result.ref is not None
-            and (result.record is not None or result.type_name == "Part[]")
+            and (result.has_stored or result.type_name == "Part[]")
             else pointer
         )
         return replace(
             result,
             ref=source_pointer,
-            record=RecordLocal.typed(
-                type_name=(f"{item_type}[]" if result.shape == "list" else item_type),
+            stored=value_for_type(
+                type_name=item_type,
                 value=pointer,
-                dim=1 if result.shape == "list" else 0,
             ),
         )
 
@@ -2535,7 +2535,7 @@ class _Execution:
         for lane in range(lanes):
             available_lanes.put_nowait(lane)
         source_local = locals.get("_", Local())
-        input_type = source_local.type_name
+        input_type = source_local.element_type
         target = resolve_call_target(state, binding.module, runnable)
         self.require_inactive_runnable(binding, target, action="run")
         declaration = target.executable
@@ -2552,7 +2552,6 @@ class _Execution:
             if select_source:
                 current["_"] = Local(
                     value,
-                    "item",
                     ref=source_local.ref.select(index)
                     if source_local.ref is not None
                     else None,
@@ -2564,7 +2563,9 @@ class _Execution:
         if not inputs:
             _bind_child_input(
                 replace(declaration, input=None) if select_source else declaration,
-                locals,
+                {name: local for name, local in locals.items() if name != "_"}
+                if select_source
+                else locals,
                 reference=runnable,
                 structs=structs,
             )
@@ -2612,16 +2613,14 @@ class _Execution:
         result_refs = tuple(result.ref for result in results if result.ref is not None)
         return Local(
             [result.value for result in results],
-            "list",
-            type_name=output_type,
-            record=(
-                RecordLocal.typed(
+            type_name=f"{output_type}[]",
+            stored=(
+                value_for_type(
                     type_name=f"{output_type}[]",
                     value=result_refs,
-                    dim=1,
                 )
                 if len(result_refs) == len(results)
-                else None
+                else _MISSING
             ),
         )
 
@@ -2731,9 +2730,7 @@ class _Execution:
         )
         if record is not None and record.output is not None:
             self._run_outputs[run_id] = Output(
-                replace(
-                    record.output.local, value=TypedRef(ref, record.output.local.type)
-                ),
+                TypedRef(ref, record.output.type),
                 "_",
             )
 
@@ -2832,7 +2829,7 @@ class _Execution:
                     if isinstance(event.given, ToolStepGiven)
                     else None,
                     output=Output(
-                        RecordLocal.typed(
+                        value_for_type(
                             "ToolResultPart",
                             canceled_result(
                                 event.given.call,
@@ -2991,7 +2988,7 @@ def _bind_child_input(
     source_locals = {
         name: locals[name]
         for name in parameters
-        if name in locals and locals[name].shape != "none"
+        if name in locals and locals[name].has_value
     }
     if isinstance(runnable, AgicDecl) and is_generated_ref(reference):
         # Captures already passed their producing boundary. Revalidating them
@@ -3082,14 +3079,14 @@ def _step_local(step: StepRecord, store: RunStore) -> Local:
     if step.output is None:
         return Local()
     return Local(
-        value=store.resolve_value(step.output.local.value),
-        shape="list" if step.output.local.dim == 1 else "item",
+        value=store.resolve_value(step.output.value),
         ref=(
-            store.resolve_value_pointer(step.output.local.value)
-            if isinstance(step.output.local.value, TypedRef)
-            else FieldRef.from_path(step.ref, "output", "local", "value")
+            store.resolve_value_pointer(step.output.value)
+            if isinstance(step.output.value, TypedRef)
+            else FieldRef.from_path(step.ref, "output", "value")
         ),
-        type_name=step.output.local.item_type,
+        type_name=step.output.type,
+        stored=step.output.value,
     )
 
 
@@ -3264,12 +3261,11 @@ def _execute_locals(
     for name, pointer in records.items():
         result[name] = Local(
             input[name],
-            "item",
             pointer.ref if isinstance(pointer, TypedRef) else None,
             types[name],
-            RecordLocal.typed(types[name], pointer)
+            value_for_type(types[name], pointer)
             if not isinstance(pointer, TypedRef)
-            else RecordLocal(pointer),
+            else pointer,
         )
     return result
 
@@ -3285,11 +3281,15 @@ def _child_control_value(
 
 
 def _runtime_local_type(local: Local) -> str | None:
-    if local.record is not None:
-        return local.record.type
+    if local.has_stored:
+        return (
+            local.stored.type
+            if isinstance(local.stored, TypedRef)
+            else value_type(local.stored)
+        )
     if local.type_name is None:
         return None
-    return f"{local.type_name}[]" if local.shape == "list" else local.type_name
+    return local.type_name
 
 
 def _resolve_stored_input(
@@ -3340,18 +3340,13 @@ def _coerce_execute_output(
         type_name,
         structs={item.name: item for item in program.structs},
     )
-    source_type = (
-        f"{result.type_name or 'Json'}[]"
-        if result.shape == "list"
-        else result.type_name or "Json"
-    )
+    source_type = result.type_name or "Json"
     preserve = source_type == type_name
     return Local(
         value=value,
-        shape="item",
         ref=result.ref if preserve else None,
         type_name=type_name,
-        record=result.record if preserve else None,
+        stored=result.stored if preserve else _MISSING,
     )
 
 
@@ -3360,13 +3355,13 @@ def _run_result_output(
     *,
     binding: str | None = "_",
 ) -> Output | None:
-    if result.shape == "none":
+    if not result.has_value:
         return None
     item_type = result.type_name or "Json"
     reference = (
         result.ref
         if result.ref is not None
-        and (result.record is not None or result.type_name == "Part[]")
+        and (result.has_stored or result.type_name == "Part[]")
         else None
     )
     concrete = (
@@ -3375,10 +3370,9 @@ def _run_result_output(
         else result.value
     )
     return Output(
-        RecordLocal.typed(
-            type_name=f"{item_type}[]" if result.shape == "list" else item_type,
+        value_for_type(
+            type_name=item_type,
             value=reference if reference is not None else cast(Value, concrete),
-            dim=1 if result.shape == "list" else 0,
         ),
         binding,
     )

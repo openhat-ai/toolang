@@ -1,5 +1,8 @@
 # History and runtime tool calls
 
+Flow syntax and value rules in this historical plan are superseded by
+[Flow Array Semantics](flow-array-semantics.md).
+
 ## Goal and baseline
 
 Connect tool calls and preflights to the execution records and ModelCall assembly

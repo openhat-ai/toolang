@@ -18,7 +18,7 @@ def operation_transform(operation: str) -> FlowTransform:
     """Return the flow result transform shared by execution and source checks."""
     if operation in {"repeat", "exec"}:
         return "none"
-    if operation in {"scatter", "storm", "map"}:
+    if operation in {"generate", "map"}:
         return "list"
     if operation in {"keep", "drop"}:
         return "filter"
@@ -115,7 +115,7 @@ def validate_operation_contract(
     """Check an already resolved signature without inferring through callees."""
 
     label = operation.capitalize()
-    if operation in {"map", "keep", "drop", "sort", "gather", "settle"}:
+    if operation in {"map", "keep", "drop", "sort", "reduce"}:
         if runnable.input is None and not (
             isinstance(runnable, AgicDecl)
             and is_generated_ref(name)
@@ -134,8 +134,4 @@ def validate_operation_contract(
     if expected is not None and output != expected:
         raise ToolangValidationError(
             f"{label} requires {expected} output from {name!r}, got {output}", line=line
-        )
-    if operation == "scatter" and (output is None or not output.endswith("[]")):
-        raise ToolangValidationError(
-            f"{label} requires array output from {name!r}, got {output}", line=line
         )

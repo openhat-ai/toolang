@@ -38,10 +38,11 @@ formatting. Stdin is supported as the sole source. `--cst`, `--json`, and
 
 Both AST modes check template syntax, reserved references, declared inputs,
 known types, and operation contracts. Flow checks follow local bindings and
-item/list shapes, detect definitely missing call inputs, and validate known
-repeat/settle windows. Empty parallel operations and implicit-seed singleton
-settle validate inputs without checking unused child history templates.
-An array-valued item is distinct from a flow list.
+complete types and outer-array lengths, detect definitely missing call inputs,
+and validate known repeat/reduce windows. Zero-call array operations, including
+empty reduce with an initializer and implicit-seed singleton reduce, validate
+inputs without checking unused child history templates. An empty reduce without
+an initializer is rejected.
 Unknown inherited context, dynamic values, and value conversions remain runtime
 checks; insufficient history within a valid window remains normal until warm-up.
 These checks do not infer signatures through calls. Source errors use

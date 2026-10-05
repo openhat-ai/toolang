@@ -280,10 +280,8 @@ declaration's source line). For example, an inline map displays
 | `run` | `Run R` |
 | `seek` | `Ask agent AGENT to run R` |
 | `ask` | `Ask for human input` |
-| `scatter` | `Scatter into items with R` |
-| `storm` | `Storm into N items with R independently` |
-| `gather` | `Gather all items into one with R` |
-| `settle` | `Settle all items into one with R sequentially` |
+| `generate` | `Generate into N items with R independently` |
+| `reduce` | `Reduce all items into one with R sequentially` |
 | `map` | `Map each item with R` |
 | positional `keep` or `drop` | `Keep/Drop the first/last N items` |
 | predicate `keep` or `drop` | `Keep/Drop items where P is true` |
@@ -299,8 +297,7 @@ These describe Flow locals, not persistence. Plain statements have no binding
 suffix, and content `let` does not repeat its assignment as a suffix.
 
 Counts of one use singular `item` or `time`; positional selection omits the
-number for one item. Scatter has no authored count; its description is
-`Scatter into items with R`. Completion summaries report actual results.
+number for one item. Completion summaries report actual results.
 
 A direct single-Run Flow Step preserves that Run's leaf trace and emits no
 synthetic success row. Absence of an error means success. Direct values are
@@ -314,16 +311,16 @@ without changing the operation's result vocabulary:
 | Statement | Live content | Final content |
 | --- | --- | --- |
 | content `let` | No synthetic activity | Actual value |
-| `run`, `scatter`, `gather` | Child Model or Tool activity | Child output, without a duplicate wrapper summary |
+| `run` | Child Model or Tool activity | Child output, without a duplicate wrapper summary |
 | `seek`, `ask` | No synthetic activity | Currently fail with a missing execution/input bridge error |
 | `map` | Item counts and lane activity | `Mapped 6 items` |
-| `storm` | Item counts and lane activity | `Generated 6 items` |
+| `generate` | Item counts and lane activity | `Generated 6 items` |
 | predicate `keep` | Item counts and lane activity | `Kept all 6 items` or `Kept 4 of 6 items` |
 | predicate `drop` | Item counts and lane activity | `Dropped all 6 items` or `Dropped 2 of 6 items; 4 remaining` |
 | positional `keep`, `drop` | No synthetic activity | Actual selection, for example `Kept the first 4 items out of 6` |
 | `sort` | Item counts and lane activity | `Sorted 6 items descending` |
 | `repeat` | Iteration/condition boundaries and child activity | Completed iterations and the termination cause |
-| `settle` | Iteration boundaries and child activity | `Settled all 6 items in 6 iterations` |
+| `reduce` | Iteration boundaries and child activity | `Reduced all 6 items in 6 iterations` |
 
 For example, `Search the web for each query` ends with `Mapped 6 items`,
 `Keep evidence bundles that answer the research task` with `Kept all 6 items`,
@@ -538,9 +535,9 @@ Cancellation uses the same counts without inventing a failure:
 • Canceled · 3 canceled · 11 not started · 4/18 succeeded
 ```
 
-## Repeat and Settle
+## Repeat and Reduce
 
-Repeat and Settle use the same loop presentation. Each iteration follows the
+Repeat and Reduce use the same loop presentation. Each iteration follows the
 normal trace-or-lane rule for its child statement:
 
 ```text
@@ -568,7 +565,7 @@ exposing an internal name. Terminal loop output identifies the actual cause:
 • Completed all 3 iterations without meeting the condition
 • Interrupted after completing 2 of 3 iterations
 • Canceled after completing 2 of 3 iterations
-• Settled all 6 items in 6 iterations
+• Reduced all 6 items in 6 iterations
 ```
 
 The causal child error remains at the child Step or lane. The loop row describes

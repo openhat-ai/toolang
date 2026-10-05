@@ -142,7 +142,8 @@ paging stable history within an active Run.
 
 Step outputs and control inputs are resolved typed values; structural and saved
 ModelCall references remain intact. `read_output` returns `{run, status, output}`,
-where output is `{type, value, name, dim}` or null, including partial output.
+where output is `{type, value, binding}` or null, including partial output.
+The type describes the complete value; binding is a local name or null.
 Missing targets and unresolved values fail as ordinary tool errors.
 
 

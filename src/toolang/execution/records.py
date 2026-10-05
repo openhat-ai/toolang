@@ -50,7 +50,6 @@ from .types import (
     FieldRef,
     history_ref,
     IterationOccurrence,
-    Local,
     LoopStepNoted,
     ExecStepNoted,
     MessageTemplate,
@@ -720,51 +719,24 @@ _PART_STORAGE_TYPES = {
 }
 
 
-def local_from_data(payload: Mapping[str, object]) -> Local:
-    """Parse one local from its private durable representation."""
-
-    if set(payload) != {"value", "dim"}:
-        raise ValueError("stored local requires value and dim fields")
-    raw_dim = payload.get("dim")
-    if isinstance(raw_dim, bool) or not isinstance(raw_dim, int):
-        raise ValueError("local dim must be 0 or 1")
-    dim = cast(Literal[0, 1], raw_dim)
-    return Local(
-        value=local_value_from_data(payload.get("value")),
-        dim=dim,
-    )
-
-
-def local_to_data(local: Local) -> dict[str, object]:
-    """Serialize one local using its private durable representation."""
-
-    return {
-        "value": local_value_to_data(local.value),
-        "dim": local.dim,
-    }
-
-
 def output_from_data(payload: Mapping[str, object]) -> Output:
-    """Decode a stored output with one local value and an optional binding."""
+    """Decode one self-describing stored value and its destination."""
 
-    if set(payload) != {"local", "binding"}:
-        raise ValueError("stored output requires local and binding fields")
-    local_data = payload["local"]
-    if not isinstance(local_data, Mapping):
-        raise ValueError("stored output local must be a local object")
+    if set(payload) != {"value", "binding"}:
+        raise ValueError("stored output requires value and binding fields")
     binding = payload["binding"]
     if binding is not None and not isinstance(binding, str):
         raise ValueError("output binding must be text or null")
-    return Output(local_from_data(cast(Mapping[str, object], local_data)), binding)
+    return Output(value_from_data(payload["value"]), binding)
 
 
 def output_to_data(output: Output) -> dict[str, object]:
-    """Encode the local value separately from its output binding."""
+    """Encode the value separately from its output binding."""
 
-    return {"local": local_to_data(output.local), "binding": output.binding}
+    return {"value": value_to_data(output.value), "binding": output.binding}
 
 
-def local_value_from_data(data: object) -> Value | TypedRef:
+def value_from_data(data: object) -> Value | TypedRef:
     """Parse one self-describing stored value."""
 
     if isinstance(data, Mapping):
@@ -792,7 +764,7 @@ def local_value_from_data(data: object) -> Value | TypedRef:
             return part_from_data(
                 cast(Mapping[str, Any], {**fields, "type": discriminator})
             )
-        decoded = {name: local_value_from_data(item) for name, item in fields.items()}
+        decoded = {name: value_from_data(item) for name, item in fields.items()}
         if type_name == "Json":
             return cast(Value, decoded)
         if type_name.endswith("[]") or type_name in {
@@ -812,7 +784,7 @@ def local_value_from_data(data: object) -> Value | TypedRef:
     raise ValueError(f"unsupported stored value: {type(data).__name__}")
 
 
-def local_value_to_data(value: Value | TypedRef) -> object:
+def value_to_data(value: Value | TypedRef) -> object:
     """Serialize one self-describing stored value."""
 
     if isinstance(value, TypedRef):
@@ -835,7 +807,7 @@ def local_value_to_data(value: Value | TypedRef) -> object:
     if isinstance(value, Array):
         return {
             "?": f"{value.type}!",
-            "!": [local_value_to_data(cast(Value | TypedRef, item)) for item in value],
+            "!": [value_to_data(cast(Value | TypedRef, item)) for item in value],
         }
     if isinstance(value, Struct):
         if {"?", "!"}.intersection(value):
@@ -843,7 +815,7 @@ def local_value_to_data(value: Value | TypedRef) -> object:
         return {
             "?": value.type,
             **{
-                name: local_value_to_data(cast(Value | TypedRef, item))
+                name: value_to_data(cast(Value | TypedRef, item))
                 for name, item in value.items()
             },
         }
@@ -855,14 +827,14 @@ def local_value_to_data(value: Value | TypedRef) -> object:
         return {
             "?": "Json",
             **{
-                str(key): local_value_to_data(cast(Value | TypedRef, item))
+                str(key): value_to_data(cast(Value | TypedRef, item))
                 for key, item in value.items()
             },
         }
     if isinstance(value, tuple | list):
         return {
             "?": "Json!",
-            "!": [local_value_to_data(cast(Value | TypedRef, item)) for item in value],
+            "!": [value_to_data(cast(Value | TypedRef, item)) for item in value],
         }
     if value is None:
         return {"?": "Json!", "!": None}
@@ -877,13 +849,13 @@ def _boxed_value_from_data(type_name: str, data: object) -> Value | TypedRef:
             raise ValueError(f"stored {type_name} requires an array ! value")
         result = Array(
             type_name,
-            tuple(local_value_from_data(item) for item in data),
+            tuple(value_from_data(item) for item in data),
         )
         validate_runtime_value(result, type_name, path="stored value")
         return cast(Value, result)
     if type_name == "Json":
         if isinstance(data, list):
-            return cast(Value, tuple(local_value_from_data(item) for item in data))
+            return cast(Value, tuple(value_from_data(item) for item in data))
         if isinstance(data, Mapping):
             raise ValueError("stored Json objects must use inline fields")
         if data is None or isinstance(data, str | bool | int | float):
@@ -897,7 +869,7 @@ def _boxed_value_from_data(type_name: str, data: object) -> Value | TypedRef:
 def call_input_to_data(input: CallInput[Value | TypedRef]) -> dict[str, object]:
     """Encode input entries using the shared self-describing value codec."""
 
-    return {name: local_value_to_data(value) for name, value in input.items()}
+    return {name: value_to_data(value) for name, value in input.items()}
 
 
 def call_input_from_data(data: object) -> CallInput[Value | TypedRef]:
@@ -907,7 +879,7 @@ def call_input_from_data(data: object) -> CallInput[Value | TypedRef]:
         raise ValueError('control input must be a flat object, such as {"_": "text"}')
     return CallInput(
         {
-            name: local_value_from_data(value)
+            name: value_from_data(value)
             for name, value in cast(Mapping[str, object], data).items()
         }
     )
@@ -1272,7 +1244,10 @@ def step_given_to_data(kind: StepKind, given: StepGiven) -> dict[str, object]:
         if given.summary:
             data["summary"] = given.summary
         return data
-    return cast(dict[str, object], ast_to_data(given))
+    return cast(
+        dict[str, object],
+        ast_to_data(given),
+    )
 
 
 def stored_step_given_from_data(kind: StepKind, data: object) -> StoredStepGiven:

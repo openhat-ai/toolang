@@ -34,8 +34,8 @@ from toolang.execution.events import (
 from toolang.execution.executor import AgentCeiling, RunExecutor, RunSpec
 from toolang.execution.executor._persist import _PersistSink
 from toolang.execution.executor.common import (
-    BoundRun,
     Local,
+    BoundRun,
     transform_flow_result,
 )
 from toolang.execution.executor.executor import _Execution
@@ -50,11 +50,11 @@ from toolang.execution.runnables import parse_runnable_ref, resolve_runnable
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
 from toolang.execution.types import (
+    value_for_type,
     Output,
     ControlRef,
     ErrorMessage,
     FieldRef,
-    Local as RecordLocal,
     Occurrence,
     RunRef,
     StepRef,
@@ -68,6 +68,7 @@ from toolang.lang.ast import (
     Parameter,
     Program,
     RunStmt,
+    SeekStmt,
     Span,
 )
 from toolang.lang.input import CallInput, RunnableInput, resolve_runnable_input
@@ -165,28 +166,33 @@ def _model_setup(tmp_path: Path) -> AgentSetup:
     )
 
 
-def test_flow_item_transform_normalizes_a_list_result_to_dim_zero() -> None:
-    pointer = FieldRef.from_path(RunRef.parse("run_child"), "output", "local", "value")
+@pytest.mark.parametrize(
+    "statement",
+    [
+        RunStmt(span=Span(line=1), runnable="flow:child"),
+        SeekStmt(span=Span(line=1), name="researcher", runnable="flow:child"),
+    ],
+)
+def test_flow_call_preserves_the_complete_array_type(statement) -> None:
+    pointer = FieldRef.from_path(RunRef.parse("run_child"), "output", "value")
     evaluated = Local(
         ["one", "two"],
-        "list",
         ref=pointer,
-        type_name="Text",
-        record=RecordLocal.typed("Text[]", pointer, dim=1),
+        type_name="Text[]",
+        stored=value_for_type("Text[]", pointer),
     )
 
     result = transform_flow_result(
-        RunStmt(span=Span(line=1), runnable="flow:child"),
+        statement,
         {},
         evaluated,
     )
 
     assert result == Local(
         ["one", "two"],
-        "item",
         ref=pointer,
         type_name="Text[]",
-        record=RecordLocal.typed("Text[]", pointer, dim=0),
+        stored=value_for_type("Text[]", pointer),
     )
 
 
@@ -305,7 +311,7 @@ def test_run_executor_persists_before_tracing(tmp_path: Path) -> None:
     assert detail.controls[0].payload == run_control.payload
     assert [step.kind for step in detail.steps] == ["value"]
     assert detail.steps[0].output == Output(
-        RecordLocal.typed("Part[]", (TextPart(text="done"),), 0), "_"
+        value_for_type("Part[]", (TextPart(text="done"),)), "_"
     )
     assert not hasattr(detail.steps[0], "message")
     asyncio.run(executor.stop())
@@ -436,7 +442,7 @@ def test_top_level_agic_has_no_containing_step_events(
     tracer = _RecordingTracer(store)
 
     async def execute_agic(*_args: Any, **_kwargs: Any) -> Local:
-        return Local("done", "item")
+        return Local("done")
 
     monkeypatch.setattr(agic_run, "execute", execute_agic)
     record = asyncio.run(
@@ -756,7 +762,7 @@ def test_nested_flow_inherits_resources_and_restores_parent_scope(
         observed.append(
             (_name(agic), tuple(item.model_name for item in binding.resources.tools))
         )
-        return Local("done", "item")
+        return Local("done")
 
     monkeypatch.setattr(agic_run, "execute", execute_agic)
     executor = _executor(tmp_path)
@@ -817,14 +823,14 @@ def test_parallel_children_preserve_input_and_output_types(
     ) -> Local:
         assert expected_output is not None and expected_output.type_name == "Number"
         observed_types.append(child_locals["_"].type_name)
-        return Local(1, "item", type_name="Number")
+        return Local(1, type_name="Number")
 
     monkeypatch.setattr(execution, "execute_child", execute_child)
 
     result = asyncio.run(
         execution.parallel_children(
             binding,
-            {"_": Local(["one", "two"], "list", type_name="Text")},
+            {"_": Local(["one", "two"], type_name="Text[]")},
             StepRef.parse("run_root.0"),
             _name(child),
             ["one", "two"],
@@ -832,7 +838,7 @@ def test_parallel_children_preserve_input_and_output_types(
         )
     )
 
-    assert result == Local([1, 1], "list", type_name="Number")
+    assert result == Local([1, 1], type_name="Number[]")
     assert observed_types == ["Text", "Text"]
     asyncio.run(executor.stop())
 
@@ -883,7 +889,7 @@ def test_parallel_children_reuse_the_lane_that_finished(
         occurrences[item] = occurrence
         started.put_nowait(item)
         await gates[item].wait()
-        return Local(item, "item", type_name="Number")
+        return Local(item, type_name="Number")
 
     monkeypatch.setattr(execution, "execute_child", execute_child)
 
@@ -891,7 +897,7 @@ def test_parallel_children_reuse_the_lane_that_finished(
         task = asyncio.create_task(
             execution.parallel_children(
                 binding,
-                {"_": Local(list(range(5)), "list", type_name="Number")},
+                {"_": Local(list(range(5)), type_name="Number[]")},
                 StepRef.parse("run_root.0"),
                 _name(child),
                 list(range(5)),
@@ -909,7 +915,7 @@ def test_parallel_children_reuse_the_lane_that_finished(
                 gate.set()
         return await task
 
-    assert asyncio.run(scenario()) == Local(list(range(5)), "list", type_name="Number")
+    assert asyncio.run(scenario()) == Local(list(range(5)), type_name="Number[]")
     asyncio.run(executor.stop())
 
 
@@ -1798,9 +1804,7 @@ def test_private_event_projector_persists_run_and_step_records(
             step=StepRef.parse("run_test.0"),
             kind="value",
             status="succeeded",
-            output=Output(
-                RecordLocal.typed("Part[]", (TextPart(text="done"),), 0), "_"
-            ),
+            output=Output(value_for_type("Part[]", (TextPart(text="done"),)), "_"),
             finished_at="2026-01-01T00:00:03Z",
         )
     )
@@ -1809,12 +1813,9 @@ def test_private_event_projector_persists_run_and_step_records(
             run="run_test",
             status="succeeded",
             output=Output(
-                RecordLocal.typed(
+                value_for_type(
                     "Part[]",
-                    FieldRef.from_path(
-                        StepRef.parse("run_test.0"), "output", "local", "value"
-                    ),
-                    0,
+                    FieldRef.from_path(StepRef.parse("run_test.0"), "output", "value"),
                 ),
                 "_",
             ),
@@ -1864,9 +1865,7 @@ def test_step_queries_use_exact_canonical_run_ids(tmp_path: Path) -> None:
                 step=StepRef.parse(f"{run_id}.0"),
                 kind="value",
                 status="succeeded",
-                output=Output(
-                    RecordLocal.typed("Part[]", (TextPart(text=text),), 0), "_"
-                ),
+                output=Output(value_for_type("Part[]", (TextPart(text=text),)), "_"),
                 finished_at="2026-01-01T00:00:03Z",
             )
         )

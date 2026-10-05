@@ -82,7 +82,7 @@ agic evolve() -> Text:
             )
             assert root.status == "succeeded", root.error
             assert root.output is not None
-            assert harness.store.resolve_value(root.output.local.value) == "done"
+            assert harness.store.resolve_value(root.output.value) == "done"
             assert harness.published is not None
             (control,) = harness.store.list_run_controls(run_id=root.id, kind="execute")
             assert isinstance(control.payload, ExecuteControlPayload)

@@ -1,11 +1,11 @@
-"""Storm-statement semantics."""
+"""Generate-statement semantics."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING
 
-from toolang.lang.ast import StormStmt
+from toolang.lang.ast import GenerateStmt
 
 from ...records import ControlRecord, StepRef
 from ...types import Occurrence
@@ -22,7 +22,7 @@ async def execute(
     binding: BoundRun,
     locals: Mapping[str, Local],
     path: StepRef,
-    statement: StormStmt,
+    statement: GenerateStmt,
     controls: Sequence[ControlRecord],
     occurrence: Occurrence | None,
 ) -> Local:

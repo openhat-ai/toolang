@@ -92,7 +92,7 @@ agic predicate -> Boolean:
 agic score -> Number:
   Score.
 flow main() -> {output}:
-  scatter using seed
+  run seed
   {operation}
 """,
         responses=["[]"],
@@ -100,12 +100,12 @@ flow main() -> {output}:
     expected_type = output
     run, output, error = _run(harness)
     assert run.status == "succeeded", run.error
-    assert run.output is not None and run.output.local.type == expected_type
+    assert run.output is not None and run.output.type == expected_type
     assert output == "[]"
     assert len(harness.adapter.invocations) == 1
 
 
-@pytest.mark.parametrize("operation", ["gather", "settle"])
+@pytest.mark.parametrize("operation", ["reduce"])
 def test_empty_reductions_fail_before_child_calls(
     tmp_path: Path, operation: str
 ) -> None:
@@ -117,14 +117,14 @@ agic seed() -> Text[]:
 agic reduce:
   Reduce.
 flow main():
-  scatter using seed
+  run seed
   {operation} using reduce
 """,
         responses=["[]"],
     )
     run, output, error = _run(harness)
     assert run.status == "failed"
-    assert "nonempty list" in str(error)
+    assert "nonempty array" in str(error)
     assert len(harness.adapter.invocations) == 1
 
 
@@ -135,9 +135,9 @@ def test_scatter_and_storm_can_omit_primary_and_keep_nested_arrays(
         tmp_path,
         source="""
 flow main() -> Text[][]:
-  scatter using:
+  run -> Text[]:
     Make two strings.
-  storm 2 in 1 lane using -> Text[]:
+  generate 2 in 1 lane -> Text[]:
     Make a pair.
 """,
         responses=['["ignored"]', '["a","b"]', '["c"]'],
@@ -156,8 +156,8 @@ def test_settle_uses_first_element_then_passes_current_and_previous_output(
 agic seed() -> Text[]:
   Seed.
 flow main():
-  scatter using seed
-  settle using:
+  run seed
+  reduce:
     current={{_}}; previous={{_1._}}
 """,
         responses=['["a","b","c"]', "ab", "abc"],
@@ -176,8 +176,8 @@ def test_settle_keeps_leading_markdown_in_the_model_prompt(tmp_path: Path) -> No
 agic seed() -> Text[]:
   Seed.
 flow main():
-  scatter using seed
-  settle:
+  run seed
+  reduce:
     # Reducer instructions
     ## Preserve this heading
     Combine {{_}} with {{_1._}}.
@@ -198,6 +198,7 @@ flow main():
     "initial,output,responses,expected",
     [
         (None, "Text", ['["one"]'], "one"),
+        ("not a number", "Number", ["[]"], None),
         ("start", "Text", ['["one"]', "start+one"], "start+one"),
         ("not a number", "Number", ['["one"]'], None),
         (None, "Number", ['["one"]'], None),
@@ -216,16 +217,16 @@ agic seed() -> Text[]:
 agic reduce -> {output}:
   user: current={{{{_}}}}; previous={{{{_1._}}}}
 flow main() -> {output}:
-  scatter using seed
-  settle using reduce
+  run seed
+  reduce using reduce
 """
     if initial is not None:
         source = source.replace(
-            "  settle using reduce\n", f"  settle using reduce:\n    from: {initial}\n"
+            "  reduce using reduce\n", f"  reduce using reduce:\n    from: {initial}\n"
         )
     if initial is None and output != "Text":
         with pytest.raises(
-            ToolangError, match="Settle without from requires Text output"
+            ToolangError, match="Reduce without an initializer requires Text output"
         ):
             Program.from_source(source)
         return
@@ -234,6 +235,8 @@ flow main() -> {output}:
     assert run.status == ("succeeded" if expected is not None else "failed"), run.error
     if expected is not None:
         assert output == expected
+    else:
+        assert "Number" in str(error)
     assert len(harness.adapter.invocations) == len(responses)
 
 
@@ -248,12 +251,12 @@ agic seed() -> Text[]:
 agic reduce(_: Number) -> Text:
   user: Add {{_}} to {{_1._}}.
 flow main():
-  scatter using seed
-  settle using reduce
+  run seed
+  reduce using reduce
 """
     if initial is not None:
         source = source.replace(
-            "  settle using reduce\n", f"  settle using reduce:\n    from: {initial}\n"
+            "  reduce using reduce\n", f"  reduce using reduce:\n    from: {initial}\n"
         )
     harness = _create(
         tmp_path,
@@ -432,8 +435,8 @@ def test_inline_mapper_preserves_structured_primary_input(tmp_path: Path) -> Non
 agic seed() -> Json[]:
   Seed.
 flow main() -> Text[]:
-  scatter using seed
-  map in 1 lane using: Value={{_.value}}.
+  run seed
+  map in 1 lane: Value={{_.value}}.
 """,
         responses=['[{"value":0},{"value":2}]', "zero", "two"],
     )
@@ -571,8 +574,8 @@ agic seed() -> Text[]:
   Seed.
 flow main() -> Text[]:
   let enabled = run ready
-  scatter using seed
-  map in 1 lane using: {{#enabled}}Value={{_}}{{/enabled}}
+  run seed
+  map in 1 lane: {{#enabled}}Value={{_}}{{/enabled}}
 """,
         responses=["true", '["a"]', "done"],
     )
@@ -674,11 +677,11 @@ def test_lane_defaults_inherit_and_statement_override_is_local(
 agic worker():
   Work.
 flow child() -> Text[]:
-  storm 1 in 1 lane using worker
-  storm 3 using worker
+  generate 1 in 1 lane using worker
+  generate 3 using worker
 flow main() -> Text[][]:
   lanes = 2
-  storm 1 using child
+  generate 1 using child
 """
     if child_lanes is not None:
         source = source.replace(
@@ -816,8 +819,8 @@ agic seed() -> Text[]:
   Seed.
 flow main():
   repeat 2 times:
-    scatter using seed
-    settle using:
+    run seed
+    reduce:
       current={{_}}; seed={{_1._}}
       from: {{#_1}}{{_1._}}{{/_1}}{{^_1}}start{{/_1}}
 """
@@ -840,8 +843,8 @@ agic seed() -> Text[]:
 agic fold -> Number[]:
   user: Merge {{_}} into {{_1._}}.
 flow main() -> Number[]:
-  scatter using seed
-  settle using fold:
+  run seed
+  reduce using fold:
     from: [1,2]
 """
     harness = _create(tmp_path, source=source, responses=['["a"]', "[1,2,3]"])
@@ -856,8 +859,8 @@ def test_singleton_settle_skips_unrendered_reducer_history(tmp_path: Path) -> No
         tmp_path,
         source="""
 flow main():
-  storm 1 using: Seed
-  settle: {{_}} {{_2._}}
+  generate 1: Seed
+  reduce: {{_}} {{_2._}}
 """,
         responses=["seed"],
     )
@@ -871,7 +874,7 @@ flow main():
 @pytest.mark.parametrize(
     "operation, output_type, response",
     [
-        ("map in 1 lane using", "Text[]", "done"),
+        ("map in 1 lane", "Text[]", "done"),
         ("keep in 1 lane if", "Json[]", "true"),
         ("drop in 1 lane if", "Json[]", "false"),
         ("sort ascending by", "Json[]", "1"),
@@ -886,7 +889,7 @@ def test_inline_collection_calls_preserve_json_strings(
 agic seed() -> Json[]:
   Seed.
 flow main() -> {output_type}:
-  scatter using seed
+  run seed
   {operation}: {{{{#_}}}}nonempty{{{{/_}}}}{{{{^_}}}}empty{{{{/_}}}}|{{{{_}}}}
 """,
         responses=[json.dumps([value]), response],
@@ -927,7 +930,7 @@ flow main() -> Json:
             )
             assert run.status == "succeeded", run.error
             assert run.output is not None
-            assert harness.store.resolve_output(run.output).local.value == value
+            assert harness.store.resolve_output(run.output).value == value
             expected = ("nonempty" if value else "empty") + "|" + json.dumps(value)
             assert expected in _texts(harness)[-1]
 
@@ -981,8 +984,8 @@ def test_retry_restores_json_string_collection_captures(
 agic seed() -> Json[]:
   Seed.
 flow main() -> Text[]:
-  scatter using seed
-  map in 1 lane using: {{#_}}nonempty{{/_}}{{^_}}empty{{/_}}|{{_}}
+  run seed
+  map in 1 lane: {{#_}}nonempty{{/_}}{{^_}}empty{{/_}}|{{_}}
 """,
         responses=[
             ModelCallResult(message=Message.assistant(json.dumps([value]))),

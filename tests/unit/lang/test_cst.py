@@ -1,5 +1,7 @@
 """Raw source inspection retains the complete concrete tree."""
 
+from importlib.metadata import version
+
 import pytest
 
 from toolang.lang import cst
@@ -27,7 +29,7 @@ def test_complete_tree_matches_parser_and_original_bytes(source):
     assert data["source"].encode() == encoded
     assert data["schema_version"] == 1
     assert data["grammar"]["name"] == "toolang"
-    assert data["grammar"]["version"].startswith("0.3.")
+    assert data["grammar"]["version"] == version("tree-sitter-toolang")
     pending = [(tree.root_node, data["root"], None)]
     while pending:
         node, projected, field = pending.pop()

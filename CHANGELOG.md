@@ -17,11 +17,40 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Changed
 
+- `reduce` with a `from:` initializer accepts an empty outer array and returns
+  that initializer coerced to the reducer output type without any child calls;
+  without an initializer it still rejects an empty array.
+
+- **Breaking:** `storm` is renamed to `generate` and `settle` to `reduce`, and
+  `generate`, `map`, and `reduce` now require `using` for named targets and must
+  omit it for inline bodies, so `map using [-> T]: BODY` becomes
+  `map [-> T]: BODY`. `reduce` keeps its optional `from:` initializer.
+- **Breaking:** flow arrays use the actual outermost array and there is no
+  separate item/list shape. `run` makes exactly one child call with the complete
+  input, including arrays, without iterating, wrapping, or flattening; `map`,
+  `keep`, `drop`, `sort`, and `reduce` operate on outer items. Arrays from
+  parameters, calls, helper flows, `exec`, and restored values behave
+  identically, and array-valued child results stay nested.
+- **Breaking:** the `Local` wrapper is removed. Stored outputs contain only
+  `value` and `binding`, and the HTTP/event protocol projection contains `type`,
+  `value`, and `binding`; update output references from `output/local/value` to
+  `output/value`. RunStore schema 51 rejects older stores before mutation with no
+  compatibility reader or migration, so keep the matching runtime to inspect old
+  records and start new runs on a fresh store.
+
 - **Breaking:** the `me` tool `me__loaded(receipts)` is replaced by `me__sync()`,
   which waits for one State publication and returns `{revision, files}` for the
   agent's tracked root and home sources. Integrations that poll `me.loaded`
   receipts must call `me.sync()` / `me__sync({})`, handle operational error codes,
   and use the scoped `files` manifest as the receipt.
+
+### Removed
+
+- **Breaking:** the `scatter` and `gather` flow statements are removed. Rewrite
+  `scatter using R` and `gather using R` as `run R`, and give a former `scatter`
+  body an explicit `run -> Text[]` type; a former `gather` may now receive `[]`.
+  Source, snapshots, retries, and reruns using them are rejected with migration
+  guidance, and older records remain available only to their matching runtime.
 
 ## [0.3.6] - 2026-10-04
 

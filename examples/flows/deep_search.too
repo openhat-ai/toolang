@@ -59,18 +59,18 @@ flow(_: Text):
     {{_}}
 
   ## Expand the research question into diverse search queries
-  scatter using expand_queries
+  run expand_queries
   ## Search the web for each query
-  map using search_web in 4 lanes
+  map in 4 lanes using search_web
   ## Keep evidence bundles that answer the research task
   keep if is_relevant
   ## Prioritize the strongest evidence
   sort descending by relevance
   keep first 8
   ## Extract source-backed findings from each evidence bundle
-  map using extract_findings in 4 lanes
+  map in 4 lanes using extract_findings
   ## Synthesize the final research brief
-  gather using synthesize_report
+  run synthesize_report
 
 agic is_relevant(_, topic: Part[]) -> Boolean:
   recall = none

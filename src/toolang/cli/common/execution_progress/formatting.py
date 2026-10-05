@@ -118,7 +118,7 @@ def output_parts(event: StepEnd) -> tuple[Part, ...]:
 
     if event.output is None:
         return ()
-    value = event.output.local.value
+    value = event.output.value
     if isinstance(value, ToolResultPart):
         return (value,)
     if isinstance(value, Array | tuple | list):
@@ -136,7 +136,9 @@ def shape_label(event: StepEnd) -> str:
     if event.output is None:
         return ""
     items = output_item_count(event)
-    if event.output.local.dim == 1:
+    if event.output.type.endswith("[]") or isinstance(
+        event.output.value, Array | tuple | list
+    ):
         return f"{items}-item list" if items is not None else "list"
     return "1 item"
 
@@ -146,7 +148,7 @@ def output_item_count(event: StepEnd) -> int | None:
 
     if event.output is None:
         return None
-    value = event.output.local.value
-    if event.output.local.dim == 1 and isinstance(value, Array | tuple | list):
+    value = event.output.value
+    if isinstance(value, Array | tuple | list):
         return len(value)
-    return 1 if event.output.local.dim == 0 else None
+    return None if event.output.type.endswith("[]") else 1

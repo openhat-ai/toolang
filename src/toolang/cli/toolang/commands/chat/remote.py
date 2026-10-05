@@ -35,7 +35,7 @@ from toolang.execution.runnables import parse_runnable_ref
 from toolang.execution.schemas import ControlInfo, RunDetail, RunRequest, ThreadInfo
 from toolang.execution.types import RunOverride, SessionSetting
 from toolang.lang.input import CallInput
-from toolang.execution.values import parts_from_local
+from toolang.execution.values import parts_from_value
 from toolang.plugin.sandboxes.host import host_sandbox_description
 
 from .base import (
@@ -700,7 +700,7 @@ class RemoteChatSession:
                 "remote chat run result returned mismatched identity"
             )
         output = (
-            parts_from_local(detail.output.local, content_only=True)
+            parts_from_value(detail.output.value, content_only=True)
             if detail.output is not None
             else ()
         )

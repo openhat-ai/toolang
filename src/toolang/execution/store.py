@@ -84,6 +84,7 @@ from .records import (
     stored_step_given_to_data,
 )
 from .types import (
+    value_for_type,
     ControlKind,
     ControlRef,
     ControlStatus,
@@ -107,7 +108,6 @@ from .types import (
     StepPath,
     StepRef,
     ThreadRef,
-    Local,
     Output,
     ModelStepGiven,
     MessageTemplate,
@@ -122,9 +122,9 @@ from .types import (
     valid_thread_id,
 )
 from .schemas import Record, RecordSelection, select_record
-from .values import parts_from_local
+from .values import parts_from_value
 
-_SCHEMA_VERSION = 50
+_SCHEMA_VERSION = 51
 _SUPPORTED_SCHEMA_VERSIONS = (_SCHEMA_VERSION,)
 
 
@@ -502,7 +502,7 @@ class RunStore:
                         (
                             _dump_json(
                                 output_to_data(
-                                    Output(Local.typed("ToolResultPart", receipt))
+                                    Output(value_for_type("ToolResultPart", receipt))
                                 )
                             ),
                             str(parent),
@@ -1773,23 +1773,14 @@ class RunStore:
             raise ValueError(f"run not found: {run_id}")
         if run.output is None:
             return ()
-        return parts_from_local(self.resolve_local(run.output.local))
+        return parts_from_value(self.resolve_output(run.output).value)
 
     def resolve_output(self, output: Output) -> Output:
-        """Resolve an output's local value while retaining its binding."""
+        """Resolve and validate an output's value while retaining its binding."""
 
-        return replace(output, local=self.resolve_local(output.local))
-
-    def resolve_local(self, local: Local) -> Local:
-        """Resolve and validate every pointer in one durable typed local."""
-
-        type_name = local.type
-        value = cast(Value | TypedRef, self.resolve_value(local.value))
-        validate_runtime_value(value, type_name)
-        return Local(
-            value=value,
-            dim=local.dim,
-        )
+        value = cast(Value | TypedRef, self.resolve_value(output.value))
+        validate_runtime_value(value, output.type)
+        return replace(output, value=value)
 
     def resolve_value(self, value: object) -> object:
         """Resolve every immutable pointer contained in one durable value."""
@@ -1805,10 +1796,19 @@ class RunStore:
             if ref in seen:
                 raise ValueError(f"value reference cycle: {ref}")
             seen.add(ref)
-            runtime = self.select_pointer(Pointer(ref)).runtime
-            if isinstance(runtime, Local):
-                runtime = runtime.value
+            selected = self.select_pointer(Pointer(ref))
+            runtime = selected.runtime
             if not isinstance(runtime, TypedRef):
+                # Control inputs use the self-describing codec. Array indexes
+                # live below its box; outputs already expose plain arrays.
+                if (
+                    isinstance(runtime, Array | tuple | list)
+                    and isinstance(selected.value, Mapping)
+                    and isinstance(
+                        cast(Mapping[str, object], selected.value).get("!"), list
+                    )
+                ):
+                    return ref.select("!")
                 return ref
             ref = runtime.ref
 
@@ -2871,9 +2871,9 @@ class RunStore:
                     and isinstance(existing_step.given, ToolStepGiven)
                     and existing_step.given.call.name == "_toolang__chdir"
                     and output is not None
-                    and isinstance(output.local.value, ToolResultPart)
+                    and isinstance(output.value, ToolResultPart)
                 ):
-                    cwd = output.local.value.output.get("cwd")
+                    cwd = output.value.output.get("cwd")
                     if not isinstance(cwd, str):
                         raise ValueError("successful chdir Step requires a cwd result")
                     parse_cwd(cwd)
@@ -3326,9 +3326,7 @@ class RunStore:
             ):
                 primary = initial.payload.input.get("_")
                 if primary is not None:
-                    parts = parts_from_local(
-                        Local(value=cast(Value, self.resolve_value(primary)))
-                    )
+                    parts = parts_from_value(cast(Value, self.resolve_value(primary)))
                     if parts:
                         results.append(Message("user", parts))
                 emitted.add(initial.ref)
@@ -4057,7 +4055,7 @@ def _replay_messages_from_step(step: StepRecord) -> list[Message]:
     role = step_message_role(step.kind)
     if role is None or not step.output:
         return []
-    parts = parts_from_local(step.output.local)
+    parts = parts_from_value(step.output.value)
     return [Message(role=role, parts=parts)] if parts else []
 
 

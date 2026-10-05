@@ -58,7 +58,6 @@ from toolang.execution.types import (
     ErrorMessage,
     ErrorRef,
     FieldRef,
-    Local,
     ModelStepNoted,
     Occurrence,
     Pointer,
@@ -67,7 +66,7 @@ from toolang.execution.types import (
     ThreadRef,
     ToolStepGiven,
     TypedRef,
-    local_to_protocol_data,
+    value_to_protocol_data,
     type_assignable,
     validate_runtime_value,
 )
@@ -217,14 +216,13 @@ def _project_run_output(store: RunStore, source: _InspectSubject) -> object:
     run = source.selection.record
     if run.output is None:
         raise ValueError(f"Run {run.id} has no output (status: {run.status})")
-    local = store.resolve_local(run.output.local)
-    data = local_to_protocol_data(local)["value"]
-    text = _run_output_text(local)
+    value = store.resolve_output(run.output).value
+    data = value_to_protocol_data(value)
+    text = _run_output_text(value)
     return _ProjectedValue(json=data, human=text if text is not None else data)
 
 
-def _run_output_text(local: Local) -> str | None:
-    value = local.value
+def _run_output_text(value: object) -> str | None:
     if isinstance(value, str):
         return value
     parts: tuple[Part, ...] | None = None
@@ -331,7 +329,7 @@ def _model_step_result_parts(
     output = subject.selection.record.output
     if output is None:
         return None
-    value = local_to_protocol_data(output.local)["value"]
+    value = value_to_protocol_data(output.value)
     if not isinstance(value, list):  # pragma: no cover - model output is Part[]
         raise TypeError("model Step output is not a Part array")
     if not all(isinstance(part, Mapping) for part in value):  # pragma: no cover
@@ -379,7 +377,7 @@ def _render_tool_call(
 def _tool_step_result(step: StepRecord) -> Mapping[str, object] | None:
     if step.output is None:
         return None
-    value = local_to_protocol_data(step.output.local)["value"]
+    value = value_to_protocol_data(step.output.value)
     candidates = value if isinstance(value, list) else [value]
     for item in candidates:
         if not isinstance(item, Mapping):
@@ -925,10 +923,7 @@ def _resolve_inspect_projection(
 def _implicit_pointer_projector(
     selected: RecordSelection,
 ) -> Literal["fields", "value"]:
-    if (
-        isinstance(selected.runtime, ErrorMessage | ErrorRef | Local)
-        or selected.is_pointer
-    ):
+    if isinstance(selected.runtime, ErrorMessage | ErrorRef) or selected.is_pointer:
         return "value"
     if selected.render_type in {"Part", "Part[]"}:
         return "value"
@@ -1647,12 +1642,6 @@ def _human_value(store: RunStore, selected: RecordSelection) -> _HumanValue:
     visited: list[Pointer] = []
 
     while True:
-        if isinstance(runtime, Local):
-            protocol = local_to_protocol_data(runtime)
-            local_type = runtime.type
-            data = protocol["value"]
-            runtime = runtime.value
-            render_type = local_type
         if isinstance(runtime, TypedRef):
             expected.append(runtime.type)
             pointer = Pointer(runtime.ref)

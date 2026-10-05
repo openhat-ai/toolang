@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from toolang.lang.ast import FlowStmt, RepeatStmt
+from toolang.lang.ast import RepeatStmt
+from toolang.lang.ast import FlowStmt
 from toolang.lang.description import statement_description
 from toolang.lang.types import is_generated_ref
 

@@ -6,6 +6,7 @@ from collections.abc import Callable, Sequence
 from copy import deepcopy
 
 from toolang.base.types.message import Message, MessageRole
+from toolang.lang.types import Value, value_type
 
 from .utils import control_message, literal_delta, render_delta
 from ..recall import recall_revisions
@@ -13,7 +14,6 @@ from ..records import ControlRecord, RecallControlPayload, SteerControlPayload
 from ..types import (
     ContentRef,
     FieldRef,
-    Local,
     MessageTemplate,
     ModelMessages,
     RecallTarget,
@@ -74,10 +74,22 @@ class MessageBuffer:
         )
         self.append_template(template, lambda _ref: content)
 
-    def append_ref(self, role: MessageRole, ref: FieldRef, value: Local) -> None:
+    def append_ref(
+        self, role: MessageRole, ref: FieldRef, value: Value | TypedRef
+    ) -> None:
         self.append_template(
-            MessageTemplate(role, (TypedRef(ref, value.type),)),
-            lambda _ref: value.value,
+            MessageTemplate(
+                role,
+                (
+                    TypedRef(
+                        ref,
+                        value.type
+                        if isinstance(value, TypedRef)
+                        else value_type(value),
+                    ),
+                ),
+            ),
+            lambda _ref: value,
         )
 
     def append_template(

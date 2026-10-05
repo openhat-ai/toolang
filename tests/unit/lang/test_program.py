@@ -16,8 +16,7 @@ from toolang.lang.ast import (
     LetStmt,
     RepeatStmt,
     RunStmt,
-    ScatterStmt,
-    SettleStmt,
+    ReduceStmt,
 )
 from toolang.base.types.message import TextPart
 from toolang.lang.input import resolve_input_parts, resolve_input_parts_with_provenance
@@ -366,11 +365,11 @@ flow pipeline:
   run action
   seek reviewer action
   ask: Continue?
-  scatter using action
-  storm 3 using action in 2 lanes
-  let gather using action
-  let settle using action
-  map using action in 4 lanes
+  run action
+  generate 3 in 2 lanes using action
+  let run action
+  let reduce using action
+  map in 4 lanes using action
   keep first 2
   keep if predicate in 2 lanes
   drop last 1
@@ -392,10 +391,10 @@ flow pipeline:
         "run",
         "seek",
         "ask",
-        "scatter",
-        "storm",
-        "gather",
-        "settle",
+        "run",
+        "generate",
+        "run",
+        "reduce",
         "map",
         "keep",
         "keep",
@@ -436,14 +435,14 @@ def test_inline_settle_exposes_the_current_item() -> None:
     program = Program.from_source(
         """
 flow summarize(_: Text[]) -> Text:
-  scatter: {{_}}
-  settle using -> Text:
+  run -> Text[]: {{_}}
+  reduce -> Text:
     {{_}}{{_1._}}
 """
     )
 
     statement = program.flows[0].stmts[-1]
-    assert isinstance(statement, SettleStmt)
+    assert isinstance(statement, ReduceStmt)
     generated = next(
         agic
         for agic in program.agics
@@ -465,14 +464,14 @@ flow expand(_: Text, topic: Text) -> Text[]:
     {{_}}
   let prepared = run prepare
 
-  scatter using -> Text[]:
+  run -> Text[]:
     Return distinct pieces of {{source}} about {{topic}} and {{prepared}}.
     {{#source}}{{detail}}{{/source}}
 """
     )
 
     statement = program.flows[0].stmts[2]
-    assert isinstance(statement, ScatterStmt)
+    assert isinstance(statement, RunStmt)
     generated = next(
         agic
         for agic in program.agics
@@ -487,11 +486,11 @@ flow expand(_: Text, topic: Text) -> Text[]:
 
 def test_inline_scatter_defaults_to_text_array() -> None:
     program = Program.from_source(
-        "flow expand:\n  scatter using:\n    Return distinct pieces.\n"
+        "flow expand:\n  run -> Text[]:\n    Return distinct pieces.\n"
     )
 
     statement = program.flows[0].stmts[0]
-    assert isinstance(statement, ScatterStmt)
+    assert isinstance(statement, RunStmt)
     generated = next(
         agic
         for agic in program.agics
@@ -507,7 +506,7 @@ agic action:
   pass
 
 flow evaluate:
-  storm 2 using action
+  generate 2 using action
   keep if: Return true when {{_}} is useful.
   sort descending by: Return a relevance score for {{_}}.
   repeat 2 times:
@@ -706,6 +705,33 @@ def test_program_data_round_trips_without_parsing_source() -> None:
     assert program_from_data(to_data(program)) == program
 
 
+@pytest.mark.parametrize("kind", ["scatter", "gather", "storm", "settle"])
+def test_program_data_does_not_treat_job_metadata_as_flow_syntax(kind: str) -> None:
+    from toolang.lang.ast import program_from_data
+
+    program = Program.from_source(f"task work:\n  kind = {kind}\n  Do the work.\n")
+
+    assert program_from_data(to_data(program)) == program
+
+
+@pytest.mark.parametrize("kind", ["scatter", "gather", "storm", "settle"])
+def test_program_data_rejects_removed_statements_in_nested_flows(kind: str) -> None:
+    from toolang.lang.ast import program_from_data
+
+    data = cast(
+        dict[str, Any],
+        to_data(
+            Program.from_source(
+                "agic action:\n  Work.\nflow main:\n  repeat 2 times:\n    run action\n"
+            )
+        ),
+    )
+    data["flows"][0]["stmts"][0]["stmts"][0]["kind"] = kind
+
+    with pytest.raises(ValueError, match="migrate source"):
+        program_from_data(data)
+
+
 def test_program_data_round_trip_preserves_ambiguous_statement_kinds() -> None:
     from toolang.lang.ast import program_from_data
 
@@ -718,13 +744,13 @@ agic predicate -> Boolean:
   pass
 
 flow work:
-  storm 2 using action
-  let gather using action
-  let settle using action
+  generate 2 using action
+  let run action
+  let reduce using action
   keep if predicate
   drop if predicate
   repeat 2 times:
-    let settle using action
+    let reduce using action
     drop if predicate
 """
     )
@@ -1072,7 +1098,7 @@ def test_historical_nested_statements_load_new_default_fields() -> None:
     from toolang.lang.ast import flow_stmt_from_data
 
     program = Program.from_source(
-        "agic fold:\n  pass\nflow work:\n  storm 2 using fold\n  repeat 2 times:\n    let settle using fold\n"
+        "agic fold:\n  pass\nflow work:\n  generate 2 using fold\n  repeat 2 times:\n    let reduce using fold\n"
     )
     statement = program.flows[0].stmts[-1]
     encoded = cast(dict[str, Any], to_data(statement))

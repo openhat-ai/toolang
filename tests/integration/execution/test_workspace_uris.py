@@ -48,7 +48,7 @@ def _results(harness, run):
             if isinstance(part, ToolResultPart)
         },
         **{
-            s.output.local.value.tool_call_id: s.output.local.value
+            s.output.value.tool_call_id: s.output.value
             for s in _tool_steps(harness, run)
         },
     }
@@ -512,7 +512,7 @@ agic chat(_: Part[]) -> Text:
   user: Complete the task.
 
 flow parent(_: Part[]) -> Text[]:
-  storm 2 using chat in 2 lanes
+  generate 2 in 2 lanes using chat
 """
     harness, _repo, _pub = _harness(
         tmp_path,

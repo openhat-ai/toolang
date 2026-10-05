@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from toolang.execution.types import ModelAccounting
+from toolang.execution.types import ModelAccounting, value_for_type
 
 from typing import get_args
 
@@ -33,7 +33,6 @@ from toolang.execution.types import (
     ErrorMessage,
     ErrorRef,
     FieldRef,
-    Local,
     LoopStepNoted,
     ModelStepGiven,
     ModelStepNoted,
@@ -46,7 +45,7 @@ from toolang.execution.types import (
     ToolStepGiven,
     ToolStepNoted,
 )
-from toolang.lang.ast import KeepStmt, RepeatStmt, RunStmt, ScatterStmt, Span
+from toolang.lang.ast import KeepStmt, RepeatStmt, RunStmt, Span
 
 _EVENTS: tuple[RunEvent, ...] = (
     RunBegin(
@@ -67,7 +66,7 @@ _EVENTS: tuple[RunEvent, ...] = (
             FieldRef.from_path(
                 ControlRef.for_run("run_root", 0), "payload", "input", "_"
             ),
-            FieldRef.from_path(StepRef.parse("run_root.1"), "output", "local", "value"),
+            FieldRef.from_path(StepRef.parse("run_root.1"), "output", "value"),
         ),
         started_at="2026-01-01T00:00:01Z",
     ),
@@ -91,11 +90,7 @@ _EVENTS: tuple[RunEvent, ...] = (
     StepBegin(
         step=StepRef.parse("run_root.3"),
         kind="run",
-        input=(
-            FieldRef.from_path(
-                StepRef.parse("run_root.0"), "output", "local", "value", 1
-            ),
-        ),
+        input=(FieldRef.from_path(StepRef.parse("run_root.0"), "output", "value", 1),),
         given=RunStmt(
             binding="_",
             runnable="flow:research",
@@ -109,7 +104,7 @@ _EVENTS: tuple[RunEvent, ...] = (
         step=StepRef.parse("run_root.0"),
         kind="model",
         status="succeeded",
-        output=Output(Local.typed("Part[]", (TextPart("hello"),), 0), "_"),
+        output=Output(value_for_type("Part[]", (TextPart("hello"),)), "_"),
         noted=ModelStepNoted(
             accounting=ModelAccounting(input_tokens=4, output_tokens=2)
         ),
@@ -119,12 +114,9 @@ _EVENTS: tuple[RunEvent, ...] = (
         run="run_root",
         status="succeeded",
         output=Output(
-            Local.typed(
+            value_for_type(
                 "Part[]",
-                FieldRef.from_path(
-                    StepRef.parse("run_root.0"), "output", "local", "value"
-                ),
-                0,
+                FieldRef.from_path(StepRef.parse("run_root.0"), "output", "value"),
             ),
             "_",
         ),
@@ -151,7 +143,7 @@ def test_step_schema_preserves_the_flow_statement_discriminator() -> None:
         path=StepRef.parse("run_root.1"),
         kind="run",
         input=[],
-        given=ScatterStmt(span=Span(line=4), runnable="agic:child"),
+        given=RunStmt(span=Span(line=4), runnable="agic:child"),
         state=RunControlRefData(run="run_root", index=0),
         output=None,
     )
@@ -160,7 +152,7 @@ def test_step_schema_preserves_the_flow_statement_discriminator() -> None:
 
     assert payload["path"] == "run_root.1"
     assert payload["state"] == {"run": "run_root", "index": 0}
-    assert payload["given"]["kind"] == "scatter"
+    assert payload["given"]["kind"] == "run"
     assert TypeAdapter(StepData).validate_python(payload) == step
 
 
@@ -440,7 +432,7 @@ def test_run_event_codec_round_trips_struct_output() -> None:
         step=StepRef.parse("run_root.0"),
         kind="run",
         status="succeeded",
-        output=Output(Local.typed("Review", {"score": 1}), "_"),
+        output=Output(value_for_type("Review", {"score": 1}), "_"),
     )
 
     assert run_event_from_data(run_event_to_data(event)) == event

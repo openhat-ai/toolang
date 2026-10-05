@@ -26,7 +26,7 @@ from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.base.types.tool import ToolContext
 from toolang.common.layout import AgentLayout
 from toolang.execution.executor.steps.tool import invoke_tool_call
-from toolang.execution.values import parts_from_local
+from toolang.execution.values import parts_from_value
 from toolang.execution.records import (
     ExecuteControlPayload,
     RunControlPayload,
@@ -132,7 +132,7 @@ agic helper() -> Text:
                 for control in controls
             )
             assert root.output is not None
-            assert harness.store.resolve_value(root.output.local.value) == (
+            assert harness.store.resolve_value(root.output.value) == (
                 "caller output" if directive == "hands" else "main output"
             )
 
@@ -195,11 +195,11 @@ agic child(_: Text) -> Text:
             assert isinstance(dynamic.given, ToolStepGiven)
             assert dynamic.given.call.input["runnable"] == "agic:child"
             assert dynamic.input == (
-                FieldRef.from_path(root_steps[0].ref, "output", "local", "value", 0),
+                FieldRef.from_path(root_steps[0].ref, "output", "value", 0),
             )
             dynamic_output = dynamic.output
             assert dynamic_output is not None
-            (persisted_result,) = parts_from_local(dynamic_output.local)
+            (persisted_result,) = parts_from_value(dynamic_output.value)
             assert isinstance(persisted_result, ToolResultPart)
             assert set(persisted_result.output) == {"run_id", "controls"}
             children = [
@@ -398,7 +398,7 @@ flow check(_: Text, threshold: Number) -> Text:
                 ),
             }
             assert root.output is not None
-            assert harness.store.resolve_value(root.output.local.value) == (
+            assert harness.store.resolve_value(root.output.value) == (
                 "What threshold should I use?"
             )
 
@@ -1351,7 +1351,7 @@ agic target(_: Text) -> Text:
 
             assert root.status == "succeeded", root.error
             assert root.output is not None
-            assert harness.store.resolve_value(root.output.local.value) == "completed"
+            assert harness.store.resolve_value(root.output.value) == "completed"
             assert harness.store.list_run_tree(root_run_id=root.id) == [root]
             steps = harness.store.list_steps(run_id=root.id)
             assert [step.kind for step in steps] == [
@@ -1366,7 +1366,7 @@ agic target(_: Text) -> Text:
             execute = controls[0]
             assert execute.status == "applied"
             assert isinstance(execute.payload, ExecuteControlPayload)
-            source = FieldRef.from_path(steps[0].ref, "output", "local", "value", 0)
+            source = FieldRef.from_path(steps[0].ref, "output", "value", 0)
             assert execute.payload.state == harness.state.revision
             assert execute.payload.runnable == "agic:target"
             assert execute.triggered_by == steps[1].ref
@@ -1461,7 +1461,7 @@ agic target(_: Text) -> Boolean:
 
             assert root.status == "succeeded", root.error
             assert root.output is not None
-            assert harness.store.resolve_value(root.output.local.value) is True
+            assert harness.store.resolve_value(root.output.value) is True
             assert harness.adapter.invocations[0].call.output_schema == {}
             assert harness.adapter.invocations[1].call.output_schema == {
                 "type": "boolean"
@@ -2201,7 +2201,7 @@ agic other() -> Text:
                     }
                 ]
                 assert root.output is not None
-                assert harness.store.resolve_value(root.output.local.value) == (
+                assert harness.store.resolve_value(root.output.value) == (
                     f"Summary: {target_output}" if operation == "run" else target_output
                 )
                 assert len(harness.adapter.invocations) == 1 + (kind == "agic") + (

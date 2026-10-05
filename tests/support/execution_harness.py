@@ -273,9 +273,9 @@ class PublicationTracer(RecordingRunTracer):
         if (
             isinstance(event, StepEnd)
             and event.output is not None
-            and isinstance(event.output.local.value, ToolResultPart)
+            and isinstance(event.output.value, ToolResultPart)
         ):
-            state = self.publications.get(event.output.local.value.tool_call_id)
+            state = self.publications.get(event.output.value.tool_call_id)
             if state is not None:
                 self.harness.published = state
 

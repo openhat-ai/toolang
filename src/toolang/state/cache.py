@@ -36,7 +36,7 @@ from .state import (
 )
 
 LayerScope = Literal["root", "home"]
-LAYER_SCHEMA = 13
+LAYER_SCHEMA = 14
 _LAYER_FILE = "layer.json"
 _LAYERS_FILE = "layers.json"
 _FILES_DIR = "files"
@@ -797,6 +797,16 @@ def _program_indexes(
         )
         if len(here_caps) != len(raw_caps):
             raise TypeError("State Program here cap must be an object")
+        if document.get("schema") != LAYER_SCHEMA:
+            from toolang.lang.ast import validate_source_syntax
+            from toolang.lang.errors import ToolangSourceError
+
+            try:
+                validate_source_syntax((revision_dir / materialized).read_text())
+            except ToolangSourceError as exc:
+                raise ValueError(
+                    "Legacy Flow snapshot requires source migration and a newly prepared snapshot"
+                ) from exc
         program = program_from_data(data["program"])
         validate_program_term(
             name=name,

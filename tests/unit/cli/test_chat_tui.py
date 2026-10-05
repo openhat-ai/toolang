@@ -109,12 +109,12 @@ from toolang.execution.schemas import (
     RunRequest,
 )
 from toolang.execution.types import (
+    value_for_type,
     Output,
     ControlRef,
     ErrorMessage,
     ErrorRef,
     FieldRef,
-    Local,
     ModelAccounting,
     ModelCost,
     ModelCostLine,
@@ -189,12 +189,12 @@ def _cell_attrs(app: tui.ChatTuiApp, screen: Screen, row: int, col: int) -> Attr
 
 
 def _parts(*parts: Part) -> Output:
-    return Output(Local.typed("Part[]", tuple(parts), 0), "_")
+    return Output(value_for_type("Part[]", tuple(parts)), "_")
 
 
 def _output(step: StepRef) -> Output:
     return Output(
-        Local.typed("Part[]", FieldRef.from_path(step, "output", "local", "value"), 0),
+        value_for_type("Part[]", FieldRef.from_path(step, "output", "value")),
         "_",
     )
 
@@ -6128,7 +6128,7 @@ def _flow_step_end(*, step_index: int = 1) -> StepEnd:
         step=StepRef.parse(f"run_1.{step_index}"),
         kind="par",
         status="succeeded",
-        output=Output(Local.typed("Json[]", (), 1), "_"),
+        output=Output(value_for_type("Json[]", ()), "_"),
         finished_at="2026-01-01T00:00:02Z",
     )
 
@@ -6395,7 +6395,7 @@ def _steer_control(index: int, *, run_id: str = "run_1") -> ControlInfo:
         request_id=f"request_{index}",
         status="pending",
         payload=SteerControlPayload(
-            CallInput({"_": _parts(*Message.user("adjust").parts).local.value})
+            CallInput({"_": _parts(*Message.user("adjust").parts).value})
         ),
         error=None,
         created_at="2026-01-01T00:00:01Z",

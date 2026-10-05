@@ -99,9 +99,9 @@ def test_batch_runs_after_receipts_and_before_next_tools(tmp_path: Path) -> None
                 if (
                     step is not None
                     and step.output is not None
-                    and isinstance(step.output.local.value, ToolResultPart)
+                    and isinstance(step.output.value, ToolResultPart)
                 ):
-                    run_id = step.output.local.value.output.get("run_id")
+                    run_id = step.output.value.output.get("run_id")
                     if isinstance(run_id, str):
                         receipts.append(
                             (

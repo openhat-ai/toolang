@@ -1,5 +1,8 @@
 # Inspect Historical Execution Trees
 
+Flow syntax and value rules in this historical plan are superseded by
+[Flow Array Semantics](flow-array-semantics.md).
+
 ## Status
 
 Approved and merged by pull request 413. The canonical execution record fields

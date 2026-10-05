@@ -124,11 +124,11 @@ def _recalls(harness, run):
 
 def _results(harness, run):
     return {
-        s.given.call.tool_call_id: s.output.local.value
+        s.given.call.tool_call_id: s.output.value
         for s in harness.store.list_steps(run_id=run.id)
         if isinstance(s.given, ToolStepGiven)
         and s.output is not None
-        and isinstance(s.output.local.value, ToolResultPart)
+        and isinstance(s.output.value, ToolResultPart)
     }
 
 
@@ -688,8 +688,8 @@ def test_pick_retains_the_bound_resource_selection(tmp_path: Path):
             if (
                 isinstance(event, StepEnd)
                 and event.output is not None
-                and isinstance(event.output.local.value, ToolResultPart)
-                and event.output.local.value.tool_call_id == "before"
+                and isinstance(event.output.value, ToolResultPart)
+                and event.output.value.tool_call_id == "before"
             ):
                 harness.setup.layout.program.write_text(
                     SOURCE.replace(
@@ -765,12 +765,12 @@ def test_guidance_refreshes_between_batches_and_supports_revision_reversals(
             if (
                 isinstance(event, StepEnd)
                 and event.output is not None
-                and isinstance(event.output.local.value, ToolResultPart)
+                and isinstance(event.output.value, ToolResultPart)
             ):
-                if event.output.local.value.tool_call_id == "a":
+                if event.output.value.tool_call_id == "a":
                     _write_guidance(skill, b)
                     harness.published = prepare_agent_state(harness.setup.layout)
-                elif event.output.local.value.tool_call_id == "b":
+                elif event.output.value.tool_call_id == "b":
                     _write_guidance(skill, a)
                     harness.published = prepare_agent_state(harness.setup.layout)
 
@@ -914,8 +914,8 @@ def test_compaction_excludes_old_guidance_even_when_far_mentions_it(
             if (
                 isinstance(event, StepEnd)
                 and event.output is not None
-                and isinstance(event.output.local.value, ToolResultPart)
-                and event.output.local.value.tool_call_id == "before"
+                and isinstance(event.output.value, ToolResultPart)
+                and event.output.value.tool_call_id == "before"
             ):
                 assert horizon is not None
                 harness.store.accept_compact_control(
@@ -1048,7 +1048,7 @@ agic child(_: Part[]) -> Part[]:
   user: Child task.
 
 flow parent(_: Part[]) -> Part[][]:
-  storm 2 using child in 2 lanes
+  generate 2 in 2 lanes using child
 """
     )
     harness, _ = _harness(

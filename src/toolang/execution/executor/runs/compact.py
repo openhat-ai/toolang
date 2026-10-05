@@ -22,13 +22,13 @@ from ...events import PartBegin, PartEnd, StepBegin, StepEnd
 from ...inspection.history import RunHistory
 from ...records import CompactControlPayload
 from ...types import (
+    value_for_type,
     AgentResources,
     ErrorMessage,
     FieldRef,
     history_ref,
     history_root,
     history_position,
-    Local as StoredLocal,
     ModelStepGiven,
     ModelStepNoted,
     Output,
@@ -303,7 +303,7 @@ async def execute(
                 step=read,
                 kind="tool",
                 status="succeeded",
-                output=Output(StoredLocal.typed("Part", result), "_"),
+                output=Output(value_for_type("Part", result), "_"),
                 finished_at=utc_now(),
             )
         )
@@ -368,7 +368,7 @@ async def execute(
                     kind="model",
                     status="succeeded",
                     output=Output(
-                        StoredLocal.typed("Part[]", tuple(response.message.parts)), "_"
+                        value_for_type("Part[]", tuple(response.message.parts)), "_"
                     ),
                     noted=ModelStepNoted(accounting=accounting),
                     finished_at=utc_now(),
@@ -377,7 +377,7 @@ async def execute(
         finally:
             execution.record_model_accounting(spec.model, accounting)
         reducer.accept(response)
-    return Local(reducer.summary, "item", type_name="Text")
+    return Local(reducer.summary, type_name="Text")
 
 
 async def _emit_part(

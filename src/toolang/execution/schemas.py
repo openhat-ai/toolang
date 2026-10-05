@@ -50,7 +50,6 @@ from .types import (
     ErrorMessage,
     ErrorRef,
     FieldRef,
-    Local,
     Output,
     ModelStepGiven,
     Occurrence,
@@ -71,7 +70,7 @@ from .types import (
     validate_step_given,
     validate_step_noted,
 )
-from .values import parts_from_local
+from .values import parts_from_value
 
 
 Record = ThreadRecord | ControlRecord | RunRecord | StepRecord
@@ -264,8 +263,11 @@ def _select_runtime_child(
     *,
     source: str,
 ) -> tuple[object, object, str, str]:
-    if isinstance(runtime, Local):
-        return _select_local_child(runtime, token, data, source=source)
+    if isinstance(runtime, Output):
+        if token == "type":
+            return runtime.type, str, "str", "Text"
+        if token == "value":
+            return runtime.value, Any, "Value | TypedRef", runtime.type
     if isinstance(runtime, CallInput):
         child = runtime[token]
         name = child.type if isinstance(child, TypedRef) else value_type(child)
@@ -307,22 +309,6 @@ def _select_runtime_child(
         name = _declared_name(declared, declared)
         return child, declared, name, _render_type(child, name)
     return data, Any, "Json", _render_type(data, "Json")
-
-
-def _select_local_child(
-    local: Local,
-    token: str,
-    data: object,
-    *,
-    source: str,
-) -> tuple[object, object, str, str]:
-    if token == "type":
-        return local.type, str, "str", "Text"
-    if token == "value":
-        return local.value, Any, "Value | TypedRef", local.type
-    if token == "dim":
-        return local.dim, Literal[0, 1], "Literal[0, 1]", "Number"
-    raise ValueError(f"field does not exist ({token!r}): {source}")
 
 
 def _type_hints(value: type[object]) -> dict[str, object]:
@@ -373,8 +359,6 @@ def _declared_name(raw: object, annotation: object) -> str:
 
 def _render_type(value: object, declared: str) -> str:
     if isinstance(value, TypedRef):
-        return value.type
-    if isinstance(value, Local):
         return value.type
     if isinstance(value, Array | Struct):
         return value.type
@@ -910,4 +894,4 @@ def _thread_channel(thread_id: str, origin: str) -> str:
 def _output_parts(output: Output | None) -> tuple[Part, ...]:
     if output is None:
         return ()
-    return parts_from_local(output.local)
+    return parts_from_value(output.value)

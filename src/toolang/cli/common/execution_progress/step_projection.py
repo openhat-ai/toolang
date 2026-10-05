@@ -16,16 +16,16 @@ from toolang.execution.types import (
     ToolStepGiven,
     ToolStepNoted,
 )
-from toolang.execution.values import parts_from_local
+from toolang.execution.values import parts_from_value
+from toolang.lang.ast import FlowStmt
 from toolang.lang.ast import (
     DropStmt,
-    FlowStmt,
     KeepStmt,
     MapStmt,
     SortStmt,
     RepeatStmt,
-    SettleStmt,
-    StormStmt,
+    ReduceStmt,
+    GenerateStmt,
 )
 
 from .formatting import one_line, output_parts, run_label, tool_label
@@ -209,8 +209,8 @@ def loop_terminal_rows(
         if event.status == "succeeded"
         else event.status
     )
-    if isinstance(statement, SettleStmt):
-        text = _settle_terminal_text(iterations, total, termination)
+    if isinstance(statement, ReduceStmt):
+        text = _reduce_terminal_text(iterations, total, termination)
     else:
         text = _repeat_terminal_text(
             iterations,
@@ -302,7 +302,7 @@ def flow_lane_terminal_lines(
             observed_iterations=observed_iterations,
             error=error,
         )
-    elif isinstance(statement, MapStmt | StormStmt | KeepStmt | DropStmt | SortStmt):
+    elif isinstance(statement, MapStmt | GenerateStmt | KeepStmt | DropStmt | SortStmt):
         rows = collection_terminal_rows(statement, event, error=error)
     else:
         rows = flow_terminal_rows(event, error=error)
@@ -353,7 +353,7 @@ def _flow_output_lines(event: StepEnd) -> list[str]:
     if event.output is None:
         return []
     try:
-        parts = parts_from_local(event.output.local, content_only=True)
+        parts = parts_from_value(event.output.value, content_only=True)
     except (TypeError, ValueError):
         return []
     lines: list[str] = []
@@ -410,7 +410,7 @@ def _collection_success_text(
 ) -> str:
     if isinstance(statement, MapStmt):
         return f"Mapped {_count(total, 'item')}"
-    if isinstance(statement, StormStmt):
+    if isinstance(statement, GenerateStmt):
         return f"Generated {_count(output if output is not None else total, 'item')}"
     if isinstance(statement, KeepStmt):
         kept = output if output is not None else total
@@ -484,19 +484,19 @@ def _repeat_terminal_text(
     return f"{action} after completing {_iteration_progress(iterations, total)}"
 
 
-def _settle_terminal_text(
+def _reduce_terminal_text(
     iterations: int,
     total: int | None,
     termination: str,
 ) -> str:
     if termination == "exhausted":
         if iterations == 0:
-            return "Settled no items"
-        return f"Settled {_all_items(iterations)} in {_count(iterations, 'iteration')}"
+            return "Reduced no items"
+        return f"Reduced {_all_items(iterations)} in {_count(iterations, 'iteration')}"
     action = "interrupted" if termination == "failed" else "canceled"
     if iterations == 0:
-        return f"Settling was {action} before completing an iteration"
-    return f"Settling was {action} after {_iteration_progress(iterations, total)}"
+        return f"Reducing was {action} before completing an iteration"
+    return f"Reducing was {action} after {_iteration_progress(iterations, total)}"
 
 
 def _iteration_progress(iterations: int, total: int | None) -> str:

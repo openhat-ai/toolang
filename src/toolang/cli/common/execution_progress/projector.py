@@ -41,8 +41,8 @@ from toolang.lang.ast import (
     MapStmt,
     SortStmt,
     RepeatStmt,
-    SettleStmt,
-    StormStmt,
+    ReduceStmt,
+    GenerateStmt,
 )
 
 from .facts import elapsed_fact
@@ -797,7 +797,7 @@ class ProgressProjector:
             rows = []
         elif isinstance(
             statement,
-            MapStmt | StormStmt | KeepStmt | DropStmt | SortStmt,
+            MapStmt | GenerateStmt | KeepStmt | DropStmt | SortStmt,
         ):
             rows = list(
                 collection_terminal_rows(
@@ -1269,7 +1269,7 @@ class ProgressProjector:
                     ),
                 )
             )
-            if not isinstance(statement, RepeatStmt | SettleStmt):
+            if not isinstance(statement, RepeatStmt | ReduceStmt):
                 continue
             occurrence = self._repeat_occurrence(chain, index, target)
             if occurrence is None or occurrence.iteration is None:

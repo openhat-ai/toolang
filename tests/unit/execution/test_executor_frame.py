@@ -49,13 +49,13 @@ from toolang.execution.records import (
 from toolang.execution.schemas import RunDetail
 from toolang.execution.store import RunStore
 from toolang.execution.types import (
+    value_for_type,
     Output,
     AgentResources,
     AgentToolResource,
     ControlRef,
     StepRef,
     FieldRef,
-    Local as RecordLocal,
     ModelStepGiven,
     ModelStepNoted,
 )
@@ -180,7 +180,6 @@ def test_multimodal_list_shape_has_replayable_step_output() -> None:
     assert output_parts(
         Local(
             value=[(TextPart("one"), image)],
-            shape="list",
         )
     ) == (
         TextPart(
@@ -193,10 +192,8 @@ def test_multimodal_list_shape_has_replayable_step_output() -> None:
 
 
 def test_empty_structured_list_is_not_treated_as_empty_parts() -> None:
-    assert output_parts(Local(value=[], shape="item", type_name="Text[]")) == (
-        TextPart("[]"),
-    )
-    assert output_parts(Local(value=(), shape="item", type_name="Part[]")) == ()
+    assert output_parts(Local(value=[], type_name="Text[]")) == (TextPart("[]"),)
+    assert output_parts(Local(value=(), type_name="Part[]")) == ()
 
 
 def test_recall_values_map_to_current_history_only_when_near_is_selected() -> None:
@@ -664,7 +661,7 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
         assert record.status == "succeeded"
         steps = store.list_steps(run_id=record.id)
         assert [step.kind for step in steps] == ["model"]
-        assert steps[0].output == Output(RecordLocal.typed("Part[]", (audio,)), "_")
+        assert steps[0].output == Output(value_for_type("Part[]", (audio,)), "_")
         assert store.run_output(run_id=record.id) == (audio,)
         assert len(adapter.requests) == 1
         request_text = message_text(adapter.requests[0].messages[-3].parts)
@@ -694,8 +691,8 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
             }
         )
         assert detail.output == Output(
-            RecordLocal.typed(
-                "Part[]", FieldRef.from_path(steps[0].ref, "output", "local", "value")
+            value_for_type(
+                "Part[]", FieldRef.from_path(steps[0].ref, "output", "value")
             ),
             "_",
         )

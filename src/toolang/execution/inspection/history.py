@@ -36,7 +36,6 @@ from ..types import (
     history_root,
     ErrorMessage,
     ErrorRef,
-    Local,
     Output,
     Pointer,
     RunRef,
@@ -45,7 +44,7 @@ from ..types import (
     ThreadRef,
 )
 from ..errors import HistoryChangedError
-from ..values import parts_from_local
+from ..values import parts_from_value
 
 _CURSOR = TypeAdapter(HistoryCursor)
 _THREAD_CURSOR = TypeAdapter(ThreadPageCursor)
@@ -338,21 +337,21 @@ class RunHistory:
                     )
                 output = self._store.resolve_output(successful[-1].output)
                 if (
-                    output.local.type != "Part[]"
+                    output.type != "Part[]"
                     or summary_text(
                         ModelCallResult(
                             message=Message(
-                                "assistant", cast(tuple[Part, ...], output.local.value)
+                                "assistant", cast(tuple[Part, ...], output.value)
                             )
                         )
                     )
-                    != raw.local.value
+                    != raw.value
                 ):
                     raise ValueError(
                         "compact Step summary differs from producer output"
                     )
             result = assemble_compaction(
-                raw.local.value,
+                raw.value,
                 thread=thread,
                 roots=roots,
                 start=RunRef.parse(cast(str, request["start"])),
@@ -584,7 +583,7 @@ class RunHistory:
                 return (TextPart(authored["_"]),)
             if "_" in control.payload.input:
                 value = self._store.resolve_value(control.payload.input["_"])
-                return parts_from_local(Local(cast(Value, value)))
+                return parts_from_value(cast(Value, value))
             return ()
         return ()
 

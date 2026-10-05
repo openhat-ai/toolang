@@ -47,7 +47,7 @@ numbers, or a language without English letter case.
 flow research:
   Identify the important uncertainties in the question.
 
-  storm 8 in 4 lanes using investigate
+  generate 8 in 4 lanes using investigate
   sort descending by confidence
 
   Write an answer supported by the strongest findings.
@@ -134,7 +134,7 @@ stage description for UI and progress displays.
 ```too
 flow research:
   ## Generate independent approaches
-  storm 8 in 4 lanes using investigate
+  generate 8 in 4 lanes using investigate
 
   ## Review proposals in parallel
   map in 4 lanes using review_proposal
@@ -149,7 +149,7 @@ translate the statement into prose.
 ```too
 # Avoid: restates the syntax without adding intent.
 ## Run investigate eight times in four lanes
-storm 8 in 4 lanes using investigate
+generate 8 in 4 lanes using investigate
 ```
 
 Use an unindented `#@` when the complete module needs a description. The legacy
@@ -170,7 +170,7 @@ runnable or stage description.
 
 ```too
 # Keep this limit within the provider quota.
-storm 8 in 4 lanes using investigate
+generate 8 in 4 lanes using investigate
 ```
 
 Avoid comments that narrate the syntax, long design notes, and frequent inline

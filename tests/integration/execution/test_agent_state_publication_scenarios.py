@@ -73,7 +73,7 @@ agic child(_: Part[]) -> Part[]:
   user: hello
 
 flow parent(_: Part[]) -> Part[][]:
-  storm 2 using child in 2 lanes
+  generate 2 in 2 lanes using child
 """.lstrip()
 
 _PUBLISHED_PARALLEL_SOURCE = _PARALLEL_SOURCE.replace("old state", "new state")
@@ -453,7 +453,7 @@ def test_publication_preserves_the_next_step_of_an_active_agic(tmp_path: Path) -
                 "type": "number"
             }
             assert root.output is not None
-            assert harness.store.resolve_value(root.output.local.value) == 7
+            assert harness.store.resolve_value(root.output.value) == 7
 
     asyncio.run(scenario())
 
@@ -642,7 +642,7 @@ flow parent:
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("operation", ["map", "storm", "settle"])
+@pytest.mark.parametrize("operation", ["map", "generate", "reduce"])
 @pytest.mark.parametrize("kind", ["agic", "flow"])
 @pytest.mark.parametrize("output", ["Text", "Text[]", "Item", "Item[]"])
 @pytest.mark.parametrize("changes_contract", [True, False])
@@ -667,8 +667,8 @@ def test_collection_publication_preserves_the_operation_output_contract(
     )
     statement = {
         "map": "map in 1 lane using transform",
-        "storm": "storm 3 in 1 lane using transform",
-        "settle": "settle using transform",
+        "generate": "generate 3 in 1 lane using transform",
+        "reduce": "reduce using transform",
     }[operation]
     source = f"""
 struct Item:
@@ -680,8 +680,8 @@ agic seed() -> {output}[]:
 agic {worker} -> {output}:
   user: Old current {{{{_}}}}.
 {declaration}
-flow parent() -> {output if operation == "settle" else f"{output}[]"}:
-  scatter using seed
+flow parent() -> {output if operation == "reduce" else f"{output}[]"}:
+  run seed
   {statement}
 """
     replacement = (
@@ -744,12 +744,12 @@ flow parent() -> {output if operation == "settle" else f"{output}[]"}:
             else:
                 assert root.status == "succeeded", root.error
                 assert len(harness.adapter.invocations) == (
-                    3 if operation == "settle" else 4
+                    3 if operation == "reduce" else 4
                 )
                 assert "New current" in str(
                     harness.adapter.invocations[2].call.messages
                 )
-                expected = results[1] if operation == "settle" else results
+                expected = results[1] if operation == "reduce" else results
                 assert harness.store.run_output_text(run_id=root.id) == (
                     json.dumps(expected, separators=(",", ":"))
                     if isinstance(expected, list | dict)

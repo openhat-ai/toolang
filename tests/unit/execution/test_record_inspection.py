@@ -33,13 +33,13 @@ from toolang.execution.records import (
 from toolang.execution.schemas import record_to_data
 from toolang.execution.store import RunStore
 from toolang.execution.types import (
+    value_for_type,
     Output,
     AgentResources,
     ControlRef,
     ErrorMessage,
     ErrorRef,
     FieldRef,
-    Local,
     Pointer,
     RunRef,
     StepRef,
@@ -214,8 +214,8 @@ def test_record_registry_serializes_exact_record_shapes(tmp_path: Path) -> None:
             store,
             run_id=run.id,
             output=Output(
-                Local.typed(
-                    "Part[]", FieldRef.from_path(step.ref, "output", "local", "value")
+                value_for_type(
+                    "Part[]", FieldRef.from_path(step.ref, "output", "value")
                 ),
                 "_",
             ),
@@ -289,11 +289,8 @@ def test_record_registry_serializes_exact_record_shapes(tmp_path: Path) -> None:
         assert control_data["id"] == f"{run.id}@0"
         assert step_data["input"] == [f"{run.id}@0/payload/input/_"]
         assert run_data["output"] == {
-            "local": {
-                "type": "Part[]",
-                "value": {"?": f"{step.ref}/output/local/value:Part[]"},
-                "dim": 0,
-            },
+            "type": "Part[]",
+            "value": {"?": f"{step.ref}/output/value:Part[]"},
             "binding": "_",
         }
         assert record_to_data(
@@ -418,13 +415,13 @@ def test_record_selection_matches_rfc6901_traversal(
             "toolang.execution.schemas.step_noted_to_data", unused_field
         )
         output = store.select_pointer(
-            Pointer(FieldRef.from_path(step.ref, "output", "local", "value", 1))
+            Pointer(FieldRef.from_path(step.ref, "output", "value", 1))
         )
         missing_null = store.select_pointer(
             Pointer(FieldRef.from_path(step.ref, "error"))
         )
 
-        assert output.value == whole.value["output"]["local"]["value"][1]  # type: ignore[index]
+        assert output.value == whole.value["output"]["value"][1]  # type: ignore[index]
         assert output.runtime == TextPart("second")
         assert output.type_name == "Part"
         assert missing_null.value is None
@@ -434,7 +431,7 @@ def test_record_selection_matches_rfc6901_traversal(
             store.select_pointer(Pointer(FieldRef.from_path(step.ref, "missing")))
         with pytest.raises(ValueError, match="invalid array index"):
             store.select_pointer(
-                Pointer(FieldRef.from_path(step.ref, "output", "local", "value", "01"))
+                Pointer(FieldRef.from_path(step.ref, "output", "value", "01"))
             )
         with pytest.raises(ValueError, match="traverses a scalar"):
             store.select_pointer(
@@ -596,7 +593,7 @@ def test_every_control_payload_variant_has_one_canonical_record_shape() -> None:
     revision = "a" * 64
     resources = AgentResources()
     limits = RunLimits()
-    source = FieldRef.parse("run_control.0/output/local/value/0")
+    source = FieldRef.parse("run_control.0/output/value/0")
     cases = (
         (
             "run",

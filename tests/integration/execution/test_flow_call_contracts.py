@@ -45,7 +45,7 @@ flow main:
             assert len(runs) == (2 if via_flow else 1)
             for run in runs:
                 assert run.status == "succeeded", run.error
-                assert run.output is not None and run.output.local.type == "Text"
+                assert run.output is not None and run.output.type == "Text"
                 assert harness.store.run_output_text(run_id=run.id) == "done"
             assert len(harness.adapter.invocations) == 1
             assert harness.adapter.invocations[0].call.output_schema is None
@@ -58,45 +58,45 @@ flow main:
     "body,responses,child_types,result_type,result",
     [
         ("run: {{_}}", ["done"], ["Text"], "Text", "done"),
-        ("scatter: Items", ['["a","b"]'], ["Text[]"], "Text[]", '["a","b"]'),
-        ("storm 2 using: Work", ["a", "b"], ["Text", "Text"], "Text[]", '["a","b"]'),
+        ("run -> Text[]: Items", ['["a","b"]'], ["Text[]"], "Text[]", '["a","b"]'),
+        ("generate 2: Work", ["a", "b"], ["Text", "Text"], "Text[]", '["a","b"]'),
         (
-            "scatter: Items\n  map using: {{_}}",
+            "run -> Text[]: Items\n  map: {{_}}",
             ['["a","b"]', "A", "B"],
             ["Text[]", "Text", "Text"],
             "Text[]",
             '["A","B"]',
         ),
         (
-            "scatter: Items\n  keep if: {{_}}",
+            "run -> Text[]: Items\n  keep if: {{_}}",
             ['["a","b"]', "true", "false"],
             ["Text[]", "Boolean", "Boolean"],
             "Text[]",
             '["a"]',
         ),
         (
-            "scatter: Items\n  drop if: {{_}}",
+            "run -> Text[]: Items\n  drop if: {{_}}",
             ['["a","b"]', "true", "false"],
             ["Text[]", "Boolean", "Boolean"],
             "Text[]",
             '["b"]',
         ),
         (
-            "scatter: Items\n  sort ascending by: {{_}}",
+            "run -> Text[]: Items\n  sort ascending by: {{_}}",
             ['["a","b"]', "2", "1"],
             ["Text[]", "Number", "Number"],
             "Text[]",
             '["b","a"]',
         ),
         (
-            "scatter: Items\n  gather using: {{_}}",
+            "run -> Text[]: Items\n  run: {{_}}",
             ['["a","b"]', "joined"],
             ["Text[]", "Text"],
             "Text",
             "joined",
         ),
         (
-            "scatter: Items\n  settle using: {{_}} {{_1._}}",
+            "run -> Text[]: Items\n  reduce: {{_}} {{_1._}}",
             ['["a","b"]', "joined"],
             ["Text[]", "Text"],
             "Text",
@@ -112,14 +112,14 @@ flow main:
     ],
     ids=[
         "run",
-        "scatter",
-        "storm",
+        "run",
+        "generate",
         "map",
         "keep",
         "drop",
         "sort",
-        "gather",
-        "settle",
+        "run",
+        "reduce",
         "until",
     ],
 )
@@ -156,7 +156,7 @@ flow main{annotation}:
                 )
             )
             assert root.status == "succeeded", root.error
-            assert root.output is not None and root.output.local.type == result_type
+            assert root.output is not None and root.output.type == result_type
             assert harness.store.run_output_text(run_id=root.id) == result
             children = [
                 run
@@ -166,9 +166,9 @@ flow main{annotation}:
             assert all(
                 run.status == "succeeded" and run.output is not None for run in children
             )
-            assert sorted(
-                run.output.local.type for run in children if run.output
-            ) == sorted(child_types)
+            assert sorted(run.output.type for run in children if run.output) == sorted(
+                child_types
+            )
             schemas = {
                 "Text": None,
                 "Text[]": {"type": "array", "items": {"type": "string"}},
@@ -187,33 +187,33 @@ flow main{annotation}:
     "header,input_type,output_type,items",
     [
         ("run worker", "Number", "Text", None),
-        ("scatter using worker", "Number", "Text[]", None),
-        ("storm 2 using worker", "Number", "Text", None),
+        ("run worker", "Number", "Text[]", None),
+        ("generate 2 using worker", "Number", "Text", None),
         ("map using worker", "Number", "Text", '["1","invalid"]'),
         ("keep if worker", "Number", "Boolean", '["1","invalid"]'),
         ("drop if worker", "Number", "Boolean", '["1","invalid"]'),
         ("sort ascending by worker", "Number", "Number", '["1","invalid"]'),
-        ("gather using worker", "Number[]", "Text", '["1","invalid"]'),
-        ("gather using worker", "Number", "Text", '["1","2"]'),
-        ("settle using worker", "Number", "Text", '["seed","1","invalid"]'),
+        ("run worker", "Number[]", "Text", '["1","invalid"]'),
+        ("run worker", "Number", "Text", '["1","2"]'),
+        ("reduce using worker", "Number", "Text", '["seed","1","invalid"]'),
     ],
     ids=[
         "run",
-        "scatter",
-        "storm",
+        "run",
+        "generate",
         "map",
         "keep",
         "drop",
         "sort",
         "gather-elements",
         "gather-scalar",
-        "settle",
+        "reduce",
     ],
 )
 def test_incompatible_call_inputs_fail_before_any_target_model_call(
     tmp_path: Path, header: str, input_type: str, output_type: str, items: str | None
 ) -> None:
-    prefix = "scatter: Items\n  " if items is not None else ""
+    prefix = "run -> Text[]: Items\n  " if items is not None else ""
     harness = ExecutionHarness.create(
         tmp_path,
         source=f"""
@@ -241,10 +241,7 @@ flow main:
             assert root.status == "failed"
             assert root.error is not None
             error = harness.store.resolve_error(root.error)
-            if header == "gather using worker" and input_type == "Number":
-                assert error == "Part[] can only contain Part values"
-            else:
-                assert "Number" in error
+            assert "Number" in error or error == "Part[] cannot use Text[]"
             assert len(harness.adapter.invocations) == (1 if items is not None else 0)
             assert harness.adapter.pending_responses == 0
             children = [
@@ -261,20 +258,27 @@ flow main:
 
 
 @pytest.mark.parametrize("limit", ["2", "invalid"])
-def test_empty_map_skips_element_conversion_but_checks_named_arguments(
-    tmp_path: Path, limit: str
+@pytest.mark.parametrize("operation", ["map", "reduce"])
+def test_empty_array_skips_element_conversion_but_checks_named_arguments(
+    tmp_path: Path, limit: str, operation: str
 ) -> None:
+    output_type = "Number[]" if operation == "map" else "Number"
+    statement = (
+        "map using worker"
+        if operation == "map"
+        else "reduce using worker:\n    from: 0"
+    )
     harness = ExecutionHarness.create(
         tmp_path,
-        source="""
+        source=f"""
 agic worker(_: Number, limit: Number) -> Number:
-  {{_}} {{limit}}
-flow main(limit) -> Number[]:
+  {{{{_}}}} {{{{limit}}}}
+flow main(limit) -> {output_type}:
   recall = none
   instruct = none
   context = none
-  scatter: Items
-  map using worker
+  run -> Text[]: Items
+  {statement}
 """,
         responses=[ModelCallResult(message=Message.assistant("[]"))],
     )
@@ -287,8 +291,10 @@ flow main(limit) -> Number[]:
             )
             if limit == "2":
                 assert root.status == "succeeded", root.error
-                assert root.output is not None and root.output.local.type == "Number[]"
-                assert harness.store.run_output_text(run_id=root.id) == "[]"
+                assert root.output is not None and root.output.type == output_type
+                assert harness.store.run_output_text(run_id=root.id) == (
+                    "[]" if operation == "map" else "0"
+                )
             else:
                 assert root.status == "failed" and root.error is not None
                 assert "Number" in harness.store.resolve_error(root.error)

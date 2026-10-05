@@ -1,5 +1,8 @@
 # Show a Flow Outline in Script Help
 
+Flow syntax and value rules in this historical plan are superseded by
+[Flow Array Semantics](flow-array-semantics.md).
+
 Status: Approved for implementation with authored-doc-first rows and truncation.
 
 ## Goal and Success Criteria

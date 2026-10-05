@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from toolang.execution.types import ModelAccounting
+from toolang.execution.types import ModelAccounting, value_for_type
 
 from io import StringIO
 import re
@@ -27,7 +27,6 @@ from toolang.execution.types import (
     Output,
     ControlRef,
     ErrorMessage,
-    Local,
     ModelStepGiven,
     ModelStepNoted,
     Occurrence,
@@ -105,7 +104,7 @@ def _execute_step(
             step=step,
             kind="tool",
             status="failed" if error else "succeeded",
-            output=Output(Local.typed("ToolResultPart", result, 0), None),
+            output=Output(value_for_type("ToolResultPart", result), None),
             error=ErrorMessage(error) if error else None,
             noted=ToolStepNoted(
                 summary=f"Failed to execute {runnable}" if error else "Transferred"
@@ -192,7 +191,7 @@ def test_dynamic_run_projects_a_flat_header_and_child_id_footer() -> None:
             step=child_model,
             kind="model",
             status="succeeded",
-            output=Output(Local.typed("Part[]", (TextPart("summary"),), 0), "_"),
+            output=Output(value_for_type("Part[]", (TextPart("summary"),)), "_"),
             noted=ModelStepNoted(
                 accounting=ModelAccounting(input_tokens=4, output_tokens=2)
             ),
@@ -287,7 +286,7 @@ def test_execute_projects_a_live_marker_then_a_handoff_header() -> None:
             step=caller,
             kind="model",
             status="succeeded",
-            output=Output(Local.typed("Part[]", (_execute_part(),), 0), "_"),
+            output=Output(value_for_type("Part[]", (_execute_part(),)), "_"),
         )
     )
 
@@ -554,7 +553,7 @@ def test_confirmed_execute_stays_in_its_parallel_lane(
             status="succeeded",
             noted=ToolStepNoted(summary="Transferred to next"),
             output=Output(
-                Local.typed(
+                value_for_type(
                     "ToolResultPart",
                     ToolResultPart(
                         tool_call_id="execute-1",
@@ -623,7 +622,7 @@ def test_execute_prestart_failure_uses_a_correlated_trace_marker() -> None:
             kind="model",
             status="succeeded",
             output=Output(
-                Local.typed("Part[]", (_execute_part("flow:missing"),), 0), "_"
+                value_for_type("Part[]", (_execute_part("flow:missing"),)), "_"
             ),
         )
     )
@@ -664,7 +663,7 @@ def test_handoff_to_flow_keeps_the_first_run_statement_flow_owned() -> None:
             kind="model",
             status="succeeded",
             output=Output(
-                Local.typed("Part[]", (_execute_part("flow:delegate"),), 0), "_"
+                value_for_type("Part[]", (_execute_part("flow:delegate"),)), "_"
             ),
         )
     )
@@ -1052,7 +1051,7 @@ def test_dynamic_scope_suppresses_internal_call_and_protocol_result_rows() -> No
             kind="model",
             status="succeeded",
             output=Output(
-                Local.typed(
+                value_for_type(
                     "Part[]",
                     (
                         ToolCallPart(
@@ -1062,7 +1061,6 @@ def test_dynamic_scope_suppresses_internal_call_and_protocol_result_rows() -> No
                             input={"runnable": "agic:child"},
                         ),
                     ),
-                    0,
                 ),
                 "_",
             ),
@@ -1084,7 +1082,7 @@ def test_dynamic_scope_suppresses_internal_call_and_protocol_result_rows() -> No
             kind="run",
             status="succeeded",
             output=Output(
-                Local.typed(
+                value_for_type(
                     "Part[]",
                     (
                         ToolResultPart(
@@ -1094,7 +1092,6 @@ def test_dynamic_scope_suppresses_internal_call_and_protocol_result_rows() -> No
                             output={"run": "run_child"},
                         ),
                     ),
-                    0,
                 ),
                 "_",
             ),

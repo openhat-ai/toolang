@@ -640,8 +640,8 @@ def read_checkpoint(store: RunStore, run: RunRecord) -> tuple[int, str]:
         read_output = store.resolve_output(read.output) if read.output else None
         if (
             read_output is None
-            or not isinstance(read_output.local.value, ToolResultPart)
-            or read_output.local.value.output
+            or not isinstance(read_output.value, ToolResultPart)
+            or read_output.value.output
             != {
                 "roots": [str(history_root(str(ref))) for ref in batch],
                 **({"units": batch} if granular else {}),
@@ -654,12 +654,12 @@ def read_checkpoint(store: RunStore, run: RunRecord) -> tuple[int, str]:
         if step.given.call.tools is not None or step.output is None:
             raise ValueError("compact checkpoint requires a tool-free model output")
         output = store.resolve_output(step.output)
-        if output.local.type != "Part[]":
+        if output.type != "Part[]":
             raise ValueError("compact checkpoint output must contain Parts")
         summary = summary_text(
             ModelCallResult(
                 message=Message(
-                    role="assistant", parts=cast(tuple[Part, ...], output.local.value)
+                    role="assistant", parts=cast(tuple[Part, ...], output.value)
                 )
             )
         )

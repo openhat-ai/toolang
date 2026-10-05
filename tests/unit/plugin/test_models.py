@@ -54,10 +54,10 @@ from toolang.lang.types import Array
 from toolang.plugin.toolsets.loading import load_tools
 from toolang.execution.records import ControlRecord, SteerControlPayload
 from toolang.execution.types import (
+    value_for_type,
     AgentResources,
     AgentToolResource,
     ControlRef,
-    Local,
     Output,
     StepRef,
 )
@@ -1959,7 +1959,7 @@ def test_agic_preserves_multimodal_steer_and_model_output() -> None:
         ),
     )
     step_end = next(event for event in events if isinstance(event, StepEnd))
-    assert step_end.output == Output(Local.typed("Part[]", (audio,)), "_")
+    assert step_end.output == Output(value_for_type("Part[]", (audio,)), "_")
     assert [event.type for event in events] == [
         "step_begin",
         "part_begin",
