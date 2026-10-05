@@ -40,6 +40,7 @@ from toolang.execution.types import (
     RunRef,
 )
 from toolang.lang.input import CallInput
+from toolang.state.types import StateSyncResult
 from toolang.state.watcher import StateRefresh, StateWatcher
 
 
@@ -456,6 +457,9 @@ agic chat(_: Part[]) -> Part[]:
             del force
             return StateRefresh(self.state)
 
+        async def sync(self):
+            return StateSyncResult(self.state.revision, self.state.files)
+
         async def run(self, *, stop_signal: asyncio.Event) -> None:
             await stop_signal.wait()
 
@@ -470,6 +474,7 @@ agic chat(_: Part[]) -> Part[]:
     session = local.LocalChatSession(
         harness.setup.layout,
     )
+    assert session.executor._sync_state == session.state_watcher.sync
     events: list[RunEvent] = []
     event_threads: list[int] = []
     errors: list[str] = []
@@ -585,6 +590,9 @@ def test_chat_session_does_not_create_a_thread_on_open(
             del force
             return StateRefresh(self.state)
 
+        async def sync(self):
+            return StateSyncResult(self.state.revision, self.state.files)
+
         async def run(self, *, stop_signal: asyncio.Event) -> None:
             await stop_signal.wait()
 
@@ -648,6 +656,9 @@ agic chat(_: Part[]) -> Part[]:
         async def refresh_result(self, *, force: bool = False):
             del force
             return StateRefresh(self.state)
+
+        async def sync(self):
+            return StateSyncResult(self.state.revision, self.state.files)
 
         async def run(self, *, stop_signal: asyncio.Event) -> None:
             await stop_signal.wait()

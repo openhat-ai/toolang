@@ -16,6 +16,7 @@ from toolang.common.layout import AgentLayout
 from .config import normalize_cap_overrides
 from .state import AgentState
 from .errors import StateDiagnostic, StatePreparationError
+from .types import StateFile, StateFileDifference, StateSyncError, StateSyncResult
 from .cache import (
     LayerScope,
     agent_current_path,
@@ -32,6 +33,7 @@ from .source import (
     observe_home_source,
     observe_root_source,
     root_source_manifest,
+    raw_source_files,
     source_path_scope,
 )
 
@@ -56,6 +58,7 @@ class StateRefresh:
 
     state: AgentState
     diagnostics: tuple[StateDiagnostic, ...] = ()
+    error: StateSyncError | None = None
 
 
 class StateWatcher:
@@ -135,6 +138,42 @@ class StateWatcher:
         """Return one serialized check with diagnostics from that exact check."""
 
         return await self._request_check(requested=True, force=force)
+
+    async def sync(self) -> StateSyncResult:
+        """Check once; callers keep authored sources unchanged until return."""
+
+        state: AgentState | None = None
+        error: StateSyncError = "state_rejected"
+        try:
+            result = await self.refresh_result(force=False)
+            state = result.state
+            diagnostics = result.diagnostics
+            if not diagnostics:
+                return StateSyncResult(state.revision, state.files)
+            error = result.error or error
+        except StatePreparationError as exc:
+            diagnostics = exc.diagnostics
+        except Exception as exc:
+            error = "io_error" if isinstance(exc, OSError) else "state_rejected"
+            diagnostics = (_candidate_diagnostic(exc),)
+        message = "; ".join(item.message for item in diagnostics)
+        files = state.files if state is not None else ()
+        try:
+            disk_files = await asyncio.to_thread(
+                raw_source_files, self.layout.root, self.layout.name
+            )
+            differences = _file_differences(disk_files, files)
+        except Exception as exc:
+            differences = None
+            message += f"; could not inspect source differences: {exc}"
+        return StateSyncResult(
+            revision=state.revision if state is not None else None,
+            files=files,
+            error=error,
+            message=message,
+            differences=differences,
+            diagnostics=diagnostics,
+        )
 
     async def _request_check(
         self,
@@ -220,7 +259,11 @@ class StateWatcher:
                 "watch.rejected agent=%s diagnostics=1",
                 self.layout.name,
             )
-            return StateRefresh(self._state, self._diagnostics)
+            return StateRefresh(
+                self._state,
+                self._diagnostics,
+                "io_error" if isinstance(exc, OSError) else "state_rejected",
+            )
         if (
             not requested
             and not invalidated_root
@@ -251,7 +294,11 @@ class StateWatcher:
             if self._state is None:
                 raise
             self._diagnostics = (_candidate_diagnostic(exc),)
-            return StateRefresh(self._state, self._diagnostics)
+            return StateRefresh(
+                self._state,
+                self._diagnostics,
+                "io_error" if isinstance(exc, OSError) else "state_rejected",
+            )
         if (
             not requested
             and not force
@@ -292,7 +339,11 @@ class StateWatcher:
                 self.layout.name,
                 len(exc.diagnostics),
             )
-            return StateRefresh(self._state, self._diagnostics)
+            return StateRefresh(
+                self._state,
+                self._diagnostics,
+                "state_rejected",
+            )
         except Exception as exc:
             self._record_checked_candidate(
                 root_observation,
@@ -307,7 +358,11 @@ class StateWatcher:
                 "watch.rejected agent=%s diagnostics=1",
                 self.layout.name,
             )
-            return StateRefresh(self._state, self._diagnostics)
+            return StateRefresh(
+                self._state,
+                self._diagnostics,
+                "io_error" if isinstance(exc, OSError) else "state_rejected",
+            )
         self._state = self._remember(candidate)
         loaded_root_source = load_layer_source(
             self.layout,
@@ -541,6 +596,20 @@ def _candidate_diagnostic(exc: Exception) -> StateDiagnostic:
         line=None,
         code="candidate-preparation",
         message=str(exc) or type(exc).__name__,
+    )
+
+
+def _file_differences(
+    disk: tuple[StateFile, ...], published: tuple[StateFile, ...]
+) -> tuple[StateFileDifference, ...]:
+    current = {(item.scope, item.key): item.digest for item in disk}
+    previous = {(item.scope, item.key): item.digest for item in published}
+    return tuple(
+        StateFileDifference(
+            scope, key, current.get((scope, key)), previous.get((scope, key))
+        )
+        for scope, key in sorted(current.keys() | previous.keys())
+        if current.get((scope, key)) != previous.get((scope, key))
     )
 
 

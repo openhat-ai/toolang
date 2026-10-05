@@ -186,9 +186,19 @@ def build_agic_frame(
         routes = replace(
             routes,
             resolved=tuple(
-                route
+                replace(route, actions=actions)
                 for route in routes.resolved
-                if route.runnable.identity not in active
+                if (
+                    actions := tuple(
+                        action
+                        for action in route.actions
+                        if route.runnable.identity not in active
+                        or (
+                            action == "exec"
+                            and context.can_self_exec(run, route.runnable)
+                        )
+                    )
+                )
             ),
         )
         runnables = runnable_descriptions(state, routes)

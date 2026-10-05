@@ -114,8 +114,10 @@ agic helper() -> Text:
                     if kind == "agic"
                     else ["agic:caller"]
                 )
-                for routes in child_routes.values():
-                    assert [item["ref"] for item in routes] == expected
+                assert [item["ref"] for item in child_routes["hands"]] == expected
+                assert [item["ref"] for item in child_routes["handoffs"]] == (
+                    expected + ["agic:main"] if kind == "agic" else expected
+                )
             assert without_runtime_snapshots(child_call.messages) == [
                 Message.user("Main.")
             ]
@@ -227,7 +229,10 @@ agic child(_: Text) -> Text:
             assert 'status="succeeded"' in message_text(completion.parts)
             parent_routes = route_snapshots(harness.adapter.invocations[0].call)
             assert [item["ref"] for item in parent_routes["hands"]] == ["agic:child"]
-            assert parent_routes["handoffs"] == parent_routes["hands"]
+            assert [item["ref"] for item in parent_routes["handoffs"]] == [
+                "agic:parent",
+                "agic:child",
+            ]
             assert route_snapshots(harness.adapter.invocations[1].call) == {
                 "hands": [],
                 "handoffs": [],
@@ -525,18 +530,20 @@ agic helper() -> Text:
             assert len(calls) == 5
             for index, call in enumerate(calls):
                 snapshots = route_snapshots(call)
-                for targets in snapshots.values():
-                    assert [target["ref"] for target in targets] == (
-                        ["agic:helper"] if index % 2 == 0 else []
-                    )
+                assert [target["ref"] for target in snapshots["hands"]] == (
+                    ["agic:helper"] if index % 2 == 0 else []
+                )
+                assert [target["ref"] for target in snapshots["handoffs"]] == (
+                    ["agic:default", "agic:helper"] if index % 2 == 0 else []
+                )
 
     asyncio.run(scenario())
     assert_replayed(harness.store.db_path, tracer.events)
 
 
-@pytest.mark.parametrize("count", [64, 65])
+@pytest.mark.parametrize("count", [63, 64])
 @pytest.mark.parametrize("directives", ["", "  hands = *\n  handoffs = *\n"])
-def test_route_limit_counts_only_inactive_targets(
+def test_route_limit_includes_the_root_self_handoff(
     tmp_path: Path, count: int, directives: str
 ) -> None:
     harness = ExecutionHarness.create(
@@ -556,12 +563,15 @@ def test_route_limit_counts_only_inactive_targets(
             root = await harness.executor.run(
                 harness.run_spec(thread=thread, runnable="agic:default")
             )
-            if count == 64:
+            if count == 63:
                 assert root.status == "succeeded", root.error
                 snapshots = route_snapshots(harness.adapter.invocations[0].call)
-                for targets in snapshots.values():
-                    assert len(targets) == count
-                    assert all(target["ref"] != "agic:default" for target in targets)
+                assert len(snapshots["hands"]) == count
+                assert len(snapshots["handoffs"]) == count + 1
+                assert all(
+                    target["ref"] != "agic:default" for target in snapshots["hands"]
+                )
+                assert snapshots["handoffs"][0]["ref"] == "agic:default"
             else:
                 assert root.status == "failed"
                 assert root.error == ErrorMessage(
@@ -630,7 +640,10 @@ agic parent(_: Text, threshold: Number) -> Text:
             )
             assert result.output == {}
             for invocation in harness.adapter.invocations:
-                assert route_snapshots(invocation.call) == {"hands": [], "handoffs": []}
+                assert route_snapshots(invocation.call)["hands"] == []
+                assert [
+                    item["ref"] for item in route_snapshots(invocation.call)["handoffs"]
+                ] == ["agic:parent"]
 
     asyncio.run(scenario())
 
@@ -1527,6 +1540,8 @@ def test_runtime_tools_are_available_without_routes_or_refresh(
         tmp_path,
         source="""
 agic caller() -> Text:
+  hands = none
+  handoffs = none
   recall = none
   context = none
   instruct = none

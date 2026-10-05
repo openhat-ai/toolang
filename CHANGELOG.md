@@ -7,6 +7,22 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ## [Unreleased]
 
+### Added
+
+- Root Runs with no active descendants may `exec` their own entry runnable,
+  replacing the run binding with the latest published implementation whose
+  normalized contract matches, while preserving the Run, captured Setup,
+  authority ceilings, limits, and entry output contract. `run self`, child
+  self-exec, and ancestor calls remain rejected.
+
+### Changed
+
+- **Breaking:** the `me` tool `me__loaded(receipts)` is replaced by `me__sync()`,
+  which waits for one State publication and returns `{revision, files}` for the
+  agent's tracked root and home sources. Integrations that poll `me.loaded`
+  receipts must call `me.sync()` / `me__sync({})`, handle operational error codes,
+  and use the scoped `files` manifest as the receipt.
+
 ## [0.3.6] - 2026-10-04
 
 ### Added

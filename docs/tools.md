@@ -148,10 +148,9 @@ Missing targets and unresolved values fail as ordinary tool errors.
 
 ## Current Agent
 
-`me` manages the current agent's latest home files and compares saved file
-versions with the State loaded by the calling Run, subject to normal tool
-permissions. The executor supplies that home and captured State. File operations
-read current disk content; `loaded` reads only the captured State's file list.
+`me` manages the current agent's latest home files and synchronizes tracked
+root/home sources with published Agent State, subject to normal tool permissions.
+The executor supplies that home and its host's State synchronization service.
 
 ```text
 me__list()
@@ -159,7 +158,7 @@ me__get(key)
 me__create(key, content, encoding="utf-8")
 me__update(key, content, if_digest, encoding="utf-8")
 me__delete(key, if_digest)
-me__loaded(receipts)
+me__sync()
 ```
 
 Keys are canonical paths relative to the current home:
@@ -184,7 +183,7 @@ Successful results are flat objects:
 | `get` | `{key, digest, bytes, content, encoding}` |
 | `create`, `update` | `{key, digest}` |
 | `delete` | `{key, digest: null}` |
-| `loaded` | `{loaded, revision, mismatches: [{key, digest}]}` |
+| `sync` | `{revision, files: [{scope, key, digest}]}` |
 
 Text is UTF-8; non-UTF-8 files are returned as base64. Create/update accept a
 complete content string; `encoding="base64"` supplies exact binary bytes.
@@ -198,12 +197,12 @@ from a read or successful write and check it under the owning lock. On
 if a target already exists. The receipt identifies the resulting bytes; a null
 digest identifies the requested absence of a file.
 
-Me does not parse or validate file content. A successful save only confirms that
+Me file operations do not parse or validate content. A successful save confirms that
 the bytes were written. Existing loaders/watchers handle syntax, metadata, and
 composition errors identically for me writes and direct filesystem edits. The
 State watcher retains its last valid publication and reports diagnostics for
 rejected candidates; repairing the files allows a later refresh to publish.
-Reads never allocate job ids. Failures return `{error, message, key?}`, where
+Reads never allocate job ids. File-operation failures return `{error, message, key?}`, where
 `error` is a stable code and `key` is included when known. Successful results
 never contain `error`.
 
@@ -233,28 +232,58 @@ Restart older writers when upgrading from `.authored-flows.lock` or `.project.lo
 Locks coordinate participating writers; filesystem edits that bypass these locks
 can still race a save.
 
-`loaded` accepts an array of `{key, digest}` receipts with unique home-relative
-keys. It compares all receipts with the same State bound to the current call and
-returns that State's `revision`. Only mismatches are returned, in input order;
-their `digest` is the loaded value, not the expected value from the input.
-Empty input matches. Missing or untracked keys have digest `null`, including
-independent task/chore files. A null receipt matches a missing entry even if a
-same-named root file exists. For example:
+`sync()` accepts no arguments and waits for one serialized State refresh. Finish
+all source writes first and ensure no program, agent, editor, or background writer
+modifies tracked sources until sync returns. Concurrent readers and the watcher
+may continue. The operation adds no preliminary scan, final verification, or
+retry loop; existing preparation snapshot protections remain in place.
+
+Success returns exactly `{revision, files}`. Files are the complete published
+input manifest, sorted by `(scope, key)`, including shadowed inputs, raw config,
+and skill assets. Scope is `home` or `root`, and each key is relative to its scope.
+Deleted and untracked files are absent. No changes returns the existing revision.
+Independent `tasks/` and `chores/` are outside State.
+
+Operational failures set the tool error and return:
 
 ```json
 {
-  "loaded": false,
-  "revision": "<loaded-state-sha256>",
-  "mismatches": [{"key": "tasks/example.md", "digest": null}]
+  "error": "state_rejected",
+  "message": "<preparation error>",
+  "revision": "<last-valid-state-sha256>",
+  "files": [{"scope": "home", "key": "agent.too", "digest": "<state-sha256>"}],
+  "differences": [
+    {"scope": "home", "key": "agent.too", "disk_digest": "<disk-sha256>", "state_digest": "<state-sha256>"}
+  ],
+  "diagnostics": [
+    {"layer": "program", "module_kind": "agent", "authored_path": "agent.too", "line": 4, "code": "invalid-program", "message": "<loader diagnostic>"}
+  ]
 }
 ```
 
-`loaded: false` is a successful comparison, not an error. The operation does not
-read disk, select the latest publication, refresh, wait, or switch the Run's
-State. Matching proves inclusion in the source file list, including shadowed
-inputs; it does not prove that each declaration is effective or that Setup or a
-scheduled job adopted a change. Historical manifests without raw config hashes
-treat that config as untracked. See [Agent State](agent-state.md).
+`state_rejected` means preparation failed; `io_error` means source inspection
+failed; `sync_unavailable` means the host has no synchronization service.
+Malformed arguments use `invalid_request` without refreshing. On failure,
+`revision` and `files` identify that check's last valid publication, or null and
+an empty list if unavailable. Diagnostics preserve the actual loader details.
+
+A failure-only raw scan compares disk with that publication. `differences` is
+sorted by `(scope, key)` and includes only unequal entries: null `state_digest`
+means an addition, null `disk_digest` a deletion, and two digests a modification.
+If a complete disk manifest cannot be read, `differences` is null and the message
+reports the inspection failure without replacing the original preparation error.
+An empty difference list does not rule out a preparation error.
+
+Sync does not replace active code, captured Setup, or the current model-call
+snapshot. It confirms input inclusion, not runtime success or effective selection
+of every declaration. A child may edit, sync, and return so the root can self-exec
+into compatible code. Keep sources stable through exec acceptance if it must use
+that publication; the returned revision is not reserved. See [Agent State](agent-state.md).
+
+`me.loaded` and `me__loaded` have been removed. Replace receipt polling with
+`me.sync()` / `me__sync({})`, handle operational errors, and use `revision` and the
+scoped `files` manifest as the publication receipt. CRUD receipts and `if_digest`
+remain unchanged; historical tool-call records remain readable.
 
 Reading after a save observes the saved source. Running code remains governed by
 Run binding and publication: static calls in an accepted flow use its bound

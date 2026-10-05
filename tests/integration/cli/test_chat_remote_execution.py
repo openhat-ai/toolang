@@ -267,6 +267,11 @@ agic xyz(_: Text) -> Text:
     else:
 
         class Watcher(_Snapshot):
+            async def sync(self):
+                from toolang.state.types import StateSyncResult
+
+                return StateSyncResult(harness.state.revision, harness.state.files)
+
             async def refresh(self) -> object:
                 return self.value
 
@@ -311,10 +316,12 @@ agic xyz(_: Text) -> Text:
         first = route_snapshots(
             calls[0], requested_only={"hands": True, "handoffs": True}
         )
-        assert all(
-            {entry["ref"] for entry in targets} == {"flow:abc", "agic:xyz"}
-            for targets in first.values()
-        )
+        assert {entry["ref"] for entry in first["hands"]} == {"flow:abc", "agic:xyz"}
+        assert {entry["ref"] for entry in first["handoffs"]} == {
+            "agic:chat",
+            "flow:abc",
+            "agic:xyz",
+        }
         assert {"_toolang__run", "_toolang__exec"} <= {
             tool.name for tool in calls[0].tools
         }

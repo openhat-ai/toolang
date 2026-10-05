@@ -1,4 +1,4 @@
-"""Current home file operations and comparisons with the calling State."""
+"""Current home file operations and publication synchronization."""
 
 from __future__ import annotations
 
@@ -19,8 +19,6 @@ def execute(request: ResourceRequest, context: ToolContext) -> dict[str, Any]:
     try:
         if not isinstance(context, MeToolContext):
             fail("invalid_request", "me requires a current agent context")
-        if request.operation == "loaded":
-            return _loaded(request, context)
         storage = _storage(context)
         if request.operation == "list":
             with storage.lock():
@@ -80,21 +78,23 @@ def execute(request: ResourceRequest, context: ToolContext) -> dict[str, Any]:
         fail("io_error", f"could not {request.operation} home file", key=request.key)
 
 
-def _loaded(request: ResourceRequest, context: MeToolContext) -> dict[str, Any]:
-    state = context.state
-    if state is None:
-        fail("invalid_request", "loaded requires the calling AgentState")
-    files = {item.key: item.digest for item in state.files if item.scope == "home"}
-    mismatches = [
-        {"key": receipt.key, "digest": files.get(receipt.key)}
-        for receipt in request.receipts
-        if receipt.digest != files.get(receipt.key)
-    ]
-    return {
-        "loaded": not mismatches,
-        "revision": state.revision,
-        "mismatches": mismatches,
-    }
+async def synchronize(context: ToolContext) -> dict[str, object]:
+    if not isinstance(context, MeToolContext):
+        fail("invalid_request", "me requires a current agent context")
+    if context.sync_state is None:
+        fail(
+            "sync_unavailable",
+            "Agent State synchronization is unavailable on this execution host",
+            revision=None,
+            files=[],
+            differences=None,
+            diagnostics=[],
+        )
+    result = await context.sync_state()
+    data = result.to_data()
+    if result.error is not None:
+        raise ResourceError(result.message or result.error, data)
+    return data
 
 
 def _storage(context: MeToolContext) -> HomeFiles:

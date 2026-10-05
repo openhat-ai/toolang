@@ -23,20 +23,24 @@ from toolang.execution.types import ThreadPrefix
 from toolang.state.prepare import prepare_agent_state
 
 
-@pytest.mark.parametrize("ancestor", [False, True], ids=["self", "ancestor"])
 @pytest.mark.parametrize(
-    "statement",
+    ("statement", "ancestor"),
     [
-        "run outer",
-        "exec outer",
-        "map using outer in 2 lanes",
-        "storm 2 using outer in 2 lanes",
-        "scatter using outer",
-        "gather using outer",
-        "settle using outer",
-        "keep if outer",
-        "drop if outer",
-        "sort ascending by outer",
+        (statement, ancestor)
+        for statement in [
+            "run outer",
+            "exec outer",
+            "map using outer in 2 lanes",
+            "storm 2 using outer in 2 lanes",
+            "scatter using outer",
+            "gather using outer",
+            "settle using outer",
+            "keep if outer",
+            "drop if outer",
+            "sort ascending by outer",
+        ]
+        for ancestor in [False, True]
+        if statement != "exec outer" or ancestor
     ],
 )
 def test_flow_statements_reject_active_targets_even_after_publication(

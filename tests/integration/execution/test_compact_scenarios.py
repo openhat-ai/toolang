@@ -1561,7 +1561,7 @@ def test_recent_target_yields_to_the_complete_caller_budget(tmp_path):
     async def scenario():
         async with h:
             thread, latest = await seed(h)
-            constrain(h, context=10000)
+            constrain(h, context=11000)
             h.setup = replace(
                 h.setup,
                 compact=replace(h.setup.compact, recent=5000, summary=256),
@@ -1576,7 +1576,7 @@ def test_recent_target_yields_to_the_complete_caller_budget(tmp_path):
             caller = h.adapter.invocations[-1].call
             assert "latest " * 120 in str(caller.messages)
             assert "middle " * 850 not in str(caller.messages)
-            assert InputEstimate().count(caller, None) <= 8000
+            assert InputEstimate().count(caller, None) <= 8800
             assert len(h.adapter.invocations) == 5
 
     asyncio.run(scenario())

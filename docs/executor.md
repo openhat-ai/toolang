@@ -486,9 +486,21 @@ the control. Terminal events arrive inner to outer before successor Steps.
 The transfer skips result binding and the remaining body/until statements.
 A parent Run still waits for its child's eventual result.
 
-The entry runnable's output type remains the final Run contract. Repeated
-identities on the current branch's active path are rejected. Earlier handoffs
-are no longer on that path and can be called again.
+The entry runnable's output type remains the final Run contract. Active-path
+identities are rejected except for root self-exec: a caller with no parent,
+whose ID equals its root ID and which has no pending/running descendants, may
+exec its current module/name. `run self`, child self-exec, and ancestor targets
+remain rejected. Authorized root-self routes appear only in handoffs. Earlier
+handoffs are no longer on the active path and can be called again.
+
+Self-exec resolves the latest publication once and compares its full normalized
+contract with the outgoing root's pinned contract, including kind, input/output
+types, and referenced structs. A newer model catalog cannot relax that check.
+Successful replacement preserves the Run, captured Setup, authority ceilings,
+root totals/time limit, and original entry output contract. Unchanged revisions
+are allowed; repeated execs add no ancestry and remain subject to cancellation
+and root limits. `me.sync()` publishes sources; self-exec explicitly adopts the
+compatible root implementation. A child must finish before its root does this.
 
 Progress starts the exec marker at Tool Step begin, confirms the transfer from
 its result, and attaches a handoff divider to the target's first Step. A receipt

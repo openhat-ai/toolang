@@ -73,6 +73,7 @@ class AgentCore:
             self.ids,
             setup=lambda: self.setup.current(),
             state=lambda: self.state.current(),
+            sync_state=self.state.sync,
             load_state=lambda revision: self.state.load(revision),
             default_workdir=workdir,
         )

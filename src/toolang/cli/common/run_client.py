@@ -85,6 +85,7 @@ async def acquire_run_client(
             IdIssuer(layout.id_state),
             setup=setup.current,
             state=state.current,
+            sync_state=state.sync,
             load_state=state.load,
         )
         client = LocalRunClient(executor)
