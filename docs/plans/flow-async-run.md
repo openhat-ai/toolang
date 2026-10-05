@@ -1,198 +1,178 @@
-# Define Async Child Runs and Future Awaiting
+# Define async child runs and Run awaiting
 
-Status: Proposed; feature definition, group 2 of 4. The human confirmed bare
-async does not bind, await's destination rules, and cancellation/cleanup of
-unfinished children when their parent run ends. Other details below are proposed
-for approval. This PR contains no implementation.
+Status: Proposed; feature definition, group 2 of 4. No implementation changes.
 
 ## Goal, Scope, and Dependencies
 
-Start a child run without waiting for its result, optionally retain a typed
-future, and wait at an explicit later statement. Ordinary run remains synchronous.
-Success means execution overlaps deterministically without changing input
-snapshots, parent ownership, root accounting, or result provenance.
+Start a child without waiting, optionally retain its typed Run handle, and await
+its result at an explicit later statement. Ordinary run remains synchronous.
+Success means execution overlaps without changing input snapshots, parent
+ownership, root accounting, or result provenance.
 
 Implement after [group 1](https://github.com/openhat-ai/toolang/pull/684)'s
-complete-value Local model. Scope is async run, handle await, and their let
-combinations. Exclude await blocks (group 3), spawn (group
-4), async modifiers on other operators, general authored generics, remote-agent
-launch syntax, timeouts, and future cancellation/steering methods.
+complete-value Local model. Share the Run handle contract with
+[spawn #687](https://github.com/openhat-ai/toolang/pull/687): the first launch
+implementation supplies common value support; neither requires the other's
+launch behavior. Scope includes async run, handle await, and let combinations.
+Exclude await blocks, spawn execution, async modifiers on other operators,
+authored generics, remote-agent launch syntax, timeouts, and handle methods.
 
 ## Verified Current Behavior
 
-- Flow execution awaits each statement before applying its binding. Bare run
-  binds _, named let preserves _, and let without a name discards the result.
-- Run Step execution calls accept_child followed by _execute_child_binding.
-  Child runs inherit the root identity, thread, ceilings, limits, settings, and
-  shared root accounting; they already have durable Run identities.
-- The executor has process-local awaitable handles for roots, and the public
-  RunClient returns handles with wait(). Neither is a language value or suitable
-  for persisting in a Flow local.
-- No Future is a built-in value type; authored type syntax supports names and []
-  suffixes. Current retry reconstructs committed locals from Step outputs.
-  Execution records already support run and value Step kinds.
+- Flow awaits statements before applying bindings. Bare run writes `_`, named
+  let writes its destination, and nameless let discards the result.
+- Run Steps accept then execute children. Children inherit root identity, thread,
+  ceilings, limits, settings, and shared accounting; each has a durable run ID.
+- Executor/RunClient handles are process-local interfaces, not language values.
+- Run is not a built-in language type. Authored type syntax supports names and
+  `[]`; retry reconstructs locals from committed Step outputs.
 
-## Syntax and Binding Rules
+## Syntax, Types, and Binding
+
+Let `T = Return<R>`, the complete output type of target runnable R:
 
 ```too
 let research = async run investigate
 async run review_risks
-
 run draft
-
 let evidence = await research
-await research
-
-run finish
+run: Research {{research.id}} is {{research.status}}.
 ```
 
-| Form | Wait for child completion? | Binding |
+| Form | Statement value | Destination |
 | --- | --- | --- |
-| `run R` | Yes | Complete output to _ |
-| `let value = run R` | Yes | Complete output to value |
-| `let run R` | Yes | Discard output |
-| `async run R` | No | No binding; preserve all caller locals |
-| `let job = async run R` | No | Future to job only |
-| `let async run R` | No | Explicitly discard future; same as bare async |
-| `await job` | Yes | Replace job with its complete result |
-| `let value = await job` | Yes | Result to value; retain job if names differ |
-| `let await job` | Yes | Discard result; retain job |
+| `run R` | `T`, after completion | `_` |
+| `let value = run R` | `T` | value only |
+| `let run R` | `T` | Discard |
+| `async run R` | `Run<T>`, after admission | None; preserve locals |
+| `let job = async run R` | `Run<T>` | job only |
+| `let async run R` | `Run<T>` | Discard |
+| `await job` | `T`, after completion | `_`; retain job unless job is `_` |
+| `let value = await job` | `T` | value only; retain job if names differ |
+| `let await job` | `T` | Discard; retain job |
 
-Run accepts its existing named and inline targets; inline syntax is
-`async run [-> T]: BODY`, with Text as the default and no using.
-No fut/future declarations or alternate async placement.
+Await follows ordinary value-statement binding, also used by await blocks. It
+never implicitly replaces its operand. Use `let job = await job` to explicitly
+replace a named handle with its result; `await _` also replaces `_` through the
+normal default destination. Only success writes a destination; failure preserves
+all bindings.
 
-Await takes exactly one local identifier, including _. It is not a block,
-arbitrary expression, array-of-handles operation, or implicit await on argument
-use. Bare await's destination is its operand, rather than the normal _ default.
-Explicit let destination wins; `let job = await job` matches bare await job.
-Only a successful wait writes the destination; failure preserves all bindings.
+Async run accepts ordinary named/inline targets: `async run [-> T]: BODY`, with
+Text as the inline default and no using. No alternative declaration prefix or
+async placement. Await takes exactly one local identifier, including `_`, not
+an arbitrary expression, array of handles, or implicit await on argument use.
 
-The operand must contain a Future even if its work has already completed.
-Awaiting a retained future again returns the same result without launching work.
-After in-place awaiting, the local is T; another await of that local is a type
-error. Background completion never changes caller locals by itself.
+The operand must be a native `Run<T>`, including a completed or spawned run.
+Retained handles can be awaited repeatedly without relaunching work. Replacing a
+handle with `T` makes that local non-awaitable. Background completion never
+changes bindings; status reads do not consume handles or deliver their results.
+
+## Run Handle Contract
+
+Use #687's shared Run value and public struct view: `id: Text`, `thread: Text`,
+`status: Text`. Identity/thread are stable; execution projects current persisted
+status once per referenced run per statement evaluation. Field projections and
+explicit view rendering are ordinary data, not implicit awaits. General handle
+parameters and containers remain out of scope. No separate Future or receipt
+type is introduced: the returned Run handle itself serves as the launch receipt.
+
+Public locals have type Run with their complete result contract tracked
+separately; `Run<T>` is explanatory/static notation, not authored generics.
+Reuse the shared `Run!` codec for id, thread, and result_type. Do not persist
+mutable status, output caches, tasks, or executors in handles. Reserve Run in new
+source and preserve historical authored structs through their existing encoding.
+Execution validates identity, thread, and accepted output contract; Json objects
+or rendered Run views do not acquire handle semantics.
+
+For `Run<Text[]>`, await returns `Text[]`, not one element. A spawned root and
+an async child have the same field/await interface; their original ownership
+rules determine cancellation and accounting. Await never transfers ownership.
 
 ## Launch, Ownership, and Failure
 
-- Validate and bind target/input at launch, using ordinary run's live-resolution,
-  contract, ancestry, and authorization rules. Capture inputs, named locals,
-  applicable iteration history, and relevant execution context at this boundary.
-  Later local changes do not affect the invocation. Await does not resolve the
-  runnable again or launch it lazily.
-- Return only after the child has been durably accepted and registered for
-  execution. No guarantee that a provider call starts before the next statement.
-  Preflight/admission failure fails the launch statement and publishes no future.
-- Children belong to the immediate launching run, remain inside its root tree,
-  and share that root's budgets and cancellation. No new global lane pool or
-  separate accounting is introduced. Serialize shared accounting/event updates
-  correctly while parent and children run concurrently.
-- On normal parent return, cancel all unfinished owned children and await their
-  cleanup before marking the parent terminal. Do not wait for their successful
-  business results. On parent failure/cancellation, cancel and drain them too.
-  Successful exec handoff closes the outgoing execution segment's async children
-  before replacement execution. Independent lifetime is reserved for spawn.
-- Overwriting or discarding a future does not cancel its work or remove ownership.
-  Repeat iterations capture separate launch inputs; iteration exit alone does
-  not end the owner run or cancel prior iteration children.
-- Child failure is recorded immediately and surfaces at await, without replacing
-  locals. An unawaited child's failure does not fail an otherwise successful
-  parent; retrieve its exception and preserve ordinary failure inspection.
-  Shared-root budget exhaustion and parent cancellation still affect the tree.
-- Canceling a waiting parent triggers normal child cleanup. Propagate a child's
-  failed/canceled terminal outcome as a failed await with the child error/status
-  reference; do not silently return null or mark an unrelated parent canceled.
-  External side effects are not rolled back.
+- Validate and bind at launch using ordinary run resolution, contract, ancestry,
+  and authorization rules. Capture inputs, named locals, iteration history, and
+  execution context. Later local changes do not alter the invocation; await
+  neither resolves the runnable again nor launches it lazily.
+- Return after durable acceptance and executor registration, without promising
+  a provider call has started. Admission failure publishes no handle.
+- The immediate launching run owns each child inside its root tree and budgets.
+  Serialize shared accounting/events while parent and children overlap; add no
+  global task pool or separate root accounting.
+- On normal parent return, failure, or cancellation, cancel and drain unfinished
+  owned children before marking the parent terminal. Do not wait for successful
+  business results. Exec drains the outgoing segment's async children before
+  replacement execution. Spawned roots retain independent lifetimes.
+- Discarding/overwriting handles does not cancel work or remove ownership. Repeat
+  iteration exit does not end the owner or cancel earlier iteration children.
+- Record child failures immediately and surface them at await, without changing
+  locals. An unawaited child failure does not fail an otherwise successful
+  parent. Shared-root exhaustion and parent cancellation still affect the tree.
+- A canceled wait leaves independent targets alone; normal parent cleanup still
+  applies to its owned children. A failed/canceled target fails await with its
+  error/status reference, never a null success or unrelated parent cancellation.
+  External effects are not rolled back.
 
-## Future Value and Durable Execution
+## Durable Execution and Recovery
 
-Use a language-owned Future value with immutable target run ID and expected
-complete result type. Future<T> is explanatory/static notation, not authored
-generic syntax. Add the boxed stored form `{"?":"Future!","!":{"run":ID,
-"result_type":T}}`; public locals use type Future with the inner payload.
-Static checking carries T separately. Reserve Future as a built-in name. The
-boxed tag distinguishes new handles from historical structs named Future;
-preserve those historical reads, but require such authored structs to be renamed.
-
-Keep the pure value vocabulary in lang; execution validates run references and
-loads outputs. No asyncio.Task, executor, store, mutable status, or result cache
-is serialized in the value. The target's accepted contract/state and final
-record provide authoritative output validation and provenance. A stored handle
-must not resolve to a missing or contract-incompatible run.
-
-T is the complete declared output: Future<Text[]> resolves to Text[], not to
-one element. Known future values cannot be used as Text/Json/array inputs, prompt
-content, tools' data, or ordinary Flow outputs. Await them first. Authored Future
-parameters/fields and containers of handles are outside this group; diagnostics
-must not silently stringify, await, or coerce them.
-
-- Add an asynchronous flag to RunStmt, defaulting false for old records, and an
-  AwaitStmt with an operand local and resolved output binding.
-- An async launch is a run-kind Step whose committed output is the Future,
-  including binding=None for discarded handles. Its success means acceptance,
-  not child completion. The child Run retains its ordinary parent Step relation
-  and its own terminal status. Inspector/progress must show these separately.
-- Persist child acceptance and the launch receipt together; cancellation or
-  failure between receipt and event delivery must not produce an untracked child
-  or duplicate acceptance. Reuse the existing durable admission-receipt pattern.
-- Await is a value-kind Step. Record the awaited target and successful output
-  reference/binding; preserve the child's full value/provenance.
-- Retry restores committed launch futures and await results, including within
-  repeats, without replaying launches or applying child locals to the parent.
-  A retained failed/canceled future stays tied to that outcome; retry does not
-  implicitly rerun it. A fresh whole-run rerun creates fresh launches.
-- A live target owned by the current executor can be awaited through its registry.
-  A terminal target can be read from records. A nonterminal target with no local
-  owner fails promptly as unavailable; do not invent a terminal status, hang,
-  or recreate work from its handle. Missing/pruned targets fail explicitly.
-  No cross-process resumption or new owner-loss recovery service.
+- Add RunStmt's asynchronous flag, default false for old records, and AwaitStmt
+  with an operand local and ordinary result binding (bare default `_`).
+- Async launch is a run-kind Step with native Run output, including when unbound.
+  Its success means acceptance; the child retains its parent Step and outcome.
+  Commit acceptance and handle output atomically before delivery.
+- Await is a value-kind Step recording the target and successful output reference
+  and binding. Preserve the complete result and provenance.
+- Retry restores committed handles/results, including repeats, without replaying
+  launches or applying child locals to the parent. A failed/canceled handle stays
+  tied to that outcome; whole-run rerun intentionally creates fresh launches.
+- Await live targets through the current executor registry and terminal targets
+  through records. A nonterminal target without a local owner fails promptly as
+  unavailable; status remains inspectable. Missing/pruned or incompatible targets
+  fail explicitly. Do not hang, fabricate terminal state, or recreate work.
 
 ## Implementation Touchpoints
 
-- `src/toolang/lang/{ast,lower,types,flow_validation,format,description}.py` and
-  the grammar/CST/highlighter: RunStmt modifier, AwaitStmt, target-dependent
-  binding, Future vocabulary, sequential type transitions, and diagnostics.
-- `src/toolang/execution/executor/{executor,common,limits}.py`,
-  `runs/flow.py`, `stmts/{run,exec}.py`, new `stmts/await_value.py`, and
-  Step helpers: split admission from completion; owner/task registry and cleanup.
-- `src/toolang/execution/{types,records,store,events,schemas}.py`: Future codec,
-  launch receipts, status/provenance projection, and retry restoration.
-- Execution inspection/progress, prepared caches, and focused language, execution,
-  record, retry, cancellation, and offline concurrency tests. Keep parsing and
-  host/CLI defaults out of the core runtime.
+- Upstream grammar and `src/toolang/lang/{ast,lower,types,contracts,flow_validation,
+  format,description}.py`: async modifier, AwaitStmt, Run/result inference,
+  binding transitions, field access, and diagnostics.
+- `src/toolang/execution/executor/{executor,common,content,frame}.py`,
+  `stmts/{run,await}.py`, `steps/run.py`, `runs/flow.py`, and `iteration.py`:
+  concurrent ownership, cleanup, status projection, waiting, accounting, retry.
+- `src/toolang/execution/{types,records,store,events,schemas}.py`: shared Run codec,
+  atomic handle output, provenance, restoration, and inspection.
+- Parser/static, execution, ownership, metadata, persistence, and retry tests.
 
-Publish/pin the required grammar release and update the lockfile. Reserve async
-and await statement starts with useful diagnostics. Reject unsupported async
-targets and block syntax until group 3 implements it; no implicit prompt fallback.
-Keep existing historical records readable. Document the new Future representation
-and generate the implementation changelog entry through the repository runnable.
+Publish/pin the matching grammar and update the lockfile. Reserve async/await
+statement starts with useful errors; unsupported forms must not become prose.
+Keep historical records readable and generate the implementation changelog
+through the repository runnable. This definition changes no product behavior.
 
 ## Acceptance Tests
 
-1. Parse/check/format every table form, named/inline run, annotations, and repeat
-   nesting. Check exact destination behavior, including _, self-binding, and
-   discarded awaits; reject malformed/unsupported forms and non-Future operands.
-2. Use deterministic gates to prove launch returns before completion, inputs and
-   history stay captured, and siblings/parent overlap without background mutation.
-3. Await scalar, array, empty array, nested, struct, and Part outputs with exact
-   types/provenance. A retained future is reusable; an in-place resolved local
-   is no longer awaitable. Reject implicit awaiting/coercion at data boundaries.
-4. Normal parent exit, failure, cancellation, exec handoff, and executor shutdown
-   cancel/drain owned unfinished children. Discarded/overwritten handles do not
-   leak tasks; unawaited child failures remain inspectable without failing parents.
-5. Verify launch failure versus accepted-child failure, canceled targets, shared
-   root limits, event ordering, and that no binding changes on failed await.
-6. Round-trip futures/receipts; inject admission/event-delivery faults. Retry
-   restores original targets and bindings without duplicate side effects; test
-   successful/failed/canceled/missing targets, repeat prefixes, and owner loss.
-7. Check documentation/examples and links; implementation runs all default
-   repository verification with offline deterministic concurrency tests.
+1. Parse/check/format all table forms, targets, annotations, and repeat nesting.
+   Verify bare await writes `_`, named let writes only its destination, explicit
+   self-binding replaces the handle, and discard preserves locals. Reject
+   non-handles and unsupported syntax without implicit text fallback.
+2. Gates prove overlapping execution, launch before completion, captured inputs/
+   history, and no background binding mutation. Check stable id/thread, current
+   status snapshots, metadata captures, and view rendering without result access.
+3. Await every complete result shape with exact type/provenance. Reuse retained
+   handles and preserve metadata after `let result = await job`; reject reawait
+   of a replaced `T` and lookalike Json. Root/child handles obey the same interface.
+4. Parent return/failure/cancel/exec and executor shutdown drain owned children;
+   discarded handles do not leak tasks. Waiting/canceling a wait does not adopt
+   or cancel an independently owned target.
+5. Distinguish admission failure from target failure/cancellation, shared limits,
+   and event ordering. No failed await writes a destination.
+6. Round-trip Run values; fault-inject admission/delivery. Retry preserves targets,
+   bindings, and effects. Cover terminal, missing, incompatible, ownerless, and
+   repeated handles and historical structs named Run.
+7. Validate documentation/examples/links. Implementation runs all default checks
+   with offline deterministic concurrency tests.
 
 ## Risks and Approval
 
-Key risks are leaked children, admission/completion confusion, race-dependent
-local mutation, duplicate launches on retry, and implicit conversion of futures.
-The specified receipts, owner cleanup, explicit await, and acceptance cases
-address these. No remaining implementation choice requires a product decision;
-the complete proposed definition still needs human approval. Documentation-only
-checks do not claim this syntax or lifecycle is implemented.
+Risks are leaked children, admission/completion confusion, stale status mistaken
+for live ownership, duplicate launches, implicit awaiting, and accidental handle
+replacement. The type/binding rules and ownership checks address these. The
+complete definition still requires human approval; no implementation is shipped.
