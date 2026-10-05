@@ -25,11 +25,12 @@ spawn implementation. Groups 2-4 have separate definitions and PRs.
 | 1. Calls, arrays, names, and using | [#684](https://github.com/openhat-ai/toolang/pull/684) | Matching published grammar |
 | 2. Async run and handle await | [#685](https://github.com/openhat-ai/toolang/pull/685) | Group 1 |
 | 3. Await blocks | [#686](https://github.com/openhat-ai/toolang/pull/686) | Groups 1 and 2 |
-| 4. Independent spawn | [#687](https://github.com/openhat-ai/toolang/pull/687) | Groups 1 and 2 |
+| 4. Independent spawn | [Runtime #687](https://github.com/openhat-ai/toolang/pull/687), [grammar #48](https://github.com/openhat-ai/tree-sitter-toolang/pull/48) | Group 1 and published spawn grammar; async/await deferred |
 
-The four documentation PRs target main independently. Approval and the grammar
-release are required per implementation group; groups 3 and 4 do not depend on
-one another. Do not implement later groups as incidental work in an earlier PR.
+The definition PRs target their repositories' main branches independently.
+Approval and the grammar release are required per implementation group. Group 4
+has separate grammar/runtime definitions and does not depend on group 2 or 3.
+Do not implement later groups as incidental work in an earlier PR.
 
 This supersedes the affected rules in [Flow Usability](flow-usability.md) and
 [Flat Call Input](flat-call-input.md); unrelated behavior remains unchanged.
