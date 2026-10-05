@@ -356,7 +356,7 @@ async def execute_step(
     return (
         replace(
             result,
-            ref=result.ref or FieldRef.from_path(path, "output", output.value_field),
+            ref=result.ref or FieldRef.from_path(path, "output", "value"),
         )
         if output is not None
         else result

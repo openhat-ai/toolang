@@ -109,8 +109,10 @@ fields fail. Capture these fields as ordinary data before passing them to named
 runnables. Handles cannot be runnable results or general data arguments.
 
 `Run<T>` is runtime design notation, not a language type or constructor. An
-authored struct named `Run` remains ordinary data. Neither `async` nor `await`
-is implemented in this release.
+authored struct named `Run` remains ordinary data. Serialized outputs use the
+runtime tag `_Run<T>` for a known result type, otherwise `_Run`, inside the same
+`type/value/binding` envelope as ordinary outputs. User struct names cannot begin
+with `_`. Neither `async` nor `await` is implemented in this release.
 
 The root survives its source finishing, failing, being canceled, or executing a
 handoff. Executor shutdown cancels it: script invocations stop their executor on

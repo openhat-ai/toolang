@@ -142,9 +142,8 @@ async def accept(
             output_type = runnable.output or (
                 "Part[]" if isinstance(runnable, AgicDecl) else None
             )
-            handle = RunHandle(
-                bound.run_id,
-                thread,
+            handle = RunHandle(bound.run_id, thread, output_type)
+            result_contract = (
                 OutputContract.resolve(
                     output_type,
                     structs={
@@ -152,7 +151,7 @@ async def accept(
                     },
                 )
                 if output_type is not None
-                else None,
+                else None
             )
         except (ToolangError, TypeError, ValueError) as exc:
             raise _RunRejected(str(exc) or type(exc).__name__) from exc
@@ -178,7 +177,7 @@ async def accept(
                 bound.settings,
                 bound.workspaces,
                 bound.captured_iterations,
-                handle.result,
+                result_contract,
             ),
         )
         if created:

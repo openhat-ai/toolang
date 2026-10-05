@@ -74,6 +74,10 @@ struct Run:
 read-only snapshot of the referenced run's persisted lifecycle: pending, running,
 succeeded, failed, or canceled. It is not the launching Step's status.
 The result contract is internal runtime metadata, not a public data field.
+Output uses the ordinary `{type, value, binding}` envelope: its runtime type tag
+is `_Run<T>` for a known result type T, otherwise `_Run`, and its value contains
+only id/thread. User struct names cannot begin with `_`; this does not introduce
+authored generic syntax or a built-in Run type.
 Scripts obtain handles from launch statements without declaring a struct.
 An authored struct named Run remains ordinary data and is not awaitable.
 
@@ -128,7 +132,10 @@ Await uses ordinary value-statement binding: `await job` writes the result to `_
 `let result = await job` writes result only, and `let await job` discards it.
 The Run handle stays available unless its local is the destination: explicit
 `let job = await job` replaces job with `T`, as does `await _` for `_`.
-Only success writes a binding. Retained handles can be awaited repeatedly and
+`let v = await h` creates v with type T only after a successful wait on h of type
+`_Run<T>`; it allocates no pending result placeholder and leaves h unchanged.
+Failure or cancellation creates no v (and preserves any prior binding).
+Retained handles can be awaited repeatedly and
 keep their readable fields; a replaced `T` cannot be awaited. Stopping a wait
 does not cancel an independent spawned root.
 
@@ -222,16 +229,20 @@ pointing to the originating Step in the same agent store, even across threads;
 the root parent stays null. Separate parent from origin in shared admission
 helpers. Add no new ControlKind, synthetic caller control, or scheduler.
 
-Flow records a run-kind Step with SpawnStmt, runtime handle output, and its optional
+Flow records a spawn-kind Step with SpawnStmt, runtime handle output, and its optional
 named binding; agic records a normal Tool Step with the admission-time Run view.
-Do not split thread creation and root admission into separate commits.
+Each Step ends after admission without waiting for root execution. Once committed,
+admission remains a successful Step even if receipt delivery or the caller is
+canceled. Do not split thread creation and root admission into separate commits.
 
-Persist handles through an execution-owned record variant, distinct from ordinary
-data outputs. Store identity and result contract, not status, results, tasks, or
-executors. Execution resolves status/output and validates the thread and accepted
-contract. Restore handle locals with that metadata; do not add Run to the language
-value-type registry or struct codec. Lookalike Json, authored structs, and rendered
-views do not become handles. General handle parameters/containers remain out of scope.
+Persist handles through the common Output envelope and `output/value` path.
+The `_Run<T>` type tag distinguishes native handles from ordinary values; save
+only id/thread in value, and retain the full result contract in the root entry.
+Execution resolves status/output and validates the thread and accepted result
+type. Restore native handle locals from this representation without adding Run
+to the authored type registry or struct codec. Lookalike Json, authored structs,
+and rendered views do not become handles. General handle parameters/containers
+remain out of scope.
 
 Use the source run/physical Step/admission occurrence as the stable request
 identity. Reprocessing restores the original handle and recorded agic reply;

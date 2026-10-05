@@ -93,9 +93,8 @@ text. Retry inherits entry input; rerun creates a new Run entry. Each persisted
 value retains its self-describing codec, without a Local/name/dim wrapper.
 References address `payload/input/_` or `payload/input/argumentName`.
 
-RunStore schema 51 accepts only the current format. Older stores are rejected
-before mutation and remain intact for their matching runtime. There is no
-migration or compatibility reader.
+RunStore schema 51 rejects older SQL schemas before mutation and leaves them
+intact for their matching runtime. There is no migration for older SQL schemas.
 
 `Output` contains a complete `value: Value | TypedRef | RunHandle` and a
 `binding: str | None`. `"_"` is an ordinary binding name for the current local;
@@ -111,10 +110,11 @@ value type.
 An absent output (`None`) differs from `Output(value=None)`, whose value is
 JSON null. There is no Local wrapper or shape/dim flag.
 
-The durable output object is `{"value": ..., "binding": "_"}`, with the
-self-describing value codec. The HTTP/event projection is
-`{"type": "Text", "value": "result", "binding": "_"}`; its type is derived
-from the value or typed reference. References use `output/value` for the value,
+Durable and HTTP/event outputs share the `type`, `value`, and `binding` envelope,
+for example `{"type": "Text", "value": "result", "binding": "_"}`. Ordinary
+durable values retain the self-describing value codec; historical outputs without
+an explicit type remain readable. Type is derived from the value or typed
+reference. References use `output/value` for the value,
 `output` for the complete Output, and `output/binding` for the destination.
 Removed wrapper fields and old reference paths have no aliases. Removed Flow
 statement records are rejected, and executable snapshots require migrated source
@@ -129,12 +129,15 @@ kind. Entry `spawn_context` stores inherited settings, workspace bindings,
 iteration data, and the accepted output contract; ordinary entries omit it from
 storage. Resources, limits, model request, State, and cwd use existing entry fields.
 
-Flow's run-kind Step carries a `SpawnStmt`. Its durable and event output is
-`{"handle": {"id": "run_…", "thread": "spawn_…", "result": …}, "binding": "job"}`.
-`result` is the accepted output contract (`type_name` and struct `definitions`),
-not the produced result. This execution-owned variant has no language `type`.
-References to it use `output/handle`, while data outputs retain `output/value`.
-Status is resolved from the Run record, never saved in the handle.
+Flow's spawn-kind Step carries a `SpawnStmt`. Its durable and event output is
+`{"type": "_Run<Text>", "value": {"id": "run_…", "thread": "spawn_…"}, "binding": "job"}`.
+The runtime tag is `_Run<T>` when the target's result type T is known, otherwise
+`_Run`. Its value contains identity only; references use the same `output/value`
+path as ordinary outputs. The complete accepted result contract, including struct
+definitions, belongs to the root's entry `spawn_context`. Status is read from the
+Run record. Neither status nor the produced result is stored in the handle.
+`_Run<T>` is protocol vocabulary, not an authored language type; user struct names
+cannot start with `_`. An authored struct named `Run` remains ordinary data.
 
 Agic's ordinary Tool Step instead stores a `ToolResultPart` whose `output` is
 `{id, thread, status: "pending"}`. The tool returns that exact committed snapshot;
@@ -142,8 +145,10 @@ reconstructed model history retains it even after the root finishes. This view
 is ordinary data and does not become a native handle. The eventual result belongs
 to the spawned Run's output and remains inspectable by its ID.
 
-Accepted outputs survive canceled delivery, and StepEnd carries the same output
-as the durable Step. A dispatch failure marks the admitted root failed while
+The Step ends after admission, without waiting for root execution. Accepted
+spawn Steps remain succeeded through interrupted delivery or caller cancellation;
+StepEnd carries the persisted status and output. Before acceptance, errors or
+cancellation create no root. A dispatch failure marks the admitted root failed while
 preserving its handle. Reprocessing one physical Step returns its original
 admission; conflicting requests fail. Recovery does not relaunch a root.
 Retry rejects cuts through a surviving root's origin or retained input references;

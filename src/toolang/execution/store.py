@@ -119,6 +119,7 @@ from .types import (
     Pointer,
     TypedRef,
     ToolStepGiven,
+    ToolStepNoted,
     RunCommand,
     validate_runtime_value,
     valid_run_id,
@@ -545,8 +546,8 @@ class RunStore:
     ) -> tuple[RunHandle, bool]:
         """Commit a new thread, independent root, and launch output together."""
 
-        if handle.result != context.result:
-            raise ValueError("spawn handle differs from the accepted result contract")
+        if handle.result_type != (context.result.type_name if context.result else None):
+            raise ValueError("spawn handle differs from the accepted result type")
         with self.write_transaction():
             step = self.get_step(ref=source)
             if step is None:
@@ -586,7 +587,7 @@ class RunStore:
                 thread = self.get_thread(thread_id=str(run.thread))
                 if thread is None or thread.peer != peer:
                     raise ValueError(f"conflicting spawn thread: {source}")
-                original = RunHandle(run.id, str(run.thread), handle.result)
+                original = RunHandle(run.id, str(run.thread), handle.result_type)
                 if (
                     step.output is not None
                     and isinstance(step.output.value, RunHandle)
@@ -1895,7 +1896,7 @@ class RunStore:
                 cast(Value, self.run_handle_view(output.value)), output.binding
             )
         value = cast(Value | TypedRef, self.resolve_value(output.value))
-        validate_runtime_value(value, output.type or "Json")
+        validate_runtime_value(value, output.type)
         return replace(output, value=value)
 
     def run_handle_view(self, handle: RunHandle) -> dict[str, str]:
@@ -1908,9 +1909,11 @@ class RunStore:
             entry is None
             or not isinstance(entry.payload, RunControlPayload)
             or entry.payload.spawn_context is None
-            or entry.payload.spawn_context.result != handle.result
         ):
-            raise ValueError(f"run handle result contract is mismatched: {handle.id}")
+            raise ValueError(f"run handle target has no accepted context: {handle.id}")
+        result = entry.payload.spawn_context.result
+        if handle.result_type != (result.type_name if result is not None else None):
+            raise ValueError(f"run handle result type is mismatched: {handle.id}")
         return {"id": handle.id, "thread": handle.thread, "status": run.status}
 
     def resolve_value(self, value: object) -> object:
@@ -3022,8 +3025,8 @@ class RunStore:
             existing_step = _step_from_row(existing)
             if existing_step.kind != kind:
                 raise ValueError(f"step kind changed: {ref}")
-            # An accepted spawn survives interrupted delivery. Its admission
-            # output is immutable even when the caller's Step ends unsuccessfully.
+            # Committed admission is a successful spawn even if the caller is
+            # interrupted before its receipt is delivered.
             if (
                 existing_step.output is not None
                 and self._conn.execute(
@@ -3037,6 +3040,12 @@ class RunStore:
                 if status == "succeeded" and output != existing_step.output:
                     raise ValueError(f"conflicting spawn output: {ref}")
                 output = existing_step.output
+                status, error, aborted_by = "succeeded", None, None
+                if isinstance(output.value, ToolResultPart):
+                    receipt = output.value.output
+                    noted = ToolStepNoted(
+                        summary=f"Spawned {receipt['id']} in {receipt['thread']}"
+                    )
             if existing_step.status == "running":
                 self._conn.execute(
                     """
@@ -4222,6 +4231,7 @@ def _step_kind_from_data(value: object) -> StepKind:
     if not isinstance(value, str) or value not in {
         "exec",
         "run",
+        "spawn",
         "agent",
         "human",
         "model",

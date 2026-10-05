@@ -159,7 +159,7 @@ def test_honor_lists_every_rules_file_in_script_and_chat_without_store_reads():
             assert "✧" in rendered
 
 
-@pytest.mark.parametrize("name", ["pick", "compact", "honor"])
+@pytest.mark.parametrize("name", ["pick", "compact", "honor", "spawn"])
 @pytest.mark.parametrize("status", ["failed", "canceled"])
 def test_runtime_tool_failure_details_and_cancellation_remain_visible(name, status):
     begin = _begin(name)
@@ -305,23 +305,19 @@ def test_non_tty_prints_compact_start_and_end_without_a_timer():
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("status", ["succeeded", "failed", "canceled"])
-def test_spawn_summary_carries_identity_through_existing_tool_progress(status):
+def test_spawn_summary_carries_identity_through_existing_tool_progress():
     begin = _begin("spawn", {"runnable": "flow:research"})
     end = _end(
         begin,
-        status,
+        "succeeded",
         output={"id": "run_job", "thread": "spawn_thread", "status": "pending"},
     )
     assert trace_live_rows(begin, "")[0].text == "✧ Spawning flow:research"
     rows = [r.text for r in trace_terminal_rows(begin, end, error="")]
     assert rows[0] == "✧ Spawned run_job in spawn_thread"
-    if status != "succeeded":
-        assert rows[1] == f"✧ Caller {status} after spawn"
 
 
-@pytest.mark.parametrize("status", ["succeeded", "failed", "canceled"])
-def test_flow_spawn_summary_is_visible_without_child_events(status):
+def test_flow_spawn_summary_is_visible_without_child_events():
     from toolang.execution.types import RunHandle
     from toolang.lang.ast import SpawnStmt, Span
     from toolang.execution.events import run_event_from_data, run_event_to_data
@@ -338,20 +334,18 @@ def test_flow_spawn_summary_is_visible_without_child_events(status):
     projector.handle(
         StepBegin(
             step=StepRef.parse("run_root.0"),
-            kind="run",
+            kind="spawn",
             given=SpawnStmt(span=Span(line=1), runnable="flow:research", binding="job"),
             started_at=START,
         )
     )
     end = StepEnd(
         step=StepRef.parse("run_root.0"),
-        kind="run",
-        status=status,
-        output=Output(RunHandle("run_job", "spawn_thread", None), "job"),
+        kind="spawn",
+        status="succeeded",
+        output=Output(RunHandle("run_job", "spawn_thread"), "job"),
         finished_at=FINISH,
     )
     update = projector.handle(run_event_from_data(run_event_to_data(end)))
     rows = [row.text for block in update.committed for row in block.rows]
     assert any("Spawned run_job in spawn_thread" in text for text in rows)
-    if status != "succeeded":
-        assert any(f"Caller {status}" in text for text in rows)

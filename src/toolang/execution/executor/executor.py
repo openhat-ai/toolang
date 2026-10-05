@@ -2849,7 +2849,7 @@ class _Execution:
             else None
         )
         if record is not None and record.output is not None:
-            if record.output.type is None:
+            if isinstance(record.output.value, RunHandle):
                 raise ToolangError(
                     "Run handles cannot be returned as runnable results; capture their fields instead"
                 )
@@ -3230,9 +3230,11 @@ def _step_local(step: StepRecord, store: RunStore) -> Local:
         ref=(
             store.resolve_value_pointer(step.output.value)
             if isinstance(step.output.value, TypedRef)
-            else FieldRef.from_path(step.ref, "output", step.output.value_field)
+            else FieldRef.from_path(step.ref, "output", "value")
         ),
-        type_name=step.output.type,
+        type_name=None
+        if isinstance(step.output.value, RunHandle)
+        else step.output.type,
         stored=step.output.value,
     )
 

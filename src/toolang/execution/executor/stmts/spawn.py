@@ -39,7 +39,7 @@ async def execute(
     return await execute_step(
         execution.emit,
         begin_step=execution.step_starter(binding),
-        kind="run",
+        kind="spawn",
         path=path,
         binding=binding,
         statement=statement,

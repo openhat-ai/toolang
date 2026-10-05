@@ -65,7 +65,14 @@ class _PersistSink:
             error=event.error,
             finished_at=event.finished_at,
         )
-        return replace(event, output=step.output)
+        return replace(
+            event,
+            status=step.status,
+            output=step.output,
+            noted=step.noted,
+            error=step.error,
+            aborted_by=step.aborted_by,
+        )
 
     def _finish_run(self, event: RunEnd) -> None:
         self._store.finish_run(

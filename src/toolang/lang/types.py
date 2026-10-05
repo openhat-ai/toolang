@@ -93,6 +93,8 @@ def validate_struct_type(type_name: str) -> str:
     """Return one unambiguous authored struct type."""
 
     validate_type(type_name)
+    if type_name.startswith("_"):
+        raise ValueError(f"struct type cannot start with _: {type_name}")
     if type_name in _RESERVED_STRUCT_TYPES:
         raise ValueError(f"struct type conflicts with built-in type: {type_name}")
     return type_name

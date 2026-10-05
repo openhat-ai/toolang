@@ -34,6 +34,18 @@ def test_spawn_keyword_takes_priority_and_run_is_not_a_type():
     assert validate_struct_type("Run") == "Run"
 
 
+@pytest.mark.parametrize("name", ["_", "_Run", "_Report", "__Internal"])
+def test_authored_struct_names_cannot_use_runtime_prefix(name):
+    from toolang.lang.types import Struct
+
+    with pytest.raises(ValueError, match="cannot start with _"):
+        validate_struct_type(name)
+    with pytest.raises(ValueError, match="cannot start with _"):
+        Struct(name, {})
+    with pytest.raises(ToolangError):
+        Program.from_source(f"struct {name}:\n  id: Text\n")
+
+
 def test_handle_is_not_the_target_result_or_a_normal_input():
     with pytest.raises(ToolangError, match="handle.*cannot be passed"):
         Program.from_source("""

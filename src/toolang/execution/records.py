@@ -767,25 +767,35 @@ _PART_STORAGE_TYPES = {
 def output_from_data(payload: Mapping[str, object]) -> Output:
     """Decode one self-describing stored value and its destination."""
 
-    if set(payload) == {"handle", "binding"}:
-        binding = payload["binding"]
-        if binding is not None and not isinstance(binding, str):
-            raise ValueError("output binding must be text or null")
-        return Output(RunHandle.from_data(payload["handle"]), binding)
-    if set(payload) != {"value", "binding"}:
-        raise ValueError("stored output requires value and binding fields")
+    # Historical ordinary outputs derive their type from the value codec.
+    if set(payload) not in ({"type", "value", "binding"}, {"value", "binding"}):
+        raise ValueError("stored output requires type, value, and binding fields")
     binding = payload["binding"]
     if binding is not None and not isinstance(binding, str):
         raise ValueError("output binding must be text or null")
-    return Output(value_from_data(payload["value"]), binding)
+    type_name = payload.get("type")
+    value = (
+        RunHandle.from_data(payload["value"], type_name=type_name)
+        if isinstance(type_name, str)
+        and (type_name == "_Run" or type_name.startswith("_Run<"))
+        else value_from_data(payload["value"])
+    )
+    output = Output(value, binding)
+    if "type" in payload and payload["type"] != output.type:
+        raise ValueError("stored output type does not match its value")
+    return output
 
 
 def output_to_data(output: Output) -> dict[str, object]:
     """Encode the value separately from its output binding."""
 
-    if isinstance(output.value, RunHandle):
-        return {"handle": output.value.to_data(), "binding": output.binding}
-    return {"value": value_to_data(output.value), "binding": output.binding}
+    return {
+        "type": output.type,
+        "value": output.value.to_data()
+        if isinstance(output.value, RunHandle)
+        else value_to_data(output.value),
+        "binding": output.binding,
+    }
 
 
 def value_from_data(data: object) -> Value | TypedRef:

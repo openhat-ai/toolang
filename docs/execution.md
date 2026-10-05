@@ -175,8 +175,8 @@ The private projector never creates or updates run controls. Tracer failures
 are logged and isolated from execution. One tracer observes the complete run
 tree started by its `run()` call, including child runs, steps, parts, and
 terminal events. Each event already contains its complete durable references
-and output edge. For accepted spawn Steps, the projector preserves the committed
-admission output through canceled delivery and emits that persisted output. It
+and output edge. For accepted spawn Steps, the projector preserves successful
+admission through canceled delivery and emits the persisted status/output. It
 does not reconstruct runtime locals. `RunTracer.on_event()` is asynchronous. The executor
 serializes tracer calls and awaits each one on the owner event loop, so tracers
 never need to infer which worker thread emitted an event.

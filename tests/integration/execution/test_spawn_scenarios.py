@@ -21,7 +21,7 @@ from toolang.execution.records import (
     output_to_data,
     RunControlPayload,
 )
-from toolang.execution.types import RunHandle, ThreadPrefix, Output
+from toolang.execution.types import RunHandle, ThreadPrefix, Output, ToolStepNoted
 
 
 @pytest.mark.parametrize(
@@ -72,10 +72,11 @@ agic child(_: Text) -> Text:
                 assert parent.output is not None
                 assert harness.store.resolve_value(parent.output.value) == "input"
             step = harness.store.list_steps(run_id=parent.id)[0]
+            assert step.kind == "spawn" and step.status == "succeeded"
             assert step.output is not None and isinstance(step.output.value, RunHandle)
             handle = step.output.value
             assert output_from_data(output_to_data(step.output)) == step.output
-            assert step.output.type is None
+            assert step.output.type == "_Run<Text>"
             child = harness.store.get_run(run_id=handle.id)
             assert child is not None and child.parent is None
             assert handle.thread != thread and handle.thread.startswith("spawn_")
@@ -87,7 +88,10 @@ agic child(_: Text) -> Text:
             assert spawned_thread.peer.type == "agent"
             entry = harness.store.get_run_control(run_id=handle.id, index=0)
             assert entry is not None and entry.triggered_by == step.ref
-            assert handle.result is not None and handle.result.type_name == "Text"
+            assert isinstance(entry.payload, RunControlPayload)
+            assert entry.payload.spawn_context is not None
+            assert entry.payload.spawn_context.result is not None
+            assert entry.payload.spawn_context.result.type_name == "Text"
             await asyncio.wait_for(gate.wait_until_entered(), 2)
             assert harness.store.run_handle_view(handle)["status"] == "running"
             assert len(harness.adapter.invocations) == 1
@@ -191,9 +195,13 @@ flow child(_: Text) -> Text:
 
 
 def test_handle_record_is_distinct_from_json():
-    handle = RunHandle("run_test", "spawn_test", None)
+    handle = RunHandle("run_test", "spawn_test")
     encoded = output_to_data(Output(handle, "job"))
-    assert "handle" in encoded and "value" not in encoded
+    assert encoded == {
+        "type": "_Run",
+        "value": {"id": "run_test", "thread": "spawn_test"},
+        "binding": "job",
+    }
     plain = output_from_data(
         output_to_data(
             Output(
@@ -202,6 +210,65 @@ def test_handle_record_is_distinct_from_json():
         )
     )
     assert not isinstance(plain.value, RunHandle)
+
+
+def test_typed_spawn_keeps_result_contract_on_the_root(tmp_path: Path):
+    from dataclasses import replace
+
+    gate = AsyncGate()
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+struct Report:
+  text: Text
+flow parent(_: Text) -> Text:
+  let job = spawn child
+agic child() -> Report[]:
+  user: Work
+""",
+        responses=[
+            ScriptedModelTurn(
+                ModelCallResult(message=Message.assistant('[{"text":"done"}]')),
+                gate=gate,
+            )
+        ],
+    )
+
+    async def scenario():
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            parent = await harness.executor.run(
+                harness.run_spec(
+                    thread=thread, runnable="flow:parent", primary=(TextPart("input"),)
+                )
+            )
+            assert parent.status == "succeeded", (
+                harness.store.resolve_error(parent.error) if parent.error else None
+            )
+            step = harness.store.list_steps(run_id=parent.id)[0]
+            assert step.output is not None and isinstance(step.output.value, RunHandle)
+            handle = step.output.value
+            assert step.output.type == "_Run<Report[]>"
+            assert output_to_data(step.output)["value"] == {
+                "id": handle.id,
+                "thread": handle.thread,
+            }
+            entry = harness.store.get_run_control(run_id=handle.id, index=0)
+            assert entry is not None and isinstance(entry.payload, RunControlPayload)
+            assert entry.payload.spawn_context is not None
+            contract = entry.payload.spawn_context.result
+            assert contract is not None and contract.type_name == "Report[]"
+            assert contract.definitions == {"Report": (("text", "Text", False),)}
+            with pytest.raises(TypeError):
+                contract.definitions["Other"] = ()  # ty: ignore[invalid-assignment]
+            with pytest.raises(ValueError, match="result type is mismatched"):
+                harness.store.run_handle_view(replace(handle, result_type="Text"))
+            await asyncio.wait_for(gate.wait_until_entered(), 2)
+            gate.release()
+            await asyncio.gather(*tuple(harness.executor._tasks))
+            assert harness.store.run_handle_view(handle)["status"] == "succeeded"
+
+    asyncio.run(scenario())
 
 
 @pytest.mark.parametrize("caller", ["flow", "agic"])
@@ -313,7 +380,7 @@ flow child(_: Text):
             step = next(
                 s
                 for s in harness.store.list_steps(run_id=parent.id)
-                if s.kind == ("run" if caller == "flow" else "tool")
+                if s.kind == ("spawn" if caller == "flow" else "tool")
             )
             end = next(
                 e
@@ -321,14 +388,25 @@ flow child(_: Text):
                 if isinstance(e, StepEnd) and e.step == step.ref
             )
             assert end.output == step.output
+            assert end.status == step.status
             assert run_event_from_data(run_event_to_data(end)) == end
             roots = [r for r in harness.store.list_runs() if r.id != parent.id]
             if failure in {"admission", "commit"}:
+                assert step.status == "failed"
+                if caller == "flow":
+                    assert step.output is None
+                else:
+                    assert step.output is not None and isinstance(
+                        step.output.value, ToolResultPart
+                    )
+                    assert step.output.value.error and step.output.value.output == {}
                 assert roots == []
                 assert len(harness.store.list_threads()) == 1
                 return
             assert len(roots) == 1
             root = roots[0]
+            assert step.status == "succeeded"
+            assert step.error is None and step.aborted_by is None
             assert root.parent is None
             assert step.output is not None
             if caller == "flow":
@@ -341,6 +419,8 @@ flow child(_: Text):
                     "thread": str(root.thread),
                     "status": "pending",
                 }
+                assert isinstance(step.noted, ToolStepNoted)
+                assert step.noted.summary == f"Spawned {root.id} in {root.thread}"
             if failure == "dispatch":
                 assert root.status == "failed"
                 assert root.error is not None
@@ -416,7 +496,7 @@ agic child() -> Text:
             assert projection.input
             selected = harness.store.select_pointer(Pointer(projection.input[0]))
             assert selected.runtime == handle
-            assert str(selected.pointer).endswith("/output/handle")
+            assert str(selected.pointer).endswith("/output/value")
             assert selected.child("id").runtime == handle.id
             assert selected.child("thread").runtime == handle.thread
             if not dispatch_failure:

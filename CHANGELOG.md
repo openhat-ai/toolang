@@ -38,11 +38,16 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Changed
 
-- Flow `spawn` Step outputs add a native run-handle variant to persisted records
-  and events, shaped `{"handle": ..., "binding": ...}`, with references at
-  `output/handle`. Ordinary outputs retain their existing `value` representation
-  and `output/value` references. Consumers that assume every output carries
-  `value` must support both variants.
+- Flow `spawn` Step outputs use the same `{"type", "value", "binding"}` envelope
+  and `output/value` references as ordinary outputs. The native handle's runtime
+  type tag is `_Run<T>` when the target's result type `T` is known and `_Run`
+  otherwise, and its value holds only `id` and `thread`; user-authored struct
+  names cannot begin with `_`. The complete accepted result contract stays on
+  the spawned root entry; historical ordinary stored outputs without an explicit
+  `type` remain readable. Flow `spawn` records a spawn-kind Step, while agic
+  `_toolang/spawn` remains an ordinary tool Step. Once admission commits, the
+  Step succeeds and keeps its receipt even if delivery is interrupted or the
+  caller is canceled, and a dispatch failure is recorded on the new root.
 
 - Hands now authorizes both `run` and `spawn`, while handoffs still authorizes
   `exec`. The public `ToolRuntime` protocol adds `spawn(runnable, input)`, so
@@ -66,12 +71,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   `keep`, `drop`, `sort`, and `reduce` operate on outer items. Arrays from
   parameters, calls, helper flows, `exec`, and restored values behave
   identically, and array-valued child results stay nested.
-- **Breaking:** the `Local` wrapper is removed. Stored outputs contain only
-  `value` and `binding`, and the HTTP/event protocol projection contains `type`,
-  `value`, and `binding`; update output references from `output/local/value` to
-  `output/value`. RunStore schema 51 rejects older stores before mutation with no
-  compatibility reader or migration, so keep the matching runtime to inspect old
-  records and start new runs on a fresh store.
+- **Breaking:** the `Local` wrapper is removed. Stored and HTTP/event outputs
+  share the `type`, `value`, and `binding` envelope; update output references
+  from `output/local/value` to `output/value`. RunStore schema 51 rejects older
+  stores before mutation with no compatibility reader or migration, so keep the
+  matching runtime to inspect old records and start new runs on a fresh store.
 
 - **Breaking:** the `me` tool `me__loaded(receipts)` is replaced by `me__sync()`,
   which waits for one State publication and returns `{revision, files}` for the

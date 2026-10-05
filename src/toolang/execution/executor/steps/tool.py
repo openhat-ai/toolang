@@ -497,6 +497,14 @@ async def _cancel(
         part = canceled_result(
             call, reason="canceled by steer" if state.immediate_steer() else "canceled"
         )
+    if call.name == "_toolang__spawn" and state.execution is not None:
+        record = state.execution.store.get_step(ref=step)
+        if (
+            record is not None
+            and record.output is not None
+            and isinstance(record.output.value, ToolResultPart)
+        ):
+            part = record.output.value
     if trigger == "model":
         state.messages.append_ref(
             "tool",

@@ -265,12 +265,12 @@ def _select_runtime_child(
     source: str,
 ) -> tuple[object, object, str, str]:
     if isinstance(runtime, Output):
-        if token == "handle" and isinstance(runtime.value, RunHandle):
-            return runtime.value, RunHandle, "RunHandle", "Json"
         if token == "type":
             return runtime.type, str, "str", "Text"
         if token == "value":
-            return runtime.value, Any, "Value | TypedRef", runtime.type or "Json"
+            if isinstance(runtime.value, RunHandle):
+                return runtime.value, RunHandle, runtime.type, "Json"
+            return runtime.value, Any, "Value | TypedRef", runtime.type
     if isinstance(runtime, CallInput):
         child = runtime[token]
         name = child.type if isinstance(child, TypedRef) else value_type(child)

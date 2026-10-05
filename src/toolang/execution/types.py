@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Annotated, Any, Literal, TypeAlias, cast
 
-from pydantic import BeforeValidator, Field, WrapSerializer, TypeAdapter
+from pydantic import BeforeValidator, Field, WrapSerializer
 from pydantic_core import core_schema
 
 from toolang.base.types.compaction import CompactionResult
@@ -52,8 +52,6 @@ from toolang.lang.ast import (
     to_data as ast_to_data,
 )
 from toolang.lang.types import Array, Struct, Value, validate_type, value_type
-from toolang.lang.contracts import OutputContract
-from toolang.common.immutable import freeze_mapping
 
 _EXECUTION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
 _LOCAL_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -924,56 +922,43 @@ _PART_PROTOCOL_TYPES = frozenset(
 
 @dataclass(frozen=True, slots=True)
 class RunHandle:
-    """Durable execution identity, not an authored language value type."""
+    """Durable execution identity; the referenced run owns its result contract."""
 
     id: str
     thread: str
-    result: OutputContract | None
+    result_type: str | None = None
 
     def __post_init__(self) -> None:
         RunRef(self.id)
         ThreadRef(self.thread)
-        if self.result is not None:
-            validate_type(self.result.type_name)
-            object.__setattr__(
-                self,
-                "result",
-                OutputContract(
-                    self.result.type_name, freeze_mapping(self.result.definitions)
-                ),
-            )
+        if self.result_type is not None:
+            validate_type(self.result_type)
+            if self.result_type.startswith("_"):
+                raise ValueError(
+                    "run handle result type must be an authored value type"
+                )
+
+    @property
+    def type(self) -> str:
+        return "_Run" if self.result_type is None else f"_Run<{self.result_type}>"
 
     def to_data(self) -> dict[str, object]:
-        return {
-            "id": self.id,
-            "thread": self.thread,
-            "result": None
-            if self.result is None
-            else {
-                "type_name": self.result.type_name,
-                "definitions": {
-                    name: [list(field) for field in fields]
-                    for name, fields in self.result.definitions.items()
-                },
-            },
-        }
+        return {"id": self.id, "thread": self.thread}
 
     @classmethod
-    def from_data(cls, data: object) -> RunHandle:
-        if not isinstance(data, Mapping) or set(data) != {"id", "thread", "result"}:
-            raise ValueError("run handle requires id, thread, and result contract")
+    def from_data(cls, data: object, *, type_name: str) -> RunHandle:
+        if type_name == "_Run":
+            result_type = None
+        elif type_name.startswith("_Run<") and type_name.endswith(">"):
+            result_type = type_name[5:-1]
+        else:
+            raise ValueError(f"invalid run handle type: {type_name!r}")
+        if not isinstance(data, Mapping) or set(data) != {"id", "thread"}:
+            raise ValueError("run handle requires id and thread")
         data = cast(Mapping[str, Any], data)
         if not isinstance(data["id"], str) or not isinstance(data["thread"], str):
             raise ValueError("run handle identities must be text")
-        result = (
-            None
-            if data["result"] is None
-            else TypeAdapter(OutputContract).validate_python(data["result"])
-        )
-        handle = cls(data["id"], data["thread"], result)
-        if handle.to_data() != dict(data):
-            raise ValueError("run handle requires a canonical result contract")
-        return handle
+        return cls(data["id"], data["thread"], result_type)
 
 
 @dataclass(frozen=True, slots=True)
@@ -989,7 +974,7 @@ class Output:
                 self, "value", value_for_type(value_type(self.value), self.value)
             )
         if not isinstance(self.value, RunHandle):
-            validate_runtime_value(self.value, self.type or "Json")
+            validate_runtime_value(self.value, self.type)
         if self.binding is not None and (
             not isinstance(self.binding, str)
             or not _LOCAL_NAME_RE.fullmatch(self.binding)
@@ -997,17 +982,11 @@ class Output:
             raise ValueError(f"invalid output binding: {self.binding!r}")
 
     @property
-    def value_field(self) -> Literal["value", "handle"]:
-        """Return the canonical record field containing this runtime value."""
-
-        return "handle" if isinstance(self.value, RunHandle) else "value"
-
-    @property
-    def type(self) -> str | None:
+    def type(self) -> str:
         """Return the concrete value type or a reference's expected type."""
 
         if isinstance(self.value, RunHandle):
-            return None
+            return self.value.type
         return (
             self.value.type
             if isinstance(self.value, TypedRef)
@@ -1026,7 +1005,7 @@ class Output:
     def __get_pydantic_core_schema__(
         cls, _source_type: Any, _handler: Any
     ) -> core_schema.CoreSchema:
-        value_schema = core_schema.typed_dict_schema(
+        protocol_schema = core_schema.typed_dict_schema(
             {
                 "type": core_schema.typed_dict_field(core_schema.str_schema()),
                 "value": core_schema.typed_dict_field(core_schema.any_schema()),
@@ -1035,50 +1014,6 @@ class Output:
                 ),
             },
             extra_behavior="forbid",
-        )
-        protocol_schema = core_schema.union_schema(
-            [
-                value_schema,
-                core_schema.typed_dict_schema(
-                    {
-                        "handle": core_schema.typed_dict_field(
-                            core_schema.typed_dict_schema(
-                                {
-                                    "id": core_schema.typed_dict_field(
-                                        core_schema.str_schema()
-                                    ),
-                                    "thread": core_schema.typed_dict_field(
-                                        core_schema.str_schema()
-                                    ),
-                                    "result": core_schema.typed_dict_field(
-                                        core_schema.nullable_schema(
-                                            core_schema.typed_dict_schema(
-                                                {
-                                                    "type_name": core_schema.typed_dict_field(
-                                                        core_schema.str_schema()
-                                                    ),
-                                                    "definitions": core_schema.typed_dict_field(
-                                                        core_schema.dict_schema(
-                                                            core_schema.str_schema(),
-                                                            core_schema.any_schema(),
-                                                        )
-                                                    ),
-                                                },
-                                                extra_behavior="forbid",
-                                            )
-                                        )
-                                    ),
-                                },
-                                extra_behavior="forbid",
-                            )
-                        ),
-                        "binding": core_schema.typed_dict_field(
-                            core_schema.nullable_schema(core_schema.str_schema())
-                        ),
-                    },
-                    extra_behavior="forbid",
-                ),
-            ]
         )
         return core_schema.json_or_python_schema(
             json_schema=core_schema.no_info_after_validator_function(
@@ -1104,20 +1039,19 @@ class Output:
 def output_from_protocol_data(payload: Mapping[str, object]) -> Output:
     """Decode an output's typed value and binding."""
 
-    if set(payload) == {"handle", "binding"}:
-        binding = payload["binding"]
-        if binding is not None and not isinstance(binding, str):
-            raise ValueError("output binding must be text or null")
-        return Output(RunHandle.from_data(payload["handle"]), binding)
     if set(payload) != {"type", "value", "binding"}:
         raise ValueError("output requires type, value, and binding fields")
     raw_type = payload["type"]
     if not isinstance(raw_type, str):
         raise ValueError("output type must be text")
-    type_name = validate_type(raw_type)
     binding = payload["binding"]
     if binding is not None and not isinstance(binding, str):
         raise ValueError("output binding must be text or null")
+    if raw_type == "_Run" or raw_type.startswith("_Run<"):
+        return Output(
+            RunHandle.from_data(payload["value"], type_name=raw_type), binding
+        )
+    type_name = validate_type(raw_type)
     return Output(
         value_for_type(
             type_name, value_from_protocol_data(payload["value"], type_name)
@@ -1129,11 +1063,11 @@ def output_from_protocol_data(payload: Mapping[str, object]) -> Output:
 def output_to_protocol_data(output: Output) -> dict[str, object]:
     """Project an output with its derived type for plain JSON consumers."""
 
-    if isinstance(output.value, RunHandle):
-        return {"handle": output.value.to_data(), "binding": output.binding}
     return {
         "type": output.type,
-        "value": value_to_protocol_data(output.value),
+        "value": output.value.to_data()
+        if isinstance(output.value, RunHandle)
+        else value_to_protocol_data(output.value),
         "binding": output.binding,
     }
 
@@ -1425,6 +1359,7 @@ ControlStatus = Literal["pending", "applied", "wontapply", "revoked"]
 StepKind = Literal[
     "exec",
     "run",
+    "spawn",
     "agent",
     "human",
     "model",
@@ -1960,7 +1895,9 @@ def _flow_statement_matches_kind(value: object, kind: StepKind) -> bool:
             isinstance(value, KeepStmt | DropStmt) and value.runnable is None
         )
     if kind == "run":
-        return isinstance(value, RunStmt | SpawnStmt)
+        return isinstance(value, RunStmt)
+    if kind == "spawn":
+        return isinstance(value, SpawnStmt)
     if kind == "agent":
         return isinstance(value, SeekStmt)
     if kind == "human":
