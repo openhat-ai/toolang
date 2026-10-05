@@ -550,6 +550,8 @@ class _Lowerer:
             return ast.ExecStmt(runnable=self._runnable(node), span=span, doc=doc)
         if node.type == "run_statement":
             return ast.RunStmt(runnable=self._runnable(node), span=span, doc=doc)
+        if node.type == "spawn_statement":
+            return ast.SpawnStmt(runnable=self._runnable(node), span=span, doc=doc)
         if node.type == "seek_statement":
             return ast.SeekStmt(
                 name=self._required_text(node, "agent").strip(),

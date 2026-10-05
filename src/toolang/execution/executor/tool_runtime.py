@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from toolang.base.errors import ToolangError
 from toolang.base.protocols.tool import ToolRuntime
 from toolang.base.types.tool import ToolContext, ToolResult
+from toolang.base.types.message import ToolResultPart
 from toolang.base.utils.workspace_paths import resolve_input_path, workspace_uri
 from toolang.lang.input import CallInput
 
@@ -244,11 +245,46 @@ class _ToolRuntime(ToolRuntime):
             }
         )
 
+    async def spawn(self, runnable: str, input: Mapping[str, Any]) -> ToolResult:
+        from .spawn import accept
+
+        execution = self.state.execution
+        if execution is None:
+            raise RuntimeError("Agic runtime execution is unavailable")
+        try:
+            await accept(
+                execution,
+                self.state.prepared.run,
+                {},
+                self.step,
+                runnable,
+                resolution="state",
+                raw_input=input,
+                authorize=lambda target: self._authorize("spawn", target),
+                state_snapshot=(
+                    self.state.prepared.state,
+                    self.state.prepared.run.state_ref,
+                ),
+            )
+        except _RunRejected as exc:
+            return ToolResult(error=str(exc), output=exc.details)
+        except Exception as exc:
+            self.failure = exc
+            raise
+        recorded = execution.store.get_step(ref=self.step)
+        if (
+            recorded is None
+            or recorded.output is None
+            or not isinstance(recorded.output.value, ToolResultPart)
+        ):
+            raise RuntimeError("spawn admission has no recorded tool result")
+        return ToolResult(dict(recorded.output.value.output))
+
     def _authorize(
-        self, operation: Literal["run", "exec"], target: ResolvedRunnable
+        self, operation: Literal["run", "spawn", "exec"], target: ResolvedRunnable
     ) -> None:
         if not self.routes.allows(operation, target):
-            selector = "hands" if operation == "run" else "handoffs"
+            selector = "hands" if operation in {"run", "spawn"} else "handoffs"
             raise ToolangError(
                 f"runnable is not authorized by {selector}: {target.ref}"
             )

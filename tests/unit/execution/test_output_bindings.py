@@ -102,8 +102,9 @@ def test_output_presence_bindings_and_references_survive_reopening(
             finished_at="2026-01-01T00:00:01Z",
         )
         reference = FieldRef.from_path(step.ref, "output", "value")
+        assert output is None or output.type is not None
         retained = (
-            Output(TypedRef(reference, output.type), binding)
+            Output(TypedRef(reference, output.type or "Json"), binding)
             if output is not None
             else None
         )
@@ -155,3 +156,35 @@ def test_output_codecs_reject_removed_wrappers(data) -> None:
     for decode in (output_from_data, output_from_protocol_data):
         with pytest.raises(ValueError):
             decode(data)
+
+
+@pytest.mark.parametrize("binding", [None, "job"])
+def test_run_handle_has_one_protocol_and_event_shape(binding):
+    from toolang.execution.types import RunHandle
+    from toolang.execution.events import StepEnd
+    from toolang.execution.types import StepRef
+    from toolang.lang.contracts import OutputContract
+
+    contract = OutputContract("Report[]", {"Report": (("text", "Text", False),)})
+    handle = RunHandle("run_spawned", "spawn_thread", contract)
+    output = Output(handle, binding)
+    stored = output_to_data(output)
+    assert stored == output_to_protocol_data(output)
+    assert output_from_data(stored) == output
+    assert output_from_protocol_data(stored) == output
+    adapter = TypeAdapter(Output)
+    assert adapter.validate_json(adapter.dump_json(output)) == output
+    assert adapter.dump_python(output, mode="json") == stored
+    event = StepEnd(
+        step=StepRef.parse("run_source.0"),
+        kind="run",
+        status="succeeded",
+        output=output,
+    )
+    assert run_event_from_data(run_event_to_data(event)) == event
+    assert isinstance(stored["handle"], dict)
+    assert "status" not in stored["handle"]
+    assert handle.result is not None
+    with pytest.raises(TypeError):
+        handle.result.definitions["Other"] = ()  # ty: ignore[invalid-assignment]
+    assert "handle" in str(adapter.json_schema())

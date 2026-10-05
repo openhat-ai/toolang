@@ -240,7 +240,7 @@ agic child(_: Text) -> Text:
             prohibitions = harness.adapter.invocations[1].call.instructions.split(
                 "## Don't", 1
             )[1]
-            assert "call run or exec without authorized routes" in prohibitions
+            assert "call run, spawn, or exec without authorized routes" in prohibitions
             assert {
                 tool.name for tool in harness.adapter.invocations[1].call.tools
             } == {
@@ -248,6 +248,7 @@ agic child(_: Text) -> Text:
                 "_toolang__exec",
                 "_toolang__pick",
                 "_toolang__run",
+                "_toolang__spawn",
             }
             assert_run_event_integrity(tracer.events)
 
@@ -1386,6 +1387,7 @@ agic target(_: Text) -> Text:
                 "_toolang__exec",
                 "_toolang__pick",
                 "_toolang__run",
+                "_toolang__spawn",
                 "web__search",
             }
             assert {tool.name for tool in target_call.tools} == {
@@ -1393,6 +1395,7 @@ agic target(_: Text) -> Text:
                 "_toolang__exec",
                 "_toolang__pick",
                 "_toolang__run",
+                "_toolang__spawn",
                 "web__search",
             }
             assert {
@@ -1402,6 +1405,7 @@ agic target(_: Text) -> Text:
                 "_toolang__exec",
                 "_toolang__pick",
                 "_toolang__run",
+                "_toolang__spawn",
                 "web__search",
             }
             assert len(web.calls) == 1
@@ -1581,11 +1585,12 @@ agic caller() -> Text:
                 "_toolang__exec",
                 "_toolang__pick",
                 "_toolang__run",
+                "_toolang__spawn",
             }
             assert route_snapshots(first_call) == {"hands": [], "handoffs": []}
             assert '"runnables"' not in first_call.instructions
             prohibitions = first_call.instructions.split("## Don't", 1)[1]
-            assert "call run or exec without authorized routes" in prohibitions
+            assert "call run, spawn, or exec without authorized routes" in prohibitions
             result = last_tool_result(harness.adapter.invocations[1].call)
             assert isinstance(result, ToolResultPart)
             assert result.error == "Runnable not found: target"
@@ -2065,6 +2070,7 @@ agic target(_: Text) -> Text:
                 "_toolang__exec",
                 "_toolang__pick",
                 "_toolang__run",
+                "_toolang__spawn",
                 "beta__use",
             }
             assert {tool.name for tool in after_publication.tools} == {
@@ -2072,6 +2078,7 @@ agic target(_: Text) -> Text:
                 "_toolang__exec",
                 "_toolang__pick",
                 "_toolang__run",
+                "_toolang__spawn",
                 "beta__use",
             }
             assert "old target state" in before_publication.instructions

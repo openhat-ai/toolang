@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
 from toolang.lang.input import resolve_input_parts_with_provenance
+from toolang.common.template import template_root_names
 from toolang.state.state import state_program
 
 from ..calls import prompt_definitions
@@ -29,6 +30,9 @@ def evaluate_content(
     resources = binding.resources
     if resources is None:
         raise RuntimeError(f"run resources missing: {binding.run_id}")
+    locals = execution.project_handle_locals(
+        locals, step=path, names=template_root_names(content)
+    )
     resolution = resolve_input_parts_with_provenance(
         content,
         program=program,

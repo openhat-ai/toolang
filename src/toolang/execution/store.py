@@ -31,6 +31,7 @@ from toolang.base.types.tool import ToolDefinition
 from toolang.base.types.policy import RunLimits
 from toolang.base.utils.workspace_paths import parse_cwd
 from toolang.common.time import utc_now
+from toolang.lang.ast import SpawnStmt
 from .errors import HistoryChangedError, RunStoreSchemaError
 from .assembly.run_results import run_completion, run_receipt, scheduled_run
 from .assembly.utils import control_message, literal_delta, render_delta
@@ -58,6 +59,7 @@ from .records import (
     RetryControlPayload,
     RewindControlPayload,
     RunControlPayload,
+    SpawnContext,
     SteerControlPayload,
     CancelControlPayload,
     control_payload_from_data,
@@ -104,6 +106,7 @@ from .types import (
     LoopStepNoted,
     StepStatus,
     RunRef,
+    RunHandle,
     RunLink,
     StepPath,
     StepRef,
@@ -179,13 +182,12 @@ class RunStore:
                 self._conn.execute("BEGIN IMMEDIATE")
             try:
                 yield
+                if owner:
+                    self._conn.commit()
             except BaseException:
                 if owner:
                     self._conn.rollback()
                 raise
-            else:
-                if owner:
-                    self._conn.commit()
 
     @contextmanager
     def read_transaction(self) -> Iterator[None]:
@@ -345,6 +347,8 @@ class RunStore:
         prompt_invocations: tuple[PromptInvocation, ...] = (),
         schedule_receipt: bool = False,
         cwd: str = "",
+        triggered_by: StepRef | None = None,
+        spawn_context: SpawnContext | None = None,
     ) -> tuple[RunRecord, ControlRecord]:
         """Atomically insert one new run and its entry control."""
 
@@ -368,8 +372,7 @@ class RunStore:
             raise ValueError("child run requires an Agent State control reference")
         _validate_request_id(request_id)
 
-        with self._lock:
-            self._conn.execute("BEGIN IMMEDIATE")
+        with self.write_transaction():
             try:
                 if (
                     self._conn.execute(
@@ -451,6 +454,7 @@ class RunStore:
                     model_request=model_request,
                     input=input,
                     horizon=horizon,
+                    spawn_context=spawn_context,
                     sandbox=sandbox,
                     cwd=cwd,
                     authored_input=authored_input,
@@ -469,7 +473,7 @@ class RunStore:
                     created_at=created_at,
                     finished_at=None,
                     claimed=False,
-                    triggered_by=parent,
+                    triggered_by=triggered_by or parent,
                 )
                 if schedule_receipt:
                     if parent is None:
@@ -515,17 +519,129 @@ class RunStore:
                     "SELECT * FROM controls WHERE id = ?",
                     (str(control_ref),),
                 ).fetchone()
-                self._conn.commit()
             except sqlite3.IntegrityError as exc:
-                self._conn.rollback()
                 identity = request_id or run_id
                 raise ValueError(f"run control already exists: {identity}") from exc
-            except Exception:
-                self._conn.rollback()
-                raise
         if run_row is None or control_row is None:
             raise RuntimeError(f"run acceptance failed: {run_id}")
         return _run_from_row(run_row), _control_from_row(control_row)
+
+    def accept_spawn(
+        self,
+        *,
+        handle: RunHandle,
+        source: StepRef,
+        peer: ThreadPeer,
+        resources: AgentResources,
+        limits: RunLimits,
+        state: str,
+        runnable: str,
+        model_request: ModelRequest | None,
+        input: CallInput[Value | TypedRef],
+        sandbox: str,
+        cwd: str,
+        created_at: str,
+        context: SpawnContext,
+    ) -> tuple[RunHandle, bool]:
+        """Commit a new thread, independent root, and launch output together."""
+
+        if handle.result != context.result:
+            raise ValueError("spawn handle differs from the accepted result contract")
+        with self.write_transaction():
+            step = self.get_step(ref=source)
+            if step is None:
+                raise ValueError(f"spawn source step not found: {source}")
+            if not (
+                isinstance(step.given, SpawnStmt)
+                or (
+                    isinstance(step.given, ToolStepGiven)
+                    and step.given.trigger == "model"
+                    and step.given.call.name == "_toolang__spawn"
+                )
+            ):
+                raise ValueError("spawn requires a flow spawn or model Tool Step")
+            previous = self._conn.execute(
+                "SELECT * FROM controls WHERE kind = 'run' AND triggered_by = ?",
+                (str(source),),
+            ).fetchone()
+            if previous is not None:
+                control = _control_from_row(previous)
+                payload = control.payload
+                if (
+                    not isinstance(payload, RunControlPayload)
+                    or payload.runnable != runnable
+                    or payload.input != input
+                    or payload.spawn_context != context
+                    or payload.resources != resources
+                    or payload.limits != limits
+                    or payload.state != state
+                    or payload.model_request != model_request
+                    or payload.sandbox != sandbox
+                    or payload.cwd != cwd
+                ):
+                    raise ValueError(f"conflicting spawn admission: {source}")
+                run = self.get_run(run_id=str(control.target))
+                if run is None or run.parent is not None:
+                    raise ValueError(f"invalid spawn admission: {source}")
+                thread = self.get_thread(thread_id=str(run.thread))
+                if thread is None or thread.peer != peer:
+                    raise ValueError(f"conflicting spawn thread: {source}")
+                original = RunHandle(run.id, str(run.thread), handle.result)
+                if (
+                    step.output is not None
+                    and isinstance(step.output.value, RunHandle)
+                    and step.output.value != original
+                ):
+                    raise ValueError(f"conflicting spawn handle: {source}")
+                return original, False
+            if step.status != "running" or step.output is not None:
+                raise ValueError("spawn requires an unacknowledged running Step")
+            self.create_thread(
+                thread_id=handle.thread,
+                peer=peer,
+                created_at=created_at,
+                triggered_by=source,
+            )
+            self.accept_run(
+                run_id=handle.id,
+                parent=None,
+                thread=handle.thread,
+                resources=resources,
+                limits=limits,
+                state=state,
+                runnable=runnable,
+                model_request=model_request,
+                input=input,
+                sandbox=sandbox,
+                cwd=cwd,
+                occurrence=None,
+                request_id=None,
+                created_at=created_at,
+                triggered_by=source,
+                spawn_context=context,
+            )
+            if isinstance(step.given, SpawnStmt):
+                output = Output(handle, step.given.binding)
+            else:
+                call = step.given.call
+                output = Output(
+                    ToolResultPart(
+                        tool_call_id=call.tool_call_id,
+                        call_id=call.call_id,
+                        tool_name=call.name,
+                        tool_family=call.name,
+                        output={
+                            "id": handle.id,
+                            "thread": handle.thread,
+                            "status": "pending",
+                        },
+                    )
+                )
+            self._conn.execute(
+                "UPDATE steps SET output = ? WHERE id = ?",
+                (_dump_json(output_to_data(output)), str(source)),
+            )
+        return handle, True
 
     def accept_execute_control(
         self,
@@ -1282,6 +1398,7 @@ class RunStore:
         peer: ThreadPeer | None = None,
         request_id: str | None = None,
         created_at: str | None = None,
+        triggered_by: StepRef | None = None,
     ) -> tuple[ThreadRecord, ControlRecord]:
         """Atomically create one thread and its create control."""
 
@@ -1290,8 +1407,7 @@ class RunStore:
         _validate_request_id(request_id)
         now = created_at or utc_now()
         effective_peer = peer or ThreadPeer()
-        with self._lock:
-            self._conn.execute("BEGIN IMMEDIATE")
+        with self.write_transaction():
             try:
                 if request_id is not None and (
                     self._conn.execute(
@@ -1320,6 +1436,7 @@ class RunStore:
                     created_at=now,
                     finished_at=now,
                     claimed=True,
+                    triggered_by=triggered_by,
                 )
                 self._conn.execute(
                     """
@@ -1343,14 +1460,9 @@ class RunStore:
                     "SELECT * FROM controls WHERE id = ?",
                     (str(control_ref),),
                 ).fetchone()
-                self._conn.commit()
             except sqlite3.IntegrityError as exc:
-                self._conn.rollback()
                 identity = request_id or thread_id
                 raise ValueError(f"thread control already exists: {identity}") from exc
-            except Exception:
-                self._conn.rollback()
-                raise
         if thread_row is None or control_row is None:
             raise RuntimeError(f"thread creation failed: {thread_id}")
         return _thread_from_row(thread_row), _control_from_row(control_row)
@@ -1778,9 +1890,28 @@ class RunStore:
     def resolve_output(self, output: Output) -> Output:
         """Resolve and validate an output's value while retaining its binding."""
 
+        if isinstance(output.value, RunHandle):
+            return Output(
+                cast(Value, self.run_handle_view(output.value)), output.binding
+            )
         value = cast(Value | TypedRef, self.resolve_value(output.value))
-        validate_runtime_value(value, output.type)
+        validate_runtime_value(value, output.type or "Json")
         return replace(output, value=value)
+
+    def run_handle_view(self, handle: RunHandle) -> dict[str, str]:
+        """Project one current status snapshot without waiting or adopting work."""
+        run = self.get_run(run_id=handle.id)
+        if run is None or str(run.thread) != handle.thread:
+            raise ValueError(f"run handle target is missing or mismatched: {handle.id}")
+        entry = self.get_run_control(run_id=handle.id, index=0)
+        if (
+            entry is None
+            or not isinstance(entry.payload, RunControlPayload)
+            or entry.payload.spawn_context is None
+            or entry.payload.spawn_context.result != handle.result
+        ):
+            raise ValueError(f"run handle result contract is mismatched: {handle.id}")
+        return {"id": handle.id, "thread": handle.thread, "status": run.status}
 
     def resolve_value(self, value: object) -> object:
         """Resolve every immutable pointer contained in one durable value."""
@@ -2641,6 +2772,51 @@ class RunStore:
                 ):
                     removed_runs.add(run.id)
                     changed = True
+        for row in self._conn.execute(
+            "SELECT controls.* FROM controls JOIN runs ON runs.id = controls.target "
+            "WHERE controls.kind = 'run' AND runs.parent IS NULL AND controls.triggered_by IS NOT NULL"
+        ):
+            control = _control_from_row(row)
+            if control.triggered_by is not None and (
+                str(control.triggered_by) in step_keys
+                or control.triggered_by.run_id in removed_runs
+            ):
+                raise ValueError(
+                    f"retry would delete spawn origin {control.triggered_by}; use rerun"
+                )
+            payload = control.payload
+            if (
+                not isinstance(payload, RunControlPayload)
+                or payload.spawn_context is None
+            ):
+                continue
+            pending = list(_value_refs(payload.input))
+            seen: set[FieldRef] = set()
+            while pending:
+                ref = pending.pop()
+                if ref in seen:
+                    continue
+                seen.add(ref)
+                record = ref.record
+                owner = (
+                    record.run_id
+                    if isinstance(record, StepRef)
+                    else str(record.target)
+                    if isinstance(record, ControlRef)
+                    else str(record)
+                )
+                removed = owner in removed_runs or str(record) in step_keys
+                if isinstance(record, RunRef):
+                    removed |= any(step.run == record for step in steps)
+                elif isinstance(record, ControlRef):
+                    referenced = self.get_record(Pointer(record))
+                    removed |= (
+                        isinstance(referenced, ControlRecord)
+                        and str(referenced.triggered_by) in step_keys
+                    )
+                if removed:
+                    raise ValueError(f"retry would delete spawn input {ref}; use rerun")
+                pending.extend(_value_refs(self.select_pointer(Pointer(ref)).runtime))
         # A published producer can outlive its owning Step: thread horizons
         # and later Run controls retain its output. Reject the entire retry
         # transaction rather than leave those durable references dangling.
@@ -2846,6 +3022,21 @@ class RunStore:
             existing_step = _step_from_row(existing)
             if existing_step.kind != kind:
                 raise ValueError(f"step kind changed: {ref}")
+            # An accepted spawn survives interrupted delivery. Its admission
+            # output is immutable even when the caller's Step ends unsuccessfully.
+            if (
+                existing_step.output is not None
+                and self._conn.execute(
+                    "SELECT 1 FROM controls JOIN runs ON runs.id = controls.target "
+                    "WHERE controls.kind = 'run' AND runs.parent IS NULL "
+                    "AND controls.triggered_by = ?",
+                    (str(ref),),
+                ).fetchone()
+                is not None
+            ):
+                if status == "succeeded" and output != existing_step.output:
+                    raise ValueError(f"conflicting spawn output: {ref}")
+                output = existing_step.output
             if existing_step.status == "running":
                 self._conn.execute(
                     """
@@ -3785,6 +3976,19 @@ def _dump_json(value: Any) -> str:
         separators=(",", ":"),
         sort_keys=True,
     )
+
+
+def _value_refs(value: object) -> set[FieldRef]:
+    """Collect input dependencies without interpreting lookalike strings."""
+    if isinstance(value, TypedRef):
+        return {value.ref}
+    if isinstance(value, Mapping):
+        children = value.values()
+    elif isinstance(value, Array | tuple | list):
+        children = value
+    else:
+        return set()
+    return set().union(*(_value_refs(child) for child in children))
 
 
 def _record_control_refs(value: object) -> set[ControlRef]:

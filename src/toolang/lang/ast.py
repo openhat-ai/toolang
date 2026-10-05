@@ -166,6 +166,14 @@ class RunStmt(Node):
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class SpawnStmt(Node):
+    kind: ClassVar[str] = "spawn"
+
+    binding: str | None = None
+    runnable: str
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class ExecStmt(Node):
     kind: ClassVar[str] = "exec"
 
@@ -281,6 +289,7 @@ def _flow_statement_kind(value: Any) -> str | None:
 
 FlowStmt = Annotated[
     Annotated[RunStmt, Tag("run")]
+    | Annotated[SpawnStmt, Tag("spawn")]
     | Annotated[ExecStmt, Tag("exec")]
     | Annotated[SeekStmt, Tag("seek")]
     | Annotated[AskStmt, Tag("ask")]

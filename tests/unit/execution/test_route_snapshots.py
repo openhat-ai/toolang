@@ -85,7 +85,7 @@ def test_routes_resolve_portable_exported_flow_names(
     target = routes.resolved[0]
     assert target.runnable.name == name
     assert target.runnable.module == module
-    assert target.actions == (action,)
+    assert target.actions == (("run", "spawn") if action == "run" else (action,))
 
 
 def _document(rendered: str) -> list[dict[str, Any]]:
@@ -452,7 +452,7 @@ agic caller:
     (entry,) = runnable_descriptions(state, routes)
     contract = runnable_signature(state, "agent", target)
     assert entry["ref"] == f"{kind}:main"
-    assert entry["actions"] == ["run", "exec"]
+    assert entry["actions"] == ["run", "spawn", "exec"]
     assert entry["documentation"] == "Handle the general request."
     assert (
         entry["input"]
@@ -604,13 +604,13 @@ def test_default_routes_preserve_public_exports_and_module_boundaries():
         "agent::agic:caller",
         "flows::report::flow:report",
     }
-    assert public.requested_only == ("run", "exec")
-    assert all(route.actions == ("run", "exec") for route in public.resolved)
+    assert public.requested_only == ("run", "spawn", "exec")
+    assert all(route.actions == ("run", "spawn", "exec") for route in public.resolved)
     helper = state.modules[module].agics[0]
     private = resolve_agic_routes(state, helper, module=module)
     assert {route.runnable.qualified for route in private.resolved} == {
         "flows::report::flow:report",
         "flows::report::agic:helper",
     }
-    assert private.requested_only == ("run", "exec")
-    assert all(route.actions == ("run", "exec") for route in private.resolved)
+    assert private.requested_only == ("run", "spawn", "exec")
+    assert all(route.actions == ("run", "spawn", "exec") for route in private.resolved)

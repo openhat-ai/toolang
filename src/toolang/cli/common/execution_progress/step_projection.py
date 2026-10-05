@@ -8,6 +8,7 @@ from toolang.base.types.message import (
     TextPart,
     content_parts,
     ToolCallPart,
+    ToolResultPart,
 )
 from toolang.execution.events import StepBegin, StepEnd
 from toolang.execution.types import (
@@ -15,6 +16,7 @@ from toolang.execution.types import (
     LoopStepNoted,
     ToolStepGiven,
     ToolStepNoted,
+    RunHandle,
 )
 from toolang.execution.values import parts_from_value
 from toolang.lang.ast import FlowStmt
@@ -37,7 +39,7 @@ def runtime_tool_name(begin: StepBegin) -> str | None:
     given = begin.given
     if isinstance(given, ToolStepGiven) and given.plugin == "_toolang":
         name = given.call.name.removeprefix("_toolang__")
-        if name in {"pick", "compact", "honor"}:
+        if name in {"pick", "compact", "honor", "spawn"}:
             return name
     return None
 
@@ -162,6 +164,26 @@ def trace_terminal_rows(
     ]
     if event.status == "failed":
         rows.append(_tool_error_row(error))
+    if name == "spawn":
+        for part in output_parts(event):
+            if (
+                isinstance(part, ToolResultPart)
+                and {"id", "thread", "status"} <= part.output.keys()
+            ):
+                rows[0] = ProgressRow(
+                    f"✧ Caller {event.status} after spawn",
+                    "progress",
+                    surface="tool_summary",
+                )
+                rows.insert(
+                    0,
+                    ProgressRow(
+                        f"✧ Spawned {part.output['id']} in {part.output['thread']}",
+                        "progress",
+                        surface="tool_summary",
+                    ),
+                )
+                break
     return tuple(rows)
 
 
@@ -179,6 +201,12 @@ def flow_terminal_rows(
     """Project terminal output owned directly by an ordinary Flow Step."""
 
     tone = _tone(event.status)
+    if event.output is not None and isinstance(event.output.value, RunHandle):
+        handle = event.output.value
+        rows = [ProgressRow(f"• Spawned {handle.id} in {handle.thread}", "progress")]
+        if event.status != "succeeded":
+            rows.extend(_error_rows(f"Caller {event.status}", error, tone))
+        return tuple(rows)
     if event.status == "failed":
         return flow_error_rows(error, tone=tone)
     if event.status == "canceled":

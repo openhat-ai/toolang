@@ -1,7 +1,6 @@
 # Define root spawning from flow and agic
 
-Status: Proposed runtime definition; full human approval is still required.
-No implementation changes in this PR.
+Status: Approved in #687; implemented by the spawn runtime change.
 
 ## Goal and Scope
 

@@ -37,7 +37,6 @@ from ...types import (
     StepNoted,
     StepRef,
 )
-from ..iteration import iteration_values
 from ..common import (
     _StepFailed,
     BoundRun,
@@ -219,7 +218,7 @@ async def execute(
             agic,
             state=dependencies,
             runtime_tools_enabled=not repairing_output,
-            variables={**variables, **iteration_values()},
+            variables={**variables, **execution.iteration_values()},
             far=selected.far,
             near=selected.near,
             history=selected,

@@ -33,6 +33,7 @@ from toolang.lang.ast import (
     SortStmt,
     RepeatStmt,
     RunStmt,
+    SpawnStmt,
     ExecStmt,
     SeekStmt,
     ReduceStmt,
@@ -137,6 +138,8 @@ class BoundRun:
     occurrence: Occurrence | None = None
     horizon: RunRef | StepRef | None = None
     cwd: str = ""
+    resource_ceiling: AgentResources | None = None
+    captured_iterations: Mapping[str, object] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -353,7 +356,7 @@ async def execute_step(
     return (
         replace(
             result,
-            ref=result.ref or FieldRef.from_path(path, "output", "value"),
+            ref=result.ref or FieldRef.from_path(path, "output", output.value_field),
         )
         if output is not None
         else result
@@ -487,7 +490,7 @@ def statement_input_refs(
 def _statement_child_runnable(statement: FlowStmt) -> str | None:
     if isinstance(
         statement,
-        RunStmt | ExecStmt | ReduceStmt | MapStmt | GenerateStmt,
+        RunStmt | SpawnStmt | ExecStmt | ReduceStmt | MapStmt | GenerateStmt,
     ):
         return statement.runnable
     if isinstance(statement, SortStmt):
@@ -550,6 +553,7 @@ def statement_has_call(statement: FlowStmt) -> bool:
     if isinstance(
         statement,
         RunStmt
+        | SpawnStmt
         | ExecStmt
         | SeekStmt
         | AskStmt

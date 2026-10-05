@@ -175,11 +175,19 @@ The private projector never creates or updates run controls. Tracer failures
 are logged and isolated from execution. One tracer observes the complete run
 tree started by its `run()` call, including child runs, steps, parts, and
 terminal events. Each event already contains its complete durable references
-and output edge; the private projector does not reconstruct runtime locals or
-infer alternate output. `RunTracer.on_event()` is asynchronous. The executor
+and output edge. For accepted spawn Steps, the projector preserves the committed
+admission output through canceled delivery and emits that persisted output. It
+does not reconstruct runtime locals. `RunTracer.on_event()` is asynchronous. The executor
 serializes tracer calls and awaits each one on the owner event loop, so tracers
 never need to infer which worker thread emitted an event.
 
+
+Spawned roots have their own thread and lifecycle. The host may configure
+`RunExecutor.root_tracer` and `thread_listener`; the API uses these to route the
+existing thread/run events to the new IDs. Foreground tracers keep observing only
+the source run tree. Dispatch failure can emit a root RunEnd before any RunBegin.
+Script and Chat progress use the ordinary StepEnd output/summary to show the new
+run/thread identity without adopting background progress.
 
 ## Run Events
 

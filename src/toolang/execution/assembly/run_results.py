@@ -73,7 +73,7 @@ def run_completion(
     attributes = f'run="{escape(run.id, quote=True)}" status="{run.status}"'
     content = ()
     if run.status == "succeeded" and run.output is not None:
-        type_name = run.output.type
+        type_name = run.output.type or "Json"
         resolved = cast(Value, resolve(run.output.value))
         raw_parts = parts_from_value(resolved)
         parts = parts_from_value(resolved, content_only=True)

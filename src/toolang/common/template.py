@@ -84,6 +84,33 @@ def require_template_inputs(template: str, values: Mapping[str, object]) -> None
             raise ToolangError(f"template input is missing: {name}")
 
 
+def require_template_fields(
+    template: str, fields: Mapping[str, frozenset[str] | None]
+) -> None:
+    """Validate fields of known flat records, including positive sections."""
+    validate_template(template)
+    scopes: list[frozenset[str] | None] = []
+    for match in _REFERENCE_TAG_RE.finditer(template):
+        sigil, name = match.group("sigil", "name")
+        if sigil == "/":
+            scopes.pop()
+            continue
+        root, *path = name.split(".")
+        allowed = fields.get(root)
+        if root not in fields and scopes and scopes[-1] is not None and name != ".":
+            allowed, path = scopes[-1], [root, *path]
+        if allowed is not None and path and (len(path) != 1 or path[0] not in allowed):
+            raise ToolangError(f"unknown template field: {name}")
+        if sigil in {"#", "^"}:
+            scopes.append(
+                allowed
+                if sigil == "#" and not path
+                else (scopes[-1] if scopes else None)
+                if sigil == "^"
+                else None
+            )
+
+
 def template_runtime_names(template: str) -> tuple[str, ...]:
     """Validate reserved roots without requiring a particular execution frame."""
     validate_template(template)

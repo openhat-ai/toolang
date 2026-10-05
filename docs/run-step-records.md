@@ -97,7 +97,7 @@ RunStore schema 51 accepts only the current format. Older stores are rejected
 before mutation and remain intact for their matching runtime. There is no
 migration or compatibility reader.
 
-`Output` contains a complete `value: Value | TypedRef` and a
+`Output` contains a complete `value: Value | TypedRef | RunHandle` and a
 `binding: str | None`. `"_"` is an ordinary binding name for the current local;
 `None` leaves the result unbound. `StepRecord.input` remains a list of dependency
 references. Executor locals separately retain evaluation and provenance metadata.
@@ -119,6 +119,36 @@ from the value or typed reference. References use `output/value` for the value,
 Removed wrapper fields and old reference paths have no aliases. Removed Flow
 statement records are rejected, and executable snapshots require migrated source
 and a newly prepared state.
+
+### Spawn admission and handles
+
+Spawn atomically records a new thread/create control, an independent root/run
+control, and the originating Step output. Both controls have `triggered_by` set
+to that physical Step; the root's `parent` is null. There is no spawn control
+kind. Entry `spawn_context` stores inherited settings, workspace bindings,
+iteration data, and the accepted output contract; ordinary entries omit it from
+storage. Resources, limits, model request, State, and cwd use existing entry fields.
+
+Flow's run-kind Step carries a `SpawnStmt`. Its durable and event output is
+`{"handle": {"id": "run_…", "thread": "spawn_…", "result": …}, "binding": "job"}`.
+`result` is the accepted output contract (`type_name` and struct `definitions`),
+not the produced result. This execution-owned variant has no language `type`.
+References to it use `output/handle`, while data outputs retain `output/value`.
+Status is resolved from the Run record, never saved in the handle.
+
+Agic's ordinary Tool Step instead stores a `ToolResultPart` whose `output` is
+`{id, thread, status: "pending"}`. The tool returns that exact committed snapshot;
+reconstructed model history retains it even after the root finishes. This view
+is ordinary data and does not become a native handle. The eventual result belongs
+to the spawned Run's output and remains inspectable by its ID.
+
+Accepted outputs survive canceled delivery, and StepEnd carries the same output
+as the durable Step. A dispatch failure marks the admitted root failed while
+preserving its handle. Reprocessing one physical Step returns its original
+admission; conflicting requests fail. Recovery does not relaunch a root.
+Retry rejects cuts through a surviving root's origin or retained input references;
+use rerun instead. Retry after the origin restores handle locals, and rewind can
+hide source history without deleting its records or stopping the root.
 
 ### RunRecord
 

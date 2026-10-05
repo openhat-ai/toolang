@@ -672,7 +672,12 @@ def _validate_binding(stmt: ast.FlowStmt) -> None:
 def _stmt_runnable(stmt: ast.FlowStmt) -> str:
     if isinstance(
         stmt,
-        ast.RunStmt | ast.ExecStmt | ast.GenerateStmt | ast.ReduceStmt | ast.MapStmt,
+        ast.RunStmt
+        | ast.SpawnStmt
+        | ast.ExecStmt
+        | ast.GenerateStmt
+        | ast.ReduceStmt
+        | ast.MapStmt,
     ):
         return stmt.runnable
     raise RuntimeError(f"Statement {stmt.kind!r} has no runnable field.")

@@ -65,7 +65,7 @@ class ResolvedRunnable:
         return f"{self.module}::{self.ref}"
 
 
-RouteAction: TypeAlias = Literal["run", "exec"]
+RouteAction: TypeAlias = Literal["run", "spawn", "exec"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,7 +90,11 @@ class AgicRoutes:
 
         return tuple(
             action
-            for action, references in (("run", self.hands), ("exec", self.handoffs))
+            for action, references in (
+                ("run", self.hands),
+                ("spawn", self.hands),
+                ("exec", self.handoffs),
+            )
             if not references
         )
 
@@ -137,6 +141,7 @@ def resolve_agic_routes(
     actions_by_ref: dict[str, set[RouteAction]] = {}
     groups: tuple[tuple[RouteAction, tuple[str, ...]], ...] = (
         ("run", hands),
+        ("spawn", hands),
         ("exec", handoffs),
     )
     if module == "agent":
@@ -182,7 +187,9 @@ def resolve_agic_routes(
                 module=item.module,
                 executable=item.executable,
             ),
-            actions=tuple(action for action in ("run", "exec") if action in actions),
+            actions=tuple(
+                action for action in ("run", "spawn", "exec") if action in actions
+            ),
         )
         for item in targets
         if (actions := actions_by_ref.get(item.ref)) is not None

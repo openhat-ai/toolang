@@ -43,6 +43,8 @@ def test_run_spec_has_minimal_execution_contract() -> None:
         "prompt_invocations",
         "horizon",
         "all_tools",
+        "spawn_context",
+        "resource_ceiling",
     )
 
 

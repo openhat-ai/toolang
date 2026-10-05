@@ -9,6 +9,27 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Added
 
+- Flow `spawn RUNNABLE` and `spawn [-> T]: BODY` start an independent root in a
+  new empty thread and return once it is admitted, without waiting. Each root
+  gets a new run and thread identity with a null parent, inherits the source's
+  captured State, settings, limits, cwd, and workspaces, and continues under the
+  same executor when its source finishes, fails, is canceled, or hands off.
+  Each root completes, fails, or is explicitly canceled on its own, and a root
+  still unfinished when the executor stops is canceled then (a script host
+  cancels unfinished roots on exit). No completion message is injected.
+
+- `let job = spawn RUNNABLE` binds a Run handle readable through templates as
+  ordinary data: `{{job.id}}`, `{{job.thread}}`, and `{{job.status}}`, with one
+  status snapshot per statement and no waiting. Unknown fields fail, an authored
+  struct named `Run` remains ordinary data, handles cannot be passed as runnable
+  inputs, and `async`/`await` are not implemented in this release.
+
+- The `_toolang/spawn` tool (wire name `_toolang__spawn`) starts an independent
+  root through `run`'s input decoder and hands policy, and returns the committed
+  admission snapshot `{id, thread, status: "pending"}`. It waits for no result,
+  occupies no scheduled-child slot, and injects no completion message; inspect
+  progress and results by ID with the existing tools.
+
 - Root Runs with no active descendants may `exec` their own entry runnable,
   replacing the run binding with the latest published implementation whose
   normalized contract matches, while preserving the Run, captured Setup,
@@ -16,6 +37,20 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   self-exec, and ancestor calls remain rejected.
 
 ### Changed
+
+- Flow `spawn` Step outputs add a native run-handle variant to persisted records
+  and events, shaped `{"handle": ..., "binding": ...}`, with references at
+  `output/handle`. Ordinary outputs retain their existing `value` representation
+  and `output/value` references. Consumers that assume every output carries
+  `value` must support both variants.
+
+- Hands now authorizes both `run` and `spawn`, while handoffs still authorizes
+  `exec`. The public `ToolRuntime` protocol adds `spawn(runnable, input)`, so
+  custom tool-runtime implementations must add it, and the model-facing runtime
+  protocol documents spawn and Run handles.
+
+- Bumped the pinned `tree-sitter-toolang` grammar to 0.4.0a2, which provides the
+  `spawn` syntax.
 
 - `reduce` with a `from:` initializer accepts an empty outer array and returns
   that initializer coerced to the reducer output type without any child calls;

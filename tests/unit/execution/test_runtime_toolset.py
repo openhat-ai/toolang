@@ -29,6 +29,7 @@ def test_installed_runtime_toolset_has_no_old_aliases() -> None:
     tools = ToolCollection.from_tools(load_tools())
     assert set(tools.runtime) == {
         "_toolang__run",
+        "_toolang__spawn",
         "_toolang__chdir",
         "_toolang__exec",
         "_toolang__pick",
@@ -84,6 +85,12 @@ class _Runtime:
             {"run_id": self.marker, "output_type": "Text", "output": input["_"]}
         )
 
+    async def spawn(self, runnable, input):
+        self.calls.append((runnable, dict(input)))
+        return ToolResult(
+            {"id": self.marker, "thread": "spawn_test", "status": "pending"}
+        )
+
     async def exec(self, runnable, input):
         self.calls.append((runnable, dict(input)))
         await asyncio.sleep(0)
@@ -110,7 +117,7 @@ class _Runtime:
         return ToolResult({"controls": [self.marker]})
 
 
-@pytest.mark.parametrize("name", ["run", "exec", "pick", "honor", "compact"])
+@pytest.mark.parametrize("name", ["run", "spawn", "exec", "pick", "honor", "compact"])
 def test_shared_plugin_keeps_per_call_authority_isolated(
     tmp_path: Path, name: str
 ) -> None:
@@ -139,6 +146,8 @@ def test_shared_plugin_keeps_per_call_authority_isolated(
     assert len(first.calls) == 1
     if name == "run":
         assert [result.output["run_id"] for result in results] == ["first", "second"]
+    elif name == "spawn":
+        assert [result.output["id"] for result in results] == ["first", "second"]
     else:
         assert [result.output for result in results] == [
             {"controls": ["first"]},
@@ -155,6 +164,9 @@ def test_shared_plugin_keeps_per_call_authority_isolated(
         ("run", {"runnable": "child", "step": "another"}),
         ("exec", {"runnable": "child", "input": []}),
         ("run", {"runnable": ""}),
+        ("spawn", {"runnable": "child", "thread": "term_source"}),
+        ("spawn", {"runnable": "child", "input": []}),
+        ("spawn", {"runnable": ""}),
         (
             "pick",
             {"kind": "skill", "ref": "skill/testing", "content": "injected"},

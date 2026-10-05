@@ -45,6 +45,7 @@ from ..types import (
     ControlRef,
     ToolStepGiven,
     TypedRef,
+    RunHandle,
 )
 from ..values import parts_from_value
 from .tool_replies import workspace_reply_from_step
@@ -404,9 +405,11 @@ def tail_delta(
 def _value_message(
     role: MessageRole,
     ref: FieldRef,
-    value: Value | TypedRef,
+    value: Value | TypedRef | RunHandle,
     resolve: Callable[[object], object],
 ) -> MessageTemplate:
+    if isinstance(value, RunHandle):
+        raise ValueError("run handles cannot be reconstructed as runnable results")
     type_name = value.type if isinstance(value, TypedRef) else value_type(value)
     if type_name in {"Text", "Part", "Part[]"}:
         return MessageTemplate(role, (TypedRef(ref, type_name),))

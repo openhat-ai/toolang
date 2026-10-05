@@ -69,6 +69,9 @@ VALUE_STMT                    update `_`
 let NAME = VALUE_STMT         update `NAME`
 let VALUE_STMT                discard the result
 
+spawn RUNNABLE                start an independent root; preserve `_`
+let NAME = spawn RUNNABLE     bind its runtime handle to `NAME`
+
 repeat ...                    update locals through its body
 
 let NAME = BODY         evaluate Content and assign one `Percept` to `NAME`
@@ -89,6 +92,32 @@ Runtime history names are supplied separately from authored bindings.
 `repeat` is different: it produces no result and accepts no `let` binding. Its
 body statements update the current flow locals normally as the loop proceeds.
 
+
+## Spawn
+
+`spawn RUNNABLE` and `spawn [-> T]: BODY` use the same inputs and inline captures
+as `run`, then continue as soon as a new root is admitted. Each root uses a new
+empty thread under the same agent and executor. `let job = spawn research` binds
+a handle; bare spawn and `let spawn research` preserve all locals, including `_`.
+The formatter writes nameless-let spawn as bare spawn.
+
+Read metadata through templates: `{{job.id}}` is the run ID, `{{job.thread}}` is
+the thread ID, and `{{job.status}}` reads persisted lifecycle status without
+waiting. A whole-handle template renders those three fields. One statement sees
+one status snapshot per run; later statements may see a newer status. Unknown
+fields fail. Capture these fields as ordinary data before passing them to named
+runnables. Handles cannot be runnable results or general data arguments.
+
+`Run<T>` is runtime design notation, not a language type or constructor. An
+authored struct named `Run` remains ordinary data. Neither `async` nor `await`
+is implemented in this release.
+
+The root survives its source finishing, failing, being canceled, or executing a
+handoff. Executor shutdown cancels it: script invocations stop their executor on
+exit, while local Chat and AgentCore keep theirs for the session/host lifetime.
+There is no automatic restart or completion message. Use its ID with existing
+inspection and host control commands. See [execution records](run-step-records.md)
+for durable handles and retry behavior.
 
 ## Exec
 
@@ -117,6 +146,10 @@ TEXT                                      shorthand for inline `run`
 seek AGENT RUNNABLE
 seek AGENT [-> T]: BODY
 ask: BODY
+
+# Start an independent root without waiting
+spawn RUNNABLE
+spawn [-> T]: BODY
 
 # Replace the current runnable within the same Run
 exec RUNNABLE

@@ -1,4 +1,5 @@
 from __future__ import annotations
+from toolang.lang.types import Array
 
 import asyncio
 import threading
@@ -6387,6 +6388,8 @@ class FakeClient(ChatClient):
 
 
 def _steer_control(index: int, *, run_id: str = "run_1") -> ControlInfo:
+    value = _parts(*Message.user("adjust").parts).value
+    assert isinstance(value, Array)
     return ControlInfo(
         run_id=run_id,
         index=index,
@@ -6394,9 +6397,7 @@ def _steer_control(index: int, *, run_id: str = "run_1") -> ControlInfo:
         timing="next_step",
         request_id=f"request_{index}",
         status="pending",
-        payload=SteerControlPayload(
-            CallInput({"_": _parts(*Message.user("adjust").parts).value})
-        ),
+        payload=SteerControlPayload(CallInput({"_": value})),
         error=None,
         created_at="2026-01-01T00:00:01Z",
         finished_at=None,

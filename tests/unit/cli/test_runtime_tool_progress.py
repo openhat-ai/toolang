@@ -303,3 +303,55 @@ def test_non_tty_prints_compact_start_and_end_without_a_timer():
         assert stream.getvalue().count("Compacted thread history in 1m20s") == 1
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("status", ["succeeded", "failed", "canceled"])
+def test_spawn_summary_carries_identity_through_existing_tool_progress(status):
+    begin = _begin("spawn", {"runnable": "flow:research"})
+    end = _end(
+        begin,
+        status,
+        output={"id": "run_job", "thread": "spawn_thread", "status": "pending"},
+    )
+    assert trace_live_rows(begin, "")[0].text == "✧ Spawning flow:research"
+    rows = [r.text for r in trace_terminal_rows(begin, end, error="")]
+    assert rows[0] == "✧ Spawned run_job in spawn_thread"
+    if status != "succeeded":
+        assert rows[1] == f"✧ Caller {status} after spawn"
+
+
+@pytest.mark.parametrize("status", ["succeeded", "failed", "canceled"])
+def test_flow_spawn_summary_is_visible_without_child_events(status):
+    from toolang.execution.types import RunHandle
+    from toolang.lang.ast import SpawnStmt, Span
+    from toolang.execution.events import run_event_from_data, run_event_to_data
+
+    projector = ProgressProjector()
+    projector.handle(
+        RunBegin(
+            run="run_root",
+            control=ControlRef.for_run("run_root", 0),
+            runnable="flow:parent",
+            started_at=START,
+        )
+    )
+    projector.handle(
+        StepBegin(
+            step=StepRef.parse("run_root.0"),
+            kind="run",
+            given=SpawnStmt(span=Span(line=1), runnable="flow:research", binding="job"),
+            started_at=START,
+        )
+    )
+    end = StepEnd(
+        step=StepRef.parse("run_root.0"),
+        kind="run",
+        status=status,
+        output=Output(RunHandle("run_job", "spawn_thread", None), "job"),
+        finished_at=FINISH,
+    )
+    update = projector.handle(run_event_from_data(run_event_to_data(end)))
+    rows = [row.text for block in update.committed for row in block.rows]
+    assert any("Spawned run_job in spawn_thread" in text for text in rows)
+    if status != "succeeded":
+        assert any(f"Caller {status}" in text for text in rows)
