@@ -9,7 +9,7 @@ import pytest
 
 from toolang.common.layout import AgentLayout
 from toolang.state import watcher as state_watcher
-from toolang.state.errors import StateDiagnostic
+from toolang.state.errors import StateDiagnostic, StatePreparationError
 from toolang.state.watcher import StateRefresh, StateWatcher
 
 
@@ -34,6 +34,44 @@ def test_sync_uses_one_refresh_and_no_success_scan(watcher, monkeypatch):
     }
     refresh.assert_awaited_once_with(force=False)
     scan.assert_not_called()
+
+
+@pytest.mark.parametrize("invalidated", [False, True])
+@pytest.mark.parametrize(
+    "failure,code",
+    [
+        (PermissionError("candidate is unreadable"), "io_error"),
+        (ValueError("candidate is invalid"), "state_rejected"),
+    ],
+)
+def test_background_skip_preserves_check_failure(
+    watcher, monkeypatch, failure, code, invalidated
+):
+    async def scenario():
+        initial = await watcher.refresh()
+        watcher.layout.program.write_text("agic answer:\n  Changed.\n")
+        prepare = Mock(side_effect=failure)
+        with monkeypatch.context() as patch:
+            patch.setattr(state_watcher, "prepare_agent_state", prepare)
+            rejected = await watcher.refresh_result()
+            skipped = await watcher._request_check(
+                requested=False,
+                invalidated_home=frozenset({"agent.too"})
+                if invalidated
+                else frozenset(),
+            )
+        assert rejected.state is skipped.state is initial
+        assert rejected.error == skipped.error == code
+        assert rejected.diagnostics == skipped.diagnostics == watcher.diagnostics()
+        assert rejected.diagnostics[0].message == str(failure)
+        prepare.assert_called_once()
+
+        repaired = await watcher.refresh_result()
+        assert repaired.state.revision != initial.revision
+        assert repaired.error is None
+        assert repaired.diagnostics == watcher.diagnostics() == ()
+
+    asyncio.run(scenario())
 
 
 @pytest.mark.parametrize("initial", [False, True])
@@ -167,8 +205,9 @@ def test_sync_uses_exact_check_result_not_later_watcher_diagnostics(
 
     async def refresh(*, force):
         assert force is False
-        watcher._diagnostics = ()
-        return StateRefresh(state, (diagnostic,), "state_rejected")
+        result = watcher._reject_check(StatePreparationError(diagnostic))
+        watcher._failure = None
+        return result
 
     monkeypatch.setattr(watcher, "refresh_result", refresh)
     result = asyncio.run(watcher.sync())

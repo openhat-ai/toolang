@@ -245,16 +245,9 @@ actual_digest. Successful results have no error.
 
 me.sync() accepts no arguments. Finish all source writes first and ensure no
 program, agent, editor, or background writer modifies tracked root/home sources
-until it returns. It waits for one State refresh and returns {revision, files:
-[{scope, key, digest}]}, sorted by scope/key, including shadowed inputs and assets.
-Deleted/untracked files are absent; independent tasks/chores are outside State.
-Errors return {error, message, revision, files, differences, diagnostics}. Codes
-are state_rejected, io_error, or sync_unavailable. Revision/files identify that
-check's last valid State, or null/[] if unavailable. Differences contain unequal
-{scope, key, disk_digest, state_digest}; null digest means absence, while
-differences=null means the complete disk manifest could not be read.
-Diagnostics preserve preparation errors. Repair sources before retrying.
-Sync does not replace running code, captured Setup, or this model-call snapshot.
+until it returns. It waits for one State refresh; repair rejected sources before
+retrying. Independent tasks/chores are outside State. Sync does not replace
+running code, captured Setup, or this model-call snapshot.
 
 An authorized root Run with no active descendants may exec its current runnable
 from the entry, using the latest published compatible code. Child self-exec,

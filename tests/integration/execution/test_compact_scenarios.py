@@ -34,7 +34,7 @@ from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.execution.inspection.history import RunHistory
 from toolang.execution.assembly.history import summary_message
 from toolang.execution.compaction import permit
-from toolang.execution.tokens import InputEstimate
+from toolang.execution.tokens import InputEstimate, message_tokens
 from toolang.execution.records import CompactControlPayload, RunControlPayload
 from toolang.execution.types import FieldRef, ThreadPrefix, ToolStepGiven
 
@@ -1548,35 +1548,48 @@ def test_summary_publication_uses_the_caller_model_count(
 
 
 def test_recent_target_yields_to_the_complete_caller_budget(tmp_path):
+    current_input = "current " * 500
+    latest_reply = "latest " * 120
     h = ExecutionHarness.create(
         tmp_path,
         source=SOURCE,
         responses=[
             reply("old " * 18000),
             reply("middle " * 850),
-            reply("latest " * 120),
+            reply(latest_reply),
         ],
     )
 
     async def scenario():
         async with h:
             thread, latest = await seed(h)
-            constrain(h, context=11000)
+            # Budget from the assembled protocol/tools, leaving room for current
+            # input, the latest root, and a summary, but not the middle root.
+            baseline = InputEstimate().count(h.adapter.invocations[0].call, None)
+            caller_budget = (
+                baseline
+                + message_tokens(Message.user(current_input))
+                + message_tokens(Message.assistant(latest_reply))
+                + 512  # Summary and history framing.
+            )
+            constrain(h, context=2 * caller_budget)
             h.setup = replace(
                 h.setup,
-                compact=replace(h.setup.compact, recent=5000, summary=256),
+                compact=replace(
+                    h.setup.compact, trigger=caller_budget, recent=5000, summary=256
+                ),
             )
-            h.adapter._responses.extend([reply("Short facts.")] * 3 + [reply("done")])
-            current = await h.executor.run(spec(h, thread, "current " * 500))
+            h.adapter._responses.extend([reply("Short facts."), reply("done")])
+            current = await h.executor.run(spec(h, thread, current_input))
             assert current.status == "succeeded", (
                 h.store.resolve_error(current.error) if current.error else None
             )
             result = RunHistory(h.store).get_compaction(thread)
             assert result is not None and result.result.end == latest
             caller = h.adapter.invocations[-1].call
-            assert "latest " * 120 in str(caller.messages)
+            assert latest_reply in str(caller.messages)
             assert "middle " * 850 not in str(caller.messages)
-            assert InputEstimate().count(caller, None) <= 8800
+            assert InputEstimate().count(caller, None) <= caller_budget
             assert len(h.adapter.invocations) == 5
 
     asyncio.run(scenario())

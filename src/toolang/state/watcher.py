@@ -53,12 +53,36 @@ class _CheckRequest:
 
 
 @dataclass(frozen=True, slots=True)
+class _CheckFailure:
+    """Keep a rejected check's classification and diagnostics together."""
+
+    error: StateSyncError
+    diagnostics: tuple[StateDiagnostic, ...]
+
+    @classmethod
+    def from_exception(cls, exc: Exception) -> _CheckFailure:
+        return cls(
+            "io_error" if isinstance(exc, OSError) else "state_rejected",
+            exc.diagnostics
+            if isinstance(exc, StatePreparationError)
+            else (_candidate_diagnostic(exc),),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class StateRefresh:
     """One completed watcher check and its exact last-valid result."""
 
     state: AgentState
-    diagnostics: tuple[StateDiagnostic, ...] = ()
-    error: StateSyncError | None = None
+    failure: _CheckFailure | None = None
+
+    @property
+    def diagnostics(self) -> tuple[StateDiagnostic, ...]:
+        return self.failure.diagnostics if self.failure is not None else ()
+
+    @property
+    def error(self) -> StateSyncError | None:
+        return self.failure.error if self.failure is not None else None
 
 
 class StateWatcher:
@@ -102,7 +126,7 @@ class StateWatcher:
                 ):
                     self._state = self._remember(state)
                     self._record_persisted_baseline(state)
-        self._diagnostics: tuple[StateDiagnostic, ...] = ()
+        self._failure: _CheckFailure | None = None
         self._check_requests: deque[_CheckRequest] = deque()
         self._check_task: asyncio.Task[None] | None = None
         self._monitoring = False
@@ -117,7 +141,7 @@ class StateWatcher:
     def diagnostics(self) -> tuple[StateDiagnostic, ...]:
         """Return diagnostics for the latest rejected candidate, if any."""
 
-        return self._diagnostics
+        return self._failure.diagnostics if self._failure is not None else ()
 
     def load(self, revision: str) -> AgentState:
         """Load the exact State identified by a persisted composition."""
@@ -143,20 +167,15 @@ class StateWatcher:
         """Check once; callers keep authored sources unchanged until return."""
 
         state: AgentState | None = None
-        error: StateSyncError = "state_rejected"
         try:
             result = await self.refresh_result(force=False)
             state = result.state
-            diagnostics = result.diagnostics
-            if not diagnostics:
+            failure = result.failure
+            if failure is None:
                 return StateSyncResult(state.revision, state.files)
-            error = result.error or error
-        except StatePreparationError as exc:
-            diagnostics = exc.diagnostics
         except Exception as exc:
-            error = "io_error" if isinstance(exc, OSError) else "state_rejected"
-            diagnostics = (_candidate_diagnostic(exc),)
-        message = "; ".join(item.message for item in diagnostics)
+            failure = _CheckFailure.from_exception(exc)
+        message = "; ".join(item.message for item in failure.diagnostics)
         files = state.files if state is not None else ()
         try:
             disk_files = await asyncio.to_thread(
@@ -169,10 +188,10 @@ class StateWatcher:
         return StateSyncResult(
             revision=state.revision if state is not None else None,
             files=files,
-            error=error,
+            error=failure.error,
             message=message,
             differences=differences,
-            diagnostics=diagnostics,
+            diagnostics=failure.diagnostics,
         )
 
     async def _request_check(
@@ -252,18 +271,7 @@ class StateWatcher:
                 self.layout.name,
             )
         except Exception as exc:
-            if self._state is None:
-                raise
-            self._diagnostics = (_candidate_diagnostic(exc),)
-            logger.warning(
-                "watch.rejected agent=%s diagnostics=1",
-                self.layout.name,
-            )
-            return StateRefresh(
-                self._state,
-                self._diagnostics,
-                "io_error" if isinstance(exc, OSError) else "state_rejected",
-            )
+            return self._reject_check(exc)
         if (
             not requested
             and not invalidated_root
@@ -273,7 +281,7 @@ class StateWatcher:
                 home_observation=home_observation,
             )
         ):
-            return StateRefresh(self.current(), self._diagnostics)
+            return StateRefresh(self.current(), self._failure)
         if requested:
             invalidated_root = frozenset(item.path for item in root_observation.files)
             invalidated_home = frozenset(item.path for item in home_observation.files)
@@ -291,14 +299,7 @@ class StateWatcher:
                 invalidated=invalidated_home,
             )
         except Exception as exc:
-            if self._state is None:
-                raise
-            self._diagnostics = (_candidate_diagnostic(exc),)
-            return StateRefresh(
-                self._state,
-                self._diagnostics,
-                "io_error" if isinstance(exc, OSError) else "state_rejected",
-            )
+            return self._reject_check(exc)
         if (
             not requested
             and not force
@@ -313,8 +314,7 @@ class StateWatcher:
                 root_source,
                 home_source,
             )
-            self._diagnostics = ()
-            return StateRefresh(self.current())
+            return StateRefresh(self.current(), self._failure)
         try:
             candidate = await asyncio.to_thread(
                 prepare_agent_state,
@@ -340,26 +340,6 @@ class StateWatcher:
                 raise ValueError(
                     "prepared State layers require portable source manifests"
                 )
-        except StatePreparationError as exc:
-            self._record_checked_candidate(
-                root_observation,
-                home_observation,
-                root_source,
-                home_source,
-            )
-            self._diagnostics = exc.diagnostics
-            if self._state is None:
-                raise
-            logger.warning(
-                "watch.rejected agent=%s diagnostics=%s",
-                self.layout.name,
-                len(exc.diagnostics),
-            )
-            return StateRefresh(
-                self._state,
-                self._diagnostics,
-                "state_rejected",
-            )
         except Exception as exc:
             self._record_checked_candidate(
                 root_observation,
@@ -367,18 +347,7 @@ class StateWatcher:
                 root_source,
                 home_source,
             )
-            if self._state is None:
-                raise
-            self._diagnostics = (_candidate_diagnostic(exc),)
-            logger.warning(
-                "watch.rejected agent=%s diagnostics=1",
-                self.layout.name,
-            )
-            return StateRefresh(
-                self._state,
-                self._diagnostics,
-                "io_error" if isinstance(exc, OSError) else "state_rejected",
-            )
+            return self._reject_check(exc)
         self._state = self._remember(candidate)
         # Retain the observations that led to preparation. A source change after
         # preparation returned must remain visible to the next watcher check.
@@ -390,8 +359,19 @@ class StateWatcher:
             candidate.root_revision,
             candidate.home_revision,
         )
-        self._diagnostics = ()
+        self._failure = None
         return StateRefresh(self._state)
+
+    def _reject_check(self, exc: Exception) -> StateRefresh:
+        self._failure = _CheckFailure.from_exception(exc)
+        if self._state is None:
+            raise exc
+        logger.warning(
+            "watch.rejected agent=%s diagnostics=%s",
+            self.layout.name,
+            len(self._failure.diagnostics),
+        )
+        return StateRefresh(self._state, self._failure)
 
     async def updates(
         self,
