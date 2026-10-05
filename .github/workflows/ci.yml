@@ -20,8 +20,52 @@ env:
   UV_NO_PROGRESS: "1"
 
 jobs:
+  changes:
+    name: Check changes
+    runs-on: ubuntu-latest
+    outputs:
+      docs_only: ${{ steps.changes.outputs.docs_only }}
+    env:
+      BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+
+    steps:
+      - name: Check out pull request history
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Identify plan-only pull requests
+        id: changes
+        shell: bash
+        run: |
+          docs_only=false
+          if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
+            git diff --name-only --no-renames -z "$BASE_SHA...$HEAD_SHA" > "$RUNNER_TEMP/changed-files"
+            docs_only=true
+            changed=false
+            while IFS= read -r -d '' path; do
+              changed=true
+              case "$path" in
+                docs/plans/*.md) ;;
+                *) docs_only=false ;;
+              esac
+            done < "$RUNNER_TEMP/changed-files"
+            if [[ "$changed" == "false" ]]; then
+              docs_only=false
+            fi
+          fi
+          echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
+
+      - name: Check plan formatting
+        if: steps.changes.outputs.docs_only == 'true'
+        run: git diff --check "$BASE_SHA...$HEAD_SHA"
+
   quality:
     name: Quality
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -58,6 +102,8 @@ jobs:
 
   tests:
     name: Tests (${{ matrix.os }}, Python ${{ matrix.python-version }})
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -69,6 +115,10 @@ jobs:
           - "3.11"
           - "3.12"
           - "3.13"
+        exclude: >-
+          ${{ github.event_name == 'pull_request'
+              && fromJSON('[{"os":"ubuntu-latest","python-version":"3.12"},{"os":"ubuntu-latest","python-version":"3.13"},{"os":"macos-latest","python-version":"3.11"},{"os":"macos-latest","python-version":"3.12"}]')
+              || fromJSON('[]') }}
 
     steps:
       - name: Check out repository
@@ -95,6 +145,8 @@ jobs:
 
   package:
     name: Package
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -116,18 +168,30 @@ jobs:
     name: CI Gate
     if: ${{ always() }}
     needs:
+      - changes
       - quality
       - tests
       - package
     runs-on: ubuntu-latest
 
     steps:
-      - name: Require every CI job to pass
+      - name: Require the expected CI jobs to pass
         env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}
           QUALITY_RESULT: ${{ needs.quality.result }}
           TESTS_RESULT: ${{ needs.tests.result }}
           PACKAGE_RESULT: ${{ needs.package.result }}
         run: |
-          test "$QUALITY_RESULT" = "success"
-          test "$TESTS_RESULT" = "success"
-          test "$PACKAGE_RESULT" = "success"
+          test "$CHANGES_RESULT" = "success"
+          case "$DOCS_ONLY" in
+            true)
+              test "$GITHUB_EVENT_NAME" = "pull_request"
+              expected=skipped
+              ;;
+            false) expected=success ;;
+            *) exit 1 ;;
+          esac
+          test "$QUALITY_RESULT" = "$expected"
+          test "$TESTS_RESULT" = "$expected"
+          test "$PACKAGE_RESULT" = "$expected"
