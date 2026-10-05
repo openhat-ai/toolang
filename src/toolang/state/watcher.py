@@ -478,7 +478,7 @@ class StateWatcher:
                 or root_observation != self._checked_root_observation
                 or home_observation != self._checked_home_observation
             )
-        except (FileNotFoundError, TypeError, ValueError):
+        except (OSError, TypeError, ValueError):
             return True
 
     def _manifest_needs_check(
@@ -498,7 +498,7 @@ class StateWatcher:
                 or root_source != self._checked_root_source
                 or home_source != self._checked_home_source
             )
-        except (FileNotFoundError, TypeError, ValueError):
+        except (OSError, TypeError, ValueError):
             return True
 
     def _remember(self, state: AgentState) -> AgentState:

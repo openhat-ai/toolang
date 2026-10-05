@@ -318,6 +318,47 @@ def test_current_publication_does_not_retrigger_candidate_preparation(
     asyncio.run(run())
 
 
+@pytest.mark.parametrize("source_event", [False, True])
+def test_unreadable_current_pointer_does_not_stop_monitoring(
+    tmp_path, monkeypatch, source_event
+):
+    async def run():
+        layout = AgentLayout.resident(tmp_path, "alice")
+        layout.home.mkdir(parents=True)
+        layout.program.write_text("agic answer:\n  First.\n")
+        watcher = state_watcher.StateWatcher(layout)
+        initial = await watcher.refresh()
+
+        def unreadable_pointer(_layout):
+            raise PermissionError("agent current pointer is unreadable")
+
+        async def unreadable_then_changed(*_args, **_kwargs):
+            with monkeypatch.context() as patch:
+                patch.setattr(
+                    state_watcher, "load_current_agent_revision", unreadable_pointer
+                )
+                yield (
+                    {(state_watcher.Change.modified, str(layout.program))}
+                    if source_event
+                    else set()
+                )
+            layout.program.write_text("agic answer:\n  Recovered.\n")
+            yield {(state_watcher.Change.modified, str(layout.program))}
+
+        monkeypatch.setattr(state_watcher, "awatch", unreadable_then_changed)
+        observed = [
+            state async for state in watcher.updates(stop_signal=asyncio.Event())
+        ]
+
+        assert len(observed) == 1
+        assert observed[0] is watcher.current()
+        assert observed[0].revision != initial.revision
+        assert observed[0].modules["agent"].agics[0].messages[0].content == "Recovered."
+        assert watcher.diagnostics() == ()
+
+    asyncio.run(run())
+
+
 def test_rejected_candidate_does_not_retry_partially_published_layers(
     tmp_path: Path,
     monkeypatch,
