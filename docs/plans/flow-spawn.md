@@ -333,8 +333,11 @@ policy for changed encodings; historical records remain inspectable.
 1. Parse/check/format named and inline spawn with bare/named-let/nameless-let forms;
    verify canonical bare formatting for both unbound forms, Json inference for
    named locals, and independent target output validation. Reject malformed
-   syntax and invalid arguments before root admission. Use the upstream corpus
-   contract for keyword/let boundaries; test prepared-cache invalidation.
+   syntax and invalid arguments before root admission. In particular,
+   `let text = spawn a process` must report malformed spawn, never become text or
+   launch a root. Preserve literal text in an indented let block or
+   `let text = Spawn a process`, including through formatting. Use the upstream
+   corpus contract for keyword/let boundaries; test prepared-cache invalidation.
 2. Match Flow child input behavior for declared `_`, named/optional parameters,
    structs, arrays, Parts, and inline captures. Match Agic child input decoding,
    diagnostics, hands scopes/requested_only, module visibility, State publication
