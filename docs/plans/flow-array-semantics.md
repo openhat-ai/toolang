@@ -286,6 +286,17 @@ run write_article
   Reusing a retained future waits for the same operation without executing again.
 - The same binding syntax may extend to whole produce/map/spread operations
   while preserving their result and internal scheduling contracts.
+- Model the future value as `Future<T>`, where T is the operation's complete
+  output type. This is semantic notation, not a decision to add general authored
+  generic syntax; infer T from the operation contract. `Future<Text[]>` is one
+  future for an entire array, distinct from an array of individual futures.
+  Child and root operations use the same future type; ownership remains an
+  execution property.
+- Track local types in statement order: standalone `await x` changes x from
+  `Future<T>` to T; `let a = await x` gives a type T and leaves x as `Future<T>`
+  when the names differ. Consumers requiring T must await first, even when the
+  operation has already completed. This is a value type, not a restored shape
+  or dimension flag.
 
 The separate definition must resolve unawaited child lifetimes, cancellation
 and failure propagation, durable handles and retry, root context and limits,
