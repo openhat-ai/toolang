@@ -25,13 +25,13 @@ spawn implementation. Groups 2-4 have separate definitions and PRs.
 | 1. Calls, arrays, names, and using | [#684](https://github.com/openhat-ai/toolang/pull/684) | Matching published grammar |
 | 2. Async run and handle await | [#685](https://github.com/openhat-ai/toolang/pull/685) | Group 1 |
 | 3. Await blocks | [#686](https://github.com/openhat-ai/toolang/pull/686) | Groups 1 and 2 |
-| 4. Independent spawn | [Runtime #687](https://github.com/openhat-ai/toolang/pull/687), [grammar #48](https://github.com/openhat-ai/tree-sitter-toolang/pull/48) | Group 1 and published spawn grammar; shares Future vocabulary with group 2, waiting deferred |
+| 4. Independent spawn | [Runtime #687](https://github.com/openhat-ai/toolang/pull/687), [grammar #48](https://github.com/openhat-ai/tree-sitter-toolang/pull/48) | Group 1 and published spawn grammar; shares Run vocabulary with group 2, waiting deferred |
 
 The definition PRs target their repositories' main branches independently.
 Approval and the grammar release are required per implementation group. Group 4
 has separate grammar/runtime definitions and does not depend on group 2 or 3.
-Groups 2 and 4 share the Future value contract; the first implementation supplies
-the type and codec, without pulling in the other's launch or waiting behavior.
+Groups 2 and 4 share `Run<T>` handles with readable id/thread/status fields.
+Shared value support does not pull in the other's launch or waiting behavior.
 Do not implement later groups as incidental work in an earlier PR.
 
 This supersedes the affected rules in [Flow Usability](flow-usability.md) and

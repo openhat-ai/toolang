@@ -6,19 +6,19 @@ No implementation changes in this PR.
 ## Goal and Scope
 
 Let flow and agic start an independent root in a new empty thread under the same
-agent and executor and continue without waiting. Flow produces a typed future;
-agic receives an admission receipt. Both share admission and ownership rules.
+agent and executor and continue without waiting. Both expose Run: a handle with
+readable identity/status and a typed eventual result.
 
 The merged [grammar definition](https://github.com/openhat-ai/tree-sitter-toolang/pull/48)
 owns syntax, CST, keywords, and highlighting. Implementation requires its
 published grammar and the [call/array simplification](flow-array-semantics.md).
 This runtime contract supersedes #48's provisional Json handle typing.
 [Async run/await](https://github.com/openhat-ai/toolang/pull/685) and
-[await blocks](https://github.com/openhat-ai/toolang/pull/686) remain later work.
-Include the shared Future value contract so spawn's return type stays stable;
-whichever launch feature lands first supplies it, without depending on waiting
-behavior. Exclude completion messages, thread selectors, implicit forks,
-cross-agent dispatch, detached processes, restart/resume, and new CLI/API flags.
+[await blocks](https://github.com/openhat-ai/toolang/pull/686) remain separate work.
+The launch features share the Run value contract below; whichever lands first
+supplies common support without depending on the other's execution behavior.
+Exclude completion messages, thread selectors, implicit forks, cross-agent
+dispatch, detached processes, restart/resume, and new CLI/API flags.
 
 ## Verified Baseline
 
@@ -33,7 +33,7 @@ cross-agent dispatch, detached processes, restart/resume, and new CLI/API flags.
   Atomic child receipts support model Tool Steps only; thread creation has a
   separate transaction. Spawn must extend these boundaries.
 
-## Invocation and Receipt
+## Invocation and Inputs
 
 ```too
 let job = spawn investigate
@@ -44,11 +44,10 @@ spawn -> Text: Research {{_}} and save the findings.
 Flow reuses ordinary `run` input binding and validation: declared `_` and named
 parameters come from matching locals; inline agic captures referenced locals.
 Capture inputs before updating any binding. Unused locals are not arguments.
-Inline `-> T` describes the target's eventual output; the launch value is
-`Future<T>`.
+Inline `-> T` describes the target's eventual output, giving a `Run<T>` handle.
 
-Agic gains `_toolang/spawn` (wire name `_toolang__spawn`), with the same schema
-and decoder as `_toolang/run`:
+Agic gains `_toolang/spawn` (wire name `_toolang__spawn`), with the same input
+schema and decoder as `_toolang/run`:
 
 ```json
 {"runnable": "agic:investigate", "input": {"_": "Compare the proposed designs"}}
@@ -58,71 +57,83 @@ Require a runnable reference; default omitted input to `{}`. Named targets may
 be flow or agic. Do not infer arguments from conversation history or accept
 additional fields for thread, identity, source code, or execution configuration.
 
-The spawn tool returns this fixed admission schema, expressed as a Toolang struct:
+## Run Handle and Result Types
+
+Use one language-owned Run handle. Its public view has this Toolang struct shape:
 
 ```too
-struct SpawnReceipt:
-  run_id: Text
-  thread_id: Text
-  controls: Text[]
+struct Run:
+  id: Text
+  thread: Text
+  status: Text
 ```
 
-SpawnReceipt names a protocol schema, not a new built-in type for scripts.
-Validate its fields using ordinary struct rules. Text fields hold canonical
-references; controls contains the thread create control followed by the root
-entry run control (both index 0). It confirms admission, not target success.
-
-Agic `_toolang/spawn` returns these fields in ToolResultPart.output and continues.
-The visible run_id lets agic identify newly started work in its summary and use
-existing inspection while that work is still running. Preserve the same IDs in
-stored replies and reconstructed model history.
-
-Keep `_toolang/run`'s existing `{run_id, controls}` reply and completion message
-unchanged; this feature needs no named RunReceipt or shared receipt type.
-Flow `run`, `async run`, and `spawn` expose values below, not receipts.
-
-Existing inspection supplies input, runnable, Steps, error, usage, and controls.
-`history/read_output` supplies a nonblocking status/output snapshot, possibly
-partial or null. Existing authorized host controls address the root by run ID;
-spawn grants no history access and adds no model control or flow polling operator.
-Thread ID enables navigation; child-run receipts remain unchanged because they
-create no thread.
-
-### Flow Values and Binding
+`id` and `thread` are immutable canonical RunRef/ThreadRef strings. `status` is a
+read-only snapshot of the referenced run's persisted lifecycle: pending, running,
+succeeded, failed, or canceled. It is not the launching Step's status.
+The result type is native handle metadata, not a public data field. Scripts need
+no struct declaration; the schema describes the runtime-supplied view.
 
 Let `T = Return<R>`, the complete output type of target runnable R:
 
-| Flow statement | Value type | Available when | Default binding |
-| --- | --- | --- | --- |
-| `run R` | `T` | Child succeeds | `_` |
-| Later `async run R` | `Future<T>` | Child is admitted | None |
-| `spawn R` | `Future<T>` | Independent root is admitted | None |
-| Later `await job`, where job is `Future<T>` | `T` | Referenced run succeeds | Replace job |
-| Later `await:` block | `T[]` for homogeneous children, otherwise `Json[]` | All children succeed | `_` |
+| Caller | Operation | Value type | Available when | Destination |
+| --- | --- | --- | --- | --- |
+| flow | `run R` | `T` | Child succeeds | `_` by default |
+| flow | Later `async run R` | `Run<T>` | Child is admitted | Named let only |
+| flow | `spawn R` | `Run<T>` | Independent root is admitted | Named let only |
+| flow | Later `await job`, with job: `Run<T>` | `T` | Referenced run succeeds | `_` by default |
+| flow | Later `await:` block | `T[]` for homogeneous children, otherwise `Json[]` | All children succeed | `_` by default |
+| agic | `_toolang/spawn` targeting R | Serialized Run view | Independent root is admitted | ToolResultPart.output |
 
-Named let binds that statement's value to its destination only; nameless let
-discards it. Thus `let result = await job` retains job when the names differ;
-`let await job` also retains job. Only success changes bindings. A retained future
-can be awaited again; after replacing job with `T`, another await is a type error.
+`Run<T>` is explanatory/static notation, not authored generic syntax. Await reads
+that run's result without launching work. For `Run<Text[]>`, await returns
+`Text[]`; an await block of such children returns `Text[][]`, without flattening.
+Run's meaning is independent of who owns its lifetime: async children remain
+parent-owned, while spawned roots remain executor-owned.
+
+A returned Run handle serves as the launch receipt; receipt is a role, not
+another type. Agic receives `{id, thread, status}` and can cite id or pass it as the run
+argument to history/read_output. The reply is a snapshot; it does not update
+inside model history. Keep `_toolang/run`'s existing `{run_id, controls}` reply
+and completion message unchanged. Creation/entry controls remain persisted and
+inspectable by run ID; they need no separate field on the new handle.
+
+### Field Access and Binding
+
+Flow reads fields through existing template paths. For example:
+
+```too
+let job = spawn investigate
+let run_id = {{job.id}}
+run inspect_started_run
+run: Run {{job.id}} in thread {{job.thread}} is {{job.status}}.
+```
+
+Here inspect_started_run consumes the ordinary named run_id input. Existing
+let-template rendering rules apply; no general member-expression syntax is added.
+Field projections are ordinary data. Capture those values, not a live handle,
+when crossing a runnable boundary. Rendering the whole handle explicitly yields
+its public view, never its result. Rendered/serialized data is not awaitable.
+
+Resolve public views in execution, with one status snapshot per referenced run
+per statement evaluation. Later evaluations can observe a new status; neither
+background progress nor a status read changes locals or waits for completion.
+Agic can refresh through existing inspection tools. Missing or mismatched run
+references fail explicitly. Pending/running records without a live owner remain
+inspectable; status alone does not promise execution or restart work.
+
+Await uses ordinary value-statement binding: `await job` writes the result to `_`,
+`let result = await job` writes result only, and `let await job` discards it.
+The Run handle stays available unless its local is the destination: explicit
+`let job = await job` replaces job with `T`, as does `await _` for `_`.
+Only success writes a binding. Retained handles can be awaited repeatedly and
+keep their readable fields; a replaced `T` cannot be awaited. Stopping a wait
+does not cancel an independent spawned root.
 
 Bare and nameless-let spawn preserve every local, including a final statement's
 flow output. Both lower to `SpawnStmt.binding=None` and format as bare spawn;
-restoration preserves those rules. Only named let retains a local future.
-Admission rejection preserves locals; losing a future does not cancel its root.
-
-`Future<T>` is explanatory/static notation; the language value is Future, with
-`T` tracked as its result contract. Reuse #685's Future value/codec and ordinary
-data-use restrictions. The first launch implementation supplies the shared type;
-the other reuses it. Spawn implementation creates/restores futures without await.
-
-Future references the eventual business result; receipt records admission
-effects. Neither contains the result or grants authority. Await accepts Future,
-never SpawnReceipt, and does not launch work. If R returns `Text[]`,
-its future is `Future<Text[]>` and await returns `Text[]`; an await block of such
-children returns `Text[][]`. Follow #686's ordered, non-flattening collection
-rules. No implicit awaiting, tuple/union types, or authored generics are added.
-Waiting does not transfer ownership: stopping a wait leaves spawned roots alive;
-an async child's original parent lifetime still applies.
+restoration preserves those rules. Admission rejection preserves locals;
+discarding or overwriting a handle does not cancel its run.
 
 ## Authorization and Integration
 
@@ -142,6 +153,8 @@ an async child's original parent lifetime still applies.
   interruption skips unstarted calls without undoing accepted roots. Preserve
   exec/chdir singleton rules. Never set the scheduled-child slot or inject a
   child completion message, including during history reconstruction.
+- Handle fields grant no authority. Reuse authorized history and host controls
+  for inspection/control; add no polling operator or model control tool.
 
 ## Thread and Context
 
@@ -190,9 +203,8 @@ Spawn creates a causal relationship with its source, not lifecycle ownership.
 
 Serialize admission/registration with shutdown: no committed root may be missed
 by the executor's drain. After commit, ownership and cleanup survive interrupted
-launch-value delivery; a dispatch failure records a failed root. Route events
-by the new root/thread through host observation, without adopting the source
-foreground tracer or changing its interrupt target.
+handle delivery; a dispatch failure records a failed root. Route events by the
+new root/thread without adopting the source foreground tracer or interrupt target.
 
 The Script CLI stops its executor when the invocation exits, canceling unfinished
 spawned roots. Local Chat keeps its executor across turns until session close;
@@ -208,18 +220,22 @@ pointing to the originating Step in the same agent store, even across threads;
 the root parent stays null. Separate parent from origin in shared admission
 helpers. Add no new ControlKind, synthetic caller control, or scheduler.
 
-Flow records a run-kind Step with SpawnStmt, `Future<T>` output, and its optional
-named binding; agic records a normal Tool Step with the serialized SpawnReceipt.
-The root/thread/create/run records reconstruct the same receipt for either
-surface; no duplicate flow-local receipt is needed. Preserve typed inputs and
-futures with the ordinary codecs and keep references resolvable. Do not split
-thread creation and root admission into separate commits.
+Flow records a run-kind Step with SpawnStmt, native Run output, and its optional
+named binding; agic records a normal Tool Step with the admission-time Run view.
+Do not split thread creation and root admission into separate commits.
+
+Use the shared stored form `{"?":"Run!","!":{"id":ID,"thread":THREAD,"result_type":T}}`.
+Store identity and result contract, not status, results, tasks, or executors.
+Execution resolves status/output and validates the thread and accepted contract.
+Reserve Run in new source; the tag preserves historical authored structs named
+Run under their existing encoding. Lookalike Json and rendered views are not
+native handles. General authored handle parameters/containers remain out of scope.
 
 Use the source run/physical Step/admission occurrence as the stable request
-identity. Reprocessing a committed occurrence restores its existing future or
-receipt; conflicting specifications fail. New loop occurrences and whole-run
-reruns may launch new roots. Cancellation/rejection before commit creates nothing.
-Recovery never relaunches an accepted root without a live owner; this is admission
+identity. Reprocessing restores the original handle and recorded agic reply;
+conflicting specifications fail. New loop occurrences and whole-run reruns may
+launch new roots. Cancellation/rejection before commit creates nothing. Recovery
+never relaunches an accepted root without a live owner. This is admission
 deduplication, not exactly-once external effects or restart recovery.
 
 Retry/prune must reject, before mutation, deletion of an origin or retained input
@@ -234,10 +250,10 @@ Paths below are relative to `src/toolang/`.
 
 | Area | Likely files and changes |
 | --- | --- |
-| Language | `lang/{ast,lower,types,contracts,flow_validation,format,description}.py`: shared Future vocabulary, CST, binding/type inference, diagnostics, prepared-cache compatibility |
-| Execution | `execution/executor/{executor,common,frame,tool_runtime}.py`, new `execution/executor/stmts/spawn.py`: shared admission, context, ownership, binding |
+| Language | `lang/{ast,lower,types,input,contracts,flow_validation,format,description}.py`: Run vocabulary, field/type inference, CST, diagnostics, prepared-cache compatibility |
+| Execution | `execution/executor/{executor,common,content,frame,tool_runtime}.py`, new `execution/executor/stmts/spawn.py`: admission, Run views/projections, context, ownership, binding |
 | Runtime tools | `execution/tools/_toolang.py`, `base/protocols/tool.py`, `execution/runnables.py`, assembly guidance/result matching: registration, hands, receipt-only continuation |
-| Persistence/hosts | `execution/{store,threads,records,events,types,schemas}.py`, inspection/history and host observers: Future codec, SpawnReceipt schema, atomic admission, provenance, retention, event routing |
+| Persistence/hosts | `execution/{store,threads,records,events,types,schemas}.py`, inspection/history and host observers: Run codec/view, atomic admission, provenance, retention, event routing |
 
 Pin the published grammar, update examples/generated references, and generate
 the implementation changelog through the repository runnable. This definition
@@ -246,40 +262,35 @@ changes no dependencies, product code, or changelog.
 ## Acceptance Tests
 
 1. Cover the upstream grammar contract, all bindings, named/inline targets,
-   canonical formatting, `Future<T>` inference from complete target output, and
-   cache compatibility. Malformed `let text = spawn a process` must error,
-   never become text or launch work.
-2. Match run input validation, inline captures, State resolution, hands policies,
+   canonical formatting, `Run<T>` inference, and cache compatibility. Malformed
+   `let text = spawn a process` must error, never become text or launch work.
+2. Match run input validation, captures, State resolution, hands policies,
    visibility, and ancestry checks; reject authority/configuration arguments.
-3. Gates prove future/receipt delivery without awaiting completion.
-   Preserve unbound locals in final position, immediate completion, and replay;
-   named let changes only its destination. Check struct fields/types, exact
-   references, codec round trips, and rejection of missing/extra/wrongly typed
-   fields. Round-trip futures with their complete result contracts; preserve
-   historical records and reject ordinary data misuse. Preserve batches and
-   child receipts/waits; inject no spawn completion online or on replay. Verify
-   the exact spawned run_id is visible in live and reconstructed tool replies.
+3. Gates prove immediate handle/field availability. Check id/thread types,
+   every status, consistent snapshots within an evaluation, later status changes,
+   metadata captures, and ordinary runnable inputs. Model history retains the
+   recorded snapshot. Reject unknown fields and lookalike handles; metadata reads
+   never wait or publish the result. Preserve all binding and child-run behavior.
 4. Verify thread/root IDs, null parent, control/peer provenance, empty history,
    copied context/limits, fresh accounting, and no authority widening. Cover
    nested callers, iteration captures, and later source changes.
-5. Exercise the lifetime table, Script/Chat/AgentCore ownership, admission racing
-   stop, and foreground event/interrupt isolation. Inspection must expose durable
-   outcomes without waiting or granting authority.
+5. Exercise the lifetime table, host ownership, admission racing stop, and
+   foreground event/interrupt isolation. Inspect ownerless records without replay.
 6. Fault-inject creation, commit, registration, and delivery for both Step forms:
-   no orphan thread, one admission per committed occurrence, explicit dispatch
-   failure, no ownerless relaunch. Verify conflicting requests, new loop/rerun
-   launches, and old-record compatibility.
+   no orphan thread, one admission per occurrence, explicit dispatch failure.
+   Round-trip Run identities/result contracts; verify conflicting requests,
+   intentional loop/rerun launches, and historical records.
 7. Reject destructive cuts that invalidate surviving roots; permit nondestructive
-   rewind with references intact. Preserve receipts, bindings, and child retries.
+   rewind with references intact. Preserve handles, bindings, and child retries.
 
 Use offline fake providers/gates and all default checks for implementation.
 This definition requires implementation review, link checks, and `git diff --check`.
 
 ## Risks and Approval
 
-Main risks: authority widening, duplicate admission, accidental child completion
-delivery, dangling references, and confusion between run and host lifetimes.
+Main risks: authority widening, duplicate admission, stale status interpreted as
+live ownership, accidental child completion delivery, and dangling references.
 Independent budgets can multiply work; shared files still permit write races.
-Approval covers the shared Future contract, SpawnReceipt schema, hands
-authorization, new empty threads, inherited authority without history, and
-executor ownership. Waiting behavior remains in #685/#686.
+Approval covers Run values/views, hands authorization, new empty threads,
+inherited authority without history, and executor ownership. Waiting remains
+in #685/#686 and consumes the same Run handle contract.
