@@ -2,8 +2,9 @@
 
 Status: Proposed; definition only. The human confirmed an operator that collects
 one complete child output per array item, and distinguished it from control
-constructs such as repeat, par, and a possible seq. `collect` is the proposed
-keyword; it and the remaining definition details await human approval.
+constructs such as repeat, par, and a possible seq. Use `spread` for this
+operator and `fut` for the related asynchronous-binding direction discussed
+below. Approval of these spellings does not approve the complete definition.
 
 ## Goal and Success Criteria
 
@@ -38,7 +39,7 @@ Their unrelated decisions remain unchanged.
   Settle rejects empty input both with and without `from`.
 - Flow statements execute sequentially. Named result bindings preserve `_`;
   named runnable parameters bind from same-named locals.
-- The installed grammar is 0.3.4: `collect:` is rejected, while unrecognized
+- The installed grammar is 0.3.4: `spread:` is rejected, while unrecognized
   produce/generate/reduce-like text can be lowered as an implicit run. New
   keywords require a grammar release, not executor-only dispatch changes.
 
@@ -55,7 +56,7 @@ transformation probes; no model or live-provider calls were used.
 | `keep` / `drop` | Select outer elements by position or Boolean predicate | Selected elements in original order |
 | `sort` | One Number score per outer element | A stable ordering of those elements |
 | `reduce` | Sequential reduction of outer elements | The reducer's declared output |
-| `collect` | Independent child statements read one entry snapshot | One outer array, one item per child in source order |
+| `spread` | Independent child statements read one entry snapshot | One outer array, one item per child in source order |
 
 1. Run accepts scalar or array inputs and outputs according to the existing
    runnable contract. It neither iterates nor wraps, unwraps, or flattens values.
@@ -103,19 +104,19 @@ and `["c"]`; `keep first 1` returns `[["a", "b"]]`.
 
 Flow and repeat bodies remain sequential by default. Existing repeat and possible
 par/seq control constructs describe execution organization; value operators
-such as produce, map, reduce, and the proposed collect describe value production
+such as produce, map, reduce, and the proposed spread describe value production
 or transformation. A statement block can supply an operator's children without
 making that operator a control construct. New par/seq control syntax is outside
 this definition.
 
 A named Flow is already a runnable, so `produce N using pipeline` and
 `map using pipeline` repeat a multi-step sequence without extending `using` to
-accept multiple targets. Use `collect` for independent children with different
+accept multiple targets. Use `spread` for independent children with different
 runnables, counts, and output types:
 
 ```too
 flow review(_: Text) -> Text:
-  collect:
+  spread:
     run review_accuracy
     run review_risks
   run summarize_reviews
@@ -123,13 +124,13 @@ flow review(_: Text) -> Text:
 
 Both reviewers consume the original `Text` and return `Text`.
 `summarize_reviews(_: Text[]) -> Text` receives their results as one array.
-Use `let reviews = collect:` when the next runnable needs both the original `_`
-and a named `reviews: Text[]` parameter. Collect does not export child locals or
+Use `let reviews = spread:` when the next runnable needs both the original `_`
+and a named `reviews: Text[]` parameter. Spread does not export child locals or
 assemble named fields into an object.
 
-- Syntax is `collect [in P lanes]: STMTS`, with at least one child. Each immediate
+- Syntax is `spread [in P lanes]: STMTS`, with at least one child. Each immediate
   statement contributes exactly one output. First-version children are unbound
-  value statements, including produce/map/reduce and nested collect. Reject direct
+  value statements, including produce/map/reduce and nested spread. Reject direct
   `let`, `repeat`, and `exec` children: named/discarded child bindings would hide
   the one-item-per-child contract, and control statements have no return value.
   Put multi-step sequences or repeats in helper Flows and call them with `run`.
@@ -149,14 +150,14 @@ assemble named fields into an object.
   each child's typed value and provenance. An unknown child output also selects
   `Json[]`. Do not infer a different result type from observed values or add
   tuple/union types. The outer count always equals the number of children.
-- Collect is a value statement: bare collect writes `_`; `let results = collect:`
-  writes only `results`; `let collect:` discards the whole array. Bind only after
+- Spread is a value statement: bare spread writes `_`; `let results = spread:`
+  writes only `results`; `let spread:` discards the whole array. Bind only after
   all children succeed. No child variable is exported to the enclosing Flow.
 - Limit active direct children with P, or inherit the Flow's `lanes`. Nested
-  collect/produce/map operations retain their own lane limits; this is not a global
+  spread/produce/map operations retain their own lane limits; this is not a global
   leaf-call limit. Start ready children in source order, but do not promise
   completion order. Use separate scheduling scopes to avoid nested-lane deadlock.
-- A failure cancels unfinished siblings and awaits their cleanup; fail the collect
+- A failure cancels unfinished siblings and awaits their cleanup; fail the spread
   Step without binding a partial array. Parent cancellation cancels the whole
   block. Completed child records remain inspectable. Failed result collection
   does not roll back file or tool side effects.
@@ -165,7 +166,7 @@ assemble named fields into an object.
   it does not introduce an authored par control construct. Its output is an array
   of typed refs to child outputs using existing array codecs; child Steps retain
   their outputs and local bindings.
-  Restore a committed collect prefix from its whole-array output and outer binding,
+  Restore a committed spread prefix from its whole-array output and outer binding,
   never by applying child bindings to enclosing locals. Apply the same rule
   inside repeat. Failed blocks retain the existing retry policy; add no
   partial-success retry mode.
@@ -178,7 +179,7 @@ assemble named fields into an object.
   an outer array element.
 - Represent missing locals and statement-without-output separately from valid
   values. Use absence or a private missing-value sentinel, never JSON null.
-  Repeat remains a control statement with no result; collect produces an array.
+  Repeat remains a control statement with no result; spread produces an array.
 - Static checks accept known array types and reject known non-arrays or missing
   input. Unknown types and open `Json` values defer array checks to execution.
   Repeat joins widen differing type/length facts without a shape lattice.
@@ -199,7 +200,7 @@ behavior; reduce retains settle's clauses and reducer contract.
 
 Remove executable scatter/gather/storm/settle forms with migration diagnostics,
 without deprecated execution aliases. Adopt a published Tree-sitter release
-that defines produce, reduce, and collect statement nodes. Preserve recognizable
+that defines produce, reduce, and spread statement nodes. Preserve recognizable
 legacy CST forms only for precise rejection, never as implicit prompt text.
 Source checking, formatting, help, highlighting, and execution must agree,
 including nested and bound forms. Literal prose with a newly reserved statement
@@ -243,22 +244,56 @@ The implementation PR updates current docs and tracked examples, and generates
 the breaking-change/migration entry through `too aide.too update_changelog`.
 This definition PR changes no behavior and needs no release entry.
 
+## Related Direction: Asynchronous Bindings
+
+Use `fut` as the short asynchronous-binding keyword paired with `let`.
+The following syntax records the design direction; root spawning, future
+values, asynchronous scheduling, and awaiting are outside this array-operator
+implementation scope and require a separate complete definition.
+
+```too
+fut research_result = spawn research
+fut ideas_result = run brainstorm
+
+run prepare_outline
+
+let research = await research_result
+let ideas = await ideas_result
+
+run write_article
+```
+
+- `fut result = run R` starts a child operation immediately and binds its future.
+  `let result = run R` waits and binds the completed result.
+- `spawn R` starts an independent root and returns its handle immediately.
+  `fut result = spawn R` binds that completion handle without nesting futures.
+- Capture inputs at launch. Waiting is explicit: `await result` writes the
+  completed output to `_`; `let value = await result` binds only `value`.
+  The original future remains reusable; waiting again does not execute again.
+- The same binding syntax may extend to whole produce/map/spread operations
+  while preserving their result and internal scheduling contracts.
+
+The separate definition must resolve unawaited child lifetimes, cancellation
+and failure propagation, durable handles and retry, root context and limits,
+and whether to accept the long `future` spelling as an alias. This section
+does not add those features to this plan's acceptance tests.
+
 ## Implementation Touchpoints
 
 - `src/toolang/lang/{ast,lower,contracts,flow_validation,format,description}.py`:
-  renamed and new statements, collect output contracts, legacy decoding, type checks.
+  renamed and new statements, spread output contracts, legacy decoding, type checks.
 - The upstream grammar's statement nodes/queries/corpus, followed by this
   repository's `pyproject.toml`, `uv.lock`, CST/formatter/highlighter integration:
   published syntax support; no alternate handwritten parser.
 - `src/toolang/execution/executor/{common,executor,content,iteration}.py`,
   `runs/{flow,agic}.py`, and `stmts/`: complete-value locals, collection selection,
   call/result binding, content handling, and removal of scatter/gather handlers.
-  Rename storm/settle owners to produce/reduce; add `stmts/collect.py` using the
+  Rename storm/settle owners to produce/reduce; add `stmts/spread.py` using the
   existing internal par Step boundary and child-local execution, collecting
   outputs in source order.
 - `src/toolang/execution/{types,records,schemas,store}.py`: Local codecs,
-  reference projections, historical records, resolved outputs, and CollectStmt as
-  an existing-kind par Step. Restore only collect's outer binding during Flow retry.
+  reference projections, historical records, resolved outputs, and SpreadStmt as
+  an existing-kind par Step. Restore only spread's outer binding during Flow retry.
 - `src/toolang/state/cache.py` and execution snapshot entry points: prevent stale
   validated programs from bypassing the new source rules.
 - `src/toolang/cli/common/execution_progress/formatting.py`: summaries without
@@ -295,19 +330,19 @@ This definition PR changes no behavior and needs no release entry.
 9. Produce and reduce match the former storm and settle contracts, including
    inline defaults, lane clauses, reducer seeds/history, and call counts.
    New grammar nodes and formatter round trips must not become implicit runs.
-10. Collect returns one array item per child in source order, including child empty
+10. Spread returns one array item per child in source order, including child empty
     arrays and nulls. Test homogeneous `Text[]`/`Text[][]`, heterogeneous
     `Json[]`, structs/Parts, unknown output contracts, and preserved refs. Exercise
-    bare/named/discarded collect, nested collect, collect inside repeat, multi-step
+    bare/named/discarded spread, nested spread, spread inside repeat, multi-step
     child Flows, and direct consumption of the resulting array by map/reduce/run.
-11. Reject empty collect, child `let` bindings, unsupported direct control children,
+11. Reject empty spread, child `let` bindings, unsupported direct control children,
     and statically known missing inputs before calls; allow input-free children
     without `_`. Prove entry snapshot reads with one lane and out-of-order
     completion; prove overlap and lane limits with deterministic gates, including
     nested-operation limits.
 12. A failed/canceled child publishes no partial array, cancels and
     drains siblings, preserves child records, and prevents downstream execution.
-    Restoring a successful collect prefix restores exactly its outer binding and
+    Restoring a successful spread prefix restores exactly its outer binding and
     refs without replaying child bindings; failed prefixes leak no partial result.
 13. Migrate and check tracked examples; validate current documentation links and
     syntax. Run all default repository checks for the implementation.
@@ -317,19 +352,19 @@ This definition PR changes no behavior and needs no release entry.
 This is a breaking language and Local-protocol change. Main risks are lost array
 levels or provenance during the type-model conversion, implicit inline output
 defaults during migration, confusing content arrays with absent output, and
-child results escaping before the whole collect array succeeds. Nested lane limits
+child results escaping before the whole spread array succeeds. Nested lane limits
 can multiply concurrent calls and must be documented and tested.
 The acceptance cases above cover those boundaries.
 
 Out of scope: authored `par`/`seq` control constructs, implicit result objects or
-destructuring, inline multi-statement collect branches, flattening, a new reduce
+destructuring, inline multi-statement spread branches, flattening, a new reduce
 empty policy, automatic
 source rewriting, global concurrency controls, a legacy execution engine, and
 unrelated filesystem or presentation uses of the word shape/dim.
 
 The proposed compatibility choice is direct source removal with historical
 record reads retained. The collection operator's array result and separation
-from control constructs follow the human's explicit direction. Its keyword and
-remaining details are proposed for review, not inferred approval.
+from control constructs follow the human's explicit direction. Remaining
+semantics are proposed for review, not inferred approval.
 Implementation requires approval of the complete definition and publication of
 the matching upstream grammar; this PR changes no product behavior.
