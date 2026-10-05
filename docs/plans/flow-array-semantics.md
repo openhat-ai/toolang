@@ -247,6 +247,7 @@ This definition PR changes no behavior and needs no release entry.
 ## Related Direction: Asynchronous Bindings
 
 Use `fut` as the short asynchronous-binding keyword paired with `let`.
+Its form is `fut [NAME =] VALUE_STMT`: naming the future is optional.
 The following syntax records the design direction; root spawning, future
 values, asynchronous scheduling, and awaiting are outside this array-operator
 implementation scope and require a separate complete definition.
@@ -254,6 +255,7 @@ implementation scope and require a separate complete definition.
 ```too
 fut research_result = spawn research
 fut ideas_result = run brainstorm
+fut run review_risks
 
 run prepare_outline
 
@@ -265,6 +267,12 @@ run write_article
 
 - `fut result = run R` starts a child operation immediately and binds its future.
   `let result = run R` waits and binds the completed result.
+- `fut run R` starts immediately, discards the future, and continues without
+  waiting or requiring a later await. It preserves `_` and existing named locals.
+  By comparison, `let run R` waits and discards the completed result.
+  Discarding a future does not cancel its work, erase execution records, or
+  turn a child into an independent root; `fut spawn R` starts a root and
+  discards its handle.
 - `spawn R` starts an independent root and returns its handle immediately.
   `fut result = spawn R` binds that completion handle without nesting futures.
 - Capture inputs at launch. Waiting is explicit: `await result` writes the
