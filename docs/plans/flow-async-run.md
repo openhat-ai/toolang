@@ -73,8 +73,8 @@ Use #687's shared Run value and public struct view: `id: Text`, `thread: Text`,
 `status: Text`. Identity/thread are stable; execution projects current persisted
 status once per referenced run per statement evaluation. Field projections and
 explicit view rendering are ordinary data, not implicit awaits. General handle
-parameters and containers remain out of scope. No separate Future or receipt
-type is introduced: the returned Run handle itself serves as the launch receipt.
+parameters and containers remain out of scope. Returning the handle confirms
+admission; it does not imply completion.
 
 Public locals have type Run with their complete result contract tracked
 separately; `Run<T>` is explanatory/static notation, not authored generics.
