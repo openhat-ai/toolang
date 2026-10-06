@@ -356,7 +356,7 @@ def test_execute_input_is_resolved_in_entries_and_dependencies(store):
         ),
         started_at="2026-01-01T00:00:03Z",
     )
-    control = store.accept_execute_control(
+    control = store.accept_exec_control(
         run_id="run_a",
         state="0" * 64,
         runnable="agic:target",

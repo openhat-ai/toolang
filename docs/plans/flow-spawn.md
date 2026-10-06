@@ -229,6 +229,13 @@ pointing to the originating Step in the same agent store, even across threads;
 the root parent stays null. Separate parent from origin in shared admission
 helpers. Add no new ControlKind, synthetic caller control, or scheduler.
 
+Use `exec` and `chdir` for the existing handoff and working-directory control
+kinds, matching their runtime tools. Rename their payloads to `ExecControlPayload`
+and `ChdirControlPayload`; keep the location field `cwd`. Schema 52 rejects older
+stores unchanged, without migration or old-kind aliases. Acceptance checks cover
+stored/protocol round trips, history reconstruction, retry guards, and chdir
+atomicity under the renamed kinds.
+
 Flow records a spawn-kind Step with SpawnStmt, runtime handle output, and its optional
 named binding; agic records a normal Tool Step with the admission-time Run view.
 Each Step ends after admission without waiting for root execution. Once committed,

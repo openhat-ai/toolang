@@ -23,8 +23,9 @@ from toolang.base.types.model import (
 from toolang.base.types.policy import RunLimits
 from toolang.execution.records import (
     CancelControlPayload,
+    ChdirControlPayload,
     ControlRecord,
-    ExecuteControlPayload,
+    ExecControlPayload,
     RetryControlPayload,
     RunControlPayload,
     SteerControlPayload,
@@ -37,6 +38,7 @@ from toolang.execution.schemas import ControlInfo
 from toolang.execution.types import (
     value_for_type,
     AgentResources,
+    ControlKind,
     ControlRef,
     FieldRef,
     Pointer,
@@ -561,9 +563,9 @@ def test_inherited_preparation_payload_round_trips_without_revision_duplication(
     assert control_payload_from_data("run", child_data) == child_payload
 
 
-def test_execute_payload_round_trips_source_pointing_locals() -> None:
+def test_exec_payload_round_trips_source_pointing_locals() -> None:
     source = FieldRef.from_path(StepRef.parse("run_1.2"), "output", "value", 1)
-    payload = ExecuteControlPayload(
+    payload = ExecControlPayload(
         state="a" * 64,
         runnable="_flow_deliver$flow:deliver",
         input=CallInput(
@@ -575,8 +577,7 @@ def test_execute_payload_round_trips_source_pointing_locals() -> None:
     )
 
     assert (
-        control_payload_from_data("execute", control_payload_to_data(payload))
-        == payload
+        control_payload_from_data("exec", control_payload_to_data(payload)) == payload
     )
 
 
@@ -590,11 +591,19 @@ def test_execute_payload_round_trips_source_pointing_locals() -> None:
             ),
         ),
         ("cancel", CancelControlPayload()),
+        (
+            "exec",
+            ExecControlPayload("a" * 64, "flow:next", CallInput({"_": "work"})),
+        ),
+        ("chdir", ChdirControlPayload("repo://src")),
     ),
 )
 def test_control_protocol_uses_kind_to_restore_payload_variant(
-    kind: Literal["steer", "cancel"],
-    payload: SteerControlPayload | CancelControlPayload,
+    kind: Literal["steer", "cancel", "exec", "chdir"],
+    payload: SteerControlPayload
+    | CancelControlPayload
+    | ExecControlPayload
+    | ChdirControlPayload,
 ) -> None:
     record = ControlRecord(
         id="run_test@1",
@@ -623,6 +632,22 @@ def test_control_protocol_uses_kind_to_restore_payload_variant(
 
     assert type(restored_record.payload) is type(payload)
     assert type(restored_info.payload) is type(payload)
+
+
+@pytest.mark.parametrize(
+    ("kind", "payload"),
+    [
+        ("execute", {"state": "a" * 64, "runnable": "flow:next", "input": {}}),
+        ("cwd", {"cwd": "repo://src", "cause": "chdir", "state": None}),
+    ],
+)
+def test_renamed_control_kinds_do_not_accept_legacy_aliases(kind, payload) -> None:
+    with pytest.raises(ValueError, match="unknown control kind"):
+        control_payload_from_data(cast(ControlKind, kind), payload)
+    with pytest.raises(ValueError):
+        TypeAdapter(ControlRecord).validate_python(
+            {"id": "run_test@1", "kind": kind, "payload": payload}
+        )
 
 
 @pytest.mark.parametrize(

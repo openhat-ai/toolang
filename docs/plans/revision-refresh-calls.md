@@ -87,7 +87,7 @@ and reload control persistence. Publication and discovery are automatic; no
 compatibility shim or historical reload codec remains. Bump the execution
 database schema version so unsupported old databases fail at open.
 Existing same-Run execute transfers remain explicit binding changes, recorded
-by execute controls. Resolve them from the model's advertised catalog snapshot
+by exec controls. Resolve them from the model's advertised catalog snapshot
 and preserve their output/lineage checks; they are not new child Run acceptance.
 
 ## Persistence and Implementation

@@ -1974,11 +1974,11 @@ RecallTarget = Annotated[
 ControlTiming = Literal["immediate", "next_step", "next_call"]
 ControlKind = Literal[
     "run",
-    "cwd",
+    "chdir",
     "recall",
     "retry",
     "compact",
-    "execute",
+    "exec",
     "steer",
     "cancel",
     "create",

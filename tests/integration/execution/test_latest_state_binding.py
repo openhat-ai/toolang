@@ -649,9 +649,7 @@ def test_exec_uses_latest_snapshot_and_records_explicit_binding(tmp_path):
             gate.release()
             root = await handle
             assert root.status == "succeeded", root.error
-            transfer = harness.store.list_run_controls(run_id=root.id, kind="execute")[
-                0
-            ]
+            transfer = harness.store.list_run_controls(run_id=root.id, kind="exec")[0]
             assert harness.store.resolve_state_revision(transfer.ref) == latest.revision
             steps = harness.store.list_steps(run_id=root.id)
             assert isinstance(steps[0].given, StoredModelStepGiven)

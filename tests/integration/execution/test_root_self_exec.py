@@ -21,7 +21,7 @@ from toolang.base.types.message import Message
 from toolang.base.types.policy import AgentCeiling, RunLimits
 from toolang.base.types.run import ModelCallResult, ModelUsage, ToolCall
 from toolang.execution.events import StepEnd
-from toolang.execution.records import ExecuteControlPayload
+from toolang.execution.records import ExecControlPayload
 from toolang.plugin.toolsets.loading import load_tools
 from toolang.execution.types import ThreadPrefix
 from toolang.state.prepare import prepare_agent_state
@@ -84,8 +84,8 @@ agic evolve() -> Text:
             assert root.output is not None
             assert harness.store.resolve_value(root.output.value) == "done"
             assert harness.published is not None
-            (control,) = harness.store.list_run_controls(run_id=root.id, kind="execute")
-            assert isinstance(control.payload, ExecuteControlPayload)
+            (control,) = harness.store.list_run_controls(run_id=root.id, kind="exec")
+            assert isinstance(control.payload, ExecControlPayload)
             assert control.payload.state == harness.published.revision
             assert control.payload.runnable == "flow:grow"
             steps = harness.store.list_steps(run_id=root.id)
@@ -151,8 +151,8 @@ def test_model_root_self_exec_keeps_one_run(tmp_path, changed, unnamed):
             root = await handle
             assert root.status == "succeeded", root.error
             assert harness.store.list_run_tree(root_run_id=root.id) == [root]
-            (control,) = harness.store.list_run_controls(run_id=root.id, kind="execute")
-            assert isinstance(control.payload, ExecuteControlPayload)
+            (control,) = harness.store.list_run_controls(run_id=root.id, kind="exec")
+            assert isinstance(control.payload, ExecControlPayload)
             assert (
                 control.payload.state == (harness.published or harness.state).revision
             )
@@ -220,7 +220,7 @@ agic grow(item: Item) -> Text:
                 assert "signature changed" in result.error
                 assert harness.state.revision in result.error
                 assert harness.published.revision in result.error
-            assert not harness.store.list_run_controls(run_id=root.id, kind="execute")
+            assert not harness.store.list_run_controls(run_id=root.id, kind="exec")
             assert "Old root." in str(harness.adapter.invocations[-1].call.messages)
 
     asyncio.run(scenario())
@@ -249,7 +249,7 @@ def test_root_self_exec_still_requires_handoff_authorization(tmp_path):
             assert (
                 last_tool_result(harness.adapter.invocations[-1].call).error is not None
             )
-            assert not harness.store.list_run_controls(run_id=root.id, kind="execute")
+            assert not harness.store.list_run_controls(run_id=root.id, kind="exec")
 
     asyncio.run(scenario())
 
@@ -285,8 +285,7 @@ def test_unchanged_native_self_exec_remains_cancelable(tmp_path, monkeypatch, ti
             root = await asyncio.wait_for(handle, 5)
             assert root.status == "canceled"
             assert (
-                len(harness.store.list_run_controls(run_id=root.id, kind="execute"))
-                == 1
+                len(harness.store.list_run_controls(run_id=root.id, kind="exec")) == 1
             )
 
     asyncio.run(scenario())
@@ -321,8 +320,7 @@ def test_self_exec_preserves_root_budget_and_authority(tmp_path):
             assert "token" in harness.store.resolve_error(root.error).lower()
             assert len(harness.adapter.invocations) == 2
             assert (
-                len(harness.store.list_run_controls(run_id=root.id, kind="execute"))
-                == 1
+                len(harness.store.list_run_controls(run_id=root.id, kind="exec")) == 1
             )
             assert all(
                 blocked.name not in {tool.name for tool in call.call.tools}

@@ -71,7 +71,7 @@ path syntax. Remove `_toolang.workspaces`; the per-call workspace list provides 
 
 **Current:** `SessionSetting` and `RunOverride` have no workdir. Chat has slash-command
 infrastructure but no `/cd` setting. `RunControlPayload` stores the accepted `cwd`,
-`CwdControlPayload` stores applied changes, and `RunStore.current_cwd()` reconstructs a
+`ChdirControlPayload` stores applied changes, and `RunStore.current_cwd()` reconstructs a
 Run's final value. New root Runs currently select a workdir only when exactly one workspace
 is configured and available. Child Runs inherit the parent's current value.
 

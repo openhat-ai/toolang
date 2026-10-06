@@ -94,7 +94,7 @@ def test_run_store_persists_dot_separated_step_paths(tmp_path: Path) -> None:
             assert connection.execute(
                 "SELECT parent FROM runs WHERE id = 'run_dot_child'"
             ).fetchone() == ("run_dot_path.2.3",)
-            assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 51
+            assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 52
         finally:
             connection.close()
     finally:
@@ -602,7 +602,7 @@ def test_retry_rejects_applied_execute_history_without_mutation(
             started_at="2026-01-01T00:00:03Z",
             finished_at=None,
         )
-        execute = store.accept_execute_control(
+        execute = store.accept_exec_control(
             run_id=run.id,
             state=entry.payload.state,
             runnable="agic:target",
@@ -615,7 +615,7 @@ def test_retry_rejects_applied_execute_history_without_mutation(
         assert execute.status == "applied"
         project_run_end(store, run_id=run.id)
 
-        with pytest.raises(ValueError, match="applied execute controls.*use rerun"):
+        with pytest.raises(ValueError, match="applied exec controls.*use rerun"):
             store.accept_retry(
                 run_id=run.id,
                 anchor=None,

@@ -54,7 +54,7 @@ agic target() -> Text:
 
     async def scenario() -> None:
         async with harness:
-            monkeypatch.setattr(harness.store, "accept_execute_control", fail_commit)
+            monkeypatch.setattr(harness.store, "accept_exec_control", fail_commit)
             root = await harness.executor.run(
                 harness.run_spec(
                     thread=harness.threads.create(prefix=ThreadPrefix.TERM),
@@ -74,7 +74,7 @@ agic target() -> Text:
             assert isinstance(result, ToolResultPart)
             assert result.error == "database is locked"
             assert result.tool_call_id == "execute"
-            assert not harness.store.list_run_controls(run_id=root.id, kind="execute")
+            assert not harness.store.list_run_controls(run_id=root.id, kind="exec")
             assert len(harness.adapter.invocations) == 1
             assert_run_event_integrity(tracer.events)
             projector = ProgressProjector()

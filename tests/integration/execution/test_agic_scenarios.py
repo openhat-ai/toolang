@@ -1158,7 +1158,7 @@ def test_cancel_during_tool_result_delivery_preserves_output(
                 control = next(
                     c
                     for c in harness.store.list_run_controls(run_id=run.id)
-                    if c.kind == "execute"
+                    if c.kind == "exec"
                 )
                 assert part.output == {"controls": [str(control.ref)]}
             assert_run_event_integrity(tracer.events)

@@ -28,7 +28,7 @@ from toolang.common.layout import AgentLayout
 from toolang.execution.executor.steps.tool import invoke_tool_call
 from toolang.execution.values import parts_from_value
 from toolang.execution.records import (
-    ExecuteControlPayload,
+    ExecControlPayload,
     RunControlPayload,
 )
 from toolang.execution.types import (
@@ -127,7 +127,7 @@ agic helper() -> Text:
                 for control in harness.store.list_run_controls(run_id=run.id)
             ]
             assert any(
-                isinstance(control.payload, (RunControlPayload, ExecuteControlPayload))
+                isinstance(control.payload, (RunControlPayload, ExecControlPayload))
                 and control.payload.runnable == f"{kind}:main"
                 for control in controls
             )
@@ -1362,11 +1362,11 @@ agic target(_: Text) -> Text:
                 "tool",
                 "model",
             ]
-            controls = harness.store.list_run_controls(run_id=root.id, kind="execute")
+            controls = harness.store.list_run_controls(run_id=root.id, kind="exec")
             assert len(controls) == 1
             execute = controls[0]
             assert execute.status == "applied"
-            assert isinstance(execute.payload, ExecuteControlPayload)
+            assert isinstance(execute.payload, ExecControlPayload)
             source = FieldRef.from_path(steps[0].ref, "output", "value", 0)
             assert execute.payload.state == harness.state.revision
             assert execute.payload.runnable == "agic:target"
@@ -1526,7 +1526,7 @@ agic blocked -> Text:
                 ("tool", "failed"),
                 ("model", "succeeded"),
             ]
-            assert not harness.store.list_run_controls(run_id=root.id, kind="execute")
+            assert not harness.store.list_run_controls(run_id=root.id, kind="exec")
             result = last_tool_result(harness.adapter.invocations[1].call)
             assert isinstance(result, ToolResultPart)
             assert result.tool_call_id == "blocked-handoff"
@@ -1648,7 +1648,7 @@ agic target() -> Text:
                 ("tool", "failed"),
                 ("model", "succeeded"),
             ]
-            assert not harness.store.list_run_controls(run_id=root.id, kind="execute")
+            assert not harness.store.list_run_controls(run_id=root.id, kind="exec")
             results = tuple(
                 part
                 for message in harness.adapter.invocations[1].call.messages
@@ -1727,12 +1727,12 @@ agic target() -> Text:
                 ("tool", "succeeded"),
                 ("model", "succeeded"),
             ]
-            controls = harness.store.list_run_controls(run_id=root.id, kind="execute")
+            controls = harness.store.list_run_controls(run_id=root.id, kind="exec")
             assert len(controls) == 2
             assert [
                 control.payload.runnable
                 for control in controls
-                if isinstance(control.payload, ExecuteControlPayload)
+                if isinstance(control.payload, ExecControlPayload)
             ] == ["agic:target", "agic:caller"]
             assert harness.store.list_run_tree(root_run_id=root.id) == [root]
             for invocation, expected in zip(
@@ -1814,11 +1814,11 @@ flow deliver(_: Text) -> Text:
                 "tool",
                 "value",
             ]
-            controls = harness.store.list_run_controls(run_id=root.id, kind="execute")
+            controls = harness.store.list_run_controls(run_id=root.id, kind="exec")
             assert [
                 control.payload.runnable
                 for control in controls
-                if isinstance(control.payload, ExecuteControlPayload)
+                if isinstance(control.payload, ExecControlPayload)
             ] == [
                 "agic:middle",
                 "flow:deliver",
@@ -1925,7 +1925,7 @@ agic target() -> Text:
                 "tool",
                 "model",
             ]
-            controls = harness.store.list_run_controls(run_id=root.id, kind="execute")
+            controls = harness.store.list_run_controls(run_id=root.id, kind="exec")
             assert len(controls) == 1 and controls[0].status == "applied"
 
     asyncio.run(scenario())
@@ -2184,10 +2184,10 @@ agic other() -> Text:
                 )
                 (invocation,) = harness.store.list_run_controls(
                     run_id=target_run.id,
-                    kind="execute" if operation == "exec" else "run",
+                    kind="exec" if operation == "exec" else "run",
                 )
                 assert isinstance(
-                    invocation.payload, RunControlPayload | ExecuteControlPayload
+                    invocation.payload, RunControlPayload | ExecControlPayload
                 )
                 assert harness.store.resolve_value(invocation.payload.input) == {
                     "_": "payload",
@@ -2234,9 +2234,7 @@ agic other() -> Text:
                 else:
                     assert (
                         len(
-                            harness.store.list_run_controls(
-                                run_id=root.id, kind="execute"
-                            )
+                            harness.store.list_run_controls(run_id=root.id, kind="exec")
                         )
                         == 1
                     )
@@ -2247,8 +2245,7 @@ agic other() -> Text:
                     == f"runnable is not authorized by {directive}: {kind}:target"
                 )
                 assert (
-                    harness.store.list_run_controls(run_id=root.id, kind="execute")
-                    == ()
+                    harness.store.list_run_controls(run_id=root.id, kind="exec") == ()
                 )
             assert len(runs) == (2 if allowed and operation == "run" else 1)
 

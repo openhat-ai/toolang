@@ -11,7 +11,7 @@ from toolang.base.money import add_cost, cost_text, normalize_cost
 from ..accounting import token_meter_quantity
 from ..records import (
     ControlRecord,
-    ExecuteControlPayload,
+    ExecControlPayload,
     RunRecord,
     StepRecord,
     occurrence_to_data,
@@ -305,7 +305,7 @@ def _handoffs(
         trigger = control.triggered_by
         if (
             control.status != "applied"
-            or not isinstance(control.payload, ExecuteControlPayload)
+            or not isinstance(control.payload, ExecControlPayload)
             or trigger is None
             or str(control.target) not in positions
         ):

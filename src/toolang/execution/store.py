@@ -50,10 +50,10 @@ from .inspection import (
 )
 from .records import (
     CompactControlPayload,
-    CwdControlPayload,
+    ChdirControlPayload,
     CreateControlPayload,
     ControlPayload,
-    ExecuteControlPayload,
+    ExecControlPayload,
     ForkControlPayload,
     RecallControlPayload,
     RetryControlPayload,
@@ -128,7 +128,7 @@ from .types import (
 from .schemas import Record, RecordSelection, select_record
 from .values import parts_from_value
 
-_SCHEMA_VERSION = 51
+_SCHEMA_VERSION = 52
 _SUPPORTED_SCHEMA_VERSIONS = (_SCHEMA_VERSION,)
 
 
@@ -644,7 +644,7 @@ class RunStore:
             )
         return handle, True
 
-    def accept_execute_control(
+    def accept_exec_control(
         self,
         *,
         run_id: str,
@@ -659,13 +659,13 @@ class RunStore:
 
         if not valid_run_id(run_id):
             raise ValueError(f"invalid run id: {run_id!r}")
-        payload = ExecuteControlPayload(
+        payload = ExecControlPayload(
             state=state,
             runnable=runnable,
             input=input,
         )
         if triggered_by.run_id != run_id:
-            raise ValueError("execute trigger must belong to its run")
+            raise ValueError("exec trigger must belong to its run")
         with self.write_transaction():
             run = self._conn.execute(
                 "SELECT status FROM runs WHERE id = ?", (run_id,)
@@ -683,7 +683,7 @@ class RunStore:
                 or str(step["kind"]) not in {"tool", "exec"}
                 or str(step["status"]) != "running"
             ):
-                raise ValueError("execute trigger must be a running tool or exec Step")
+                raise ValueError("exec trigger must be a running tool or exec Step")
             row = self._conn.execute(
                 'SELECT COALESCE(MAX("index"), -1) + 1 AS next_index '
                 "FROM controls WHERE target = ?",
@@ -693,7 +693,7 @@ class RunStore:
             control_ref = ControlRef(RunRef(run_id), index)
             self._insert_control(
                 ref=control_ref,
-                kind="execute",
+                kind="exec",
                 timing="immediate",
                 payload=payload,
                 request=None,
@@ -743,7 +743,7 @@ class RunStore:
                 (str(control_ref),),
             ).fetchone()
         if inserted is None:  # pragma: no cover - transactional insert invariant
-            raise RuntimeError(f"execute control acceptance failed: {run_id}")
+            raise RuntimeError(f"exec control acceptance failed: {run_id}")
         return _control_from_row(inserted)
 
     def runtime_controls(
@@ -1031,18 +1031,18 @@ class RunStore:
                     )
                 tree_runs = self._root_tree_runs(run_id)
                 placeholders = ", ".join("?" for _ in tree_runs)
-                applied_execute = self._conn.execute(
+                applied_exec = self._conn.execute(
                     f"""
                     SELECT 1 FROM controls
                     WHERE scope = 'run' AND target IN ({placeholders})
-                      AND kind = 'execute' AND status = 'applied'
+                      AND kind = 'exec' AND status = 'applied'
                     LIMIT 1
                     """,
                     tree_runs,
                 ).fetchone()
-                if applied_execute is not None:
+                if applied_exec is not None:
                     raise ValueError(
-                        f"run has applied execute controls: {run_id}; use rerun"
+                        f"run has applied exec controls: {run_id}; use rerun"
                     )
                 preparation_row = self._conn.execute(
                     "SELECT * FROM controls WHERE id = ?",
@@ -2253,9 +2253,7 @@ class RunStore:
                         pending_runs.append(run.id)
 
             records = tuple(runs.values())
-            handoffs = self.list_run_controls_for_runs(
-                run_ids=tuple(runs), kind="execute"
-            )
+            handoffs = self.list_run_controls_for_runs(run_ids=tuple(runs), kind="exec")
             entries = tuple(
                 item.entry for item in self._inspect_runs_locked(records)
             ) + tuple(control for controls in handoffs.values() for control in controls)
@@ -2994,9 +2992,9 @@ class RunStore:
         if initial is None or not isinstance(initial.payload, RunControlPayload):
             raise ValueError(f"run preparation not found: {run_id}")
         location = initial.payload.cwd
-        for control in self.list_run_controls(run_id=run_id, kind="cwd"):
+        for control in self.list_run_controls(run_id=run_id, kind="chdir"):
             if control.status == "applied" and isinstance(
-                control.payload, CwdControlPayload
+                control.payload, ChdirControlPayload
             ):
                 location = control.payload.cwd
         return location
@@ -3083,9 +3081,9 @@ class RunStore:
                     ).fetchone()[0]
                     self._insert_control(
                         ref=ControlRef(RunRef(ref.run_id), int(index)),
-                        kind="cwd",
+                        kind="chdir",
                         timing="immediate",
-                        payload=CwdControlPayload(
+                        payload=ChdirControlPayload(
                             cwd=cwd, cause="chdir", state=existing_step.state
                         ),
                         request=None,
@@ -3683,7 +3681,7 @@ class RunStore:
             payload.state
             if isinstance(
                 payload,
-                RunControlPayload | ExecuteControlPayload,
+                RunControlPayload | ExecControlPayload,
             )
             else None
         )

@@ -12,7 +12,7 @@ from toolang.execution.records import (
     CancelControlPayload,
     ControlRecord,
     CreateControlPayload,
-    ExecuteControlPayload,
+    ExecControlPayload,
     ForkControlPayload,
     RetryControlPayload,
     RewindControlPayload,
@@ -76,7 +76,7 @@ def test_control_description_is_an_attribute(
             ),
         ),
         ("retry", RetryControlPayload(AgentResources(), RunLimits(), None)),
-        ("execute", ExecuteControlPayload("a" * 64, "agic:chat", CallInput({}))),
+        ("exec", ExecControlPayload("a" * 64, "agic:chat", CallInput({}))),
         ("create", CreateControlPayload()),
         (
             "fork",

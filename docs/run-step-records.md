@@ -79,7 +79,7 @@ for queries.
 Current kinds are:
 
 ```text
-run | rerun | retry | execute | steer | cancel
+run | retry | exec | chdir | recall | compact | steer | cancel
 create | fork | rewind
 ```
 
@@ -87,14 +87,17 @@ Control status is `pending`, `applied`, `wontapply`, or `revoked`. Timing is
 `immediate`, `next_step`, or `next_call`. Private claim and revision columns
 support concurrency and polling.
 
-Run, Execute, Steer, and Cancel payloads store flat `input` objects, keyed by
+Run, Exec, Steer, and Cancel payloads store flat `input` objects, keyed by
 `_` and argument names. Run entries may also store flat `authored_input` source
 text. Retry inherits entry input; rerun creates a new Run entry. Each persisted
 value retains its self-describing codec, without a Local/name/dim wrapper.
 References address `payload/input/_` or `payload/input/argumentName`.
 
-RunStore schema 51 rejects older SQL schemas before mutation and leaves them
+RunStore schema 52 rejects older SQL schemas before mutation and leaves them
 intact for their matching runtime. There is no migration for older SQL schemas.
+Control kinds `execute` and `cwd` are renamed to `exec` and `chdir`, with no
+old-name aliases. The working-directory payload field remains `cwd`. Update
+control filters and consumers to the new kinds; use a fresh store for new runs.
 
 `Output` contains a complete `value: Value | TypedRef | RunHandle` and a
 `binding: str | None`. `"_"` is an ordinary binding name for the current local;

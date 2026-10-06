@@ -141,7 +141,7 @@ def test_publication_preserves_committed_cwd_before_next_model_call(tmp_path, ch
             harness.published = updated
             assert harness.store.current_cwd(handle.run_id) == "repo://"
             assert (
-                len(harness.store.list_run_controls(run_id=handle.run_id, kind="cwd"))
+                len(harness.store.list_run_controls(run_id=handle.run_id, kind="chdir"))
                 == 1
             )
             gate.release()
@@ -654,7 +654,7 @@ def test_cd_mixed_batch_is_rejected_before_filesystem_mutation(tmp_path):
             )
             assert run.status == "succeeded", run.error
             assert not (repo / "bad").exists()
-            assert harness.store.list_run_controls(run_id=run.id, kind="cwd") == ()
+            assert harness.store.list_run_controls(run_id=run.id, kind="chdir") == ()
 
     asyncio.run(scenario())
 
@@ -898,14 +898,14 @@ def test_retry_discards_cd_control_at_agic_restart_anchor(tmp_path):
             # An Agic cycle restarts from its first Model Step; cd is in the
             # discarded suffix and cannot be restored by reading old output.
             assert harness.store.current_cwd(first.id) == "repo://"
-            assert harness.store.list_run_controls(run_id=first.id, kind="cwd") == ()
+            assert harness.store.list_run_controls(run_id=first.id, kind="chdir") == ()
             anchor = harness.store.list_steps(run_id=first.id)[0].ref
             restarted = await harness.executor.retry(
                 first.id, setup=harness.setup, state=harness.state, anchor=anchor
             )
             assert restarted.status == "succeeded", restarted.error
             assert harness.store.current_cwd(first.id) == "repo://"
-            assert harness.store.list_run_controls(run_id=first.id, kind="cwd") == ()
+            assert harness.store.list_run_controls(run_id=first.id, kind="chdir") == ()
             assert (
                 _locations(harness.adapter.invocations[-1].call)[-1]
                 == '<toolang:workdir path="repo://"/>'
@@ -1055,7 +1055,7 @@ def test_failed_and_canceled_cd_never_change_the_run_location(tmp_path, monkeypa
             run = await asyncio.wait_for(handle, timeout=3)
             assert run.status == "canceled"
             assert harness.store.current_cwd(run.id) == "repo://"
-            assert harness.store.list_run_controls(run_id=run.id, kind="cwd") == ()
+            assert harness.store.list_run_controls(run_id=run.id, kind="chdir") == ()
 
     asyncio.run(scenario())
 
@@ -1246,9 +1246,9 @@ flow parent:
                 "repo://",
                 "repo://src",
             ]
-            assert not harness.store.list_run_controls(run_id=parent.id, kind="cwd")
+            assert not harness.store.list_run_controls(run_id=parent.id, kind="chdir")
             assert (
-                len(harness.store.list_run_controls(run_id=child.id, kind="cwd")) == 1
+                len(harness.store.list_run_controls(run_id=child.id, kind="chdir")) == 1
             )
             gate.release()
             result = await handle

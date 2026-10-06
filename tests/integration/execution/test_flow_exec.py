@@ -13,7 +13,7 @@ from tests.support.execution_harness import (
 from toolang.base.types.message import Message, message_text
 from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.execution.events import StepEnd, run_event_from_data, run_event_to_data
-from toolang.execution.records import ExecuteControlPayload, RunControlPayload
+from toolang.execution.records import ExecControlPayload, RunControlPayload
 from toolang.execution.types import ExecStepNoted, LoopStepNoted, ThreadPrefix, TypedRef
 from toolang.state.prepare import prepare_agent_state
 
@@ -128,7 +128,7 @@ def test_flow_handoffs_allow_scheduled_cancellation(tmp_path, monkeypatch, timin
             assert root.status == "canceled", (
                 harness.store.resolve_error(root.error) if root.error else None
             )
-            controls = harness.store.list_run_controls(run_id=root.id, kind="execute")
+            controls = harness.store.list_run_controls(run_id=root.id, kind="exec")
             assert len(controls) == 1
             assert harness.store.list_steps(run_id=root.id)[0].status == "succeeded"
 
@@ -217,7 +217,7 @@ agic finish() -> Text:
             )
             steps = harness.store.list_steps(run_id=grow.id)
             assert [s.kind for s in steps] == ["loop", "loop", "exec", "run"]
-            (control,) = harness.store.list_run_controls(run_id=grow.id, kind="execute")
+            (control,) = harness.store.list_run_controls(run_id=grow.id, kind="exec")
             assert control.triggered_by == steps[2].ref
             assert steps[2].noted == ExecStepNoted(control.ref, "flow:successor")
             assert steps[2].output is None
@@ -285,8 +285,8 @@ agic successor(_: Text) -> Text:
             assert root.status == "succeeded", (
                 harness.store.resolve_error(root.error) if root.error else None
             )
-            (control,) = harness.store.list_run_controls(run_id=root.id, kind="execute")
-            assert isinstance(control.payload, ExecuteControlPayload)
+            (control,) = harness.store.list_run_controls(run_id=root.id, kind="exec")
+            assert isinstance(control.payload, ExecControlPayload)
             assert control.payload.state == harness.published.revision
             assert set(control.payload.input) == {"_"}
             pointer = control.payload.input["_"]
@@ -322,11 +322,11 @@ def test_rejected_child_self_exec_leaves_no_handoff(tmp_path):
             assert "current or an ancestor" in str(
                 harness.store.resolve_error(root.error)
             )
-            assert not harness.store.list_run_controls(run_id=root.id, kind="execute")
+            assert not harness.store.list_run_controls(run_id=root.id, kind="exec")
             child = next(
                 r for r in harness.store.list_run_tree(root_run_id=root.id) if r.parent
             )
-            assert not harness.store.list_run_controls(run_id=child.id, kind="execute")
+            assert not harness.store.list_run_controls(run_id=child.id, kind="exec")
             steps = harness.store.list_steps(run_id=child.id)
             assert [step.status for step in steps] == ["failed", "failed"]
             assert all(step.aborted_by is None for step in steps)
@@ -376,7 +376,7 @@ agic successor() -> Text:
             assert (
                 len(
                     harness.store.list_run_controls(
-                        run_id=event.step.run_id, kind="execute"
+                        run_id=event.step.run_id, kind="exec"
                     )
                 )
                 == 1
@@ -400,7 +400,7 @@ agic successor() -> Text:
             )
             assert injected
             steps = harness.store.list_steps(run_id=root.id)
-            transfers = harness.store.list_run_controls(run_id=root.id, kind="execute")
+            transfers = harness.store.list_run_controls(run_id=root.id, kind="exec")
             assert (
                 root.status
                 == {"commit": "failed", "cancel": "canceled", "delivery": "succeeded"}[
@@ -537,7 +537,7 @@ agic successor() -> Text:
             )
             assert root.status == "failed"
             assert len(
-                harness.store.list_run_controls(run_id=root.id, kind="execute")
+                harness.store.list_run_controls(run_id=root.id, kind="exec")
             ) == (2 if self_exec else 1)
             assert harness.store.list_steps(run_id=root.id)[0].status == "succeeded"
 
@@ -573,7 +573,7 @@ agic successor() -> Text:
             gate.release()
             root = await handle
             assert root.status == "canceled"
-            assert not harness.store.list_run_controls(run_id=root.id, kind="execute")
+            assert not harness.store.list_run_controls(run_id=root.id, kind="exec")
             assert len(harness.adapter.invocations) == 1
             assert harness.store.list_steps(run_id=root.id)[-1].status == "canceled"
 
@@ -629,8 +629,7 @@ agic successor() -> Text:
             assert root.error is not None
             assert "token" in harness.store.resolve_error(root.error).lower()
             assert (
-                len(harness.store.list_run_controls(run_id=root.id, kind="execute"))
-                == 1
+                len(harness.store.list_run_controls(run_id=root.id, kind="exec")) == 1
             )
             assert len(harness.adapter.invocations) == 2
             assert all(
@@ -682,8 +681,8 @@ flow grow(_: Text) -> Text:
             assert root.status == "succeeded", (
                 harness.store.resolve_error(root.error) if root.error else None
             )
-            (control,) = harness.store.list_run_controls(run_id=root.id, kind="execute")
-            assert isinstance(control.payload, ExecuteControlPayload)
+            (control,) = harness.store.list_run_controls(run_id=root.id, kind="exec")
+            assert isinstance(control.payload, ExecControlPayload)
             assert control.payload.state == harness.state.revision
             call = harness.adapter.invocations[-1].call
             assert "Old inline work." in str(call.messages)
@@ -727,11 +726,11 @@ flow evolve() -> Text:
             assert root.status == "succeeded", (
                 harness.store.resolve_error(root.error) if root.error else None
             )
-            controls = harness.store.list_run_controls(run_id=root.id, kind="execute")
+            controls = harness.store.list_run_controls(run_id=root.id, kind="exec")
             assert [
                 (c.payload.runnable, c.payload.state)
                 for c in controls
-                if isinstance(c.payload, ExecuteControlPayload)
+                if isinstance(c.payload, ExecControlPayload)
             ] == [
                 ("flow:evolve", harness.state.revision),
                 ("flow:grow", harness.published.revision),
@@ -787,7 +786,7 @@ agic successor() -> Text:
             assert (
                 harness.state.revision in error and harness.published.revision in error
             )
-            assert not harness.store.list_run_controls(run_id=root.id, kind="execute")
+            assert not harness.store.list_run_controls(run_id=root.id, kind="exec")
             step = harness.store.list_steps(run_id=root.id)[-1]
             assert step.kind == "exec" and step.status == "failed"
             assert step.state == root.state and step.noted is None

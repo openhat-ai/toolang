@@ -177,7 +177,7 @@ root, resolves and records its anchor, physically deletes the invalid structural
 step suffix and its child Runs, fails stale pending controls, and reopens the
 root as pending. New steps reuse the trimmed indexes. Before mutation, retry
 rejects any root tree captured by a durable fork prefix, as well as applied
-execute-control history because it cannot replay those prior execution timelines. It also requires the
+exec-control history because it cannot replay those prior execution timelines. It also requires the
 source preparation to have sandbox
 provenance and requires it to equal the current canonical sandbox. Accepted
 retry controls repeat that value. A flow retry restores typed locals from the
@@ -459,14 +459,14 @@ its existing behavior: retrying an agic replaces its Step history and children.
 Automatic resumption of pending scheduled Runs after process loss is not
 implemented yet.
 
-A successful `_toolang__exec` records one applied execute control during its
+A successful `_toolang__exec` records one applied exec control during its
 Tool Step, then finishes that Step before transferring to the target. It creates
 no child Run, extra transition Step, or additional `RunBegin`:
 
 ```text
 RunBegin(entry)
   caller Model Step
-  exec Tool Step → applied execute control
+  exec Tool Step → applied exec control
   target Steps
 RunEnd(final target result)
 ```
@@ -478,7 +478,7 @@ runnable path are validated before commit. Validation failure creates no
 control and returns a correlated tool error. Success returns a control receipt;
 the target starts with fresh continuation and local call counters, while prior
 Steps and message deltas remain in Run history.
-Native Flow `exec` uses an `exec` Step and the same durable `execute` control.
+Native Flow `exec` uses an `exec` Step and the same durable `exec` control.
 Its typed inputs retain Flow provenance. One transaction commits the control,
 the exec Step, and all open same-Run repeat ancestors; loops succeed with
 `termination = exec`, completed iteration counts, and `aborted_by` pointing to

@@ -1962,7 +1962,7 @@ class _Execution:
         """Persist and activate one prepared same-Run runnable replacement."""
 
         ref = _bound_runnable(binding)
-        control = self.store.accept_execute_control(
+        control = self.store.accept_exec_control(
             run_id=binding.run_id,
             state=binding.state.revision,
             runnable=ref,

@@ -38,6 +38,14 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Changed
 
+- **Breaking:** Run Control kinds `execute` and `cwd` are renamed to `exec` and
+  `chdir`, and their payload types to `ExecControlPayload` and
+  `ChdirControlPayload`; `RunStore.accept_exec_control` replaces
+  `accept_execute_control`. Update integrations and control-kind filters to the
+  new names; the `cwd` location field is unchanged. RunStore schema 52 rejects
+  older stores unchanged, with no migration or old-name aliases, so inspect old
+  records with their matching runtime and start new runs on a fresh store.
+
 - Flow `spawn` Step outputs use the same `{"type", "value", "binding"}` envelope
   and `output/value` references as ordinary outputs. The native handle's runtime
   type tag is `_Run<T>` when the target's result type `T` is known and `_Run`
@@ -73,7 +81,7 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   identically, and array-valued child results stay nested.
 - **Breaking:** the `Local` wrapper is removed. Stored and HTTP/event outputs
   share the `type`, `value`, and `binding` envelope; update output references
-  from `output/local/value` to `output/value`. RunStore schema 51 rejects older
+  from `output/local/value` to `output/value`. RunStore schema 52 rejects older
   stores before mutation with no compatibility reader or migration, so keep the
   matching runtime to inspect old records and start new runs on a fresh store.
 

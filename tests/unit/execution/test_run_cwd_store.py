@@ -1,4 +1,4 @@
-"""Cwd controls share one durable commit boundary with successful chdir Steps."""
+"""Chdir controls share one durable commit boundary with successful chdir Steps."""
 
 import pytest
 
@@ -7,7 +7,7 @@ from toolang.base.errors import ToolangError
 from toolang.base.types.message import Message, ToolResultPart
 from toolang.base.types.run import ToolCall
 from toolang.execution.records import (
-    CwdControlPayload,
+    ChdirControlPayload,
     RunControlPayload,
     control_payload_from_data,
 )
@@ -59,7 +59,7 @@ def test_cd_step_end_and_cwd_control_commit_atomically(tmp_path, monkeypatch):
         original = store._insert_control
 
         def fail_control(*args, **kwargs):
-            if kwargs.get("kind") == "cwd":
+            if kwargs.get("kind") == "chdir":
                 raise RuntimeError("simulated interrupted transaction")
             return original(*args, **kwargs)
 
@@ -69,13 +69,13 @@ def test_cd_step_end_and_cwd_control_commit_atomically(tmp_path, monkeypatch):
         step = store.get_step(ref=ref)
         assert step is not None and step.status == "running"
         assert store.current_cwd(run.id) == ""
-        assert store.list_run_controls(run_id=run.id, kind="cwd") == ()
+        assert store.list_run_controls(run_id=run.id, kind="chdir") == ()
 
         monkeypatch.setattr(store, "_insert_control", original)
         assert finish().status == "succeeded"
-        (control,) = store.list_run_controls(run_id=run.id, kind="cwd")
+        (control,) = store.list_run_controls(run_id=run.id, kind="chdir")
         assert control.triggered_by == ref
-        assert isinstance(control.payload, CwdControlPayload)
+        assert isinstance(control.payload, ChdirControlPayload)
         assert control.payload.cwd == "repo://src"
         assert store.current_cwd(run.id) == "repo://src"
         reopened = RunStore(store.db_path)
@@ -121,11 +121,11 @@ def test_legacy_run_control_without_cwd_starts_unselected(tmp_path):
 )
 def test_cwd_control_rejects_noncanonical_or_uncaused_data(payload):
     with pytest.raises((ToolangError, TypeError, ValueError)):
-        control_payload_from_data("cwd", payload)
+        control_payload_from_data("chdir", payload)
 
 
 def test_removed_workspace_invalidation_is_rejected() -> None:
     with pytest.raises(ValueError, match="location and cause"):
         control_payload_from_data(
-            "cwd", {"cwd": "", "cause": "invalidated", "state": "run_abc@0"}
+            "chdir", {"cwd": "", "cause": "invalidated", "state": "run_abc@0"}
         )

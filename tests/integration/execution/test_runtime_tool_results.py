@@ -605,7 +605,7 @@ def test_steer_during_execute_delivery_keeps_committed_transfer(tmp_path: Path) 
             execute = next(
                 c
                 for c in harness.store.list_run_controls(run_id=root.id)
-                if c.kind == "execute"
+                if c.kind == "exec"
             )
             assert part.output == {"controls": [str(execute.ref)]}
             assert steps[1].aborted_by == steer.ref

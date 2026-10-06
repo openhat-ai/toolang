@@ -17,9 +17,9 @@ from toolang.execution.records import (
     CancelControlPayload,
     CompactControlPayload,
     ControlRecord,
-    CwdControlPayload,
+    ChdirControlPayload,
     CreateControlPayload,
-    ExecuteControlPayload,
+    ExecControlPayload,
     ForkControlPayload,
     RetryControlPayload,
     RewindControlPayload,
@@ -631,8 +631,8 @@ def test_every_control_payload_variant_has_one_canonical_record_shape() -> None:
             {"resources", "limits", "model_request", "retry_from"},
         ),
         (
-            "cwd",
-            CwdControlPayload("repo://", state=ControlRef.for_run("run_control", 0)),
+            "chdir",
+            ChdirControlPayload("repo://", state=ControlRef.for_run("run_control", 0)),
             {"cwd", "cause", "state"},
         ),
         (
@@ -641,8 +641,8 @@ def test_every_control_payload_variant_has_one_canonical_record_shape() -> None:
             {"horizon"},
         ),
         (
-            "execute",
-            ExecuteControlPayload(
+            "exec",
+            ExecControlPayload(
                 revision,
                 "agic:next",
                 CallInput(

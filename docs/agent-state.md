@@ -261,4 +261,4 @@ acceptance and model catalogs, without changing accepted code or caps.
 
 Model/provider continuation is a different value and is named `cont` in model
 calls, model results, model step records, and runtime agic state. The runs
-database accepts schema version 49 and rejects unsupported versions at open.
+database accepts schema version 52 and rejects unsupported versions at open.

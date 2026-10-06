@@ -25,7 +25,7 @@ from ..recall import recall_revisions
 from ..records import (
     CompactControlPayload,
     ControlRecord,
-    ExecuteControlPayload,
+    ExecControlPayload,
     RunControlPayload,
     RunRecord,
     StepRecord,
@@ -253,7 +253,7 @@ def active_steps(
         if any(
             ref.target == step.ref.run
             and ref in controls
-            and controls[ref].kind in {"run", "retry", "execute"}
+            and controls[ref].kind in {"run", "retry", "exec"}
             for ref in step.preceded_by
         ):
             start = index
@@ -281,14 +281,12 @@ def tail_delta(
             (
                 control
                 for control in reversed(tuple(controls.values()))
-                if isinstance(
-                    control.payload, RunControlPayload | ExecuteControlPayload
-                )
+                if isinstance(control.payload, RunControlPayload | ExecControlPayload)
             ),
             None,
         )
         if entry is not None and isinstance(
-            entry.payload, RunControlPayload | ExecuteControlPayload
+            entry.payload, RunControlPayload | ExecControlPayload
         ):
             if "_" in entry.payload.input:
                 messages.append(

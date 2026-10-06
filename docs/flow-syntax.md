@@ -472,10 +472,10 @@ Rename `storm` to `generate` and `settle` to `reduce`. Remove `using` before
 inline generate/map/reduce bodies; retain it before named targets. Keep bindings,
 `from` initializers, explicit types, and lane counts.
 
-Output protocol objects contain `type`, `value`, and `binding`; stored outputs
-contain `value` and `binding`, using the self-describing value codec. There is no
+Output protocol and stored objects contain `type`, `value`, and `binding`;
+ordinary stored values use the self-describing value codec. There is no
 Local wrapper or `dim` field. Update output references to `output/value`.
-RunStore schema 51 rejects older stores without modifying them; retain the
+RunStore schema 52 rejects older stores without modifying them; retain the
 matching older runtime to inspect those stores, and use a fresh store for new
 runs. No compatibility reader or automatic migration is provided. Old executable
 snapshots require source migration and a newly prepared state before retry/rerun.

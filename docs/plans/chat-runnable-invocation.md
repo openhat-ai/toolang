@@ -154,7 +154,7 @@ background execution, target creation, or session-default changes are included.
    The next chat turn still uses the session's default runnable.
 4. A scripted run of agic:xyz delivers its actual outcome before the next caller
    model invocation, which can then produce the requested summary.
-5. Invalid inputs create no accepted child or execute control, include signature
+5. Invalid inputs create no accepted child or exec control, include signature
    diagnostics, and allow corrected calls. Keep active-lineage, execute batching,
    output-contract, module-boundary, and target-failure behavior covered. Preserve
    rejection of deleted targets or changed signatures at named child acceptance.

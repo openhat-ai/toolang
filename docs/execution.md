@@ -43,7 +43,7 @@ records and observes only new live events.
 
 Persistence makes completed history available after process restart and for
 later model calls. Toolang does not resume an unfinished run after its owner
-process exits. The execution store uses schema version 36: both
+process exits. The execution store uses schema version 52: both
 read-only and writable opens reject every other version unchanged. This build
 does not migrate older stores.
 
@@ -218,8 +218,9 @@ observe only higher-level events.
 
 ## Run Controls
 
-Preparation control kinds are `run`, `rerun`, and `retry`; runtime control
-kinds include `execute`, `steer`, and `cancel`. Control timing is:
+Preparation control kinds are `run` and `retry`; runtime control kinds are
+`exec`, `chdir`, `recall`, `compact`, `steer`, and `cancel`. Rerun creates a new
+Run with a `run` control. Control timing is:
 
 ```text
 immediate | next_step | next_call
@@ -242,7 +243,7 @@ Every Run entry control stores its concrete runnable and model bindings,
 limits, resources, and a flat `CallInput[Value | TypedRef]`. Optional
 `authored_input` records the corresponding `CallInput[str]` source snapshot.
 Steer stores a primary `Part[]` value under `_`; cancel stores optional primary
-Text under `_`. Execute stores input references keyed by parameter name. Retry
+Text under `_`. Exec stores input references keyed by parameter name. Retry
 inherits input from the entry control and records its effective settings.
 
 Every Run entry stores its State revision. Root entries also store the accepted

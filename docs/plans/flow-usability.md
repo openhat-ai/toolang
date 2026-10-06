@@ -387,7 +387,7 @@ repeat 5 times windowing 3:
   target execution, serial caller suspension/resumption, batch reply ordering,
   and separate completion messages for success/failure/cancellation. Recovery must
   preserve continuation without duplicate dispatch or completion delivery.
-- Verify run/execute control references and causal ownership, unchanged execute
+- Verify run/exec control references and causal ownership, unchanged execute
   transfer/output contracts, caller cancellation, and flow statement result binding.
 - Migrate runtime tool descriptions and result consumers to scheduling receipts
   with final outcomes delivered through completion context.
