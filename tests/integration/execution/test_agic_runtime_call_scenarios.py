@@ -21,7 +21,7 @@ from tests.support.execution_harness import (
     PublicationTracer,
     RecordingTool,
 )
-from toolang.base.types.message import Message, ToolResultPart
+from toolang.base.types.message import ImagePart, Message, TextPart, ToolResultPart
 from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.base.types.tool import ToolContext
 from toolang.common.layout import AgentLayout
@@ -31,15 +31,16 @@ from toolang.execution.records import (
     ExecControlPayload,
     RunControlPayload,
 )
+from toolang.execution.store import RunStore
 from toolang.execution.types import (
     ErrorMessage,
     ErrorRef,
     FieldRef,
     ThreadPrefix,
-    TypedRef,
     ToolStepGiven,
 )
 from toolang.lang.input import resolve_input_parts
+from toolang.lang.types import Array, Struct
 from toolang.state.prepare import prepare_agent_state
 from toolang.state.watcher import StateWatcher
 
@@ -1357,18 +1358,11 @@ agic target(_: Text) -> Text:
             execute = controls[0]
             assert execute.status == "applied"
             assert isinstance(execute.payload, ExecControlPayload)
-            source = FieldRef.from_path(steps[0].ref, "output", "value", 0)
             assert execute.payload.state == harness.state.revision
             assert execute.payload.runnable == "agic:target"
             assert execute.triggered_by == steps[1].ref
             assert steps[2].preceded_by == (execute.ref,)
-            assert len(execute.payload.input) == 1
-            control_value = execute.payload.input["_"]
-            assert isinstance(control_value, TypedRef)
-            assert control_value.type == "Json"
-            assert control_value.ref == source.select("input", "input", "_")
-            assert harness.store.resolve_value(control_value) == "work"
-            assert steps[2].input == (source.select("input", "input", "_"),)
+            assert execute.payload.input == {"_": "work"}
             target_call = harness.adapter.invocations[1].call
             assert {
                 tool.name for tool in harness.adapter.invocations[0].call.tools
@@ -1409,6 +1403,215 @@ agic target(_: Text) -> Text:
                 for message in without_runtime_snapshots(target_call.messages)
             ] == ["user"]
             assert "Target work" in str(target_call.messages[0].parts[0])
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("operation", ["run", "async run", "exec", "spawn"])
+@pytest.mark.parametrize(
+    "type_name,raw,expected",
+    [
+        pytest.param(
+            "Part[]", "work", Array("Part[]", (TextPart("work"),)), id="text-to-parts"
+        ),
+        pytest.param(
+            "Part[]",
+            [
+                {"type": "text", "text": "work"},
+                {"type": "image", "file_id": "image-1"},
+            ],
+            Array("Part[]", (TextPart("work"), ImagePart(file_id="image-1"))),
+            id="multimodal-parts",
+        ),
+        pytest.param("Part[]", [], Array("Part[]", ()), id="empty-parts"),
+        pytest.param("Part", "work", TextPart("work"), id="text-to-part"),
+        pytest.param("Number", "7", 7, id="text-to-number"),
+        pytest.param("Boolean", "true", True, id="text-to-boolean"),
+        pytest.param(
+            "Json", '{"key":"value"}', '{"key":"value"}', id="native-json-string"
+        ),
+        pytest.param(
+            "Number[]", "[1,2]", Array("Number[]", (1, 2)), id="text-to-number-array"
+        ),
+        pytest.param(
+            "Number[][]",
+            [[1], []],
+            Array("Number[][]", (Array("Number[]", (1,)), Array("Number[]", ()))),
+            id="nested-array",
+        ),
+        pytest.param(
+            "Packet",
+            {"content": ["work"]},
+            Struct("Packet", {"content": Array("Part[]", (TextPart("work"),))}),
+            id="nested-parts",
+        ),
+    ],
+)
+def test_runtime_calls_persist_signature_coerced_inputs_and_results(
+    tmp_path: Path, monkeypatch, operation, type_name, raw, expected
+) -> None:
+    responses = [
+        ModelCallResult(
+            tool_calls=(
+                ToolCall(
+                    "invoke",
+                    "invoke",
+                    f"_toolang__{operation.removeprefix('async ')}",
+                    {
+                        "runnable": "flow:target",
+                        "input": {"_": raw, "extra": "note"},
+                        **({"async": True} if operation == "async run" else {}),
+                    },
+                ),
+            )
+        )
+    ]
+    if operation != "exec":
+        responses.append(ModelCallResult(message=Message.assistant("Caller finished")))
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=f"""
+struct Packet:
+  content: Part[]
+
+agic caller() -> {type_name if operation == "exec" else "Text"}:
+  tools = none
+  recall = none
+  context = none
+  instruct = none
+  user: Call flow:target with the supplied input using {operation}.
+
+flow target(_: {type_name}, extra: Part[]) -> {type_name}:
+  pass
+""",
+        responses=responses,
+    )
+    tracer = RecordingRunTracer()
+    if operation == "async run":
+        calls = 0
+
+        async def invoke(model, request, *, environ, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                return responses[0]
+            if calls == 2:
+                handle = last_tool_result(request).output
+                return ModelCallResult(
+                    tool_calls=(
+                        ToolCall(
+                            "wait", "wait", "_toolang__await", {"target": handle["id"]}
+                        ),
+                    )
+                )
+            return responses[1]
+
+        monkeypatch.setattr(harness.adapter, "invoke", invoke)
+        monkeypatch.setattr(harness.adapter, "stream", invoke)
+
+    def assert_result(store: RunStore, run_id: str) -> None:
+        root = store.get_run(run_id=run_id)
+        assert root is not None and root.status == "succeeded", root
+        assert root.output is not None
+        assert store.resolve_value(root.output.value) == expected
+        (control,) = store.list_run_controls(
+            run_id=run_id, kind="exec" if operation == "exec" else "run"
+        )
+        assert isinstance(control.payload, ExecControlPayload | RunControlPayload)
+        assert store.resolve_value(control.payload.input) == {
+            "_": expected,
+            "extra": Array("Part[]", (TextPart("note"),)),
+        }
+
+    async def scenario() -> str:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            root = await harness.executor.run(
+                harness.run_spec(thread=thread, runnable="agic:caller"), tracer=tracer
+            )
+            await asyncio.gather(*harness.executor._tasks)
+            assert root.status == "succeeded", root.error
+            target = (
+                root
+                if operation == "exec"
+                else next(
+                    run
+                    for run in harness.store.list_runs(limit=None)
+                    if run.id != root.id
+                )
+            )
+            assert_result(harness.store, target.id)
+            return target.id
+
+    run_id = asyncio.run(scenario())
+    reopened = RunStore(harness.store.db_path, read_only=True)
+    try:
+        assert_result(reopened, run_id)
+    finally:
+        reopened.close()
+    assert_replayed(harness.store.db_path, tracer.events)
+
+
+@pytest.mark.parametrize("operation", ["run", "async run", "exec", "spawn"])
+@pytest.mark.parametrize(
+    "input",
+    [
+        pytest.param({"_": "invalid", "count": "2"}, id="primary-coercion"),
+        pytest.param({"_": "1", "count": "invalid"}, id="named-coercion"),
+        pytest.param({"_": True, "count": "2"}, id="boolean-is-not-number"),
+        pytest.param({"_": "1"}, id="missing-argument"),
+        pytest.param({"_": "1", "count": "2", "extra": 3}, id="unknown-argument"),
+    ],
+)
+def test_runtime_calls_reject_invalid_inputs_before_target_admission(
+    tmp_path: Path, operation, input
+) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+agic caller() -> Text:
+  tools = none
+  recall = none
+  context = none
+  instruct = none
+  user: Call flow:target.
+
+flow target(_: Number, count: Number) -> Number:
+  pass
+""",
+        responses=(
+            ModelCallResult(
+                tool_calls=(
+                    ToolCall(
+                        "invalid",
+                        "invalid",
+                        f"_toolang__{operation.removeprefix('async ')}",
+                        {
+                            "runnable": "flow:target",
+                            "input": input,
+                            **({"async": True} if operation == "async run" else {}),
+                        },
+                    ),
+                )
+            ),
+            ModelCallResult(message=Message.assistant("Input rejected")),
+        ),
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            root = await harness.executor.run(
+                harness.run_spec(thread=thread, runnable="agic:caller")
+            )
+            assert root.status == "succeeded", root.error
+            assert harness.store.list_runs(limit=None) == [root]
+            assert not harness.store.list_run_controls(run_id=root.id, kind="exec")
+            reply = last_tool_result(harness.adapter.invocations[1].call)
+            assert reply.error
+            assert reply.output["code"] == "invalid_runnable_input"
+            assert reply.output["expected"]["input"]["type"] == "Number"
+            assert harness.adapter.pending_responses == 0
 
     asyncio.run(scenario())
 

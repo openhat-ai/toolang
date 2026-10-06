@@ -7,6 +7,12 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ## [Unreleased]
 
+### Fixed
+
+- `_toolang/exec` now records the target's signature-coerced input as resolved
+  typed values in its Run control payload, matching `run`, `async run`, and
+  `spawn`, instead of references into the caller's input.
+
 ## [0.4.0a1] - 2026-10-06
 
 ### Added
