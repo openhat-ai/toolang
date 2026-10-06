@@ -1133,6 +1133,25 @@ def test_flow_pointer_backed_output_is_not_displayed() -> None:
     assert terminal.committed == ()
 
 
+def test_unbounded_repeat_progress_uses_shared_description() -> None:
+    reducer = ProgressProjector()
+    reducer.handle(
+        RunBegin(
+            run="run_root",
+            control=ControlRef.for_run("run_root", 0),
+            runnable="flow:work",
+        )
+    )
+    header = reducer.handle(
+        StepBegin(
+            step=StepRef.parse("run_root.0"),
+            kind="loop",
+            given=RepeatStmt(span=SPAN),
+        )
+    )
+    assert _rows(header.committed) == [["[0] Repeat indefinitely", ""]]
+
+
 @pytest.mark.parametrize("count", [3, None])
 def test_repeat_uses_flat_iteration_and_statement_boundaries(count: int | None) -> None:
     reducer = ProgressProjector()
@@ -1284,6 +1303,53 @@ def test_until_run_shows_control_boundary_and_only_real_agic_steps() -> None:
     text = "\n".join(_rows(final.committed)[0])
     assert "• true" in text
     assert "executed completion_check" not in text
+
+
+@pytest.mark.parametrize(
+    "kind,statement,label",
+    [
+        ("run", RunStmt(span=SPAN, runnable="ready"), "Run ready"),
+        ("loop", RepeatStmt(span=SPAN, count=1), "Repeat 1 time"),
+    ],
+)
+def test_named_flow_condition_preserves_its_until_boundary(kind, statement, label):
+    reducer = ProgressProjector()
+    reducer.handle(
+        RunBegin(
+            run="run_root",
+            control=ControlRef.for_run("run_root", 0),
+            runnable="flow:work",
+        )
+    )
+    reducer.handle(
+        StepBegin(
+            step=StepRef.parse("run_root.0"),
+            kind="loop",
+            given=RepeatStmt(
+                span=SPAN,
+                runnable="check",
+                until_index=0,
+                stmts=(RunStmt(span=SPAN, runnable="work"),),
+            ),
+        )
+    )
+    reducer.handle(
+        RunBegin(
+            run="run_check",
+            parent=StepRef.parse("run_root.0"),
+            control=ControlRef.for_run("run_check", 0),
+            runnable="flow:check",
+            occurrence=Occurrence(
+                iteration=IterationOccurrence(index=0, phase="until")
+            ),
+        )
+    )
+    update = reducer.handle(
+        StepBegin(step=StepRef.parse("run_check.0"), kind=kind, given=statement)
+    )
+    assert _rows(update.committed) == [
+        ["<?> Run check to check whether to break", "", f"[0] {label}", ""]
+    ]
 
 
 def test_parallel_lane_is_single_line_and_terminal_failure_replaces_lanes() -> None:

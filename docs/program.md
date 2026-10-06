@@ -275,8 +275,11 @@ Rules:
 - `name?` is optional.
 - An omitted type defaults to `Text`.
 - Parameters are initialized as named runtime locals.
-- Parameter names must be unique. Except primary `_`, names cannot start or
-  end with `_`; internal underscores remain valid.
+- Parameter names must be unique. Regular parameter and local names must fully
+  match `[a-z][a-z0-9_]*` and must not be a grammar keyword, including reserved
+  legacy words. Comparison is exact and case-sensitive. `_` retains its special
+  primary-input role. This rule does not restrict data-field names. Rename
+  existing keyword-named variables together with their references.
 
 Script CLI arguments and options are derived from the selected runnable's
 signature. The primary input maps to positional/stdin content rather than a

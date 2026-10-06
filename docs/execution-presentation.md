@@ -297,6 +297,7 @@ declaration's source line). For example, an inline map displays
 | fixed `repeat` | `Repeat N times` |
 | bounded conditional `repeat` | `Repeat up to N times, until P is true` |
 | condition-only `repeat` | `Repeat until P is true` |
+| unbounded `repeat` without a condition | `Repeat indefinitely` |
 
 Explicit lane limits append `, one at a time` for one lane or `, up to N at once`
 for larger limits. A named statement binding (`let NAME = STMT`) then appends
@@ -546,7 +547,9 @@ Cancellation uses the same counts without inventing a failure:
 ## Repeat and Reduce
 
 Repeat and Reduce use the same loop presentation. Each iteration follows the
-normal trace-or-lane rule for its child statement:
+normal trace-or-lane rule for its child statement. Repeat condition markers
+appear at the authored position and belong to the owning repeat, including when
+a named Flow condition contains a nested loop:
 
 ```text
 ───────────────────────────────── 1/3 ──────────────────────────────────
@@ -576,8 +579,10 @@ exposing an internal name. Terminal loop output identifies the actual cause:
 • Reduced all 6 items in 6 iterations
 ```
 
-The causal child error remains at the child Step or lane. The loop row describes
-termination without repeating it.
+Terminal iteration counts include only completed passes. A leading or middle
+condition may exit with zero completed passes while retaining prefix work.
+Historical Human and JSON trees preserve the same authored order. The causal
+child error remains at the child Step or lane; the loop row describes termination.
 
 ## Error Ownership
 

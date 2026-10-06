@@ -1,7 +1,8 @@
 # Flow Rules Outline
 
 Flow syntax and value rules in this historical plan are superseded by
-[Flow Array Semantics](flow-array-semantics.md).
+[Flow Array Semantics](flow-array-semantics.md) and
+[Flexible repeat conditions](repeat-until-position.md), including variable naming.
 
 Goal: local signatures, validated operation contracts, consistent runtime scheduling,
 and bounded iteration/thread context.
@@ -15,8 +16,8 @@ Grammar integration is covered in section 11.
   output uses the operation default. Runtime references are not parameters.
 - Explicit `()` declares no parameters. Declared/inferred `_` is required.
 - Parameter type defaults: `_` is `Part[]`; other parameters are `Text`.
-- Parameter/local names cannot start or end with `_`, except primary `_`.
-  Internal underscores and data-field names are unrestricted by this rule.
+- Parameter/local names follow the current
+  [variable naming rule](../program.md#named-parameters).
   Reject unknown reserved references rather than inferring parameters.
 - Determine the signature locally, then check its compatibility at each use.
 
@@ -36,7 +37,7 @@ contracts. Constraints apply to both. `T` means any supported value type.
 | gather | Must include `_` | Text | T |
 | settle with from | Must include `_` | Text | T; initial value must also satisfy T |
 | settle without from | Must include `_` | Text | Must match the source element type |
-| until (inline agic) | May include or omit `_` | Boolean | Boolean |
+| until | May include or omit `_` | Boolean | Boolean |
 
 - Validate required arguments, input types, output types, and runtime context.
 - Map/keep/drop/sort/settle pass one element as `_`; gather passes the whole list.
@@ -110,12 +111,9 @@ repeat 5 times windowing 3:
 | `_k._` | Primary output at that iteration's end |
 | `_k.__` | Primary value at that iteration's entry |
 
-- Repeat: capture entry -> execute body, updating locals after each statement ->
-  evaluate until -> save entry/exit snapshots -> stop or continue. History stays
-  fixed throughout the body and `until`.
-- Until remains an inline agic. Bind its ordinary parameters from post-body locals
-  according to its signature; runtime supplies the active iteration-history family.
-  Until creates no iteration scope of its own.
+- Repeat evaluation, condition inputs, and completed-pass accounting follow
+  [Flexible repeat conditions](repeat-until-position.md). History stays fixed
+  throughout each pass; the condition creates no iteration scope of its own.
 - Settle captures entry locals after binding the current element as `_`, before
   invoking the reducer. Its exit snapshot replaces `_` with the cumulative
   output of type T; reducer-private state is excluded.
@@ -334,7 +332,7 @@ repeat 5 times windowing 3:
 | Lanes | Add `lanes = N` to both runnable kinds; retain optional `in N lanes` on parallel statements. |
 | Scatter | `scatter using name` or adhoc `scatter:` without a count; `storm N` keeps its count. |
 | Settle initializer | Optional trailing `from:` Content clause in adhoc `settle:` and named `settle using name:` blocks; see section 4. |
-| Repeat window | Optional `windowing N` before the header colon, as in `repeat 5 times windowing 3:`; also available on repeats without a count that use `until`. |
+| Repeat window | Optional `windowing N` before the header colon, independent of the optional count and condition. |
 | Empty route selection | `hands = none` and `handoffs = none` disable inherited routes; empty values are invalid. |
 
 - Preserve omitted signatures versus explicit `()` and authored type annotations;

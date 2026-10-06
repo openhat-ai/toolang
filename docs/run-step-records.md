@@ -216,6 +216,15 @@ Model `given` data contains normalized-call references. Large instructions,
 messages, and toolsets are content-addressed; provider request bodies and
 credentials are not stored. Model `noted` records continuation and accounting.
 
+For a Repeat Step, `given.until_index` counts preceding body statements; null or
+an absent historical field means a trailing condition. Body statements are
+same-Run child Steps with monotonic indexes. An evaluated condition is a child
+Run with an unbound result. Both carry zero-based `occur.iteration.index` and
+`body`/`until` phase labels; those labels do not determine execution order.
+Skipped conditions and suffixes create no records. Loop `noted` records completed
+passes and the termination cause; a satisfied loop may retain prefix effects
+with zero completed passes. The optional AST field needs no SQL schema change.
+
 ## Content And Errors
 
 The `contents` table stores `(id, value)` only. `id` is the complete
@@ -260,7 +269,9 @@ THREAD runs
 `inspect RUN tree` produces a transactionally consistent structural projection.
 `inspect STEP call` exposes normalized model or tool calls and structural calls
 for run, par, and loop Steps. These projections are not persisted event journals
-or exact timelines.
+or exact timelines. Human and JSON repeat trees merge body Steps and condition
+Runs at the saved condition position within each iteration, preserving trailing
+order for historical records without a position.
 
 ## Persistence
 

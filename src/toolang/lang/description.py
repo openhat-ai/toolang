@@ -78,6 +78,8 @@ def statement_description(statement: FlowStmt) -> str:
             )
         if statement.count is not None:
             return f"Repeat {_count(statement.count, 'time')}"
+        if statement.runnable is None:
+            return "Repeat indefinitely"
         return f"Repeat until {_runnable_label(statement.runnable)} is true"
     else:
         raise TypeError(f"unsupported flow statement: {type(statement).__name__}")

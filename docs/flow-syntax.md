@@ -87,8 +87,9 @@ and each parameter name holds its argument. See
 
 `_` is the primary local. A value statement reads a locals snapshot, computes
 one result, and applies its binding only after the complete statement succeeds.
-Except primary `_`, parameter/local names cannot start or end with `_`.
-Runtime history names are supplied separately from authored bindings.
+Regular local and parameter names follow the
+[variable naming rule](program.md#named-parameters). Runtime history names are
+supplied separately from authored bindings.
 `repeat` is different: it produces no result and accepts no `let` binding. Its
 body statements update the current flow locals normally as the loop proceeds.
 
@@ -103,8 +104,9 @@ The formatter writes nameless-let spawn as bare spawn.
 
 Read metadata through templates: `{{job.id}}` is the run ID, `{{job.thread}}` is
 the thread ID, and `{{job.status}}` reads persisted lifecycle status without
-waiting. A whole-handle template renders those three fields. One statement sees
-one status snapshot per run; later statements may see a newer status. Unknown
+waiting. A whole-handle template renders those three fields. Each statement's
+input binding uses one status snapshot per run. `until` refreshes that snapshot
+on each evaluation, sharing it across input validation and binding. Unknown
 fields fail. Capture these fields as ordinary data before passing them to named
 runnables. Handles cannot be runnable results or general data arguments.
 
@@ -189,14 +191,14 @@ sort ascending|descending [in P lanes] by SCORER
 sort ascending|descending [in P lanes] by [-> Number]: BODY
 
 # Repeat statements
-repeat N times [windowing P]:
-  STMTS
-  [until: BODY]
-
-repeat [windowing P]:
-  STMTS
-  until: BODY
+repeat [N times] [windowing P]:
+  PREFIX
+  [until RUNNABLE | until: BODY]
+  SUFFIX
 ```
+
+`PREFIX` and `SUFFIX` are statement sequences; either may be empty, but together
+they must contain at least one ordinary Flow statement.
 
 
 ## Natural Reading
@@ -212,7 +214,7 @@ map      map each current item to a new item while preserving order
 keep     keep positional items or items accepted by a filter
 drop     drop positional items or items accepted by a filter
 sort     sort all items by score in the required ascending or descending order
-repeat   repeat a statement block, bounded by N or until
+repeat   repeat a statement block, optionally bounded by N or until
 ```
 
 All value statements bind their complete result once. `run` calls once with the
@@ -243,9 +245,11 @@ returns one complete result per outer input item. Neither flattens array results
   the shared margin and represents relative indentation with spaces; formatting
   width changes only structural indentation. Interior blank lines are retained.
   Completed bodies do not require a final newline.
-- `until` is optional when a repeat has a count. It must follow at least one
-  executable statement, use the repeat body's sibling indentation, and be its
-  final substantive entry. A repeat without a count requires `until`.
+- Move same-line `let` text beginning with `until` into an indented value body;
+  `until` is a structural boundary at that position.
+- Each repeat accepts zero or one `until` at its body's sibling indentation.
+  The condition may precede, separate, or follow ordinary statements; at least
+  one ordinary statement is required. Nested repeats own their conditions.
 
 
 ### Results
@@ -284,13 +288,16 @@ returns one complete result per outer input item. Neither flattens array results
   with language type `Part[]`, without starting a child run.
 - Inline `keep`, `drop`, and `until` bodies default to `Boolean`; inline
   `sort` defaults to `Number`. An explicit incompatible return type is rejected.
-- Named filters must declare `Boolean`; named scorers must declare `Number`.
+- Named filters and repeat conditions must declare `Boolean`; named scorers
+  must declare `Number`. Named conditions accept a bare runnable name, without
+  kind/module qualification, arguments, modifiers, or a colon body.
 - Generated inline `keep`, `drop`, `sort`, and `until` evaluators disable tools.
   They inherit recall for explicit history-variable references; child agics never
   prepend historical messages automatically.
 - `repeat` is control flow, not a value statement. It has no result or binding.
   Its body statements update the same working locals according to their own
-  bindings. Zero iterations leave locals unchanged.
+  bindings. `repeat 0 times` leaves locals unchanged; an early condition exit
+  can retain prefix assignments even with zero completed iterations.
 
 
 ### Array Input And Empty Results
@@ -383,11 +390,16 @@ are clipped: keep retains everything and drop removes everything.
   numeric value `01`; other values require `times`.
 - Repeat retains 3 prior frames by default. `windowing P` overrides that positive
   capacity independently of the iteration count.
-- Every `repeat` has `N`, `until`, or both. When both are present, the first
-  stopping condition reached ends the loop. `until` is always final, reads the
-  latest locals after the iteration, and does not bind its Boolean result. A
-  failed evaluator run or failed Boolean coercion fails the repeat and its
-  enclosing flow; failure is never interpreted as `false`.
+- Count and condition are independently optional. Without either, repeat runs
+  until exec, cancellation, or failure. `repeat 0 times` makes no calls; reaching
+  the count limit starts no extra condition check.
+- `until` binds inputs from current locals at its authored position. True exits
+  only the owning repeat, retaining prefix effects and skipping the suffix.
+  False continues with the suffix. It never binds its Boolean result. A pass
+  counts and contributes history after its entire body succeeds and any condition
+  succeeds or skips for insufficient history. A true trailing condition counts;
+  an earlier exit does not. Failure, cancellation, or exec before completion
+  never counts the incomplete pass; failure is not interpreted as false.
 - `_k.name` reads the kth prior iteration's exit local; `_k._name` reads its
   entry local. `_k._` is the prior output and `_k.__` its input. Snapshots are
   immutable and exclude injected runtime bindings.
@@ -395,11 +407,15 @@ are clipped: keep retains everything and drop removes everything.
   the nearest scope and restore it on exit; ordinary calls preserve that scope.
   Missing in-window frames may be guarded; missing fields and out-of-window
   references are errors. Frame guards test presence, including empty/false/zero.
-- Until waits for the highest history index in its own resolved templates,
-  including inherited instruct/context and guards. Insufficient history means
-  false with no rendering or child call; the completed round is still saved.
-- Parameter/local names cannot start or end with `_`, except primary `_`.
-  Data fields remain unrestricted. Thread variables are `_far`, `_near`, `_past`.
+- Inline and named agic conditions wait for the highest history index in their
+  resolved templates, including inherited instruct/context and guards.
+  Insufficient history means false with no rendering or child call; the
+  completed round is still saved.
+- Named Flow conditions execute normally with the active history scope. Their
+  children do not receive automatic whole-Flow warm-up; guarded reads work,
+  and unguarded missing-frame reads fail. Named conditions retain normal tool
+  settings and live call resolution. Their executed tool effects are retained,
+  and a child exec stays within the condition's Run.
 
 The common form is:
 

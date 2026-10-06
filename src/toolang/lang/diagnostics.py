@@ -138,6 +138,17 @@ def _flow_migration_hint(node: Node, source: bytes) -> str | None:
             )
         ):
             keyword = source[child.start_byte : child.end_byte].decode("utf-8").strip()
+        if (
+            child.type == "text_line"
+            and child.parent is not None
+            and child.parent.type == "invalid_flow_reserved_statement"
+            and child.prev_named_sibling is not None
+            and child.prev_named_sibling.type == "flow_let_keyword"
+        ):
+            # Keyword variable rejection can recover the entire let as one
+            # invalid statement, leaving the operation head in its text field.
+            text = source[child.start_byte : child.end_byte].decode("utf-8").strip()
+            keyword = text.split(maxsplit=1)[0] if text else ""
         if keyword in replacements:
             return f"Removed Flow statement {keyword!r}; use {replacements[keyword]}"
         if child.type in {

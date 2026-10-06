@@ -9,6 +9,15 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Added
 
+- Repeat statements accept a named Boolean condition as a bare runnable name,
+  such as `until is_done`, in addition to the inline `until: BODY` form. Named
+  conditions must declare `Boolean` and reject kind or module qualification,
+  arguments, and a colon body.
+
+- A `repeat:` with neither a count nor a condition runs unbounded until `exec`,
+  cancellation, or failure, and is labeled `Repeat indefinitely` in script help
+  and progress. Bounded and condition-only repeats keep their existing limits.
+
 - Flow `spawn RUNNABLE` and `spawn [-> T]: BODY` start an independent root in a
   new empty thread and return once it is admitted, without waiting. Each root
   gets a new run and thread identity with a null parent, inherits the source's
@@ -37,6 +46,20 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   self-exec, and ancestor calls remain rejected.
 
 ### Changed
+
+- Repeat conditions are positional: an `until` clause may precede, separate, or
+  follow its body statements, and at most one condition is allowed. A condition
+  binds inputs from current locals at its authored position; a true condition
+  exits only its repeat, keeping committed prefix effects and skipping the
+  suffix, and never replaces parent locals or the Flow output. Count and
+  condition are independently optional.
+
+- **Breaking:** regular local and parameter names must fully match
+  `[a-z][a-z0-9_]*` and must not be a grammar keyword. Rename existing
+  keyword-named variables together with their references. Same-line `let` text
+  beginning with `until` must move into an indented value body, where it
+  remains literal text. The `_` primary-input parameter keeps its special
+  role, and data fields remain unrestricted.
 
 - **Breaking:** the runtime call tool `_toolang/run` (exposed as
   `_toolang__run`) now runs an authorized hand synchronously, matching flow
@@ -118,6 +141,15 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   body an explicit `run -> Text[]` type; a former `gather` may now receive `[]`.
   Source, snapshots, retries, and reruns using them are rejected with migration
   guidance, and older records remain available only to their matching runtime.
+
+### Fixed
+
+- Historical repeat trees now place `until` at its authored position,
+  consistently in Human and JSON inspection. (#695)
+
+- Repeated `until` evaluations now refresh Run handle status, and named
+  Flow conditions retain their correct progress boundary with nested loops.
+  (#695)
 
 ## [0.3.6] - 2026-10-04
 

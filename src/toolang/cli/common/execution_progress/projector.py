@@ -1247,12 +1247,20 @@ class ProgressProjector:
         repeat_index: int,
         target: StepState,
     ) -> Occurrence | None:
-        if repeat_index + 1 < len(chain):
-            return chain[repeat_index + 1].begin.occurrence
-        if target.begin.occurrence is not None:
-            return target.begin.occurrence
-        run = self._runs.get(target.begin.step.run_id)
-        return run.begin.occurrence if run is not None else None
+        owner = chain[repeat_index].begin.step
+        child = chain[repeat_index + 1] if repeat_index + 1 < len(chain) else target
+        if child.begin.step == owner:
+            return None
+        if child.begin.step.parent == owner:
+            return child.begin.occurrence
+        # Named Flow conditions have ordinary Steps in their own Run. Their
+        # until occurrence belongs to that Run, not to an inner loop's Steps.
+        run = self._runs.get(child.begin.step.run_id)
+        while run is not None and run.begin.parent is not None:
+            if run.begin.parent == owner:
+                return run.begin.occurrence
+            run = self._runs.get(run.begin.parent.run_id)
+        return None
 
     def _rows_for_boundaries(self, keys: tuple[str, ...]) -> tuple[ProgressRow, ...]:
         rows: list[ProgressRow] = []

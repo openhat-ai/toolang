@@ -302,7 +302,7 @@ def test_flow_materializes_named_parameter_and_output_defaults() -> None:
     assert flow.output == "Text"
 
 
-@pytest.mark.parametrize("name", ["_far", "_near", "_past", "_1", "name_"])
+@pytest.mark.parametrize("name", ["_far", "_near", "_past", "_1"])
 def test_runtime_local_names_are_reserved_for_parameters_and_bindings(
     name: str,
 ) -> None:

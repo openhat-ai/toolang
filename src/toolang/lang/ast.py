@@ -8,7 +8,7 @@ from functools import lru_cache
 import re
 from typing import Annotated, Any, ClassVar, Literal, cast
 
-from pydantic import Discriminator, Tag, TypeAdapter
+from pydantic import Discriminator, StrictInt, Tag, TypeAdapter
 from tree_sitter import Node as TreeSitterNode, Tree
 
 from .cst import parse as parse_cst
@@ -267,7 +267,18 @@ class RepeatStmt(Node):
     count: int | None = None
     stmts: tuple[FlowStmt, ...] = ()
     runnable: str | None = None
+    until_index: StrictInt | None = None
     window: int = 3
+
+    def __post_init__(self) -> None:
+        if self.until_index is not None and (
+            type(self.until_index) is not int
+            or self.runnable is None
+            or not 0 <= self.until_index <= len(self.stmts)
+        ):
+            raise ValueError(
+                "until_index requires a condition and an integer in 0..len(stmts)"
+            )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -542,7 +553,7 @@ def flow_stmt_from_data(value: object) -> FlowStmt:
     def legacy_defaults(raw: object, encoded: dict[str, Any]) -> None:
         if not isinstance(raw, Mapping):
             return
-        for name, default in (("window", 3), ("initial", None)):
+        for name, default in (("window", 3), ("initial", None), ("until_index", None)):
             if name not in raw and encoded.get(name) == default:
                 encoded.pop(name, None)
         for child, raw_child in zip(

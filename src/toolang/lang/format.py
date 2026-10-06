@@ -53,6 +53,7 @@ _FLOW_STATEMENT_TYPES = {
     "drop_statement",
     "sort_statement",
     "repeat_statement",
+    "until_clause",
     "inline_agic_body",
 }
 _DECLARATION_TYPES = {
@@ -322,7 +323,10 @@ def _flow_ancestry(ancestors: tuple[Node, ...]) -> tuple[tuple[int, str], ...]:
         (node.id, node.type)
         for node in reversed(ancestors)
         if node.type == "implicit_run_statement"
-        or (node.type in _FLOW_STATEMENT_TYPES and node.type != "inline_agic_body")
+        or (
+            node.type in _FLOW_STATEMENT_TYPES
+            and node.type not in {"inline_agic_body", "until_clause"}
+        )
     )
 
 
