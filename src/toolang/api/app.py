@@ -91,6 +91,8 @@ def create_app(
     live_events = LiveEventRelay()
     app.state.live_events = live_events
     core.threads.listener = live_events
+    core.executor.thread_listener = live_events
+    core.executor.root_tracer = lambda thread_id: live_events.trace(thread_id=thread_id)
 
     @app.exception_handler(CatalogNotFoundError)
     async def catalog_not_found(

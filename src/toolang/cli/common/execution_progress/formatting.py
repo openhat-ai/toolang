@@ -7,12 +7,6 @@ from toolang.base.types.message import (
     ToolResultPart,
 )
 from toolang.execution.events import StepEnd
-from toolang.execution.types import (
-    ModelStepGiven,
-    StepGiven,
-    ToolStepGiven,
-)
-from toolang.lang.ast import FlowStmt
 from toolang.lang.types import Array, display_runnable_ref
 from wcwidth import wcwidth, wcswidth
 
@@ -96,21 +90,14 @@ def count(value: int, noun: str) -> str:
     return f"{value} {noun}{'' if value == 1 else 's'}"
 
 
-def tool_label(given: StepGiven) -> str:
-    return given.call.name if isinstance(given, ToolStepGiven) else "tool"
+def runnable_label(value: object) -> str:
+    """Format a runnable target already extracted by operation normalization."""
 
-
-def run_label(given: StepGiven, *, fallback: str = "runnable") -> str:
-    value = (
-        given.call.input.get("runnable")
-        if isinstance(given, ToolStepGiven)
-        else getattr(given, "runnable", "")
-    )
     if not isinstance(value, str):
-        return fallback
+        return ""
     safe = "".join(character if character.isprintable() else " " for character in value)
     safe = display_runnable_ref(safe, surface="progress")
-    return one_line(safe)[:240] or fallback
+    return one_line(safe)[:240]
 
 
 def output_parts(event: StepEnd) -> tuple[Part, ...]:
@@ -124,12 +111,6 @@ def output_parts(event: StepEnd) -> tuple[Part, ...]:
     if isinstance(value, Array | tuple | list):
         return tuple(part for part in value if isinstance(part, Part))
     return ()
-
-
-def flow_statement(given: StepGiven) -> FlowStmt | None:
-    """Return the Flow statement carried directly by one Step given value."""
-
-    return None if isinstance(given, ModelStepGiven | ToolStepGiven) else given
 
 
 def shape_label(event: StepEnd) -> str:

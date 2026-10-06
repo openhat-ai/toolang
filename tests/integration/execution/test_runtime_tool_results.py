@@ -19,7 +19,7 @@ from tests.support.execution_harness import (
     RecordingTool,
     ScriptedModelTurn,
 )
-from toolang.base.types.message import Message, ToolResultPart, message_text
+from toolang.base.types.message import Message, ToolResultPart
 from toolang.base.types.policy import RunLimits
 from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.cli.common.execution_progress import ProgressProjector
@@ -118,13 +118,16 @@ def test_runtime_result_survives_restart_without_followup_model(
             ]
             if tool_name == "_toolang__run":
                 assert tool.status == "succeeded"
-                child = reopened.get_run(run_id=part.output["run_id"])
+                child = next(
+                    r
+                    for r in reopened.list_run_tree(root_run_id=root.id)
+                    if r.parent == tool.ref
+                )
                 assert child is not None and child.parent == tool.ref
                 assert tree.nodes[3].pointer == child.id
                 assert tree.nodes[3].parent == str(tool.ref)
-                assert set(part.output) == {"run_id", "controls"}
-                (completion,) = [m for m in conversation if m.tag == "run-result"]
-                assert "child output" in message_text(completion.parts)
+                assert part.output == {"type": "Text", "value": "child output"}
+                assert not any(m.tag == "run-result" for m in conversation)
                 assert root_record.output is not None
                 assert (
                     reopened.resolve_value(root_record.output.value) == "child output"
@@ -231,7 +234,7 @@ def test_steer_during_result_delivery_preserves_result_once(
             ]
             assert not projector._broken, [row.text for row in rows]
             assert projector._root_ended
-            assert not projector._scheduled_runs
+            assert not projector._steps
 
     asyncio.run(scenario())
 
@@ -320,18 +323,17 @@ def test_interruption_before_result_commit_preserves_completed_result(
                     for part in message.parts
                     if isinstance(part, ToolResultPart)
                 ] == [completed]
-            unstarted = []
-            if tool_name == "_toolang__run" and interruption == "cancel":
+            if tool_name == "_toolang__run":
                 child = next(
                     r
                     for r in harness.store.list_run_tree(root_run_id=root.id)
                     if r.parent is not None
                 )
-                assert child.status == "canceled" and not child.started_at
+                assert child.status == "succeeded" and child.started_at
                 entry = harness.store.get_run_control(run_id=child.id, index=0)
-                assert entry is not None and entry.status == "wontapply"
-                unstarted.append(child.id)
-            assert_run_event_integrity(tracer.events, unstarted_runs=unstarted)
+                assert entry is not None and entry.status == "applied"
+                assert entry.finished_at == entry.created_at
+            assert_run_event_integrity(tracer.events)
             projector = ProgressProjector()
             rows = [
                 row
@@ -341,13 +343,13 @@ def test_interruption_before_result_commit_preserves_completed_result(
             ]
             assert not projector._broken, [row.text for row in rows]
             assert projector._root_ended
-            assert not projector._scheduled_runs
+            assert not projector._steps
 
     asyncio.run(scenario())
 
 
 @pytest.mark.parametrize("interruption", ["steer", "cancel"])
-def test_interrupting_runtime_child_preserves_completed_tool_step(
+def test_interrupting_runtime_child_cancels_its_tool_step(
     tmp_path: Path, interruption: str
 ) -> None:
     gate = AsyncGate()
@@ -374,7 +376,7 @@ def test_interrupting_runtime_child_preserves_completed_tool_step(
                 tracer=tracer,
             )
             await asyncio.wait_for(gate.wait_until_entered(), timeout=1)
-            _control = (
+            control = (
                 handle.steer(Message.user("change direction"), timing="immediate")
                 if interruption == "steer"
                 else handle.cancel()
@@ -384,8 +386,8 @@ def test_interrupting_runtime_child_preserves_completed_tool_step(
                 "succeeded" if interruption == "steer" else "canceled"
             )
             tool_step = harness.store.list_steps(run_id=root.id)[1]
-            assert tool_step.kind == "tool" and tool_step.status == "succeeded"
-            assert tool_step.aborted_by is None
+            assert tool_step.kind == "tool" and tool_step.status == "canceled"
+            assert tool_step.aborted_by == control.ref
             child = next(
                 run
                 for run in harness.store.list_run_tree(root_run_id=root.id)
@@ -394,7 +396,7 @@ def test_interrupting_runtime_child_preserves_completed_tool_step(
             assert child.status == "canceled"
             assert tool_step.output is not None
             assert isinstance(tool_step.output.value, ToolResultPart)
-            assert tool_step.output.value.error is None
+            assert tool_step.output.value.error is not None
             if interruption == "steer":
                 messages = harness.adapter.invocations[-1].call.messages
                 assert [
@@ -403,9 +405,7 @@ def test_interrupting_runtime_child_preserves_completed_tool_step(
                     for p in m.parts
                     if isinstance(p, ToolResultPart)
                 ] == [tool_step.output.value]
-                (completion,) = [m for m in messages if m.tag == "run-result"]
-                assert 'status="canceled"' in message_text(completion.parts)
-                assert child.id in message_text(completion.parts)
+                assert not any(m.tag == "run-result" for m in messages)
             else:
                 assert len(harness.adapter.invocations) == 2
             assert_run_event_integrity(tracer.events)
@@ -418,7 +418,7 @@ def test_interrupting_runtime_child_preserves_completed_tool_step(
             ]
             assert not projector._broken, [row.text for row in rows]
             assert projector._root_ended
-            assert not projector._scheduled_runs
+            assert not projector._steps
 
     asyncio.run(scenario())
 
@@ -464,14 +464,12 @@ def test_retry_replaces_runtime_results_and_owned_child(tmp_path: Path) -> None:
             assert result is not None
             (part,) = parts_from_value(result.value)
             assert isinstance(part, ToolResultPart) and part.tool_call_id == "new"
-            (completion,) = [
-                m
-                for m in harness.adapter.invocations[-1].call.messages
-                if m.tag == "run-result"
-            ]
-            assert "new output" in message_text(completion.parts)
-            assert "old output" not in message_text(completion.parts)
-            assert part.output["run_id"] != old_child.id
+            assert part.output == {"type": "Text", "value": "new output"}
+            messages = harness.adapter.invocations[-1].call.messages
+            assert [
+                p for m in messages for p in m.parts if isinstance(p, ToolResultPart)
+            ] == [part]
+            assert not any(m.tag == "run-result" for m in messages)
 
     asyncio.run(scenario())
 
@@ -605,10 +603,12 @@ def test_steer_during_execute_delivery_keeps_committed_transfer(tmp_path: Path) 
             execute = next(
                 c
                 for c in harness.store.list_run_controls(run_id=root.id)
-                if c.kind == "execute"
+                if c.kind == "exec"
             )
             assert part.output == {"controls": [str(execute.ref)]}
-            assert steps[1].aborted_by == steer.ref
+            assert steps[1].status == "succeeded" and steps[1].aborted_by is None
+            assert execute.finished_at == execute.created_at == steps[1].finished_at
+            assert steer.ref in steps[2].preceded_by
             assert_run_event_integrity(tracer.events)
             projector = ProgressProjector()
             rows = [

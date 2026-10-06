@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from ..events import RunBegin, RunEnd, RunEvent, StepBegin, StepEnd
 from ..store import RunStore
 
@@ -12,7 +14,7 @@ class _PersistSink:
     def __init__(self, store: RunStore) -> None:
         self._store = store
 
-    def on_event(self, event: RunEvent) -> None:
+    def on_event(self, event: RunEvent) -> RunEvent:
         """Persist one run event in emission order."""
 
         if isinstance(event, RunBegin):
@@ -22,15 +24,15 @@ class _PersistSink:
                 occurrence=event.occurrence,
                 started_at=event.started_at,
             )
-            return
+            return event
         if isinstance(event, StepBegin):
             self._begin_step(event)
-            return
+            return event
         if isinstance(event, StepEnd):
-            self._finish_step(event)
-            return
+            return self._finish_step(event)
         if isinstance(event, RunEnd):
             self._finish_run(event)
+        return event
 
     def _begin_step(self, event: StepBegin) -> None:
         state = event.state
@@ -52,8 +54,8 @@ class _PersistSink:
             started_at=event.started_at,
         )
 
-    def _finish_step(self, event: StepEnd) -> None:
-        self._store.finish_step(
+    def _finish_step(self, event: StepEnd) -> StepEnd:
+        step = self._store.finish_step(
             aborted_by=event.aborted_by,
             ref=event.step,
             kind=event.kind,
@@ -62,6 +64,15 @@ class _PersistSink:
             noted=event.noted,
             error=event.error,
             finished_at=event.finished_at,
+        )
+        return replace(
+            event,
+            status=step.status,
+            output=step.output,
+            noted=step.noted,
+            error=step.error,
+            aborted_by=step.aborted_by,
+            finished_at=step.finished_at,
         )
 
     def _finish_run(self, event: RunEnd) -> None:

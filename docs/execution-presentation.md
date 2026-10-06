@@ -44,6 +44,15 @@ Ordered native events pass through one terminal-independent pipeline:
 RunEvent -> ProgressProjector -> ProgressUpdate -> surface presenter
 ```
 
+At `StepBegin`, `operations.normalize_operation` maps Flow statements and runtime
+Tool Steps to one presentation-only `StepOperation`: operation name, source,
+target label, run scope, and tool marker. Active Step state retains that projection;
+headers, lanes, timers, and terminal rows consume it. The same module recognizes
+committed exec outcomes from either `ExecStepNoted` or a tool reply. Raw tool-name
+matching belongs there, including result-only UI updates such as Chat's cwd label.
+Persisted Step kinds and execution metrics keep their original meaning. Script and
+Chat retain their existing source-specific styling.
+
 `ProgressUpdate.committed` contains stable, append-only fragments in event
 order. `ProgressUpdate.live` is the complete replaceable snapshot. A Step can
 progressively commit a header and output while retaining only its unfinished
@@ -208,11 +217,10 @@ identified by the enclosing `RunBegin.runnable`, while the existing `RunStmt`
 provides the target label. Its header begins in column zero and uses the
 canonical resolved runnable ref:
 
-For a scheduled `_toolang/run`, retain the receipt's child Run identity after the
-Tool Step ends. Open the divider at the child's `RunBegin` and close it at
-`RunEnd`, using the child's status and metrics. This presentation scope does not
-extend the Tool Step's lifetime. Cancellation before dispatch closes the scheduled
-target without a `RunBegin`.
+For synchronous `_toolang/run`, the child names the still-running Tool Step as
+its parent, using the same event nesting as a flow Run Step. Open the divider at
+the child's `RunBegin`, accumulate child metrics at `RunEnd`, and close it at the
+enclosing `StepEnd`. The footer reflects the enclosing operation's status.
 
 ```text
 ┌ Run agic:summarize ───────────────────────────────────────────────────

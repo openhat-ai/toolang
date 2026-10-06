@@ -264,6 +264,10 @@ def test_compact_between_model_calls_preserves_now_and_prior_call(tmp_path):
             # independently of the bundled protocol's length.
             baseline = InputEstimate().count(harness.adapter.invocations[-1].call, None)
             constrain(harness, context=baseline + 4096)
+            harness.setup = replace(
+                harness.setup,
+                compact=replace(harness.setup.compact, trigger=baseline + 2048),
+            )
             harness.adapter._responses.extend(
                 [
                     ModelCallResult(
@@ -434,6 +438,12 @@ def test_large_current_input_fails_but_oversized_retained_step_is_bounded(
     async def scenario():
         async with harness:
             thread, _end = await seed(harness)
+            # Test bounded history projection without triggering a summary merely
+            # because the bundled runtime protocol and tools gain definitions.
+            harness.setup = replace(
+                harness.setup,
+                compact=replace(harness.setup.compact, trigger=0.95),
+            )
             harness.adapter._responses.append(reply("continued"))
             root = await harness.executor.run(
                 spec(
@@ -1008,7 +1018,7 @@ def test_compact_config_controls_summary_and_recent_whole_roots(
                                 "model": "test/reducer",
                                 "summary": summary,
                                 "recent": recent,
-                                "trigger": "80%",
+                                "trigger": "90%",  # Keep headroom for runtime tool definitions.
                             }
                         },
                     )

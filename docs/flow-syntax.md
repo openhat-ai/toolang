@@ -69,6 +69,9 @@ VALUE_STMT                    update `_`
 let NAME = VALUE_STMT         update `NAME`
 let VALUE_STMT                discard the result
 
+spawn RUNNABLE                start an independent root; preserve `_`
+let NAME = spawn RUNNABLE     bind its runtime handle to `NAME`
+
 repeat ...                    update locals through its body
 
 let NAME = BODY         evaluate Content and assign one `Percept` to `NAME`
@@ -89,6 +92,34 @@ Runtime history names are supplied separately from authored bindings.
 `repeat` is different: it produces no result and accepts no `let` binding. Its
 body statements update the current flow locals normally as the loop proceeds.
 
+
+## Spawn
+
+`spawn RUNNABLE` and `spawn [-> T]: BODY` use the same inputs and inline captures
+as `run`, then continue as soon as a new root is admitted. Each root uses a new
+empty thread under the same agent and executor. `let job = spawn research` binds
+a handle; bare spawn and `let spawn research` preserve all locals, including `_`.
+The formatter writes nameless-let spawn as bare spawn.
+
+Read metadata through templates: `{{job.id}}` is the run ID, `{{job.thread}}` is
+the thread ID, and `{{job.status}}` reads persisted lifecycle status without
+waiting. A whole-handle template renders those three fields. One statement sees
+one status snapshot per run; later statements may see a newer status. Unknown
+fields fail. Capture these fields as ordinary data before passing them to named
+runnables. Handles cannot be runnable results or general data arguments.
+
+`Run<T>` is runtime design notation, not a language type or constructor. An
+authored struct named `Run` remains ordinary data. Serialized outputs use the
+runtime tag `_Run<T>` for a known result type, otherwise `_Run`, inside the same
+`type/value/binding` envelope as ordinary outputs. User struct names cannot begin
+with `_`. Neither `async` nor `await` is implemented in this release.
+
+The root survives its source finishing, failing, being canceled, or executing a
+handoff. Executor shutdown cancels it: script invocations stop their executor on
+exit, while local Chat and AgentCore keep theirs for the session/host lifetime.
+There is no automatic restart or completion message. Use its ID with existing
+inspection and host control commands. See [execution records](run-step-records.md)
+for durable handles and retry behavior.
 
 ## Exec
 
@@ -117,6 +148,10 @@ TEXT                                      shorthand for inline `run`
 seek AGENT RUNNABLE
 seek AGENT [-> T]: BODY
 ask: BODY
+
+# Start an independent root without waiting
+spawn RUNNABLE
+spawn [-> T]: BODY
 
 # Replace the current runnable within the same Run
 exec RUNNABLE
@@ -437,10 +472,10 @@ Rename `storm` to `generate` and `settle` to `reduce`. Remove `using` before
 inline generate/map/reduce bodies; retain it before named targets. Keep bindings,
 `from` initializers, explicit types, and lane counts.
 
-Output protocol objects contain `type`, `value`, and `binding`; stored outputs
-contain `value` and `binding`, using the self-describing value codec. There is no
+Output protocol and stored objects contain `type`, `value`, and `binding`;
+ordinary stored values use the self-describing value codec. There is no
 Local wrapper or `dim` field. Update output references to `output/value`.
-RunStore schema 51 rejects older stores without modifying them; retain the
+RunStore schema 52 rejects older stores without modifying them; retain the
 matching older runtime to inspect those stores, and use a fresh store for new
 runs. No compatibility reader or automatic migration is provided. Old executable
 snapshots require source migration and a newly prepared state before retry/rerun.

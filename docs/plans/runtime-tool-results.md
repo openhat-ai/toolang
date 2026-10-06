@@ -18,7 +18,7 @@ This is PR5 after bounded history reads.
 - Started calls terminate their existing Step. Preserve a completed result if
   delivery is interrupted; do not replace it or append a duplicate cancellation
   result. Do not manufacture results for other unexecuted calls.
-- Reuse reload/execute Tool Steps and preserve execute control transfer, routing,
+- Reuse reload/execute Tool Steps and preserve exec control transfer, routing,
   authorization, result formats, State snapshots, limits, and child cancellation.
 
 No schema change, new runtime tool, message-template storage, recall trigger,

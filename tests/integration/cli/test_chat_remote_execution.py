@@ -329,14 +329,9 @@ agic xyz(_: Text) -> Text:
             Message.user("Next question")
         ]
         if operation == "run":
-            assert last_tool_result(calls[2]).error is None
-            from toolang.base.types.message import message_text
-
-            assert any(
-                'status="succeeded"' in message_text(m.parts)
-                and "target result" in message_text(m.parts)
-                for m in calls[2].messages
-            )
+            result = last_tool_result(calls[2])
+            assert result.error is None
+            assert result.output == {"type": "Text", "value": "target result"}
     finally:
         session.close()
         if core is not None:

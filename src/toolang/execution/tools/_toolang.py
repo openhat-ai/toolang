@@ -25,7 +25,7 @@ TOOLSET_NAME = "_toolang"
 class ToolangTool(Tool):
     """One stateless tool using authority supplied by its executor."""
 
-    name: Literal["run", "exec", "pick", "honor", "compact", "chdir"]
+    name: Literal["run", "spawn", "exec", "pick", "honor", "compact", "chdir"]
     description: str
     parameters: dict[str, object]
 
@@ -37,6 +37,14 @@ class ToolangTool(Tool):
         arguments: Mapping[str, Any],
         result: ToolResult | None = None,
     ) -> str | None:
+        if self.name == "spawn":
+            if result is not None and not result.error:
+                return f"Spawned {result.output.get('id')} in {result.output.get('thread')}"
+            return action_summary(
+                result,
+                ("spawn", "Spawning", "Spawned"),
+                str(arguments.get("runnable", "runnable")),
+            )
         labels = {
             "pick": "guidance",
             "compact": "thread history",
@@ -153,6 +161,8 @@ class ToolangTool(Tool):
             raise ToolangError(f"_toolang/{self.name} input must be an object")
         if self.name == "run":
             return await runtime.run(runnable, input)
+        if self.name == "spawn":
+            return await runtime.spawn(runnable, input)
         return await runtime.exec(runnable, input)
 
 
@@ -257,8 +267,8 @@ _TOOLS = (
     ),
     ToolangTool(
         "run",
-        "Schedule an authorized hand as a child Run. The tool reply acknowledges "
-        "scheduling; a separate runtime message supplies its outcome before you continue. "
+        "Run an authorized hand synchronously as a child Run. The tool reply returns "
+        "its completed result as {type, value}, or an error if the child fails or is canceled. "
         "Use run when the caller needs the result for further processing. "
         "Follow the latest hands scope and requested_only policy. Read the target "
         "input signature and do not invent missing values. Acceptance selects the latest "
@@ -271,6 +281,16 @@ _TOOLS = (
         "The caller never resumes, and this must be the only tool call in the "
         "Model Call. Use exec for a named invocation with no requested follow-up. "
         "Follow the latest handoffs scope and requested_only policy.",
+        _RUN_PARAMETERS,
+    ),
+    ToolangTool(
+        "spawn",
+        "Start an authorized hand as an independent root in a new empty thread. "
+        "Returns id, thread, and the admission-time status without waiting. "
+        "Use the id with history tools; no completion message is injected. "
+        "Work continues after this Run ends, until completion or executor shutdown. "
+        "Follow the same hands scope and requested_only policy as run, read the "
+        "target input signature, and supply explicit inputs.",
         _RUN_PARAMETERS,
     ),
 )

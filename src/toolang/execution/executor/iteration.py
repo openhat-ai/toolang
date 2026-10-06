@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
@@ -59,19 +59,24 @@ def template_value(local: Local) -> object:
     return json_value(local.value)
 
 
-def iteration_values() -> dict[str, object]:
+def iteration_values(
+    project: Callable[[Local], object] = template_value,
+    *,
+    captured: Mapping[str, object] | None = None,
+) -> dict[str, object]:
+    """Use captured history only outside a local iteration scope."""
     scope = _SCOPE.get()
     if scope is None:
-        return {}
+        return dict(captured or {})
     return {
         f"_{index + 1}": (
             {
                 **{
-                    f"_{name}": template_value(local)
+                    f"_{name}": project(local)
                     for name, local in scope.frames[index].entry.items()
                 },
                 **{
-                    name: template_value(local)
+                    name: project(local)
                     for name, local in scope.frames[index].exit.items()
                 },
             }

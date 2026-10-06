@@ -104,9 +104,7 @@ def test_flow_statements_reject_active_targets_even_after_publication(
             assert len(runs) == (3 if ancestor else 2)
             assert len(harness.adapter.invocations) == 1
             for run in runs:
-                assert not harness.store.list_run_controls(
-                    run_id=run.id, kind="execute"
-                )
+                assert not harness.store.list_run_controls(run_id=run.id, kind="exec")
 
     asyncio.run(scenario())
     assert_replayed(harness.store.db_path, tracer.events)
@@ -222,7 +220,7 @@ flow outer() -> Text[]:
                         "flow:outer",
                     }
             assert all(
-                not harness.store.list_run_controls(run_id=r.id, kind="execute")
+                not harness.store.list_run_controls(run_id=r.id, kind="exec")
                 for r in runs
             )
 

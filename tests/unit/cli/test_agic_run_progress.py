@@ -55,11 +55,13 @@ def _model_given() -> ModelStepGiven:
     )
 
 
-def _execute_part(runnable: object = "agic:abc") -> ToolCallPart:
+def _execute_part(
+    runnable: object = "agic:abc", *, tool_name: str = "_toolang__exec"
+) -> ToolCallPart:
     return ToolCallPart(
         tool_call_id="execute-1",
-        tool_name="_toolang__exec",
-        tool_family="_toolang__exec",
+        tool_name=tool_name,
+        tool_family=tool_name,
         input={"runnable": runnable, "input": {}},
     )
 
@@ -69,6 +71,7 @@ def _execute_step(
     runnable: str = "agic:abc",
     *,
     error: str | None = None,
+    tool_name: str = "_toolang__exec",
 ) -> ProgressUpdate:
     step = StepRef.parse("run_root.1")
     starting = projector.handle(
@@ -80,7 +83,7 @@ def _execute_step(
                 call=ToolCall(
                     "execute-1",
                     "execute-1",
-                    "_toolang__exec",
+                    tool_name,
                     {"runnable": runnable},
                 ),
                 summary=f"Executing {runnable}...",
@@ -94,8 +97,8 @@ def _execute_step(
     assert len(starting.live) == 1
     result = ToolResultPart(
         tool_call_id="execute-1",
-        tool_name="_toolang__exec",
-        tool_family="_toolang__exec",
+        tool_name=tool_name,
+        tool_family=tool_name,
         error=error,
         output={} if error else {"controls": [f"{step.run_id}@1"]},
     )
@@ -133,7 +136,8 @@ def _render_chat_progress(block: ProgressBlock, *, width: int = 80) -> str:
     )
 
 
-def test_dynamic_run_projects_a_flat_header_and_child_id_footer() -> None:
+@pytest.mark.parametrize("source", ["flow", "tool"])
+def test_dynamic_run_projects_a_flat_header_and_child_id_footer(source) -> None:
     projector = ProgressProjector(show_boundaries=False)
     dynamic = StepRef.parse("run_root.0")
     child_model = StepRef.parse("run_child.0")
@@ -146,17 +150,28 @@ def test_dynamic_run_projects_a_flat_header_and_child_id_footer() -> None:
         )
     )
 
+    kind = "run" if source == "flow" else "tool"
+    given = (
+        _run_stmt()
+        if source == "flow"
+        else ToolStepGiven(
+            plugin="_toolang",
+            call=ToolCall(
+                "call", "call", "_toolang__run", {"runnable": "agic:summarize"}
+            ),
+            summary="Running agic:summarize",
+        )
+    )
     starting = projector.handle(
         StepBegin(
-            step=dynamic,
-            kind="run",
-            given=_run_stmt(),
-            started_at="2026-01-01T00:00:00Z",
+            step=dynamic, kind=kind, given=given, started_at="2026-01-01T00:00:00Z"
         )
     )
     assert starting.committed == ()
     assert starting.live[0].rows == (
-        ProgressRow("• Running agic:summarize...", "active"),
+        ProgressRow("• Running agic:summarize...", "active")
+        if source == "flow"
+        else ProgressRow("› Running agic:summarize", "active", surface="tool_summary"),
     )
 
     header = projector.handle(
@@ -208,7 +223,7 @@ def test_dynamic_run_projects_a_flat_header_and_child_id_footer() -> None:
     footer = projector.handle(
         StepEnd(
             step=dynamic,
-            kind="run",
+            kind=kind,
             status="succeeded",
             finished_at="2026-01-01T00:00:02Z",
         )
@@ -268,7 +283,8 @@ def test_dynamic_run_preaccept_failure_uses_a_trace_marker_without_boundaries() 
     ]
 
 
-def test_execute_projects_a_live_marker_then_a_handoff_header() -> None:
+@pytest.mark.parametrize("tool_name", ["_toolang__exec", "_toolang__execute"])
+def test_execute_projects_a_live_marker_then_a_handoff_header(tool_name) -> None:
     projector = ProgressProjector(show_boundaries=False)
     caller = StepRef.parse("run_root.0")
     target = StepRef.parse("run_root.2")
@@ -286,14 +302,16 @@ def test_execute_projects_a_live_marker_then_a_handoff_header() -> None:
             step=caller,
             kind="model",
             status="succeeded",
-            output=Output(value_for_type("Part[]", (_execute_part(),)), "_"),
+            output=Output(
+                value_for_type("Part[]", (_execute_part(tool_name=tool_name),)), "_"
+            ),
         )
     )
 
     assert starting.committed == ()
     assert starting.live == ()
 
-    transferred = _execute_step(projector)
+    transferred = _execute_step(projector, tool_name=tool_name)
     assert transferred.committed == ()
     assert transferred.live == ()
     header = projector.handle(

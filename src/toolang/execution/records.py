@@ -36,6 +36,8 @@ from toolang.lang.input import (
     validate_runnable_input_names,
 )
 from toolang.lang.types import Array, Struct, Value, validate_type, value_type
+from toolang.lang.contracts import OutputContract
+from toolang.common.immutable import freeze_mapping, mutable_data
 
 from .types import (
     AgentResources,
@@ -67,6 +69,8 @@ from .types import (
     RecallTarget,
     RunCommand,
     RunRef,
+    RunHandle,
+    RunnableSettings,
     RunStatus,
     StepGiven,
     StepKind,
@@ -279,6 +283,43 @@ class ThreadPeer:
 
 
 @dataclass(frozen=True, slots=True)
+class SpawnContext:
+    """Captured root context that no longer depends on execution ancestry."""
+
+    settings: RunnableSettings
+    workspaces: Mapping[str, str]
+    iterations: Mapping[str, object]
+    result: OutputContract | None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "workspaces", freeze_mapping(self.workspaces))
+        object.__setattr__(self, "iterations", freeze_mapping(self.iterations))
+        if self.result is not None:
+            object.__setattr__(
+                self,
+                "result",
+                OutputContract(
+                    self.result.type_name, freeze_mapping(self.result.definitions)
+                ),
+            )
+
+    def to_data(self) -> dict[str, object]:
+        return {
+            "settings": TypeAdapter(RunnableSettings).dump_python(
+                self.settings, mode="json"
+            ),
+            "workspaces": dict(self.workspaces),
+            "iterations": mutable_data(self.iterations),
+            "result": None
+            if self.result is None
+            else {
+                "type_name": self.result.type_name,
+                "definitions": mutable_data(self.result.definitions),
+            },
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class RunControlPayload:
     """Resolved preparation snapshot for one new run."""
 
@@ -298,6 +339,10 @@ class RunControlPayload:
     authored_session_commands: tuple[RunCommand, ...] = ()
     prompt_invocations: tuple[PromptInvocation, ...] = ()
     horizon: RunRef | StepRef | None = None
+    spawn_context: Annotated[
+        SpawnContext | None,
+        PlainSerializer(lambda value: value.to_data() if value is not None else None),
+    ] = None
 
     def __post_init__(self) -> None:
         parse_cwd(self.cwd)
@@ -317,7 +362,7 @@ class RunControlPayload:
 
 
 @dataclass(frozen=True, slots=True)
-class CwdControlPayload:
+class ChdirControlPayload:
     """One durable Run-local working location transition."""
 
     cwd: str
@@ -352,7 +397,7 @@ class CompactControlPayload:
 
 
 @dataclass(frozen=True, slots=True)
-class ExecuteControlPayload:
+class ExecControlPayload:
     """One durable same-Run runnable replacement."""
 
     state: str
@@ -363,9 +408,9 @@ class ExecuteControlPayload:
     ]
 
     def __post_init__(self) -> None:
-        _validate_state_revision(self.state, label="execute payload State")
+        _validate_state_revision(self.state, label="exec payload State")
         if not self.runnable or self.runnable != self.runnable.strip():
-            raise ValueError("execute payload requires a canonical runnable")
+            raise ValueError("exec payload requires a canonical runnable")
         object.__setattr__(self, "input", _snapshot_control_input(self.input))
 
 
@@ -454,9 +499,9 @@ class RewindControlPayload:
 PreparationControlPayload = RunControlPayload | RetryControlPayload
 RunScopedControlPayload = (
     PreparationControlPayload
-    | CwdControlPayload
+    | ChdirControlPayload
     | CompactControlPayload
-    | ExecuteControlPayload
+    | ExecControlPayload
     | SteerControlPayload
     | CancelControlPayload
     | RecallControlPayload
@@ -465,10 +510,10 @@ ThreadControlPayload = CreateControlPayload | ForkControlPayload | RewindControl
 ControlPayload = RunScopedControlPayload | ThreadControlPayload
 _CONTROL_PAYLOAD_TYPES = {
     "run": RunControlPayload,
-    "cwd": CwdControlPayload,
+    "chdir": ChdirControlPayload,
     "retry": RetryControlPayload,
     "compact": CompactControlPayload,
-    "execute": ExecuteControlPayload,
+    "exec": ExecControlPayload,
     "steer": SteerControlPayload,
     "cancel": CancelControlPayload,
     "recall": RecallControlPayload,
@@ -722,18 +767,35 @@ _PART_STORAGE_TYPES = {
 def output_from_data(payload: Mapping[str, object]) -> Output:
     """Decode one self-describing stored value and its destination."""
 
-    if set(payload) != {"value", "binding"}:
-        raise ValueError("stored output requires value and binding fields")
+    # Historical ordinary outputs derive their type from the value codec.
+    if set(payload) not in ({"type", "value", "binding"}, {"value", "binding"}):
+        raise ValueError("stored output requires type, value, and binding fields")
     binding = payload["binding"]
     if binding is not None and not isinstance(binding, str):
         raise ValueError("output binding must be text or null")
-    return Output(value_from_data(payload["value"]), binding)
+    type_name = payload.get("type")
+    value = (
+        RunHandle.from_data(payload["value"], type_name=type_name)
+        if isinstance(type_name, str)
+        and (type_name == "_Run" or type_name.startswith("_Run<"))
+        else value_from_data(payload["value"])
+    )
+    output = Output(value, binding)
+    if "type" in payload and payload["type"] != output.type:
+        raise ValueError("stored output type does not match its value")
+    return output
 
 
 def output_to_data(output: Output) -> dict[str, object]:
     """Encode the value separately from its output binding."""
 
-    return {"value": value_to_data(output.value), "binding": output.binding}
+    return {
+        "type": output.type,
+        "value": output.value.to_data()
+        if isinstance(output.value, RunHandle)
+        else value_to_data(output.value),
+        "binding": output.binding,
+    }
 
 
 def value_from_data(data: object) -> Value | TypedRef:
@@ -962,13 +1024,18 @@ def control_payload_from_data(kind: ControlKind, data: object) -> ControlPayload
             authored_commands=authored_commands,
             authored_session_commands=authored_session_commands,
             prompt_invocations=prompt_invocations,
+            spawn_context=TypeAdapter(SpawnContext).validate_python(
+                payload["spawn_context"]
+            )
+            if payload.get("spawn_context") is not None
+            else None,
         )
-    if kind == "cwd":
+    if kind == "chdir":
         raw_cwd = payload.get("cwd")
         raw_cause = payload.get("cause")
         if not isinstance(raw_cwd, str) or raw_cause != "chdir":
-            raise ValueError("cwd control requires a location and cause")
-        return CwdControlPayload(
+            raise ValueError("chdir control requires a location and cause")
+        return ChdirControlPayload(
             cwd=raw_cwd,
             cause=cast(Literal["chdir"], raw_cause),
             state=ControlRef.parse(cast(str, payload["state"]))
@@ -979,8 +1046,8 @@ def control_payload_from_data(kind: ControlKind, data: object) -> ControlPayload
         return CompactControlPayload(
             horizon=history_ref(_required_payload_text(payload, "horizon")),
         )
-    if kind == "execute":
-        return ExecuteControlPayload(
+    if kind == "exec":
+        return ExecControlPayload(
             state=_required_payload_text(payload, "state"),
             runnable=_required_payload_text(payload, "runnable"),
             input=call_input_from_data(payload.get("input")),
@@ -1035,7 +1102,7 @@ def control_payload_to_data(payload: ControlPayload) -> dict[str, object]:
             "revision": payload.revision,
             "content": payload.content,
         }
-    if isinstance(payload, CwdControlPayload):
+    if isinstance(payload, ChdirControlPayload):
         return {
             "cwd": payload.cwd,
             "cause": payload.cause,
@@ -1043,7 +1110,7 @@ def control_payload_to_data(payload: ControlPayload) -> dict[str, object]:
         }
     if isinstance(payload, CompactControlPayload):
         return {"horizon": str(payload.horizon)}
-    if isinstance(payload, ExecuteControlPayload):
+    if isinstance(payload, ExecControlPayload):
         return {
             "state": payload.state,
             "runnable": payload.runnable,
@@ -1808,6 +1875,8 @@ def _run_payload_data(
     }
     if payload.state is not None:
         data["state"] = payload.state
+    if payload.spawn_context is not None:
+        data["spawn_context"] = payload.spawn_context.to_data()
     if payload.horizon is not None:
         data["horizon"] = str(payload.horizon)
     if payload.sandbox is not None:

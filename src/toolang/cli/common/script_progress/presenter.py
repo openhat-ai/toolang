@@ -11,7 +11,8 @@ from toolang.execution.events import RunBegin, RunEnd, RunEvent, RunTracer, Step
 
 from ..terminal_surfaces import DARK_TERMINAL_SURFACES, TerminalSurfaces
 from ..execution_progress import ProgressProjector, ProgressBlock, ProgressUpdate
-from ..execution_progress.step_projection import runtime_tool_name, trace_live_rows
+from ..execution_progress.operations import normalize_operation
+from ..execution_progress.step_projection import trace_live_rows
 from ..execution_progress.config import DEFAULT_MAX_PROGRESS_WIDTH
 from .blocks import RunBlock, RunContext
 from .console import ProgressConsole
@@ -55,13 +56,13 @@ class ScriptRunPresenter(RunTracer):
         if (
             not self.console.tty
             and isinstance(event, StepBegin)
-            and runtime_tool_name(event) == "compact"
+            and (operation := normalize_operation(event)).timed
         ):
             update = replace(
                 update,
                 committed=(
                     *update.committed,
-                    ProgressBlock(f"step:{event.step}", trace_live_rows(event, "")),
+                    ProgressBlock(f"step:{event.step}", trace_live_rows(operation, "")),
                 ),
             )
         self._apply_progress(update)

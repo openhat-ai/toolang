@@ -29,7 +29,7 @@ async def execute(
 ) -> Local:
     async def evaluate() -> Local:
         successor, runnable, inputs = execution.prepare_flow_exec(
-            binding, statement, locals
+            binding, statement, locals, step=path
         )
         loops = []
         parent = path.parent

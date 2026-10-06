@@ -25,7 +25,7 @@ from toolang.execution.types import (
     output_to_protocol_data,
     value_to_protocol_data,
 )
-from toolang.lang.types import Array, Value
+from toolang.lang.types import Array, Struct, Value
 
 
 @pytest.mark.parametrize("binding", [None, "_", "answer"])
@@ -48,8 +48,9 @@ def test_output_reuses_value_across_storage_and_protocol(
     output = Output(value, binding)
     assert output.value is value
     stored = output_to_data(output)
-    assert set(stored) == {"value", "binding"}
+    assert set(stored) == {"type", "value", "binding"}
     assert output_from_data(stored) == output
+    assert output_from_data({k: v for k, v in stored.items() if k != "type"}) == output
     data = output_to_protocol_data(output)
     assert data == {
         "type": output.type,
@@ -155,3 +156,81 @@ def test_output_codecs_reject_removed_wrappers(data) -> None:
     for decode in (output_from_data, output_from_protocol_data):
         with pytest.raises(ValueError):
             decode(data)
+
+
+@pytest.mark.parametrize("binding", [None, "job"])
+@pytest.mark.parametrize(
+    "result_type", [None, "Text", "Report[]", "Part[]", "Text[][]"]
+)
+def test_run_handle_has_one_protocol_and_event_shape(binding, result_type):
+    from toolang.execution.types import RunHandle
+    from toolang.execution.events import StepEnd
+    from toolang.execution.types import StepRef
+
+    handle = RunHandle("run_spawned", "spawn_thread", result_type)
+    output = Output(handle, binding)
+    stored = output_to_data(output)
+    assert stored == {
+        "type": "_Run" if result_type is None else f"_Run<{result_type}>",
+        "value": {"id": "run_spawned", "thread": "spawn_thread"},
+        "binding": binding,
+    }
+    assert stored == output_to_protocol_data(output)
+    assert output_from_data(stored) == output
+    assert output_from_protocol_data(stored) == output
+    adapter = TypeAdapter(Output)
+    assert adapter.validate_json(adapter.dump_json(output)) == output
+    assert adapter.dump_python(output, mode="json") == stored
+    event = StepEnd(
+        step=StepRef.parse("run_source.0"),
+        kind="spawn",
+        status="succeeded",
+        output=output,
+    )
+    assert run_event_from_data(run_event_to_data(event)) == event
+    assert set(adapter.json_schema()["properties"]) == {"type", "value", "binding"}
+
+
+def test_authored_run_struct_and_json_are_not_runtime_handles():
+    fields = {"id": "run_spawned", "thread": "spawn_thread"}
+    for value, expected_type in ((Struct("Run", fields), "Run"), (fields, "Json")):
+        output = Output(value, "job")
+        assert output.type == expected_type
+        assert output_from_protocol_data(output_to_protocol_data(output)) == output
+        assert output_from_data(output_to_data(output)) == output
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        {"id": "run_spawned"},
+        {"id": "invalid/id", "thread": "spawn_thread"},
+        {"id": "run_spawned", "thread": "spawn_thread", "status": "pending"},
+        {"id": "run_spawned", "thread": "spawn_thread", "result": None},
+    ],
+)
+def test_runtime_handle_output_requires_only_canonical_identity(value):
+    for decode in (output_from_data, output_from_protocol_data):
+        with pytest.raises(ValueError):
+            decode({"type": "_Run<Text>", "value": value, "binding": "job"})
+
+
+@pytest.mark.parametrize(
+    "type_name",
+    ["_Run<>", "_Run<Text", "_Run<Text>extra", "_Run<_Run>", "_Run<Run<Text>>"],
+)
+def test_runtime_handle_output_rejects_malformed_result_types(type_name):
+    for decode in (output_from_data, output_from_protocol_data):
+        with pytest.raises(ValueError):
+            decode(
+                {
+                    "type": type_name,
+                    "value": {"id": "run_spawned", "thread": "spawn_thread"},
+                    "binding": None,
+                }
+            )
+
+
+def test_stored_output_rejects_a_type_mismatched_with_its_value():
+    with pytest.raises(ValueError, match="type does not match"):
+        output_from_data({"type": "Number", "value": "text", "binding": None})

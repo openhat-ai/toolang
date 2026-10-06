@@ -370,7 +370,6 @@ class RunHistory:
                         steps=self._store.list_steps(run_id=original.id),
                         controls=self._store.list_run_controls(run_id=original.id),
                         resolve=self._store.resolve_value,
-                        completion=self._store.run_completion,
                         render=False,
                     )
                 }:

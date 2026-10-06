@@ -16,6 +16,7 @@ from toolang.lang.ast import (
     SortStmt,
     RepeatStmt,
     RunStmt,
+    SpawnStmt,
     ExecStmt,
     SeekStmt,
     ReduceStmt,
@@ -34,6 +35,7 @@ from . import (
     sort,
     repeat,
     run,
+    spawn,
     exec as exec_stmt,
     seek,
     reduce,
@@ -62,6 +64,10 @@ async def execute(
         )
     if isinstance(statement, RunStmt):
         return await run.execute(
+            execution, binding, locals, path, statement, controls, occurrence
+        )
+    if isinstance(statement, SpawnStmt):
+        return await spawn.execute(
             execution, binding, locals, path, statement, controls, occurrence
         )
     if isinstance(statement, SeekStmt):

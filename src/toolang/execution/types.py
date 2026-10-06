@@ -41,6 +41,7 @@ from toolang.lang.ast import (
     Node,
     RepeatStmt,
     RunStmt,
+    SpawnStmt,
     ExecStmt,
     SeekStmt,
     ReduceStmt,
@@ -920,18 +921,60 @@ _PART_PROTOCOL_TYPES = frozenset(
 
 
 @dataclass(frozen=True, slots=True)
+class RunHandle:
+    """Durable execution identity; the referenced run owns its result contract."""
+
+    id: str
+    thread: str
+    result_type: str | None = None
+
+    def __post_init__(self) -> None:
+        RunRef(self.id)
+        ThreadRef(self.thread)
+        if self.result_type is not None:
+            validate_type(self.result_type)
+            if self.result_type.startswith("_"):
+                raise ValueError(
+                    "run handle result type must be an authored value type"
+                )
+
+    @property
+    def type(self) -> str:
+        return "_Run" if self.result_type is None else f"_Run<{self.result_type}>"
+
+    def to_data(self) -> dict[str, object]:
+        return {"id": self.id, "thread": self.thread}
+
+    @classmethod
+    def from_data(cls, data: object, *, type_name: str) -> RunHandle:
+        if type_name == "_Run":
+            result_type = None
+        elif type_name.startswith("_Run<") and type_name.endswith(">"):
+            result_type = type_name[5:-1]
+        else:
+            raise ValueError(f"invalid run handle type: {type_name!r}")
+        if not isinstance(data, Mapping) or set(data) != {"id", "thread"}:
+            raise ValueError("run handle requires id and thread")
+        data = cast(Mapping[str, Any], data)
+        if not isinstance(data["id"], str) or not isinstance(data["thread"], str):
+            raise ValueError("run handle identities must be text")
+        return cls(data["id"], data["thread"], result_type)
+
+
+@dataclass(frozen=True, slots=True)
 class Output:
     """One complete value and its optional destination in the local table."""
 
-    value: Value | TypedRef
+    value: Value | TypedRef | RunHandle
     binding: str | None = None
 
     def __post_init__(self) -> None:
-        if not isinstance(self.value, TypedRef):
+        if not isinstance(self.value, TypedRef | RunHandle):
             object.__setattr__(
                 self, "value", value_for_type(value_type(self.value), self.value)
             )
-        validate_runtime_value(self.value, self.type)
+        if not isinstance(self.value, RunHandle):
+            validate_runtime_value(self.value, self.type)
         if self.binding is not None and (
             not isinstance(self.binding, str)
             or not _LOCAL_NAME_RE.fullmatch(self.binding)
@@ -942,6 +985,8 @@ class Output:
     def type(self) -> str:
         """Return the concrete value type or a reference's expected type."""
 
+        if isinstance(self.value, RunHandle):
+            return self.value.type
         return (
             self.value.type
             if isinstance(self.value, TypedRef)
@@ -999,10 +1044,14 @@ def output_from_protocol_data(payload: Mapping[str, object]) -> Output:
     raw_type = payload["type"]
     if not isinstance(raw_type, str):
         raise ValueError("output type must be text")
-    type_name = validate_type(raw_type)
     binding = payload["binding"]
     if binding is not None and not isinstance(binding, str):
         raise ValueError("output binding must be text or null")
+    if raw_type == "_Run" or raw_type.startswith("_Run<"):
+        return Output(
+            RunHandle.from_data(payload["value"], type_name=raw_type), binding
+        )
+    type_name = validate_type(raw_type)
     return Output(
         value_for_type(
             type_name, value_from_protocol_data(payload["value"], type_name)
@@ -1016,7 +1065,9 @@ def output_to_protocol_data(output: Output) -> dict[str, object]:
 
     return {
         "type": output.type,
-        "value": value_to_protocol_data(output.value),
+        "value": output.value.to_data()
+        if isinstance(output.value, RunHandle)
+        else value_to_protocol_data(output.value),
         "binding": output.binding,
     }
 
@@ -1308,6 +1359,7 @@ ControlStatus = Literal["pending", "applied", "wontapply", "revoked"]
 StepKind = Literal[
     "exec",
     "run",
+    "spawn",
     "agent",
     "human",
     "model",
@@ -1844,6 +1896,8 @@ def _flow_statement_matches_kind(value: object, kind: StepKind) -> bool:
         )
     if kind == "run":
         return isinstance(value, RunStmt)
+    if kind == "spawn":
+        return isinstance(value, SpawnStmt)
     if kind == "agent":
         return isinstance(value, SeekStmt)
     if kind == "human":
@@ -1920,11 +1974,11 @@ RecallTarget = Annotated[
 ControlTiming = Literal["immediate", "next_step", "next_call"]
 ControlKind = Literal[
     "run",
-    "cwd",
+    "chdir",
     "recall",
     "retry",
     "compact",
-    "execute",
+    "exec",
     "steer",
     "cancel",
     "create",
@@ -1940,6 +1994,7 @@ class ThreadPrefix(StrEnum):
     SCRIPT = "script"
     WEB = "web"
     TERM = "term"
+    SPAWN = "spawn"
 
 
 def valid_execution_id(value: object) -> bool:

@@ -298,7 +298,7 @@ the active Run.
 Tools do not own the model loop.
 
 For every ordinary tool-capable Agic Model Call, the executor selects the registered
-`_toolang__run`, `_toolang__exec`, `_toolang__pick`,
+`_toolang__run`, `_toolang__spawn`, `_toolang__exec`, `_toolang__pick`,
 `_toolang__honor`, `_toolang__compact`, and `_toolang__chdir` tools. `hands` and
 `handoffs` authorize runnable targets but do not select these definitions.
 Statement-generated Flow evaluators, output-repair
@@ -306,7 +306,7 @@ calls, and tool-disabled models receive no runtime tools.
 
 In chat, a named invocation without further requested work uses exec; a
 request to call a target and then summarize or process its result uses run.
-Both tools accept `runnable` and optional `input`, whose `_` field is primary
+Run, spawn, and exec accept `runnable` and optional `input`, whose `_` field is primary
 input and other fields are declared parameters. The model reads the latest
 hands/handoffs signatures and asks for missing required values before calling.
 Questions about parameters alone do not execute the target.
@@ -315,20 +315,20 @@ Omitted hands/handoffs settings inherit within the same module. Without an
 inherited value, all module-visible targets are available for named user requests.
 Their snapshots have `requested_only="true"`, directing the model not to delegate autonomously.
 Explicit lists and `*` have `requested_only="false"`. Explicit lists and `none`
-remain runtime-enforced limits, independently for run and exec. On a conflict,
+remain runtime-enforced limits, with hands governing run/spawn and handoffs governing exec. On a conflict,
 the model reports the restriction without switching operation or target. Snapshot
 limits remain 64 unique targets and 32 KiB; narrow hands/handoffs if exceeded.
 
 `AgentSetup.tools()` retains registered runtime tools independently of user tool
 ceilings. Each invocation has an ordinary Tool Step. Trusted runtime tools receive
 per-call operations through `RuntimeToolContext.runtime`, not the Store or executor.
-Run creates a child owned by its Tool Step and returns a scheduling receipt with
-`run_id` and `controls`. A separate runtime message delivers its status and, on
-success, output type and content before the caller continues.
-Execute returns `{controls: [ControlRef]}` and finishes its Tool Step before
+Run creates a child owned by its Tool Step and waits for it to finish. The single
+tool reply returns `{type, value}` on success or `ToolResultPart.error` on failure
+or child-only cancellation.
+Exec returns `{controls: [ControlRef]}` and finishes its Tool Step before
 transferring execution. Pick, honor, and compact return summaries of durably created or reused
 controls; recalled content remains in controls, not the result summaries.
-Execute never resumes the caller after commitment, even if the target fails,
+Exec never resumes the caller after commitment, even if the target fails,
 and does not change the default runnable for future chat turns.
 
 `ToolStepGiven.trigger` records `model` or `runtime`. Both have durable results and
@@ -372,6 +372,22 @@ for example `repo://src/file.py`. Honor says `Loading rules...` /
 `Loaded rules: repo://AGENTS.md`.
 Pick says `Loaded guidance: skill/name` or `service/name`, using the effective
 capability identity rather than its source location.
+
+### Spawn independent work
+
+`_toolang/spawn({runnable, input?})` starts an independent root in a new empty
+thread under the same agent/executor. It shares run's input decoder and hands
+policy, including default `requested_only` guidance. It accepts no thread,
+identity, source-code, or execution-configuration arguments. Multiple spawn calls
+may share a tool batch; each commits independently.
+
+The response is the admission snapshot `{id, thread, status: "pending"}` stored
+in the Tool Step. Use `id` with existing history/output tools to inspect progress
+and results. Spawn waits for no result and
+injects no completion message. Work survives the source Run, but executor shutdown
+cancels it. In a short-lived script host, returning from the script stops unfinished
+roots. See [spawn syntax](flow-syntax.md#spawn) and
+[record semantics](run-step-records.md#spawn-admission-and-handles).
 
 ### Pick guidance
 

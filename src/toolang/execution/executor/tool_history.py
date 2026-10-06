@@ -15,7 +15,7 @@ from ..records import (
     value_to_data,
     CancelControlPayload,
     ControlRecord,
-    ExecuteControlPayload,
+    ExecControlPayload,
     RunControlPayload,
     SteerControlPayload,
     StepRecord,
@@ -172,7 +172,7 @@ def _record_data(store: RunStore, record: Record) -> dict[str, object]:
         record.payload,
         (
             RunControlPayload,
-            ExecuteControlPayload,
+            ExecControlPayload,
             SteerControlPayload,
             CancelControlPayload,
         ),

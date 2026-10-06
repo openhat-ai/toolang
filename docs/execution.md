@@ -43,7 +43,7 @@ records and observes only new live events.
 
 Persistence makes completed history available after process restart and for
 later model calls. Toolang does not resume an unfinished run after its owner
-process exits. The execution store uses schema version 36: both
+process exits. The execution store uses schema version 52: both
 read-only and writable opens reject every other version unchanged. This build
 does not migrate older stores.
 
@@ -175,11 +175,19 @@ The private projector never creates or updates run controls. Tracer failures
 are logged and isolated from execution. One tracer observes the complete run
 tree started by its `run()` call, including child runs, steps, parts, and
 terminal events. Each event already contains its complete durable references
-and output edge; the private projector does not reconstruct runtime locals or
-infer alternate output. `RunTracer.on_event()` is asynchronous. The executor
+and output edge. For accepted spawn Steps, the projector preserves successful
+admission through canceled delivery and emits the persisted status/output. It
+does not reconstruct runtime locals. `RunTracer.on_event()` is asynchronous. The executor
 serializes tracer calls and awaits each one on the owner event loop, so tracers
 never need to infer which worker thread emitted an event.
 
+
+Spawned roots have their own thread and lifecycle. The host may configure
+`RunExecutor.root_tracer` and `thread_listener`; the API uses these to route the
+existing thread/run events to the new IDs. Foreground tracers keep observing only
+the source run tree. Dispatch failure can emit a root RunEnd before any RunBegin.
+Script and Chat progress use the ordinary StepEnd output/summary to show the new
+run/thread identity without adopting background progress.
 
 ## Run Events
 
@@ -210,8 +218,9 @@ observe only higher-level events.
 
 ## Run Controls
 
-Preparation control kinds are `run`, `rerun`, and `retry`; runtime control
-kinds include `execute`, `steer`, and `cancel`. Control timing is:
+Preparation control kinds are `run` and `retry`; runtime control kinds are
+`exec`, `chdir`, `recall`, `compact`, `steer`, and `cancel`. Rerun creates a new
+Run with a `run` control. Control timing is:
 
 ```text
 immediate | next_step | next_call
@@ -220,13 +229,15 @@ immediate | next_step | next_call
 Statuses are:
 
 ```text
-pending   newly accepted and not applied
+pending   external steer/cancel accepted and not applied
 applied   applied by the runtime
 wontapply no longer applicable because the run ended or the checkpoint vanished
 revoked   explicitly withdrawn before application
 ```
 
 `applied` means the control was applied; it does not mean the run succeeded.
+Runtime-created controls are applied when their effects commit. In particular,
+an applied run control confirms admission even while the Run is still pending.
 A cancel control is therefore `applied` when it cancels a run. An unapplied steer
 left behind by a terminal run is `wontapply`.
 
@@ -234,7 +245,7 @@ Every Run entry control stores its concrete runnable and model bindings,
 limits, resources, and a flat `CallInput[Value | TypedRef]`. Optional
 `authored_input` records the corresponding `CallInput[str]` source snapshot.
 Steer stores a primary `Part[]` value under `_`; cancel stores optional primary
-Text under `_`. Execute stores input references keyed by parameter name. Retry
+Text under `_`. Exec stores input references keyed by parameter name. Retry
 inherits input from the entry control and records its effective settings.
 
 Every Run entry stores its State revision. Root entries also store the accepted

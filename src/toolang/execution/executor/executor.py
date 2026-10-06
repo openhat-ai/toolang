@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextvars import Context
 from collections.abc import Awaitable, Callable, Generator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 import logging
@@ -69,11 +70,21 @@ from ..calls import (
     resolve_restart_request,
     resolve_run_request,
 )
-from ..events import RunBegin, RunEnd, RunEvent, RunTracer, StepBegin, StepEnd
+from ..events import (
+    RunBegin,
+    RunEnd,
+    RunEvent,
+    RunTracer,
+    StepBegin,
+    StepEnd,
+    ThreadEvent,
+    ThreadListener,
+)
 from ..records import (
     CompactControlPayload,
     RecallControlPayload,
     RunControlPayload,
+    SpawnContext,
     run_preparation,
     ControlRecord,
     RunRecord,
@@ -97,6 +108,7 @@ from ..types import (
     ControlKind,
     StepRef,
     RunRef,
+    RunHandle,
     ModelStepNoted,
     LoopStepNoted,
     ModelStepGiven,
@@ -206,6 +218,8 @@ class RunSpec:
     prompt_invocations: tuple[PromptInvocation, ...] = ()
     horizon: RunRef | StepRef | None = None
     all_tools: bool = False
+    spawn_context: SpawnContext | None = None
+    resource_ceiling: AgentResources | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -304,6 +318,18 @@ class RunExecutor:
         self._monitor_task: asyncio.Task[None] | None = None
         self._control_revision = self.store.latest_run_control_revision()
         self._stopped = False
+        # Host observation is separate from the foreground caller's tracer.
+        self.root_tracer: Callable[[str], RunTracer] | None = None
+        self.thread_listener: ThreadListener | None = None
+
+    def notify_thread(self, event: ThreadEvent) -> None:
+        """Notify the host of a committed thread created during execution."""
+
+        if self.thread_listener is not None:
+            try:
+                self.thread_listener.on_event(event)
+            except Exception:
+                _LOGGER.exception("thread listener event handling failed")
 
     def start(self) -> None:
         """Start this executor lifecycle."""
@@ -467,6 +493,7 @@ class RunExecutor:
             authored_commands=spec.authored_commands,
             authored_session_commands=spec.authored_session_commands,
             prompt_invocations=spec.prompt_invocations,
+            spawn_context=spec.spawn_context,
             horizon=bound.horizon,
         )
         return self._launch(bound, runnable, loop=loop, tracer=tracer)
@@ -573,6 +600,7 @@ class RunExecutor:
             authored_commands=spec.authored_commands,
             authored_session_commands=spec.authored_session_commands,
             prompt_invocations=spec.prompt_invocations,
+            spawn_context=spec.spawn_context,
             horizon=bound.horizon,
         )
         return self._launch(bound, runnable, loop=loop, tracer=tracer)
@@ -711,6 +739,13 @@ class RunExecutor:
         if run is None or run.parent is not None:
             raise ValueError(f"root run not found: {run_id}")
         preparation = run_preparation(run, self.store.list_run_controls(run_id=run_id))
+        entry = self.store.get_run_control(run_id=run_id, index=0)
+        entry_payload = entry.payload if entry is not None else None
+        captured = (
+            entry_payload.spawn_context
+            if isinstance(entry_payload, RunControlPayload)
+            else None
+        )
         module, _, ref = (
             preparation.runnable.rpartition("::")
             if "::" in preparation.runnable
@@ -779,6 +814,11 @@ class RunExecutor:
             authored_commands=preparation.authored_commands,
             authored_session_commands=preparation.authored_session_commands,
             prompt_invocations=preparation.prompt_invocations,
+            spawn_context=captured,
+            resource_ceiling=entry_payload.resources
+            if captured is not None and isinstance(entry_payload, RunControlPayload)
+            else None,
+            workdir=preparation.cwd if captured is not None else None,
         )
 
     def _require_retry_compatible(
@@ -825,10 +865,14 @@ class RunExecutor:
         loop: asyncio.AbstractEventLoop,
         tracer: RunTracer | None,
         retry: ControlRecord | None = None,
+        independent: bool = False,
     ) -> LocalRunHandle:
+        if tracer is None and self.root_tracer is not None:
+            tracer = self.root_tracer(bound.thread)
         task = asyncio.create_task(
             self._execute_owned(bound, runnable, tracer=tracer, retry=retry),
             name=f"toolang-run-{bound.run_id}",
+            context=Context() if independent else None,
         )
         active = _ActiveRun(
             task=task,
@@ -840,7 +884,14 @@ class RunExecutor:
             self._active[bound.run_id] = active
         self._tasks[task] = (bound.run_id, active)
         task.add_done_callback(self._task_done)
-        self._ensure_monitor(bound.setup.layout.name)
+        try:
+            self._ensure_monitor(bound.setup.layout.name)
+        except Exception:
+            task.cancel()
+            self._tasks.pop(task, None)
+            with self._active_lock:
+                self._active.pop(bound.run_id, None)
+            raise
         return LocalRunHandle(bound.run_id, self, task)
 
     def validate(self, spec: RunSpec) -> None:
@@ -1026,8 +1077,26 @@ class RunExecutor:
         return emit
 
     async def _emit_event(self, active: _ActiveRun, event: RunEvent) -> None:
-        async with active.event_lock:
+        interruption: asyncio.CancelledError | None = None
+        while True:
+            try:
+                await active.event_lock.acquire()
+                break
+            except asyncio.CancelledError as exc:
+                if not isinstance(event, StepEnd):
+                    raise
+                step = self.store.get_step(ref=event.step)
+                if step is None or step.status == "running":
+                    raise
+                # Admission may have committed the Step before event delivery.
+                # Finish delivering that fact before propagating cancellation.
+                interruption = exc
+        try:
             await self._emit_event_locked(active, event)
+        finally:
+            active.event_lock.release()
+        if interruption is not None:
+            raise interruption
 
     async def _emit_event_locked(
         self,
@@ -1044,7 +1113,7 @@ class RunExecutor:
         ):
             event = replace(event, aborted_by=active.interruption.ref)
         with self.store.write_transaction():
-            self._persist.on_event(event)
+            event = self._persist.on_event(event)
             self._update_control_state(event)
         if isinstance(event, StepBegin) and active.execution is not None:
             active.execution._adopt_step_relations(event)
@@ -1077,13 +1146,6 @@ class RunExecutor:
                 _LOGGER.exception("run tracer event handling failed")
 
     def _update_control_state(self, event: RunEvent) -> None:
-        if isinstance(event, RunBegin):
-            self.store.finish_run_controls(
-                run_id=event.run,
-                indexes=(event.control.index,),
-                finished_at=event.started_at,
-            )
-            return
         if isinstance(event, StepBegin):
             for ref in event.preceded_by:
                 self.store.finish_run_controls(
@@ -1295,7 +1357,7 @@ class RunExecutor:
             and interruption.kind == "cancel"
             and interruption.target == RunRef(run_id)
         ):
-            # Receipt delivery may already have applied the target's cancel.
+            # RunBegin delivery may already have applied the target's cancel.
             cancellation = interruption
         await emit(
             RunEnd(
@@ -1356,6 +1418,7 @@ class _Execution:
         self._step_horizons: dict[StepRef, RunRef | StepRef | None] = {}
         self._runtime_controls: dict[str, dict[int, ControlRecord]] = {}
         self._runtime_cursors: dict[str, int] = {}
+        self._handle_views: dict[StepRef, dict[str, dict[str, str]]] = {}
 
     def message_history(self) -> MessageHistory:
         if self._history is None:
@@ -1478,8 +1541,75 @@ class _Execution:
         history = self.message_history().select(horizon)
         return {
             **history_variables(history.far, history.near, binding.settings.recall),
-            **iteration_values(),
+            **self.iteration_values(binding, step=step),
         }
+
+    def iteration_values(
+        self, binding: BoundRun, *, step: StepRef | None = None
+    ) -> dict[str, object]:
+        """Capture iteration history as data, projecting any retained handles."""
+        from .iteration import template_value
+
+        views = self._handle_views.setdefault(step, {}) if step is not None else {}
+
+        def project(local: Local) -> object:
+            handle = local.value
+            if not isinstance(handle, RunHandle):
+                return template_value(local)
+            if handle.id not in views:
+                views[handle.id] = self.store.run_handle_view(handle)
+            return views[handle.id]
+
+        return iteration_values(project, captured=binding.captured_iterations)
+
+    def project_call_locals(
+        self,
+        locals: Mapping[str, Local],
+        runnable: AgicDecl | FlowDecl,
+        reference: str,
+        *,
+        step: StepRef,
+    ) -> Mapping[str, Local]:
+        """Bind all inline captures before projecting referenced handle views."""
+        if not isinstance(runnable, AgicDecl) or not is_generated_ref(reference):
+            return locals
+        captured = bind_inline_inputs(
+            runnable,
+            reference,
+            {
+                name: "Json"
+                if isinstance(local.value, RunHandle)
+                else _runtime_local_type(local)
+                for name, local in locals.items()
+            },
+        )
+        return self.project_handle_locals(
+            locals,
+            step=step,
+            names=[p.name for p in captured.params] + (["_"] if captured.input else []),
+        )
+
+    def project_handle_locals(
+        self,
+        locals: Mapping[str, Local],
+        *,
+        step: StepRef,
+        names: Sequence[str] | None = None,
+    ) -> dict[str, Local]:
+        """Capture ordinary metadata using one status snapshot per statement."""
+        views = self._handle_views.setdefault(step, {})
+        result = dict(locals)
+        for name, local in locals.items():
+            handle = local.value
+            if not isinstance(handle, RunHandle):
+                continue
+            if names is not None and name not in names:
+                result.pop(name)
+                continue
+            if handle.id not in views:
+                views[handle.id] = self.store.run_handle_view(handle)
+            result[name] = Local(value=views[handle.id], type_name="Json")
+        return result
 
     def recall(
         self,
@@ -1601,6 +1731,7 @@ class _Execution:
         self.require_inactive_runnable(binding, target, action="run")
         runnable = target.executable
         self._validate_child_contract(step, name, runnable)
+        locals = self.project_call_locals(locals, runnable, name, step=step)
         _bind_child_input(
             runnable if include_primary else replace(runnable, input=None),
             locals
@@ -1767,11 +1898,19 @@ class _Execution:
         return state, target
 
     def prepare_flow_exec(
-        self, parent: BoundRun, statement: ExecStmt, locals: Mapping[str, Local]
+        self,
+        parent: BoundRun,
+        statement: ExecStmt,
+        locals: Mapping[str, Local],
+        *,
+        step: StepRef,
     ) -> tuple[BoundRun, AgicDecl | FlowDecl, dict[str, Local]]:
         """Bind authored input before committing a native same-Run handoff."""
         state, target = self.resolve_invocation(
             parent, statement.runnable, action="exec"
+        )
+        locals = self.project_call_locals(
+            locals, target.executable, target.ref, step=step
         )
         input, provenance = _bind_child_input(
             target.executable,
@@ -1852,7 +1991,7 @@ class _Execution:
         """Persist and activate one prepared same-Run runnable replacement."""
 
         ref = _bound_runnable(binding)
-        control = self.store.accept_execute_control(
+        control = self.store.accept_exec_control(
             run_id=binding.run_id,
             state=binding.state.revision,
             runnable=ref,
@@ -2176,7 +2315,6 @@ class _Execution:
             authorize=authorize,
             state_snapshot=state_snapshot,
             expected_output=expected_output,
-            begin=True,
         )
         result = await self._execute_child_binding(
             binding,
@@ -2200,7 +2338,6 @@ class _Execution:
         name: str,
         occurrence: Occurrence | None,
         *,
-        begin: bool = False,
         resolution: Literal["module", "state"] = "module",
         raw_input: Mapping[str, object] | None = None,
         authorize: Callable[[ResolvedRunnable], None] | None = None,
@@ -2266,7 +2403,6 @@ class _Execution:
         binding, runnable = await self._begin_child(
             prepare,
             state_snapshot=state_snapshot or (parent.state, parent.state_ref),
-            begin=begin,
         )
         assert not isinstance(runnable, CompactSpec)
         return binding, runnable
@@ -2308,6 +2444,8 @@ class _Execution:
             module=module,
             limits=parent.limits,
             ceilings=parent.ceilings,
+            resource_ceiling=parent.resource_ceiling,
+            captured_iterations=parent.captured_iterations,
             settings=resolve_settings(runnable, module, parent.settings),
             created_at=utc_now(),
             call="run",
@@ -2340,6 +2478,14 @@ class _Execution:
             ceilings=binding.ceilings,
             external=self._agent_resources,
         )
+        if binding.resource_ceiling is not None:
+            ceiling = binding.resource_ceiling
+            resources = replace(
+                resources,
+                models=tuple(m for m in resources.models if m in ceiling.models),
+                tools=tuple(t for t in resources.tools if t in ceiling.tools),
+                caps=tuple(c for c in resources.caps if c in ceiling.caps),
+            )
         if isinstance(runnable, AgicDecl):
             validate_model_binding(
                 self.models,
@@ -2357,7 +2503,6 @@ class _Execution:
         ],
         *,
         state_snapshot: tuple[AgentState, ControlRef],
-        begin: bool = True,
         resume: RunRecord | None = None,
     ) -> tuple[BoundRun, AgicDecl | FlowDecl | CompactSpec]:
         """Prepare and atomically accept a child before starting any of its work."""
@@ -2407,15 +2552,12 @@ class _Execution:
                         request_id=None,
                         created_at=binding.created_at,
                         horizon=binding.horizon,
-                        schedule_receipt=not begin,
                     )
                 self._cwd_cache[binding.run_id] = binding.cwd
                 self.executor._register_child_run(
                     run_id=binding.run_id,
                     root_run_id=binding.root_run_id,
                 )
-                if not begin:
-                    return binding, runnable
                 event = RunBegin(
                     run=binding.run_id,
                     control=ControlRef(RunRef(binding.run_id), binding.control_index),
@@ -2729,6 +2871,10 @@ class _Execution:
             else None
         )
         if record is not None and record.output is not None:
+            if isinstance(record.output.value, RunHandle):
+                raise ToolangError(
+                    "Run handles cannot be returned as runnable results; capture their fields instead"
+                )
             self._run_outputs[run_id] = Output(
                 TypedRef(ref, record.output.type),
                 "_",
@@ -2751,10 +2897,12 @@ class _Execution:
             await emit(event)
             if isinstance(event, StepEnd):
                 self._step_states.pop(event.step, None)
+                self._handle_views.pop(event.step, None)
             return
         await self.executor._emit_event(self._active, event)
         if isinstance(event, StepEnd):
             self._step_states.pop(event.step, None)
+            self._handle_views.pop(event.step, None)
 
     def step_starter(
         self, binding: BoundRun
@@ -2938,6 +3086,9 @@ def _child_binding(
     state: AgentState,
     state_ref: ControlRef,
 ) -> BoundRun:
+    locals = context.project_call_locals(
+        locals, runnable, effective_name, step=parent_step
+    )
     structs = {item.name: item for item in state_program(state, module).structs}
     input, control_input = _bind_child_input(
         runnable, locals, reference=effective_name, structs=structs
@@ -2960,6 +3111,8 @@ def _child_binding(
         module=module,
         limits=parent.limits,
         ceilings=parent.ceilings,
+        resource_ceiling=parent.resource_ceiling,
+        captured_iterations=parent.captured_iterations,
         settings=resolve_settings(runnable, module, parent.settings),
         created_at=utc_now(),
         call="run",
@@ -2990,6 +3143,11 @@ def _bind_child_input(
         for name in parameters
         if name in locals and locals[name].has_value
     }
+    for name, local in source_locals.items():
+        if isinstance(local.value, RunHandle):
+            raise ToolangError(
+                f"Run handle {name!r} cannot be passed as an input; capture its fields instead"
+            )
     if isinstance(runnable, AgicDecl) and is_generated_ref(reference):
         # Captures already passed their producing boundary. Revalidating them
         # against this module can reinterpret Json strings or foreign structs.
@@ -3062,13 +3220,21 @@ def _bind_run(
         state=spec.state,
         state_ref=ControlRef(RunRef(run_id), 0),
         setup=spec.setup,
-        workspaces=spec.state.workspaces,
+        workspaces=spec.spawn_context.workspaces
+        if spec.spawn_context is not None
+        else spec.state.workspaces,
         module=module,
         limits=spec.limits,
         ceilings=spec.ceilings,
         agent_resources=agent_resources,
         resources=resources,
-        settings=resolve_settings(runnable, module),
+        settings=spec.spawn_context.settings
+        if spec.spawn_context is not None
+        else resolve_settings(runnable, module),
+        captured_iterations=spec.spawn_context.iterations
+        if spec.spawn_context is not None
+        else {},
+        resource_ceiling=spec.resource_ceiling,
         created_at=utc_now(),
         horizon=spec.horizon,
         cwd=spec.workdir or "",
@@ -3085,7 +3251,9 @@ def _step_local(step: StepRecord, store: RunStore) -> Local:
             if isinstance(step.output.value, TypedRef)
             else FieldRef.from_path(step.ref, "output", "value")
         ),
-        type_name=step.output.type,
+        type_name=None
+        if isinstance(step.output.value, RunHandle)
+        else step.output.type,
         stored=step.output.value,
     )
 
@@ -3121,6 +3289,18 @@ def _prepare_run_spec(
             agent_resources,
             ceiling,
             module=module,
+        )
+    if spec.resource_ceiling is not None:
+        agent_resources = AgentResources(
+            models=tuple(
+                m for m in agent_resources.models if m in spec.resource_ceiling.models
+            ),
+            tools=tuple(
+                t for t in agent_resources.tools if t in spec.resource_ceiling.tools
+            ),
+            caps=tuple(
+                c for c in agent_resources.caps if c in spec.resource_ceiling.caps
+            ),
         )
     selection = snapshot_model_selection(spec.setup)
     resources = resolve_runnable_resources(
@@ -3281,6 +3461,8 @@ def _child_control_value(
 
 
 def _runtime_local_type(local: Local) -> str | None:
+    if isinstance(local.value, RunHandle):
+        return None
     if local.has_stored:
         return (
             local.stored.type

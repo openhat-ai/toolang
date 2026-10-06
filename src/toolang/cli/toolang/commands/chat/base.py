@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, cast
 from toolang.base.types.message import Part
 from toolang.execution.events import RunEvent
 from toolang.execution.records import (
-    CwdControlPayload,
+    ChdirControlPayload,
     RunControlPayload,
     execution_error_message,
 )
@@ -105,7 +105,7 @@ def final_workdir(detail: RunDetail) -> str | None:
         if isinstance(control.payload, RunControlPayload):
             value = control.payload.cwd
         elif (
-            isinstance(control.payload, CwdControlPayload)
+            isinstance(control.payload, ChdirControlPayload)
             and control.status == "applied"
         ):
             value = control.payload.cwd

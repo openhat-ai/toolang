@@ -175,8 +175,8 @@ class _RelayRunTracer(RunTracer):
 
     async def on_event(self, event: RunEvent) -> None:
         if self._root_run_id is None:
-            if not isinstance(event, RunBegin):
-                raise RuntimeError("run trace must begin with run_begin")
+            if not isinstance(event, RunBegin | RunEnd):
+                raise RuntimeError("run trace must begin with a root lifecycle event")
             self._root_run_id = event.run
         self._relay.publish_run(
             event,

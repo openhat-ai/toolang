@@ -102,7 +102,7 @@ effects, and do not themselves mean that a Model Step adopted them.
 | --- | --- |
 | Recall target, revision, original text | Recall control payload |
 | Reload state | Reload control payload |
-| Execute state, runnable, input | Execute control payload |
+| Execute state, runnable, input | Exec control payload |
 | Horizon | Compact control payload |
 | Compacted range and summary | Validated producer entry and summary output referenced by horizon |
 

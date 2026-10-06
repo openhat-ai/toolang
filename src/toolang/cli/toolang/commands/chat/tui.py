@@ -32,6 +32,7 @@ from rich.text import Text
 from typer._click.exceptions import ClickException
 from toolang.base.types.message import ToolResultPart
 from toolang.base.utils.workspace_paths import parse_cwd
+from toolang.cli.common.execution_progress.operations import runtime_operation_name
 from toolang.execution.events import (
     PartBegin,
     PartDelta,
@@ -1224,7 +1225,7 @@ class ChatTuiApp:
             isinstance(event, PartEnd)
             and event.step.run_id == self._status_run_id
             and isinstance(event.data, ToolResultPart)
-            and event.data.tool_name == "_toolang__chdir"
+            and runtime_operation_name(event.data.tool_name) == "chdir"
             and event.data.error is None
         ):
             cwd = event.data.output.get("cwd")

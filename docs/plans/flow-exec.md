@@ -54,7 +54,7 @@ counter resets and Run retry/rerun rules remain unchanged.
 
 - Add an `exec` Step kind whose `given` is `ExecStmt`, with no output. Its terminal
   facts identify the committed control and resolved target; do not fabricate a
-  child Run or model ToolCall. Preserve the durable `execute` control kind and
+  child Run or model ToolCall. Preserve the durable `exec` control kind and
   extend its trigger/input handling to native Steps and typed Flow locals.
 - Commit the native handoff and closure of its Step and open repeat ancestors
   atomically before starting the successor. Each loop ends once with

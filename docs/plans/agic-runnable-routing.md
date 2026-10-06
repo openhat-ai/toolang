@@ -26,7 +26,7 @@ keeping executor-owned runtime tools separate from user-facing tools.
   catalog is present only when the current Agic declares `hands` or `handoffs`.
 - `_too__run` creates the existing ordinary Run Step and child Run, waits, and
   returns a correlated result to the caller.
-- `_too__execute` creates no Step and no child Run. One applied execute control
+- `_too__execute` creates no Step and no child Run. One applied exec control
   durably records the same-Run replacement before target execution begins.
 - Progress shows an execute marker while the target has not started, a failed
   marker when preparation is rejected, and a handoff divider on the target's
@@ -44,7 +44,7 @@ In scope:
   instructions;
 - bounded authorized-route catalog rendering;
 - child-Run calls and same-Run execute transfer;
-- execute control records, lineage, retry/rerun behavior, and State timing; and
+- exec control records, lineage, retry/rerun behavior, and State timing; and
 - removal of the obsolete Handoff Step from types, records, events, progress,
   and tests.
 
@@ -65,7 +65,7 @@ Out of scope:
 | handoff | A public runnable authorized for `_too__execute` |
 | Run Call | A model `_too__run` call that creates an ordinary Run Step |
 | execute request | A model `_too__execute` call in a Model Step output |
-| execute control | The durable commit that replaces the active runnable |
+| exec control | The durable commit that replaces the active runnable |
 | inner runtime toolset | Executor-owned `_too` definitions and dispatch |
 | agent state toolset | Agent-State-owned `_me` tools |
 | user-facing toolset | Public tools such as `fs`, `web`, and `shell` |
@@ -214,12 +214,12 @@ Before commit, the Agic executor:
    active ancestor lineage.
 
 A pre-commit request, authorization, resolution, input, resource, or lineage
-failure creates no execute control. One correlated ToolResult is appended and
+failure creates no exec control. One correlated ToolResult is appended and
 the caller continues at its next Model Step. Infrastructure and store failures
 remain Run failures.
 
 After successful preparation, the executor atomically persists one applied
-execute control, then replaces the in-memory active binding and lineage. The
+exec control, then replaces the in-memory active binding and lineage. The
 caller cannot resume after that commit. The target starts directly with its
 natural next Step in the same Run.
 
@@ -241,7 +241,7 @@ against the entry runnable's output contract.
 
 ## Execute Control
 
-The execute control is the durable commit boundary:
+The exec control is the durable commit boundary:
 
 ```text
 ControlKind     execute
@@ -264,9 +264,9 @@ never pending and has no worker. Persistence completes before the in-memory
 replacement. The applied control remains historical truth if target execution
 later fails or is canceled.
 
-`RunBegin.runnable` remains the entry runnable. Ordered applied execute controls
+`RunBegin.runnable` remains the entry runnable. Ordered applied exec controls
 provide the transition lineage. Retry rejects a Run tree containing an applied
-execute control because replay would cross a replacement boundary. Rerun starts
+exec control because replay would cross a replacement boundary. Rerun starts
 a normal new root Run from the original request.
 
 There is intentionally no compatibility or migration for records containing
@@ -294,7 +294,7 @@ to reopen.
 - `src/toolang/execution/runnables.py`: route authorization and bounded catalog.
 - `src/toolang/execution/executor/executor.py`: target preparation, applied
   execute commit, in-place transfer, lineage, and entry output coercion.
-- `src/toolang/execution/{types,records,store}.py`: execute control vocabulary,
+- `src/toolang/execution/{types,records,store}.py`: exec control vocabulary,
   payload serialization, atomic persistence, and retry rejection.
 - `src/toolang/execution/{types,records,events}.py` and CLI progress: delete the
   Handoff Step vocabulary and derive execute presentation from ordinary Model
@@ -316,9 +316,9 @@ to reopen.
    existing applied-control behavior, including unchanged-State no-op records.
 5. `_too__run` uses captured authorization plus Run Step State, produces one
    ordinary Run Step and child Run, and returns to the caller.
-6. A failed execute produces no Step and no execute control, returns a
+6. A failed execute produces no Step and no exec control, returns a
    correlated error, and lets the caller continue.
-7. A successful execute produces one applied execute control, no transition
+7. A successful execute produces one applied exec control, no transition
    Step or child Run, one `RunBegin`/`RunEnd`, and only target natural Steps.
 8. The execute payload round-trips the captured State, canonical ref, module,
    ToolCall source, and raw-`Json` source-pointing locals.
@@ -337,7 +337,7 @@ to reopen.
 
 - Always-present high-impact tools require concise, consistent conservative
   instructions across Model Calls.
-- The execute control, not a synthetic Step or mutation of `RunBegin`, must be
+- The exec control, not a synthetic Step or mutation of `RunBegin`, must be
   the sole durable transition truth.
 - Source-pointing input locals depend on the originating Model ToolCall part
   remaining the canonical model-output representation.

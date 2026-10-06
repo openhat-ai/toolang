@@ -95,7 +95,7 @@ These are the input-bearing contracts affected by the cutover:
 | Direct HTTP run | `RunCreateRequest` in `api/schemas.py` | `RunnableRequest[object]`, decoded against the signature |
 | Authored HTTP run | `AuthoredRunRequest` in `api/schemas.py` | `RunnableRequest[str]` |
 | Internal authored run | `RunRequest` in `execution/schemas.py` | `RunnableRequest[str]` plus execution policy |
-| Run and Execute controls | `RunControlPayload`, `ExecuteControlPayload` in `execution/records.py` | `CallInput[Value | TypedRef]` |
+| Run and Exec controls | `RunControlPayload`, `ExecControlPayload` in `execution/records.py` | `CallInput[Value | TypedRef]` |
 | Steer and Cancel controls | `SteerControlPayload`, `CancelControlPayload` in `execution/records.py` | Flat concrete input under `_`, or an empty Cancel map |
 | Authored provenance | `RunControlPayload.authored_input` | `CallInput[str] | None` |
 | Run/Step records, end events, and HTTP output | `Output` in `execution/types.py` | `local` plus optional `binding` |

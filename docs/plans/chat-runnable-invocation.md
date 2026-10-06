@@ -34,8 +34,8 @@ runnable for future chat turns.
   the captured routes. Prompt changes alone cannot enable missing targets.
 - The protocol and execute description currently prefer run when either works.
   That preference conflicts with the requested direct-call behavior.
-- Run returns a scheduling receipt and supplies the child outcome separately
-  before the model continues. Execute commits a same-Run replacement; after
+- Run keeps its Tool Step open until the child ends and returns its typed result
+  or a tool error. Exec commits a same-Run replacement; after
   commitment the caller never resumes, even when the target fails. The entry
   output contract still applies.
 
@@ -95,7 +95,7 @@ Update the protocol and tool descriptions together:
 - A direct request to invoke a named target uses execute if no further caller
   work is requested. Do not add a summary merely to justify choosing run.
 - A request to summarize, compare, transform, or use the result afterward uses
-  run. Wait for the actual outcome; a scheduling receipt is not the result.
+  run. Its tool reply carries the completed result or error.
 - Use the latest route snapshot to check scope and read the target's signature.
   A parameter-only question is not an execution request.
 - Pass primary input under input._ and named parameters under their declared
@@ -154,7 +154,7 @@ background execution, target creation, or session-default changes are included.
    The next chat turn still uses the session's default runnable.
 4. A scripted run of agic:xyz delivers its actual outcome before the next caller
    model invocation, which can then produce the requested summary.
-5. Invalid inputs create no accepted child or execute control, include signature
+5. Invalid inputs create no accepted child or exec control, include signature
    diagnostics, and allow corrected calls. Keep active-lineage, execute batching,
    output-contract, module-boundary, and target-failure behavior covered. Preserve
    rejection of deleted targets or changed signatures at named child acceptance.

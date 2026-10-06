@@ -13,6 +13,7 @@ from .ast import (
     SortStmt,
     RepeatStmt,
     RunStmt,
+    SpawnStmt,
     ExecStmt,
     SeekStmt,
     ReduceStmt,
@@ -33,6 +34,8 @@ def statement_description(statement: FlowStmt) -> str:
         return f"Set value to {statement.binding}"
     if isinstance(statement, RunStmt):
         action = f"Run {_runnable_label(statement.runnable)}"
+    elif isinstance(statement, SpawnStmt):
+        action = f"Spawn {_runnable_label(statement.runnable)}"
     elif isinstance(statement, SeekStmt):
         action = (
             f"Ask agent {statement.name} to run {_runnable_label(statement.runnable)}"

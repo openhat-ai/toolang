@@ -3,7 +3,11 @@
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from toolang.common.template import require_template_inputs, template_history_depth
+from toolang.common.template import (
+    require_template_inputs,
+    require_template_fields,
+    template_history_depth,
+)
 
 from . import ast
 from .contracts import operation_transform
@@ -15,6 +19,7 @@ class _Local:
     # Full value type: Text[][] for a list of Text[] elements.
     type_name: str | None = None
     length: int | None = None
+    handle: bool = False
 
 
 _Locals = dict[str, _Local]
@@ -46,6 +51,7 @@ def _join(left: _Locals, right: _Locals) -> _Locals:
         result[name] = _Local(
             a.type_name if a.type_name == b.type_name else None,
             a.length if a.length == b.length else None,
+            a.handle or b.handle,
         )
     return result
 
@@ -57,6 +63,13 @@ class _FlowChecker:
 
     def content(self, text: str, locals: _Locals, window: int | None) -> None:
         require_template_inputs(text, locals)
+        require_template_fields(
+            text,
+            {
+                name: frozenset({"id", "thread", "status"}) if local.handle else None
+                for name, local in locals.items()
+            },
+        )
         if window is not None:
             template_history_depth(text, window)
 
@@ -72,6 +85,14 @@ class _FlowChecker:
             if not parameter.optional and parameter.name not in locals:
                 raise ToolangValidationError(
                     f"Missing input {parameter.name!r} for {runnable.name or 'inline agic'!r}"
+                )
+            if (
+                runnable.name is not None
+                and parameter.name in locals
+                and locals[parameter.name].handle
+            ):
+                raise ToolangValidationError(
+                    f"Run handle {parameter.name!r} cannot be passed as an input; capture its fields instead"
                 )
 
     def history(
@@ -245,12 +266,18 @@ class _FlowChecker:
             # Zero-call operations still preflight inputs, but never render the
             # child's history templates (including implicit-seed singleton reduce).
             self.inputs(child, child_locals)
+            if isinstance(child, ast.AgicDecl) and child.name is None:
+                for message in child.messages:
+                    self.content(message.content, child_locals, None)
             if not no_calls:
                 self.history(
                     child,
                     1 if isinstance(stmt, ast.ReduceStmt) else window,
                     settings,
                 )
+
+        if isinstance(stmt, ast.SpawnStmt):
+            return _Local(handle=True)
 
         transform = operation_transform(stmt.kind)
         if transform in {"filter", "sort"}:

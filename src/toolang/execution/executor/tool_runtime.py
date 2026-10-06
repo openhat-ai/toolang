@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
@@ -9,12 +10,13 @@ from typing import TYPE_CHECKING, Any, Literal
 from toolang.base.errors import ToolangError
 from toolang.base.protocols.tool import ToolRuntime
 from toolang.base.types.tool import ToolContext, ToolResult
+from toolang.base.types.message import ToolResultPart
 from toolang.base.utils.workspace_paths import resolve_input_path, workspace_uri
 from toolang.lang.input import CallInput
 
 from ..records import RecallControlPayload
 from ..assembly.tool_replies import control_summary
-from ..assembly.run_results import run_receipt
+from ..assembly.run_results import run_result
 
 from ..runnables import (
     AgicRoutes,
@@ -163,6 +165,7 @@ class _ToolRuntime(ToolRuntime):
         execution = state.execution
         if execution is None:
             raise RuntimeError("Agic runtime execution is unavailable")
+        binding = None
         try:
             binding, target = await execution.accept_child(
                 state.prepared.run,
@@ -178,13 +181,49 @@ class _ToolRuntime(ToolRuntime):
                     state.prepared.run.state_ref,
                 ),
             )
+            await execution.execute(binding, target, output_binding=None, begun=True)
         except _RunRejected as exc:
             return ToolResult(error=str(exc), output=exc.details)
+        except asyncio.CancelledError:
+            # Admission delivers RunBegin under its lock. Cancellation during
+            # that delivery closes the child before accept_child can return.
+            child = (
+                execution.store.get_run(run_id=binding.run_id)
+                if binding is not None
+                else next(
+                    (
+                        run
+                        for run in execution.store.list_run_tree(
+                            root_run_id=state.prepared.run.run_id
+                        )
+                        if run.parent == self.step
+                    ),
+                    None,
+                )
+            )
+            if child is None or not execution.canceled_within(child.id):
+                raise
         except Exception as exc:
-            self.failure = exc
-            raise
-        state.scheduled_run = (binding, target)
-        return ToolResult(run_receipt(binding.run_id))
+            child = (
+                execution.store.get_run(run_id=binding.run_id)
+                if binding is not None
+                else None
+            )
+            if child is None or child.status in {"pending", "running"}:
+                self.failure = exc
+                raise
+        else:
+            child = execution.store.get_run(run_id=binding.run_id)
+        if child is None:
+            raise RuntimeError(f"child Run disappeared for {self.step}")
+        if child.status == "succeeded" and child.output is not None:
+            state.output = FieldRef.from_path(RunRef(child.id), "output", "value")
+            state.record_output(state.output)
+        elif child.error is not None:
+            self.error = ErrorRef(FieldRef.from_path(RunRef(child.id), "error"))
+        return run_result(
+            child, execution.store.resolve_value, execution.store.resolve_error
+        )
 
     async def exec(self, runnable: str, input: Mapping[str, Any]) -> ToolResult:
         if self.source is None:
@@ -244,11 +283,46 @@ class _ToolRuntime(ToolRuntime):
             }
         )
 
+    async def spawn(self, runnable: str, input: Mapping[str, Any]) -> ToolResult:
+        from .spawn import accept
+
+        execution = self.state.execution
+        if execution is None:
+            raise RuntimeError("Agic runtime execution is unavailable")
+        try:
+            await accept(
+                execution,
+                self.state.prepared.run,
+                {},
+                self.step,
+                runnable,
+                resolution="state",
+                raw_input=input,
+                authorize=lambda target: self._authorize("spawn", target),
+                state_snapshot=(
+                    self.state.prepared.state,
+                    self.state.prepared.run.state_ref,
+                ),
+            )
+        except _RunRejected as exc:
+            return ToolResult(error=str(exc), output=exc.details)
+        except Exception as exc:
+            self.failure = exc
+            raise
+        recorded = execution.store.get_step(ref=self.step)
+        if (
+            recorded is None
+            or recorded.output is None
+            or not isinstance(recorded.output.value, ToolResultPart)
+        ):
+            raise RuntimeError("spawn admission has no recorded tool result")
+        return ToolResult(dict(recorded.output.value.output))
+
     def _authorize(
-        self, operation: Literal["run", "exec"], target: ResolvedRunnable
+        self, operation: Literal["run", "spawn", "exec"], target: ResolvedRunnable
     ) -> None:
         if not self.routes.allows(operation, target):
-            selector = "hands" if operation == "run" else "handoffs"
+            selector = "hands" if operation in {"run", "spawn"} else "handoffs"
             raise ToolangError(
                 f"runnable is not authorized by {selector}: {target.ref}"
             )

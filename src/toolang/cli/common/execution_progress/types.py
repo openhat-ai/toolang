@@ -5,10 +5,36 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
+from toolang.execution.events import StepBegin
+from toolang.execution.types import ToolStepGiven
+from toolang.lang.ast import FlowStmt
+
 ProgressTone = Literal["progress", "normal", "active", "error", "warning"]
 ProgressFormat = Literal["plain", "markdown"]
 ProgressSurface = Literal["none", "tool_summary", "tool_error"]
 ProgressLeader = Literal["none", "run", "handoff", "iteration"]
+
+
+@dataclass(frozen=True, slots=True)
+class StepOperation:
+    """Presentation meaning of a Step, retaining its original event and source."""
+
+    begin: StepBegin
+    name: str
+    source: Literal["flow", "model", "tool"]
+    statement: FlowStmt | None = None
+    tool: ToolStepGiven | None = None
+    runnable: str = ""
+    run_scope: bool = False
+    tool_marker: Literal["›", "✧"] = "›"
+
+    @property
+    def is_flow(self) -> bool:
+        return self.statement is not None and not self.run_scope
+
+    @property
+    def timed(self) -> bool:
+        return self.source == "tool" and self.name == "compact"
 
 
 @dataclass(frozen=True, slots=True)

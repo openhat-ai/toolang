@@ -42,6 +42,7 @@ _COMMENT_SPLIT_KINDS = {
 _FLOW_STATEMENT_TYPES = {
     "let_statement",
     "run_statement",
+    "spawn_statement",
     "exec_statement",
     "seek_statement",
     "ask_statement",
@@ -136,6 +137,11 @@ def format_statement_head(statement: ast.FlowStmt) -> str:
 
     if isinstance(statement, ast.ExecStmt):
         return _statement_words("exec", _authored_runnable(statement.runnable))
+    if isinstance(statement, ast.SpawnStmt):
+        head = _statement_words("spawn", _authored_runnable(statement.runnable))
+        return (
+            head if statement.binding is None else f"let {statement.binding} = {head}"
+        )
     if isinstance(statement, ast.LetStmt):
         return _statement_words("let", statement.binding)
     if isinstance(statement, ast.RunStmt):
@@ -606,6 +612,15 @@ def _format_flow_statement_line(stripped_line: str, *, node: Node) -> str:
         return f"{_collapse_syntax_space(before)} = {content.strip()}".rstrip()
     before, separator, after = stripped_line.partition(":")
     rendered = _collapse_syntax_space(before)
+    nested = binding.child_by_field_name("statement") if binding is not None else None
+    if (
+        binding is not None
+        and nested is not None
+        and nested.type == "spawn_statement"
+        and binding.child_by_field_name("name") is None
+        and rendered.startswith("let spawn")
+    ):
+        rendered = rendered.removeprefix("let ")
     if not separator:
         return rendered
     body = after.strip()
