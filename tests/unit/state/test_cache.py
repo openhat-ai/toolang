@@ -206,6 +206,32 @@ def test_home_layer_preserves_nested_sort_without_reparsing_source(
     assert statement.runnable == "score"
 
 
+@pytest.mark.parametrize("index", [0, 1, 2])
+def test_home_layer_preserves_condition_position_without_reparsing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, index: int
+) -> None:
+    layout = _layout(tmp_path)
+    lines = ["let first_value = First.", "let second_value = Second."]
+    lines.insert(index, "until ready")
+    revision = _write_home(
+        layout,
+        "agic ready() -> Boolean:\n  Ready?\nflow work():\n  repeat:\n"
+        + "".join(f"    {line}\n" for line in lines),
+    )
+
+    def fail_parse(*_args, **_kwargs):
+        raise AssertionError("persisted condition must not be reparsed")
+
+    monkeypatch.setattr(Program, "from_source", classmethod(fail_parse))
+    flow = load_home_layer(layout, revision).modules["agent"].find_flow("work")
+    assert flow is not None
+    repeat = flow.stmts[0]
+    assert isinstance(repeat, RepeatStmt)
+    assert repeat.until_index == (None if index == 2 else index)
+    assert repeat.runnable == "ready"
+    assert [stmt.binding for stmt in repeat.stmts] == ["first_value", "second_value"]
+
+
 @pytest.mark.parametrize("damage", ["missing", "extra", "modified"])
 def test_explicit_layer_validation_rejects_file_set_and_content_damage(
     tmp_path: Path,

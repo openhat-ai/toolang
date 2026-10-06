@@ -40,7 +40,6 @@ _CAP_REQUIRED_FIELDS: dict[ast.CapKind, frozenset[str]] = {
 }
 _CAP_BODY_REQUIRED = frozenset({"psyche", "skill", "prompt"})
 _SERVICE_FIELDS = frozenset({"description", "transport", "target", "headers", "env"})
-_RESERVED_RUNTIME_NAMES = frozenset({"runtime"})
 _ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _PARAM_NAME_RE = re.compile(r"^[A-Za-z_][\w-]*$")
 
@@ -418,32 +417,17 @@ def _validate_parameters(
     if input_param is not None and input_param.optional:
         raise ToolangValidationError(f"{owner} primary input '_' must not be optional")
     seen = {input_param.name: input_param.span.line} if input_param is not None else {}
-    if "runtime" in seen:
-        raise ToolangValidationError(
-            f"{owner} must not use reserved parameter name 'runtime'"
-        )
-    if reserved := seen.keys() & _RESERVED_RUNTIME_NAMES:
-        name = next(iter(reserved))
-        raise ToolangValidationError(
-            f"{owner} must not use reserved runtime parameter name {name!r}"
-        )
     for param in params:
         if param.name == "_":
             raise ToolangValidationError(
                 f"{owner} primary input '_' must be the first parameter"
             )
-        if param.name == "runtime":
-            raise ToolangValidationError(
-                f"{owner} must not use reserved parameter name 'runtime'"
-            )
-        if (
-            param.name in _RESERVED_RUNTIME_NAMES
-            or param.name.startswith("_")
-            or param.name.endswith("_")
-        ):
+        if param.name.startswith("_"):
             raise ToolangValidationError(
                 f"{owner} must not use reserved runtime parameter name {param.name!r}"
             )
+        if not re.fullmatch(r"[a-z][a-z0-9_]*", param.name):
+            raise ToolangValidationError(f"Invalid parameter name {param.name!r}")
         if param.name in seen:
             raise ToolangValidationError(
                 f"Duplicate parameter {param.name!r} in {owner}",
@@ -629,9 +613,9 @@ def _validate_stmt(
         _positive_optional(stmt.lanes, field="lanes", line=stmt.span.line)
         return
     if isinstance(stmt, ast.RepeatStmt):
-        if stmt.count is None and stmt.runnable is None:
+        if not stmt.stmts:
             raise ToolangValidationError(
-                "Repeat requires count or until", line=stmt.span.line
+                "Repeat requires at least one body statement", line=stmt.span.line
             )
         _positive_optional(stmt.window, field="window", line=stmt.span.line)
         if stmt.count is not None:
@@ -651,10 +635,7 @@ def _validate_stmt(
 
 def _validate_binding(stmt: ast.FlowStmt) -> None:
     binding = stmt.binding
-    if binding in _RESERVED_RUNTIME_NAMES or (
-        binding not in {None, "_"}
-        and (binding.startswith("_") or binding.endswith("_"))
-    ):
+    if binding not in {None, "_"} and binding.startswith("_"):
         raise ToolangValidationError(
             f"Flow binding {binding!r} is reserved for a runtime local",
             line=stmt.span.line,

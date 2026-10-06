@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
@@ -21,6 +22,8 @@ from ..iteration import (
 from ..steps import loop as loop_step
 
 if TYPE_CHECKING:
+    from toolang.state.state import AgentState
+    from ...types import ControlRef
     from ..executor import _Execution
 
 
@@ -39,40 +42,72 @@ async def execute(
         child_index = 0
         iteration = 0
         scope = IterationScope(statement.window)
+
+        def prepare_condition() -> tuple[
+            AgentState, tuple[AgentState, ControlRef], tuple[str, ...]
+        ]:
+            assert statement.runnable is not None
+            candidate = (
+                execution.latest_state()
+                if execution.executor._state is not None
+                else binding.state
+            )
+            state, _ = execution.resolve_invocation(
+                binding, statement.runnable, action="run", candidate_state=candidate
+            )
+            state_snapshot = (state, binding.state_ref)
+            templates = execution.condition_templates(
+                binding,
+                path,
+                statement.runnable,
+                state_snapshot=state_snapshot,
+                dependencies=candidate,
+            )
+            return candidate, state_snapshot, templates
+
         if statement.runnable is not None:
             with iteration_scope(scope):
-                history_available(
-                    execution.condition_templates(
-                        binding,
-                        path,
-                        statement.runnable,
-                        state_snapshot=execution.state_snapshot(binding.run_id),
-                    )
+                # Preflight the accepted code's history window even for N=0.
+                # Live target/reentry checks belong at the authored condition.
+                templates = execution.condition_templates(
+                    binding,
+                    path,
+                    statement.runnable,
+                    state_snapshot=(binding.state, binding.state_ref),
+                    dependencies=(
+                        execution.latest_state()
+                        if execution.executor._state is not None
+                        else binding.state
+                    ),
                 )
+                history_available(templates)
+        index = (
+            len(statement.stmts)
+            if statement.until_index is None
+            else statement.until_index
+        )
         while statement.count is None or iteration < statement.count:
+            # Local-only bodies may never suspend at an execution boundary.
+            await asyncio.sleep(0)
+            execution.raise_if_canceling(binding.run_id, call=False)
             entry = snapshot(locals)
             satisfied = False
+            body_occurrence = Occurrence(
+                iteration=IterationOccurrence(
+                    index=iteration, count=statement.count, phase="body"
+                )
+            )
             with iteration_scope(scope):
                 child_index = await execution.execute_statements(
                     binding,
-                    statement.stmts,
+                    statement.stmts[:index],
                     locals,
                     parent=path,
                     start=child_index,
-                    occurrence=Occurrence(
-                        iteration=IterationOccurrence(
-                            index=iteration, count=statement.count, phase="body"
-                        )
-                    ),
+                    occurrence=body_occurrence,
                 )
                 if statement.runnable is not None:
-                    state_snapshot = execution.state_snapshot(binding.run_id)
-                    templates = execution.condition_templates(
-                        binding,
-                        path,
-                        statement.runnable,
-                        state_snapshot=state_snapshot,
-                    )
+                    candidate, state_snapshot, templates = prepare_condition()
                     execution.validate_child_inputs(
                         binding,
                         path,
@@ -95,8 +130,20 @@ async def execute(
                             ),
                             output_binding=None,
                             state_snapshot=state_snapshot,
+                            candidate_state=candidate,
                         )
                         satisfied = boolean(condition.value, operation="until")
+                if satisfied and index < len(statement.stmts):
+                    progress.termination = "satisfied"
+                    break
+                child_index = await execution.execute_statements(
+                    binding,
+                    statement.stmts[index:],
+                    locals,
+                    parent=path,
+                    start=child_index,
+                    occurrence=body_occurrence,
+                )
             frame = IterationFrame(entry, snapshot(locals))
             scope = IterationScope(
                 statement.window, (frame, *scope.frames)[: statement.window]

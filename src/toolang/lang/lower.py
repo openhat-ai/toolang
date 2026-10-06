@@ -515,7 +515,7 @@ class _Lowerer:
     def _lower_statements(self, node: CstNode) -> list[ast.FlowStmt]:
         stmts: list[ast.FlowStmt] = []
         for child in node.named_children:
-            if child.type in _TRIVIA:
+            if child.type in _TRIVIA or child.type == "until_clause":
                 continue
             with source_location(self._line(child), child.start_point.column + 1):
                 stmts.append(self._lower_stmt(child, doc=self.docs.for_node(child)))
@@ -617,21 +617,25 @@ class _Lowerer:
             )
         if node.type == "repeat_statement":
             statements = self._required(node, "body")
+            statement_nodes = statements.children_by_field_name("statement")
             body = tuple(self._lower_statements(statements))
             window = self._optional_int(node.child_by_field_name("window"))
-            until_node = node.child_by_field_name("until")
+            until_node = statements.child_by_field_name("until")
             runnable = None
+            until_index = None
             if until_node is not None:
-                runnable = self._generated_agic(
-                    until_node,
-                    body=self._block_text(self._required(until_node, "body")),
-                    output="Boolean",
-                    evaluator=True,
+                runnable = self._runnable(until_node, output="Boolean", evaluator=True)
+                preceding = sum(
+                    child.start_byte < until_node.start_byte
+                    for child in statement_nodes
                 )
+                if preceding < len(body):
+                    until_index = preceding
             return ast.RepeatStmt(
                 count=self._optional_int(node.child_by_field_name("count")),
                 stmts=body,
                 runnable=runnable,
+                until_index=until_index,
                 window=3 if window is None else window,
                 span=span,
                 doc=doc,

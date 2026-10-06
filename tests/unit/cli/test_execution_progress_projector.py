@@ -1133,6 +1133,25 @@ def test_flow_pointer_backed_output_is_not_displayed() -> None:
     assert terminal.committed == ()
 
 
+def test_unbounded_repeat_progress_uses_shared_description() -> None:
+    reducer = ProgressProjector()
+    reducer.handle(
+        RunBegin(
+            run="run_root",
+            control=ControlRef.for_run("run_root", 0),
+            runnable="flow:work",
+        )
+    )
+    header = reducer.handle(
+        StepBegin(
+            step=StepRef.parse("run_root.0"),
+            kind="loop",
+            given=RepeatStmt(span=SPAN),
+        )
+    )
+    assert _rows(header.committed) == [["[0] Repeat indefinitely", ""]]
+
+
 @pytest.mark.parametrize("count", [3, None])
 def test_repeat_uses_flat_iteration_and_statement_boundaries(count: int | None) -> None:
     reducer = ProgressProjector()

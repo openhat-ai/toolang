@@ -297,6 +297,7 @@ declaration's source line). For example, an inline map displays
 | fixed `repeat` | `Repeat N times` |
 | bounded conditional `repeat` | `Repeat up to N times, until P is true` |
 | condition-only `repeat` | `Repeat until P is true` |
+| unbounded `repeat` without a condition | `Repeat indefinitely` |
 
 Explicit lane limits append `, one at a time` for one lane or `, up to N at once`
 for larger limits. A named statement binding (`let NAME = STMT`) then appends

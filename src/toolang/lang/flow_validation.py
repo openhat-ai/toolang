@@ -154,25 +154,46 @@ class _FlowChecker:
         if stmt.count == 0:
             return locals
 
-        def body(entry: _Locals) -> _Locals | None:
-            result = self.statements(
-                stmt.stmts, entry, window=stmt.window, settings=settings
-            )
-            if result is not None and stmt.runnable is not None:
-                self.inputs(self.runnables[stmt.runnable], result)
-            return result
+        index = len(stmt.stmts) if stmt.until_index is None else stmt.until_index
 
-        result = body(locals)
-        if result is None or stmt.count == 1:
+        def body(entry: _Locals) -> tuple[_Locals | None, _Locals | None]:
+            prefix = self.statements(
+                stmt.stmts[:index], entry, window=stmt.window, settings=settings
+            )
+            if prefix is None:
+                return None, None
+            exit_locals = None
+            if stmt.runnable is not None:
+                self.inputs(self.runnables[stmt.runnable], prefix)
+                exit_locals = prefix
+            suffix = self.statements(
+                stmt.stmts[index:], prefix, window=stmt.window, settings=settings
+            )
+            return suffix, exit_locals
+
+        def exits(
+            completed: _Locals | None, condition: _Locals | None
+        ) -> _Locals | None:
+            if stmt.count is None or completed is None:
+                return condition
+            return completed if condition is None else _join(completed, condition)
+
+        completed, condition = body(locals)
+        result = exits(completed, condition)
+        if completed is None or stmt.count == 1:
             return result
         # Finite widening: names can only be added, and differing facts become
         # unknown. Include the first iteration and possible later iterations.
-        entry = _join(locals, result)
+        entry = _join(locals, completed)
         while True:
-            following = body(entry)
+            following, condition = body(entry)
+            possible_exit = exits(following, condition)
+            if possible_exit is not None:
+                result = (
+                    possible_exit if result is None else _join(result, possible_exit)
+                )
             if following is None:
                 return result
-            result = _join(result, following)
             widened = _join(entry, following)
             if widened == entry:
                 return result

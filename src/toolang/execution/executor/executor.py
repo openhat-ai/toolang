@@ -125,7 +125,6 @@ from ..runnables import (
     runnable_signature,
     resolve_bound_runnable,
     resolve_call_target,
-    resolve_module_runnable,
     resolve_state_runnable,
 )
 from .steps import loop as loop_step
@@ -1751,18 +1750,17 @@ class _Execution:
         name: str,
         *,
         state_snapshot: tuple[AgentState, ControlRef],
+        dependencies: AgentState | None = None,
     ) -> tuple[str, ...]:
-        state, state_ref = state_snapshot
-        ref, kind = parse_runnable_ref(name)
-        _, runnable = resolve_module_runnable(state, binding.module, ref, kind=kind)
+        state, _ = state_snapshot
+        target = resolve_call_target(state, binding.module, name)
+        runnable = target.executable
         self._validate_child_contract(step, name, runnable)
         if not isinstance(runnable, AgicDecl):
-            raise ToolangError("until requires an inline agic")
-        settings = resolve_settings(runnable, binding.module, binding.settings)
+            return ()
+        settings = resolve_settings(runnable, target.module, binding.settings)
         templates = [message.content for message in runnable.messages]
-        dependencies = (
-            self.latest_state() if self.executor._state is not None else state
-        )
+        dependencies = dependencies or state
         for setting, kind in (
             (settings.instruct, "instruct"),
             (settings.context, "context"),
@@ -1853,6 +1851,7 @@ class _Execution:
         baseline_state: AgentState | None = None,
         authorize: Callable[[ResolvedRunnable], None] | None = None,
         action: str,
+        candidate_state: AgentState | None = None,
     ) -> tuple[AgentState, ResolvedRunnable]:
         """Resolve one known target once, preserving inline code and contracts."""
         baseline_state = baseline_state or parent.state
@@ -1869,7 +1868,7 @@ class _Execution:
             contract_runnable = resolve_bound_runnable(
                 parent.state, parent.module, _bound_runnable(parent)
             )
-        state = self.latest_state()
+        state = candidate_state or self.latest_state()
         try:
             target = resolve_call_target(state, parent.module, reference)
             if target.identity != baseline.identity:
@@ -2301,6 +2300,7 @@ class _Execution:
         authorize: Callable[[ResolvedRunnable], None] | None = None,
         state_snapshot: tuple[AgentState, ControlRef] | None = None,
         expected_output: OutputContract | None = None,
+        candidate_state: AgentState | None = None,
     ) -> Local:
         """Accept and execute one authored child call."""
 
@@ -2315,6 +2315,7 @@ class _Execution:
             authorize=authorize,
             state_snapshot=state_snapshot,
             expected_output=expected_output,
+            candidate_state=candidate_state,
         )
         result = await self._execute_child_binding(
             binding,
@@ -2343,6 +2344,7 @@ class _Execution:
         authorize: Callable[[ResolvedRunnable], None] | None = None,
         state_snapshot: tuple[AgentState, ControlRef] | None = None,
         expected_output: OutputContract | None = None,
+        candidate_state: AgentState | None = None,
     ) -> tuple[BoundRun, AgicDecl | FlowDecl]:
         """Validate and commit a child Run before dispatching it."""
 
@@ -2356,6 +2358,7 @@ class _Execution:
                 baseline_state=state if resolution == "state" else parent.state,
                 authorize=authorize,
                 action="_toolang/run" if resolution == "state" else "run",
+                candidate_state=candidate_state,
             )
             runnable = target.executable
             if resolution == "state":

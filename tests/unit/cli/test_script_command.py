@@ -1198,6 +1198,20 @@ agic search:
     assert stdout.endswith("[3] Keep the first item\n")
 
 
+def test_script_help_describes_unbounded_repeat(tmp_path: Path, capsys) -> None:
+    source = _write_source(tmp_path, "flow main():\n  repeat:\n    let value = Body.\n")
+    assert (
+        script.dispatch(
+            [], [str(source), "main", "--help"], prog_name="too", stdin=StringIO()
+        )
+        == 0
+    )
+    assert _flow_outline_lines(capsys.readouterr().out) == [
+        "[0] Repeat indefinitely",
+        "  [0] Set value to value",
+    ]
+
+
 def test_script_flow_outline_expands_repeat_bodies_but_not_calls(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
 ) -> None:
