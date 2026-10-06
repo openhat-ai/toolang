@@ -65,10 +65,8 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Changed
 
-- The `tree-sitter-toolang` grammar dependency is temporarily pinned to the exact
-  Git commit `388553d9a15230b650a3f61ee3d146c3a8f35d0b` (grammar PR #51), which is
-  required for `async run` and `await`. This applies to all installs, not only uv,
-  and must be replaced by a published grammar version before a PyPI release.
+- Bumped the pinned `tree-sitter-toolang` grammar to 0.4.0a4, which provides the
+  `async run` and `await` syntax.
 
 - Progress for `run`, `exec`, `async run`, `spawn`, and `await` now uses one shared
   vocabulary, with background events kept separate from linear caller Steps.

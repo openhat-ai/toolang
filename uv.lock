@@ -2489,7 +2489,7 @@ requires-dist = [
     { name = "tomlkit", specifier = ">=0.13,<1" },
     { name = "tq-json", specifier = ">=0.1.0,<0.2" },
     { name = "tree-sitter", specifier = ">=0.25.2,<0.26" },
-    { name = "tree-sitter-toolang", git = "https://github.com/openhat-ai/tree-sitter-toolang.git?rev=388553d9a15230b650a3f61ee3d146c3a8f35d0b" },
+    { name = "tree-sitter-toolang", specifier = "==0.4.0a4" },
     { name = "typer", specifier = "==0.27.2" },
     { name = "urllib3", specifier = ">=2.8.0" },
     { name = "uvicorn", specifier = ">=0.35,<1" },
@@ -2567,8 +2567,17 @@ wheels = [
 
 [[package]]
 name = "tree-sitter-toolang"
-version = "0.4.0a3"
-source = { git = "https://github.com/openhat-ai/tree-sitter-toolang.git?rev=388553d9a15230b650a3f61ee3d146c3a8f35d0b#388553d9a15230b650a3f61ee3d146c3a8f35d0b" }
+version = "0.4.0a4"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/17/64/e5de7f225910e2fe7c95b43dcfb8247b7c06c2f924c70abe084fb18a7d22/tree_sitter_toolang-0.4.0a4.tar.gz", hash = "sha256:d854c3f5bc3c044593993b5fb537595adb482a7c991a895370633d1539032f12", size = 127905, upload-time = "2026-10-06T09:46:03.396Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b4/8f/ccd24f2e4f6f139f663948de4907cd9c9286149c279d4f7c8c94aefc3d00/tree_sitter_toolang-0.4.0a4-cp311-abi3-macosx_10_9_universal2.whl", hash = "sha256:f93388503a72d4cf5bc63c386b9fd26e926cf45e7fa54d3b290f5a725465f37c", size = 91986, upload-time = "2026-10-06T09:45:55.927Z" },
+    { url = "https://files.pythonhosted.org/packages/f5/70/fe0251c6cc77b4101410c037685053aa3b41f95d71d791b7100eeb86e1f1/tree_sitter_toolang-0.4.0a4-cp311-abi3-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl", hash = "sha256:b4abeb5d000814bcfe08f72db24cd67ab48fb178f8cbc580b6bcded61bccdab7", size = 76337, upload-time = "2026-10-06T09:45:57.18Z" },
+    { url = "https://files.pythonhosted.org/packages/ef/be/e5cab2d11e3353648359d650b0f5595af4444d778c6b9894cf575b4af609/tree_sitter_toolang-0.4.0a4-cp311-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:d7cadf3e44052ef1ac2a711e2ea0cc2b7c471e87ba9eed288ea1b6ab0d03ba7c", size = 77166, upload-time = "2026-10-06T09:45:58.316Z" },
+    { url = "https://files.pythonhosted.org/packages/59/97/accfb51c6b0dd463c7d4596edd7919f68f99fddd4b11be063e084fb99040/tree_sitter_toolang-0.4.0a4-cp311-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:e3f4928a4b7274f6a18407b3a713fa8ec36167faff17100089ad2c155c537137", size = 75920, upload-time = "2026-10-06T09:45:59.412Z" },
+    { url = "https://files.pythonhosted.org/packages/e9/fb/4e57929fa90e338e9fa974fbaafea5cc2a5bd0cbc84e02528397627196d5/tree_sitter_toolang-0.4.0a4-cp311-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:0173d746bc906eb265cd671f39a6e193017cc9c5e3d22bbfb78c8116f76e669e", size = 75985, upload-time = "2026-10-06T09:46:00.713Z" },
+    { url = "https://files.pythonhosted.org/packages/ba/db/fbed9729a1e9ec420d7c5fccd6b9c0a5fb64bff5392f355b47335d0f02ff/tree_sitter_toolang-0.4.0a4-cp311-abi3-win_amd64.whl", hash = "sha256:f32c32032dc6c9bc42ab3407aa4397e2a530a01dd4b3735b1f90044849fe09d7", size = 53108, upload-time = "2026-10-06T09:46:02.067Z" },
+]
 
 [[package]]
 name = "trove-classifiers"
