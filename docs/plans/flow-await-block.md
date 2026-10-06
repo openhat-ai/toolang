@@ -1,166 +1,167 @@
-# Define Await Blocks
+# Define async and await blocks
 
-Status: Proposed; feature definition, group 3 of 4. The human selected await:
-without all, with one complete child output per ordered array item. The complete
-definition remains subject to human approval. This PR contains no implementation.
+Status: Proposed; revised feature definition. Implementation is pending and depends
+on the shared awaitable contract and open decisions in
+[#685](https://github.com/openhat-ai/toolang/pull/685). Human approval is still required.
 
-## Goal, Scope, and Dependencies
+## Goal and Scope
 
-Start independent child operations, wait for their results, and return one array
-without flattening. Ordinary Flow and repeat bodies remain sequential. The await
-block is a value operator; it does not add par/seq control constructs.
+Provide one parallel group with two entry forms: `async:` returns its handle after
+admission; `await:` waits immediately for its complete result array. Both forms use
+the same branch execution, ordering, isolation, lanes, and failure rules. Ordinary
+flow and repeat bodies remain sequential.
 
-Implement after [group 1](https://github.com/openhat-ai/toolang/pull/684)'s
-array/target rules and [group 2](https://github.com/openhat-ai/toolang/pull/685)'s
-handle-await grammar.
-The block scheduler itself uses the existing parallel Step machinery, without
-creating user-visible Run handles for its branches. Group 2 supplies the existing
-handle form when a child explicitly awaits previously started work. Spawn is
-not required. These are separate documentation and implementation changes.
+This is the second pending feature after async/await. It extends the original
+await-block proposal with nonblocking group launch; it does not require
+`async await:`. Existing [array semantics](./flow-array-semantics.md) and
+[spawn ownership](./flow-spawn.md) remain unchanged. Proposed examples below are
+not supported by today's CLI.
 
 ## Verified Current Behavior
 
-- Flow dispatch awaits each statement in order. Map/generate use an internal
-  par Step and preserve input order despite concurrent completion.
-- Parallel child execution captures inputs, limits lanes, cancels/drains failing
-  groups, and preserves complete child output types and references.
-- Current grammar rejects bare, named, and discarded await blocks.
-- Retry restores top-level statement outputs, but repeat restoration walks
-  descendants. A new block must not leak branch-local bindings during restoration.
+Flow dispatch awaits statements sequentially. Existing parallel Steps preserve
+input order, limit lanes, and cancel/drain failed groups. Retry reconstructs locals
+from committed outputs and walks repeat descendants. Async/await blocks and
+operation handles are not implemented; restoration must not leak branch bindings.
 
-## Syntax and Result Binding
+## Syntax and Binding
 
 ```too
-flow review(_: Text) -> Text:
-  let reviews = await:
-    run review_accuracy
-    run review_risks
-    generate 3 using suggest_improvements
-  run: Summarize {{reviews}} for {{_}}.
+let h = async:
+  run review_accuracy
+  run review_risks
+  generate 3 using suggest_improvements
+run draft
+let reviews = await h
 ```
 
-The reviews array is [accuracy_result, risk_result, [idea1, idea2, idea3]].
-The original primary input remains in _ because the block has a named binding.
+To start the same group and wait immediately:
 
-```text
-await [in P lanes]:
-  VALUE_STMTS
-
-let results = await [in P lanes]:
-  VALUE_STMTS
-
-let await [in P lanes]:
-  VALUE_STMTS
+```too
+let reviews = await:
+  run review_accuracy
+  run review_risks
+  generate 3 using suggest_improvements
 ```
 
-Bare await: writes the complete array to _. Named let writes only that local.
-Discarded let waits and drops the array. Publish a binding only after the whole
-block succeeds. No all qualifier, spread/collect alias, or implicit flattening.
+Both produce `[accuracy_result, risk_result, [idea1, idea2, idea3]]` when successful.
+The result order follows branch declarations. Async captures entry inputs before
+returning; subsequent work cannot alter those inputs.
 
-Block await starts child statements and joins them. In contrast, await handle
-waits for existing work. Both forms use ordinary value-statement binding: bare
-await writes `_`, named let writes its destination, and nameless let discards.
-Handle await preserves its operand unless that local is also the destination.
+| Form | Binding and completion |
+| --- | --- |
+| `let h = async [in P lanes]: ...` | Bind one operation handle after admission |
+| `async [in P lanes]: ...` / `let async [in P lanes]: ...` | Launch, discard handle, preserve locals |
+| `await [in P lanes]: ...` | Wait for the group; bind its array to `_` |
+| `let results = await [in P lanes]: ...` | Wait; bind only `results` |
+| `let await [in P lanes]: ...` | Wait and discard the result |
 
-## Children, Inputs, and Types
+`async:` starts the work without requiring a later await. Its result is one
+`Awaitable<Results>`, not an array of Run handles. `await:` is the immediate-wait
+form of the same operation; it does not introduce a second scheduler. Awaiting
+its retained handle follows #685, including repeated waits and result bindings.
+No `all` qualifier, implicit flattening, or `async await:` form is introduced.
 
-- Require at least one immediate child. Allow unbound run, generate, map, reduce,
-  keep, drop, sort, nested await blocks, and group 2's await-handle statement.
-  Each contributes its complete result, irrespective of its local binding inside
-  the branch. Reject direct let bindings, async launches, repeat, exec, and spawn.
-  Multi-step sequences/control flow belong in helper Flows called by run.
-- Children use isolated copies of the same entry locals, history, and context.
-  A sibling result never becomes another sibling's input, even with one lane.
-  Preflight known target/input/output contracts before starting new child work.
-  Unknown external contracts retain checks at their ordinary call boundaries.
-  The block itself needs no primary input; its children determine requirements.
-- Calls in the block need no async prefix. A run child makes one ordinary call;
-  generate/map retain their own calls and arrays. Nested blocks are one child
-  result each. An exec inside a called Flow affects only that called Run.
-- A direct await handle child awaits the captured `Run<T>` in its private local
-  copy and contributes T. Here `Run<T>` is runtime design notation, not a language
-  type. The outer local retains its Run handle.
-  It does not launch the target again or adopt ownership of that existing run.
-- Collect outputs in declaration order, not completion order. Arrays stay nested;
-  an empty child array contributes one empty-array item. Null is an item, not
-  missing output. The outer length equals the immediate child count.
-- Determine output from contracts: homogeneous child type T gives T[]; differing
-  or unknown types give Json[], retaining typed values and provenance. Do not
-  add tuple/union types or infer a narrower type from observed runtime values.
-  A handle-await child contributes its Run handle's result type T.
+## Branches and Results
 
-## Scheduling, Failure, and Persistence
+- Require at least one immediate branch. Allow unbound run, generate, map, reduce,
+  keep, drop, sort, nested await blocks, and single/multiple handle-await statements.
+  Reject direct let bindings, async launches/blocks, repeat, exec, and spawn.
+  Multi-step sequences and repeat belong in helper flows called by run.
+- Every branch receives an isolated snapshot of the same entry locals, history,
+  and context. A sibling never supplies another sibling's input, even with one
+  lane. This is a parallel group, not a sequential background flow. Preflight
+  known input/target/output contracts before starting new child work.
+- Each branch contributes one complete result. Map/generate retain their arrays;
+  nested blocks and multiple-target awaits each contribute one array item without
+  flattening. Empty arrays and null are valid results; absent output fails collection.
+- Infer results from contracts: homogeneous `T` gives `T[]`; differing/unknown
+  contracts give `Json[]`, preserving typed item references and provenance. Do not
+  infer types from completion order or add tuple/union types.
+- Await branches observe captured Run or operation handles and preserve the outer
+  handles. They neither relaunch their targets nor adopt ownership of them.
 
-Use explicit P or the enclosing Flow's effective lanes limit for active direct
-children. Nested map/generate/await operations retain separate lane limits;
-this is not a global leaf-task cap. Start ready branches in source order without
-promising completion order. Avoid deadlock through nested shared semaphores.
+## Scheduling and Ownership
 
-All children must succeed before publishing the array. On failure, cancel and
-drain unfinished branch tasks and newly launched runs owned by the block; retain
-completed/failed records and publish no partial binding. Preserve ordinary parent
-cancellation and limit behavior. File/tool side effects are not rolled back.
+Use explicit `P` or the enclosing flow's effective lanes for active direct branches.
+Nested collection operations/blocks retain their own limits; this is not a global
+leaf-task cap. Admit ready branches in source order without promising completion
+order. A group identity exists before all child Runs exist, including while branches
+are queued. Do not hold a shared lane permit across nested work that needs it.
 
-Canceling a branch that merely awaits a preexisting Run handle stops that wait; it
-does not cancel the referenced run just because another branch failed. The
-original owner's lifecycle still applies: group 2 cancels owned async children
-when their parent ends, while group 4's independent roots remain independent.
+The launching Run owns an async group; the group owns work it starts. Reuse #685's
+parent return/failure/cancel/exec cleanup. Discarding a handle does not detach work.
+On branch failure, cancel and drain unfinished owned branches, retain their records,
+and fail the group. Publish no partial result; external effects are not rolled back.
+Background group failure is recorded immediately and surfaces to the caller at await.
 
-Persist one par-kind Step with source-ordered child paths. Keep AwaitBlockStmt
-separate from AwaitStmt. The block output is a complete array of typed output
-references; child Steps retain their own results and private bindings.
+Waiting on existing handles is different: `await ha, hb` does not create ownership.
+Canceling a wait-only branch stops its waiter, not the referenced computation.
+The original owner's lifecycle still applies. Failure in another branch must not
+cancel an independently spawned root just because this group awaited it.
 
-Restore a successful block only from its outer output and binding, including
-inside repeat. Never replay child bindings into enclosing locals. Failed blocks
-retain ordinary retry policy; there is no partial-success cache or new selective
-branch retry mode. Preserve old record kinds and historical decoding.
+## Records, Runtime, and Recovery
 
-## Implementation Touchpoints
+Use one durable operation identity for the group's lifecycle, result contract, and
+ordered output references. Reuse par Step machinery for branch execution and
+source-ordered child paths. Keep launch admission, group completion, and waiting
+separate; a successful launch must not later become a failed launch. The concrete
+handle codec and Step layout must be settled with #685 before implementation.
+Apply #685's event/progress rules: async launch may finish while its operation and
+branches remain active; preserve their source and owner links. Group terminal
+events describe group completion, and wait completion only retrieves its result.
+The layout must not force branch Runs to finish before the launch Step ends or
+count their progress/cost again when a caller awaits the group.
 
-- Upstream grammar plus `src/toolang/lang/{ast,lower,contracts,flow_validation,
-  format,description}.py`: AwaitBlockStmt, child restrictions, lane clauses,
-  output contract inference, shared result binding rules, and diagnostics.
-- `src/toolang/execution/executor/stmts/await_block.py`, `steps/par.py`,
-  `runs/flow.py`, `executor.py`, and `iteration.py`: isolated branch locals,
-  concurrency, ownership-sensitive cleanup, ordered result collection, and retry.
-- `src/toolang/execution/{types,records,schemas}.py`: statement decoding and
-  par-kind compatibility, whole-array references, inspection/progress output.
-- Language/format/highlight and execution/retry/record tests; current Flow syntax
-  and examples. Publish/pin the grammar and invalidate affected prepared caches.
+AsyncBlockStmt and AwaitBlockStmt may lower to the same group operation with
+different delivery modes; handle AwaitStmt only waits for existing work. Flow and
+agic use the same target resolver/wait service. `_toolang/await` must accept an
+operation target, not only a Run ID. Agic may invoke a flow containing a block;
+this plan adds no generic block-evaluation or operator-specific runtime tool.
 
-Generate the implementation's user-facing changelog entry through the repository
-runnable. This documentation PR requires no release entry or product changes.
+Retry restores a committed async launch from its handle and a successful group
+from its outer output/binding. Never replay branch bindings into the enclosing
+locals, including inside repeat. Failed groups retain ordinary retry policy; no
+partial-success cache or selective branch-retry feature is added. Unavailable
+handles follow #685's explicit failure rules rather than relaunching work.
 
-## Acceptance Tests
+## Implementation Touchpoints and Acceptance
 
-1. Parse/check/format bare, named, discarded, typed-child, lane-limited, nested,
-   and repeat-contained blocks. Distinguish await handle; reject empty blocks,
-   unsupported child forms, aliases, and missing known inputs before new calls.
-2. Use deterministic gates to show overlap and source-order results even when
-   completion order differs. Verify lane counts, nested limits, and no deadlock.
-3. Every child reads the entry snapshot, including with one lane. Named/discarded
-   outer results preserve _. No child local mutation escapes.
-4. Preserve one item per child across scalar, null, empty/nested arrays, structs,
-   Parts, homogeneous and heterogeneous types, and unknown contracts. Feed the
-   final array directly into run/map/reduce.
-5. Mix new calls with awaits of existing Run handles. Collect completed values,
-   retain outer Run handles, and never duplicate launches. On block failure,
-   cancel block-owned work but preserve independently owned Run targets.
-6. Failures and parent cancellation drain branch tasks, retain inspection facts,
-   avoid partial binding, and leave already-performed side effects observable.
-7. Round-trip output refs and statement records. Retry a successful prefix and
-   repeat-contained blocks, restoring only their outer bindings; failed blocks
-   never leak partial arrays or branch-local bindings.
-8. Check examples/links and run all default repository checks for implementation;
-   default concurrency tests remain offline and deterministic.
+- Grammar and `src/toolang/lang/{ast,lower,contracts,flow_validation,format,
+  description}.py`: both block forms, branch restrictions, lanes, and result contracts.
+- `src/toolang/execution/executor/stmts/`, `steps/par.py`, `runs/flow.py`,
+  `executor.py`, and `iteration.py`: group scheduling, snapshots, cleanup, restoration.
+- `src/toolang/execution/{types,records,events,schemas}.py`: operation identity,
+  launch/completion records, output provenance, inspection, and shared await adapter.
+- Language, execution, retry, and historical-record tests; current flow syntax docs
+  and examples. Publish/pin matching grammar before implementation release.
 
-## Risks and Approval
+Acceptance scenarios:
 
-Risks are confusing handle-await with block-await, flattening child arrays,
-branch-local bindings escaping, nested-lane deadlocks, and cancellation crossing
-ownership boundaries. The syntax and acceptance cases specify these boundaries.
+1. Parse/check/format both forms, bindings, lanes, nesting, and repeat-contained
+   blocks. Reject empty blocks, prohibited branches, and known invalid inputs.
+2. Gates prove async returns before completion, await blocks wait, both schedules
+   overlap branches, and retained handles can be awaited repeatedly without relaunch.
+3. Branches read entry snapshots even with one lane; parent/sibling mutation cannot
+   change their inputs. Results follow source order across scalar, null, empty/nested
+   array, struct, and Part values; missing output fails without a partial binding.
+4. Lane limits and nested groups avoid deadlock. Groups do not require all child IDs
+   at launch. Nested map/block/collection-await results each remain one complete item.
+5. Failure/cancel/parent exit/exec drains owned work while observer cancellation
+   preserves independently owned targets. Discarded handles do not leak tasks.
+6. Round-trip admission, operation, and output records; retry restores only outer
+   bindings, including in repeat. Cover missing/live/terminal targets and provenance.
+7. Validate links/examples and run all default checks for implementation, keeping
+   concurrency tests offline and deterministic. Generate its changelog via the runnable.
 
-Out of scope: authored par/seq, named result objects, destructuring, inline
-multi-statement branches, async modifiers on blocks, and first-success/partial
-results. No unresolved product decision is needed for this group's implementation.
-Approval of the complete definition and a published matching grammar are required.
+## Open Decisions and Risks
+
+The remaining blocker is #685's concrete operation-handle and durable Step design;
+this plan must not assume Run-only identities or independent branch Run handles.
+Approval must cover both launch modes and their shared contract before implementation.
+
+Risks are treating this block as a sequential flow, flattening results, leaking
+branch locals, nested-lane deadlocks, and cancellation crossing ownership boundaries.
+Out of scope: named result objects, destructuring, inline multi-statement branches,
+direct async repeat, and first-success/partial results. This definition changes no
+product behavior and requires no changelog entry.
