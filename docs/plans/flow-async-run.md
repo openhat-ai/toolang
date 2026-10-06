@@ -207,34 +207,38 @@ synchronous presentation scope. Adapt event routing, source/owner lookup, and me
 aggregation instead of retaining a live launch row. Preserve ordinary synchronous
 nesting checks and apply the same scope separation to CLI/TUI, streams, and inspection.
 
-## Invocation Presentation
+## Invocation and Await Presentation
 
-Design `run`, `exec`, `async run`, and `spawn` together as one invocation family.
+Design `run`, `exec`, `async run`, `spawn`, and `await` together as one execution family.
 Within each existing CLI/TUI surface, use the same action/target layout, spacing,
 status treatment, and secondary detail placement. Retain existing surface styling;
 do not invent a separate async visual system. Identify the operation explicitly so
 ownership and completion differences remain visible without relying on color alone.
 
-| Operation | Live wording | Successful wording | Step success means |
+| Operation | Live state | Successful state | Step success means |
 | --- | --- | --- | --- |
-| `run R` | Running R | Completed R | Child execution finished |
-| `exec R` | Transferring to R | Transferred to R | Handoff committed; caller does not resume |
-| `async run R` | Starting R | Started R | Owned background work admitted; handle available |
-| `spawn R` | Spawning R | Spawned R | Independent root admitted; handle available |
+| `run R` | Running | Completed | Child execution finished |
+| `exec R` | Transferring | Transferred | Handoff committed; caller does not resume |
+| `async run R` | Starting | Started | Owned background work admitted; handle available |
+| `spawn R` | Spawning | Spawned | Independent root admitted; handle available |
+| `await h` / `await ha, hb` | Waiting | Completed | Awaited outcomes received; no new work started |
 
 These labels specify lifecycle meaning within a shared row layout. Keep the action
 and readable target primary; put result summaries, handles, run/thread references,
 and timings in the same secondary positions when applicable. Async run/spawn success
 does not claim the target finished. Exec's target continues the same Run, not a new
-child; preserve the handoff boundary. An optional await uses the same status language
-(`Waiting` then `Completed`/`Failed`/`Canceled`) in its own blocking Step.
+child; preserve the handoff boundary. Await names its handle or ordered target set,
+with available target descriptions as details; do not invent a runnable for a map
+or group handle. A collection await is one blocking Step. An already-completed target
+can complete that Step immediately without showing a start/launch phase. Use shared
+Failed/Canceled styling, with errors attributed to the relevant operation or wait.
 Keep internal type tags and payload encodings out of normal progress labels.
 
 Normalize operation semantics once for native flow statements and agic runtime tools.
 Determine async delivery from the statement/tool arguments, not `_Awaitable` output:
 async run, spawn, and blocks share that type. Existing presentation treats any flow
 RunHandle output as "Spawned" and runtime run tools as synchronous run scopes; replace
-those assumptions when implementing this family. Review all four operations together
+those assumptions when implementing this family. Review all five operations together
 in live, successful, failed, and canceled states, including narrow terminal layouts.
 
 ## Implementation Touchpoints and Acceptance
@@ -272,10 +276,11 @@ Acceptance scenarios:
    events never reopen/inject caller rows. Cover admission cancellation, retained
    ownership, and accounting exactly once; synchronous nesting errors still fail.
    Run the default offline checks.
-8. Review run/exec/async run/spawn together across flow and agic: consistent row
+8. Review run/exec/async run/spawn/await together across flow and agic: consistent row
    anatomy, target/identity formatting, and failure/cancel styling; correct live and
-   terminal wording, scope, and result/handle details. Handle type alone never labels
-   an operation as spawn or keeps a launch live for background execution.
+   terminal wording, scope, and result/handle details. Include single/multiple and
+   already-completed wait targets. Handle type alone never labels an operation as
+   spawn or keeps a launch live for background execution.
 
 Publish/pin matching grammar before release; validate proposed examples against it.
 Generate the implementation changelog through the repository runnable.
