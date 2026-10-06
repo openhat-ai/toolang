@@ -117,8 +117,10 @@ ownership outside live presentation state. Waiting neither replays branch events
 nor relocates them under the wait Step, and costs are counted once. Use #685's
 `_Awaitable` type for the group target; the payload codec and background execution
 records remain to be settled, not the common internal type identifier.
-Follow #685's invocation presentation conventions for action, target, status, and
-secondary handle details. Label the operation from its syntax, not its handle type:
+Follow #685's run/exec/async run/spawn/await presentation conventions for action,
+target, status, and secondary details. Async blocks use Starting/Started; await
+blocks and later handle awaits use Waiting/Completed in their own blocking Step.
+Label the operation from its syntax, not its handle type:
 an async block is not displayed as spawn merely because both return `_Awaitable`.
 
 AsyncBlockStmt and AwaitBlockStmt may lower to the same group operation with
