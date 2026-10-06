@@ -163,6 +163,15 @@ class RunStmt(Node):
 
     binding: str | None = "_"
     runnable: str
+    asynchronous: bool = False
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class AwaitStmt(Node):
+    kind: ClassVar[str] = "await"
+
+    binding: str | None = "_"
+    handle: str
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -300,6 +309,7 @@ def _flow_statement_kind(value: Any) -> str | None:
 
 FlowStmt = Annotated[
     Annotated[RunStmt, Tag("run")]
+    | Annotated[AwaitStmt, Tag("await")]
     | Annotated[SpawnStmt, Tag("spawn")]
     | Annotated[ExecStmt, Tag("exec")]
     | Annotated[SeekStmt, Tag("seek")]

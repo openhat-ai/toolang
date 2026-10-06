@@ -19,7 +19,7 @@ from toolang.base.types.message import (
 )
 from toolang.lang.types import Array, Struct, Value, value_type
 
-from .types import TypedRef, RunHandle
+from .types import TypedRef, AwaitableHandle
 
 _PART_TYPES = (
     TextPart,
@@ -43,11 +43,11 @@ _PART_ARRAY_TYPES = {
 
 
 def parts_from_value(
-    value: Value | TypedRef | RunHandle, *, content_only: bool = False
+    value: Value | TypedRef | AwaitableHandle, *, content_only: bool = False
 ) -> tuple[Part, ...]:
     """Project one resolved value into canonical message parts."""
 
-    if isinstance(value, RunHandle):
+    if isinstance(value, AwaitableHandle):
         return (TextPart(f"Run {value.id} in thread {value.thread}"),)
 
     if _contains_pointer(value):

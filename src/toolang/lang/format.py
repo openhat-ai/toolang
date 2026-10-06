@@ -146,7 +146,14 @@ def format_statement_head(statement: ast.FlowStmt) -> str:
     if isinstance(statement, ast.LetStmt):
         return _statement_words("let", statement.binding)
     if isinstance(statement, ast.RunStmt):
-        head = _statement_words("run", _authored_runnable(statement.runnable))
+        head = _statement_words(
+            "async run" if statement.asynchronous else "run",
+            _authored_runnable(statement.runnable),
+        )
+        if statement.asynchronous and statement.binding is None:
+            return head
+    elif isinstance(statement, ast.AwaitStmt):
+        head = _statement_words("await", statement.handle)
     elif isinstance(statement, ast.SeekStmt):
         head = _statement_words(
             "seek",

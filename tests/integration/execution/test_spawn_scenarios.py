@@ -21,7 +21,7 @@ from toolang.execution.records import (
     output_to_data,
     RunControlPayload,
 )
-from toolang.execution.types import RunHandle, ThreadPrefix, Output, ToolStepNoted
+from toolang.execution.types import AwaitableHandle, ThreadPrefix, Output, ToolStepNoted
 
 
 @pytest.mark.parametrize(
@@ -73,10 +73,12 @@ agic child(_: Text) -> Text:
                 assert harness.store.resolve_value(parent.output.value) == "input"
             step = harness.store.list_steps(run_id=parent.id)[0]
             assert step.kind == "spawn" and step.status == "succeeded"
-            assert step.output is not None and isinstance(step.output.value, RunHandle)
+            assert step.output is not None and isinstance(
+                step.output.value, AwaitableHandle
+            )
             handle = step.output.value
             assert output_from_data(output_to_data(step.output)) == step.output
-            assert step.output.type == "_Run<Text>"
+            assert step.output.type == "_Awaitable"
             child = harness.store.get_run(run_id=handle.id)
             assert child is not None and child.parent is None
             assert handle.thread != thread and handle.thread.startswith("spawn_")
@@ -89,9 +91,9 @@ agic child(_: Text) -> Text:
             entry = harness.store.get_run_control(run_id=handle.id, index=0)
             assert entry is not None and entry.triggered_by == step.ref
             assert isinstance(entry.payload, RunControlPayload)
-            assert entry.payload.spawn_context is not None
-            assert entry.payload.spawn_context.result is not None
-            assert entry.payload.spawn_context.result.type_name == "Text"
+            assert entry.payload.launch_context is not None
+            assert entry.payload.launch_context.result is not None
+            assert entry.payload.launch_context.result.type_name == "Text"
             await asyncio.wait_for(gate.wait_until_entered(), 2)
             assert harness.store.run_handle_view(handle)["status"] == "running"
             assert len(harness.adapter.invocations) == 1
@@ -135,7 +137,7 @@ flow child(_: Text) -> Text:
             steps = harness.store.list_steps(run_id=parent.id)
             assert steps[0].output is not None
             handle = steps[0].output.value
-            assert isinstance(handle, RunHandle)
+            assert isinstance(handle, AwaitableHandle)
             assert any(
                 handle.id in message_text(m.parts)
                 and handle.thread in message_text(m.parts)
@@ -195,11 +197,16 @@ flow child(_: Text) -> Text:
 
 
 def test_handle_record_is_distinct_from_json():
-    handle = RunHandle("run_test", "spawn_test")
+    handle = AwaitableHandle("run_test", "spawn_test")
     encoded = output_to_data(Output(handle, "job"))
     assert encoded == {
-        "type": "_Run",
-        "value": {"id": "run_test", "thread": "spawn_test"},
+        "type": "_Awaitable",
+        "value": {
+            "kind": "run",
+            "id": "run_test",
+            "thread": "spawn_test",
+            "result_type": None,
+        },
         "binding": "job",
     }
     plain = output_from_data(
@@ -209,7 +216,7 @@ def test_handle_record_is_distinct_from_json():
             )
         )
     )
-    assert not isinstance(plain.value, RunHandle)
+    assert not isinstance(plain.value, AwaitableHandle)
 
 
 def test_typed_spawn_keeps_result_contract_on_the_root(tmp_path: Path):
@@ -246,17 +253,21 @@ agic child() -> Report[]:
                 harness.store.resolve_error(parent.error) if parent.error else None
             )
             step = harness.store.list_steps(run_id=parent.id)[0]
-            assert step.output is not None and isinstance(step.output.value, RunHandle)
+            assert step.output is not None and isinstance(
+                step.output.value, AwaitableHandle
+            )
             handle = step.output.value
-            assert step.output.type == "_Run<Report[]>"
+            assert step.output.type == "_Awaitable"
             assert output_to_data(step.output)["value"] == {
+                "kind": "run",
                 "id": handle.id,
                 "thread": handle.thread,
+                "result_type": "Report[]",
             }
             entry = harness.store.get_run_control(run_id=handle.id, index=0)
             assert entry is not None and isinstance(entry.payload, RunControlPayload)
-            assert entry.payload.spawn_context is not None
-            contract = entry.payload.spawn_context.result
+            assert entry.payload.launch_context is not None
+            contract = entry.payload.launch_context.result
             assert contract is not None and contract.type_name == "Report[]"
             assert contract.definitions == {"Report": (("text", "Text", False),)}
             with pytest.raises(TypeError):
@@ -326,7 +337,7 @@ flow child(_: Text):
     def fail_commit(*args, **kwargs):
         nonlocal fail_next_commit
         result = original_run(*args, **kwargs)
-        if kwargs.get("spawn_context"):
+        if kwargs.get("launch_context"):
             fail_next_commit = True
         return result
 
@@ -340,7 +351,7 @@ flow child(_: Text):
         return original_launch(*args, **kwargs)
 
     def fail_admission(*args, **kwargs):
-        if kwargs.get("spawn_context"):
+        if kwargs.get("launch_context"):
             raise RuntimeError("admission failed")
         return original_run(*args, **kwargs)
 
@@ -414,7 +425,7 @@ flow child(_: Text):
             assert root.parent is None
             assert step.output is not None
             if caller == "flow":
-                assert isinstance(step.output.value, RunHandle)
+                assert isinstance(step.output.value, AwaitableHandle)
                 assert step.output.value.id == root.id
             else:
                 assert isinstance(step.output.value, ToolResultPart)
@@ -494,7 +505,7 @@ agic child() -> Text:
             )
             origin, projection = harness.store.list_steps(run_id=parent.id)
             assert origin.output is not None and isinstance(
-                origin.output.value, RunHandle
+                origin.output.value, AwaitableHandle
             )
             handle = origin.output.value
             assert projection.input
@@ -560,13 +571,13 @@ flow child(_: Text) -> Text:
             assert parent.status == "failed"
             origin = harness.store.list_steps(run_id=parent.id)[0]
             assert origin.output is not None and isinstance(
-                origin.output.value, RunHandle
+                origin.output.value, AwaitableHandle
             )
             handle = origin.output.value
             entry = harness.store.get_run_control(run_id=handle.id, index=0)
             assert entry is not None
             data = cast(dict[str, Any], record_to_data(entry))
-            assert data["payload"]["spawn_context"]["result"]["type_name"] == "Text"
+            assert data["payload"]["launch_context"]["result"]["type_name"] == "Text"
             with pytest.raises(ValueError, match="spawn origin.*rerun"):
                 harness.executor.retry(
                     parent.id,
@@ -805,8 +816,8 @@ flow child(_: Text) -> Text:
                 assert entry is not None and isinstance(
                     entry.payload, RunControlPayload
                 )
-                assert entry.payload.spawn_context is not None
-                contexts.append(entry.payload.spawn_context)
+                assert entry.payload.launch_context is not None
+                contexts.append(entry.payload.launch_context)
             captured = next(
                 c.iterations["_1"]
                 for c in contexts
@@ -860,9 +871,9 @@ agic child(_: Text) -> Text:
             assert root.status == "failed"
             entry = harness.store.get_run_control(run_id=root.id, index=0)
             assert entry is not None and isinstance(entry.payload, RunControlPayload)
-            assert entry.payload.spawn_context is not None
-            assert entry.payload.spawn_context.settings.instruct is not None
-            assert entry.payload.spawn_context.settings.instruct.name == "policy"
+            assert entry.payload.launch_context is not None
+            assert entry.payload.launch_context.settings.instruct is not None
+            assert entry.payload.launch_context.settings.instruct.name == "policy"
             retried = await harness.executor.retry(
                 root.id, setup=harness.setup, state=harness.state
             )

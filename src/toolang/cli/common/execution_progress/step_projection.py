@@ -8,13 +8,14 @@ from toolang.base.types.message import (
     TextPart,
     content_parts,
     ToolCallPart,
+    ToolResultPart,
 )
 from toolang.execution.events import StepEnd
 from toolang.execution.types import (
     CollectionStepNoted,
     LoopStepNoted,
     ToolStepNoted,
-    RunHandle,
+    AwaitableHandle,
 )
 from toolang.execution.values import parts_from_value
 from toolang.lang.ast import FlowStmt
@@ -33,6 +34,60 @@ from .facts import elapsed_fact
 from .types import ProgressRow, ProgressTone, StepOperation
 
 
+_EXECUTION_STATES = {
+    "run": ("Running", "Completed"),
+    "exec": ("Transferring", "Transferred"),
+    "async run": ("Starting", "Started"),
+    "spawn": ("Spawning", "Spawned"),
+    "await": ("Waiting", "Completed"),
+}
+
+
+def _execution_rows(
+    operation: StepOperation, event: StepEnd, error: str
+) -> tuple[ProgressRow, ...]:
+    label = (
+        _EXECUTION_STATES[operation.name][1]
+        if event.status == "succeeded"
+        else f"{event.status.capitalize()} {operation.name}"
+    )
+    tool = operation.source == "tool"
+    marker = "›" if tool else "•"
+    rows = [
+        ProgressRow(
+            f"{marker} {label} {operation.runnable or 'runnable'}",
+            "progress" if tool else _tone(event.status),
+            surface="tool_summary" if tool else "none",
+        )
+    ]
+    handle = event.output.value if event.output is not None else None
+    identity = None
+    if isinstance(handle, AwaitableHandle):
+        identity = (handle.id, handle.thread)
+    elif operation.name in {"async run", "spawn"}:
+        for part in output_parts(event):
+            if (
+                isinstance(part, ToolResultPart)
+                and "id" in part.output
+                and "thread" in part.output
+            ):
+                identity = (part.output["id"], part.output["thread"])
+    if identity is not None:
+        rows.append(ProgressRow(f"  {identity[0]} in {identity[1]}", "progress"))
+    if operation.name == "await" and not tool and event.status == "succeeded":
+        rows.extend(
+            ProgressRow(f"  {line}", "normal") for line in _flow_output_lines(event)
+        )
+    if error and event.status == "failed":
+        if tool:
+            rows.append(_tool_error_row(error))
+        else:
+            rows.extend(
+                ProgressRow(f"  {line}", "error") for line in _split_lines(error)
+            )
+    return tuple(rows)
+
+
 def live_row(
     operation: StepOperation,
     preview: str,
@@ -43,6 +98,15 @@ def live_row(
 
     begin = operation.begin
 
+    if operation.name in _EXECUTION_STATES:
+        label = _EXECUTION_STATES[operation.name][0]
+        tool = operation.source == "tool"
+        marker = "›" if tool else "•"
+        return ProgressRow(
+            f"{marker} {label} {operation.runnable or 'runnable'}...",
+            "active",
+            surface="tool_summary" if tool else "none",
+        )
     if begin.kind == "model":
         detail = one_line(preview)
         text = f"• {detail}" if detail else "• Thinking"
@@ -105,6 +169,8 @@ def trace_terminal_rows(
     begin = operation.begin
 
     tone = _tone(event.status)
+    if operation.name in _EXECUTION_STATES:
+        return _execution_rows(operation, event, error)
     if begin.kind == "model":
         if event.status == "succeeded":
             parts = content_parts(output_parts(event))
@@ -173,13 +239,12 @@ def flow_terminal_rows(
     """Project terminal output owned directly by an ordinary Flow Step."""
 
     tone = _tone(event.status)
+    if operation.name in {"async run", "spawn", "await"}:
+        return _execution_rows(operation, event, error)
     if event.status == "failed":
         return flow_error_rows(error, tone=tone)
     if event.status == "canceled":
         return (ProgressRow("• canceled", tone),)
-    if event.output is not None and isinstance(event.output.value, RunHandle):
-        handle = event.output.value
-        return (ProgressRow(f"• Spawned {handle.id} in {handle.thread}", "progress"),)
     if operation.name == "run":
         return ()
     return _marked_rows(_flow_output_lines(event), "normal")

@@ -92,7 +92,7 @@ def _execute_step(
     )
     assert starting.committed == ()
     assert starting.live[0].rows == (
-        ProgressRow(f"› Executing {runnable}...", "active", surface="tool_summary"),
+        ProgressRow(f"› Transferring {runnable}...", "active", surface="tool_summary"),
     )
     assert len(starting.live) == 1
     result = ToolResultPart(
@@ -171,7 +171,9 @@ def test_dynamic_run_projects_a_flat_header_and_child_id_footer(source) -> None:
     assert starting.live[0].rows == (
         ProgressRow("• Running agic:summarize...", "active")
         if source == "flow"
-        else ProgressRow("› Running agic:summarize", "active", surface="tool_summary"),
+        else ProgressRow(
+            "› Running agic:summarize...", "active", surface="tool_summary"
+        ),
     )
 
     header = projector.handle(
@@ -272,13 +274,13 @@ def test_dynamic_run_preaccept_failure_uses_a_trace_marker_without_boundaries() 
 
     assert terminal.live == ()
     assert terminal.committed[0].rows == (
-        ProgressRow("• Failed to run flow:missing", "error"),
+        ProgressRow("• Failed run flow:missing", "error"),
         ProgressRow("  Runnable not found: missing", "error"),
     )
     rendered = _render_progress(terminal.committed[0], width=72)
     assert rendered.splitlines() == [
         "",
-        "• Failed to run flow:missing",
+        "• Failed run flow:missing",
         "  Runnable not found: missing",
     ]
 
@@ -440,7 +442,7 @@ def test_execute_uses_its_persisted_running_description() -> None:
         )
     )
     assert starting.live[0].rows == (
-        ProgressRow("› Transferring to next...", "active", surface="tool_summary"),
+        ProgressRow("› Transferring next...", "active", surface="tool_summary"),
     )
 
 
@@ -481,7 +483,7 @@ def test_uncommitted_execute_uses_its_tool_outcome(
     )
     expected = (
         ProgressRow(
-            f"› {summary}",
+            f"› {status.capitalize()} exec next",
             "progress",
             surface="tool_summary",
         ),
@@ -618,7 +620,7 @@ def test_confirmed_execute_stays_in_its_parallel_lane(
     ended = projector.handle(RunEnd(run="run_worker", status=status))
 
     assert transferred.committed == ended.committed == ()
-    assert transferred.live[0].rows[-1].text == "  0 | #0 | › Transferred to next"
+    assert transferred.live[0].rows[-1].text == "  0 | #0 | › Transferred next"
     assert not projector._broken
 
 
@@ -650,9 +652,7 @@ def test_execute_prestart_failure_uses_a_correlated_trace_marker() -> None:
     )
 
     assert failed.committed[0].rows == (
-        ProgressRow(
-            "› Failed to execute flow:missing", "progress", surface="tool_summary"
-        ),
+        ProgressRow("› Failed exec flow:missing", "progress", surface="tool_summary"),
         ProgressRow("  Runnable not found: missing", "error", surface="tool_error"),
     )
     assert failed.live == ()
@@ -996,7 +996,7 @@ def test_dynamic_run_inside_parallel_lane_stays_on_one_lane_row() -> None:
     terminal = projector.handle(StepEnd(step=dynamic, kind="run", status="succeeded"))
 
     assert terminal.committed == ()
-    assert terminal.live[0].rows[1].text.endswith("• Ran agic:leaf")
+    assert terminal.live[0].rows[1].text.endswith("• Completed agic:leaf")
     assert all(row.leader == "none" for row in terminal.live[0].rows)
 
 

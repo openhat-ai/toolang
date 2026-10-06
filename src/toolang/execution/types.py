@@ -41,6 +41,7 @@ from toolang.lang.ast import (
     Node,
     RepeatStmt,
     RunStmt,
+    AwaitStmt,
     SpawnStmt,
     ExecStmt,
     SeekStmt,
@@ -921,7 +922,7 @@ _PART_PROTOCOL_TYPES = frozenset(
 
 
 @dataclass(frozen=True, slots=True)
-class RunHandle:
+class AwaitableHandle:
     """Durable execution identity; the referenced run owns its result contract."""
 
     id: str
@@ -929,6 +930,8 @@ class RunHandle:
     result_type: str | None = None
 
     def __post_init__(self) -> None:
+        if self.kind != "run":
+            raise ValueError("unsupported awaitable target kind")
         RunRef(self.id)
         ThreadRef(self.thread)
         if self.result_type is not None:
@@ -938,26 +941,39 @@ class RunHandle:
                     "run handle result type must be an authored value type"
                 )
 
+    kind: Literal["run"] = "run"
+
     @property
     def type(self) -> str:
-        return "_Run" if self.result_type is None else f"_Run<{self.result_type}>"
+        return "_Awaitable"
 
     def to_data(self) -> dict[str, object]:
-        return {"id": self.id, "thread": self.thread}
+        return {
+            "kind": self.kind,
+            "id": self.id,
+            "thread": self.thread,
+            "result_type": self.result_type,
+        }
 
     @classmethod
-    def from_data(cls, data: object, *, type_name: str) -> RunHandle:
-        if type_name == "_Run":
-            result_type = None
-        elif type_name.startswith("_Run<") and type_name.endswith(">"):
-            result_type = type_name[5:-1]
-        else:
-            raise ValueError(f"invalid run handle type: {type_name!r}")
-        if not isinstance(data, Mapping) or set(data) != {"id", "thread"}:
-            raise ValueError("run handle requires id and thread")
+    def from_data(cls, data: object, *, type_name: str) -> AwaitableHandle:
+        if type_name != "_Awaitable":
+            raise ValueError(f"invalid awaitable type: {type_name!r}")
+        if not isinstance(data, Mapping) or set(data) != {
+            "kind",
+            "id",
+            "thread",
+            "result_type",
+        }:
+            raise ValueError("awaitable requires kind, id, thread, and result_type")
         data = cast(Mapping[str, Any], data)
+        if data["kind"] != "run":
+            raise ValueError(f"unsupported awaitable target kind: {data['kind']!r}")
         if not isinstance(data["id"], str) or not isinstance(data["thread"], str):
-            raise ValueError("run handle identities must be text")
+            raise ValueError("awaitable identities must be text")
+        result_type = data["result_type"]
+        if result_type is not None and not isinstance(result_type, str):
+            raise ValueError("awaitable result type must be text or null")
         return cls(data["id"], data["thread"], result_type)
 
 
@@ -965,15 +981,15 @@ class RunHandle:
 class Output:
     """One complete value and its optional destination in the local table."""
 
-    value: Value | TypedRef | RunHandle
+    value: Value | TypedRef | AwaitableHandle
     binding: str | None = None
 
     def __post_init__(self) -> None:
-        if not isinstance(self.value, TypedRef | RunHandle):
+        if not isinstance(self.value, TypedRef | AwaitableHandle):
             object.__setattr__(
                 self, "value", value_for_type(value_type(self.value), self.value)
             )
-        if not isinstance(self.value, RunHandle):
+        if not isinstance(self.value, AwaitableHandle):
             validate_runtime_value(self.value, self.type)
         if self.binding is not None and (
             not isinstance(self.binding, str)
@@ -985,7 +1001,7 @@ class Output:
     def type(self) -> str:
         """Return the concrete value type or a reference's expected type."""
 
-        if isinstance(self.value, RunHandle):
+        if isinstance(self.value, AwaitableHandle):
             return self.value.type
         return (
             self.value.type
@@ -1047,9 +1063,9 @@ def output_from_protocol_data(payload: Mapping[str, object]) -> Output:
     binding = payload["binding"]
     if binding is not None and not isinstance(binding, str):
         raise ValueError("output binding must be text or null")
-    if raw_type == "_Run" or raw_type.startswith("_Run<"):
+    if raw_type == "_Awaitable":
         return Output(
-            RunHandle.from_data(payload["value"], type_name=raw_type), binding
+            AwaitableHandle.from_data(payload["value"], type_name=raw_type), binding
         )
     type_name = validate_type(raw_type)
     return Output(
@@ -1066,7 +1082,7 @@ def output_to_protocol_data(output: Output) -> dict[str, object]:
     return {
         "type": output.type,
         "value": output.value.to_data()
-        if isinstance(output.value, RunHandle)
+        if isinstance(output.value, AwaitableHandle)
         else value_to_protocol_data(output.value),
         "binding": output.binding,
     }
@@ -1891,7 +1907,7 @@ def _flow_statement_matches_kind(value: object, kind: StepKind) -> bool:
     if kind == "exec":
         return isinstance(value, ExecStmt)
     if kind == "value":
-        return isinstance(value, LetStmt) or (
+        return isinstance(value, LetStmt | AwaitStmt) or (
             isinstance(value, KeepStmt | DropStmt) and value.runnable is None
         )
     if kind == "run":

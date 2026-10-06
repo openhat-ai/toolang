@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from typing import TYPE_CHECKING
 
-from toolang.lang.ast import FlowStmt
+from toolang.lang.ast import FlowStmt, RunStmt
 
 from ...records import ControlRecord
 from ...types import Occurrence, StepRef
@@ -36,6 +36,20 @@ async def execute(
                 validate()
             except (TypeError, ValueError) as exc:
                 raise _RunRejected(str(exc) or type(exc).__name__) from exc
+        if isinstance(statement, RunStmt) and statement.asynchronous:
+            await execution.accept_child(
+                binding,
+                locals,
+                path,
+                runnable,
+                occurrence,
+                state_snapshot=execution.state_for_step(path),
+                asynchronous=True,
+            )
+            source = execution.store.get_step(ref=path)
+            if source is None or source.output is None:
+                raise RuntimeError("async admission has no recorded output")
+            return Local(value=source.output.value, stored=source.output.value)
         return await execution.execute_child(
             binding,
             locals,

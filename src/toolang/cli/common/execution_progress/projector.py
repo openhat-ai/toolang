@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import replace
 
 from toolang.base.types.message import (
     TextDelta,
@@ -82,6 +83,10 @@ class ProgressProjector:
     ) -> None:
         self.show_boundaries = show_boundaries
         self._clock = clock
+        self._async_sources: set[StepRef] = set()
+        self._background_scopes: dict[str, ProgressProjector] = {}
+        self._background_members: dict[str, str] = {}
+        self._background_sources: dict[str, StepRef] = {}
         self._root: str | None = None
         self._root_ended = False
         self._broken = False
@@ -119,6 +124,13 @@ class ProgressProjector:
         try:
             if self._root_ended:
                 raise _PresentationError("progress event arrived after run completion")
+            if self._route_background(event):
+                return ProgressUpdate(live=self._live_blocks())
+            if (
+                isinstance(event, StepBegin)
+                and normalize_operation(event).name == "async run"
+            ):
+                self._async_sources.add(event.step)
             committed = tuple(self._reduce(event))
             self._note_committed(committed)
             return ProgressUpdate(
@@ -131,6 +143,52 @@ class ProgressProjector:
             committed = (self._diagnostic_block(str(exc)),)
             self._note_committed(committed)
             return ProgressUpdate(committed=committed, live=())
+
+    def _route_background(self, event: RunEvent) -> bool:
+        """Reduce background scopes independently of caller Step containment."""
+        if isinstance(event, RunBegin) and event.parent is not None:
+            parent = event.parent
+            if parent.run_id in self._background_members:
+                self._background_members[event.run] = self._background_members[
+                    parent.run_id
+                ]
+            elif parent in self._async_sources:
+                scope = ProgressProjector(clock=self._clock)
+                self._background_scopes[event.run] = scope
+                self._background_members[event.run] = event.run
+                self._background_sources[event.run] = parent
+                scope.handle(replace(event, parent=None))
+                return True
+        run_id = (
+            event.run if isinstance(event, RunBegin | RunEnd) else event.step.run_id
+        )
+        root = self._background_members.get(run_id)
+        if root is None:
+            return False
+        scope = self._background_scopes[root]
+        scope.handle(event)
+        self._errors.update(scope._errors)
+        if scope._broken:
+            raise _PresentationError(f"invalid background execution scope: {root}")
+        if isinstance(event, RunEnd) and event.run == root:
+            source = self._background_sources.pop(root)
+            owner = self._runs.get(source.run_id)
+            if owner is None:
+                raise _PresentationError(
+                    f"background target outlived owning Run: {root}"
+                )
+            owner.metrics.add(scope.root_metrics)
+            for ancestor in self._flow_ancestors_in_run(source):
+                ancestor.metrics.add(scope.root_metrics)
+            if source in self._steps:
+                self._steps[source].metrics.add(scope.root_metrics)
+            self._background_scopes.pop(root)
+            self._background_members = {
+                rid: scope_id
+                for rid, scope_id in self._background_members.items()
+                if scope_id != root
+            }
+        return True
 
     def diagnostic(self, message: str) -> ProgressUpdate:
         """Close live presentation with one ownerless execution diagnostic."""

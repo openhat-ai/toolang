@@ -10,6 +10,7 @@ from toolang.common.errors import ToolangError
 from toolang.lang.ast import (
     FlowDecl,
     FlowStmt,
+    AwaitStmt,
     RepeatStmt,
     MapStmt,
     KeepStmt,
@@ -108,7 +109,8 @@ async def execute_statements(
             controls=(),
             occurrence=occurrence,
         )
-        bind_flow_result(locals, statement.binding, result)
+        if not isinstance(statement, AwaitStmt) or result.has_value:
+            bind_flow_result(locals, statement.binding, result)
         if statement.binding == "_" and result.ref is not None:
             execution.record_output(binding.run_id, result.ref)
         index += 1

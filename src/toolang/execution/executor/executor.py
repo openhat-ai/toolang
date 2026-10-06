@@ -31,6 +31,7 @@ from toolang.lang.ast import (
     FlowDecl,
     ExecStmt,
     FlowStmt,
+    AwaitStmt,
     Parameter,
     Program,
     RepeatStmt,
@@ -84,7 +85,7 @@ from ..records import (
     CompactControlPayload,
     RecallControlPayload,
     RunControlPayload,
-    SpawnContext,
+    LaunchContext,
     run_preparation,
     ControlRecord,
     RunRecord,
@@ -108,7 +109,7 @@ from ..types import (
     ControlKind,
     StepRef,
     RunRef,
-    RunHandle,
+    AwaitableHandle,
     ModelStepNoted,
     LoopStepNoted,
     ModelStepGiven,
@@ -217,7 +218,7 @@ class RunSpec:
     prompt_invocations: tuple[PromptInvocation, ...] = ()
     horizon: RunRef | StepRef | None = None
     all_tools: bool = False
-    spawn_context: SpawnContext | None = None
+    launch_context: LaunchContext | None = None
     resource_ceiling: AgentResources | None = None
 
 
@@ -492,7 +493,7 @@ class RunExecutor:
             authored_commands=spec.authored_commands,
             authored_session_commands=spec.authored_session_commands,
             prompt_invocations=spec.prompt_invocations,
-            spawn_context=spec.spawn_context,
+            launch_context=spec.launch_context,
             horizon=bound.horizon,
         )
         return self._launch(bound, runnable, loop=loop, tracer=tracer)
@@ -599,7 +600,7 @@ class RunExecutor:
             authored_commands=spec.authored_commands,
             authored_session_commands=spec.authored_session_commands,
             prompt_invocations=spec.prompt_invocations,
-            spawn_context=spec.spawn_context,
+            launch_context=spec.launch_context,
             horizon=bound.horizon,
         )
         return self._launch(bound, runnable, loop=loop, tracer=tracer)
@@ -741,7 +742,7 @@ class RunExecutor:
         entry = self.store.get_run_control(run_id=run_id, index=0)
         entry_payload = entry.payload if entry is not None else None
         captured = (
-            entry_payload.spawn_context
+            entry_payload.launch_context
             if isinstance(entry_payload, RunControlPayload)
             else None
         )
@@ -813,7 +814,7 @@ class RunExecutor:
             authored_commands=preparation.authored_commands,
             authored_session_commands=preparation.authored_session_commands,
             prompt_invocations=preparation.prompt_invocations,
-            spawn_context=captured,
+            launch_context=captured,
             resource_ceiling=entry_payload.resources
             if captured is not None and isinstance(entry_payload, RunControlPayload)
             else None,
@@ -1213,6 +1214,21 @@ class RunExecutor:
                     and control.kind in {"steer", "cancel"}
                     and control.timing == "immediate"
                 ):
+                    if control.kind == "cancel" and active.execution is not None:
+                        target_task = active.execution._background_tasks.get(
+                            str(control.target)
+                        )
+                        if target_task is not None:
+
+                            def cancel_target() -> None:
+                                assert target_task is not None
+                                self.store.claim_run_controls(
+                                    run_id=str(control.target), indexes=(control.index,)
+                                )
+                                target_task.cancel()
+
+                            active.loop.call_soon_threadsafe(cancel_target)
+                            return
                     cancel = active.task
                     loop = active.loop
             else:
@@ -1406,6 +1422,9 @@ class _Execution:
         if retry is not None:
             self._restore_model_limits(root.run_id)
         self._run_outputs: dict[str, Output] = {}
+        self._background_tasks: dict[str, asyncio.Task[None]] = {}
+        self._background_owners: dict[str, str] = {}
+        self._background_horizons: dict[str, RunRef | StepRef | None] = {}
         self._active_bindings: dict[str, BoundRun] = {root.run_id: root}
         # Durable controls are authoritative; this is only an online projection.
         self._cwd_cache: dict[str, str] = {}
@@ -1472,9 +1491,13 @@ class _Execution:
                 created_at=utc_now(),
             )
         self._runtime_controls[step.run_id][control.index] = control
-        self._adopt_history(horizon)
-        if step.run_id != self._history_root:
-            self.horizon_for(self._history_root, pending=True)
+        scope = self.background_scope(step.run_id)
+        if scope is not None:
+            self._background_horizons[scope] = horizon
+        else:
+            self._adopt_history(horizon)
+            if step.run_id != self._history_root:
+                self.horizon_for(self._history_root, pending=True)
         return (control.ref,)
 
     def runtime_controls(
@@ -1489,9 +1512,31 @@ class _Execution:
             available.update((control.index, control) for control in additions)
         return tuple(available.values())
 
+    def background_scope(self, run_id: str) -> str | None:
+        """Find the nearest independently captured history scope."""
+        binding = self._active_bindings.get(run_id)
+        while binding is not None:
+            if binding.run_id in self._background_horizons:
+                return binding.run_id
+            binding = (
+                self._active_bindings.get(binding.parent.run_id)
+                if binding.parent
+                else None
+            )
+        return None
+
     def horizon_for(
         self, run_id: str, *, pending: bool = False
     ) -> RunRef | StepRef | None:
+        scope = self.background_scope(run_id)
+        if scope is not None:
+            horizon = self._background_horizons[scope]
+            if pending:
+                for control in self.runtime_controls(run_id):
+                    if isinstance(control.payload, CompactControlPayload):
+                        horizon = control.payload.horizon
+                self._background_horizons[scope] = horizon
+            return horizon
         if pending:
             controls = self.runtime_controls(run_id)
             root_controls = (
@@ -1553,7 +1598,7 @@ class _Execution:
 
         def project(local: Local) -> object:
             handle = local.value
-            if not isinstance(handle, RunHandle):
+            if not isinstance(handle, AwaitableHandle):
                 return template_value(local)
             if handle.id not in views:
                 views[handle.id] = self.store.run_handle_view(handle)
@@ -1581,7 +1626,7 @@ class _Execution:
             reference,
             {
                 name: "Json"
-                if isinstance(local.value, RunHandle)
+                if isinstance(local.value, AwaitableHandle)
                 else _runtime_local_type(local)
                 for name, local in locals.items()
             },
@@ -1604,7 +1649,7 @@ class _Execution:
         result = dict(locals)
         for name, local in locals.items():
             handle = local.value
-            if not isinstance(handle, RunHandle):
+            if not isinstance(handle, AwaitableHandle):
                 continue
             if names is not None and name not in names:
                 result.pop(name)
@@ -2049,7 +2094,13 @@ class _Execution:
     ) -> None:
         """Add one model accounting result to root-tree totals."""
 
-        self._limits.record_model(model, accounting)
+        try:
+            self._limits.record_model(model, accounting)
+        except _RunLimitExceeded as exc:
+            self._limits.error = str(exc)
+            if self._active is not None and self._background_tasks:
+                self._active.loop.call_soon(self._active.task.cancel)
+            raise
 
     async def execute(
         self,
@@ -2109,28 +2160,33 @@ class _Execution:
                 self._limits.check_restored()
             while True:
                 try:
-                    if isinstance(runnable, CompactSpec):
-                        self._limits.check_restored()
-                        result = await compact_run.execute(self, binding, runnable)
-                    elif isinstance(runnable, AgicDecl):
-                        result = await agic_run.execute(
-                            self,
-                            binding,
-                            runnable,
-                            current,
-                            step_start=step_start,
-                        )
-                        current["_"] = result
-                    else:
-                        result = await flow_run.execute(
-                            self,
-                            binding,
-                            runnable,
-                            current,
-                            statement_start=statement_start,
-                            step_start=step_start,
-                        )
-                    break
+                    try:
+                        if isinstance(runnable, CompactSpec):
+                            self._limits.check_restored()
+                            result = await compact_run.execute(self, binding, runnable)
+                        elif isinstance(runnable, AgicDecl):
+                            result = await agic_run.execute(
+                                self,
+                                binding,
+                                runnable,
+                                current,
+                                step_start=step_start,
+                            )
+                            current["_"] = result
+                        else:
+                            result = await flow_run.execute(
+                                self,
+                                binding,
+                                runnable,
+                                current,
+                                statement_start=statement_start,
+                                step_start=step_start,
+                            )
+                        break
+                    finally:
+                        from .awaitables import drain
+
+                        await drain(self, binding.run_id)
                 except _ExecuteCommitted as transfer:
                     binding = transfer.binding
                     runnable = transfer.runnable
@@ -2261,7 +2317,11 @@ class _Execution:
                         )
                     self._restore_step_local(binding.run_id, descendant, current)
                 continue
-            if statement.binding is None:
+            if (
+                statement.binding is None
+                or isinstance(statement, AwaitStmt)
+                and step.output is None
+            ):
                 continue
             local = _step_local(step, self.store)
             current[statement.binding] = local
@@ -2349,6 +2409,7 @@ class _Execution:
         state_snapshot: tuple[AgentState, ControlRef] | None = None,
         expected_output: OutputContract | None = None,
         candidate_state: AgentState | None = None,
+        asynchronous: bool = False,
     ) -> tuple[BoundRun, AgicDecl | FlowDecl]:
         """Validate and commit a child Run before dispatching it."""
 
@@ -2410,6 +2471,7 @@ class _Execution:
         binding, runnable = await self._begin_child(
             prepare,
             state_snapshot=state_snapshot or (parent.state, parent.state_ref),
+            asynchronous=asynchronous,
         )
         assert not isinstance(runnable, CompactSpec)
         return binding, runnable
@@ -2511,6 +2573,7 @@ class _Execution:
         *,
         state_snapshot: tuple[AgentState, ControlRef],
         resume: RunRecord | None = None,
+        asynchronous: bool = False,
     ) -> tuple[BoundRun, AgicDecl | FlowDecl | CompactSpec]:
         """Prepare and atomically accept a child before starting any of its work."""
 
@@ -2540,31 +2603,34 @@ class _Execution:
             resources = binding.resources
             if resources is None:
                 raise RuntimeError(f"run resources missing: {binding.run_id}")
+            if asynchronous:
+                assert binding.parent is not None
+                parent = self._active_bindings[binding.parent.run_id]
+                binding = replace(
+                    binding,
+                    captured_iterations=self.iteration_values(
+                        parent, step=binding.parent
+                    ),
+                )
             try:
                 self._active_bindings[binding.run_id] = binding
                 if resume is None:
-                    self.store.accept_run(
-                        run_id=binding.run_id,
-                        parent=binding.parent,
-                        thread=binding.thread,
-                        resources=resources,
-                        limits=binding.limits,
-                        state=binding.state.revision,
-                        runnable=_bound_runnable(binding),
-                        model_request=binding.model_request,
-                        input=binding.control_input,
-                        sandbox=None,
-                        cwd=binding.cwd,
-                        occurrence=binding.occurrence,
-                        request_id=None,
-                        created_at=binding.created_at,
-                        horizon=binding.horizon,
-                    )
+                    from .awaitables import admission
+
+                    admission(self, binding, runnable, asynchronous=asynchronous)
                 self._cwd_cache[binding.run_id] = binding.cwd
                 self.executor._register_child_run(
                     run_id=binding.run_id,
                     root_run_id=binding.root_run_id,
                 )
+                dispatch_error: Exception | None = None
+                if asynchronous:
+                    from .awaitables import start
+
+                    try:
+                        start(self, binding, runnable)
+                    except Exception as exc:
+                        dispatch_error = exc
                 event = RunBegin(
                     run=binding.run_id,
                     control=ControlRef(RunRef(binding.run_id), binding.control_index),
@@ -2582,8 +2648,21 @@ class _Execution:
                     await emit(event)
                 else:
                     await self.executor._emit_event_locked(self._active, event)
+                if dispatch_error is not None:
+                    terminal = RunEnd(
+                        run=binding.run_id,
+                        status="failed",
+                        error=ErrorMessage(str(dispatch_error)),
+                        finished_at=utc_now(),
+                    )
+                    if self._active is not None:
+                        await self.executor._emit_event_locked(self._active, terminal)
+                    elif self._emit_trace is not None:
+                        await self._emit_trace(terminal)
             except BaseException as exc:
-                if isinstance(exc, asyncio.CancelledError):
+                if isinstance(exc, asyncio.CancelledError) and (
+                    not asynchronous or binding.run_id not in self._background_tasks
+                ):
                     # RunBegin is durable before observers are awaited. Close an
                     # accepted child even if cancellation prevents execute().
                     # accept() already owns event_lock, so do not acquire it again.
@@ -2598,8 +2677,9 @@ class _Execution:
                         await self.executor._ensure_terminal(
                             binding.run_id, emit=emit_terminal, status="canceled"
                         )
-                self._active_bindings.pop(binding.run_id, None)
-                self._cwd_cache.pop(binding.run_id, None)
+                if not asynchronous or binding.run_id not in self._background_tasks:
+                    self._active_bindings.pop(binding.run_id, None)
+                    self._cwd_cache.pop(binding.run_id, None)
                 raise
             return binding, runnable
 
@@ -2878,7 +2958,7 @@ class _Execution:
             else None
         )
         if record is not None and record.output is not None:
-            if isinstance(record.output.value, RunHandle):
+            if isinstance(record.output.value, AwaitableHandle):
                 raise ToolangError(
                     "Run handles cannot be returned as runnable results; capture their fields instead"
                 )
@@ -3045,7 +3125,7 @@ class _Execution:
     def _adopt_step_relations(self, event: StepBegin) -> None:
         """Advance control associations after begin commits, before delivery."""
 
-        self._step_horizons[event.step] = self._history_horizon
+        self._step_horizons[event.step] = self.horizon_for(event.step.run_id)
         refs = set(event.preceded_by)
         available = self._runtime_controls.get(event.step.run_id, {})
         adopted = tuple(
@@ -3151,7 +3231,7 @@ def _bind_child_input(
         if name in locals and locals[name].has_value
     }
     for name, local in source_locals.items():
-        if isinstance(local.value, RunHandle):
+        if isinstance(local.value, AwaitableHandle):
             raise ToolangError(
                 f"Run handle {name!r} cannot be passed as an input; capture its fields instead"
             )
@@ -3227,19 +3307,19 @@ def _bind_run(
         state=spec.state,
         state_ref=ControlRef(RunRef(run_id), 0),
         setup=spec.setup,
-        workspaces=spec.spawn_context.workspaces
-        if spec.spawn_context is not None
+        workspaces=spec.launch_context.workspaces
+        if spec.launch_context is not None
         else spec.state.workspaces,
         module=module,
         limits=spec.limits,
         ceilings=spec.ceilings,
         agent_resources=agent_resources,
         resources=resources,
-        settings=spec.spawn_context.settings
-        if spec.spawn_context is not None
+        settings=spec.launch_context.settings
+        if spec.launch_context is not None
         else resolve_settings(runnable, module),
-        captured_iterations=spec.spawn_context.iterations
-        if spec.spawn_context is not None
+        captured_iterations=spec.launch_context.iterations
+        if spec.launch_context is not None
         else {},
         resource_ceiling=spec.resource_ceiling,
         created_at=utc_now(),
@@ -3259,7 +3339,7 @@ def _step_local(step: StepRecord, store: RunStore) -> Local:
             else FieldRef.from_path(step.ref, "output", "value")
         ),
         type_name=None
-        if isinstance(step.output.value, RunHandle)
+        if isinstance(step.output.value, AwaitableHandle)
         else step.output.type,
         stored=step.output.value,
     )
@@ -3468,7 +3548,7 @@ def _child_control_value(
 
 
 def _runtime_local_type(local: Local) -> str | None:
-    if isinstance(local.value, RunHandle):
+    if isinstance(local.value, AwaitableHandle):
         return None
     if local.has_stored:
         return (

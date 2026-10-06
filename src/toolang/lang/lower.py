@@ -548,8 +548,19 @@ class _Lowerer:
             return ast.RunStmt(runnable=runnable, span=span, doc=doc)
         if node.type == "exec_statement":
             return ast.ExecStmt(runnable=self._runnable(node), span=span, doc=doc)
+        if node.type == "await_statement":
+            return ast.AwaitStmt(
+                handle=self._required_text(node, "handle"), span=span, doc=doc
+            )
         if node.type == "run_statement":
-            return ast.RunStmt(runnable=self._runnable(node), span=span, doc=doc)
+            asynchronous = node.child_by_field_name("async") is not None
+            return ast.RunStmt(
+                runnable=self._runnable(node),
+                asynchronous=asynchronous,
+                binding=None if asynchronous else "_",
+                span=span,
+                doc=doc,
+            )
         if node.type == "spawn_statement":
             return ast.SpawnStmt(runnable=self._runnable(node), span=span, doc=doc)
         if node.type == "seek_statement":

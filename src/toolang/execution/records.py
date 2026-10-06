@@ -69,7 +69,7 @@ from .types import (
     RecallTarget,
     RunCommand,
     RunRef,
-    RunHandle,
+    AwaitableHandle,
     RunnableSettings,
     RunStatus,
     StepGiven,
@@ -283,8 +283,8 @@ class ThreadPeer:
 
 
 @dataclass(frozen=True, slots=True)
-class SpawnContext:
-    """Captured root context that no longer depends on execution ancestry."""
+class LaunchContext:
+    """Captured context and result contract for admitted background work."""
 
     settings: RunnableSettings
     workspaces: Mapping[str, str]
@@ -339,8 +339,8 @@ class RunControlPayload:
     authored_session_commands: tuple[RunCommand, ...] = ()
     prompt_invocations: tuple[PromptInvocation, ...] = ()
     horizon: RunRef | StepRef | None = None
-    spawn_context: Annotated[
-        SpawnContext | None,
+    launch_context: Annotated[
+        LaunchContext | None,
         PlainSerializer(lambda value: value.to_data() if value is not None else None),
     ] = None
 
@@ -775,9 +775,8 @@ def output_from_data(payload: Mapping[str, object]) -> Output:
         raise ValueError("output binding must be text or null")
     type_name = payload.get("type")
     value = (
-        RunHandle.from_data(payload["value"], type_name=type_name)
-        if isinstance(type_name, str)
-        and (type_name == "_Run" or type_name.startswith("_Run<"))
+        AwaitableHandle.from_data(payload["value"], type_name=type_name)
+        if isinstance(type_name, str) and (type_name == "_Awaitable")
         else value_from_data(payload["value"])
     )
     output = Output(value, binding)
@@ -792,7 +791,7 @@ def output_to_data(output: Output) -> dict[str, object]:
     return {
         "type": output.type,
         "value": output.value.to_data()
-        if isinstance(output.value, RunHandle)
+        if isinstance(output.value, AwaitableHandle)
         else value_to_data(output.value),
         "binding": output.binding,
     }
@@ -1024,10 +1023,10 @@ def control_payload_from_data(kind: ControlKind, data: object) -> ControlPayload
             authored_commands=authored_commands,
             authored_session_commands=authored_session_commands,
             prompt_invocations=prompt_invocations,
-            spawn_context=TypeAdapter(SpawnContext).validate_python(
-                payload["spawn_context"]
+            launch_context=TypeAdapter(LaunchContext).validate_python(
+                payload["launch_context"]
             )
-            if payload.get("spawn_context") is not None
+            if payload.get("launch_context") is not None
             else None,
         )
     if kind == "chdir":
@@ -1875,8 +1874,8 @@ def _run_payload_data(
     }
     if payload.state is not None:
         data["state"] = payload.state
-    if payload.spawn_context is not None:
-        data["spawn_context"] = payload.spawn_context.to_data()
+    if payload.launch_context is not None:
+        data["launch_context"] = payload.launch_context.to_data()
     if payload.horizon is not None:
         data["horizon"] = str(payload.horizon)
     if payload.sandbox is not None:

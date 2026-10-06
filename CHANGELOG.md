@@ -9,6 +9,24 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Added
 
+- Flow `async run RUNNABLE` starts a child Run and returns once it is admitted,
+  without waiting: `let job = async run RUNNABLE` binds a handle, while
+  `async run RUNNABLE` and `let async run RUNNABLE` launch and discard it
+  without changing other locals. Named, inline, and typed-inline targets are
+  supported.
+
+- Flow `await HANDLE` waits for one retained `async run` or `spawn` handle and
+  binds its complete result: `let value = await job` binds only `value`,
+  `await job` binds `_`, and `let await job` waits and discards. Scalar, array,
+  struct, Part, and null results keep their complete value and provenance, and
+  repeated waits reuse the outcome without relaunching the target.
+
+- The `_toolang/run` tool accepts `async=true` and returns its committed
+  `{id, thread, status}` admission snapshot without waiting. The new
+  `_toolang/await` tool (wire name `_toolang__await`) waits for one async run or
+  spawned root admitted by the caller Run and returns its complete
+  `{type, value}` or a tool error.
+
 - Repeat statements accept a named Boolean condition as a bare runnable name,
   such as `until is_done`, in addition to the inline `until: BODY` form. Named
   conditions must declare `Boolean` and reject kind or module qualification,
@@ -30,8 +48,8 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 - `let job = spawn RUNNABLE` binds a Run handle readable through templates as
   ordinary data: `{{job.id}}`, `{{job.thread}}`, and `{{job.status}}`, with one
   status snapshot per statement and no waiting. Unknown fields fail, an authored
-  struct named `Run` remains ordinary data, handles cannot be passed as runnable
-  inputs, and `async`/`await` are not implemented in this release.
+  struct named `Run` remains ordinary data, and handles cannot be passed as
+  runnable inputs.
 
 - The `_toolang/spawn` tool (wire name `_toolang__spawn`) starts an independent
   root through `run`'s input decoder and hands policy, and returns the committed
@@ -46,6 +64,32 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   self-exec, and ancestor calls remain rejected.
 
 ### Changed
+
+- The `tree-sitter-toolang` grammar dependency is temporarily pinned to the exact
+  Git commit `388553d9a15230b650a3f61ee3d146c3a8f35d0b` (grammar PR #51), which is
+  required for `async run` and `await`. This applies to all installs, not only uv,
+  and must be replaced by a published grammar version before a PyPI release.
+
+- Progress for `run`, `exec`, `async run`, `spawn`, and `await` now uses one shared
+  vocabulary, with background events kept separate from linear caller Steps.
+
+- **Breaking:** the internal Run handle encoding is replaced by the shared
+  `_Awaitable` type, whose native payload is `{kind, id, thread, result_type}`.
+  `_Run` and `_Run<T>` type tags and the two-field `{id, thread}` payload are
+  rejected rather than migrated; update integrations that read the handle type
+  tag or payload, and rerun work recorded with the old encoding.
+
+- Async children are owned by the Run that launches them: its completion,
+  failure, cancellation, `exec`, and executor shutdown drain or cancel
+  unfinished owned work, while spawned roots keep independent lifetimes.
+  Discarding or awaiting a handle never transfers ownership.
+
+- The public `ToolRuntime` protocol gains an `asynchronous` keyword on `run()`
+  and an `await_target(target)` method, so custom tool-runtime implementations
+  must add them.
+
+- `SpawnContext` and the `spawn_context` Run control field are renamed to
+  `LaunchContext` and `launch_context`, with no alias retained.
 
 - Repeat conditions are positional: an `until` clause may precede, separate, or
   follow its body statements, and at most one condition is allowed. A condition
@@ -91,14 +135,14 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 - Flow `spawn` Step outputs use the same `{"type", "value", "binding"}` envelope
   and `output/value` references as ordinary outputs. The native handle's runtime
-  type tag is `_Run<T>` when the target's result type `T` is known and `_Run`
-  otherwise, and its value holds only `id` and `thread`; user-authored struct
-  names cannot begin with `_`. The complete accepted result contract stays on
-  the spawned root entry; historical ordinary stored outputs without an explicit
-  `type` remain readable. Flow `spawn` records a spawn-kind Step, while agic
-  `_toolang/spawn` remains an ordinary tool Step. Once admission commits, the
-  Step succeeds and keeps its receipt even if delivery is interrupted or the
-  caller is canceled, and a dispatch failure is recorded on the new root.
+  type tag is `_Awaitable` and its value holds `kind`, `id`, `thread`, and
+  `result_type`; user-authored struct names cannot begin with `_`. The complete
+  accepted result contract stays on the spawned root entry; historical ordinary
+  stored outputs without an explicit `type` remain readable. Flow `spawn`
+  records a spawn-kind Step, while agic `_toolang/spawn` remains an ordinary
+  tool Step. Once admission commits, the Step succeeds and keeps its receipt
+  even if delivery is interrupted or the caller is canceled, and a dispatch
+  failure is recorded on the new root.
 
 - Hands now authorizes both `run` and `spawn`, while handoffs still authorizes
   `exec`. The public `ToolRuntime` protocol adds `spawn(runnable, input)`, so

@@ -47,7 +47,7 @@ dependencies = [
     "tomlkit>=0.13,<1",
     "tiktoken>=0.12,<1",
     "tree-sitter>=0.25.2,<0.26",
-    "tree-sitter-toolang==0.4.0a3",
+    "tree-sitter-toolang @ git+https://github.com/openhat-ai/tree-sitter-toolang.git@388553d9a15230b650a3f61ee3d146c3a8f35d0b",
     "tq-json>=0.1.0,<0.2",
     "wcwidth>=0.8,<1",
     "typer==0.27.2",
@@ -110,6 +110,9 @@ dev = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/toolang"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.hatch.build.hooks.custom]
 

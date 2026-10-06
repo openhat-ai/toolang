@@ -54,7 +54,7 @@ from .types import (
     ModelStepGiven,
     Occurrence,
     RunStatus,
-    RunHandle,
+    AwaitableHandle,
     StepKind,
     StepGiven,
     StepNoted,
@@ -268,8 +268,8 @@ def _select_runtime_child(
         if token == "type":
             return runtime.type, str, "str", "Text"
         if token == "value":
-            if isinstance(runtime.value, RunHandle):
-                return runtime.value, RunHandle, runtime.type, "Json"
+            if isinstance(runtime.value, AwaitableHandle):
+                return runtime.value, AwaitableHandle, runtime.type, "Json"
             return runtime.value, Any, "Value | TypedRef", runtime.type
     if isinstance(runtime, CallInput):
         child = runtime[token]

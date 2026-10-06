@@ -29,6 +29,7 @@ def test_installed_runtime_toolset_has_no_old_aliases() -> None:
     tools = ToolCollection.from_tools(load_tools())
     assert set(tools.runtime) == {
         "_toolang__run",
+        "_toolang__await",
         "_toolang__spawn",
         "_toolang__chdir",
         "_toolang__exec",
@@ -78,12 +79,15 @@ class _Runtime:
         self.marker = marker
         self.calls = []
 
-    async def run(self, runnable, input):
+    async def run(self, runnable, input, *, asynchronous=False):
         self.calls.append((runnable, dict(input)))
         await asyncio.sleep(0)
         return ToolResult(
             {"run_id": self.marker, "output_type": "Text", "output": input["_"]}
         )
+
+    async def await_target(self, target):
+        return ToolResult({"type": "Text", "value": target})
 
     async def spawn(self, runnable, input):
         self.calls.append((runnable, dict(input)))

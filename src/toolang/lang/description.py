@@ -13,6 +13,7 @@ from .ast import (
     SortStmt,
     RepeatStmt,
     RunStmt,
+    AwaitStmt,
     SpawnStmt,
     ExecStmt,
     SeekStmt,
@@ -32,8 +33,10 @@ def statement_description(statement: FlowStmt) -> str:
         return f"Exec {_runnable_label(statement.runnable)}"
     if isinstance(statement, LetStmt):
         return f"Set value to {statement.binding}"
+    if isinstance(statement, AwaitStmt):
+        return f"Await {statement.handle}"
     if isinstance(statement, RunStmt):
-        action = f"Run {_runnable_label(statement.runnable)}"
+        action = f"{'Start' if statement.asynchronous else 'Run'} {_runnable_label(statement.runnable)}"
     elif isinstance(statement, SpawnStmt):
         action = f"Spawn {_runnable_label(statement.runnable)}"
     elif isinstance(statement, SeekStmt):

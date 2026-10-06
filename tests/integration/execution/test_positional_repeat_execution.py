@@ -22,7 +22,7 @@ from toolang.execution.events import RunBegin, StepBegin, StepEnd
 from toolang.execution.executor.executor import _Execution
 from toolang.execution.inspection.trees import build_execution_tree, tree_to_data
 from toolang.execution.store import RunStore
-from toolang.execution.types import LoopStepNoted, RunHandle, ThreadPrefix
+from toolang.execution.types import LoopStepNoted, AwaitableHandle, ThreadPrefix
 from toolang.state.prepare import prepare_agent_state
 
 
@@ -672,7 +672,7 @@ def test_until_refreshes_handle_status_on_each_evaluation(tmp_path, prefix):
             await asyncio.wait_for(body_gate.wait_until_entered(), 2)
             spawn = harness.store.list_steps(run_id=parent.run_id)[0]
             assert spawn.output is not None and isinstance(
-                spawn.output.value, RunHandle
+                spawn.output.value, AwaitableHandle
             )
             job = spawn.output.value
             worker = harness.executor._active[job.id].task

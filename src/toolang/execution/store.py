@@ -31,7 +31,7 @@ from toolang.base.types.tool import ToolDefinition
 from toolang.base.types.policy import RunLimits
 from toolang.base.utils.workspace_paths import parse_cwd
 from toolang.common.time import utc_now
-from toolang.lang.ast import SpawnStmt
+from toolang.lang.ast import RunStmt, SpawnStmt
 from .errors import HistoryChangedError, RunStoreSchemaError
 from .assembly.utils import control_message, literal_delta, render_delta
 from .inspection.views import RunView, ThreadView, _ThreadProjection
@@ -58,7 +58,7 @@ from .records import (
     RetryControlPayload,
     RewindControlPayload,
     RunControlPayload,
-    SpawnContext,
+    LaunchContext,
     SteerControlPayload,
     CancelControlPayload,
     control_payload_from_data,
@@ -104,7 +104,7 @@ from .types import (
     LoopStepNoted,
     StepStatus,
     RunRef,
-    RunHandle,
+    AwaitableHandle,
     RunLink,
     StepPath,
     StepRef,
@@ -346,7 +346,7 @@ class RunStore:
         prompt_invocations: tuple[PromptInvocation, ...] = (),
         cwd: str = "",
         triggered_by: StepRef | None = None,
-        spawn_context: SpawnContext | None = None,
+        launch_context: LaunchContext | None = None,
     ) -> tuple[RunRecord, ControlRecord]:
         """Atomically insert a pending run and its applied admission control."""
 
@@ -452,7 +452,7 @@ class RunStore:
                     model_request=model_request,
                     input=input,
                     horizon=horizon,
-                    spawn_context=spawn_context,
+                    launch_context=launch_context,
                     sandbox=sandbox,
                     cwd=cwd,
                     authored_input=authored_input,
@@ -490,7 +490,7 @@ class RunStore:
     def accept_spawn(
         self,
         *,
-        handle: RunHandle,
+        handle: AwaitableHandle,
         source: StepRef,
         peer: ThreadPeer,
         resources: AgentResources,
@@ -502,8 +502,8 @@ class RunStore:
         sandbox: str,
         cwd: str,
         created_at: str,
-        context: SpawnContext,
-    ) -> tuple[RunHandle, bool]:
+        context: LaunchContext,
+    ) -> tuple[AwaitableHandle, bool]:
         """Commit a new thread, independent root, and successful source Step."""
 
         if handle.result_type != (context.result.type_name if context.result else None):
@@ -532,7 +532,7 @@ class RunStore:
                     not isinstance(payload, RunControlPayload)
                     or payload.runnable != runnable
                     or payload.input != input
-                    or payload.spawn_context != context
+                    or payload.launch_context != context
                     or payload.resources != resources
                     or payload.limits != limits
                     or payload.state != state
@@ -547,10 +547,10 @@ class RunStore:
                 thread = self.get_thread(thread_id=str(run.thread))
                 if thread is None or thread.peer != peer:
                     raise ValueError(f"conflicting spawn thread: {source}")
-                original = RunHandle(run.id, str(run.thread), handle.result_type)
+                original = AwaitableHandle(run.id, str(run.thread), handle.result_type)
                 if (
                     step.output is not None
-                    and isinstance(step.output.value, RunHandle)
+                    and isinstance(step.output.value, AwaitableHandle)
                     and step.output.value != original
                 ):
                     raise ValueError(f"conflicting spawn handle: {source}")
@@ -579,7 +579,7 @@ class RunStore:
                 request_id=None,
                 created_at=created_at,
                 triggered_by=source,
-                spawn_context=context,
+                launch_context=context,
             )
             if isinstance(step.given, SpawnStmt):
                 output = Output(handle, step.given.binding)
@@ -1887,7 +1887,7 @@ class RunStore:
     def resolve_output(self, output: Output) -> Output:
         """Resolve and validate an output's value while retaining its binding."""
 
-        if isinstance(output.value, RunHandle):
+        if isinstance(output.value, AwaitableHandle):
             return Output(
                 cast(Value, self.run_handle_view(output.value)), output.binding
             )
@@ -1895,7 +1895,7 @@ class RunStore:
         validate_runtime_value(value, output.type)
         return replace(output, value=value)
 
-    def run_handle_view(self, handle: RunHandle) -> dict[str, str]:
+    def run_handle_view(self, handle: AwaitableHandle) -> dict[str, str]:
         """Project one current status snapshot without waiting or adopting work."""
         run = self.get_run(run_id=handle.id)
         if run is None or str(run.thread) != handle.thread:
@@ -1904,10 +1904,10 @@ class RunStore:
         if (
             entry is None
             or not isinstance(entry.payload, RunControlPayload)
-            or entry.payload.spawn_context is None
+            or entry.payload.launch_context is None
         ):
             raise ValueError(f"run handle target has no accepted context: {handle.id}")
-        result = entry.payload.spawn_context.result
+        result = entry.payload.launch_context.result
         if handle.result_type != (result.type_name if result is not None else None):
             raise ValueError(f"run handle result type is mismatched: {handle.id}")
         return {"id": handle.id, "thread": handle.thread, "status": run.status}
@@ -2784,7 +2784,7 @@ class RunStore:
             payload = control.payload
             if (
                 not isinstance(payload, RunControlPayload)
-                or payload.spawn_context is None
+                or payload.launch_context is None
             ):
                 continue
             pending = list(_value_refs(payload.input))
@@ -3023,10 +3023,15 @@ class RunStore:
             # Later delivery (including interruption) cannot alter that fact.
             if existing_step.status == "succeeded" and (
                 kind == "spawn"
+                or isinstance(existing_step.given, RunStmt)
+                and existing_step.given.asynchronous
                 or (
                     isinstance(existing_step.given, ToolStepGiven)
                     and existing_step.given.call.name
                     in {"_toolang__spawn", "_toolang__exec"}
+                    or isinstance(existing_step.given, ToolStepGiven)
+                    and existing_step.given.call.name == "_toolang__run"
+                    and existing_step.given.call.input.get("async") is True
                 )
             ):
                 if status == "succeeded" and output != existing_step.output:

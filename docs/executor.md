@@ -144,6 +144,18 @@ Its await path shields the owner task so
 canceling a waiting HTTP request or TUI action does not cancel the durable run.
 
 
+## Owned Async Work
+
+Flow async run and `_toolang/run(async=true)` share child admission and root budgets.
+Admission commits the target and launch receipt together; execution registration
+precedes successful delivery. The immediate parent owns cleanup on return, failure,
+cancellation, or exec. Await shields target work from observer cancellation and
+reads terminal records or a live local owner. Ownerless nonterminal targets fail
+explicitly; retry restores committed receipts without launching them again.
+Spawn continues to create independent roots. Both operations use `_Awaitable`, with
+captured `LaunchContext` stored as `launch_context` on their entry controls.
+
+
 ## Acceptance
 
 Binding validates explicit runtime inputs and asks `IdIssuer` for a run ID when
