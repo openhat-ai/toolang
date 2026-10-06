@@ -1073,10 +1073,12 @@ class RunStore:
                         f"retry sandbox {sandbox} does not match original sandbox "
                         f"{preparation_payload.sandbox} for run {run_id}; use rerun"
                     )
-                tree_runs = self._root_tree_runs(run_id)
+                # Background Steps do not belong to the caller's linear retry
+                # sequence, even when they were persisted after its failed Step.
+                retry_runs = self._root_tree_runs(run_id, include_async=False)
                 resolved_anchor = self._resolve_retry_anchor(
                     run_id=run_id,
-                    tree_runs=tree_runs,
+                    tree_runs=retry_runs,
                     anchor=anchor,
                     run_status=run.status,
                 )
@@ -1088,7 +1090,7 @@ class RunStore:
                 index = int(index_row["next_index"]) if index_row is not None else 1
                 trimmed = (
                     self._retry_step_suffix(
-                        tree_runs=tree_runs,
+                        tree_runs=retry_runs,
                         anchor=resolved_anchor,
                     )
                     if resolved_anchor is not None
@@ -2570,11 +2572,26 @@ class RunStore:
             raise ValueError(f"anchor run is not terminal: {anchor.id}")
         return anchor
 
-    def _root_tree_runs(self, root_run_id: str) -> tuple[str, ...]:
-        """Return every run structurally owned by one root run."""
+    def _root_tree_runs(
+        self, root_run_id: str, *, include_async: bool = True
+    ) -> tuple[str, ...]:
+        """Return owned Runs, optionally stopping at async admission boundaries."""
 
         rows = self._conn.execute("SELECT * FROM runs ORDER BY rowid ASC").fetchall()
         records = [_run_from_row(row) for row in rows]
+        background = (
+            {
+                str(row["id"])
+                for row in self._conn.execute(
+                    "SELECT runs.id FROM runs JOIN controls ON controls.target = runs.id "
+                    "WHERE controls.kind = 'run' AND runs.parent IS NOT NULL "
+                    "AND controls.triggered_by = runs.parent "
+                    "AND json_extract(controls.payload, '$.launch_context') IS NOT NULL"
+                )
+            }
+            if not include_async
+            else set()
+        )
         selected = {root_run_id}
         changed = True
         while changed:
@@ -2582,6 +2599,7 @@ class RunStore:
             for run in records:
                 if (
                     run.id not in selected
+                    and run.id not in background
                     and run.parent is not None
                     and run.parent.run_id in selected
                 ):
@@ -2770,18 +2788,25 @@ class RunStore:
                     removed_runs.add(run.id)
                     changed = True
         for row in self._conn.execute(
-            "SELECT controls.* FROM controls JOIN runs ON runs.id = controls.target "
-            "WHERE controls.kind = 'run' AND runs.parent IS NULL AND controls.triggered_by IS NOT NULL"
+            "SELECT controls.*, runs.parent AS launch_parent FROM controls "
+            "JOIN runs ON runs.id = controls.target "
+            "WHERE controls.kind = 'run' AND controls.triggered_by IS NOT NULL"
         ):
             control = _control_from_row(row)
+            payload = control.payload
+            if row["launch_parent"] is not None and (
+                not isinstance(payload, RunControlPayload)
+                or payload.launch_context is None
+            ):
+                continue
+            launch = "spawn" if row["launch_parent"] is None else "async run"
             if control.triggered_by is not None and (
                 str(control.triggered_by) in step_keys
                 or control.triggered_by.run_id in removed_runs
             ):
                 raise ValueError(
-                    f"retry would delete spawn origin {control.triggered_by}; use rerun"
+                    f"retry would delete {launch} origin {control.triggered_by}; use rerun"
                 )
-            payload = control.payload
             if (
                 not isinstance(payload, RunControlPayload)
                 or payload.launch_context is None
@@ -2812,7 +2837,9 @@ class RunStore:
                         and str(referenced.triggered_by) in step_keys
                     )
                 if removed:
-                    raise ValueError(f"retry would delete spawn input {ref}; use rerun")
+                    raise ValueError(
+                        f"retry would delete {launch} input {ref}; use rerun"
+                    )
                 pending.extend(_value_refs(self.select_pointer(Pointer(ref)).runtime))
         # A published producer can outlive its owning Step: thread horizons
         # and later Run controls retain its output. Reject the entire retry

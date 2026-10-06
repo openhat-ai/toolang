@@ -152,6 +152,9 @@ precedes successful delivery. The immediate parent owns cleanup on return, failu
 cancellation, or exec. Await shields target work from observer cancellation and
 reads terminal records or a live local owner. Ownerless nonterminal targets fail
 explicitly; retry restores committed receipts without launching them again.
+Background Steps are excluded from the caller's retry anchor and suffix; retained
+targets keep their records and outcomes. Cuts through a committed launch or its
+captured inputs are rejected with guidance to use rerun.
 Spawn continues to create independent roots. Both operations use `_Awaitable`, with
 captured `LaunchContext` stored as `launch_context` on their entry controls.
 
