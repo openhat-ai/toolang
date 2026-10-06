@@ -11,6 +11,7 @@ from toolang.base.types.run import ToolCall
 from toolang.base.types.tool import ToolResult
 from toolang.execution.executor.steps.tool import _tool_summary, _tool_summary_context
 from toolang.cli.common.execution_progress import ProgressProjector
+from toolang.cli.common.execution_progress.operations import normalize_operation
 from toolang.cli.common.execution_progress.step_projection import (
     trace_live_rows,
     trace_terminal_rows,
@@ -110,12 +111,12 @@ def _end(begin, status="succeeded", output=None):
 )
 def test_runtime_tools_use_owned_wording_and_progress_marker(name, arguments, text):
     begin = _begin(name, arguments)
-    assert trace_live_rows(begin, "")[0].text.startswith("✧ ")
-    rows = trace_terminal_rows(begin, _end(begin), error="")
+    assert trace_live_rows(normalize_operation(begin), "")[0].text.startswith("✧ ")
+    rows = trace_terminal_rows(normalize_operation(begin), _end(begin), error="")
     assert [row.text for row in rows] == [f"✧ {text}"]
     assert rows[0].surface == "tool_summary"
     assert rows[0].tone == "progress"
-    assert trace_live_rows(begin, "")[0].tone == "active"
+    assert trace_live_rows(normalize_operation(begin), "")[0].tone == "active"
 
 
 def test_honor_lists_every_rules_file_in_script_and_chat_without_store_reads():
@@ -132,8 +133,11 @@ def test_honor_lists_every_rules_file_in_script_and_chat_without_store_reads():
         ]
     }
     end = _end(begin, output=output)
-    assert trace_live_rows(begin, "")[0].text == "✧ Loading rules"
-    for rows in (trace_live_rows(begin, ""), trace_terminal_rows(begin, end, error="")):
+    assert trace_live_rows(normalize_operation(begin), "")[0].text == "✧ Loading rules"
+    for rows in (
+        trace_live_rows(normalize_operation(begin), ""),
+        trace_terminal_rows(normalize_operation(begin), end, error=""),
+    ):
         assert len(rows) == 1
         block = ProgressBlock("honor", rows)
         stream = StringIO()
@@ -164,7 +168,9 @@ def test_honor_lists_every_rules_file_in_script_and_chat_without_store_reads():
 def test_runtime_tool_failure_details_and_cancellation_remain_visible(name, status):
     begin = _begin(name)
     error = "Resource could not be read" if status == "failed" else ""
-    rows = trace_terminal_rows(begin, _end(begin, status), error=error)
+    rows = trace_terminal_rows(
+        normalize_operation(begin), _end(begin, status), error=error
+    )
     assert rows[0].text.startswith("✧ Failed" if error else "✧ Canceled")
     assert [row.text.strip() for row in rows[1:]] == ([error] if error else [])
     if error:
@@ -207,7 +213,7 @@ def test_tool_results_remain_in_events_but_not_in_progress(plugin, name):
             None,
         ),
     )
-    rows = trace_terminal_rows(begin, end, error="")
+    rows = trace_terminal_rows(normalize_operation(begin), end, error="")
     assert rows[0].text.startswith("› ")
     assert len(rows) == 1
     assert rows[0].text == f"› Executed {name}"
@@ -312,8 +318,13 @@ def test_spawn_summary_carries_identity_through_existing_tool_progress():
         "succeeded",
         output={"id": "run_job", "thread": "spawn_thread", "status": "pending"},
     )
-    assert trace_live_rows(begin, "")[0].text == "✧ Spawning flow:research"
-    rows = [r.text for r in trace_terminal_rows(begin, end, error="")]
+    assert (
+        trace_live_rows(normalize_operation(begin), "")[0].text
+        == "✧ Spawning flow:research"
+    )
+    rows = [
+        r.text for r in trace_terminal_rows(normalize_operation(begin), end, error="")
+    ]
     assert rows[0] == "✧ Spawned run_job in spawn_thread"
 
 

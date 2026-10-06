@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import replace
 
 from toolang.base.types.message import (
     TextDelta,
     TextPart,
-    ToolResultPart,
 )
 from toolang.common.time import utc_now
 from toolang.execution.events import (
@@ -23,7 +21,6 @@ from toolang.execution.events import (
 )
 from toolang.execution.types import (
     CollectionStepNoted,
-    ExecStepNoted,
     ErrorMessage,
     ErrorRef,
     FieldRef,
@@ -32,7 +29,6 @@ from toolang.execution.types import (
     RunStatus,
     RunRef,
     StepRef,
-    ToolStepGiven,
 )
 from toolang.lang.ast import (
     DropStmt,
@@ -45,7 +41,8 @@ from toolang.lang.ast import (
 )
 
 from .facts import elapsed_fact
-from .formatting import one_line, output_parts, run_label, split_hanging_prefix
+from .formatting import one_line, output_parts, split_hanging_prefix
+from .operations import normalize_operation, committed_exec_target
 from .headers import statement_header, until_header
 from .state import (
     LaneOwner,
@@ -68,7 +65,6 @@ from .step_projection import (
     trace_live_rows,
     loop_terminal_rows,
     trace_terminal_rows,
-    runtime_tool_name,
 )
 from .streaming_markdown import split_stable_markdown
 from .types import ProgressBlock, ProgressRow, ProgressUpdate
@@ -148,8 +144,7 @@ class ProgressProjector:
     @property
     def has_timed_activity(self) -> bool:
         return not (self._broken or self._root_ended) and any(
-            runtime_tool_name(state.begin) == "compact"
-            for state in self._steps.values()
+            state.operation.timed for state in self._steps.values()
         )
 
     def refresh(self) -> ProgressUpdate:
@@ -387,16 +382,11 @@ class ProgressProjector:
             self._repeat_ordinals[key] = ordinal + 1
         self._sequence += 1
         state = StepState(
-            event,
+            normalize_operation(event, owner_is_agic=run.agic),
             run.lane_owner,
             ordinal,
             self._sequence,
             step_detail(event.kind),
-            dynamic_run=(event.kind == "run" and run.agic)
-            or (
-                isinstance(event.given, ToolStepGiven)
-                and event.given.call.name == "_toolang__run"
-            ),
         )
         self._steps[event.step] = state
         if run.internal:
@@ -406,9 +396,8 @@ class ProgressProjector:
 
         if state.lane_owner is not None:
             activity = lane_live_text(
-                state.begin,
+                state.operation,
                 state.model.lane_preview if event.kind == "model" else "",
-                dynamic_run=state.is_dynamic_run,
             )
             if handoff is not None:
                 marker, detail = split_hanging_prefix(activity)
@@ -470,7 +459,7 @@ class ProgressProjector:
         if run.internal:
             self._steps.pop(event.step)
             return None
-        execute = self._complete_execute(run, state.begin, event)
+        execute = self._complete_execute(run, state, event)
         if isinstance(event.noted, CollectionStepNoted) and event.kind == "par":
             if state.par.total_items not in {None, event.noted.total_items}:
                 raise _PresentationError(
@@ -489,12 +478,10 @@ class ProgressProjector:
         block: ProgressBlock | None = None
         if state.lane_owner is not None:
             if not isinstance(event.error, ErrorRef):
-                statement = state.statement
                 if state.is_flow:
-                    assert statement is not None
                     terminal = flow_lane_terminal_lines(
+                        state.operation,
                         event,
-                        statement=statement,
                         error=self._error_text(event.error),
                         observed_iterations=(
                             state.loop.iterations if event.kind == "loop" else 0
@@ -502,10 +489,9 @@ class ProgressProjector:
                     )
                 else:
                     terminal = lane_terminal_lines(
-                        state.begin,
+                        state.operation,
                         event,
                         error=self._error_text(event.error),
-                        dynamic_run=state.is_dynamic_run,
                     )
                 if terminal:
                     lane = self._lane_state(state.lane_owner)
@@ -529,10 +515,9 @@ class ProgressProjector:
                     self._release_boundaries(state.boundaries)
                 else:
                     rows = trace_terminal_rows(
-                        state.begin,
+                        state.operation,
                         event,
                         error=self._error_text(event.error),
-                        dynamic_run=True,
                     )
                     block = self._commit_block(state, rows) if rows else None
             elif isinstance(event.error, ErrorRef):
@@ -562,7 +547,7 @@ class ProgressProjector:
                 self._release_boundaries(state.boundaries)
             else:
                 rows = trace_terminal_rows(
-                    state.begin,
+                    state.operation,
                     event,
                     error=self._error_text(event.error),
                     include_model_text=not (
@@ -590,7 +575,7 @@ class ProgressProjector:
                         rows,
                         gap_before=(
                             False
-                            if event.kind == "run"
+                            if state.operation.name == "run"
                             and not state.boundaries
                             and rows[0].right_text
                             else None
@@ -645,7 +630,7 @@ class ProgressProjector:
             if state.lane_owner is not None:
                 self._set_lane_activity(
                     state.lane_owner,
-                    lane_live_text(state.begin, state.model.lane_preview),
+                    lane_live_text(state.operation, state.model.lane_preview),
                 )
                 return None
             committed, pending, pending_gap_before = split_stable_markdown(
@@ -762,7 +747,11 @@ class ProgressProjector:
         elif isinstance(event.error, ErrorRef):
             rows = []
         else:
-            rows = list(flow_terminal_rows(event, error=self._error_text(event.error)))
+            rows = list(
+                flow_terminal_rows(
+                    state.operation, event, error=self._error_text(event.error)
+                )
+            )
         facts = self._flow_facts(state, event)
         if facts:
             rows.append(
@@ -885,12 +874,9 @@ class ProgressProjector:
         blocks: list[tuple[int, ProgressBlock]] = []
         now = self._clock()
         for state in self._steps.values():
-            if (
-                state.lane_owner is not None
-                and runtime_tool_name(state.begin) == "compact"
-            ):
+            if state.lane_owner is not None and state.operation.timed:
                 self._set_lane_activity(
-                    state.lane_owner, lane_live_text(state.begin, "", now=now)
+                    state.lane_owner, lane_live_text(state.operation, "", now=now)
                 )
         for state in self._steps.values():
             if self._runs[state.begin.step.run_id].internal:
@@ -901,7 +887,7 @@ class ProgressProjector:
                 if state.dynamic_child_run_id is None:
                     rows = (
                         *self._rows_for_boundaries(state.boundaries),
-                        live_row(state.begin, "", dynamic_run=True),
+                        live_row(state.operation, ""),
                     )
                     blocks.append(
                         (
@@ -918,7 +904,7 @@ class ProgressProjector:
                 rows = (
                     *self._rows_for_boundaries(state.boundaries),
                     *trace_live_rows(
-                        state.begin,
+                        state.operation,
                         state.model.pending if state.begin.kind == "model" else "",
                         now=now,
                         marker_committed=(
@@ -1017,57 +1003,33 @@ class ProgressProjector:
     def _begin_execute(self, run: RunState, state: StepState) -> None:
         """Start execute presentation from its Tool Step, not the model's intent."""
 
-        given = state.begin.given
-        if isinstance(given, ToolStepGiven) and given.call.name in {
-            "_toolang__exec",
-            "_toolang__execute",
-        }:
+        operation = state.operation
+        if operation.name == "exec" and operation.source == "tool":
             run.pending_executes.append(
-                PendingExecute(
-                    tool_call_id=given.call.tool_call_id,
-                    runnable=run_label(given),
-                )
+                PendingExecute(state.begin.step, operation.runnable or "runnable")
             )
 
     @staticmethod
-    def _pending_execute(run: RunState, event: StepBegin) -> PendingExecute | None:
-        if not isinstance(event.given, ToolStepGiven):
-            return None
-        call = event.given.call
-        if call.name not in {"_toolang__exec", "_toolang__execute"}:
-            return None
-        return next(
-            (
-                item
-                for item in run.pending_executes
-                if item.tool_call_id == call.tool_call_id
-            ),
+    def _complete_execute(
+        run: RunState, state: StepState, end: StepEnd
+    ) -> PendingExecute | None:
+        """Confirm or reject a normalized handoff from its committed result."""
+
+        pending = next(
+            (item for item in run.pending_executes if item.step == state.begin.step),
             None,
         )
-
-    def _complete_execute(
-        self, run: RunState, begin: StepBegin, end: StepEnd
-    ) -> PendingExecute | None:
-        """Confirm or reject a handoff from its actual Tool Step result."""
-
-        if isinstance(end.noted, ExecStepNoted):
-            pending = PendingExecute(str(begin.step), end.noted.runnable, ready=True)
-            run.pending_executes.append(pending)
-            return pending
-        pending = self._pending_execute(run, begin)
+        target = committed_exec_target(state.operation, end)
         if pending is not None:
             index = run.pending_executes.index(pending)
-            committed = any(
-                isinstance(part, ToolResultPart)
-                and part.error is None
-                and bool(part.output.get("controls"))
-                for part in output_parts(end)
-            )
-            if committed:
-                pending = replace(pending, ready=True)
-                run.pending_executes[index] = pending
-            else:
+            if target is None:
                 run.pending_executes.pop(index)
+                return None
+            pending = PendingExecute(state.begin.step, target, ready=True)
+            run.pending_executes[index] = pending
+        elif target is not None:
+            pending = PendingExecute(state.begin.step, target, ready=True)
+            run.pending_executes.append(pending)
         return pending
 
     def _advance_execute(
@@ -1181,7 +1143,7 @@ class ProgressProjector:
 
     @staticmethod
     def _dynamic_runnable_label(state: StepState) -> str:
-        return run_label(state.begin.given, fallback="request")
+        return state.operation.runnable or "request"
 
     def _claim_boundaries(
         self,

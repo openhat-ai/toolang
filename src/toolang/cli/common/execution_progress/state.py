@@ -21,7 +21,7 @@ from toolang.execution.types import (
 from toolang.lang.ast import FlowStmt
 
 from .facts import cost_fact, execution_count_fact, token_fact
-from .formatting import flow_statement
+from .types import StepOperation
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,9 +90,9 @@ class LoopDetail:
 
 @dataclass(frozen=True, slots=True)
 class PendingExecute:
-    """One model-requested execute awaiting failure or target StepBegin."""
+    """One source Step's handoff awaiting its outcome or the target StepBegin."""
 
-    tool_call_id: str
+    step: StepRef
     runnable: str
     ready: bool = False
 
@@ -136,28 +136,31 @@ class RunState:
 class StepState:
     """Common Step projection state plus one typed variant detail."""
 
-    begin: StepBegin
+    operation: StepOperation
     lane_owner: LaneOwner | None
     ordinal: int
     sequence: int
     detail: StepDetail
-    dynamic_run: bool = False
     boundaries: tuple[str, ...] = ()
     metrics: Metrics = field(default_factory=lambda: Metrics())
     cancellation_reported: bool = False
     dynamic_child_run_id: str | None = None
 
     @property
+    def begin(self) -> StepBegin:
+        return self.operation.begin
+
+    @property
     def statement(self) -> FlowStmt | None:
-        return flow_statement(self.begin.given)
+        return self.operation.statement
 
     @property
     def is_flow(self) -> bool:
-        return not self.dynamic_run and self.statement is not None
+        return self.operation.is_flow
 
     @property
     def is_dynamic_run(self) -> bool:
-        return self.dynamic_run
+        return self.operation.run_scope
 
     @property
     def model(self) -> ModelDetail:

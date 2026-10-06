@@ -9,11 +9,10 @@ from toolang.base.types.message import (
     content_parts,
     ToolCallPart,
 )
-from toolang.execution.events import StepBegin, StepEnd
+from toolang.execution.events import StepEnd
 from toolang.execution.types import (
     CollectionStepNoted,
     LoopStepNoted,
-    ToolStepGiven,
     ToolStepNoted,
     RunHandle,
 )
@@ -29,46 +28,37 @@ from toolang.lang.ast import (
     GenerateStmt,
 )
 
-from .formatting import one_line, output_parts, run_label, tool_label
+from .formatting import one_line, output_parts
 from .facts import elapsed_fact
-from .types import ProgressRow, ProgressTone
-
-
-def runtime_tool_name(begin: StepBegin) -> str | None:
-    given = begin.given
-    if isinstance(given, ToolStepGiven) and given.plugin == "_toolang":
-        name = given.call.name.removeprefix("_toolang__")
-        if name in {"pick", "compact", "honor", "spawn"}:
-            return name
-    return None
+from .types import ProgressRow, ProgressTone, StepOperation
 
 
 def live_row(
-    begin: StepBegin,
+    operation: StepOperation,
     preview: str,
     *,
-    dynamic_run: bool = False,
     now: str = "",
 ) -> ProgressRow:
     """Project one compact Step activity for a parallel lane."""
 
+    begin = operation.begin
+
     if begin.kind == "model":
         detail = one_line(preview)
         text = f"• {detail}" if detail else "• Thinking"
-    elif dynamic_run and begin.kind != "tool":
-        text = f"• Running {run_label(begin.given)}..."
+    elif operation.run_scope and operation.source != "tool":
+        text = f"• Running {operation.runnable or 'runnable'}..."
     elif begin.kind == "tool":
         summary = (
-            begin.given.summary
-            if isinstance(begin.given, ToolStepGiven) and begin.given.summary
-            else f"executing {tool_label(begin.given)}"
+            operation.tool.summary
+            if operation.tool is not None and operation.tool.summary
+            else f"executing {operation.tool.call.name if operation.tool else 'tool'}"
         )
-        name = runtime_tool_name(begin)
-        if name == "compact" and (
+        if operation.timed and (
             elapsed := elapsed_fact(begin.started_at, now or begin.started_at)
         ):
             summary += f" · {elapsed}"
-        text = f"{'✧' if name else '›'} {summary}"
+        text = f"{operation.tool_marker} {summary}"
         return ProgressRow(text, "active", surface="tool_summary")
     else:
         text = f"• running {begin.kind}"
@@ -76,7 +66,7 @@ def live_row(
 
 
 def trace_live_rows(
-    begin: StepBegin,
+    operation: StepOperation,
     preview: str,
     *,
     marker_committed: bool = False,
@@ -85,10 +75,12 @@ def trace_live_rows(
 ) -> tuple[ProgressRow, ...]:
     """Project replaceable Trace activity or one Markdown source tail."""
 
+    begin = operation.begin
+
     if begin.kind != "model" or not preview:
         if begin.kind == "model" and marker_committed:
             return ()
-        return (live_row(begin, preview, now=now),)
+        return (live_row(operation, preview, now=now),)
     return (
         ProgressRow(
             preview,
@@ -102,14 +94,15 @@ def trace_live_rows(
 
 
 def trace_terminal_rows(
-    begin: StepBegin,
+    operation: StepOperation,
     event: StepEnd,
     *,
     error: str,
     include_model_text: bool = True,
-    dynamic_run: bool = False,
 ) -> tuple[ProgressRow, ...]:
     """Project one Model or Tool Step's complete terminal trace."""
+
+    begin = operation.begin
 
     tone = _tone(event.status)
     if begin.kind == "model":
@@ -126,8 +119,8 @@ def trace_terminal_rows(
             return _error_rows("failed", error, tone)
         return _error_rows("canceled", error, tone)
 
-    if dynamic_run and begin.kind != "tool":
-        runnable = run_label(begin.given)
+    if operation.run_scope and operation.source != "tool":
+        runnable = operation.runnable or "runnable"
         if event.status == "succeeded":
             return (ProgressRow(f"• Ran {runnable}", tone),)
         status = "Failed to run" if event.status == "failed" else "Canceled"
@@ -136,12 +129,11 @@ def trace_terminal_rows(
             rows.extend(ProgressRow(f"  {line}", tone) for line in _split_lines(error))
         return tuple(rows)
 
-    label = tool_label(begin.given)
+    label = operation.tool.call.name if operation.tool else "tool"
     summary = event.noted.summary if isinstance(event.noted, ToolStepNoted) else ""
-    name = runtime_tool_name(begin)
     tone = "progress"
-    marker = "✧" if name else "›"
-    if name == "compact" and (
+    marker = operation.tool_marker
+    if operation.timed and (
         elapsed := elapsed_fact(begin.started_at, event.finished_at)
     ):
         summary = f"{summary or label} in {elapsed}"
@@ -173,6 +165,7 @@ def _tool_error_row(error: str) -> ProgressRow:
 
 
 def flow_terminal_rows(
+    operation: StepOperation,
     event: StepEnd,
     *,
     error: str,
@@ -187,7 +180,7 @@ def flow_terminal_rows(
     if event.output is not None and isinstance(event.output.value, RunHandle):
         handle = event.output.value
         return (ProgressRow(f"• Spawned {handle.id} in {handle.thread}", "progress"),)
-    if event.kind == "run":
+    if operation.name == "run":
         return ()
     return _marked_rows(_flow_output_lines(event), "normal")
 
@@ -254,31 +247,28 @@ def collection_terminal_rows(
 
 
 def lane_live_text(
-    begin: StepBegin,
+    operation: StepOperation,
     preview: str,
     *,
-    dynamic_run: bool = False,
     now: str = "",
 ) -> str:
     """Project one descendant Step into a compact parallel-lane activity."""
 
-    return live_row(begin, preview, dynamic_run=dynamic_run, now=now).text
+    return live_row(operation, preview, now=now).text
 
 
 def lane_terminal_lines(
-    begin: StepBegin,
+    operation: StepOperation,
     event: StepEnd,
     *,
     error: str,
-    dynamic_run: bool = False,
 ) -> tuple[str, ...]:
     """Project one descendant Step into compact or expandable lane content."""
 
     rows = trace_terminal_rows(
-        begin,
+        operation,
         event,
         error=error,
-        dynamic_run=dynamic_run,
     )
     if event.status == "failed":
         return tuple(
@@ -289,13 +279,16 @@ def lane_terminal_lines(
 
 
 def flow_lane_terminal_lines(
+    operation: StepOperation,
     event: StepEnd,
     *,
-    statement: FlowStmt,
     error: str,
     observed_iterations: int = 0,
 ) -> tuple[str, ...]:
     """Project Flow-owned terminal content without synthesizing leaf activity."""
+
+    statement = operation.statement
+    assert statement is not None
 
     if event.kind == "par" and event.status == "succeeded":
         rows: tuple[ProgressRow, ...] = ()
@@ -309,7 +302,7 @@ def flow_lane_terminal_lines(
     elif isinstance(statement, MapStmt | GenerateStmt | KeepStmt | DropStmt | SortStmt):
         rows = collection_terminal_rows(statement, event, error=error)
     else:
-        rows = flow_terminal_rows(event, error=error)
+        rows = flow_terminal_rows(operation, event, error=error)
     return tuple(
         row.text[2:] if index and row.text.startswith("  ") else row.text
         for index, row in enumerate(rows)

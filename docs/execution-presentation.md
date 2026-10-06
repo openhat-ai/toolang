@@ -44,6 +44,15 @@ Ordered native events pass through one terminal-independent pipeline:
 RunEvent -> ProgressProjector -> ProgressUpdate -> surface presenter
 ```
 
+At `StepBegin`, `operations.normalize_operation` maps Flow statements and runtime
+Tool Steps to one presentation-only `StepOperation`: operation name, source,
+target label, run scope, and tool marker. Active Step state retains that projection;
+headers, lanes, timers, and terminal rows consume it. The same module recognizes
+committed exec outcomes from either `ExecStepNoted` or a tool reply. Raw tool-name
+matching belongs there, including result-only UI updates such as Chat's cwd label.
+Persisted Step kinds and execution metrics keep their original meaning. Script and
+Chat retain their existing source-specific styling.
+
 `ProgressUpdate.committed` contains stable, append-only fragments in event
 order. `ProgressUpdate.live` is the complete replaceable snapshot. A Step can
 progressively commit a header and output while retaining only its unfinished
