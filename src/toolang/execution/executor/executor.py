@@ -188,7 +188,7 @@ class _ActiveRun:
     tracer: RunTracer | None
     root_run_id: str
     loop: asyncio.AbstractEventLoop = field(repr=False)
-    interruption: ControlRecord | None = None
+    interruptions: dict[str, ControlRecord] = field(default_factory=dict, repr=False)
     controls: dict[str, dict[int, ControlRecord]] = field(
         default_factory=dict,
         repr=False,
@@ -1106,12 +1106,14 @@ class RunExecutor:
         event_run = _run_event_id(event)
         if event_run in active.ended:
             return
-        if (
-            isinstance(event, StepEnd)
-            and event.status == "canceled"
-            and active.interruption is not None
-        ):
-            event = replace(event, aborted_by=active.interruption.ref)
+        if isinstance(event, StepEnd) and event.status == "canceled":
+            interruption = (
+                active.execution.interruption_for(event.step.run_id)
+                if active.execution is not None
+                else active.interruptions.get(active.root_run_id)
+            )
+            if interruption is not None:
+                event = replace(event, aborted_by=interruption.ref)
         with self.store.write_transaction():
             event = self._persist.on_event(event)
             self._update_control_state(event)
@@ -1199,8 +1201,9 @@ class RunExecutor:
     def _observe_control(self, control: ControlRecord) -> None:
         if control.kind == "run":
             return
-        cancel: asyncio.Task[RunRecord] | None = None
+        cancel: asyncio.Task[RunRecord] | asyncio.Task[None] | None = None
         loop: asyncio.AbstractEventLoop | None = None
+        scope: str | None = None
         with self._active_lock:
             active = self._active.get(str(control.target))
             if active is None:
@@ -1214,22 +1217,16 @@ class RunExecutor:
                     and control.kind in {"steer", "cancel"}
                     and control.timing == "immediate"
                 ):
-                    if control.kind == "cancel" and active.execution is not None:
-                        target_task = active.execution._background_tasks.get(
-                            str(control.target)
-                        )
-                        if target_task is not None:
-
-                            def cancel_target() -> None:
-                                assert target_task is not None
-                                self.store.claim_run_controls(
-                                    run_id=str(control.target), indexes=(control.index,)
-                                )
-                                target_task.cancel()
-
-                            active.loop.call_soon_threadsafe(cancel_target)
-                            return
-                    cancel = active.task
+                    scope = (
+                        active.execution.control_scope(str(control.target))
+                        if active.execution is not None
+                        else active.root_run_id
+                    )
+                    cancel = (
+                        active.execution._background_tasks.get(scope, active.task)
+                        if active.execution is not None
+                        else active.task
+                    )
                     loop = active.loop
             else:
                 controls.pop(control.index, None)
@@ -1240,7 +1237,12 @@ class RunExecutor:
             def interrupt() -> None:
                 if cancel.done():
                     return
-                previous = active.interruption
+                assert scope is not None
+                previous = (
+                    active.execution.interruption_for(str(control.target))
+                    if active.execution is not None
+                    else active.interruptions.get(scope)
+                )
                 if (
                     previous is not None
                     and previous.kind == "cancel"
@@ -1262,7 +1264,7 @@ class RunExecutor:
                     )
                     if current is None or current.status != "pending":
                         return
-                active.interruption = control
+                active.interruptions[scope] = control
                 cancel.cancel()
 
             loop.call_soon_threadsafe(interrupt)
@@ -1366,7 +1368,13 @@ class RunExecutor:
         )
         with self._active_lock:
             active = self._active.get(run_id)
-            interruption = active.interruption if active is not None else None
+            interruption = (
+                active.execution.interruption_for(run_id)
+                if active is not None and active.execution is not None
+                else active.interruptions.get(active.root_run_id)
+                if active is not None
+                else None
+            )
         if (
             interruption is not None
             and interruption.kind == "cancel"
@@ -2222,13 +2230,12 @@ class _Execution:
                     )
                 )
                 raise _RunLimitExceeded(error) from exc
+            interruption = self.interruption_for(binding.run_id)
             control = (
                 exc.control
                 if isinstance(exc, _RunCanceled)
-                else self._active.interruption
-                if self._active is not None
-                and self._active.interruption is not None
-                and self._active.interruption.kind == "cancel"
+                else interruption
+                if interruption is not None and interruption.kind == "cancel"
                 else next(
                     (
                         item
@@ -2882,6 +2889,32 @@ class _Execution:
     ) -> tuple[ControlRecord, ...]:
         return self.executor._pending_controls(run_id=run_id, kind=kind)
 
+    def control_scope(self, run_id: str) -> str:
+        """Find the task owning controls, including after a child Run ends."""
+        return next(
+            (
+                ancestor
+                for ancestor in self.store.run_ancestry(run_id=run_id)
+                if ancestor in self._background_tasks
+            ),
+            self._history_root,
+        )
+
+    def interruption_for(self, run_id: str) -> ControlRecord | None:
+        """Keep task interruptions isolated; enclosing cancellation takes priority."""
+        if self._active is None or not self._active.interruptions:
+            return None
+        ancestry = self.store.run_ancestry(run_id=run_id)
+        for ancestor in reversed(ancestry):
+            control = self._active.interruptions.get(ancestor)
+            if (
+                control is not None
+                and control.kind == "cancel"
+                and str(control.target) in ancestry
+            ):
+                return control
+        return self._active.interruptions.get(self.control_scope(run_id))
+
     def steer_controls_for_call(
         self,
         run_id: str,
@@ -2905,11 +2938,8 @@ class _Execution:
         # A pending steer must not consume cancellation from an expired limit.
         if self._limits.error is not None:
             return False
-        if (
-            self._active is not None
-            and self._active.interruption is not None
-            and self._active.interruption.kind != "steer"
-        ):
+        interruption = self.interruption_for(run_id)
+        if interruption is not None and interruption.kind != "steer":
             return False
         return any(
             control.timing == "immediate"
@@ -2919,7 +2949,7 @@ class _Execution:
     def canceled_within(self, run_id: str) -> bool:
         """Whether the interruption cancels this target or one of its descendants."""
 
-        control = self._active.interruption if self._active is not None else None
+        control = self.interruption_for(run_id)
         return (
             control is not None
             and control.kind == "cancel"
@@ -2946,7 +2976,7 @@ class _Execution:
         )
         if claimed:
             if self._active is not None:
-                self._active.interruption = claimed[0]
+                self._active.interruptions[self.control_scope(run_id)] = claimed[0]
             raise _RunCanceled(claimed[0])
 
     def record_output(self, run_id: str, ref: FieldRef) -> None:
@@ -3142,12 +3172,12 @@ class _Execution:
         self._preceding_controls = [
             ref for ref in self._preceding_controls if ref not in refs
         ]
-        if (
-            self._active is not None
-            and self._active.interruption is not None
-            and self._active.interruption.ref in refs
-        ):
-            self._active.interruption = None
+        if self._active is not None:
+            self._active.interruptions = {
+                scope: control
+                for scope, control in self._active.interruptions.items()
+                if control.ref not in refs
+            }
 
     def state_for_step(self, step: StepRef) -> tuple[AgentState, ControlRef]:
         """Return the immutable State snapshot captured by one started step."""

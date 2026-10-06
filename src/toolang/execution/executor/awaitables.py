@@ -235,11 +235,16 @@ async def wait(
                 task = active.task
         if task is None:
             raise ToolangError(f"await target has no live execution owner: {handle.id}")
+        current = asyncio.current_task()
+        cancellations = current.cancelling() if current is not None else 0
         try:
             await asyncio.shield(task)
         except asyncio.CancelledError:
-            current = asyncio.current_task()
-            if current is None or current.cancelling():
+            if (
+                not task.cancelled()
+                or current is None
+                or current.cancelling() > cancellations
+            ):
                 raise
         except Exception:
             pass  # Inspect the persisted outcome, not a task's wrapper error.
