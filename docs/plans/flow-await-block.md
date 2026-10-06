@@ -56,10 +56,12 @@ returning; subsequent work cannot alter those inputs.
 | `let results = await [in P lanes]: ...` | Wait; bind only `results` |
 | `let await [in P lanes]: ...` | Wait and discard the result |
 
-`async:` starts the work without requiring a later await. Its result is one
-`Awaitable<Results>`, not an array of Run handles. `await:` is the immediate-wait
-form of the same operation; it does not introduce a second scheduler. Awaiting
-its retained handle follows #685, including repeated waits and result bindings.
+`async:` starts the work without requiring a later await. Its result uses the
+internal type `_Awaitable`, with the complete group result contract stored separately
+(`Awaitable<Results>` in design notation), not an array of Run handles. `await:` is
+the immediate-wait form of the same operation; it does not introduce a second
+scheduler. Awaiting its retained handle follows #685, including repeated waits
+and result bindings.
 No `all` qualifier, implicit flattening, or `async await:` form is introduced.
 
 ## Branches and Results
@@ -112,8 +114,12 @@ and waiting on the group, without an additional visible launch Step.
 Follow #685's scope separation. Background branch events belong to the group, not
 live children displayed under the completed launch Step. Preserve provenance and
 ownership outside live presentation state. Waiting neither replays branch events
-nor relocates them under the wait Step, and costs are counted once. The concrete
-handle codec and background execution records remain to be settled with #685.
+nor relocates them under the wait Step, and costs are counted once. Use #685's
+`_Awaitable` type for the group target; the payload codec and background execution
+records remain to be settled, not the common internal type identifier.
+Follow #685's invocation presentation conventions for action, target, status, and
+secondary handle details. Label the operation from its syntax, not its handle type:
+an async block is not displayed as spawn merely because both return `_Awaitable`.
 
 AsyncBlockStmt and AwaitBlockStmt may lower to the same group operation with
 different delivery modes; handle AwaitStmt only waits for existing work. Flow and
@@ -151,8 +157,9 @@ Acceptance scenarios:
    at launch. Nested map/block/collection-await results each remain one complete item.
 5. Failure/cancel/parent exit/exec drains owned work while observer cancellation
    preserves independently owned targets. Discarded handles do not leak tasks.
-6. Round-trip admission, operation, and output records; retry restores only outer
-   bindings, including in repeat. Cover missing/live/terminal targets and provenance.
+6. Round-trip admission, operation, and `_Awaitable` output records; the group result
+   contract stays separate from the handle type. Retry restores only outer bindings,
+   including in repeat. Cover missing/live/terminal targets and provenance.
 7. With or without a later await, caller Steps remain linear and the async launch
    row ends at startup. Background branch events stay in the group scope; `await:`
    presents one blocking Step. No reopened launch rows or replayed progress/cost.
@@ -161,8 +168,8 @@ Acceptance scenarios:
 
 ## Open Decisions and Risks
 
-The remaining blocker is #685's operation-handle and background execution records;
-the linear caller Step lifecycle is fixed, independently of that representation.
+The remaining blocker is #685's awaitable payload and background execution records;
+the `_Awaitable` identifier and linear caller Step lifecycle are fixed.
 This plan must not assume Run-only identities or independent branch Run handles.
 Approval must cover both launch modes and their shared contract before implementation.
 
