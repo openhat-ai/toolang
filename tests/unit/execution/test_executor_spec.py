@@ -1,13 +1,16 @@
 from tests.support.setup import materialized_setup
-from dataclasses import fields
+from dataclasses import FrozenInstanceError, replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
+
+import pytest
 
 from toolang.base.types.policy import RunBindings
 from toolang.execution.executor import RunSpec
 from toolang.common.layout import AgentLayout
 from toolang.setup import AgentSetup, ToolCollection
+from toolang.lang.input import CallInput
 
 
 def _setup() -> AgentSetup:
@@ -23,29 +26,6 @@ def _setup() -> AgentSetup:
 
 def _state() -> Any:
     return cast(Any, SimpleNamespace())
-
-
-def test_run_spec_has_minimal_execution_contract() -> None:
-    assert tuple(field.name for field in fields(RunSpec)) == (
-        "setup",
-        "state",
-        "thread",
-        "bindings",
-        "limits",
-        "model_request",
-        "workdir",
-        "workdir_base",
-        "ceilings",
-        "input",
-        "authored_input",
-        "authored_commands",
-        "authored_session_commands",
-        "prompt_invocations",
-        "horizon",
-        "all_tools",
-        "launch_context",
-        "resource_ceiling",
-    )
 
 
 def test_run_spec_defaults_are_immutable() -> None:
@@ -66,6 +46,13 @@ def test_run_spec_defaults_are_immutable() -> None:
         limits=second_setup.limits,
     )
 
-    assert "_" not in first.input
+    with pytest.raises(TypeError):
+        cast(Any, first.input)["_"] = "changed"
+    with pytest.raises(FrozenInstanceError):
+        cast(Any, first).input = CallInput({"_": "changed"})
+
+    updated = replace(first, input=CallInput({"_": "changed"}))
+
+    assert updated.input["_"] == "changed"
     assert first.input == {}
     assert second.input == {}

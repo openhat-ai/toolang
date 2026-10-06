@@ -1,6 +1,7 @@
 import pytest
 
 from tests import FIXTURES_ROOT, PROJECT_ROOT
+from tests.support.examples import example_sources
 from toolang.lang import (
     Program,
     ToolangFormatError,
@@ -775,7 +776,7 @@ flow pipeline(_: Part[]) -> Result:
 def test_repo_programs_format_idempotently_without_semantic_changes() -> None:
     source_paths = [
         *sorted(FIXTURES_ROOT.glob("*.too")),
-        *sorted((PROJECT_ROOT / "examples").glob("*.too")),
+        *example_sources(PROJECT_ROOT / "examples"),
     ]
 
     for source_path in source_paths:
