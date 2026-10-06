@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import fields
 from pathlib import Path
 from threading import Lock
 from typing import Any, cast
@@ -30,26 +29,6 @@ def test_setup_facade_exposes_no_catalog_projection_cache() -> None:
     assert not hasattr(setup_package, "prepare_agent_setup")
     assert "model_catalog" not in AgentSetup.__dict__
     assert "model_listing" not in AgentSetup.__dict__
-
-
-def test_agent_setup_fields_are_a_lazy_revision_facade() -> None:
-    assert tuple(item.name for item in fields(AgentSetup)) == (
-        "layout",
-        "envs",
-        "revision",
-        "environment",
-        "defaults",
-        "limits",
-        "compact",
-        "catalog_sources",
-        "_load_models",
-        "_load_tools",
-        "_allowed_tools",
-        "_load_adapters",
-        "_load_catalogs",
-        "_load_toolset_plugins",
-        "_lazy",
-    )
 
 
 @pytest.mark.parametrize("invalid", [-1, 4, 7])

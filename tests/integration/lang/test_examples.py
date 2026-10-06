@@ -11,21 +11,16 @@ from pathlib import Path
 import pytest
 
 from tests import PROJECT_ROOT
+from tests.support.examples import example_sources
 from toolang.lang import Program, format_source
 from toolang.execution.runnables import resolve_runnable_reference
 from toolang.state.state import flow_export, program_runnable_index
 
 
 EXAMPLES_ROOT = PROJECT_ROOT / "examples"
-# Direct scripts at the top level plus direct flow modules under flows/.
-# Both levels are explicit so generated state under .toolang/ stays out.
-FLOW_MODULE_PATHS = tuple(sorted((EXAMPLES_ROOT / "flows").glob("*.too")))
-EXAMPLE_PATHS = tuple(
-    sorted(
-        example
-        for pattern in ("*.too", "flows/*.too")
-        for example in EXAMPLES_ROOT.glob(pattern)
-    )
+EXAMPLE_PATHS = example_sources(EXAMPLES_ROOT)
+FLOW_MODULE_PATHS = tuple(
+    path for path in EXAMPLE_PATHS if path.parent == EXAMPLES_ROOT / "flows"
 )
 
 
@@ -43,9 +38,21 @@ def test_examples_exist() -> None:
     assert EXAMPLE_PATHS
 
 
-@pytest.mark.parametrize("path", EXAMPLE_PATHS, ids=_example_id)
-def test_example_is_valid_program(path: Path) -> None:
-    Program.from_source(_source(path))
+def test_example_discovery_excludes_generated_state(tmp_path: Path) -> None:
+    authored = (tmp_path / "hello.too", tmp_path / "flows" / "worker.too")
+    for path in authored:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("flow:\n  run: Hello.\n", encoding="utf-8")
+    for root in (tmp_path, tmp_path / "flows"):
+        cache = root / ".toolang" / "agents" / "worker"
+        snapshot = cache / ".state" / "home" / "revs" / "old" / "files"
+        snapshot.mkdir(parents=True)
+        (snapshot / "agent.too").write_text(
+            "flow:\n  scatter using worker\n", encoding="utf-8"
+        )
+        (cache / "agent.too").symlink_to(cache / "missing.too")
+
+    assert example_sources(tmp_path) == tuple(sorted(authored))
 
 
 @pytest.mark.parametrize("path", EXAMPLE_PATHS, ids=_example_id)

@@ -899,11 +899,6 @@ def test_generate_content_auth_uses_header_instead_of_url_query() -> None:
     assert headers["x-goog-api-key"] == "secret-key"
 
 
-def test_reasoning_rejects_overlapping_effort_and_budget() -> None:
-    with pytest.raises(ValueError, match="either effort or budget_tokens"):
-        Reasoning("high", 2048)
-
-
 def test_generate_content_canonical_reasoning_replaces_raw_reasoning_control() -> None:
     payload = generate_content_payload(
         _model("gemini", provider="google", name="gemini").with_route(

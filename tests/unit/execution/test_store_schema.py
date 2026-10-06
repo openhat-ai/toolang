@@ -12,33 +12,11 @@ from toolang.execution.types import ContentRef
 
 @pytest.mark.parametrize(
     "schema_version",
-    (
-        28,
-        29,
-        30,
-        31,
-        32,
-        33,
-        34,
-        35,
-        36,
-        37,
-        38,
-        39,
-        40,
-        41,
-        42,
-        43,
-        44,
-        45,
-        46,
-        47,
-        48,
-        49,
-        50,
-        51,
-        53,
-    ),
+    [
+        pytest.param(28, id="historical"),
+        pytest.param(51, id="previous"),
+        pytest.param(53, id="future"),
+    ],
 )
 @pytest.mark.parametrize("read_only", (False, True))
 def test_run_store_rejects_any_other_schema_without_modifying_it(

@@ -155,25 +155,69 @@ def test_plan_formatting_rejects_whitespace_errors(
     assert "trailing whitespace" in result.stdout
 
 
-@pytest.mark.parametrize("event", ["pull_request", "push", "workflow_dispatch"])
-@pytest.mark.parametrize("docs_only", ["true", "false", ""])
-@pytest.mark.parametrize("job_result", ["success", "failure", "cancelled", "skipped"])
-@pytest.mark.parametrize("job", ["changes", "quality", "tests", "package"])
-def test_gate_only_accepts_expected_results(
-    tmp_path: Path, event: str, docs_only: str, job_result: str, job: str
-) -> None:
+def gate_env(docs_only: str, event: str = "pull_request") -> dict[str, str]:
     expected = "skipped" if docs_only == "true" else "success"
-    env = {
+    return {
         "GITHUB_EVENT_NAME": event,
         "DOCS_ONLY": docs_only,
         "CHANGES_RESULT": "success",
         "QUALITY_RESULT": expected,
         "TESTS_RESULT": expected,
         "PACKAGE_RESULT": expected,
-        f"{job.upper()}_RESULT": job_result,
     }
+
+
+@pytest.mark.parametrize(
+    "event,docs_only",
+    [
+        ("pull_request", "false"),
+        ("pull_request", "true"),
+        ("push", "false"),
+        ("workflow_dispatch", "false"),
+    ],
+)
+def test_gate_accepts_successful_jobs(
+    tmp_path: Path, event: str, docs_only: str
+) -> None:
+    result = run_step(
+        "gate",
+        "Require the expected CI jobs to pass",
+        tmp_path,
+        gate_env(docs_only, event),
+    )
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize(
+    "docs_only,job,job_result",
+    [
+        pytest.param(docs_only, job, result, id=f"docs-{docs_only}-{job}-{result}")
+        for docs_only in ("false", "true")
+        for job in ("changes", "quality", "tests", "package")
+        for result in ("success", "failure", "cancelled", "skipped")
+        if result
+        != ("success" if job == "changes" or docs_only == "false" else "skipped")
+    ],
+)
+def test_gate_rejects_each_unexpected_job_result(
+    tmp_path: Path, docs_only: str, job: str, job_result: str
+) -> None:
+    env = {**gate_env(docs_only), f"{job.upper()}_RESULT": job_result}
     result = run_step("gate", "Require the expected CI jobs to pass", tmp_path, env)
-    should_pass = (
-        docs_only == "false" or (docs_only == "true" and event == "pull_request")
-    ) and job_result == ("success" if job == "changes" else expected)
-    assert (result.returncode == 0) == should_pass, result.stderr
+    assert result.returncode != 0
+
+
+@pytest.mark.parametrize(
+    "event,docs_only",
+    [("push", "true"), ("workflow_dispatch", "true"), ("pull_request", "")],
+)
+def test_gate_rejects_invalid_change_classification(
+    tmp_path: Path, event: str, docs_only: str
+) -> None:
+    result = run_step(
+        "gate",
+        "Require the expected CI jobs to pass",
+        tmp_path,
+        gate_env(docs_only, event),
+    )
+    assert result.returncode != 0

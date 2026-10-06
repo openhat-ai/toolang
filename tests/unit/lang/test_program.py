@@ -7,7 +7,7 @@ from typing import Any, cast
 
 import pytest
 
-from tests import FIXTURES_ROOT, PROJECT_ROOT
+from tests import FIXTURES_ROOT
 from toolang.common.errors import ToolangError
 from toolang.lang.validate import _validate
 from toolang.lang.errors import ToolangSyntaxError, ToolangValidationError
@@ -980,14 +980,6 @@ def test_repo_program_fixtures_parse_cleanly() -> None:
     for source_path in sorted(FIXTURES_ROOT.glob("*.too")):
         program = Program.from_source(source_path.read_text(encoding="utf-8"))
         assert program.agics, source_path.name
-
-
-def test_example_programs_parse_cleanly() -> None:
-    examples = PROJECT_ROOT / "examples"
-    sources = sorted(examples.rglob("*.too"))
-    assert sources
-    for source_path in sources:
-        Program.from_source(source_path.read_text(encoding="utf-8"))
 
 
 def _write_program(tmp_path: Path, body_text: str) -> Path:
