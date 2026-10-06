@@ -142,6 +142,12 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   Source, snapshots, retries, and reruns using them are rejected with migration
   guidance, and older records remain available only to their matching runtime.
 
+### Fixed
+
+- Repeated `until` evaluations now refresh Run handle status, and named
+  Flow conditions retain their correct progress boundary with nested loops.
+  (#695)
+
 ## [0.3.6] - 2026-10-04
 
 ### Added

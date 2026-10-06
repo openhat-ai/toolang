@@ -20,7 +20,7 @@ from toolang.base.types.run import ModelCallResult
 from toolang.common.layout import AgentLayout
 from toolang.execution.events import StepEnd
 from toolang.execution.executor.executor import _Execution
-from toolang.execution.types import LoopStepNoted, ThreadPrefix
+from toolang.execution.types import LoopStepNoted, RunHandle, ThreadPrefix
 from toolang.state.prepare import prepare_agent_state
 
 
@@ -610,3 +610,67 @@ flow(_: Text):
     assert len(harness.adapter.invocations) == 1
     assert "Previous=seed." in harness.adapter.invocations[0].call.instructions
     assert "Wrong module" not in harness.adapter.invocations[0].call.instructions
+
+
+@pytest.mark.parametrize("prefix", ["", "    let note = Before condition.\n"])
+def test_until_refreshes_handle_status_on_each_evaluation(tmp_path, prefix):
+    worker_gate, body_gate = AsyncGate(), AsyncGate()
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=(
+            "agic worker():\n  Worker.\n"
+            "flow main(_: Text):\n  context = none\n  instruct = none\n"
+            "  let job = spawn worker\n  repeat 2 times:\n"
+            + prefix
+            + "    until: status={{job.status}}\n    run: Wait in body.\n"
+        ),
+        responses=[
+            ScriptedModelTurn(_answer("finished"), gate=worker_gate),
+            _answer("false"),
+            ScriptedModelTurn(_answer("body"), gate=body_gate),
+            _answer("true"),
+        ],
+    )
+
+    class Tracer(RecordingRunTracer):
+        async def on_event(self, event):
+            await super().on_event(event)
+            if isinstance(event, StepEnd) and event.kind == "spawn":
+                await asyncio.wait_for(worker_gate.wait_until_entered(), 2)
+
+    tracer = Tracer()
+
+    async def scenario():
+        async with harness:
+            parent = harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    runnable="main",
+                    primary=(TextPart("seed"),),
+                ),
+                tracer=tracer,
+            )
+            await asyncio.wait_for(body_gate.wait_until_entered(), 2)
+            spawn = harness.store.list_steps(run_id=parent.run_id)[0]
+            assert spawn.output is not None and isinstance(
+                spawn.output.value, RunHandle
+            )
+            job = spawn.output.value
+            worker = harness.executor._active[job.id].task
+            worker_gate.release()
+            assert (await asyncio.wait_for(worker, 2)).status == "succeeded"
+            assert harness.store.run_handle_view(job)["status"] == "succeeded"
+            body_gate.release()
+            root = await asyncio.wait_for(parent, 2)
+            assert root.status == "succeeded", root.error
+            assert harness.store.list_steps(run_id=root.id)[1].noted == LoopStepNoted(
+                1, "satisfied", 2
+            )
+
+    asyncio.run(scenario())
+    condition_prompts = [
+        message_text(without_runtime_snapshots(call.call.messages)[-1].parts)
+        for call in harness.adapter.invocations[1::2]
+    ]
+    assert condition_prompts == ["status=running", "status=succeeded"]
+    assert_replayed(harness.store.db_path, tracer.events)

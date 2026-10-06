@@ -1561,6 +1561,10 @@ class _Execution:
 
         return iteration_values(project, captured=binding.captured_iterations)
 
+    def reset_handle_views(self, step: StepRef) -> None:
+        """Start a fresh input snapshot when a structural Step evaluates again."""
+        self._handle_views.pop(step, None)
+
     def project_call_locals(
         self,
         locals: Mapping[str, Local],

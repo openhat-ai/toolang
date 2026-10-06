@@ -107,6 +107,9 @@ async def execute(
                     occurrence=body_occurrence,
                 )
                 if statement.runnable is not None:
+                    # Conditions share the loop Step but read fresh inputs on
+                    # each evaluation. Validation and binding share this view.
+                    execution.reset_handle_views(path)
                     candidate, state_snapshot, templates = prepare_condition()
                     execution.validate_child_inputs(
                         binding,
