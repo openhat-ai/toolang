@@ -189,6 +189,7 @@ agic helper(_: Text) -> Boolean:
                 "_toolang__pick",
                 "_toolang__run",
                 "_toolang__spawn",
+                "_toolang__await",
                 "lookup__value",
             }
             initial = harness.adapter.invocations[0].call

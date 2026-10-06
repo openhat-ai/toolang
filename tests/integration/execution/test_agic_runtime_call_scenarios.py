@@ -245,6 +245,7 @@ agic child(_: Text) -> Text:
                 "_toolang__pick",
                 "_toolang__run",
                 "_toolang__spawn",
+                "_toolang__await",
             }
             assert_run_event_integrity(tracer.events)
 
@@ -1377,6 +1378,7 @@ agic target(_: Text) -> Text:
                 "_toolang__pick",
                 "_toolang__run",
                 "_toolang__spawn",
+                "_toolang__await",
                 "web__search",
             }
             assert {tool.name for tool in target_call.tools} == {
@@ -1385,6 +1387,7 @@ agic target(_: Text) -> Text:
                 "_toolang__pick",
                 "_toolang__run",
                 "_toolang__spawn",
+                "_toolang__await",
                 "web__search",
             }
             assert {
@@ -1395,6 +1398,7 @@ agic target(_: Text) -> Text:
                 "_toolang__pick",
                 "_toolang__run",
                 "_toolang__spawn",
+                "_toolang__await",
                 "web__search",
             }
             assert len(web.calls) == 1
@@ -1575,6 +1579,7 @@ agic caller() -> Text:
                 "_toolang__pick",
                 "_toolang__run",
                 "_toolang__spawn",
+                "_toolang__await",
             }
             assert route_snapshots(first_call) == {"hands": [], "handoffs": []}
             assert '"runnables"' not in first_call.instructions
@@ -2060,6 +2065,7 @@ agic target(_: Text) -> Text:
                 "_toolang__pick",
                 "_toolang__run",
                 "_toolang__spawn",
+                "_toolang__await",
                 "beta__use",
             }
             assert {tool.name for tool in after_publication.tools} == {
@@ -2068,6 +2074,7 @@ agic target(_: Text) -> Text:
                 "_toolang__pick",
                 "_toolang__run",
                 "_toolang__spawn",
+                "_toolang__await",
                 "beta__use",
             }
             assert "old target state" in before_publication.instructions

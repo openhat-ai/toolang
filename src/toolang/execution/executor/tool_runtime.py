@@ -160,7 +160,9 @@ class _ToolRuntime(ToolRuntime):
             }
         )
 
-    async def run(self, runnable: str, input: Mapping[str, Any]) -> ToolResult:
+    async def run(
+        self, runnable: str, input: Mapping[str, Any], *, asynchronous: bool = False
+    ) -> ToolResult:
         state = self.state
         execution = state.execution
         if execution is None:
@@ -176,11 +178,21 @@ class _ToolRuntime(ToolRuntime):
                 resolution="state",
                 raw_input=input,
                 authorize=lambda target: self._authorize("run", target),
+                asynchronous=asynchronous,
                 state_snapshot=(
                     state.prepared.state,
                     state.prepared.run.state_ref,
                 ),
             )
+            if asynchronous:
+                recorded = execution.store.get_step(ref=self.step)
+                if (
+                    recorded is None
+                    or recorded.output is None
+                    or not isinstance(recorded.output.value, ToolResultPart)
+                ):
+                    raise RuntimeError("async admission has no recorded tool result")
+                return ToolResult(dict(recorded.output.value.output))
             await execution.execute(binding, target, output_binding=None, begun=True)
         except _RunRejected as exc:
             return ToolResult(error=str(exc), output=exc.details)
@@ -219,6 +231,23 @@ class _ToolRuntime(ToolRuntime):
         if child.status == "succeeded" and child.output is not None:
             state.output = FieldRef.from_path(RunRef(child.id), "output", "value")
             state.record_output(state.output)
+        elif child.error is not None:
+            self.error = ErrorRef(FieldRef.from_path(RunRef(child.id), "error"))
+        return run_result(
+            child, execution.store.resolve_value, execution.store.resolve_error
+        )
+
+    async def await_target(self, target: str) -> ToolResult:
+        from .awaitables import resolve, wait
+
+        execution = self.state.execution
+        if execution is None:
+            raise RuntimeError("Agic runtime execution is unavailable")
+        caller = self.state.prepared.run
+        child = await wait(execution, caller, resolve(execution, caller, target))
+        if child.status == "succeeded" and child.output is not None:
+            self.state.output = FieldRef.from_path(RunRef(child.id), "output", "value")
+            self.state.record_output(self.state.output)
         elif child.error is not None:
             self.error = ErrorRef(FieldRef.from_path(RunRef(child.id), "error"))
         return run_result(

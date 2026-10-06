@@ -16,6 +16,7 @@ from toolang.lang.ast import (
     SortStmt,
     RepeatStmt,
     RunStmt,
+    AwaitStmt,
     SpawnStmt,
     ExecStmt,
     SeekStmt,
@@ -29,6 +30,7 @@ from ..common import BoundRun
 from ..common import Local
 from . import (
     ask,
+    await_target,
     filter,
     let,
     map,
@@ -60,6 +62,10 @@ async def execute(
 
     if isinstance(statement, ExecStmt):
         return await exec_stmt.execute(
+            execution, binding, locals, path, statement, controls, occurrence
+        )
+    if isinstance(statement, AwaitStmt):
+        return await await_target.execute(
             execution, binding, locals, path, statement, controls, occurrence
         )
     if isinstance(statement, RunStmt):

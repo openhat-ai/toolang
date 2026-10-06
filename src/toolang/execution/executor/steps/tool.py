@@ -43,6 +43,7 @@ from ...types import (
     ErrorRef,
     FieldRef,
     Output,
+    RunRef,
     StepRef,
     ToolStepGiven,
     ToolStepNoted,
@@ -261,11 +262,24 @@ async def _execute(
             if plugin_name == "_toolang"
             else None
         )
+        resolved_input = step_input
         try:
             if trigger == "model" and call.name == "_toolang__compact":
                 raise ToolangError("compact can only be initiated by model preflight")
             if tool is None:
                 raise ToolangError(f"unknown tool call: {call.name}")
+            if (
+                call.name == "_toolang__await"
+                and state.execution is not None
+                and isinstance(target := call.input.get("target"), str)
+            ):
+                from ..awaitables import resolve
+
+                handle = resolve(state.execution, run, target)
+                resolved_input = (
+                    *step_input,
+                    FieldRef.from_path(RunRef(handle.id), "id"),
+                )
             context = _tool_context(
                 layout=state.layout,
                 sync_state=state.execution.executor._sync_state
@@ -305,7 +319,7 @@ async def _execute(
             step=StepRef.from_local(run.run_id, (step_index,)),
             kind="tool",
             state=state_ref,
-            input=step_input,
+            input=resolved_input,
             given=ToolStepGiven(
                 plugin=plugin_name,
                 call=call,
@@ -499,8 +513,9 @@ async def _cancel(
         )
     if (
         call.name in {"_toolang__spawn", "_toolang__exec"}
-        and state.execution is not None
-    ):
+        or call.name == "_toolang__run"
+        and call.input.get("async") is True
+    ) and state.execution is not None:
         record = state.execution.store.get_step(ref=step)
         if (
             record is not None

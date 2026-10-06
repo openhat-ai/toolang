@@ -171,7 +171,9 @@ def test_runtime_tool_failure_details_and_cancellation_remain_visible(name, stat
     rows = trace_terminal_rows(
         normalize_operation(begin), _end(begin, status), error=error
     )
-    assert rows[0].text.startswith("✧ Failed" if error else "✧ Canceled")
+    assert rows[0].text.startswith(
+        ("› " if name == "spawn" else "✧ ") + ("Failed" if error else "Canceled")
+    )
     assert [row.text.strip() for row in rows[1:]] == ([error] if error else [])
     if error:
         assert rows[1].surface == "tool_error"
@@ -216,7 +218,11 @@ def test_tool_results_remain_in_events_but_not_in_progress(plugin, name):
     rows = trace_terminal_rows(normalize_operation(begin), end, error="")
     assert rows[0].text.startswith("› ")
     assert len(rows) == 1
-    assert rows[0].text == f"› Executed {name}"
+    assert rows[0].text == (
+        {"run": "› Completed runnable", "execute": "› Transferred runnable"}.get(
+            name, f"› Executed {name}"
+        )
+    )
     assert end.output is not None and isinstance(end.output.value, ToolResultPart)
     assert end.output.value.output == {"value": "Result is still available"}
 
@@ -320,16 +326,16 @@ def test_spawn_summary_carries_identity_through_existing_tool_progress():
     )
     assert (
         trace_live_rows(normalize_operation(begin), "")[0].text
-        == "✧ Spawning flow:research"
+        == "› Spawning flow:research..."
     )
     rows = [
         r.text for r in trace_terminal_rows(normalize_operation(begin), end, error="")
     ]
-    assert rows[0] == "✧ Spawned run_job in spawn_thread"
+    assert rows == ["› Spawned flow:research", "  run_job in spawn_thread"]
 
 
 def test_flow_spawn_summary_is_visible_without_child_events():
-    from toolang.execution.types import RunHandle
+    from toolang.execution.types import AwaitableHandle
     from toolang.lang.ast import SpawnStmt, Span
     from toolang.execution.events import run_event_from_data, run_event_to_data
 
@@ -354,9 +360,10 @@ def test_flow_spawn_summary_is_visible_without_child_events():
         step=StepRef.parse("run_root.0"),
         kind="spawn",
         status="succeeded",
-        output=Output(RunHandle("run_job", "spawn_thread"), "job"),
+        output=Output(AwaitableHandle("run_job", "spawn_thread"), "job"),
         finished_at=FINISH,
     )
     update = projector.handle(run_event_from_data(run_event_to_data(end)))
     rows = [row.text for block in update.committed for row in block.rows]
-    assert any("Spawned run_job in spawn_thread" in text for text in rows)
+    assert "• Spawned flow:research" in rows
+    assert "  run_job in spawn_thread" in rows

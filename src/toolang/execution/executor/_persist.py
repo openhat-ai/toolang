@@ -4,8 +4,11 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+from toolang.lang.ast import AwaitStmt
+
 from ..events import RunBegin, RunEnd, RunEvent, StepBegin, StepEnd
 from ..store import RunStore
+from ..types import ErrorMessage, ErrorRef, Output, ToolStepGiven, value_for_type
 
 
 class _PersistSink:
@@ -65,12 +68,27 @@ class _PersistSink:
             error=event.error,
             finished_at=event.finished_at,
         )
+        output = step.output
+        if isinstance(step.given, AwaitStmt) and output is not None:
+            # Keep the durable target pointer; deliver the complete observed
+            # value to callers that did not subscribe to the target's events.
+            output = Output(
+                value_for_type(output.type, self._store.resolve_value(output.value)),
+                output.binding,
+            )
+        error = step.error
+        if isinstance(error, ErrorRef) and (
+            isinstance(step.given, AwaitStmt)
+            or isinstance(step.given, ToolStepGiven)
+            and step.given.call.name == "_toolang__await"
+        ):
+            error = ErrorMessage(self._store.resolve_error(error))
         return replace(
             event,
             status=step.status,
-            output=step.output,
+            output=output,
             noted=step.noted,
-            error=step.error,
+            error=error,
             aborted_by=step.aborted_by,
             finished_at=step.finished_at,
         )

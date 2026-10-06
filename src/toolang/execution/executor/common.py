@@ -33,6 +33,7 @@ from toolang.lang.ast import (
     SortStmt,
     RepeatStmt,
     RunStmt,
+    AwaitStmt,
     SpawnStmt,
     ExecStmt,
     SeekStmt,
@@ -553,6 +554,7 @@ def statement_has_call(statement: FlowStmt) -> bool:
     if isinstance(
         statement,
         RunStmt
+        | AwaitStmt
         | SpawnStmt
         | ExecStmt
         | SeekStmt

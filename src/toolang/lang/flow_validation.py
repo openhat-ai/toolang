@@ -20,6 +20,7 @@ class _Local:
     type_name: str | None = None
     length: int | None = None
     handle: bool = False
+    result_type: str | None = None
 
 
 _Locals = dict[str, _Local]
@@ -52,6 +53,7 @@ def _join(left: _Locals, right: _Locals) -> _Locals:
             a.type_name if a.type_name == b.type_name else None,
             a.length if a.length == b.length else None,
             a.handle or b.handle,
+            a.result_type if a.result_type == b.result_type else None,
         )
     return result
 
@@ -214,6 +216,14 @@ class _FlowChecker:
             )
             return _Local("Part[]")
 
+        if isinstance(stmt, ast.AwaitStmt):
+            target = locals.get(stmt.handle)
+            if target is None or not target.handle:
+                raise ToolangValidationError(
+                    f"Await requires a retained handle: {stmt.handle!r}"
+                )
+            return _Local(target.result_type)
+
         source = locals.get("_")
         collection = isinstance(
             stmt,
@@ -297,8 +307,17 @@ class _FlowChecker:
                     settings,
                 )
 
-        if isinstance(stmt, ast.SpawnStmt):
-            return _Local(handle=True)
+        if (
+            isinstance(stmt, ast.SpawnStmt)
+            or isinstance(stmt, ast.RunStmt)
+            and stmt.asynchronous
+        ):
+            result_type = (
+                child.output or ("Part[]" if isinstance(child, ast.AgicDecl) else None)
+                if child
+                else None
+            )
+            return _Local(handle=True, result_type=result_type)
 
         transform = operation_transform(stmt.kind)
         if transform in {"filter", "sort"}:

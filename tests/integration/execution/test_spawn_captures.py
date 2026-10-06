@@ -16,7 +16,7 @@ from toolang.execution.executor.iteration import (
     iteration_scope,
     snapshot,
 )
-from toolang.execution.types import RunHandle, ThreadPrefix
+from toolang.execution.types import AwaitableHandle, ThreadPrefix
 
 
 @pytest.mark.parametrize("operation", ["run", "spawn", "exec", "let generate 1"])
@@ -64,7 +64,7 @@ flow worker(_: Text) -> Text:
             launch = harness.store.list_steps(run_id=parent.id)[1]
             assert launch.output is not None
             handle = launch.output.value
-            assert isinstance(handle, RunHandle)
+            assert isinstance(handle, AwaitableHandle)
             (invocation,) = harness.adapter.invocations
             assert any(
                 f"Job {handle.id}, label outer-label" in message_text(message.parts)

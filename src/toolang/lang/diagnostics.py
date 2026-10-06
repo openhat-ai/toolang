@@ -44,6 +44,12 @@ def error_kind(node: Node) -> str | None:
         return "missing"
     if node.is_error:
         return "error"
+    # Tree-sitter can recover with a missing hidden token that is absent from
+    # children. Keep its enclosing error-bearing leaf visible to validation.
+    if getattr(node, "has_error", False) and not any(
+        child.has_error or child.is_missing for child in node.children
+    ):
+        return "error"
     if node.type.startswith("invalid_"):
         return "invalid"
     return None

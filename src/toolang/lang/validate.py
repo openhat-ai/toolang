@@ -625,6 +625,13 @@ def _validate_stmt(
         _validate_stmts(stmt.stmts, runnables=runnables)
         return
 
+    if isinstance(stmt, ast.AwaitStmt):
+        if not stmt.handle or stmt.handle.startswith("_"):
+            raise ToolangValidationError(
+                "Await requires a retained named handle", line=stmt.span.line
+            )
+        return
+
     runnable = _stmt_runnable(stmt)
     _require_runnable(runnable, runnables, stmt=stmt)
     if isinstance(stmt, ast.GenerateStmt):

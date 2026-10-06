@@ -34,7 +34,7 @@ def test_spawn_keyword_takes_priority_and_run_is_not_a_type():
     assert validate_struct_type("Run") == "Run"
 
 
-@pytest.mark.parametrize("name", ["_", "_Run", "_Report", "__Internal"])
+@pytest.mark.parametrize("name", ["_", "_Awaitable", "_Report", "__Internal"])
 def test_authored_struct_names_cannot_use_runtime_prefix(name):
     from toolang.lang.types import Struct
 

@@ -440,3 +440,17 @@ and shell cwd, including reads; paths hidden in shell commands are not inspected
 Compact likewise stays out of model messages. Its result is
 `{controls: [{ref, horizon}]}`, referencing the compact Run output; the compact
 control changes the horizon used by subsequent ModelCalls.
+
+## Async Runtime Calls
+
+`_toolang/run` accepts an optional boolean `async`, defaulting to false. With true,
+it admits an owned child and returns `{id, thread, status}` immediately. Use
+`_toolang/await` with `{target: "run_id"}` for that Run's complete `{type, value}`
+result. The target must have been admitted by the calling Run, including through
+spawn. Await creates no new execution, accepts one reference, and reports target
+failure/cancellation as a tool error. An absent result produces the empty reply.
+
+Flow and agic share admission, ownership, and waiting services. Python `ToolRuntime`
+implementations provide `run(..., asynchronous=False)` and `await_target(target)`.
+Background children are canceled/drained when their parent ends or executes a
+handoff; spawned roots remain independent. Waiting itself never adopts ownership.

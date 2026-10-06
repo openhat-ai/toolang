@@ -11,7 +11,7 @@ from .types import StepOperation
 _RUNTIME_MARKERS = {"spawn", "pick", "honor", "compact"}
 _TOOL_OPERATIONS: dict[str, str] = {
     f"_toolang__{name}": name
-    for name in ("run", "spawn", "exec", "chdir", "pick", "honor", "compact")
+    for name in ("run", "spawn", "await", "exec", "chdir", "pick", "honor", "compact")
 }
 # Preserve the existing presentation reader for the former tool spelling.
 _TOOL_OPERATIONS["_toolang__execute"] = "exec"
@@ -36,12 +36,16 @@ def normalize_operation(
         # Keep existing short-name recognition for runtime progress summaries.
         if given.plugin == "_toolang" and given.call.name in _RUNTIME_MARKERS:
             name = given.call.name
+        if name == "run" and given.call.input.get("async") is True:
+            name = "async run"
         return StepOperation(
             begin,
             name or "tool",
             "tool",
             tool=given,
-            runnable=runnable_label(given.call.input.get("runnable")),
+            runnable=runnable_label(
+                given.call.input.get("target" if name == "await" else "runnable")
+            ),
             run_scope=name == "run",
             tool_marker="✧"
             if given.plugin == "_toolang" and name in _RUNTIME_MARKERS
@@ -51,11 +55,15 @@ def normalize_operation(
         return StepOperation(begin, "model", "model")
     return StepOperation(
         begin,
-        given.kind,
+        "async run" if getattr(given, "asynchronous", False) else given.kind,
         "flow",
         statement=given,
-        runnable=runnable_label(getattr(given, "runnable", "")),
-        run_scope=begin.kind == "run" and owner_is_agic,
+        runnable=runnable_label(
+            getattr(given, "runnable", getattr(given, "handle", ""))
+        ),
+        run_scope=begin.kind == "run"
+        and owner_is_agic
+        and not getattr(given, "asynchronous", False),
     )
 
 

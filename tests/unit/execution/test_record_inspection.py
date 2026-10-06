@@ -618,7 +618,7 @@ def test_every_control_payload_variant_has_one_canonical_record_shape() -> None:
                 "authored_commands",
                 "authored_session_commands",
                 "prompt_invocations",
-                "spawn_context",
+                "launch_context",
             },
         ),
         (

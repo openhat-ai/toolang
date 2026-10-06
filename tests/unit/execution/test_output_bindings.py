@@ -163,16 +163,21 @@ def test_output_codecs_reject_removed_wrappers(data) -> None:
     "result_type", [None, "Text", "Report[]", "Part[]", "Text[][]"]
 )
 def test_run_handle_has_one_protocol_and_event_shape(binding, result_type):
-    from toolang.execution.types import RunHandle
+    from toolang.execution.types import AwaitableHandle
     from toolang.execution.events import StepEnd
     from toolang.execution.types import StepRef
 
-    handle = RunHandle("run_spawned", "spawn_thread", result_type)
+    handle = AwaitableHandle("run_spawned", "spawn_thread", result_type)
     output = Output(handle, binding)
     stored = output_to_data(output)
     assert stored == {
-        "type": "_Run" if result_type is None else f"_Run<{result_type}>",
-        "value": {"id": "run_spawned", "thread": "spawn_thread"},
+        "type": "_Awaitable",
+        "value": {
+            "kind": "run",
+            "id": "run_spawned",
+            "thread": "spawn_thread",
+            "result_type": result_type,
+        },
         "binding": binding,
     }
     assert stored == output_to_protocol_data(output)
@@ -212,20 +217,43 @@ def test_authored_run_struct_and_json_are_not_runtime_handles():
 def test_runtime_handle_output_requires_only_canonical_identity(value):
     for decode in (output_from_data, output_from_protocol_data):
         with pytest.raises(ValueError):
-            decode({"type": "_Run<Text>", "value": value, "binding": "job"})
+            decode({"type": "_Awaitable", "value": value, "binding": "job"})
 
 
 @pytest.mark.parametrize(
     "type_name",
-    ["_Run<>", "_Run<Text", "_Run<Text>extra", "_Run<_Run>", "_Run<Run<Text>>"],
+    ["_Run", "_Run<Text>", "_Run<Text", "_Run<Text>extra", "_Awaitable<Text>"],
 )
-def test_runtime_handle_output_rejects_malformed_result_types(type_name):
+def test_runtime_handle_output_rejects_legacy_and_suffixed_types(type_name):
     for decode in (output_from_data, output_from_protocol_data):
         with pytest.raises(ValueError):
             decode(
                 {
                     "type": type_name,
-                    "value": {"id": "run_spawned", "thread": "spawn_thread"},
+                    "value": {
+                        "kind": "run",
+                        "id": "run_spawned",
+                        "thread": "spawn_thread",
+                        "result_type": "Text",
+                    },
+                    "binding": None,
+                }
+            )
+
+
+@pytest.mark.parametrize("result_type", ["_Awaitable", "Text[", 3])
+def test_awaitable_rejects_invalid_result_contract(result_type):
+    for decode in (output_from_data, output_from_protocol_data):
+        with pytest.raises(ValueError):
+            decode(
+                {
+                    "type": "_Awaitable",
+                    "value": {
+                        "kind": "run",
+                        "id": "run_spawned",
+                        "thread": "spawn_thread",
+                        "result_type": result_type,
+                    },
                     "binding": None,
                 }
             )

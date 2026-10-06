@@ -94,6 +94,37 @@ supplied separately from authored bindings.
 body statements update the current flow locals normally as the loop proceeds.
 
 
+## Async Run and Await
+
+```too
+let research = async run investigate
+let review = async run: Review the proposed changes.
+run draft
+let findings = await research
+await review
+```
+
+`async run` accepts named or inline targets, including inline return annotations.
+It captures inputs at launch and continues after admission. `let h = async run R`
+binds only `h`; bare `async run R` and `let async run R` discard the handle without
+changing locals. The formatter writes discarded launches as bare async run.
+
+`await h` waits for one retained named handle from async run or spawn and binds its
+complete result to `_`. `let result = await h` binds only `result`; `let await h`
+discards the result. Only successful output changes the destination; absent output
+preserves it and null is a result. Repeated awaits reuse the outcome. The handle
+survives unless explicitly replaced by `let h = await h`.
+
+Async children belong to the immediate launching Run. Its return, failure,
+cancellation, or exec cancels and drains unfinished children; discarding a handle
+does not detach work. A background failure is recorded and surfaces at await.
+Waiting does not transfer ownership or cancel independently spawned roots.
+
+The caller's launch Step ends when work is started. An optional await is a separate
+blocking Step; background progress belongs to the target Run. Comma operands,
+handle arrays, blocks, and direct async map/keep/sort/repeat are not supported.
+
+
 ## Spawn
 
 `spawn RUNNABLE` and `spawn [-> T]: BODY` use the same inputs and inline captures
@@ -110,11 +141,9 @@ on each evaluation, sharing it across input validation and binding. Unknown
 fields fail. Capture these fields as ordinary data before passing them to named
 runnables. Handles cannot be runnable results or general data arguments.
 
-`Run<T>` is runtime design notation, not a language type or constructor. An
-authored struct named `Run` remains ordinary data. Serialized outputs use the
-runtime tag `_Run<T>` for a known result type, otherwise `_Run`, inside the same
-`type/value/binding` envelope as ordinary outputs. User struct names cannot begin
-with `_`. Neither `async` nor `await` is implemented in this release.
+The shared native handle type is `_Awaitable`, with a separate result contract;
+`Awaitable<T>` is design notation, not an authored type or constructor. User struct
+names cannot begin with `_`. An authored struct named `Run` is ordinary data.
 
 The root survives its source finishing, failing, being canceled, or executing a
 handoff. Executor shutdown cancels it: script invocations stop their executor on

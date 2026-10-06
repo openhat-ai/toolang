@@ -7,6 +7,21 @@ events, records, identities, or lifecycle states.
 Inspection reads durable state and may reuse the same vocabulary, but it does
 not reconstruct live progress from stored records.
 
+## Invocation and Waiting
+
+Present run, exec, async run, spawn, and await as one family with action/target
+primary and identity, result, timing, and errors in consistent secondary positions.
+Their live/success meanings are Running/Completed, Transferring/Transferred,
+Starting/Started, Spawning/Spawned, and Waiting/Completed respectively. Preserve
+existing synchronous Run headers/footers and exec handoff boundaries.
+
+An async launch is one caller Step that ends at admission. Optional await is one
+separate blocking Step. Route the background Run tree through its own scope;
+never reopen launch, insert its activity into later caller Steps, or replay it
+under await. Aggregate its metrics once into the owning Run, even after its launch
+Step ends. Flow/tool syntax determines the action; handle types are not UI labels.
+
+
 ## Operational Progress
 
 Preparation, setup discovery, and AgentServer runtime work use `ProgressEvent`,

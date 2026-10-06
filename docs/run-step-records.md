@@ -133,20 +133,32 @@ and a newly prepared state.
 
 Spawn atomically records a new thread/create control, an independent root/run
 control, and the originating Step output. Both controls have `triggered_by` set
-to that physical Step; the root's `parent` is null. Entry `spawn_context` stores
+to that physical Step; the root's `parent` is null. Entry `launch_context` stores
 inherited settings, workspace bindings, iteration data, and the accepted output
 contract; ordinary entries omit it from storage. Resources, limits, model request,
 State, and cwd use existing entry fields.
 
-Flow's spawn-kind Step carries a `SpawnStmt`. Its durable and event output is
-`{"type": "_Run<Text>", "value": {"id": "run_…", "thread": "spawn_…"}, "binding": "job"}`.
-The runtime tag is `_Run<T>` when the target's result type T is known, otherwise
-`_Run`. Its value contains identity only; references use the same `output/value`
-path as ordinary outputs. The complete accepted result contract, including struct
-definitions, belongs to the root's entry `spawn_context`. Status is read from the
-Run record. Neither status nor the produced result is stored in the handle.
-`_Run<T>` is protocol vocabulary, not an authored language type; user struct names
-cannot start with `_`. An authored struct named `Run` remains ordinary data.
+Flow's spawn-kind Step carries a `SpawnStmt`; async run uses a run-kind Step with
+`RunStmt.asynchronous=true`. Both publish an output such as:
+
+```json
+{"type":"_Awaitable","value":{"kind":"run","id":"run_example","thread":"term_example","result_type":"Text"},"binding":"job"}
+```
+
+The tag stays `_Awaitable` for every result contract. The accepted complete contract,
+including struct definitions, belongs to entry `launch_context`; status comes from
+the Run record. The old `_Run`/`_Run<T>` tags have no decoder or alias. Rerun work
+recorded with those handles instead of retrying or decoding the old handle records.
+`_Awaitable` is not an authored type; a struct named `Run` remains ordinary data.
+
+Async run atomically commits child admission and source output, registers the
+background task, and ends the launch Step. The child retains its source Step link
+and parent Run ownership after launch completes. This link expresses provenance,
+not live UI containment. A value-kind `AwaitStmt` records the handle source and
+target identity in its input references before waiting, then stores a reference
+to the complete target result. Its public StepEnd resolves the output and error
+for observers that did not subscribe to the target. Durable result/error references
+preserve provenance. Waiting does not replay child events or costs.
 
 Agic's ordinary Tool Step instead stores a `ToolResultPart` whose `output` is
 `{id, thread, status: "pending"}`. The tool returns that exact committed snapshot;

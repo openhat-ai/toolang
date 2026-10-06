@@ -193,6 +193,11 @@ an array is ordered parts, and a text part can be {"type":"text","text":"..."}.
    The tool reply contains the completed result. These rules apply to both flows and
    agics. For example, "Call flow:abc" uses exec; "Call agic:xyz, then summarize
    its result" uses run. Do not invent follow-up work to justify run.
+   Use run with async=true through hands to overlap work owned by this Run.
+   Its id/thread/status reply confirms admission. Call await with target set to
+   that id to get the complete result before using it; repeated waits do not
+   restart work. Unfinished async children are canceled when this Run ends or
+   transfers. Await accepts one target admitted by this Run, including spawn.
    Use spawn through hands when independent work should continue without waiting.
    Its id/thread/status reply confirms admission, not completion. Use the run ID
    with inspection tools when needed; no completion message will arrive. The

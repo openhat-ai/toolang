@@ -24,13 +24,13 @@ from toolang.lang.ast import (
 from toolang.lang.contracts import OutputContract
 from toolang.state.state import AgentState, state_program
 
-from ..records import ThreadPeer, SpawnContext
+from ..records import ThreadPeer, LaunchContext
 from ..events import ThreadCreated, RunEnd
 from ..runnables import ResolvedRunnable, resolve_call_target
 from ..settings import resolve_settings
 from ..types import (
     ControlRef,
-    RunHandle,
+    AwaitableHandle,
     RunRef,
     StepRef,
     ThreadPrefix,
@@ -56,12 +56,12 @@ async def accept(
     raw_input: Mapping[str, object] | None = None,
     authorize: Callable[[ResolvedRunnable], None] | None = None,
     state_snapshot: tuple[AgentState, ControlRef] | None = None,
-) -> RunHandle:
+) -> AwaitableHandle:
     from .executor import _bound_runnable, _child_binding, _setup_sandbox
 
     dispatch_failure: RunEnd | None = None
 
-    def admit() -> RunHandle:
+    def admit() -> AwaitableHandle:
         nonlocal dispatch_failure
         executor = execution.executor
         executor._require_available()
@@ -139,7 +139,7 @@ async def accept(
             output_type = runnable.output or (
                 "Part[]" if isinstance(runnable, AgicDecl) else None
             )
-            handle = RunHandle(bound.run_id, thread, output_type)
+            handle = AwaitableHandle(bound.run_id, thread, output_type)
             result_contract = (
                 OutputContract.resolve(
                     output_type,
@@ -170,7 +170,7 @@ async def accept(
             sandbox=_setup_sandbox(bound.setup),
             cwd=bound.cwd,
             created_at=bound.created_at,
-            context=SpawnContext(
+            context=LaunchContext(
                 bound.settings,
                 bound.workspaces,
                 bound.captured_iterations,

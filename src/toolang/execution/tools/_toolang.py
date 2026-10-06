@@ -25,7 +25,7 @@ TOOLSET_NAME = "_toolang"
 class ToolangTool(Tool):
     """One stateless tool using authority supplied by its executor."""
 
-    name: Literal["run", "spawn", "exec", "pick", "honor", "compact", "chdir"]
+    name: Literal["run", "spawn", "await", "exec", "pick", "honor", "compact", "chdir"]
     description: str
     parameters: dict[str, object]
 
@@ -146,7 +146,24 @@ class ToolangTool(Tool):
             if not isinstance(ref, str) or not ref or ref != ref.strip():
                 raise ToolangError("_toolang/pick requires an exact capability ref")
             return await runtime.pick(kind, ref)
-        unknown = sorted(set(arguments) - {"runnable", "input"})
+        if self.name == "await":
+            target = arguments.get("target")
+            if (
+                set(arguments) != {"target"}
+                or not isinstance(target, str)
+                or not target
+                or target != target.strip()
+            ):
+                raise ToolangError("_toolang/await requires one target reference")
+            return await runtime.await_target(target)
+        unknown = sorted(
+            set(arguments)
+            - (
+                {"runnable", "input", "async"}
+                if self.name == "run"
+                else {"runnable", "input"}
+            )
+        )
         if unknown:
             raise ToolangError(
                 f"unknown _toolang/{self.name} input fields: {', '.join(unknown)}"
@@ -160,6 +177,11 @@ class ToolangTool(Tool):
         if not isinstance(input, Mapping) or any(not isinstance(k, str) for k in input):
             raise ToolangError(f"_toolang/{self.name} input must be an object")
         if self.name == "run":
+            asynchronous = arguments.get("async", False)
+            if not isinstance(asynchronous, bool):
+                raise ToolangError("_toolang/run async must be a boolean")
+            if asynchronous:
+                return await runtime.run(runnable, input, asynchronous=True)
             return await runtime.run(runnable, input)
         if self.name == "spawn":
             return await runtime.spawn(runnable, input)
@@ -273,7 +295,27 @@ _TOOLS = (
         "Follow the latest hands scope and requested_only policy. Read the target "
         "input signature and do not invent missing values. Acceptance selects the latest "
         "published version and rejects missing targets or changed signatures.",
-        _RUN_PARAMETERS,
+        {
+            **_RUN_PARAMETERS,
+            "properties": {
+                **dict(_RUN_PARAMETERS["properties"]),
+                "async": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Start owned background work; returns a handle immediately. Await its id for a result. Unfinished work is canceled when this Run ends or transfers.",
+                },
+            },
+        },
+    ),
+    ToolangTool(
+        "await",
+        "Wait for one async run or spawn admitted by this Run. Return its complete result; repeated waits do not relaunch work.",
+        {
+            "type": "object",
+            "properties": {"target": {"type": "string"}},
+            "required": ["target"],
+            "additionalProperties": False,
+        },
     ),
     ToolangTool(
         "exec",
