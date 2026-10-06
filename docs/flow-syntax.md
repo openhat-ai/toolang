@@ -87,8 +87,9 @@ and each parameter name holds its argument. See
 
 `_` is the primary local. A value statement reads a locals snapshot, computes
 one result, and applies its binding only after the complete statement succeeds.
-Except primary `_`, parameter/local names cannot start or end with `_`.
-Runtime history names are supplied separately from authored bindings.
+Regular local and parameter names follow the
+[variable naming rule](program.md#named-parameters). Runtime history names are
+supplied separately from authored bindings.
 `repeat` is different: it produces no result and accepts no `let` binding. Its
 body statements update the current flow locals normally as the loop proceeds.
 
@@ -103,8 +104,9 @@ The formatter writes nameless-let spawn as bare spawn.
 
 Read metadata through templates: `{{job.id}}` is the run ID, `{{job.thread}}` is
 the thread ID, and `{{job.status}}` reads persisted lifecycle status without
-waiting. A whole-handle template renders those three fields. One statement sees
-one status snapshot per run; later statements may see a newer status. Unknown
+waiting. A whole-handle template renders those three fields. Each statement's
+input binding uses one status snapshot per run. `until` refreshes that snapshot
+on each evaluation, sharing it across input validation and binding. Unknown
 fields fail. Capture these fields as ordinary data before passing them to named
 runnables. Handles cannot be runnable results or general data arguments.
 
@@ -194,6 +196,9 @@ repeat [N times] [windowing P]:
   [until RUNNABLE | until: BODY]
   SUFFIX
 ```
+
+`PREFIX` and `SUFFIX` are statement sequences; either may be empty, but together
+they must contain at least one ordinary Flow statement.
 
 
 ## Natural Reading
@@ -291,7 +296,8 @@ returns one complete result per outer input item. Neither flattens array results
   prepend historical messages automatically.
 - `repeat` is control flow, not a value statement. It has no result or binding.
   Its body statements update the same working locals according to their own
-  bindings. Zero iterations leave locals unchanged.
+  bindings. `repeat 0 times` leaves locals unchanged; an early condition exit
+  can retain prefix assignments even with zero completed iterations.
 
 
 ### Array Input And Empty Results
@@ -389,11 +395,11 @@ are clipped: keep retains everything and drop removes everything.
   the count limit starts no extra condition check.
 - `until` binds inputs from current locals at its authored position. True exits
   only the owning repeat, retaining prefix effects and skipping the suffix.
-  It never binds its Boolean result. A pass counts and contributes history only
-  after its entire body and condition succeed (or the condition skips for
-  insufficient history). A true trailing condition counts; an earlier exit does
-  not. Failure or cancellation, including in a trailing condition, never counts
-  the incomplete pass; failure is not interpreted as false.
+  False continues with the suffix. It never binds its Boolean result. A pass
+  counts and contributes history after its entire body succeeds and any condition
+  succeeds or skips for insufficient history. A true trailing condition counts;
+  an earlier exit does not. Failure, cancellation, or exec before completion
+  never counts the incomplete pass; failure is not interpreted as false.
 - `_k.name` reads the kth prior iteration's exit local; `_k._name` reads its
   entry local. `_k._` is the prior output and `_k.__` its input. Snapshots are
   immutable and exclude injected runtime bindings.
@@ -408,11 +414,8 @@ are clipped: keep retains everything and drop removes everything.
 - Named Flow conditions execute normally with the active history scope. Their
   children do not receive automatic whole-Flow warm-up; guarded reads work,
   and unguarded missing-frame reads fail. Named conditions retain normal tool
-  settings and live call resolution.
-- A regular local or parameter name fully matches `[a-z][a-z0-9_]*` and is not
-  a grammar keyword. `_` is the special primary-input parameter. Rename existing
-  keyword-named variables and their references. Data fields remain unrestricted;
-  thread variables are `_far`, `_near`, `_past`.
+  settings and live call resolution. Their executed tool effects are retained,
+  and a child exec stays within the condition's Run.
 
 The common form is:
 

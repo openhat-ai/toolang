@@ -1,7 +1,8 @@
 # Define Execution Value Provenance
 
 Flow syntax and value rules in this historical plan are superseded by
-[Flow Array Semantics](flow-array-semantics.md).
+[Flow Array Semantics](flow-array-semantics.md) and
+[Flexible repeat conditions](repeat-until-position.md).
 
 ## Goal
 
@@ -217,8 +218,9 @@ Canonical outputs are:
 
 Repeat body steps update the current flow local table directly. Primary and
 named bindings survive iterations and remain visible after repeat. The repeat
-wrapper is structural and has no output. Zero iterations leave locals
-unchanged. Known counts populate `iter` and `iters`; an until result uses
+wrapper is structural and has no output. `repeat 0 times` leaves locals
+unchanged; early condition exits retain executed prefix bindings. Known counts
+populate `iter` and `iters`; an until result uses
 `name=None` and `iter=-1` because it affects control flow rather than locals.
 
 Steer applies only to agic runs, whether root or child. `immediate` interrupts

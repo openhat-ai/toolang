@@ -370,10 +370,11 @@ Traversal is depth-first pre-order. Sibling order reflects executor semantics:
 - a `run` Step has at most one visible child Run; more is a tree-structure
   error;
 - a `par` Step's child Runs use `occur.item.index`, then Run ID;
-- a `loop` Step merges direct same-Run Steps and child Runs, groups them by
-  `occur.iteration.index`, orders `body` before `until`, orders same-Run Steps
-  before direct Runs within a phase, and then uses numeric StepPath or
-  `occur.item.index`;
+- a `loop` Step groups direct same-Run Steps and child Runs by
+  `occur.iteration.index`. Repeat merges them at `given.until_index` according to
+  [Flexible repeat conditions](repeat-until-position.md); absent/null positions
+  retain trailing order. Body Steps use numeric StepPath order, and Reduce child
+  Runs use `occur.item.index`. Phase labels alone do not determine order;
 - a tree rejects missing item/lane coordinates under `par` and missing
   iteration/phase coordinates under `loop`, because the current executor always
   records them.
