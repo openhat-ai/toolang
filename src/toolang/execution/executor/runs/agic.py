@@ -215,7 +215,7 @@ async def execute(
             agic,
             state=dependencies,
             runtime_tools_enabled=not repairing_output,
-            variables={**variables, **execution.iteration_values()},
+            variables={**variables, **execution.iteration_values(binding)},
             far=selected.far,
             near=selected.near,
             history=selected,

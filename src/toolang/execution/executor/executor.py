@@ -1541,11 +1541,12 @@ class _Execution:
         history = self.message_history().select(horizon)
         return {
             **history_variables(history.far, history.near, binding.settings.recall),
-            **binding.captured_iterations,
-            **self.iteration_values(step=step),
+            **self.iteration_values(binding, step=step),
         }
 
-    def iteration_values(self, *, step: StepRef | None = None) -> dict[str, object]:
+    def iteration_values(
+        self, binding: BoundRun, *, step: StepRef | None = None
+    ) -> dict[str, object]:
         """Capture iteration history as data, projecting any retained handles."""
         from .iteration import template_value
 
@@ -1559,7 +1560,34 @@ class _Execution:
                 views[handle.id] = self.store.run_handle_view(handle)
             return views[handle.id]
 
-        return iteration_values(project)
+        return iteration_values(project, captured=binding.captured_iterations)
+
+    def project_call_locals(
+        self,
+        locals: Mapping[str, Local],
+        runnable: AgicDecl | FlowDecl,
+        reference: str,
+        *,
+        step: StepRef,
+    ) -> Mapping[str, Local]:
+        """Bind all inline captures before projecting referenced handle views."""
+        if not isinstance(runnable, AgicDecl) or not is_generated_ref(reference):
+            return locals
+        captured = bind_inline_inputs(
+            runnable,
+            reference,
+            {
+                name: "Json"
+                if isinstance(local.value, RunHandle)
+                else _runtime_local_type(local)
+                for name, local in locals.items()
+            },
+        )
+        return self.project_handle_locals(
+            locals,
+            step=step,
+            names=[p.name for p in captured.params] + (["_"] if captured.input else []),
+        )
 
     def project_handle_locals(
         self,
@@ -1703,13 +1731,7 @@ class _Execution:
         self.require_inactive_runnable(binding, target, action="run")
         runnable = target.executable
         self._validate_child_contract(step, name, runnable)
-        if is_generated_ref(name):
-            locals = self.project_handle_locals(
-                locals,
-                step=step,
-                names=[p.name for p in runnable.params]
-                + (["_"] if runnable.input else []),
-            )
+        locals = self.project_call_locals(locals, runnable, name, step=step)
         _bind_child_input(
             runnable if include_primary else replace(runnable, input=None),
             locals
@@ -1887,13 +1909,9 @@ class _Execution:
         state, target = self.resolve_invocation(
             parent, statement.runnable, action="exec"
         )
-        if is_generated_ref(target.ref):
-            locals = self.project_handle_locals(
-                locals,
-                step=step,
-                names=[p.name for p in target.executable.params]
-                + (["_"] if target.executable.input else []),
-            )
+        locals = self.project_call_locals(
+            locals, target.executable, target.ref, step=step
+        )
         input, provenance = _bind_child_input(
             target.executable,
             locals,
@@ -3068,12 +3086,9 @@ def _child_binding(
     state: AgentState,
     state_ref: ControlRef,
 ) -> BoundRun:
-    if is_generated_ref(effective_name):
-        locals = context.project_handle_locals(
-            locals,
-            step=parent_step,
-            names=[p.name for p in runnable.params] + (["_"] if runnable.input else []),
-        )
+    locals = context.project_call_locals(
+        locals, runnable, effective_name, step=parent_step
+    )
     structs = {item.name: item for item in state_program(state, module).structs}
     input, control_input = _bind_child_input(
         runnable, locals, reference=effective_name, structs=structs

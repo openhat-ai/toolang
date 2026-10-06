@@ -89,6 +89,25 @@ def test_async_children_shadow_independently_and_restore_the_outer_scope():
     asyncio.run(scenario())
 
 
+def test_local_scope_shadows_all_captured_frames_and_restores_them_on_exit():
+    captured = {"_1": {"_": "recent"}, "_2": {"_": "older"}}
+    assert iteration_values(captured=captured) == captured
+    with iteration_scope(IterationScope(1)):
+        values = iteration_values(captured=captured)
+        assert values == {"_1": None}
+        assert render_text_template("{{^_1}}warming{{/_1}}", values) == "warming"
+        with pytest.raises(ToolangError, match="outside the active window: _2"):
+            render_text_template("{{_2._}}", values)
+        with iteration_scope(
+            IterationScope(
+                1, (IterationFrame(snapshot({}), snapshot({"_": Local("inner")})),)
+            )
+        ):
+            assert iteration_values(captured=captured) == {"_1": {"_": "inner"}}
+        assert iteration_values(captured=captured) == {"_1": None}
+    assert iteration_values(captured=captured) == captured
+
+
 def test_inference_respects_data_and_history_sections():
     assert template_dependencies(
         "{{items}} {{#items}}{{title}}{{/items}} {{topic}} {{#_1}}{{_}}{{_1._}}{{/_1}}"

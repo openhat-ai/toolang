@@ -107,10 +107,7 @@ async def accept(
                     state_ref=state_ref,
                 )
                 bound = execution.prepare_resources(bound, runnable)
-            iterations = {
-                **parent.captured_iterations,
-                **execution.iteration_values(step=step),
-            }
+            iterations = execution.iteration_values(parent, step=step)
             for template in _outer_templates(
                 state, bound.module, runnable, bound.settings
             ):

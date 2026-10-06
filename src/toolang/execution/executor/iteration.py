@@ -61,10 +61,13 @@ def template_value(local: Local) -> object:
 
 def iteration_values(
     project: Callable[[Local], object] = template_value,
+    *,
+    captured: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
+    """Use captured history only outside a local iteration scope."""
     scope = _SCOPE.get()
     if scope is None:
-        return {}
+        return dict(captured or {})
     return {
         f"_{index + 1}": (
             {

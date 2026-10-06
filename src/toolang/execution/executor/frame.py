@@ -265,7 +265,7 @@ def build_agic_frame(
             "run": {"id": run.run_id, "thread_id": run.thread},
             **history_variables(far, near, run.settings.recall),
         },
-        values={**run.captured_iterations, **variables},
+        values=variables,
         runnables=runnables,
         requested_only=routes.requested_only
         if runtime_tools and resolved_model.tool_call is True
