@@ -18,8 +18,10 @@ from tests.support.execution_harness import (
 from toolang.base.types.message import Message, TextPart, message_text
 from toolang.base.types.run import ModelCallResult
 from toolang.common.layout import AgentLayout
-from toolang.execution.events import StepEnd
+from toolang.execution.events import RunBegin, StepBegin, StepEnd
 from toolang.execution.executor.executor import _Execution
+from toolang.execution.inspection.trees import build_execution_tree, tree_to_data
+from toolang.execution.store import RunStore
 from toolang.execution.types import LoopStepNoted, RunHandle, ThreadPrefix
 from toolang.state.prepare import prepare_agent_state
 
@@ -61,7 +63,7 @@ flow main(_: Text) -> Text:
     )
 
 
-def _run(harness):
+def _run(harness, *, tracer=None):
     async def scenario():
         async with harness:
             root = await harness.executor.run(
@@ -69,7 +71,8 @@ def _run(harness):
                     thread=harness.threads.create(prefix=ThreadPrefix.TERM),
                     runnable="main",
                     primary=(TextPart("seed"),),
-                )
+                ),
+                tracer=tracer,
             )
             return (
                 root,
@@ -124,7 +127,8 @@ def test_position_controls_order_count_and_retained_output(
         source=_source(index, target),
         responses=[_answer(v) for v in responses],
     )
-    root, steps, runs, actual, error = _run(harness)
+    tracer = RecordingRunTracer()
+    root, steps, runs, actual, error = _run(harness, tracer=tracer)
     assert root.status == "succeeded", error
     assert actual == output
     loop = next(step for step in steps if step.parent is None)
@@ -140,6 +144,21 @@ def test_position_controls_order_count_and_retained_output(
         message_text(without_runtime_snapshots(call.call.messages)[-1].parts)
         for call in harness.adapter.invocations
     ] == prompts
+
+    expected = [
+        event.run if isinstance(event, RunBegin) else str(event.step)
+        for event in tracer.events
+        if isinstance(event, RunBegin | StepBegin)
+    ]
+    store = RunStore(harness.store.db_path, read_only=True)
+    try:
+        for pointer in (root.id, loop.ref):
+            tree = build_execution_tree(store.load_execution_snapshot(root=pointer))
+            order = expected if pointer == root.id else expected[1:]
+            assert [node.pointer for node in tree.nodes] == order
+            assert [node["pointer"] for node in tree_to_data(tree)] == order
+    finally:
+        store.close()
 
 
 @pytest.mark.parametrize("index", [0, 1, 2])

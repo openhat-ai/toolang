@@ -144,6 +144,9 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Fixed
 
+- Historical repeat trees now place `until` at its authored position,
+  consistently in Human and JSON inspection. (#695)
+
 - Repeated `until` evaluations now refresh Run handle status, and named
   Flow conditions retain their correct progress boundary with nested loops.
   (#695)

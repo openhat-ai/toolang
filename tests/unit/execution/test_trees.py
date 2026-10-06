@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -24,7 +25,14 @@ from toolang.execution.types import (
     OccurrencePosition,
     StepRef,
 )
-from toolang.lang.ast import RunStmt, Span
+from toolang.lang.ast import (
+    LetStmt,
+    RepeatStmt,
+    RunStmt,
+    Span,
+    flow_stmt_from_data,
+    to_data,
+)
 from tests.support.execution_fixtures import (
     project_run_end,
     project_run_start,
@@ -102,8 +110,10 @@ def test_tree_orders_parallel_runs_by_item_and_keeps_lane(tmp_path: Path) -> Non
     }
 
 
-def test_tree_merges_loop_steps_and_runs_by_iteration_and_phase(
+@pytest.mark.parametrize("until_index", [None, 0, 1])
+def test_tree_merges_loop_steps_and_runs_at_authored_position(
     tmp_path: Path,
+    until_index: int | None,
 ) -> None:
     store = RunStore(tmp_path / "runs.db")
     try:
@@ -156,15 +166,34 @@ def test_tree_merges_loop_steps_and_runs_by_iteration_and_phase(
         )
         project_run_end(store, run_id=until_run.id)
         project_run_end(store, run_id=root.id)
-        tree = build_execution_tree(store.load_execution_snapshot(root=root.id))
+        snapshot = store.load_execution_snapshot(root=root.id)
     finally:
         store.close()
 
+    assert isinstance(body.given, LetStmt)
+    statement = RepeatStmt(
+        span=Span(line=1),
+        count=1,
+        runnable="ready",
+        stmts=(body.given,),
+        until_index=until_index,
+    )
+    encoded = cast(dict[str, object], to_data(statement))
+    if until_index is None:
+        # Historical records have no positional field and retain trailing order.
+        encoded.pop("until_index")
+    loop = replace(loop, given=flow_stmt_from_data(encoded))
+    snapshot = replace(snapshot, steps=(loop, body))
+    tree = build_execution_tree(snapshot)
+    children = (
+        [until_run.id, str(body.ref)]
+        if until_index == 0
+        else [str(body.ref), until_run.id]
+    )
     assert [node.pointer for node in tree.nodes] == [
         root.id,
         str(loop.ref),
-        str(body.ref),
-        until_run.id,
+        *children,
     ]
 
 

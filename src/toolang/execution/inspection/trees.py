@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from toolang.base.money import add_cost, cost_text, normalize_cost
+from toolang.lang.ast import RepeatStmt
 
 from ..accounting import token_meter_quantity
 from ..records import (
@@ -413,17 +414,27 @@ def _ordered_step_children(
                 raise ValueError(
                     f"loop child requires iteration occurrence: {_record_pointer(child)}"
                 )
-        return tuple(sorted(children, key=_loop_child_order))
+        return tuple(
+            sorted(children, key=lambda child: _loop_child_order(parent, child))
+        )
     return ()
 
 
-def _loop_child_order(record: RunRecord | StepRecord) -> tuple[object, ...]:
+def _loop_child_order(
+    parent: StepRecord, record: RunRecord | StepRecord
+) -> tuple[object, ...]:
     occur = record.occur
     if occur is None or occur.iteration is None:  # pragma: no cover - validated first
         raise ValueError("loop child has no iteration occurrence")
     iteration = occur.iteration
     phase = 0 if iteration.phase == "body" else 1
     if isinstance(record, StepRecord):
+        statement = parent.given
+        if isinstance(statement, RepeatStmt) and statement.until_index is not None:
+            # Prior complete passes each consumed the whole body. Child Step
+            # indices keep increasing; recover this pass's authored position.
+            position = record.ref.index - iteration.index * len(statement.stmts)
+            phase = 0 if position < statement.until_index else 2
         return (iteration.index, phase, 0, record.ref.indices, record.created_at)
     item = occur.item.index if occur.item is not None else 0
     return (iteration.index, phase, 1, (item,), record.created_at, record.id)
