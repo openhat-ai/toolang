@@ -1,6 +1,6 @@
 # Flexible repeat conditions
 
-Proposed definition; human approval is required before implementation.
+Approved definition, including the keyword and reference restrictions below.
 
 ## Goal and scope
 
@@ -18,6 +18,10 @@ compatibility, presentation, and tests. Multiple conditions, new `break` or
   `until RUNNABLE` or `until: BODY` may precede, separate, or follow statements.
   Nested repeats own their conditions. Reject condition-only bodies, duplicate
   conditions, conditions outside repeats, and result bindings on `until`.
+- Language keywords, including reserved legacy words, cannot name local variables
+  or parameters. Reject `let until = value` and equivalent keyword bindings;
+  keyword prefixes such as `until_done` remain valid. Existing keyword-named
+  variables must be renamed together with their references.
 - At the condition's position, bind inputs from current locals. True exits only
   the owning repeat; false continues with the suffix. Keep committed prefix
   effects; skipped statements create no values or records. The Boolean result
@@ -38,8 +42,9 @@ compatibility, presentation, and tests. Multiple conditions, new `break` or
   no frame. Inline and named agics skip evaluation as false when their resolved
   templates, including inherited settings and guards, need unavailable history.
   Keep out-of-window preflight checks, including for zero-count loops.
-- Named targets accept the same references and input binding as `run`, require
-  declared `Boolean` output, and follow [live resolution](runtime-live-resolution.md).
+- Named conditions accept only bare `snake_name` targets; kind- or module-qualified
+  references are unsupported. Input binding follows `run`; targets require declared
+  `Boolean` output and follow [live resolution](runtime-live-resolution.md).
   Preserve visibility, reentry checks, authority, one invocation State snapshot,
   and module-owned settings. Reject named colon bodies, argument lists, and
   `until using`. Named children retain their tool settings; inline evaluators
@@ -93,6 +98,7 @@ flow improve:
 1. Parse/format/AST round trips cover all positions, both target forms, optional
    count/condition, nesting, comments, literal text, tabs, LF/CRLF, and EOF;
    malformed ownership, targets, bindings, and indices produce diagnostics.
+   Reject keyword variable/parameter names while preserving keyword prefixes.
 2. Offline traces verify true/false order, retained prefix effects, nearest-loop
    exit, zero-body leading exit, N=0/N=1, and no extra check after exhaustion.
    Assert calls, final locals, counts, and termination. Condition failure,
@@ -100,9 +106,9 @@ flow improve:
 3. Unbounded loops continue, transfer through exec, and promptly cancel with a
    local-only body. Verify positional input visibility, suffix-exec fallthrough,
    unreachable code, history warm-up, window limits, and nested scope restoration.
-4. Named agic/Flow cases cover typed inputs, qualified references, wrong output
-   types, incompatible live updates, reentry, module/tool settings, child exec,
-   and the documented difference in history warm-up.
+4. Named agic/Flow cases reject qualified references and cover typed inputs,
+   wrong output types, incompatible live updates, reentry, module/tool settings,
+   child exec, and the documented difference in history warm-up.
 5. Historical codecs, new-position serialization, cache rebuilds, retry, stored
    records, replay, and inspection preserve executed effects. Shared descriptions,
    script help, and progress show the specified unbounded-loop label.
