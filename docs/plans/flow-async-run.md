@@ -148,48 +148,52 @@ map/sort tools or generic code-execution tool are required.
 
 ## Steps, Events, and Progress
 
-Keep the existing Run/Step/Part event families for async run. Flow uses a run-kind
-launch Step with `RunStmt.asynchronous`, defaulting to false for historical records;
-agic uses a Tool Step whose run arguments identify async delivery. The launch Step's
-success means admission and durable handle output, not completion of the child.
+The caller's flow Step sequence stays linear. `async run` is one launch Step:
+live means starting the asynchronous Run, and success means started. End it as soon
+as admission, executor registration, and durable handle output succeed, then execute
+the next statement. Do not keep it live for background work or require a later await.
 
-A typical interleaving is:
+`await` is a separate, optional blocking Step. It stays live until the awaitable
+has an outcome, then publishes its result or error. An already-terminal target
+completes this Step immediately. Omitting await creates no wait Step and no implicit
+wait for a successful result; owner-lifecycle cleanup remains a separate rule.
+
+The caller's event sequence is:
 
 ```text
-StepBegin(launch, run, asynchronous=true)
-RunBegin(child, parent=launch)
-StepEnd(launch, succeeded, output=handle)
-StepBegin(other parent work)
-... child and parent Step/Part events interleave ...
-StepBegin(wait, value, targets=[child])
-RunEnd(child, succeeded, output=result)
-StepEnd(wait, succeeded, output=result reference)
+StepBegin(S1, async run)
+StepEnd(S1, succeeded, output=handle)
+StepBegin(S2, next statement)
+StepEnd(S2, succeeded, output=value)
+StepBegin(S3, await handle)                 # Only if authored
+StepEnd(S3, succeeded, output=result_ref)
 ```
 
-This is an illustrative trace, not new event constructor syntax. Record ordered
-wait targets at entry, not only operand names or success-time output references.
-Required order is launch begin before child admission before successful launch end;
-each entity's begin precedes its end. Child completion may precede handle delivery
-or the wait. An already-terminal target needs no replayed Run/Part events. Waiting
-never emits a second RunBegin, reparents the child, or duplicates its accounting.
-Persist events before observation and serialize shared-root event/accounting updates.
+This is an illustrative trace, not new event constructor syntax. Flow can retain
+a run-kind launch Step with `RunStmt.asynchronous` (historical default false) and
+a value-kind AwaitStmt; agic uses the corresponding Tool Steps. Record ordered wait
+targets at entry so waiting is inspectable before a result exists.
 
-The child's parent remains the launch Step after that Step ends; its lifetime owner
-remains the launching Run. Wait edges are dependencies, not ownership edges. A later
-child failure ends the child and fails a wait with the original error reference;
-the successful launch stays successful. Target-only cancellation is an await error,
-while cancellation of the caller cancels its wait. Parent RunEnd and exec replacement
-must follow cleanup of unfinished owned work. Admission/delivery interruption must
-not leave an accepted child without registry ownership or durable handle recovery.
+The background target has its own Run/Step/Part events and execution scope. Those
+events describe its lifecycle, not additional caller Steps or live children of the
+launch Step. Raw transport may multiplex scopes; route/project events by scope so
+background progress never reopens or inserts rows into the caller's linear timeline.
+Inspect background execution through its handle/target scope. Await observes its
+outcome without replaying its events or moving its progress under the wait Step.
 
-Progress consumers must stop assuming that every child finishes before its source
-Step. Currently `execution_progress/projector.py` rejects StepEnd with an active
-child Run and aggregates child metrics through active source Steps. Permit this
-overlap for explicit async launches, retain source/owner metadata after launch end,
-and preserve synchronous nesting checks. Show launch success, live child progress,
-and waiting as separate facts; do not display child success when only launch ended.
-Attribute child cost once even if its handle is awaited repeatedly or in a group.
-Audit CLI/TUI, event streams, stored inspection, and retry for the same ordering.
+Preserve launch provenance and Run ownership independently of live Step state;
+they do not imply temporal containment. A later target failure changes its outcome
+and fails a wait with the original error reference, never the successful launch.
+Target-only cancellation is an await error; caller cancellation cancels its wait.
+Persist events before observation, serialize root accounting, and attribute target
+cost once, regardless of how often it is awaited. Admission/delivery interruption
+must not leave accepted work without registry ownership or durable recovery.
+
+Current `execution_progress/projector.py` assumes live source Steps contain child
+Runs and rejects StepEnd while they remain active. Async launch must not enter that
+synchronous presentation scope. Adapt event routing, source/owner lookup, and metric
+aggregation instead of retaining a live launch row. Preserve ordinary synchronous
+nesting checks and apply the same scope separation to CLI/TUI, streams, and inspection.
 
 ## Implementation Touchpoints and Acceptance
 
@@ -202,7 +206,7 @@ Audit CLI/TUI, event streams, stored inspection, and retry for the same ordering
 - `src/toolang/execution/{types,records,store,events,schemas}.py`: trusted handles,
   operation identities, durable outputs, restoration, and inspection.
 - `src/toolang/cli/common/execution_progress/`, `script_progress/`, event-stream
-  consumers, and progress tests: overlapping lifetimes, presentation, and accounting.
+  consumers, and progress tests: linear caller Steps, background scopes, and accounting.
 
 Acceptance scenarios:
 
@@ -218,10 +222,12 @@ Acceptance scenarios:
 5. Round-trip handles and fault-inject admission/delivery; retry preserves bindings
    and promptly rejects unavailable targets. Historical Run records still decode.
 6. Flow/tool parity, authorization, error replies, and historical event decoding pass.
-7. Replay traces where child events continue after launch end, children finish before
-   await or handle delivery, multiple awaits observe one outcome, and cancellation
-   races admission. Progress retains owner links and counts child metrics once;
-   synchronous nesting errors still fail. Run the default offline checks.
+7. Replay background events during later caller Steps, before await/handle delivery,
+   with no await, and across repeated awaits. The caller remains linear: only launch
+   is live while starting; only an explicit await waits for the target. Background
+   events never reopen/inject caller rows. Cover admission cancellation, retained
+   ownership, and accounting exactly once; synchronous nesting errors still fail.
+   Run the default offline checks.
 
 Publish/pin matching grammar before release; validate proposed examples against it.
 Generate the implementation changelog through the repository runnable.
@@ -232,9 +238,9 @@ Before implementation approval, settle:
 
 1. Whether native handle arrays and direct async collection operators ship initially
    or later; if arrays ship, define construction/binding syntax and the runtime codec.
-2. The operation-handle representation, concrete tool target schema, and durable
-   launch/completion Step layout shared with #686. A completion Step reference is a
-   candidate; neither a Run identity nor all child IDs may be assumed.
+2. The operation-handle representation, concrete tool target schema, and background
+   execution-scope records shared with #686. They must preserve the linear caller
+   Step contract above; neither a Run identity nor all child IDs may be assumed.
 
 Risks are conflating handle collections with array-valued operations, admission
 with completion, or observation with ownership. This revision records the design
