@@ -104,14 +104,16 @@ cancel an independently spawned root just because this group awaited it.
 
 Use one durable operation identity for the group's lifecycle, result contract, and
 ordered output references. Reuse par Step machinery for branch execution and
-source-ordered child paths. Keep launch admission, group completion, and waiting
-separate; a successful launch must not later become a failed launch. The concrete
-handle codec and Step layout must be settled with #685 before implementation.
-Apply #685's event/progress rules: async launch may finish while its operation and
-branches remain active; preserve their source and owner links. Group terminal
-events describe group completion, and wait completion only retrieves its result.
-The layout must not force branch Runs to finish before the launch Step ends or
-count their progress/cost again when a caller awaits the group.
+source-ordered child paths inside the group's execution scope. The caller remains
+linear: `async:` is one launch Step that ends when the group is started; an optional
+later `await h` is one blocking Step. `await:` is one blocking caller Step for starting
+and waiting on the group, without an additional visible launch Step.
+
+Follow #685's scope separation. Background branch events belong to the group, not
+live children displayed under the completed launch Step. Preserve provenance and
+ownership outside live presentation state. Waiting neither replays branch events
+nor relocates them under the wait Step, and costs are counted once. The concrete
+handle codec and background execution records remain to be settled with #685.
 
 AsyncBlockStmt and AwaitBlockStmt may lower to the same group operation with
 different delivery modes; handle AwaitStmt only waits for existing work. Flow and
@@ -151,13 +153,17 @@ Acceptance scenarios:
    preserves independently owned targets. Discarded handles do not leak tasks.
 6. Round-trip admission, operation, and output records; retry restores only outer
    bindings, including in repeat. Cover missing/live/terminal targets and provenance.
-7. Validate links/examples and run all default checks for implementation, keeping
+7. With or without a later await, caller Steps remain linear and the async launch
+   row ends at startup. Background branch events stay in the group scope; `await:`
+   presents one blocking Step. No reopened launch rows or replayed progress/cost.
+8. Validate links/examples and run all default checks for implementation, keeping
    concurrency tests offline and deterministic. Generate its changelog via the runnable.
 
 ## Open Decisions and Risks
 
-The remaining blocker is #685's concrete operation-handle and durable Step design;
-this plan must not assume Run-only identities or independent branch Run handles.
+The remaining blocker is #685's operation-handle and background execution records;
+the linear caller Step lifecycle is fixed, independently of that representation.
+This plan must not assume Run-only identities or independent branch Run handles.
 Approval must cover both launch modes and their shared contract before implementation.
 
 Risks are treating this block as a sequential flow, flattening results, leaking
