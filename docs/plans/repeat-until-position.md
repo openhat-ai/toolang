@@ -18,10 +18,11 @@ compatibility, presentation, and tests. Multiple conditions, new `break` or
   `until RUNNABLE` or `until: BODY` may precede, separate, or follow statements.
   Nested repeats own their conditions. Reject condition-only bodies, duplicate
   conditions, conditions outside repeats, and result bindings on `until`.
-- Language keywords, including reserved legacy words, cannot name local variables
-  or parameters. Reject `let until = value` and equivalent keyword bindings;
-  keyword prefixes such as `until_done` remain valid. Existing keyword-named
-  variables must be renamed together with their references.
+- A regular variable name is valid iff it fully matches `[a-z][a-z0-9_]*`
+  and is not in the grammar-owned keyword set, including reserved legacy words,
+  using exact, case-sensitive comparison. Apply to locals and named parameters;
+  `_` retains its special primary-input role. Existing invalid names must be
+  renamed together with their references.
 - At the condition's position, bind inputs from current locals. True exits only
   the owning repeat; false continues with the suffix. Keep committed prefix
   effects; skipped statements create no values or records. The Boolean result
@@ -98,7 +99,8 @@ flow improve:
 1. Parse/format/AST round trips cover all positions, both target forms, optional
    count/condition, nesting, comments, literal text, tabs, LF/CRLF, and EOF;
    malformed ownership, targets, bindings, and indices produce diagnostics.
-   Reject keyword variable/parameter names while preserving keyword prefixes.
+   Validate local/parameter names against regex boundaries and the complete
+   keyword set; preserve the special `_` parameter.
 2. Offline traces verify true/false order, retained prefix effects, nearest-loop
    exit, zero-body leading exit, N=0/N=1, and no extra check after exhaustion.
    Assert calls, final locals, counts, and termination. Condition failure,
