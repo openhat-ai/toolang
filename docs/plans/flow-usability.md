@@ -177,8 +177,8 @@ repeat 5 times windowing 3:
   Flow Step inputs/outputs are not individually appended to history.
 - Count each conversation contribution once. Exclude automatically recalled
   prefixes and repeated model-input prefixes. Include terminal tool replies and
-  committed run-completion messages even without a subsequent model Step;
-  preserve call/result pairing and keep scheduling receipts distinct from outcomes.
+  child results even without a subsequent model Step; preserve call/result pairing
+  through the synchronous run tool reply.
 - Model input means recorded conversation messages, including rendered context;
   instructions, tool definitions, and provider settings are not history messages.
 - Preserve existing retry/execute segment selection and control/failure/cancellation
@@ -221,45 +221,29 @@ repeat 5 times windowing 3:
 - Current progress travels through `_`, named arguments, or iteration frames;
   compaction does not add active-run intermediates to prior thread history.
 
-## 7. Schedule Runtime Calls
+## 7. Runtime Calls
 
-| Runtime call | Execution decision | Continuation |
+| Runtime call | Execution decision | Tool Step completion |
 | --- | --- | --- |
-| `_toolang/run` | Schedule a separate target Run | Resume the caller after the target ends |
-| `_toolang/execute` | Replace the runnable in the same Run | The caller never resumes |
+| `_toolang/run` | Execute a child Run synchronously | Child result `{type, value}` or tool error |
+| `_toolang/exec` | Replace the runnable in the same Run | Applied control receipt, before target execution |
 
-- Both tool results acknowledge committed controls, not target execution outcomes.
-  Return control references; `run` also identifies its target Run. Validate target,
-  authorization, recursion, and input contracts before acknowledging acceptance.
-- Run sequence: prepare inputs and inherited settings -> persist the pending target
-  Run and entry control -> acknowledge and end the Tool Step -> runtime applies
-  the control and executes the target -> record its outcome -> resume the caller.
-  Retain caller/root ownership and causal links to the originating call/control;
-  no extra Step is needed solely to dispatch the target.
-- Preserve the caller's conversation and continuation while it waits. Before its
-  next model call, add one recorded runtime context message containing the target
-  Run reference, terminal status, and output type/value or error. Deliver it without
-  model polling; keep the receipt unchanged and emit no second tool result.
-- Process tool calls in existing order, finishing each scheduled Run before the
-  next call. Present the batch's paired tool replies before completion context.
-  `execute` remains the only tool call allowed in its model call.
-- Target failure/cancellation is reported through completion context; acceptance
-  remains successful. Caller/root cancellation propagates and stops continuation.
-  Persist acceptance and its receipt consistently; recovery reuses the same target
-  Run and delivers each completion once, including after interrupted delivery.
-- Control `applied` means its decision has taken effect; the target Run records
-  execution status. Preserve each control's actual application boundary.
-- Execute keeps its current sequence: commit an applied control -> record the tool
-  result and end the Tool Step -> switch the execution loop to the target. The
-  target starts its own conversation; a committed transfer is not rolled back on
-  target failure. Preserve the original Run's output contract.
-- Existing related behavior remains: pick/honor record recall controls; reload
-  applies State; compact publishes history for adoption. Honor/compact are runtime
-  initiated. Honor reports the intercepted operation as unexecuted and lets the
-  model reconsider it after reading rules.
-- Current `run` awaits a child inside its Tool Step and returns the child's output.
-  Replace that path with control scheduling and separate completion context.
-  Authored flow `run` statements retain their statement result binding.
+- Validate target, authorization, recursion, and input before admission. Persist the
+  child and its applied entry control together, retaining causal ownership through
+  the enclosing Tool Step. No additional dispatch Step is needed.
+- Run contains the child lifetime, matching flow run. Preserve caller conversation
+  and continuation; deliver its result through one ordinary paired tool reply.
+  History derives that reply even without a following model call. No scheduling
+  receipt or separate completion message is needed.
+- Process calls in order. Child failure or child-only cancellation returns a tool
+  error and permits caller recovery. Caller cancellation or immediate steer unwinds
+  the child and Tool Step. Applied admission controls remain terminal.
+- Exec commits its applied control and successful Tool Step together before the
+  target starts. It must be the only tool call in its model call and never resumes
+  the caller, even on target failure. Preserve the entry output contract.
+- Pick/honor record recall controls; reload applies State; compact publishes history
+  for adoption. Honor/compact are runtime initiated. Honor reports the intercepted
+  operation as unexecuted so the model can reconsider it after reading rules.
 
 ## 8. Configure Execution
 
@@ -381,16 +365,13 @@ repeat 5 times windowing 3:
 - Verify root flow input/final-output exchanges and shared thread-history snapshots
   across child agics/flows, with automatic recall only in root agics.
 - Verify root-Step projection without recursive child transcripts, child outcomes
-  through caller completion context, excluded flow intermediates, terminal receipts
-  and completions, no duplicated recalled prefixes, and contributions with recall none.
-- Verify run-control persistence before acknowledgment, Tool Step completion before
-  target execution, serial caller suspension/resumption, batch reply ordering,
-  and separate completion messages for success/failure/cancellation. Recovery must
-  preserve continuation without duplicate dispatch or completion delivery.
-- Verify run/exec control references and causal ownership, unchanged execute
-  transfer/output contracts, caller cancellation, and flow statement result binding.
-- Migrate runtime tool descriptions and result consumers to scheduling receipts
-  with final outcomes delivered through completion context.
+  through ordinary tool replies, excluded flow intermediates, no duplicated recalled
+  prefixes, and contributions with recall none.
+- Verify run-control application at admission, child RunEnd before enclosing StepEnd,
+  serial batch order, typed results/errors, caller cancellation, and flow result binding.
+  Replay and history must preserve paired results without extra completion messages.
+- Verify run/exec causal ownership and unchanged exec transfer/output contracts.
+- Align runtime tool descriptions and result consumers with synchronous run results.
 - Verify every recall view, omission versus explicit default, child near under parent
   none, missing sources, and policy/version consistency across compaction and replay.
 - Verify lane inheritance through agic/flow chains, root fallback 4, child overrides,

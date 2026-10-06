@@ -49,7 +49,6 @@ from ..types import (
 )
 from ..values import parts_from_value
 from .tool_replies import workspace_reply_from_step
-from .run_results import scheduled_run
 from .utils import control_message, literal_delta, render_delta
 
 SUMMARY_PREFIX = (
@@ -265,7 +264,6 @@ def tail_delta(
     steps: Sequence[StepRecord],
     controls: Mapping[ControlRef, ControlRecord],
     resolve: Callable[[object], object],
-    completion: Callable[[str], MessageTemplate | None] = lambda _run: None,
 ) -> tuple[MessageTemplate, ...]:
     """Record the still-unrecorded terminal exchange, not a second transcript."""
 
@@ -362,16 +360,6 @@ def tail_delta(
                 and control.status == "applied"
             ):
                 deferred[ref] = control
-    # Every paired tool reply precedes the batch's independent completion context.
-    for step in tail:
-        if (
-            (run_id := scheduled_run(step)) is not None
-            and step.output is not None
-            and isinstance(step.output.value, ToolResultPart)
-            and step.output.value.tool_call_id in calls
-            and (message := completion(run_id)) is not None
-        ):
-            messages.append(message)
     if not models and run.output is not None:
         # A non-model root contributes its public output, never child internals.
         messages.append(
@@ -469,7 +457,6 @@ def history_units(
     steps: Sequence[StepRecord],
     controls: Sequence[ControlRecord],
     resolve: Callable[[object], object],
-    completion: Callable[[str], MessageTemplate | None],
     error: str | None = None,
     render: bool = True,
 ) -> tuple[HistoryUnit, ...]:
@@ -504,9 +491,7 @@ def history_units(
                 if m.source is None
             )
     fallback = active[-1].ref if active else None
-    entries.extend(
-        (fallback, m) for m in tail_delta(run, active, related, resolve, completion)
-    )
+    entries.extend((fallback, m) for m in tail_delta(run, active, related, resolve))
     tool_steps = {
         s.given.call.tool_call_id: s.ref
         for s in active

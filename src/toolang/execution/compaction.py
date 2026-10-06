@@ -134,7 +134,6 @@ def history_units(
         steps=store.list_steps(run_id=run.id),
         controls=store.list_run_controls(run_id=run.id),
         resolve=store.resolve_value,
-        completion=store.run_completion,
         error=store.resolve_error(run.error) if run.error is not None else None,
         render=render,
     )

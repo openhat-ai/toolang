@@ -1357,7 +1357,7 @@ class RunExecutor:
             and interruption.kind == "cancel"
             and interruption.target == RunRef(run_id)
         ):
-            # Receipt delivery may already have applied the target's cancel.
+            # RunBegin delivery may already have applied the target's cancel.
             cancellation = interruption
         await emit(
             RunEnd(
@@ -2297,7 +2297,6 @@ class _Execution:
             authorize=authorize,
             state_snapshot=state_snapshot,
             expected_output=expected_output,
-            begin=True,
         )
         result = await self._execute_child_binding(
             binding,
@@ -2321,7 +2320,6 @@ class _Execution:
         name: str,
         occurrence: Occurrence | None,
         *,
-        begin: bool = False,
         resolution: Literal["module", "state"] = "module",
         raw_input: Mapping[str, object] | None = None,
         authorize: Callable[[ResolvedRunnable], None] | None = None,
@@ -2387,7 +2385,6 @@ class _Execution:
         binding, runnable = await self._begin_child(
             prepare,
             state_snapshot=state_snapshot or (parent.state, parent.state_ref),
-            begin=begin,
         )
         assert not isinstance(runnable, CompactSpec)
         return binding, runnable
@@ -2488,7 +2485,6 @@ class _Execution:
         ],
         *,
         state_snapshot: tuple[AgentState, ControlRef],
-        begin: bool = True,
         resume: RunRecord | None = None,
     ) -> tuple[BoundRun, AgicDecl | FlowDecl | CompactSpec]:
         """Prepare and atomically accept a child before starting any of its work."""
@@ -2538,15 +2534,12 @@ class _Execution:
                         request_id=None,
                         created_at=binding.created_at,
                         horizon=binding.horizon,
-                        schedule_receipt=not begin,
                     )
                 self._cwd_cache[binding.run_id] = binding.cwd
                 self.executor._register_child_run(
                     run_id=binding.run_id,
                     root_run_id=binding.root_run_id,
                 )
-                if not begin:
-                    return binding, runnable
                 event = RunBegin(
                     run=binding.run_id,
                     control=ControlRef(RunRef(binding.run_id), binding.control_index),

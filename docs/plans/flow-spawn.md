@@ -21,8 +21,8 @@ dispatch, detached processes, restart/resume, and new CLI/API flags.
 
 ## Verified Baseline
 
-- Flow `run` waits and binds complete output. Agic `_toolang/run` acknowledges
-  admission, then waits and injects a separate `toolang:run-result` message.
+- Flow `run` and agic `_toolang/run` both wait for the child; their enclosing Step
+  ends with the result or error. Spawn acknowledges independent root admission.
 - `RunExecutor.run` starts roots with `parent=None`; its Python handle is not a
   language value. `stop()` cancels and drains all roots owned by that executor.
 - Thread history includes active predecessors; compaction and cwd defaults are
@@ -100,8 +100,13 @@ parent-owned, while spawned roots remain executor-owned.
 Returning a Run handle confirms admission. Agic receives `{id, thread, status}`
 and can cite id or pass it as the run argument to history/read_output.
 The reply is a snapshot; it does not update
-inside model history. Keep `_toolang/run`'s existing `{run_id, controls}` reply
-and completion message unchanged. Creation/entry controls remain persisted and
+inside model history. Synchronous `_toolang/run` keeps its Tool Step open until
+the child ends, matching flow run. Its single tool reply carries `{type, value}`
+on success or the existing tool error on failure; remove scheduling receipts and
+separate completion messages. Child-local cancellation returns an error to the
+caller; caller cancellation or immediate steer unwinds the child and Tool Step.
+The run control is applied at admission, independently of Step completion.
+Creation/entry controls remain persisted and
 inspectable by run ID; they need no separate field on the new handle.
 
 ### Field Access and Binding
@@ -160,8 +165,8 @@ discarding or overwriting a handle does not cancel its run.
   run does; causal spawn links do not extend that path into other roots.
 - Spawn may share an ordinary tool-call batch. Each call commits independently;
   interruption skips unstarted calls without undoing accepted roots. Preserve
-  exec/chdir singleton rules. Never set the scheduled-child slot or inject a
-  child completion message, including during history reconstruction.
+  exec/chdir singleton rules. Never wait for the spawned root or inject a child
+  completion message, including during history reconstruction.
 - Handle fields grant no authority. Reuse authorized history and host controls
   for inspection/control; add no polling operator or model control tool.
 

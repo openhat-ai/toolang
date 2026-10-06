@@ -322,9 +322,9 @@ limits remain 64 unique targets and 32 KiB; narrow hands/handoffs if exceeded.
 `AgentSetup.tools()` retains registered runtime tools independently of user tool
 ceilings. Each invocation has an ordinary Tool Step. Trusted runtime tools receive
 per-call operations through `RuntimeToolContext.runtime`, not the Store or executor.
-Run creates a child owned by its Tool Step and returns a scheduling receipt with
-`run_id` and `controls`. A separate runtime message delivers its status and, on
-success, output type and content before the caller continues.
+Run creates a child owned by its Tool Step and waits for it to finish. The single
+tool reply returns `{type, value}` on success or `ToolResultPart.error` on failure
+or child-only cancellation. It emits no receipt or separate completion message.
 Execute returns `{controls: [ControlRef]}` and finishes its Tool Step before
 transferring execution. Pick, honor, and compact return summaries of durably created or reused
 controls; recalled content remains in controls, not the result summaries.
@@ -383,7 +383,7 @@ may share a tool batch; each commits independently.
 
 The response is the admission snapshot `{id, thread, status: "pending"}` stored
 in the Tool Step. Use `id` with existing history/output tools to inspect progress
-and results. Spawn occupies no scheduled-child slot, waits for no result, and
+and results. Spawn waits for no result and
 injects no completion message. Work survives the source Run, but executor shutdown
 cancels it. In a short-lived script host, returning from the script stops unfinished
 roots. See [spawn syntax](flow-syntax.md#spawn) and

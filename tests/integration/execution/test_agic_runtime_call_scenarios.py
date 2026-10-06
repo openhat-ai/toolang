@@ -21,7 +21,7 @@ from tests.support.execution_harness import (
     PublicationTracer,
     RecordingTool,
 )
-from toolang.base.types.message import Message, ToolResultPart, message_text
+from toolang.base.types.message import Message, ToolResultPart
 from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.base.types.tool import ToolContext
 from toolang.common.layout import AgentLayout
@@ -201,7 +201,7 @@ agic child(_: Text) -> Text:
             assert dynamic_output is not None
             (persisted_result,) = parts_from_value(dynamic_output.value)
             assert isinstance(persisted_result, ToolResultPart)
-            assert set(persisted_result.output) == {"run_id", "controls"}
+            assert persisted_result.output == {"type": "Text", "value": "child output"}
             children = [
                 run
                 for run in harness.store.list_runs(thread_id=thread, limit=None)
@@ -220,13 +220,9 @@ agic child(_: Text) -> Text:
             result = last_tool_result(followup)
             assert isinstance(result, ToolResultPart)
             assert result.tool_call_id == "call-run"
-            assert result.output["run_id"] == children[0].id
             assert persisted_result == result
-            assert result.output["controls"] == [str(child_control.ref)]
             assert child_control.status == "applied"
-            (completion,) = [m for m in followup.messages if m.tag == "run-result"]
-            assert "child output" in message_text(completion.parts)
-            assert 'status="succeeded"' in message_text(completion.parts)
+            assert not any(m.tag == "run-result" for m in followup.messages)
             parent_routes = route_snapshots(harness.adapter.invocations[0].call)
             assert [item["ref"] for item in parent_routes["hands"]] == ["agic:child"]
             assert [item["ref"] for item in parent_routes["handoffs"]] == [
@@ -896,7 +892,7 @@ agic parent(_: Text) -> Text:
     asyncio.run(scenario())
 
 
-def test_dynamic_child_failure_reports_completion_and_model_recovers(
+def test_dynamic_child_failure_reports_error_and_model_recovers(
     tmp_path: Path,
 ) -> None:
     harness = ExecutionHarness.create(
@@ -949,28 +945,24 @@ agic child(_: Text) -> Text:
             steps = harness.store.list_steps(run_id=root.id)
             assert [step.kind for step in steps] == ["model", "tool", "model"]
             dynamic = steps[1]
-            assert dynamic.status == "succeeded"
+            assert dynamic.status == "failed"
             child = next(
                 run
                 for run in harness.store.list_run_tree(root_run_id=root.id)
                 if run.parent == dynamic.ref
             )
             assert child.status == "failed"
-            assert dynamic.error is None
+            assert isinstance(dynamic.error, ErrorRef)
             assert child.error is not None
             assert "child provider failed" in harness.store.resolve_error(child.error)
             result = last_tool_result(harness.adapter.invocations[2].call)
             assert isinstance(result, ToolResultPart)
             assert result.tool_call_id == "failed-child"
-            assert result.error is None
-            (completion,) = [
-                m
+            assert result.error is not None and "child provider failed" in result.error
+            assert not any(
+                m.tag == "run-result"
                 for m in harness.adapter.invocations[2].call.messages
-                if m.tag == "run-result"
-            ]
-            assert child.id in message_text(completion.parts)
-            assert 'status="failed"' in message_text(completion.parts)
-            assert "child provider failed" in message_text(completion.parts)
+            )
 
     asyncio.run(scenario())
 
@@ -1284,10 +1276,7 @@ flow research(brief: Brief, prefix?: Text) -> Text:
             result = last_tool_result(harness.adapter.invocations[2].call)
             assert isinstance(result, ToolResultPart)
             assert result.error is None
-            assert result.output == {
-                "run_id": child.id,
-                "controls": [f"{child.id}@0"],
-            }
+            assert result.output == {"type": "Text", "value": "completed"}
 
     asyncio.run(scenario())
 
@@ -2224,13 +2213,9 @@ agic other() -> Text:
                     ) == {"hands": [], "handoffs": []}
                 if operation == "run":
                     resumed = harness.adapter.invocations[-1].call
-                    receipt = last_tool_result(resumed)
-                    assert receipt.error is None and "output" not in receipt.output
-                    assert any(
-                        'status="succeeded"' in message_text(m.parts)
-                        and target_output in message_text(m.parts)
-                        for m in resumed.messages
-                    )
+                    result = last_tool_result(resumed)
+                    assert result.error is None
+                    assert result.output == {"type": "Text", "value": target_output}
                 else:
                     assert (
                         len(

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
@@ -15,7 +16,7 @@ from toolang.lang.input import CallInput
 
 from ..records import RecallControlPayload
 from ..assembly.tool_replies import control_summary
-from ..assembly.run_results import run_receipt
+from ..assembly.run_results import run_result
 
 from ..runnables import (
     AgicRoutes,
@@ -164,6 +165,7 @@ class _ToolRuntime(ToolRuntime):
         execution = state.execution
         if execution is None:
             raise RuntimeError("Agic runtime execution is unavailable")
+        binding = None
         try:
             binding, target = await execution.accept_child(
                 state.prepared.run,
@@ -179,13 +181,49 @@ class _ToolRuntime(ToolRuntime):
                     state.prepared.run.state_ref,
                 ),
             )
+            await execution.execute(binding, target, output_binding=None, begun=True)
         except _RunRejected as exc:
             return ToolResult(error=str(exc), output=exc.details)
+        except asyncio.CancelledError:
+            # Admission delivers RunBegin under its lock. Cancellation during
+            # that delivery closes the child before accept_child can return.
+            child = (
+                execution.store.get_run(run_id=binding.run_id)
+                if binding is not None
+                else next(
+                    (
+                        run
+                        for run in execution.store.list_run_tree(
+                            root_run_id=state.prepared.run.run_id
+                        )
+                        if run.parent == self.step
+                    ),
+                    None,
+                )
+            )
+            if child is None or not execution.canceled_within(child.id):
+                raise
         except Exception as exc:
-            self.failure = exc
-            raise
-        state.scheduled_run = (binding, target)
-        return ToolResult(run_receipt(binding.run_id))
+            child = (
+                execution.store.get_run(run_id=binding.run_id)
+                if binding is not None
+                else None
+            )
+            if child is None or child.status in {"pending", "running"}:
+                self.failure = exc
+                raise
+        else:
+            child = execution.store.get_run(run_id=binding.run_id)
+        if child is None:
+            raise RuntimeError(f"child Run disappeared for {self.step}")
+        if child.status == "succeeded" and child.output is not None:
+            state.output = FieldRef.from_path(RunRef(child.id), "output", "value")
+            state.record_output(state.output)
+        elif child.error is not None:
+            self.error = ErrorRef(FieldRef.from_path(RunRef(child.id), "error"))
+        return run_result(
+            child, execution.store.resolve_value, execution.store.resolve_error
+        )
 
     async def exec(self, runnable: str, input: Mapping[str, Any]) -> ToolResult:
         if self.source is None:

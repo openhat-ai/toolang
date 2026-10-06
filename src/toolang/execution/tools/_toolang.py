@@ -267,8 +267,8 @@ _TOOLS = (
     ),
     ToolangTool(
         "run",
-        "Schedule an authorized hand as a child Run. The tool reply acknowledges "
-        "scheduling; a separate runtime message supplies its outcome before you continue. "
+        "Run an authorized hand synchronously as a child Run. The tool reply returns "
+        "its completed result as {type, value}, or an error if the child fails or is canceled. "
         "Use run when the caller needs the result for further processing. "
         "Follow the latest hands scope and requested_only policy. Read the target "
         "input signature and do not invent missing values. Acceptance selects the latest "

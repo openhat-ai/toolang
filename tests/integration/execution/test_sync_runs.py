@@ -1,9 +1,10 @@
-"""Runtime calls acknowledge scheduling before executing serial child Runs."""
+"""Runtime calls return child results inside their synchronous Tool Steps."""
 
 from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from collections.abc import Iterable
 
 import pytest
 
@@ -31,7 +32,6 @@ from toolang.base.types.message import (
 from toolang.base.types.policy import RunLimits
 from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.execution.events import (
-    PartBegin,
     RunBegin,
     RunEnd,
     RunEvent,
@@ -61,7 +61,16 @@ def run_call(id: str) -> ToolCall:
     return ToolCall(id, f"provider-{id}", "_toolang__run", {"runnable": "agic:child"})
 
 
-def test_batch_runs_after_receipts_and_before_next_tools(tmp_path: Path) -> None:
+def tool_results(messages: Iterable[Message]) -> list[ToolResultPart]:
+    return [
+        part
+        for message in messages
+        for part in message.parts
+        if isinstance(part, ToolResultPart)
+    ]
+
+
+def test_batch_runs_finish_before_replies_and_next_tools(tmp_path: Path) -> None:
     tool = RecordingTool("math__double", output={"value": 6})
     harness = ExecutionHarness.create(
         tmp_path,
@@ -88,28 +97,11 @@ def test_batch_runs_after_receipts_and_before_next_tools(tmp_path: Path) -> None
             ModelCallResult(message=Message.assistant("next root")),
         ],
     )
-    receipts = []
     beginnings = []
 
     class Tracer(RecordingRunTracer):
         async def on_event(self, event: RunEvent) -> None:
             await super().on_event(event)
-            if isinstance(event, PartBegin) and event.step.index in {1, 3}:
-                step = harness.store.get_step(ref=event.step)
-                if (
-                    step is not None
-                    and step.output is not None
-                    and isinstance(step.output.value, ToolResultPart)
-                ):
-                    run_id = step.output.value.output.get("run_id")
-                    if isinstance(run_id, str):
-                        receipts.append(
-                            (
-                                step,
-                                harness.store.get_run(run_id=run_id),
-                                harness.store.get_run_control(run_id=run_id, index=0),
-                            )
-                        )
             if isinstance(event, RunBegin) and event.parent is not None:
                 beginnings.append(
                     (
@@ -127,15 +119,12 @@ def test_batch_runs_after_receipts_and_before_next_tools(tmp_path: Path) -> None
                 harness.run_spec(thread=thread, runnable="parent"), tracer=tracer
             )
             assert root.status == "succeeded", root.error
-            assert len(receipts) == len(beginnings) == 2
-            for step, child, control in receipts:
-                assert step.status == "running" and step.output is not None
-                assert child is not None and child.status == "pending"
+            assert len(beginnings) == 2
+            for step, control in beginnings:
+                assert step is not None and step.status == "running"
+                assert step.output is None
                 assert control is not None and control.status == "applied"
                 assert control.finished_at == control.created_at
-            for step, control in beginnings:
-                assert step is not None and step.status == "succeeded"
-                assert control is not None and control.status == "applied"
             children = [
                 r
                 for r in harness.store.list_run_tree(root_run_id=root.id)
@@ -144,7 +133,7 @@ def test_batch_runs_after_receipts_and_before_next_tools(tmp_path: Path) -> None
             assert len(children) == 2
             for child in children:
                 assert child.parent is not None
-                receipt_end = next(
+                tool_end = next(
                     i
                     for i, e in enumerate(tracer.events)
                     if isinstance(e, StepEnd) and e.step == child.parent
@@ -166,21 +155,16 @@ def test_batch_runs_after_receipts_and_before_next_tools(tmp_path: Path) -> None
                     and e.step.run_id == root.id
                     and e.step.index == child.parent.index + 1
                 )
-                assert receipt_end < child_begin < child_end < next_tool_or_model
+                assert child_begin < child_end < tool_end < next_tool_or_model
             followup = harness.adapter.invocations[3].call
             assert followup.continuation == {"id": "parent-continuation"}
-            replies = [
-                i
-                for i, m in enumerate(followup.messages)
-                if any(isinstance(p, ToolResultPart) for p in m.parts)
+            replies = tool_results(followup.messages)
+            assert [part.output for part in replies] == [
+                {"type": "Text", "value": "first output"},
+                {"value": 6},
+                {"type": "Text", "value": "second output"},
             ]
-            outcomes = [
-                (i, m) for i, m in enumerate(followup.messages) if m.tag == "run-result"
-            ]
-            assert len(replies) == 3 and len(outcomes) == 2
-            assert max(replies) < min(i for i, _ in outcomes)
-            assert "first output" in message_text(outcomes[0][1].parts)
-            assert "second output" in message_text(outcomes[1][1].parts)
+            assert not any(m.tag == "run-result" for m in followup.messages)
             assert all(
                 "Private child task" not in message_text(m.parts)
                 for m in followup.messages
@@ -189,15 +173,11 @@ def test_batch_runs_after_receipts_and_before_next_tools(tmp_path: Path) -> None
                 harness.run_spec(thread=thread, runnable="parent")
             )
             selected = harness.store.message_history(next_root.id).select(None)
-            assert [m for m in selected.near if m.tag == "run-result"] == [
-                m for _, m in outcomes
-            ]
+            assert tool_results(selected.near) == replies
             conversation = harness.store.recent_conversation_messages(
                 thread_id=thread, limit=100
             )
-            assert [m for m in conversation if m.tag == "run-result"] == [
-                m for _, m in outcomes
-            ]
+            assert tool_results(conversation) == replies
             assert not any(
                 message_text(m.parts) in {"first output", "second output"}
                 for m in conversation
@@ -214,7 +194,7 @@ def test_batch_runs_after_receipts_and_before_next_tools(tmp_path: Path) -> None
             assert projector.root_metrics.runs == 3
             assert projector.root_metrics.model_calls == 4
             assert projector.root_metrics.tool_calls == 3
-            assert not projector._scheduled_runs
+            assert not projector._steps
         assert_replayed(harness.store.db_path, tracer.events)
 
     asyncio.run(scenario())
@@ -223,14 +203,15 @@ def test_batch_runs_after_receipts_and_before_next_tools(tmp_path: Path) -> None
 @pytest.mark.parametrize(
     ("output_type", "value", "expected"),
     [
-        ("Text", "<result>&", "&lt;result&gt;&amp;"),
-        ("Number[]", "[1, 2]", "[1,2]"),
-        ("Boolean", "true", "true"),
-        ("Part[]", "parts result", "parts result"),
+        ("Text", "<result>&", "<result>&"),
+        ("Number[]", "[1, 2]", [1, 2]),
+        ("Number[]", "[]", []),
+        ("Boolean", "true", True),
+        ("Part[]", "parts result", [TextPart("parts result").to_data()]),
     ],
 )
-def test_typed_completion_survives_no_followup_and_reopen(
-    tmp_path: Path, output_type: str, value: str, expected: str
+def test_typed_result_survives_no_followup_and_reopen(
+    tmp_path: Path, output_type: str, value: str, expected: object
 ) -> None:
     harness = ExecutionHarness.create(
         tmp_path,
@@ -267,60 +248,41 @@ def test_typed_completion_survives_no_followup_and_reopen(
         reopened = RunStore(harness.store.db_path, read_only=True)
         try:
             history = reopened.message_history(next_root.id).select(None)
-            (completion,) = [m for m in history.near if m.tag == "run-result"]
-            text = message_text(completion.parts)
-            assert expected in text
-            assert f'output-type="{output_type}"' in text
-            assert child.id in text
+            assert not any(m.tag == "run-result" for m in history.near)
             assert all(
                 "Private child task" not in message_text(m.parts) for m in history.near
             )
-            replies = [
-                p
-                for m in history.near
-                for p in m.parts
-                if isinstance(p, ToolResultPart)
-            ]
-            assert len(replies) == 1 and set(replies[0].output) == {
-                "run_id",
-                "controls",
-            }
+            (reply,) = tool_results(history.near)
+            assert reply.error is None
+            assert reply.output == {"type": output_type, "value": expected}
             conversation = reopened.recent_conversation_messages(
                 thread_id=thread, limit=100
             )
-            assert [m for m in conversation if m.tag == "run-result"] == [completion]
+            assert tool_results(conversation) == [reply]
         finally:
             reopened.close()
 
     asyncio.run(scenario())
 
 
-def test_repeated_steer_during_receipt_and_child_resumes_caller(tmp_path: Path) -> None:
-    receipt_gate, child_gate = AsyncGate(), AsyncGate()
-
-    class Tracer(RecordingRunTracer):
-        async def on_event(self, event: RunEvent) -> None:
-            await super().on_event(event)
-            if (
-                isinstance(event, PartBegin)
-                and event.step.index == 1
-                and not receipt_gate.entered
-            ):
-                await receipt_gate.wait()
-
+def test_repeated_steer_during_children_resumes_caller(tmp_path: Path) -> None:
+    gates = [AsyncGate(), AsyncGate()]
     harness = ExecutionHarness.create(
         tmp_path,
         source=SOURCE,
         responses=[
-            ModelCallResult(tool_calls=(run_call("scheduled"), run_call("skipped"))),
+            ModelCallResult(tool_calls=(run_call("first"), run_call("skipped"))),
             ScriptedModelTurn(
-                result=ModelCallResult(message=Message.assistant("unused")),
-                gate=child_gate,
+                ModelCallResult(message=Message.assistant("unused")), gate=gates[0]
+            ),
+            ModelCallResult(tool_calls=(run_call("second"),)),
+            ScriptedModelTurn(
+                ModelCallResult(message=Message.assistant("unused")), gate=gates[1]
             ),
             ModelCallResult(message=Message.assistant("revised")),
         ],
     )
-    tracer = Tracer()
+    tracer = RecordingRunTracer()
 
     async def scenario() -> None:
         async with harness:
@@ -331,42 +293,37 @@ def test_repeated_steer_during_receipt_and_child_resumes_caller(tmp_path: Path) 
                 ),
                 tracer=tracer,
             )
-            await asyncio.wait_for(receipt_gate.wait_until_entered(), 1)
-            first = handle.steer(Message.user("first correction"), timing="immediate")
-            await asyncio.wait_for(child_gate.wait_until_entered(), 1)
-            second = handle.steer(Message.user("second correction"), timing="immediate")
+            controls = []
+            for index, gate in enumerate(gates):
+                await asyncio.wait_for(gate.wait_until_entered(), 2)
+                controls.append(
+                    handle.steer(
+                        Message.user(f"correction {index}"), timing="immediate"
+                    )
+                )
             root = await asyncio.wait_for(handle, 2)
             assert root.status == "succeeded", root.error
-            assert len(harness.adapter.invocations) == 3
-            followup = harness.adapter.invocations[-1].call
-            text = "".join(message_text(m.parts) for m in followup.messages)
-            assert "first correction" in text and "second correction" in text
-            assert len([m for m in followup.messages if m.tag == "run-result"]) == 1
-            assert 'status="canceled"' in text
-            assert (
-                len(
-                    [
-                        p
-                        for m in followup.messages
-                        for p in m.parts
-                        if isinstance(p, ToolResultPart)
-                    ]
-                )
-                == 2
-            )
-            for control in (first, second):
+            assert len(harness.adapter.invocations) == 5
+            messages = harness.adapter.invocations[-1].call.messages
+            text = "".join(message_text(m.parts) for m in messages)
+            assert "correction 0" in text and "correction 1" in text
+            assert not any(m.tag == "run-result" for m in messages)
+            replies = tool_results(messages)
+            assert len(replies) == 3 and all(p.error for p in replies)
+            for control in controls:
                 saved = harness.store.get_run_control(
                     run_id=root.id, index=control.index
                 )
                 assert saved is not None and saved.status == "applied"
             assert_run_event_integrity(tracer.events)
+        assert_replayed(harness.store.db_path, tracer.events)
 
     asyncio.run(scenario())
 
 
 @pytest.mark.parametrize("part_kind", ["call", "result"])
 @pytest.mark.parametrize("followup", [False, True])
-def test_completion_keeps_returned_tool_parts_as_data(
+def test_result_keeps_returned_tool_parts_as_data(
     tmp_path: Path, part_kind: str, followup: bool
 ) -> None:
     returned = ToolResultPart(
@@ -451,11 +408,7 @@ flow child(_: Part[]) -> Part[]:
             ]
             assert child.status == "succeeded", child.error
             live = (
-                [
-                    m
-                    for m in harness.adapter.invocations[-1].call.messages
-                    if m.tag == "run-result"
-                ]
+                tool_results(harness.adapter.invocations[-1].call.messages)
                 if followup
                 else []
             )
@@ -467,36 +420,35 @@ flow child(_: Part[]) -> Part[]:
         reopened = RunStore(harness.store.db_path, read_only=True)
         try:
             history = reopened.message_history(next_root.id).select(None)
-            (completion,) = [m for m in history.near if m.tag == "run-result"]
+            (reply,) = tool_results(history.near)
             if followup:
-                assert live == [completion]
-            assert not any(
-                isinstance(p, (ToolCallPart, ToolResultPart)) for p in completion.parts
-            )
-            assert media in completion.parts
-            text = message_text(completion.parts)
-            assert "&lt;note&gt;&amp;" in text
-            assert "other-call" in text and "external__tool" in text
-            assert "&lt;/toolang:run-result&gt;" in text
-            assert "child reasoning" not in text
-            assert "signature" not in text
-            assert all(not isinstance(p, ReasoningPart) for p in completion.parts)
+                assert live == [reply]
+            assert reply.output == {
+                "type": "Part[]",
+                "value": [
+                    TextPart("<note>&").to_data(),
+                    media.to_data(),
+                    returned.to_data(),
+                ],
+            }
+            assert not any(m.tag == "run-result" for m in history.near)
             assert all(
-                p.signature is None and p.provider is None and not p.provider_metadata
-                for p in completion.parts
-                if isinstance(p, TextPart)
+                p.tool_call_id != "other-call"
+                for m in history.near
+                for p in m.parts
+                if isinstance(p, (ToolCallPart, ToolResultPart))
             )
             conversation = reopened.recent_conversation_messages(
                 thread_id=thread, limit=100
             )
-            assert [m for m in conversation if m.tag == "run-result"] == [completion]
+            assert tool_results(conversation) == [reply]
         finally:
             reopened.close()
 
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("boundary", ["receipt", "child"])
+@pytest.mark.parametrize("boundary", ["run_begin", "child"])
 def test_cancel_target_preserves_caller_and_remaining_batch(
     tmp_path: Path, boundary: str
 ) -> None:
@@ -507,9 +459,9 @@ def test_cancel_target_preserves_caller_and_remaining_batch(
         async def on_event(self, event: RunEvent) -> None:
             await super().on_event(event)
             if (
-                boundary == "receipt"
-                and isinstance(event, PartBegin)
-                and event.step.index == 1
+                boundary == "run_begin"
+                and isinstance(event, RunBegin)
+                and event.parent is not None
                 and not gate.entered
             ):
                 await gate.wait()
@@ -562,17 +514,15 @@ def test_cancel_target_preserves_caller_and_remaining_batch(
             )
             assert terminal is not None and terminal.status == "applied"
             messages = harness.adapter.invocations[-1].call.messages
-            (completion,) = [m for m in messages if m.tag == "run-result"]
-            assert 'status="canceled"' in message_text(completion.parts)
-            assert "stop just this target" in message_text(completion.parts)
-            replies = [
-                p for m in messages for p in m.parts if isinstance(p, ToolResultPart)
-            ]
-            assert len(replies) == 2 and all(p.error is None for p in replies)
-            assert_run_event_integrity(
-                tracer.events,
-                unstarted_runs=[child.id] if boundary == "receipt" else [],
+            replies = tool_results(messages)
+            assert len(replies) == 2
+            assert (
+                replies[0].error is not None
+                and "stop just this target" in replies[0].error
             )
+            assert replies[1].error is None
+            assert not any(m.tag == "run-result" for m in messages)
+            assert_run_event_integrity(tracer.events)
             projector = ProgressProjector()
             rows = [
                 row.text

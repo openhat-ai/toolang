@@ -208,11 +208,11 @@ identified by the enclosing `RunBegin.runnable`, while the existing `RunStmt`
 provides the target label. Its header begins in column zero and uses the
 canonical resolved runnable ref:
 
-For a scheduled `_toolang/run`, retain the receipt's child Run identity after the
-Tool Step ends. Open the divider at the child's `RunBegin` and close it at
-`RunEnd`, using the child's status and metrics. This presentation scope does not
-extend the Tool Step's lifetime. Cancellation before dispatch closes the scheduled
-target without a `RunBegin`.
+For synchronous `_toolang/run`, the child names the still-running Tool Step as
+its parent, using the same event nesting as a flow Run Step. Open the divider at
+the child's `RunBegin`, accumulate child metrics at `RunEnd`, and close it at the
+enclosing `StepEnd`. The footer reflects the enclosing operation's status. No
+receipt lookup or separate scheduled-run presentation state is needed.
 
 ```text
 ┌ Run agic:summarize ───────────────────────────────────────────────────

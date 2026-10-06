@@ -26,9 +26,9 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 - The `_toolang/spawn` tool (wire name `_toolang__spawn`) starts an independent
   root through `run`'s input decoder and hands policy, and returns the committed
-  admission snapshot `{id, thread, status: "pending"}`. It waits for no result,
-  occupies no scheduled-child slot, and injects no completion message; inspect
-  progress and results by ID with the existing tools.
+  admission snapshot `{id, thread, status: "pending"}`. It waits for no result
+  and injects no completion message; inspect progress and results by ID with the
+  existing tools.
 
 - Root Runs with no active descendants may `exec` their own entry runnable,
   replacing the run binding with the latest published implementation whose
@@ -37,6 +37,18 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   self-exec, and ancestor calls remain rejected.
 
 ### Changed
+
+- **Breaking:** the runtime call tool `_toolang/run` (exposed as
+  `_toolang__run`) now runs an authorized hand synchronously, matching flow
+  `run`: its Tool Step stays open until the child ends, and its one tool reply
+  returns the child's `{type, value}` on success or a tool error on failure or
+  child-only cancellation. The scheduling receipt `{run_id, controls}` and the
+  separate `run-result` completion message are removed. Integrations that read
+  run outcomes from the receipt or the `run-result` context must read the tool
+  reply, find the child Run whose parent names the Tool Step, and inspect its
+  applied entry control by run ID. A child-only failure or cancellation leaves
+  the caller running with a failed Tool Step; caller cancellation or immediate
+  steer unwinds the child and cancels the Tool Step.
 
 - Run controls are applied when admission commits, independent of Run
   execution status; runtime-created controls are never left pending. `spawn`

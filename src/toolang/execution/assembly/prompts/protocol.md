@@ -140,9 +140,9 @@ guidance specifies how. A changed or withdrawn capability invalidates its old gu
 Pick returns a receipt, and the runtime supplies guidance in a user message.
 Service connections, authentication, and tool permissions are managed separately.
 
-Use the structured tool definitions supplied to you. Run schedules a child and
-returns a scheduling receipt; the runtime supplies its actual outcome before
-you continue. Execute replaces the run implementation with a selected runnable;
+Use the structured tool definitions supplied to you. Run waits for a child and
+returns its completed result as {type, value}, or a tool error on failure or cancellation.
+Exec replaces the run implementation with a selected runnable;
 after a successful transfer, your current invocation ends. If preparation fails,
 you receive an error and may continue. For runnable input, use "_" for the primary
 value and other fields for named parameters. For Part/Part[], a JSON string is one text part,
@@ -190,7 +190,7 @@ an array is ordered parts, and a text part can be {"type":"text","text":"..."}.
    resumes and future chat turns keep their default runnable. For a target
    whose result is needed before continuing, use run through hands and wait for
    the actual outcome before summarizing, comparing, transforming, or using it.
-   A scheduling receipt is not the result. These rules apply to both flows and
+   The tool reply contains the completed result. These rules apply to both flows and
    agics. For example, "Call flow:abc" uses exec; "Call agic:xyz, then summarize
    its result" uses run. Do not invent follow-up work to justify run.
    Use spawn through hands when independent work should continue without waiting.

@@ -431,37 +431,32 @@ This distinction is made at the event source. The sink and tracer observe the
 same canonical event sequence and never filter a synthetic top-level step.
 
 A model `_toolang__run` call validates its target and atomically records a pending
-child Run, its applied entry control, and the scheduling receipt. The receipt contains
-`run_id` and `controls`; it does not contain the child's output. Dispatch follows
-the completed Tool Step:
+child Run and applied entry control. Its Tool Step stays open until the child ends,
+matching a flow Run Step:
 
 ```text
 caller Model Step
-run Tool Step → pending child Run + receipt → StepEnd
-RunBegin(child) → child Steps → RunEnd(child)
+run Tool Step: StepBegin
+  RunBegin(child) → child Steps → RunEnd(child)
+  ToolResultPart {type, value} or error → StepEnd
 remaining tool calls in the batch
-caller Model Step ← paired tool replies + run-result context
+caller Model Step ← paired tool replies
 ```
 
-The child retains its triggering Tool Step as `parent` for causal ownership;
-that reference does not imply overlapping lifetimes. Each scheduled child finishes
-before the next tool call starts. All paired tool replies precede the batch's
-`run-result` context messages, which identify the child, terminal status, and typed
-output or error. The caller keeps its conversation and provider continuation.
-Target failure or cancellation leaves the receipt unchanged and lets the caller
-continue the batch. Cancellation of an enclosing Run takes precedence over a
-target-only cancellation. Root cancellation also cancels an accepted child that
-has not started; its admission control remains applied. A steer during receipt
-delivery preserves the accepted request; a steer during execution interrupts the
-child and resumes the caller with its outcome.
+The child names its enclosing Tool Step as `parent`. The entry control is applied
+at admission; its completion does not mean the child has finished. Each child ends
+before the next tool call starts, preserving the caller's conversation and provider
+continuation. Target failure or child-only cancellation produces a failed Tool Step
+and a tool error; the caller can continue. Caller cancellation or immediate steer
+unwinds the child and cancels the Tool Step. Caller cancellation takes precedence
+over a child-only cancellation. Admission controls remain applied.
 
-Completion context is derived from the child's durable terminal record and included
-once in caller history, even without another Model Call. Returned tool-call and
-tool-result Parts become text data, not caller tool exchanges; media Parts remain
-native. Child internals are not flattened into the caller. Explicit retry retains
-its existing behavior: retrying an agic replaces its Step history and children.
-Automatic resumption of pending scheduled Runs after process loss is not
-implemented yet.
+The one tool reply is durable even without another Model Call. It carries the
+child's output type and JSON value; returned Parts remain nested data with reasoning
+and provider signatures removed, rather than becoming caller tool exchanges.
+There is no scheduling receipt or separate completion context, and child internals
+are not flattened into caller history. Explicit retry replaces the caller agic's
+Step history and children. Restart/resume remains outside this contract.
 
 A successful `_toolang__exec` atomically records an applied exec control and
 its succeeded Tool Step, including output and finish time, before transferring

@@ -11,7 +11,6 @@ from toolang.base.types.message import (
     ToolResultPart,
 )
 from toolang.common.time import utc_now
-from toolang.execution.assembly.run_results import scheduled_run_id
 from toolang.execution.events import (
     PartBegin,
     PartDelta,
@@ -92,7 +91,6 @@ class ProgressProjector:
         self._broken = False
         self._runs: dict[str, RunState] = {}
         self._steps: dict[StepRef, StepState] = {}
-        self._scheduled_runs: dict[str, StepState] = {}
         self._seen_runs: set[str] = set()
         self._seen_steps: set[StepRef] = set()
         self._parts: dict[tuple[StepRef, int], str] = {}
@@ -205,12 +203,9 @@ class ProgressProjector:
                 raise _PresentationError("multiple root Runs in one progress stream")
             self._root = event.run
         else:
-            scheduled = self._scheduled_runs.get(event.run)
-            owner = scheduled or self._active_step(event.parent)
-            if scheduled is not None and owner.begin.step != event.parent:
-                raise _PresentationError(f"scheduled Run parent changed: {event.run}")
+            owner = self._active_step(event.parent)
             if owner.is_dynamic_run:
-                if owner.dynamic_child_run_id is not None and scheduled is None:
+                if owner.dynamic_child_run_id is not None:
                     raise _PresentationError(
                         f"dynamic Run Step has multiple child Runs: {event.parent}"
                     )
@@ -264,20 +259,6 @@ class ProgressProjector:
 
     def _end_run(self, event: RunEnd) -> ProgressBlock | None:
         run = self._runs.get(event.run)
-        scheduled = self._scheduled_runs.get(event.run)
-        if run is None and scheduled is not None and event.status == "canceled":
-            # Cancellation can stop an accepted target before its entry control applies.
-            self._scheduled_runs.pop(event.run)
-            self._seen_runs.add(event.run)
-            self._release_boundaries(scheduled.boundaries)
-            if scheduled.lane_owner is not None:
-                self._set_lane_terminal(
-                    scheduled.lane_owner, ("• canceled",), status="canceled"
-                )
-                return None
-            return self._commit_block(
-                scheduled, self._dynamic_run_terminal_rows(scheduled, event)
-            )
         if run is None or run.end is not None:
             raise _PresentationError(f"RunEnd without active RunBegin for {event.run}")
         if any(step.begin.step.run_id == event.run for step in self._steps.values()):
@@ -285,9 +266,6 @@ class ProgressProjector:
         if any(
             child.begin.parent is not None and child.begin.parent.run_id == event.run
             for child in self._runs.values()
-        ) or any(
-            owner.begin.step.run_id == event.run
-            for owner in self._scheduled_runs.values()
         ):
             raise _PresentationError(f"RunEnd with active child Run for {event.run}")
         run.end = event
@@ -295,7 +273,7 @@ class ProgressProjector:
             self._errors[FieldRef.from_path(RunRef(event.run), "error")] = event.error
         execute_rows = self._finish_execute(run)
 
-        owner = scheduled or (
+        owner = (
             self._steps.get(run.begin.parent) if run.begin.parent is not None else None
         )
         if owner is not None:
@@ -363,16 +341,6 @@ class ProgressProjector:
                     f"could not resolve execution error {event.error}"
                 )
 
-        if scheduled is not None:
-            self._scheduled_runs.pop(event.run)
-            if scheduled.lane_owner is None:
-                rows = (
-                    *(block.rows if block is not None else ()),
-                    *self._dynamic_run_terminal_rows(scheduled, event),
-                )
-                block = self._commit_block(
-                    scheduled, rows, gap_before=not self._ends_with_blank
-                )
         if execute_rows:
             rows = list(execute_rows)
             if block is not None:
@@ -503,21 +471,6 @@ class ProgressProjector:
             self._steps.pop(event.step)
             return None
         execute = self._complete_execute(run, state.begin, event)
-        if state.is_dynamic_run and event.kind == "tool":
-            receipt = next(
-                (
-                    part
-                    for part in output_parts(event)
-                    if isinstance(part, ToolResultPart)
-                ),
-                None,
-            )
-            target = scheduled_run_id(receipt) if receipt is not None else None
-            if target is not None:
-                state.dynamic_child_run_id = target
-                self._scheduled_runs[target] = state
-                self._steps.pop(event.step)
-                return None
         if isinstance(event.noted, CollectionStepNoted) and event.kind == "par":
             if state.par.total_items not in {None, event.noted.total_items}:
                 raise _PresentationError(
