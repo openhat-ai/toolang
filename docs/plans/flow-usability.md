@@ -226,15 +226,14 @@ repeat 5 times windowing 3:
 | Runtime call | Execution decision | Tool Step completion |
 | --- | --- | --- |
 | `_toolang/run` | Execute a child Run synchronously | Child result `{type, value}` or tool error |
-| `_toolang/exec` | Replace the runnable in the same Run | Applied control receipt, before target execution |
+| `_toolang/exec` | Replace the runnable in the same Run | `{controls: [ControlRef]}`, before target execution |
 
 - Validate target, authorization, recursion, and input before admission. Persist the
   child and its applied entry control together, retaining causal ownership through
   the enclosing Tool Step. No additional dispatch Step is needed.
 - Run contains the child lifetime, matching flow run. Preserve caller conversation
   and continuation; deliver its result through one ordinary paired tool reply.
-  History derives that reply even without a following model call. No scheduling
-  receipt or separate completion message is needed.
+  History derives that reply even without a following model call.
 - Process calls in order. Child failure or child-only cancellation returns a tool
   error and permits caller recovery. Caller cancellation or immediate steer unwinds
   the child and Tool Step. Applied admission controls remain terminal.

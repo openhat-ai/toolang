@@ -129,8 +129,8 @@ Language-owned coercion supplies `_` with the runnable's declared input type.
 produces the effective `RunSpec.limits` before `run()`. Config, CLI, chat, and
 HTTP parsing remain caller concerns and are not part of the executor contract.
 
-There is no `execute()` or `spawn()` variant. `run()`, `rerun()`, and `retry()`
-create an owner task and return an awaitable `LocalRunHandle`.
+The public `run()`, `rerun()`, and `retry()` methods create an owner task and return
+an awaitable `LocalRunHandle`.
 `rerun()` loads the source invocation from durable truth and starts a new root
 against the supplied current setup and state. `retry()` keeps the root ID,
 reopens a terminal run, and resumes after its effective committed prefix. An
@@ -148,7 +148,9 @@ canceling a waiting HTTP request or TUI action does not cancel the durable run.
 
 Binding validates explicit runtime inputs and asks `IdIssuer` for a run ID when
 `run()` does not receive one. `RunSpec.thread` must identify an existing
-thread. The executor never allocates or implicitly creates threads.
+thread. Language `spawn` and `_toolang/spawn` use the internal
+[spawn admission contract](plans/flow-spawn.md#commit-boundaries-and-records),
+which creates the independent root's thread in the same transaction.
 
 Supplying a run ID is intentionally limited to one-shot script invocation so
 logging can be configured at a path containing that ID before execution.
@@ -172,7 +174,7 @@ Duplicate run IDs and duplicate non-null request IDs are rejected. Request IDs
 are globally unique in the unified Control table; `None` disables request
 identity without weakening the run or Control primary keys.
 
-Rerun acceptance atomically inserts the new root and its index-zero `rerun`
+Rerun acceptance atomically inserts the new root and its index-zero `run`
 control with the current canonical sandbox. It does not modify the terminal
 source root or its history membership.
 
@@ -453,9 +455,8 @@ over a child-only cancellation. Admission controls remain applied.
 
 The one tool reply is durable even without another Model Call. It carries the
 child's output type and JSON value; returned Parts remain nested data with reasoning
-and provider signatures removed, rather than becoming caller tool exchanges.
-There is no scheduling receipt or separate completion context, and child internals
-are not flattened into caller history. Explicit retry replaces the caller agic's
+and provider signatures removed. Caller history contains the paired tool reply;
+child internals remain in the child Run. Explicit retry replaces the caller agic's
 Step history and children. Restart/resume remains outside this contract.
 
 A successful `_toolang__exec` atomically records an applied exec control and
@@ -475,7 +476,7 @@ The control's `triggered_by` points to the Tool Step. Its payload records the
 selected latest State, the qualified runnable, and raw `Json` input pointers
 into the originating Model ToolCall. Input, resources, authorization, and active
 runnable path are validated before commit. Validation failure creates no
-control and returns a correlated tool error. Success returns a control receipt;
+control and returns a correlated tool error. Success returns `{controls: [ControlRef]}`;
 the target starts with fresh continuation and local call counters, while prior
 Steps and message deltas remain in Run history.
 Native Flow `exec` uses an `exec` Step and the same durable `exec` control.
@@ -503,9 +504,8 @@ and root limits. `me.sync()` publishes sources; self-exec explicitly adopts the
 compatible root implementation. A child must finish before its root does this.
 
 Progress starts the exec marker at Tool Step begin, confirms the transfer from
-its result, and attaches a handoff divider to the target's first Step. A receipt
-still confirms commit if result delivery was canceled; cancellation does not
-undo the control. No separate control event is needed for presentation.
+its committed Step outcome, and attaches a handoff divider to the target's first
+Step. Interrupted result delivery preserves that successful outcome and control.
 Handoff dividers align with the Run and appear even for empty successors.
 Successor display numbers restart at zero; durable pointers remain unique.
 Inspection includes the same boundaries and canonical navigation.

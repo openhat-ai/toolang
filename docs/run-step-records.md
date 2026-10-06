@@ -69,6 +69,7 @@ timing
 error
 created_at
 finished_at
+triggered_by
 ```
 
 `id` is the complete `ControlRef`. Its target determines whether the Control
@@ -132,10 +133,10 @@ and a newly prepared state.
 
 Spawn atomically records a new thread/create control, an independent root/run
 control, and the originating Step output. Both controls have `triggered_by` set
-to that physical Step; the root's `parent` is null. There is no spawn control
-kind. Entry `spawn_context` stores inherited settings, workspace bindings,
-iteration data, and the accepted output contract; ordinary entries omit it from
-storage. Resources, limits, model request, State, and cwd use existing entry fields.
+to that physical Step; the root's `parent` is null. Entry `spawn_context` stores
+inherited settings, workspace bindings, iteration data, and the accepted output
+contract; ordinary entries omit it from storage. Resources, limits, model request,
+State, and cwd use existing entry fields.
 
 Flow's spawn-kind Step carries a `SpawnStmt`. Its durable and event output is
 `{"type": "_Run<Text>", "value": {"id": "run_…", "thread": "spawn_…"}, "binding": "job"}`.
@@ -181,9 +182,10 @@ started_at
 finished_at
 ```
 
-`parent` is the triggering `StepRef` for a child Run. For `_toolang/run`, the
-Tool Step ends before the child starts; `parent` records causality, not lifetime
-containment. `thread`, `control`, and `state` are typed references. `output` is an
+`parent` identifies the enclosing Step for a child Run. Flow `run` and
+`_toolang/run` both keep that Step open through the child's `RunEnd`. Independent
+roots have no parent; their entry control's `triggered_by` records the source.
+`thread`, `control`, and `state` are typed references. `output` is an
 Output whose `value` may be concrete or a `TypedRef` to an explicit
 `/output/value` field.
 

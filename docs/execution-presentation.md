@@ -220,8 +220,7 @@ canonical resolved runnable ref:
 For synchronous `_toolang/run`, the child names the still-running Tool Step as
 its parent, using the same event nesting as a flow Run Step. Open the divider at
 the child's `RunBegin`, accumulate child metrics at `RunEnd`, and close it at the
-enclosing `StepEnd`. The footer reflects the enclosing operation's status. No
-receipt lookup or separate scheduled-run presentation state is needed.
+enclosing `StepEnd`. The footer reflects the enclosing operation's status.
 
 ```text
 ┌ Run agic:summarize ───────────────────────────────────────────────────

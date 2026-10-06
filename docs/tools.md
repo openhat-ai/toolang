@@ -324,11 +324,11 @@ ceilings. Each invocation has an ordinary Tool Step. Trusted runtime tools recei
 per-call operations through `RuntimeToolContext.runtime`, not the Store or executor.
 Run creates a child owned by its Tool Step and waits for it to finish. The single
 tool reply returns `{type, value}` on success or `ToolResultPart.error` on failure
-or child-only cancellation. It emits no receipt or separate completion message.
-Execute returns `{controls: [ControlRef]}` and finishes its Tool Step before
+or child-only cancellation.
+Exec returns `{controls: [ControlRef]}` and finishes its Tool Step before
 transferring execution. Pick, honor, and compact return summaries of durably created or reused
 controls; recalled content remains in controls, not the result summaries.
-Execute never resumes the caller after commitment, even if the target fails,
+Exec never resumes the caller after commitment, even if the target fails,
 and does not change the default runnable for future chat turns.
 
 `ToolStepGiven.trigger` records `model` or `runtime`. Both have durable results and
