@@ -351,7 +351,7 @@ class RunStore:
         triggered_by: StepRef | None = None,
         spawn_context: SpawnContext | None = None,
     ) -> tuple[RunRecord, ControlRecord]:
-        """Atomically insert one new run and its entry control."""
+        """Atomically insert a pending run and its applied admission control."""
 
         if not valid_run_id(run_id):
             raise ValueError(f"invalid run id: {run_id!r}")
@@ -469,11 +469,11 @@ class RunStore:
                     timing="immediate",
                     payload=payload,
                     request=request_id,
-                    status="pending",
+                    status="applied",
                     error=None,
                     created_at=created_at,
-                    finished_at=None,
-                    claimed=False,
+                    finished_at=created_at,
+                    claimed=True,
                     triggered_by=triggered_by or parent,
                 )
                 if schedule_receipt:
@@ -544,7 +544,7 @@ class RunStore:
         created_at: str,
         context: SpawnContext,
     ) -> tuple[RunHandle, bool]:
-        """Commit a new thread, independent root, and launch output together."""
+        """Commit a new thread, independent root, and successful source Step."""
 
         if handle.result_type != (context.result.type_name if context.result else None):
             raise ValueError("spawn handle differs from the accepted result type")
@@ -623,6 +623,7 @@ class RunStore:
             )
             if isinstance(step.given, SpawnStmt):
                 output = Output(handle, step.given.binding)
+                noted = None
             else:
                 call = step.given.call
                 output = Output(
@@ -638,9 +639,15 @@ class RunStore:
                         },
                     )
                 )
-            self._conn.execute(
-                "UPDATE steps SET output = ? WHERE id = ?",
-                (_dump_json(output_to_data(output)), str(source)),
+                noted = ToolStepNoted(summary=f"Spawned {handle.id} in {handle.thread}")
+            self.finish_step(
+                ref=source,
+                kind=step.kind,
+                status="succeeded",
+                output=output,
+                noted=noted,
+                error=None,
+                finished_at=created_at,
             )
         return handle, True
 
@@ -675,7 +682,7 @@ class RunStore:
             if str(run["status"]) not in {"pending", "running"}:
                 raise ValueError(f"run is not active: {run_id}")
             step = self._conn.execute(
-                "SELECT kind, status FROM steps WHERE id = ?",
+                "SELECT * FROM steps WHERE id = ?",
                 (str(triggered_by),),
             ).fetchone()
             if (
@@ -738,6 +745,30 @@ class RunStore:
                     raise ValueError("exec must close all repeat ancestors")
             elif loops:
                 raise ValueError("tool exec cannot close Flow repeats")
+            else:
+                given = _step_from_row(step).given
+                if not isinstance(given, ToolStepGiven) or (
+                    given.trigger != "model" or given.call.name != "_toolang__exec"
+                ):
+                    raise ValueError("tool exec requires a model exec Tool Step")
+                call = given.call
+                self.finish_step(
+                    ref=triggered_by,
+                    kind="tool",
+                    status="succeeded",
+                    output=Output(
+                        ToolResultPart(
+                            tool_call_id=call.tool_call_id,
+                            call_id=call.call_id,
+                            tool_name=call.name,
+                            tool_family=call.name,
+                            output={"controls": [str(control_ref)]},
+                        )
+                    ),
+                    noted=ToolStepNoted(summary=f"Executed exec {runnable}"),
+                    error=None,
+                    finished_at=created_at,
+                )
             inserted = self._conn.execute(
                 "SELECT * FROM controls WHERE id = ?",
                 (str(control_ref),),
@@ -1133,6 +1164,7 @@ class RunStore:
                         finished_at = ?,
                         _revision = ?
                     WHERE scope = 'run' AND target IN ({}) AND status = 'pending'
+                      AND kind IN ('steer', 'cancel')
                     """.format(", ".join("?" for _ in tree_runs)),
                     (
                         created_at,
@@ -1215,7 +1247,7 @@ class RunStore:
         indexes: Sequence[int],
         finished_at: str,
     ) -> None:
-        """Mark pending run controls consumed by one execution event as applied."""
+        """Mark pending steer/cancel requests consumed by an event as applied."""
 
         control_indexes = tuple(dict.fromkeys(int(index) for index in indexes))
         if not control_indexes:
@@ -1226,7 +1258,7 @@ class RunStore:
                 f"""
                 SELECT 1 FROM controls
                 WHERE scope = 'run' AND target = ? AND "index" IN ({placeholders})
-                  AND status = 'pending'
+                  AND status = 'pending' AND kind IN ('steer', 'cancel')
                 LIMIT 1
                 """,
                 (run_id, *control_indexes),
@@ -1239,6 +1271,7 @@ class RunStore:
                 SET status = 'applied', finished_at = ?, _revision = ?
                 WHERE scope = 'run' AND target = ?
                   AND "index" IN ({placeholders}) AND status = 'pending'
+                  AND kind IN ('steer', 'cancel')
                 """,
                 (
                     finished_at,
@@ -1251,13 +1284,14 @@ class RunStore:
     def fail_pending_run_controls(
         self, *, run_id: str, finished_at: str, error: str
     ) -> None:
-        """Fail controls that can no longer be applied to a terminal run."""
+        """Close pending steer/cancel requests that cannot reach a checkpoint."""
 
         with self.write_transaction():
             pending = self._conn.execute(
                 """
                 SELECT 1 FROM controls
                 WHERE scope = 'run' AND target = ? AND status = 'pending'
+                  AND kind IN ('steer', 'cancel')
                 LIMIT 1
                 """,
                 (run_id,),
@@ -1269,6 +1303,7 @@ class RunStore:
                 UPDATE controls
                 SET status = 'wontapply', error = ?, finished_at = ?, _revision = ?
                 WHERE scope = 'run' AND target = ? AND status = 'pending'
+                  AND kind IN ('steer', 'cancel')
                 """,
                 (
                     error,
@@ -1297,7 +1332,7 @@ class RunStore:
                 f"""
                 SELECT 1 FROM controls
                 WHERE scope = 'run' AND target = ? AND "index" IN ({placeholders})
-                  AND status = 'pending'
+                  AND status = 'pending' AND kind IN ('steer', 'cancel')
                 LIMIT 1
                 """,
                 (run_id, *control_indexes),
@@ -1310,6 +1345,7 @@ class RunStore:
                 SET status = 'wontapply', error = ?, finished_at = ?, _revision = ?
                 WHERE scope = 'run' AND target = ?
                   AND "index" IN ({placeholders}) AND status = 'pending'
+                  AND kind IN ('steer', 'cancel')
                 """,
                 (
                     error,
@@ -3023,27 +3059,19 @@ class RunStore:
             existing_step = _step_from_row(existing)
             if existing_step.kind != kind:
                 raise ValueError(f"step kind changed: {ref}")
-            # Committed admission is a successful spawn even if the caller is
-            # interrupted before its receipt is delivered.
-            if (
-                existing_step.output is not None
-                and self._conn.execute(
-                    "SELECT 1 FROM controls JOIN runs ON runs.id = controls.target "
-                    "WHERE controls.kind = 'run' AND runs.parent IS NULL "
-                    "AND controls.triggered_by = ?",
-                    (str(ref),),
-                ).fetchone()
-                is not None
+            # These operations commit their successful Step with their controls.
+            # Later delivery (including interruption) cannot alter that fact.
+            if existing_step.status == "succeeded" and (
+                kind == "spawn"
+                or (
+                    isinstance(existing_step.given, ToolStepGiven)
+                    and existing_step.given.call.name
+                    in {"_toolang__spawn", "_toolang__exec"}
+                )
             ):
                 if status == "succeeded" and output != existing_step.output:
-                    raise ValueError(f"conflicting spawn output: {ref}")
-                output = existing_step.output
-                status, error, aborted_by = "succeeded", None, None
-                if isinstance(output.value, ToolResultPart):
-                    receipt = output.value.output
-                    noted = ToolStepNoted(
-                        summary=f"Spawned {receipt['id']} in {receipt['thread']}"
-                    )
+                    raise ValueError(f"conflicting committed output: {ref}")
+                return existing_step
             if existing_step.status == "running":
                 self._conn.execute(
                     """

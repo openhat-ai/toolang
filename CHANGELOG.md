@@ -38,6 +38,14 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Changed
 
+- Run controls are applied when admission commits, independent of Run
+  execution status; runtime-created controls are never left pending. `spawn`
+  and `exec` commit their successful source Step together with their controls,
+  so later dispatch, execution failure, cancellation, or interrupted delivery
+  cannot undo them. Only external `steer` and `cancel` requests stay pending,
+  closing as `wontapply` if the Run ends first. A `StepEnd` cut short by a lock
+  wait keeps its persisted finish time and is still delivered.
+
 - **Breaking:** Run Control kinds `execute` and `cwd` are renamed to `exec` and
   `chdir`, and their payload types to `ExecControlPayload` and
   `ChdirControlPayload`; `RunStore.accept_exec_control` replaces

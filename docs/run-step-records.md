@@ -87,6 +87,11 @@ Control status is `pending`, `applied`, `wontapply`, or `revoked`. Timing is
 `immediate`, `next_step`, or `next_call`. Private claim and revision columns
 support concurrency and polling.
 
+Only external `steer` and `cancel` requests can be pending. Other controls are
+persisted as applied with their committed effects and equal creation/finish times.
+In particular, an applied `run` control can refer to a still-pending Run.
+Step adoption and subsequent Run failure never change that control's outcome.
+
 Run, Exec, Steer, and Cancel payloads store flat `input` objects, keyed by
 `_` and argument names. Run entries may also store flat `authored_input` source
 text. Retry inherits entry input; rerun creates a new Run entry. Each persisted
@@ -148,11 +153,12 @@ reconstructed model history retains it even after the root finishes. This view
 is ordinary data and does not become a native handle. The eventual result belongs
 to the spawned Run's output and remains inspectable by its ID.
 
-The Step ends after admission, without waiting for root execution. Accepted
-spawn Steps remain succeeded through interrupted delivery or caller cancellation;
-StepEnd carries the persisted status and output. Before acceptance, errors or
+Admission atomically commits the thread, pending root, applied create/run controls,
+and succeeded source Step with its output and finish time. Accepted spawn Steps
+remain succeeded through interrupted delivery or caller cancellation;
+StepEnd carries the persisted status, output, and finish time. Before acceptance, errors or
 cancellation create no root. A dispatch failure marks the admitted root failed while
-preserving its handle. Reprocessing one physical Step returns its original
+preserving its handle and applied controls. Reprocessing one physical Step returns its original
 admission; conflicting requests fail. Recovery does not relaunch a root.
 Retry rejects cuts through a surviving root's origin or retained input references;
 use rerun instead. Retry after the origin restores handle locals, and rewind can

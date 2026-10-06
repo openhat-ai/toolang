@@ -72,6 +72,7 @@ class _PersistSink:
             noted=step.noted,
             error=step.error,
             aborted_by=step.aborted_by,
+            finished_at=step.finished_at,
         )
 
     def _finish_run(self, event: RunEnd) -> None:

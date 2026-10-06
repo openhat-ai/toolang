@@ -15,7 +15,7 @@ from tests.support.execution_fixtures import (
     project_step,
 )
 from toolang.base.types.message import Message, ToolCallPart
-from toolang.base.types.run import ModelCall
+from toolang.base.types.run import ModelCall, ToolCall
 from toolang.base.types.tool import ToolDefinition
 from toolang.execution.errors import RunStoreSchemaError
 from toolang.execution.records import (
@@ -32,6 +32,7 @@ from toolang.execution.types import (
     RunRef,
     RunStatus,
     StepRef,
+    ToolStepGiven,
 )
 from toolang.lang.input import CallInput
 from toolang.lang.types import Array
@@ -125,6 +126,54 @@ def test_list_runs_uses_insertion_order_for_equal_timestamps(tmp_path: Path) -> 
         assert [run.id for run in store.list_runs(limit=None)] == [
             second.id,
             first.id,
+        ]
+    finally:
+        store.close()
+
+
+def test_pending_run_has_applied_entry_and_only_requests_need_cleanup(
+    tmp_path: Path,
+) -> None:
+    store = RunStore(tmp_path / "runs.db")
+    try:
+        store.create_thread(thread_id="term_admitted")
+        run, entry = accept_run(
+            store,
+            run_id="run_admitted",
+            parent=None,
+            thread="term_admitted",
+            input=Message.user("hello"),
+            context={},
+            request_id=None,
+            created_at="2026-01-01T00:00:00Z",
+        )
+        assert run.status == "pending" and not run.started_at
+        assert entry.status == "applied"
+        assert entry.finished_at == entry.created_at
+        requests = [
+            store.accept_run_control(
+                run_id=run.id,
+                kind=kind,
+                timing="next_call",
+                input=CallInput({"_": Array("Part[]", Message.user("update").parts)})
+                if kind == "steer"
+                else CallInput({}),
+                request_id=None,
+                created_at="2026-01-01T00:00:01Z",
+            )
+            for kind in ("steer", "cancel")
+        ]
+        assert all(c.status == "pending" and c.finished_at is None for c in requests)
+        store.fail_pending_run_controls(
+            run_id=run.id,
+            finished_at="2026-01-01T00:00:02Z",
+            error="run ended before the control could be applied",
+        )
+        assert store.get_run_control(run_id=run.id, index=0) == entry
+        assert [c.status for c in store.list_run_controls(run_id=run.id)] == [
+            "applied",
+            "wontapply",
+            "wontapply",
         ]
     finally:
         store.close()
@@ -591,16 +640,20 @@ def test_retry_rejects_applied_execute_history_without_mutation(
         assert entry is not None and isinstance(entry.payload, RunControlPayload)
         assert entry.payload.state is not None
         source = FieldRef.from_path(model.ref, "output", "value", 0)
-        trigger = project_step(
-            store,
-            run_id=run.id,
-            step_index=1,
+        trigger = store.begin_step(
+            ref=StepRef.from_local(run.id, (1,)),
             kind="tool",
-            status="running",
             input=(source,),
-            output=None,
+            given=ToolStepGiven(
+                plugin="_toolang",
+                call=ToolCall(
+                    "execute",
+                    "execute",
+                    "_toolang__exec",
+                    {"runnable": "target", "input": {"_": "work"}},
+                ),
+            ),
             started_at="2026-01-01T00:00:03Z",
-            finished_at=None,
         )
         execute = store.accept_exec_control(
             run_id=run.id,

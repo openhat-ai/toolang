@@ -131,7 +131,8 @@ def test_batch_runs_after_receipts_and_before_next_tools(tmp_path: Path) -> None
             for step, child, control in receipts:
                 assert step.status == "running" and step.output is not None
                 assert child is not None and child.status == "pending"
-                assert control is not None and control.status == "pending"
+                assert control is not None and control.status == "applied"
+                assert control.finished_at == control.created_at
             for step, control in beginnings:
                 assert step is not None and step.status == "succeeded"
                 assert control is not None and control.status == "applied"

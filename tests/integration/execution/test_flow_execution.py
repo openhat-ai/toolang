@@ -1075,7 +1075,7 @@ def test_internal_event_projection_does_not_update_control_status(
 ) -> None:
     store = RunStore(tmp_path / "runs.db")
     store.create_thread(thread_id="term_test")
-    accept_run(
+    _, entry = accept_run(
         store,
         run_id="run_test",
         parent=None,
@@ -1096,7 +1096,9 @@ def test_internal_event_projection_does_not_update_control_status(
     )
 
     control = store.get_run_control(run_id="run_test", index=0)
-    assert control is not None and control.status == "pending"
+    assert control == entry
+    assert control is not None and control.status == "applied"
+    assert control.finished_at == control.created_at
     store.close()
 
 

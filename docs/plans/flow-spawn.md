@@ -224,7 +224,8 @@ opening their store in another executor does not adopt or replay them.
 ## Persistence and Recovery
 
 Atomically commit the thread/create control, root/run control, self-contained
-entry State/context, and source Step output. Both controls use `triggered_by`
+entry State/context, and succeeded source Step with its output and finish time.
+Both controls are immediately `applied` and use `triggered_by`
 pointing to the originating Step in the same agent store, even across threads;
 the root parent stays null. Separate parent from origin in shared admission
 helpers. Add no new ControlKind, synthetic caller control, or scheduler.
@@ -240,7 +241,10 @@ Flow records a spawn-kind Step with SpawnStmt, runtime handle output, and its op
 named binding; agic records a normal Tool Step with the admission-time Run view.
 Each Step ends after admission without waiting for root execution. Once committed,
 admission remains a successful Step even if receipt delivery or the caller is
-canceled. Do not split thread creation and root admission into separate commits.
+canceled. Dispatch or execution failure belongs to the new Run and never changes
+the applied controls. Apply the same atomic control/Step completion rule to
+flow and agic exec. Only external steer/cancel requests can remain pending and
+become `wontapply` when a Run ends before handling them.
 
 Persist handles through the common Output envelope and `output/value` path.
 The `_Run<T>` type tag distinguishes native handles from ordinary values; save

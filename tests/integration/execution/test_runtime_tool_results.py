@@ -329,7 +329,8 @@ def test_interruption_before_result_commit_preserves_completed_result(
                 )
                 assert child.status == "canceled" and not child.started_at
                 entry = harness.store.get_run_control(run_id=child.id, index=0)
-                assert entry is not None and entry.status == "wontapply"
+                assert entry is not None and entry.status == "applied"
+                assert entry.finished_at == entry.created_at
                 unstarted.append(child.id)
             assert_run_event_integrity(tracer.events, unstarted_runs=unstarted)
             projector = ProgressProjector()
@@ -608,7 +609,9 @@ def test_steer_during_execute_delivery_keeps_committed_transfer(tmp_path: Path) 
                 if c.kind == "exec"
             )
             assert part.output == {"controls": [str(execute.ref)]}
-            assert steps[1].aborted_by == steer.ref
+            assert steps[1].status == "succeeded" and steps[1].aborted_by is None
+            assert execute.finished_at == execute.created_at == steps[1].finished_at
+            assert steer.ref in steps[2].preceded_by
             assert_run_event_integrity(tracer.events)
             projector = ProgressProjector()
             rows = [

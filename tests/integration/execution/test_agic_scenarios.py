@@ -1146,8 +1146,10 @@ def test_cancel_during_tool_result_delivery_preserves_output(
             run = await asyncio.wait_for(handle, timeout=2)
             assert run.status == "canceled"
             step = harness.store.list_steps(run_id=run.id)[1]
-            assert step.status == "canceled"
-            assert step.aborted_by == control.ref
+            if tool_name == "_toolang__exec":
+                assert step.status == "succeeded" and step.aborted_by is None
+            else:
+                assert step.status == "canceled" and step.aborted_by == control.ref
             assert step.output is not None
             (part,) = parts_from_value(step.output.value)
             assert isinstance(part, ToolResultPart)
@@ -1161,6 +1163,8 @@ def test_cancel_during_tool_result_delivery_preserves_output(
                     if c.kind == "exec"
                 )
                 assert part.output == {"controls": [str(control.ref)]}
+                assert control.status == "applied"
+                assert control.created_at == control.finished_at == step.finished_at
             assert_run_event_integrity(tracer.events)
 
     asyncio.run(scenario())

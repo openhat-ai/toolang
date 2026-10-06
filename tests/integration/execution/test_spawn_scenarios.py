@@ -389,6 +389,7 @@ flow child(_: Text):
             )
             assert end.output == step.output
             assert end.status == step.status
+            assert end.finished_at == step.finished_at
             assert run_event_from_data(run_event_to_data(end)) == end
             roots = [r for r in harness.store.list_runs() if r.id != parent.id]
             if failure in {"admission", "commit"}:
@@ -405,6 +406,9 @@ flow child(_: Text):
                 return
             assert len(roots) == 1
             root = roots[0]
+            entry = harness.store.get_run_control(run_id=root.id, index=0)
+            assert entry is not None and entry.status == "applied"
+            assert entry.finished_at == entry.created_at == step.finished_at
             assert step.status == "succeeded"
             assert step.error is None and step.aborted_by is None
             assert root.parent is None

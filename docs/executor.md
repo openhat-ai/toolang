@@ -160,9 +160,13 @@ ID. The supplied or allocated ID must be globally unique in `RunStore`.
 1. validate the thread;
 2. reject a conflicting run ID;
 3. insert the pending `RunRecord`;
-4. insert `run` `ControlRecord(index=0)` with effective `bindings`,
+4. insert an applied `run` `ControlRecord(index=0)` with effective `bindings`,
    `limits`, `input`, final `resources`, and canonical root sandbox snapshots;
 5. commit the accepted run before its owner task is scheduled.
+
+The entry control finishes at admission, even while the Run is pending.
+`RunBegin` records execution starting; it does not apply the entry control.
+Later scheduling or execution failure changes the Run, not its admission control.
 
 Duplicate run IDs and duplicate non-null request IDs are rejected. Request IDs
 are globally unique in the unified Control table; `None` disables request
@@ -427,7 +431,7 @@ This distinction is made at the event source. The sink and tracer observe the
 same canonical event sequence and never filter a synthetic top-level step.
 
 A model `_toolang__run` call validates its target and atomically records a pending
-child Run, its entry control, and the scheduling receipt. The receipt contains
+child Run, its applied entry control, and the scheduling receipt. The receipt contains
 `run_id` and `controls`; it does not contain the child's output. Dispatch follows
 the completed Tool Step:
 
@@ -447,7 +451,7 @@ output or error. The caller keeps its conversation and provider continuation.
 Target failure or cancellation leaves the receipt unchanged and lets the caller
 continue the batch. Cancellation of an enclosing Run takes precedence over a
 target-only cancellation. Root cancellation also cancels an accepted child that
-has not started, without applying its entry control. A steer during receipt
+has not started; its admission control remains applied. A steer during receipt
 delivery preserves the accepted request; a steer during execution interrupts the
 child and resumes the caller with its outcome.
 
@@ -459,8 +463,9 @@ its existing behavior: retrying an agic replaces its Step history and children.
 Automatic resumption of pending scheduled Runs after process loss is not
 implemented yet.
 
-A successful `_toolang__exec` records one applied exec control during its
-Tool Step, then finishes that Step before transferring to the target. It creates
+A successful `_toolang__exec` atomically records an applied exec control and
+its succeeded Tool Step, including output and finish time, before transferring
+to the target. Interrupted delivery cannot change that committed outcome. It creates
 no child Run, extra transition Step, or additional `RunBegin`:
 
 ```text
@@ -537,6 +542,10 @@ it. A cancellation updates only an unclaimed pending control, making
 application and cancellation linearizable without exposing an intermediate
 public status.
 
+Only external steer/cancel requests wait in `pending`. Runtime-created controls
+are persisted as `applied` with their effects. A later Step's `preceded_by`
+records adoption without changing those controls or their finish times.
+
 Every physical `StepBegin` persists the executing Run's bound State reference
 under the root event lock. Named child acceptance independently captures the
 latest published State once, validates its contract and authority, and persists
@@ -570,8 +579,10 @@ directly on the run without a synthetic step. Cancellation unwinds steps and
 child runs before the root `RunEnd(canceled)`.
 
 If cancellation came from a cancel control, `RunEnd.control` references it. The
-runtime marks that control `applied` and marks all other pending controls
-`wontapply` because they can no longer reach an applicable checkpoint.
+runtime marks that request `applied`. Every Run ending closes remaining pending
+steer/cancel requests as `wontapply` because they can no longer reach an applicable
+checkpoint. Runtime-created controls and their successful source Steps retain
+their committed outcomes even when subsequent execution fails or is canceled.
 
 
 ## Persistence

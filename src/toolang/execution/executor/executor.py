@@ -1077,8 +1077,26 @@ class RunExecutor:
         return emit
 
     async def _emit_event(self, active: _ActiveRun, event: RunEvent) -> None:
-        async with active.event_lock:
+        interruption: asyncio.CancelledError | None = None
+        while True:
+            try:
+                await active.event_lock.acquire()
+                break
+            except asyncio.CancelledError as exc:
+                if not isinstance(event, StepEnd):
+                    raise
+                step = self.store.get_step(ref=event.step)
+                if step is None or step.status == "running":
+                    raise
+                # Admission may have committed the Step before event delivery.
+                # Finish delivering that fact before propagating cancellation.
+                interruption = exc
+        try:
             await self._emit_event_locked(active, event)
+        finally:
+            active.event_lock.release()
+        if interruption is not None:
+            raise interruption
 
     async def _emit_event_locked(
         self,
@@ -1128,13 +1146,6 @@ class RunExecutor:
                 _LOGGER.exception("run tracer event handling failed")
 
     def _update_control_state(self, event: RunEvent) -> None:
-        if isinstance(event, RunBegin):
-            self.store.finish_run_controls(
-                run_id=event.run,
-                indexes=(event.control.index,),
-                finished_at=event.started_at,
-            )
-            return
         if isinstance(event, StepBegin):
             for ref in event.preceded_by:
                 self.store.finish_run_controls(

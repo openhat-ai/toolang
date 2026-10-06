@@ -229,13 +229,15 @@ immediate | next_step | next_call
 Statuses are:
 
 ```text
-pending   newly accepted and not applied
+pending   external steer/cancel accepted and not applied
 applied   applied by the runtime
 wontapply no longer applicable because the run ended or the checkpoint vanished
 revoked   explicitly withdrawn before application
 ```
 
 `applied` means the control was applied; it does not mean the run succeeded.
+Runtime-created controls are applied when their effects commit. In particular,
+an applied run control confirms admission even while the Run is still pending.
 A cancel control is therefore `applied` when it cancels a run. An unapplied steer
 left behind by a terminal run is `wontapply`.
 

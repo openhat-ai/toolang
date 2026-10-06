@@ -373,23 +373,10 @@ def test_execute_input_is_resolved_in_entries_and_dependencies(store):
         ),
         created_at="2026-01-01T00:00:04Z",
     )
-    store.finish_step(
-        ref=trigger.ref,
-        kind="tool",
-        status="succeeded",
-        output=Output(
-            value_for_type(
-                "ToolResultPart",
-                ToolResultPart(
-                    "call", "_toolang__exec", "_toolang", {"controls": [control.id]}
-                ),
-            ),
-            None,
-        ),
-        noted=None,
-        error=None,
-        finished_at="2026-01-01T00:00:05Z",
-    )
+    committed = store.get_step(ref=trigger.ref)
+    assert committed.status == "succeeded"
+    assert committed.finished_at == control.finished_at
+    assert committed.output.value.output == {"controls": [control.id]}
     store.begin_step(
         ref=StepRef.parse("run_a.2"),
         kind="model",
