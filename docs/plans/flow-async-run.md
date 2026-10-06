@@ -33,9 +33,12 @@ Remote dispatch, timeouts, and automatic restart remain outside scope.
 
 ## Awaitable and Result Contracts
 
-`Awaitable<T>` is design notation, not an authored generic type. It represents an
-executor-recognized computation with a stable identity, lifecycle state, complete
-result contract, and eventual outcome. Run is one implementation, not the interface.
+Use `_Awaitable` as the common internal runtime type identifier for all awaitable
+handles, including Run and operation targets. It is not an authored type or
+constructor. `Awaitable<T>` below is design notation only: the runtime tag stays
+`_Awaitable`, with `T` carried by the result contract rather than a type-name suffix.
+Each handle identifies an executor-recognized computation with a stable identity,
+lifecycle state, complete result contract, and eventual outcome.
 
 | Value | Meaning | Successful result |
 | --- | --- | --- |
@@ -48,8 +51,17 @@ An operation handle identifies the whole computation, not a preallocated list of
 child run IDs. Children may be admitted as lanes become available. Async starts
 scheduling after admission; await never launches work lazily or transfers ownership.
 
-Preserve existing Run metadata and `_Run` encodings from the spawn contract.
-Operation identities/result contracts must be durable; live tasks stay in the
+New handle outputs from async run, spawn, and async operations use `_Awaitable` in
+the existing Output envelope. The payload identifies the target kind and identity;
+the result contract determines what await returns. Run versus operation is a target
+distinction, not a separate runtime type. Native handle arrays, when enabled, use
+`_Awaitable[]`; one handle yielding an array still has type `_Awaitable`.
+
+Replace the current Run-specific handle encoding outright; retain no separate Run
+handle type, legacy alias, or compatibility decoder. Preserve Run metadata and the
+public spawn tool reply from the spawn contract. Record the storage-format change
+in the implementation changelog; old handle encoding is not a compatibility target.
+Target identities/result contracts must be durable; live tasks stay in the
 executor registry. Status does not prove a live owner exists. Repeated awaits reuse
 the outcome. Rendering fields, ordinary values, and Json lookalikes do not await
 or acquire handle semantics.
@@ -195,6 +207,36 @@ synchronous presentation scope. Adapt event routing, source/owner lookup, and me
 aggregation instead of retaining a live launch row. Preserve ordinary synchronous
 nesting checks and apply the same scope separation to CLI/TUI, streams, and inspection.
 
+## Invocation Presentation
+
+Design `run`, `exec`, `async run`, and `spawn` together as one invocation family.
+Within each existing CLI/TUI surface, use the same action/target layout, spacing,
+status treatment, and secondary detail placement. Retain existing surface styling;
+do not invent a separate async visual system. Identify the operation explicitly so
+ownership and completion differences remain visible without relying on color alone.
+
+| Operation | Live wording | Successful wording | Step success means |
+| --- | --- | --- | --- |
+| `run R` | Running R | Completed R | Child execution finished |
+| `exec R` | Transferring to R | Transferred to R | Handoff committed; caller does not resume |
+| `async run R` | Starting R | Started R | Owned background work admitted; handle available |
+| `spawn R` | Spawning R | Spawned R | Independent root admitted; handle available |
+
+These labels specify lifecycle meaning within a shared row layout. Keep the action
+and readable target primary; put result summaries, handles, run/thread references,
+and timings in the same secondary positions when applicable. Async run/spawn success
+does not claim the target finished. Exec's target continues the same Run, not a new
+child; preserve the handoff boundary. An optional await uses the same status language
+(`Waiting` then `Completed`/`Failed`/`Canceled`) in its own blocking Step.
+Keep internal type tags and payload encodings out of normal progress labels.
+
+Normalize operation semantics once for native flow statements and agic runtime tools.
+Determine async delivery from the statement/tool arguments, not `_Awaitable` output:
+async run, spawn, and blocks share that type. Existing presentation treats any flow
+RunHandle output as "Spawned" and runtime run tools as synchronous run scopes; replace
+those assumptions when implementing this family. Review all four operations together
+in live, successful, failed, and canceled states, including narrow terminal layouts.
+
 ## Implementation Touchpoints and Acceptance
 
 - Grammar and `src/toolang/lang/{ast,lower,contracts,flow_validation,format,
@@ -219,15 +261,21 @@ Acceptance scenarios:
    failures, and native empty arrays if that syntax is included.
 4. Parent lifecycle drains owned work; observer cancellation preserves targets;
    group cleanup respects ownership. No leaked tasks or duplicate effects.
-5. Round-trip handles and fault-inject admission/delivery; retry preserves bindings
-   and promptly rejects unavailable targets. Historical Run records still decode.
-6. Flow/tool parity, authorization, error replies, and historical event decoding pass.
+5. Round-trip `_Awaitable` Run/operation handles with scalar and array result
+   contracts; all writes use the same tag, with no legacy handle type or decoder.
+   Fault-inject admission/delivery; retry preserves bindings and rejects unavailable
+   targets. Incompatible persisted handle encodings fail explicitly.
+6. Flow/tool parity, authorization, error replies, and event round-trips pass.
 7. Replay background events during later caller Steps, before await/handle delivery,
    with no await, and across repeated awaits. The caller remains linear: only launch
    is live while starting; only an explicit await waits for the target. Background
    events never reopen/inject caller rows. Cover admission cancellation, retained
    ownership, and accounting exactly once; synchronous nesting errors still fail.
    Run the default offline checks.
+8. Review run/exec/async run/spawn together across flow and agic: consistent row
+   anatomy, target/identity formatting, and failure/cancel styling; correct live and
+   terminal wording, scope, and result/handle details. Handle type alone never labels
+   an operation as spawn or keeps a launch live for background execution.
 
 Publish/pin matching grammar before release; validate proposed examples against it.
 Generate the implementation changelog through the repository runnable.
@@ -238,9 +286,10 @@ Before implementation approval, settle:
 
 1. Whether native handle arrays and direct async collection operators ship initially
    or later; if arrays ship, define construction/binding syntax and the runtime codec.
-2. The operation-handle representation, concrete tool target schema, and background
-   execution-scope records shared with #686. They must preserve the linear caller
-   Step contract above; neither a Run identity nor all child IDs may be assumed.
+2. The `_Awaitable` payload codec, concrete tool target schema, and background
+   execution-scope records shared with #686. The internal type identifier is fixed;
+   the remaining representation must preserve linear caller Steps and cannot assume
+   a Run identity or preallocated child IDs.
 
 Risks are conflating handle collections with array-valued operations, admission
 with completion, or observation with ownership. This revision records the design
