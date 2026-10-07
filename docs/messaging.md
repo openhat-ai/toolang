@@ -33,6 +33,7 @@ too text --group alice hello
 Interactive Text keeps a live input below ordinary scrollback. Enter sends; Ctrl+J inserts a newline; Ctrl+P/Ctrl+N browse sent input; Ctrl+Q exits. Failed sends preserve the draft. In tmux, each root/connection/human has a session and each conversation has a reusable window; switch windows to switch conversations. Use tmux copy mode for history. `TOOLANG_TMUX=0` keeps Text in the invoking pane.
 
 Messages align within Chat's maximum content width (120 columns by default, configurable with `TOOLANG_PROGRESS_MAX_WIDTH`), capped by the current terminal width.
+Left-aligned names and body text start in column 3, with a `•` marker on the first body line. Owner names sit above the message background at the top right; the body has two cells of horizontal padding on each side and one row above and below. The first owner body line has Chat's cyan `▮` marker in the outermost right padding cell. Extremely narrow terminals reduce horizontal decoration to preserve content.
 
 ## Conversations and keys
 

@@ -16,12 +16,14 @@ from rich.text import Text
 from wcwidth import wcswidth
 
 from toolang.cli.common.console import terminal_console
+from toolang.cli.common.control_bars import (
+    CONTROL_BAR_MARK as CONTROL_BAR_MARK,
+    QUICK_COMMAND_CONTROL_ACCENT as QUICK_COMMAND_CONTROL_ACCENT,
+    RUN_CONTROL_ACCENT as RUN_CONTROL_ACCENT,
+    STEER_CONTROL_ACCENT as STEER_CONTROL_ACCENT,
+)
 
 ACCENT_CELL = " "
-CONTROL_BAR_MARK = "▮"
-QUICK_COMMAND_CONTROL_ACCENT = "yellow"
-RUN_CONTROL_ACCENT = "bright_cyan"
-STEER_CONTROL_ACCENT = "bright_magenta"
 _ANSI_NOT_DIM = "\x1b[22m"
 
 _PROMPT_TOOLKIT_ANSI_COLORS = (

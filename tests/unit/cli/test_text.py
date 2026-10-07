@@ -11,6 +11,7 @@ from prompt_toolkit.data_structures import Size
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
 from rich.console import Console
+from rich.color import Color
 
 from toolang.cli.toolang import main as cli
 from toolang.cli.toolang.commands import text, team
@@ -115,7 +116,7 @@ def test_failed_send_preserves_draft_and_success_does_not_erase_new_typing(
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("width", [1, 4, 16, 80])
+@pytest.mark.parametrize("width", [1, 2, 3, 4, 16, 80])
 @pytest.mark.parametrize("sender", ["alice", "bryan"])
 def test_narrow_rendering_and_terminal_escape_removal(width, sender):
     message = Message.create(sender, "hello\x1b[2J\x1b]52;c;secret\x07 **world**")
@@ -127,8 +128,64 @@ def test_narrow_rendering_and_terminal_escape_removal(width, sender):
     rendered = output.getvalue()
     assert "secret" not in rendered and "\x1b" not in rendered
     assert all(len(line) <= width for line in rendered.splitlines())
-    assert "hello" in rendered.replace(" ", "").replace("\n", "")
+    assert "hello" in rendered.replace(" ", "").replace("\n", "").replace("▮", "")
     assert display_text("a\x08b\r\x00c") == "abc"
+
+
+@pytest.mark.parametrize("group", ["all", "dm_alice", "dm_alice_bob"])
+def test_left_message_marker_has_aligned_header_and_wrapped_body(group):
+    output = StringIO()
+    console = Console(file=output, width=40, color_system=None)
+    console.print(
+        message_block(
+            Message.create("alice", "word " * 20 + "\n\n**Last paragraph**"),
+            group,
+            {"alice", "bob"},
+            40,
+            DARK_TERMINAL_SURFACES,
+        )
+    )
+    lines = output.getvalue().splitlines()
+    assert lines[0].rstrip() == "  alice"
+    assert lines[1].startswith("• word")
+    assert all(line.startswith("  ") for line in lines[2:] if line.strip())
+    assert output.getvalue().count("•") == 1
+    assert output.getvalue().split().count("word") == 20
+    assert any(line.rstrip() == "  Last paragraph" for line in lines)
+
+
+@pytest.mark.parametrize("group", ["all", "dm_alice"])
+def test_owner_name_is_above_padded_background_at_top_right(group):
+    output = StringIO()
+    console = Console(file=output, width=40, color_system=None)
+    block = message_block(
+        Message.create("bryan", "x" * 28 + "\nshort"),
+        group,
+        {"alice"},
+        40,
+        DARK_TERMINAL_SURFACES,
+    )
+    console.print(block)
+    lines = output.getvalue().splitlines()
+    assert lines[0] == " " * 35 + "bryan"
+    assert lines[1] == " " * 40
+    assert lines[2] == " " * 10 + "x" * 28 + " ▮"
+    assert lines[3] == " " * 10 + "short" + " " * 25
+    assert lines[4:] == [" " * 40, " " * 40]
+    background_widths = [
+        sum(
+            segment.cell_length
+            for segment in row
+            if segment.style and segment.style.bgcolor is not None
+        )
+        for row in console.render_lines(block)
+    ]
+    assert background_widths == [0, 32, 32, 32, 32, 0]
+    accents = [segment for segment in console.render(block) if "▮" in segment.text]
+    assert len(accents) == 1
+    assert accents[0].style is not None
+    assert accents[0].style.color == Color.parse("bright_cyan")
+    assert accents[0].style.dim is False
 
 
 @pytest.mark.parametrize("configured_width", [None, "72"])
@@ -170,8 +227,9 @@ def test_interactive_messages_use_chat_width_after_resize(
             limit = min(columns, int(configured_width or "120"))
             assert all(len(line) <= limit for line in lines)
             assert output.getvalue().split().count("word") == 90
-            # Human messages retain the left inset within the capped content area.
-            assert lines[0].index(sender) == (9 if sender == "bryan" else 0)
+            assert lines[0].index(sender) == (
+                limit - len(sender) if sender == "bryan" else 2
+            )
 
     monkeypatch.setattr(TextTui, "run", render_messages)
     with (

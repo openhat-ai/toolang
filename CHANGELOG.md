@@ -9,6 +9,14 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Added
 
+- Interactive Text starts left-aligned names and body text in column 3, with a
+  `•` marker on the first body line rather than the name. Owner names sit
+  outside and above the background at the upper right; owner bodies have two
+  cells of horizontal padding on each side and one row above and below, and their
+  first body line carries Chat's cyan `▮` marker in the outermost right
+  padding cell. Right-aligned agent DMs have no marker, and very narrow terminals
+  reduce the decoration to preserve content.
+
 - Interactive Text lays out messages within Chat's maximum content width (120
   columns by default, configurable with `TOOLANG_PROGRESS_MAX_WIDTH`), capped by
   the current terminal width.
