@@ -53,7 +53,7 @@ def test_protocol_preserves_guidance_and_execution_boundaries() -> None:
         "A trigger change or removal invalidates",
         "Setup, which stays fixed within a root Run",
         "output contract stays fixed",
-        "Run cannot target the current runnable or an ancestor",
+        "Run (including async run) and spawn cannot target the current runnable or an ancestor",
         "child self-exec is forbidden",
         'entered_by="exec"',
         "the handoff has already succeeded",

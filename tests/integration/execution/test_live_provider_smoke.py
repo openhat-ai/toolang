@@ -228,8 +228,15 @@ def test_real_provider_executes_flow_with_nested_agic(
     [
         ("Invoke agic:review with input ROUTE_MARKER.", "agic:review", "exec"),
         ("Invoke flow:check with input ROUTE_MARKER.", "flow:check", "exec"),
+        ("Run agic:review with input ROUTE_MARKER.", "agic:review", "exec"),
+        ("Run flow:check with input ROUTE_MARKER.", "flow:check", "exec"),
         (
             "Invoke agic:review for a smoke test; choose the input yourself.",
+            "agic:review",
+            "exec",
+        ),
+        (
+            "Run agic:review for a smoke test; choose the input yourself.",
             "agic:review",
             "exec",
         ),
@@ -253,7 +260,10 @@ def test_real_provider_executes_flow_with_nested_agic(
     ids=[
         "named-agic",
         "named-flow",
+        "ordinary-run-agic",
+        "ordinary-run-flow",
         "chosen-test-input",
+        "ordinary-run-chosen-input",
         "explicit-run-input",
         "parameters-only",
         "doc-routing",
