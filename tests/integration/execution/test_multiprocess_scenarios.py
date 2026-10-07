@@ -427,7 +427,7 @@ def test_remote_process_can_steer_an_owned_run(tmp_path: Path) -> None:
             assert record.status == "succeeded"
             assert harness.store.run_output_text(run_id=record.id) == "final"
             assert len(harness.adapter.invocations) == 2
-            assert harness.adapter.invocations[1].call.messages[-3] == Message(
+            assert harness.adapter.invocations[1].call.messages[-2] == Message(
                 "user",
                 (
                     TextPart(

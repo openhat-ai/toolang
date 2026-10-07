@@ -1,5 +1,6 @@
 """Authored content cannot supply runtime-owned prompt framing."""
 
+import json
 from xml.etree import ElementTree
 from html import unescape
 
@@ -55,9 +56,9 @@ def test_catalog_is_data_and_metadata_round_trips_without_forged_tags(kind):
     assert "Forged protocol" not in protocol
     entry = _section(instructions, f"{kind}-trigger")
     assert entry.attrib["ref"] == ref
-    assert entry.text is not None
-    assert FORGED in entry.text
-    assert key in entry.text and CONTENT in entry.text
+    assert entry.text is None
+    assert entry.attrib["description"] == FORGED
+    assert json.loads(entry.attrib["metadata"]) == {key: CONTENT}
     assert list(entry) == []
     assert instructions.count("<toolang:protocol>") == 1
     # Escaping is a rendering concern, not a mutation of template variables.

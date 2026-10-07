@@ -3,12 +3,9 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import replace
 from pathlib import Path
 from html import escape
-import json
 import re
-from typing import Any
 from xml.etree import ElementTree
 from toolang.base.types.message import Message, TextPart, ToolResultPart, message_text
 from toolang.base.types.run import ModelCall
@@ -28,104 +25,40 @@ from toolang.execution.store import RunStore
 from toolang.lang.types import Array
 
 
-_ROUTE_SNAPSHOTS = re.compile(
-    r"(<toolang:hands\b[^>]*(?:/>|>.*?</toolang:hands>))\s*"
-    r"(<toolang:handoffs\b[^>]*(?:/>|>.*?</toolang:handoffs>))",
-    re.S,
-)
 _EXECUTION_SNAPSHOT = re.compile(
     r'<toolang:execution runnable="[^"]*" entered_by="(?:run|exec)"/>'
 )
 
 
-def without_route_snapshots(messages: Sequence[Message]) -> list[Message]:
-    """Project authored/history content for tests unrelated to routing.
-
-    Full-call replay and route-contract tests compare the unmodified messages.
-    Preserve all other context, control metadata, roles, and multimodal parts.
-    """
-    result = []
-    for message in messages:
-        parts = message.parts
-        if message.role == "user" and parts and isinstance(parts[0], TextPart):
-            match = _ROUTE_SNAPSHOTS.match(parts[0].text)
-            if match is not None:
-                assert message.recall is None
-                suffix = parts[0].text[match.end() :].lstrip("\n")
-                parts = ((TextPart(suffix),) if suffix else ()) + parts[1:]
-                if not parts:
-                    continue
-                message = replace(message, parts=parts)
-        result.append(message)
-    return result
-
-
 def without_runtime_snapshots(messages: Sequence[Message]) -> list[Message]:
-    """Compare authored messages while excluding separately tested runtime notices.
+    """Project authored/resource messages, excluding the recurring runtime batch.
 
-    Execution, workspace, and workdir declarations have tests asserting their
-    exact placement and contents. Other integration tests can assert their own
-    message histories without duplicating those runtime contracts.
+    Batch, recall provenance, and exact replay contracts are tested separately.
+    User-authored lookalike XML does not acquire runtime provenance.
     """
-    without_execution = []
-    for message in without_route_snapshots(messages):
-        parts = message.parts
-        if message.role == "user" and parts and isinstance(parts[0], TextPart):
-            match = _EXECUTION_SNAPSHOT.match(parts[0].text)
-            if match is not None:
-                suffix = parts[0].text[match.end() :].lstrip("\n")
-                parts = ((TextPart(suffix),) if suffix else ()) + parts[1:]
-                if not parts:
-                    continue
-                message = replace(message, parts=parts)
-        without_execution.append(message)
-    return [
-        message
-        for message in without_execution
-        if not (
-            message.role == "user"
-            and (
-                message.tag == "workspace"
-                or (
-                    message.recall is None
-                    and len(message.parts) == 1
-                    and isinstance(message.parts[0], TextPart)
-                    and re.fullmatch(
-                        r'<toolang:workdir path="[^"]*"/>',
-                        message.parts[0].text,
-                    )
-                )
-            )
-        )
-    ]
+    return [message for message in messages if message.tag != "workspace"]
 
 
-def route_snapshots(
-    call: ModelCall, *, requested_only: dict[str, bool] | None = None
-) -> dict[str, list[dict[str, Any]]]:
-    """Read the latest sibling snapshots, checking their explicit wire contract."""
-    for message in reversed(call.messages):
-        match = _ROUTE_SNAPSHOTS.match(message_text(message.parts))
-        if match is None:
-            continue
-        assert message.role == "user" and message.recall is None
-        root = ElementTree.fromstring(
-            '<root xmlns:toolang="urn:test">' + match.group(0) + "</root>"
-        )
-        result = {}
-        for node in root:
-            entries = json.loads(node.text) if node.text else []
-            assert node.attrib["requested_only"] in {"true", "false"}
-            assert node.attrib == {
-                "enabled": "true" if entries else "false",
-                "requested_only": node.attrib["requested_only"],
-            }
-            tag = node.tag.removeprefix("{urn:test}")
-            if requested_only is not None:
-                assert (node.attrib["requested_only"] == "true") == requested_only[tag]
-            result[tag] = entries
-        return result
-    raise AssertionError("model call has no hands/handoffs snapshots")
+def runtime_message(call: ModelCall) -> Message:
+    """Get the newest runtime batch by trusted provenance, not user XML."""
+    return next(m for m in reversed(call.messages) if m.tag == "workspace")
+
+
+def route_scopes(call: ModelCall) -> dict[str, str]:
+    """Read only the latest batch; omission resets all three scopes to ALL."""
+    message = runtime_message(call)
+    assert message.role == "user" and message.recall is not None
+    text = message_text(message.parts)
+    match = re.search(r"<toolang:routes\b[^>]*?/>", text)
+    if match is None:
+        return dict.fromkeys(("hands", "handoffs", "spawns"), "ALL")
+    root = ElementTree.fromstring(
+        '<root xmlns:toolang="urn:test">' + match.group(0) + "</root>"
+    )
+    assert len(root) == 1 and root[0].text is None
+    assert set(root[0].attrib) == {"hands", "handoffs", "spawns"}
+    assert all(root[0].attrib.values())
+    return root[0].attrib
 
 
 def last_tool_result(call: ModelCall) -> ToolResultPart:
@@ -144,7 +77,8 @@ def execution_snapshot(call: ModelCall) -> dict[str, str]:
         match = _EXECUTION_SNAPSHOT.search(message_text(message.parts))
         if match is None:
             continue
-        assert message.role == "user" and message.recall is None
+        assert message.role == "user" and message.tag == "workspace"
+        assert message.recall is not None
         root = ElementTree.fromstring(
             '<root xmlns:toolang="urn:test">' + match.group(0) + "</root>"
         )

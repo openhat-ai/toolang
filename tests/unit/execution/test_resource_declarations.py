@@ -69,7 +69,11 @@ def test_bodyless_declaration_round_trip_and_structural_visibility(
     assert template.tag == tag
     assert template.recall is not None and template.recall.revision == revision
     assert not any(isinstance(segment, TypedRef) for segment in template.content)
-    suffix = ' removed="true"' if removed else ""
+    suffix = (
+        ' removed="true"'
+        if removed
+        else (' description=""' if target.kind.endswith("-trigger") else "")
+    )
     text = f"<toolang:{tag} {attributes}{suffix}/>"
     delta = (template,)
     encoded = delta_to_data(delta)
@@ -184,3 +188,53 @@ def test_workspace_remap_retracts_old_rules_without_loading_new_ones():
         resource_text(workspace, remapped.revision, "")
         == '<toolang:workspace-access ref="repo"/>'
     )
+
+
+@pytest.mark.parametrize("kind", [SkillTriggerRecallTarget, ServiceTriggerRecallTarget])
+@pytest.mark.parametrize("legacy", [False, True])
+def test_trigger_attributes_preserve_literal_text_metadata_and_recall(kind, legacy):
+    import json
+    from xml.etree import ElementTree
+
+    text = 'Route "quotes" & <tags>\nnext\tcolumn\rline'
+    metadata = {"space key": {"values": [text, False, 3]}, "empty": ""}
+    target = kind('skill/"a&b"')
+    content = (
+        text if legacy else json.dumps({"description": text, "metadata": metadata})
+    )
+    payload = RecallControlPayload(target, "revision", content)
+    control = ControlRecord(str(ControlRef.for_run("run_test", 1)), "recall", payload)
+    template = control_message(control)
+    assert template is not None
+    restored = delta_from_data(delta_to_data((template,)))
+    message = render_delta(restored, lambda _: pytest.fail("attribute-only trigger"))[0]
+    (part,) = message.parts
+    assert isinstance(part, TextPart)
+    root = ElementTree.fromstring(
+        '<root xmlns:toolang="urn:test">' + part.text + "</root>"
+    )
+    (node,) = root
+    assert node.text is None and len(node) == 0
+    assert node.attrib["ref"] == target.ref
+    assert node.attrib["revision"] == "revision"
+    assert node.attrib["description"] == text
+    if legacy:
+        assert "metadata" not in node.attrib
+    else:
+        assert json.loads(node.attrib["metadata"]) == metadata
+    assert recall_revisions(restored) == {target: "revision"}
+    assert required_declarations((payload,), recall_revisions(restored)) == ()
+
+
+def test_legacy_trigger_call_template_replays_without_new_serialization():
+    old = MessageTemplate(
+        "user",
+        (
+            '<toolang:skill-trigger ref="skill/testing">\nOld body\n</toolang:skill-trigger>',
+        ),
+    )
+    assert isinstance(old.content[0], str)
+    restored = delta_from_data(delta_to_data((old,)))
+    assert render_delta(restored, lambda _: pytest.fail("literal history"))[
+        0
+    ].parts == (TextPart(old.content[0]),)

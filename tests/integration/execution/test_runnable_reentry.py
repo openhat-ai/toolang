@@ -7,7 +7,7 @@ import pytest
 from tests.support.execution_assertions import (
     assert_replayed,
     last_tool_result,
-    route_snapshots,
+    route_scopes,
 )
 from tests.support.execution_harness import (
     AsyncGate,
@@ -214,11 +214,9 @@ flow outer() -> Text[]:
                 f"_toolang/{action} cannot call the current or an ancestor runnable: {target}"
             )
             for invocation in harness.adapter.invocations[1:]:
-                for routes in route_snapshots(invocation.call).values():
-                    assert not {r["ref"] for r in routes} & {
-                        "agic:worker",
-                        "flow:outer",
-                    }
+                assert route_scopes(invocation.call) == dict.fromkeys(
+                    ("hands", "handoffs", "spawns"), "ALL"
+                )
             assert all(
                 not harness.store.list_run_controls(run_id=r.id, kind="exec")
                 for r in runs

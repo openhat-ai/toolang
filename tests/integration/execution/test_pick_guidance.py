@@ -17,7 +17,7 @@ from tests.support.execution_assertions import (
     assert_replayed,
     assert_run_event_integrity,
     without_runtime_snapshots,
-    route_snapshots,
+    route_scopes,
 )
 from tests.support.execution_harness import (
     RecordingTool,
@@ -284,7 +284,8 @@ def test_catalog_escaping_preserves_pick_targets_and_recalled_source(
                 for entry in root.findall(f"{{urn:test}}{kind}-trigger")
                 if entry.attrib["ref"] == ref
             )
-            assert entry.text and entry.text.strip() == description
+            assert entry.text is None
+            assert entry.attrib["description"] == description
             assert _results(harness, run)["pick"].error is None
             (control,) = _recalls(harness, run)
             assert control.payload.target.ref == ref
@@ -378,7 +379,9 @@ def test_model_without_tools_keeps_protocol_but_exposes_no_tools(tmp_path: Path)
             assert run.status == "succeeded", run.error
             (invocation,) = harness.adapter.invocations
             assert invocation.call.tools == ()
-            assert route_snapshots(invocation.call) == {"hands": [], "handoffs": []}
+            assert route_scopes(invocation.call) == dict.fromkeys(
+                ("hands", "handoffs", "spawns"), "NONE"
+            )
             assert "<toolang:protocol>" in invocation.call.instructions
             assert "declares no hands or handoffs" not in invocation.call.instructions
             assert "<toolang:instruct>" not in invocation.call.instructions

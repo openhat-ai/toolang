@@ -258,7 +258,18 @@ async def _execute(
         summary_context = _tool_summary_context(call, tool)
         runtime = (
             _ToolRuntime(
-                state, step, source_ref, tool_call_count, routes or prepared.routes
+                state,
+                step,
+                source_ref,
+                tool_call_count,
+                routes or prepared.routes,
+                (
+                    state.execution.latest_state()
+                    if call.name == "_toolang__runnables"
+                    and state.execution is not None
+                    and state.execution.executor._state is not None
+                    else agent_state
+                ),
             )
             if plugin_name == "_toolang"
             else None

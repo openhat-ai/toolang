@@ -471,25 +471,26 @@ agic coordinate(_: Text) -> Report:
   Coordinate the work.
 ```
 
-When a setting is omitted and has no inherited value, all visible targets are
-available for user-directed calls. The model may invoke them when the user names
-a target; this requested-only rule is enforced by protocol guidance. An explicit
-list or `*` also permits autonomous delegation within its scope. Explicit lists
-and `none` are enforced by the runtime and cannot be bypassed by a user request.
-Inherited lists and `none` remain effective within their module until a child
-explicitly replaces them. Additional restrictions stated by the user further constrain model use.
+Omitted settings without an inherited restriction and explicit `*` both allow
+all module-visible targets. Calls must serve an explicit user request or concrete
+work required by the current agic; availability or matching documentation alone
+does not request execution. Explicit lists and `none` are enforced by the runtime
+and cannot be bypassed by a user request. Inherited restrictions remain effective
+within their module until a child explicitly replaces them. Additional user
+restrictions further constrain model use.
 
 For a named invocation with no requested follow-up, the model uses
 `_toolang/exec`. When asked to summarize, compare, or otherwise process the
 result afterward, it uses `_toolang/run`. Asking about parameters alone does not
-execute the target; missing required input is requested before invocation.
+execute the target. When the user delegates test-input choice, the model chooses
+a reasonable value; it asks only for required values it cannot establish or choose.
 Scope conflicts are reported without silently changing the target or operation.
 
 A hand is a child Run: the runtime acknowledges scheduling, executes the child,
 then supplies its outcome as context before the Agic continues.
 A handoff replaces the current runnable in the same Run: the target continues
 at the next Step and owns the Run's result. Missing but well-formed refs
-remain authored routes and become available in the next model-call catalog after
+remain authored routes and become available in the next model-call scope after
 the watcher publishes them. No explicit refresh action is needed.
 Flows pass these route defaults to descendants. `_toolang` inner runtime tools cannot be selected
 through `tools`; use `hands` or `handoffs` to authorize targets. Runtime tool
@@ -510,7 +511,7 @@ parents or siblings. Lane defaults are 4 per parallel operation; a statement
 
 ### Context And Instruct
 
-`context` defines data prepended to the final user content. `instruct` defines
+`context` defines data in the recurring runtime user message. `instruct` defines
 provider-neutral agent instructions. Model adapters map the assembled frame to
 provider-specific roles.
 
@@ -721,18 +722,35 @@ output schema; each model adapter maps those fields to its provider API.
 | Selected `instruct` | Agent- and runnable-specific behavior | `<toolang:instruct>` in `instructions` |
 | Selected psyches | Resident guidance subordinate to protocol and instruct | Individual `<toolang:psyche>` declarations in `instructions` |
 | Skill/service triggers | Available capabilities' exact refs, descriptions, and metadata; not loaded guidance | Individual `<toolang:skill-trigger>` and `<toolang:service-trigger>` declarations in `instructions` |
-| Hands/handoffs | Complete current call authorization and signatures, with `enabled` and `requested_only` attributes | `<toolang:hands>` and `<toolang:handoffs>` in `messages`, as siblings before context; independent of `context = none` |
-| Selected `context` | Runtime data, not behavioral instructions | `<toolang:context>` prepended to the last authored user message; repeated as a user message on later calls |
+| Routes | Effective target restrictions for run, exec, and spawn | Optional self-closing `<toolang:routes hands="..." handoffs="..." spawns="..."/>` in the recurring runtime message |
+| Selected `context` | Runtime data, not behavioral instructions | `<toolang:context>` in the recurring runtime message, separate from authored messages |
 | Prompts and authored messages | Reusable input and the runnable's conversation, including referenced primary input | `messages`, preserving authored roles |
 | Far and near recall | Selected conversation summary and historical messages | Before current messages in `messages` |
-| Resource and control messages | Workspace availability, loaded rules/guidance, resource changes, steering, and cancellation | Runtime-generated user messages with `toolang:` tags |
+| Resource and control messages | Loaded rules/guidance, resource changes, steering, and cancellation | Separate runtime-generated user messages with `toolang:` tags |
 | Tool definitions | Callable tool schemas, not guidance or permission grants | Structured `tools` field |
 | Output contract | The runnable's required result type | Structured `output_schema` field; adapters may add format instructions |
 
-Hands/handoffs snapshots omit the current runnable and its ancestors on the
-calling branch. Earlier handoffs, completed children, and siblings do not block
-calls. If no callable targets remain for a mode, its snapshot is disabled. These
-filters run before snapshot size limits; execution still rejects recursive calls.
+Every call adds one runtime user message ordered `workspace`, `workdir`, optional
+`routes`, optional `context`, then `execution`. Authored roles and multimodal parts
+remain separate. In routes, `hands` limits run, `handoffs` limits exec, and `spawns`
+follows hands. Each attribute is `ALL`, `NONE`, or comma-separated canonical refs.
+All three attributes are present if any scope is restricted; otherwise the tag is
+omitted. Absence in the newest runtime message means ALL, regardless of older tags.
+Scopes do not filter active-path targets: runtime guards still reject run to self
+or ancestors, exec to ancestors, and child self-exec. An authorized root with no
+active descendants can exec itself.
+
+Use `_toolang__runnables` to discover targets and complete signatures:
+`{}` returns all module-visible declarations; `{"name":"agic:review"}` or
+`{"name":"review"}` returns exactly one. Unknown, inaccessible, empty, whitespace,
+and null names fail; there is no wildcard or multi-name query. Results include
+`current`, active `ancestors` ordered root to parent, and sorted `runnables`.
+Each entry has `ref`, `revision`, the full authored `doc`, and a `signature`
+containing input, ordered parameters, output, and recursively referenced structs
+with field docs. Public refs omit the module prefix; private refs keep it.
+Docs describe suitability for an already-authorized task and do not authorize
+execution. Discovery includes current and visible ancestors even when their
+invocation is forbidden, and remains available when routes are NONE.
 
 ### Selection And Priority
 
@@ -741,7 +759,7 @@ instruct selections cannot remove it. `instruct = none` disables only the
 agent-specific layer; it does not disable context, psyches, or capabilities.
 Resource selection and ceilings still determine which capabilities are present.
 `context = none` independently disables context. The runtime wraps every nonempty
-rendered context in `<toolang:context>`, including program-default and named
+authored context body in `<toolang:context>`, including program-default and named
 selections. Empty rendered context adds no block. Authors should supply only the
 context body, not its wrapper.
 
@@ -752,14 +770,16 @@ remain data even when their content looks like instructions.
 Runtime facts, resource fields, and rendered instruct, psyche, and context bodies
 are XML-escaped at the model-input boundary. Literal tags cannot close their
 runtime-owned wrapper. Read decoded text literally; use decoded refs in tool
-calls. Runnable information contains XML-escaped JSON, and its complete framing
-counts toward the byte limit. Recalled guidance is escaped without flattening
+calls. Trigger descriptions use a `description` attribute; other metadata uses
+a JSON `metadata` attribute. Attribute whitespace is preserved with XML character
+references. Recalled guidance is escaped without flattening
 nontext Parts. Replay uses recorded content, not current templates. Tags do not
 grant authority; tools, resource ceilings, and workspace access are enforced
 separately.
 
 Default instruct contains the stable agent name. Default context contains only
-date, timezone, model provider, and model name. Agent home is not exposed there;
+`date`, `timezone`, `model_provider`, and `model_name` attributes. Authored
+default replacements and named contexts retain their bodies. Agent home is not exposed there;
 use `me` tools for agent resources. Version, paths, and selected resources do not
 belong in the shared protocol.
 

@@ -7,7 +7,7 @@ import pytest
 from tests.support.execution_assertions import (
     assert_replayed,
     execution_snapshot,
-    route_snapshots,
+    route_scopes,
 )
 from tests.support.execution_harness import ExecutionHarness, RecordingRunTracer
 from toolang.base.types.message import Message, TextPart, message_text
@@ -94,9 +94,9 @@ def test_exec_successor_declares_current_identity_with_chat_history(
                 text = "\n".join(message_text(m.parts) for m in call.messages)
                 assert "What text should I echo?" in text
                 assert "Confirm the agent is working and echo SMOKE_MARKER." in text
-                routes = route_snapshots(call)
-                assert not any(item["ref"] == "agic:test" for item in routes["hands"])
-                assert any(item["ref"] == "agic:test" for item in routes["handoffs"])
+                assert route_scopes(call) == dict.fromkeys(
+                    ("hands", "handoffs", "spawns"), "ALL"
+                )
 
     asyncio.run(scenario())
     assert_replayed(harness.store.db_path, tracer.events)

@@ -7,7 +7,7 @@ import pytest
 from tests.support.execution_assertions import (
     assert_replayed,
     last_tool_result,
-    route_snapshots,
+    route_scopes,
 )
 from tests.support.execution_harness import (
     AsyncGate,
@@ -428,10 +428,7 @@ def test_model_catalog_is_frozen_but_acceptance_selects_latest(
                 )
             )
             await asyncio.wait_for(gate.wait_until_entered(), 2)
-            assert (
-                route_snapshots(harness.adapter.invocations[0].call)["hands"][0]["ref"]
-                == "flow:worker"
-            )
+            assert route_scopes(harness.adapter.invocations[0].call)["hands"] == "ALL"
             candidate = publish(
                 harness,
                 added.replace("Catalog worker", "Accepted worker").replace(
@@ -511,20 +508,14 @@ def test_unadvertised_target_waits_for_next_model_catalog(
                 )
             )
             await asyncio.wait_for(gate.wait_until_entered(), 2)
-            assert [
-                item["ref"]
-                for item in route_snapshots(harness.adapter.invocations[0].call)[mode]
-            ] == (["agic:parent"] if mode == "handoffs" else [])
+            assert route_scopes(harness.adapter.invocations[0].call)[mode] == "ALL"
             publish(harness, source + "flow worker():\n  pass\n")
             gate.release()
             root = await handle
             assert root.status == "succeeded", root.error
             assert harness.store.list_run_tree(root_run_id=root.id) == [root]
             assert last_tool_result(harness.adapter.invocations[1].call).error
-            assert (
-                route_snapshots(harness.adapter.invocations[1].call)[mode][-1]["ref"]
-                == "flow:worker"
-            )
+            assert route_scopes(harness.adapter.invocations[1].call)[mode] == "ALL"
 
     asyncio.run(scenario())
 
@@ -598,11 +589,8 @@ def test_tool_batch_reuses_frame_and_next_model_discovers_publication(tmp_path, 
             assert root.status == "succeeded", root.error
             assert finished_tools == 2 and len(tool.calls) == 1
             assert "tools" not in reads
-            assert route_snapshots(harness.adapter.invocations[0].call)["hands"] == []
-            assert (
-                route_snapshots(harness.adapter.invocations[1].call)["hands"][0]["ref"]
-                == "flow:worker"
-            )
+            assert route_scopes(harness.adapter.invocations[0].call)["hands"] == "ALL"
+            assert route_scopes(harness.adapter.invocations[1].call)["hands"] == "ALL"
             assert not last_tool_result(harness.adapter.invocations[1].call).error
 
     asyncio.run(scenario())
@@ -722,9 +710,11 @@ def test_flow_model_routes_are_local_and_keep_advertised_identity(
             gate.release()
             root = await handle
             assert root.status == "succeeded", root.error
-            advertised = route_snapshots(harness.adapter.invocations[0].call)
+            advertised = route_scopes(harness.adapter.invocations[0].call)
             enabled = "hands" if operation == "run" else "handoffs"
-            assert [item["ref"] for item in advertised[enabled]] == ["agic:helper"]
+            assert advertised[enabled] == (
+                "ALL" if selector == "*" else "flows::research::agic:helper"
+            )
             helper_call = harness.adapter.invocations[1].call
             if operation == "run":
                 assert not last_tool_result(harness.adapter.invocations[2].call).error
@@ -782,10 +772,8 @@ def test_deleted_flow_module_keeps_accepted_agic_and_withdraws_routes(tmp_path, 
             root = await handle
             assert root.status == "succeeded", root.error
             first, second = [i.call for i in harness.adapter.invocations]
-            assert [r["ref"] for r in route_snapshots(first)["hands"]] == [
-                "agic:helper"
-            ]
-            assert route_snapshots(second)["hands"] == []
+            assert route_scopes(first)["hands"] == "ALL"
+            assert route_scopes(second)["hands"] == "ALL"
             assert "Bound driver." in str(second.messages)
 
     asyncio.run(scenario())
@@ -810,12 +798,9 @@ def test_model_catalog_uses_bound_state_without_publication_source(tmp_path):
                 )
             )
             assert root.status == "succeeded", root.error
-            snapshots = route_snapshots(harness.adapter.invocations[0].call)
-            assert [item["ref"] for item in snapshots["hands"]] == ["flow:worker"]
-            assert [item["ref"] for item in snapshots["handoffs"]] == [
-                "agic:parent",
-                "flow:worker",
-            ]
+            assert route_scopes(harness.adapter.invocations[0].call) == dict.fromkeys(
+                ("hands", "handoffs", "spawns"), "ALL"
+            )
             first = harness.store.list_steps(run_id=root.id)[0]
             assert isinstance(first.given, StoredModelStepGiven)
             assert first.given.state == harness.state.revision
@@ -865,13 +850,11 @@ def test_output_repair_ignores_new_callable_targets(tmp_path, routes, added_targ
             assert root.output is not None
             assert harness.store.resolve_value(root.output.value) == 42
             first, repaired = [item.call for item in harness.adapter.invocations]
-            assert [item["ref"] for item in route_snapshots(first)["hands"]] == [
-                "flow:worker"
-            ]
+            assert route_scopes(first)["hands"] == "ALL"
             assert repaired.tools == ()
-            assert route_snapshots(
-                repaired, requested_only={"hands": False, "handoffs": False}
-            ) == {"hands": [], "handoffs": []}
+            assert route_scopes(repaired) == dict.fromkeys(
+                ("hands", "handoffs", "spawns"), "NONE"
+            )
 
     asyncio.run(scenario())
 
@@ -1071,9 +1054,7 @@ flow() -> Text:
                 harness.store.resolve_error(root.error) if root.error else None
             )
             first, helper, resumed = [i.call for i in harness.adapter.invocations]
-            assert [r["ref"] for r in route_snapshots(first)["hands"]] == [
-                "agic:helper"
-            ]
+            assert route_scopes(first)["hands"] == "ALL"
             assert "Module advice." in first.instructions
             assert "New private module advice." not in first.instructions
             for call in (helper, resumed):

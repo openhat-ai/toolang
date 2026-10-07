@@ -13,6 +13,8 @@ from toolang.base.types.tool import ToolContext, ToolResult
 from toolang.base.types.message import ToolResultPart
 from toolang.base.utils.workspace_paths import resolve_input_path, workspace_uri
 
+from toolang.state.state import AgentState
+
 from ..records import RecallControlPayload
 from ..assembly.tool_replies import control_summary
 from ..assembly.run_results import run_result
@@ -20,6 +22,11 @@ from ..assembly.run_results import run_result
 from ..runnables import (
     AgicRoutes,
     ResolvedRunnable,
+    bound_runnable,
+    resolve_call_target,
+    runnable_ref,
+    runnable_signature,
+    visible_runnables,
 )
 from ..types import (
     ControlRef,
@@ -32,7 +39,7 @@ from ..types import (
     StepRef,
     WorkspaceRecallTarget,
 )
-from .common import _ExecuteCommitted, _RunRejected
+from .common import BoundRun, _ExecuteCommitted, _RunRejected
 from ..recall import required_declarations
 from .resources import resource_caps, workspace_declarations
 from .rules import load_rules
@@ -48,9 +55,65 @@ class _ToolRuntime(ToolRuntime):
     source: FieldRef | None
     tool_call_count: int
     routes: AgicRoutes
+    adopted_state: AgentState
     transfer: _ExecuteCommitted | None = None
     error: ErrorMessage | ErrorRef | None = None
     failure: Exception | None = None
+
+    async def runnables(self, name: str | None = None) -> ToolResult:
+        execution = self.state.execution
+        if execution is None:
+            raise RuntimeError("Agic runtime execution is unavailable")
+        frame = self.state.prepared
+        binding = frame.run
+
+        def target_for(run: BoundRun) -> ResolvedRunnable:
+            if run.bindings.runnable is None:
+                raise RuntimeError(f"run runnable binding missing: {run.run_id}")
+            return bound_runnable(run.state, run.module, run.bindings.runnable)
+
+        current = target_for(binding)
+        current_ref = runnable_ref(binding.state, current)
+        if name is None:
+            targets = {
+                target.identity: (self.adopted_state, target)
+                for target in visible_runnables(self.adopted_state, binding.module)
+            }
+            targets[current.identity] = (binding.state, current)
+        else:
+            try:
+                pinned = resolve_call_target(binding.state, binding.module, name)
+            except ToolangError:
+                pinned = None
+            if pinned is not None and pinned.identity == current.identity:
+                targets = {current.identity: (binding.state, current)}
+            else:
+                target = resolve_call_target(self.adopted_state, binding.module, name)
+                targets = {target.identity: (self.adopted_state, target)}
+        entries = [
+            {
+                "ref": runnable_ref(state, target),
+                "revision": state.revision,
+                "doc": target.executable.doc or "",
+                "signature": runnable_signature(
+                    state,
+                    target.module,
+                    target.executable,
+                    documentation_limit=None,
+                ),
+            }
+            for state, target in targets.values()
+        ]
+        return ToolResult(
+            {
+                "current": current_ref,
+                "ancestors": [
+                    runnable_ref(run.state, target_for(run))
+                    for run in execution.active_path(binding)[:-1]
+                ],
+                "runnables": sorted(entries, key=lambda item: item["ref"]),
+            }
+        )
 
     async def chdir(self, path: str, context: ToolContext) -> ToolResult:
         if self.tool_call_count != 1:

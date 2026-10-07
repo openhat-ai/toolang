@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from copy import deepcopy
 from html import escape
+import json
 from typing import cast
 
 from toolang.base.types.message import Message, MessageRecall, Part, TextPart
@@ -17,7 +18,13 @@ from ..records import (
 )
 from ..types import FieldRef, value_type
 from ..types import ContentRef, MessageTemplate, TypedRef, validate_runtime_value
-from ..types import RecallTarget, RulesRecallTarget, WorkspaceRecallTarget
+from ..types import (
+    RecallTarget,
+    RulesRecallTarget,
+    WorkspaceRecallTarget,
+    SkillTriggerRecallTarget,
+    ServiceTriggerRecallTarget,
+)
 
 
 _PART_NAMES = {
@@ -38,6 +45,21 @@ _RESOURCE_TAGS = {
     "workspace": "workspace-access",
     "rules": "workspace-rules",
 }
+
+
+def attribute(value: str) -> str:
+    """Escape a literal XML attribute without normalizing its whitespace."""
+
+    return (
+        escape(value, quote=True)
+        .replace("\t", "&#9;")
+        .replace("\n", "&#10;")
+        .replace("\r", "&#13;")
+    )
+
+
+def attributes(values: Mapping[str, str]) -> str:
+    return " ".join(f'{key}="{attribute(value)}"' for key, value in values.items())
 
 
 def control_message(control: ControlRecord) -> MessageTemplate | None:
@@ -187,12 +209,36 @@ def resource_frame(
         attrs["removed"] = "true"
     elif content and not isinstance(target, WorkspaceRecallTarget):
         attrs["revision"] = revision
-    attributes = " ".join(
-        f'{key}="{escape(value, quote=True)}"' for key, value in attrs.items()
-    )
+    if revision != "0" and isinstance(
+        target, SkillTriggerRecallTarget | ServiceTriggerRecallTarget
+    ):
+        # New trigger controls retain structured text; older pending controls
+        # may still carry a plain description. Recorded call templates stay intact.
+        try:
+            trigger = json.loads(content)
+        except (ValueError, TypeError):
+            trigger = None
+        if (
+            isinstance(trigger, dict)
+            and set(trigger) == {"description", "metadata"}
+            and isinstance(trigger["description"], str)
+            and isinstance(trigger["metadata"], dict)
+        ):
+            attrs["description"] = trigger["description"]
+            if trigger["metadata"]:
+                attrs["metadata"] = json.dumps(
+                    trigger["metadata"],
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+        else:
+            attrs["description"] = content
+        return f"<{tag} {attributes(attrs)}/>", ""
+    rendered = attributes(attrs)
     if revision == "0" or not content or isinstance(target, WorkspaceRecallTarget):
-        return f"<{tag} {attributes}/>", ""
-    return f"<{tag} {attributes}>", f"</{tag}>"
+        return f"<{tag} {rendered}/>", ""
+    return f"<{tag} {rendered}>", f"</{tag}>"
 
 
 def resource_text(target: RecallTarget, revision: str, content: str) -> str:

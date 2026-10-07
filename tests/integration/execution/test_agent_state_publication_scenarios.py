@@ -325,7 +325,7 @@ agic parent:
             ):
                 assert f"{prefix} instruction." in invocation.call.instructions
                 assert f"{prefix} context." in message_text(
-                    without_runtime_snapshots(invocation.call.messages)[-1].parts
+                    invocation.call.messages[-1].parts
                 )
 
     asyncio.run(scenario())

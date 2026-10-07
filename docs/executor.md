@@ -289,7 +289,8 @@ from becoming new conversation. Replay needs neither State nor control lookup.
 
 Instructions contain `toolang:protocol`, optional `toolang:instruct`, resident
 `toolang:psyche` bodies, and `toolang:skill-trigger`/`toolang:service-trigger`
-descriptions. Triggers advertise availability, not loaded guidance.
+descriptions in attributes. Non-description metadata is a JSON `metadata`
+attribute, omitted when empty. Triggers advertise availability, not loaded guidance.
 Using a skill or service requires its current visible `skill-guidance` or
 `service-guidance` user message; `_toolang__pick` loads it on demand.
 Revisions derive from immutable definition fingerprints and metadata, without
@@ -305,17 +306,30 @@ Trigger and guidance tags share a source-free ref such as `skill/testing` but
 have separate visibility. Withdrawals append a revision-zero tombstone; previous
 calls and their content remain unchanged. Public message payloads omit metadata.
 
+Recall controls carry resource target, revision, and content. Window visibility
+folds message `tag`/`recall` metadata, never XML. A visible identical revision or
+identical pending control is reused; pending does not mean delivered. Needed
+resources outside the selected window are loaded again. Rebuilt windows may
+replace earlier resource content for future calls while persisted calls remain
+immutable; changed prefixes reset the message head and invalidate incompatible
+provider continuation. Chat hiding likewise uses internal provenance, not tag
+text supplied by users.
+
 Every Model Call receives the current usable workspace names as
 `<toolang:workspace list="lab,repo1"/>` and the current workdir as
 `<toolang:workdir path="repo1://src"/>`. These runtime declarations are refreshed on
-every call; workspace names do not expose host roots. Assembly does not scan rules;
+every call in one user message, ordered workspace, workdir, optional routes,
+optional context, then execution. The batch retains workspace `tag` and binding
+`recall` metadata. Authored messages and each resource update remain separate.
+Workspace names do not expose host roots. Assembly does not scan rules;
 preflight blocks a path-aware operation until applicable rules are current and model-visible.
 On a remap, honor withdraws old scoped rules and presents the new binding before new rules;
 loading failure never permits the original operation. Compaction and `recall = none`
 re-present rules when their prior declarations are no longer visible.
 
 Default instruct retains the agent name. Default context contains only date,
-timezone, model provider, and model name. Authored instruct/context selection
+timezone, model provider, and model name as attributes. Named contexts and authored
+default replacements keep rendered bodies. Authored instruct/context selection
 remains unchanged; no default agent-home path, model-family label, or run-info is emitted.
 
 `execution/inspection/` groups durable history queries, inspection types,
@@ -337,27 +351,38 @@ Assembly helpers add no separate execution state or model-call lifecycle.
 There is no loop plugin, public run-context protocol, or separate
 effective-resource, invocation, or tool-snapshot layer.
 
-The frame holds one selected tool mapping and effective Agic routes. Every
-ordinary tool-capable Agic call receives `_toolang__run`,
-`_toolang__exec`, `_toolang__chdir`, and `_toolang__pick`. `hands` and `handoffs` authorize run and
-exec targets; they do not select definitions. All tools use plugin registration
-and the same Tool Step lifecycle. Every call includes `toolang:hands` and
-`toolang:handoffs` in messages, as siblings before `toolang:context`, even with
-`context = none`. Each snapshot has `enabled="true"` and a complete JSON target
-list, or `enabled="false"` and no body. Entries contain refs, descriptions and
-signatures, without redundant actions. Only the latest runtime snapshots apply;
-they have no revision, withdrawal, or recall metadata. Instructions stay stable
-when routes change. Snapshots persist as ordinary message content, not controls.
-Calls without runtime tools, including output repair, disable both modes.
-The limits are 64 unique targets and 32,768 UTF-8 bytes across both snapshots,
-including escaped framing. Overflow rejects preparation with an error asking
-the author to narrow hands/handoffs; lists are never silently truncated.
-Runtime calls in one model batch
-use that Model Call's captured routes and prepared frame. Both advertisement
-and invocation resolve within the caller's module: main sees public exports,
-and a flow module sees its own declarations, including private helpers. Child acceptance
-selects latest State and checks the advertised contract. The next Model Call
-captures the latest published routes within the Run's bound authority.
+The frame holds selected tools and effective Agic routes. Ordinary tool-capable
+calls receive `_toolang__runnables`, `_toolang__run`, `_toolang__await`,
+`_toolang__spawn`, `_toolang__exec`, `_toolang__chdir`, and `_toolang__pick`
+independently of route lists, using the normal plugin and Tool Step lifecycle.
+Honor and compact remain automatic preflights.
+
+Recurring `toolang:routes` has three attributes: hands for run, handoffs for exec,
+and spawns projected from hands. Each is ALL, NONE, or canonical CSV refs. Effective
+unset and star settings become ALL; none or an unresolved explicit list becomes
+NONE. Render before active-path filtering. If all scopes are ALL, omit the tag;
+absence in the latest runtime message resets all scopes to ALL. Output repair and
+other calls without runtime tools declare all scopes NONE. Routes have no resource
+revision and do not participate in recall. Signatures and docs are not repeated
+in these messages.
+
+`_toolang__runnables` accepts an optional exact `name`; omission returns all
+module-visible declarations, sorted by ref without truncation. It returns current
+identity, active ancestors excluding the leaf, and entries containing ref,
+State revision, full doc, and complete signature including recursive struct/field
+docs. Public refs use the merged namespace; private refs retain a module qualifier.
+The query captures the latest published State at its Tool Step boundary (or the
+bound State when no publication source exists). Current is always described from
+its bound declaration, even after removal or replacement; each entry records
+the revision used. Discovery neither filters by routes/active path nor exposes
+other modules' private signatures through ancestry. Tool results durably preserve
+the snapshot; querying does not read or publish home sources.
+
+Invocation still uses its Model Call's captured authority and module-visible
+targets; main sees public exports and a flow module sees local declarations.
+Acceptance selects latest State and checks the captured contract. The next Model
+Call refreshes targets within the Run's bound authority. Discovery is descriptive,
+not a reservation or a replacement for these checks.
 
 `AgentSetup.models_effective()` and `AgentSetup.tools()` provide the filtered
 runtime collections. They are lazily materialized and memoized in the pinned
@@ -506,7 +531,8 @@ The entry runnable's output type remains the final Run contract. Active-path
 identities are rejected except for root self-exec: a caller with no parent,
 whose ID equals its root ID and which has no pending/running descendants, may
 exec its current module/name. `run self`, child self-exec, and ancestor targets
-remain rejected. Authorized root-self routes appear only in handoffs. Earlier
+remain rejected. Discovery and route scopes retain these identities; invocation
+checks enforce eligibility. Earlier
 handoffs are no longer on the active path and can be called again.
 
 Self-exec resolves the latest publication once and compares its full normalized

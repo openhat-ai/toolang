@@ -238,7 +238,7 @@ def test_external_workspace_rules_and_protocol_survive_instruct_none(tmp_path):
             assert len(controls) == 1
             assert controls[0].payload.target == RulesRecallTarget("external", "/")
             assert (
-                "**Use authorized workspaces.**"
+                "Use only available workspaces;"
                 in harness.adapter.invocations[0].call.instructions
             )
             assert str(external) not in harness.adapter.invocations[0].call.instructions
@@ -350,7 +350,7 @@ def test_fs_protocol_follows_effective_tools(tmp_path):
             assert run.status == "succeeded", run.error
             call = harness.adapter.invocations[0].call
             assert all(not tool.name.startswith("fs__") for tool in call.tools)
-            assert "**Use authorized workspaces.**" in call.instructions
+            assert "Use only available workspaces;" in call.instructions
 
     asyncio.run(scenario())
 

@@ -252,7 +252,7 @@ def test_online_tool_loops_only_record_and_render_additions(
                 len(step.given.call.messages.delta)
                 for step in model_steps
                 if isinstance(step.given, StoredModelStepGiven)
-            ] == [3, *([5] * 12)]
+            ] == [2, *([3] * 12)]
             for step in model_steps[1:]:
                 assert isinstance(step.given, StoredModelStepGiven)
                 assert all(
@@ -266,7 +266,7 @@ def test_online_tool_loops_only_record_and_render_additions(
             )
             assert [
                 len(item.call.messages) for item in harness.adapter.invocations
-            ] == list(range(3, 64, 5))
+            ] == list(range(2, 39, 3))
 
     asyncio.run(scenario())
     assert_replayed(harness.store.db_path, tracer.events)

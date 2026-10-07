@@ -6,7 +6,6 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from functools import cached_property
 from hashlib import sha256
-from html import escape
 import json
 import re
 from typing import Literal, cast
@@ -39,7 +38,14 @@ from toolang.state.state import (
 from . import prompts
 from .history import HistorySelection, summary_message, SUMMARY_PREFIX, SUMMARY_SUFFIX
 from .message_buffer import MessageBuffer
-from .utils import join_parts, resource_text, strip_parts, text_block
+from .utils import (
+    attribute,
+    attributes,
+    join_parts,
+    resource_text,
+    strip_parts,
+    text_block,
+)
 from ..types import PromptSetting
 from ..records import ControlRecord, RecallControlPayload
 from ..types import (
@@ -54,9 +60,6 @@ from ..types import (
 from ..values import parts_from_value
 
 __all__ = ["instructions", "messages", "tools", "output_schema"]
-
-ROUTE_MAX_BYTES = 32_768
-ROUTE_MAX_TARGETS = 64
 
 _PROTOCOL = prompts.load("protocol.md").strip()
 _DEFAULT_INSTRUCT_TEMPLATE = prompts.load("defaults/instruct.md")
@@ -105,13 +108,21 @@ def instructions(
             content = (
                 inputs.psyches[cap.effective_ref]
                 if kind == "psyche"
-                else "\n".join(
-                    [str(cap.meta.get("description") or "")]
-                    + [
-                        f"{item['key']}: {item['value']}"
-                        for item in _metadata_items(cap.meta)
-                    ]
-                ).strip()
+                else json.dumps(
+                    {
+                        "description": str(cap.meta.get("description") or ""),
+                        "metadata": mutable_data(
+                            {
+                                key: value
+                                for key, value in cap.meta.items()
+                                if key != "description" and value is not None
+                            }
+                        ),
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
             )
             payload = RecallControlPayload(
                 target_type(cap.effective_ref), cap.revision, content
@@ -144,14 +155,21 @@ def messages(
     context, initial, _invocations = inputs.rendered_input
     if not current.started:
         current.initialize(initial)
-    elif context:
-        current.append(Message.user(context))
     for control in controls:
         current.append_control(control)
+    recurring = "\n".join(part for part in (workdir, context) if part)
     if workspace is not None:
-        current.append_template(workspace, lambda _ref: "")
-    if workdir is not None:
-        current.append(Message.user(workdir))
+        current.append_template(
+            replace(
+                workspace,
+                content=(*workspace.content, "\n" + recurring)
+                if recurring
+                else workspace.content,
+            ),
+            lambda _ref: "",
+        )
+    elif recurring:
+        current.append(Message.user(recurring))
 
     recorded = current.take_delta(step, reset=reset)
     prefix: list[Message] = []
@@ -191,7 +209,7 @@ def workspace_message(
     }
     encoded = json.dumps(revisions, sort_keys=True, separators=(",", ":"))
     revision = sha256(encoded.encode()).hexdigest()
-    value = escape(",".join(names), quote=True)
+    value = attribute(",".join(names))
     return MessageTemplate(
         role="user",
         content=(f'<toolang:workspace list="{value}"/>',),
@@ -204,7 +222,7 @@ def workdir_message(cwd: str) -> str:
     """Declare the current workdir on one Model Call."""
     name, relative = parse_cwd(cwd)
     value = workspace_uri(name, relative) if name else ""
-    return f'<toolang:workdir path="{escape(value, quote=True)}"/>'
+    return f'<toolang:workdir path="{attribute(value)}"/>'
 
 
 def tools(selected: Mapping[str, Tool]) -> tuple[ToolDefinition, ...]:
@@ -248,8 +266,7 @@ class PromptInputs:
     facts: Mapping[str, object]
     values: Mapping[str, object]
     code: AgentState | None = None
-    runnables: Sequence[Mapping[str, object]] = ()
-    requested_only: tuple[str, ...] = ()
+    routes: tuple[str, str, str] = ("ALL", "ALL", "ALL")
     instruct: PromptSetting | None = None
     context: PromptSetting | None = None
     entered_by: Literal["run", "exec"] = "run"
@@ -257,9 +274,7 @@ class PromptInputs:
     @cached_property
     def execution_message(self) -> str:
         """Identify the active invocation independently of authored context."""
-        runnable = escape(
-            f"{self.module}::{self.agic.kind}:{self.runnable_name}", quote=True
-        )
+        runnable = attribute(f"{self.module}::{self.agic.kind}:{self.runnable_name}")
         return (
             f'<toolang:execution runnable="{runnable}" entered_by="{self.entered_by}"/>'
         )
@@ -424,8 +439,7 @@ class PromptInputs:
         prompt_context = "\n".join(
             part
             for part in (
-                _render_routes(self.runnables, requested_only=self.requested_only),
-                self.execution_message,
+                _render_routes(self.routes),
                 _render_context(
                     _prompt_program(self.state, self.context.module, agic)
                     if self.context
@@ -433,6 +447,7 @@ class PromptInputs:
                     replace(agic, context=self.context.name) if self.context else agic,
                     context,
                 ),
+                self.execution_message,
             )
             if part
         )
@@ -441,7 +456,6 @@ class PromptInputs:
             _initial_messages(
                 agic=agic,
                 rendered=tuple(rendered),
-                prompt_context=prompt_context,
                 primary=primary,
             ),
             tuple(invocations),
@@ -481,44 +495,12 @@ def _metadata_items(meta: Mapping[str, object]) -> list[dict[str, str]]:
     return items
 
 
-def _render_routes(
-    runnables: Sequence[Mapping[str, object]],
-    *,
-    requested_only: tuple[str, ...] = (),
-) -> str:
-    """Render complete per-call authorization snapshots, never partial lists."""
-    if len(runnables) > ROUTE_MAX_TARGETS:
-        raise ToolangError(
-            f"Authorized routes exceed {ROUTE_MAX_TARGETS} targets. "
-            "Narrow hands or handoffs."
-        )
-    parts = []
-    for action, tag in (("run", "hands"), ("exec", "handoffs")):
-        requested = "true" if action in requested_only else "false"
-        entries = [
-            {key: value for key, value in item.items() if key != "actions"}
-            for item in runnables
-            if action in cast(Sequence[str], item["actions"])
-        ]
-        if entries:
-            content = json.dumps(
-                entries, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-            )
-            parts.append(
-                f'<toolang:{tag} enabled="true" requested_only="{requested}">\n'
-                f"{escape(content, quote=False)}\n</toolang:{tag}>"
-            )
-        else:
-            parts.append(
-                f'<toolang:{tag} enabled="false" requested_only="{requested}"/>'
-            )
-    result = "\n".join(parts)
-    if len(result.encode("utf-8")) > ROUTE_MAX_BYTES:
-        raise ToolangError(
-            f"Authorized route snapshots exceed {ROUTE_MAX_BYTES} bytes. "
-            "Narrow hands or handoffs."
-        )
-    return result
+def _render_routes(scopes: tuple[str, str, str]) -> str:
+    """Declare only additional restrictions for this call's visible namespace."""
+    if scopes == ("ALL", "ALL", "ALL"):
+        return ""
+    values = dict(zip(("hands", "handoffs", "spawns"), scopes, strict=True))
+    return f"<toolang:routes {attributes(values)}/>"
 
 
 def _render_context(
@@ -535,6 +517,18 @@ def _render_context(
         declaration.body if declaration is not None else _DEFAULT_CONTEXT_TEMPLATE
     )
     require_template_inputs(template, values)
+    if declaration is None:
+        model = cast(Mapping[str, object], values["model"])
+        return render_text_template(
+            template,
+            {
+                "date": attribute(str(values["date"])),
+                "timezone": attribute(str(values["timezone"])),
+                "model": {
+                    key: attribute(str(model[key])) for key in ("provider", "name")
+                },
+            },
+        ).strip()
     content = render_text_template(template, values).strip() if template.strip() else ""
     return text_block("toolang:context", content)
 
@@ -543,10 +537,9 @@ def _initial_messages(
     *,
     agic: AgicDecl,
     rendered: tuple[tuple[AstMessage, tuple[Part, ...]], ...],
-    prompt_context: str,
     primary: tuple[Part, ...],
 ) -> tuple[Message, ...]:
-    """Combine authored messages with context and the primary input."""
+    """Combine authored messages with primary input, independently of runtime facts."""
 
     implicit = tuple(
         parts
@@ -561,7 +554,6 @@ def _initial_messages(
         for block in agic.messages
     )
     parts = join_parts(
-        (TextPart(prompt_context.strip()),) if prompt_context.strip() else (),
         authored,
         primary if (not authored or not references_primary) else (),
     )
@@ -574,24 +566,12 @@ def _initial_messages(
     )
     if not any(block.explicit for block, _parts in blocks):
         return (fallback,)
-    last_user = next(
-        (
-            index
-            for index in range(len(blocks) - 1, -1, -1)
-            if blocks[index][0].role == "user"
-        ),
-        None,
-    )
     result: list[Message] = []
-    for index, (block, parts) in enumerate(blocks):
-        if index == last_user and prompt_context.strip():
-            parts = join_parts((TextPart(prompt_context.strip()),), parts)
+    for block, parts in blocks:
         if not parts:
             continue
         try:
             result.append(Message(role=block.role, parts=parts))
         except ValueError as exc:
             raise ToolangError(str(exc)) from exc
-    if last_user is None and prompt_context.strip():
-        result.insert(0, Message.user(prompt_context.strip()))
     return tuple(result) if result else (fallback,)

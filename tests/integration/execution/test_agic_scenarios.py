@@ -15,7 +15,7 @@ from tests.support.execution_assertions import (
     event_labels,
     execution_snapshot,
     without_runtime_snapshots,
-    route_snapshots,
+    route_scopes,
 )
 from tests.support.execution_harness import (
     TEST_MODEL_REF,
@@ -186,6 +186,7 @@ agic helper(_: Text) -> Boolean:
                 tool.name for tool in harness.adapter.invocations[0].call.tools
             } == {
                 "_toolang__chdir",
+                "_toolang__runnables",
                 "_toolang__exec",
                 "_toolang__pick",
                 "_toolang__run",
@@ -194,14 +195,16 @@ agic helper(_: Text) -> Boolean:
                 "lookup__value",
             }
             initial = harness.adapter.invocations[0].call
-            assert route_snapshots(initial)["hands"][0]["ref"] == "agic:helper"
-            assert route_snapshots(initial)["handoffs"][0]["ref"] == "agic:helper"
+            assert route_scopes(initial)["hands"] == "agic:helper"
+            assert route_scopes(initial)["handoffs"] == "agic:helper"
             assert "<output-contract>" not in initial.instructions
             assert "type: Boolean" not in initial.instructions
             assert initial.output_schema == {"type": "boolean"}
             repair = harness.adapter.invocations[1].call
             assert repair.tools == ()
-            assert route_snapshots(repair) == {"hands": [], "handoffs": []}
+            assert route_scopes(repair) == dict.fromkeys(
+                ("hands", "handoffs", "spawns"), "NONE"
+            )
             # Protocol stays stable; the adapter receives no tools on repair.
             assert repair.instructions == initial.instructions
             assert "<toolang:instruct>" not in repair.instructions

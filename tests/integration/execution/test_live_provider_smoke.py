@@ -182,11 +182,17 @@ def test_real_provider_executes_requested_agic_once_with_chat_history(
             assert isinstance(control.payload, ExecControlPayload)
             assert control.payload.runnable == "agic:test"
             assert len(runtime.store.list_run_tree(root_run_id=run_id)) == 1
-            assert [step.kind for step in runtime.store.list_steps(run_id=run_id)] == [
-                "model",
-                "tool",
-                "model",
+            from toolang.execution.types import ToolStepGiven
+
+            steps = runtime.store.list_steps(run_id=run_id)
+            tool_calls = [
+                s.given.call for s in steps if isinstance(s.given, ToolStepGiven)
             ]
+            assert sum(t.name == "_toolang__exec" for t in tool_calls) == 1
+            assert all(
+                t.name in {"_toolang__runnables", "_toolang__exec"} for t in tool_calls
+            )
+            assert steps[-1].kind == "model"
 
     asyncio.run(scenario())
 
@@ -213,5 +219,144 @@ def test_real_provider_executes_flow_with_nested_agic(
             assert [
                 step.kind for step in runtime.store.list_steps(run_id=children[0].id)
             ] == ["model"]
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "prompt,target,operation",
+    [
+        ("Invoke agic:review with input ROUTE_MARKER.", "agic:review", "exec"),
+        ("Invoke flow:check with input ROUTE_MARKER.", "flow:check", "exec"),
+        (
+            "Invoke agic:review for a smoke test; choose the input yourself.",
+            "agic:review",
+            "exec",
+        ),
+        (
+            "Use _toolang__run to invoke agic:review for a smoke test; choose the input yourself and return its result.",
+            "agic:review",
+            "run",
+        ),
+        ("What input does agic:review require? Explain only.", "agic:review", None),
+        (
+            "Choose a suitable worker to review this change list: ROUTE_MARKER. Wait for its result and summarize it.",
+            "agic:review",
+            "run",
+        ),
+        (
+            "List available runnables and describe their intended use. Do not invoke them.",
+            None,
+            None,
+        ),
+    ],
+    ids=[
+        "named-agic",
+        "named-flow",
+        "chosen-test-input",
+        "explicit-run-input",
+        "parameters-only",
+        "doc-routing",
+        "discovery-only",
+    ],
+)
+def test_real_provider_uses_discovery_for_task_directed_routing(
+    tmp_path: Path,
+    live_model: str,
+    prompt: str,
+    target: str | None,
+    operation: str | None,
+) -> None:
+    import json
+    from toolang.execution.types import ModelStepNoted, ToolStepGiven
+
+    source = """
+agic chat(_: Text) -> Text:
+  tools = none
+  context = none
+  {{_}}
+
+## Review a supplied change list. Echo the supplied text with a short confirmation.
+## @param _ The change list to review or test text to echo.
+agic review(_: Text) -> Text:
+  tools = none
+  context = none
+  Confirm the review and echo {{_}}.
+
+## Validate a supplied test phrase through the review worker.
+flow check(_: Text) -> Text:
+  run review
+"""
+
+    async def scenario():
+        created = await _LiveExecution.create(tmp_path, model=live_model, source=source)
+        async with created as runtime:
+            runtime.setup = replace(
+                runtime.setup,
+                limits=replace(runtime.setup.limits, agic_model_calls=6, time=120),
+            )
+            run_id, output = await runtime.run("chat", prompt)
+            runs = runtime.store.list_run_tree(root_run_id=run_id)
+            steps = [
+                step for run in runs for step in runtime.store.list_steps(run_id=run.id)
+            ]
+            tools = [s.given.call for s in steps if isinstance(s.given, ToolStepGiven)]
+            discoveries = [t for t in tools if t.name == "_toolang__runnables"]
+            assert discoveries, output
+            if target and operation != "run":
+                assert discoveries[0].input.get("name") in {
+                    target,
+                    target.split(":")[1],
+                }
+            invocations = [
+                t
+                for t in tools
+                if t.name in {"_toolang__run", "_toolang__exec", "_toolang__spawn"}
+            ]
+            if operation is None:
+                assert invocations == [], output
+                assert len(runs) == 1
+            else:
+                assert target is not None
+                assert len(invocations) == 1, invocations
+                assert invocations[0].name == f"_toolang__{operation}"
+                assert invocations[0].input["runnable"] in {
+                    target,
+                    target.split(":")[1],
+                }
+                assert output.strip()
+                if "ROUTE_MARKER" in prompt:
+                    assert "ROUTE_MARKER" in output
+            metrics = []
+            for step in steps:
+                if isinstance(step.noted, ModelStepNoted):
+                    call = runtime.store.rebuild_model_call(step)
+                    accounting = step.noted.accounting
+                    metrics.append(
+                        {
+                            "messages": len(call.messages),
+                            "input_tokens": accounting.input_tokens
+                            if accounting
+                            else None,
+                            "cached": {
+                                m.name: m.quantity
+                                for m in accounting.meters
+                                if "cache_" in m.name
+                            }
+                            if accounting
+                            else {},
+                        }
+                    )
+            print(
+                json.dumps(
+                    {
+                        "scenario": prompt,
+                        "tools": [t.name for t in tools],
+                        "calls": metrics,
+                        "output": output,
+                    },
+                    ensure_ascii=False,
+                )
+            )
 
     asyncio.run(scenario())

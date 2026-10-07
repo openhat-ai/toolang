@@ -9,6 +9,16 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Added
 
+- The `_toolang/runnables` tool (wire name `_toolang__runnables`) discovers
+  runnable documentation and complete signatures: omitting `name` returns every
+  module-visible declaration, and an exact `name` returns one target. Results
+  carry the caller's `current` runnable, its active `ancestors` in root-to-parent
+  order, and ref-sorted `runnables` entries with `ref`, State `revision`, the
+  full authored `doc`, and a complete `signature` (primary input, ordered
+  parameters, output, and reachable structs with field docs, without the former
+  512-character truncation). Discovery is descriptive data: it neither filters
+  by routes or active-path eligibility nor grants execution.
+
 - The `Tool` plugin protocol gains `bind_arguments(arguments)`, a synchronous,
   side-effect-free hook that returns a new mapping of supplied arguments. The
   executor binds after resolving the tool and before `paths`, passing the bound
@@ -18,6 +28,28 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   call records.
 
 ### Changed
+
+- **Breaking:** the model-facing route declarations replace the per-call
+  `<toolang:hands>` and `<toolang:handoffs>` signature snapshots and the
+  requested-only policy with one optional self-closing
+  `<toolang:routes hands="..." handoffs="..." spawns="..."/>`, where each value
+  is `ALL`, `NONE`, or comma-separated exact refs and `spawns` follows `hands`.
+  Runnable documentation and signatures are no longer sent on every call;
+  discover them with `_toolang__runnables`. Readers of the removed tags or the
+  `requested_only` flag must read the new attribute and treat an absent tag as
+  `ALL`.
+
+- Runtime facts are grouped into one recurring user message per Model Call,
+  ordered `workspace`, `workdir`, optional `routes`, optional `context`, then the
+  `execution` declaration, kept separate from authored messages and the primary
+  input. The default context carries date, timezone, model provider, and model
+  name as `<toolang:context>` attributes, while named and authored contexts keep
+  their rendered bodies; skill and service trigger declarations move their
+  description into a `description` attribute and the remaining capability
+  metadata into a JSON `metadata` attribute.
+
+- **Breaking:** the public `ToolRuntime` protocol gains `runnables(name=None)`,
+  so custom tool-runtime implementations must add it.
 
 - **Breaking:** `@tool` function tools now bind supplied arguments against their
   resolved signature before path preflight and invocation. Values follow

@@ -204,8 +204,8 @@ def _candidate(
         preceding = (*preceding, *new_controls)
     step = StepRef.from_local(prepared.run.run_id, (state.next_step,))
     inputs = prepared.inputs
-    if state.repairing_output and inputs.runnables:
-        inputs = replace(inputs, runnables=(), requested_only=())
+    if state.repairing_output:
+        inputs = replace(inputs, routes=("NONE", "NONE", "NONE"))
     assembled, recorded = prompting.messages(
         inputs,
         messages,
@@ -301,8 +301,9 @@ def _boundary(
             **prepared.inputs.facts,
             **history_variables("", roots[-1][1], prepared.recall),
         },
-        runnables=() if state.repairing_output else prepared.inputs.runnables,
-        requested_only=() if state.repairing_output else prepared.inputs.requested_only,
+        routes=("NONE", "NONE", "NONE")
+        if state.repairing_output
+        else prepared.inputs.routes,
     )
     instructions, _declarations = prompting.instructions(inputs)
     messages, _recorded = prompting.messages(
