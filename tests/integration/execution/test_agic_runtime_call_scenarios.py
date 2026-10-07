@@ -507,7 +507,10 @@ flow check(_: Part[]) -> Text:
             assert len(runs) == 3
             reviewer_call = harness.adapter.invocations[1].call
             assert reviewer_call.messages[-3] == Message.user(
-                '<toolang:hands enabled="false" requested_only="false"/>\n<toolang:handoffs enabled="false" requested_only="true"/>\n\nReview candidate'
+                '<toolang:hands enabled="false" requested_only="false"/>\n'
+                '<toolang:handoffs enabled="false" requested_only="true"/>\n'
+                '<toolang:execution runnable="agent::agic:reviewer" entered_by="run"/>\n\n'
+                "Review candidate"
             )
 
     asyncio.run(scenario())

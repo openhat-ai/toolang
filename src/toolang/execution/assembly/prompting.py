@@ -9,7 +9,7 @@ from hashlib import sha256
 from html import escape
 import json
 import re
-from typing import cast
+from typing import Literal, cast
 
 from toolang.base.protocols.tool import Tool
 from toolang.base.utils.workspace_paths import parse_cwd, workspace_uri
@@ -252,6 +252,17 @@ class PromptInputs:
     requested_only: tuple[str, ...] = ()
     instruct: PromptSetting | None = None
     context: PromptSetting | None = None
+    entered_by: Literal["run", "exec"] = "run"
+
+    @cached_property
+    def execution_message(self) -> str:
+        """Identify the active invocation independently of authored context."""
+        runnable = escape(
+            f"{self.module}::{self.agic.kind}:{self.runnable_name}", quote=True
+        )
+        return (
+            f'<toolang:execution runnable="{runnable}" entered_by="{self.entered_by}"/>'
+        )
 
     @cached_property
     def program(self) -> Program:
@@ -414,6 +425,7 @@ class PromptInputs:
             part
             for part in (
                 _render_routes(self.runnables, requested_only=self.requested_only),
+                self.execution_message,
                 _render_context(
                     _prompt_program(self.state, self.context.module, agic)
                     if self.context

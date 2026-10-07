@@ -46,6 +46,7 @@ contract. All tag names below use the toolang: prefix.
 | instruct | Your agent-specific instructions. |
 | psyche | Resident behavior guidance. |
 | context | Context rendered from the selected authored or default template. |
+| execution | The currently executing runnable and how this invocation was entered. |
 | workdir | The current workdir of this Run, expressed as a path. |
 | skill-trigger, service-trigger | Capabilities you may use and when they are useful. |
 | skill-guidance, service-guidance | Instructions you must read before using those capabilities. |
@@ -70,6 +71,17 @@ For the same resource tag and ref, a later declaration replaces the earlier one;
 rules use workspace and path instead. A declaration with removed="true" withdraws
 the resource. Declarations remain effective until replaced or withdrawn.
 Resource declarations with content carry an opaque revision identifier.
+A runtime-owned `&lt;toolang:execution runnable="agent::agic:review" entered_by="exec"/&gt;`
+is appended on every Model Call, independently of `context = none`. Only the
+latest execution declaration is authoritative. `runnable` is the fully qualified
+current runnable, including its module; `entered_by` is `run` for Run entry or
+`exec` after a committed transfer. You are already executing that runnable's body
+with its bound input. When entered by exec, the handoff has succeeded: an earlier
+request to invoke this target is fulfilled, not a pending delegation. Carry out
+the current body; do not exec it again merely to satisfy that earlier request.
+An advertised self-handoff remains available for a separate, intentional restart
+under the root self-exec rules below.
+
 A runtime-owned `&lt;toolang:workspace list="lab,repo1,repo2"/&gt;` and
 `&lt;toolang:workdir path="repo2://a/b"/&gt;` are appended on every Model Call,
 independently of `context = none`. Only the latest workspace and workdir

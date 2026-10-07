@@ -990,7 +990,7 @@ def test_runtime_compact_resolves_its_boundary_at_admission(tmp_path, monkeypatc
 
 
 @pytest.mark.parametrize("recent,keep_middle", [("1%", False), ("50%", True)])
-@pytest.mark.parametrize("summary,target", [(400, 400), ("2%", 200)])
+@pytest.mark.parametrize("summary,target", [(400, 400), ("2%", 320)])
 def test_compact_config_controls_summary_and_recent_whole_roots(
     tmp_path, recent, keep_middle, summary, target
 ):
@@ -1008,7 +1008,9 @@ def test_compact_config_controls_summary_and_recent_whole_roots(
         async with harness:
             thread, latest = await seed(harness)
             roots = harness.store.list_thread_runs_chronological(thread_id=thread)
-            constrain(harness, context=10000)
+            # Leave room for the protocol and two small roots, independently
+            # of the recent-history percentage under test.
+            constrain(harness, context=16000)
             harness.setup = replace(
                 harness.setup,
                 compact=resolve_compact_config(

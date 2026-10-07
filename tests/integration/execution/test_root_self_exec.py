@@ -7,6 +7,7 @@ import pytest
 
 from tests.support.execution_assertions import (
     assert_replayed,
+    execution_snapshot,
     last_tool_result,
     route_snapshots,
 )
@@ -162,6 +163,15 @@ def test_model_root_self_exec_keeps_one_run(tmp_path, changed, unnamed):
             assert ("New root." if changed else "Old root.") in str(
                 harness.adapter.invocations[-1].call.messages
             )
+            identity = f"agent::agic:{'<entry:1>' if unnamed else 'grow'}"
+            assert execution_snapshot(harness.adapter.invocations[0].call) == {
+                "runnable": identity,
+                "entered_by": "run",
+            }
+            assert execution_snapshot(harness.adapter.invocations[-1].call) == {
+                "runnable": identity,
+                "entered_by": "exec",
+            }
 
     asyncio.run(scenario())
     assert_replayed(harness.store.db_path, tracer.events)

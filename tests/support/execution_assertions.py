@@ -33,6 +33,9 @@ _ROUTE_SNAPSHOTS = re.compile(
     r"(<toolang:handoffs\b[^>]*(?:/>|>.*?</toolang:handoffs>))",
     re.S,
 )
+_EXECUTION_SNAPSHOT = re.compile(
+    r'<toolang:execution runnable="[^"]*" entered_by="(?:run|exec)"/>'
+)
 
 
 def without_route_snapshots(messages: Sequence[Message]) -> list[Message]:
@@ -60,13 +63,25 @@ def without_route_snapshots(messages: Sequence[Message]) -> list[Message]:
 def without_runtime_snapshots(messages: Sequence[Message]) -> list[Message]:
     """Compare authored messages while excluding separately tested runtime notices.
 
-    Workspace and workdir declarations have dedicated tests asserting their
+    Execution, workspace, and workdir declarations have tests asserting their
     exact placement and contents. Other integration tests can assert their own
     message histories without duplicating those runtime contracts.
     """
+    without_execution = []
+    for message in without_route_snapshots(messages):
+        parts = message.parts
+        if message.role == "user" and parts and isinstance(parts[0], TextPart):
+            match = _EXECUTION_SNAPSHOT.match(parts[0].text)
+            if match is not None:
+                suffix = parts[0].text[match.end() :].lstrip("\n")
+                parts = ((TextPart(suffix),) if suffix else ()) + parts[1:]
+                if not parts:
+                    continue
+                message = replace(message, parts=parts)
+        without_execution.append(message)
     return [
         message
-        for message in without_route_snapshots(messages)
+        for message in without_execution
         if not (
             message.role == "user"
             and (
@@ -121,6 +136,21 @@ def last_tool_result(call: ModelCall) -> ToolResultPart:
         for part in reversed(message.parts)
         if isinstance(part, ToolResultPart)
     )
+
+
+def execution_snapshot(call: ModelCall) -> dict[str, str]:
+    """Read the latest runtime execution identity, including escaped names."""
+    for message in reversed(call.messages):
+        match = _EXECUTION_SNAPSHOT.search(message_text(message.parts))
+        if match is None:
+            continue
+        assert message.role == "user" and message.recall is None
+        root = ElementTree.fromstring(
+            '<root xmlns:toolang="urn:test">' + match.group(0) + "</root>"
+        )
+        assert len(root) == 1
+        return root[0].attrib
+    raise AssertionError("model call has no execution snapshot")
 
 
 def assert_replayed(path: Path, events: Sequence[RunEvent]) -> None:
