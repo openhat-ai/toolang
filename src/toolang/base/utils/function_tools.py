@@ -10,7 +10,7 @@ import math
 from types import GenericAlias, UnionType
 from typing import Annotated, Any, Literal, Union, get_args, get_origin, get_type_hints
 
-from pydantic import BeforeValidator, ConfigDict, Strict, TypeAdapter
+from pydantic import BeforeValidator, ConfigDict, Strict, TypeAdapter, ValidationInfo
 
 from ..errors import ToolangError
 from ..protocols.tool import Tool
@@ -177,9 +177,11 @@ def create_function_tool(func: Callable[..., Any]) -> Tool:
             )
             schema = adapter.json_schema()
             if parameter.default is not inspect.Parameter.empty:
-                adapter.validate_python(parameter.default, strict=True)
+                adapter.validate_python(
+                    parameter.default, strict=True, context="tool_default"
+                )
                 schema["default"] = parameter.default
-        except (NameError, SyntaxError, TypeError, ValueError) as exc:
+        except (NameError, SyntaxError, TypeError, ValueError, RuntimeError) as exc:
             raise ToolangError(
                 f"invalid tool parameter {parameter.name}: {exc}"
             ) from exc
@@ -215,7 +217,12 @@ def _resolve_annotation(func: Callable[..., Any], parameter: inspect.Parameter) 
     # Resolve only this input: context and return annotations are not public input.
     input_hint.__annotations__ = {parameter.name: parameter.annotation}
     return get_type_hints(
-        input_hint, globalns=getattr(func, "__globals__", {}), include_extras=True
+        input_hint,
+        globalns=getattr(func, "__globals__", {}),
+        localns=inspect.getclosurevars(func).nonlocals
+        if inspect.isfunction(func)
+        else {},
+        include_extras=True,
     )[parameter.name]
 
 
@@ -247,15 +254,24 @@ def _input_annotation(annotation: Any) -> Any:
     ):
         if any(type(value) is float and not math.isfinite(value) for value in args):
             raise TypeError("numeric Literal values must be finite")
-        if any(type(value) in (int, float) for value in args):
 
-            def literal_input(value: Any) -> Any:
-                if isinstance(value, bool) and not any(value is item for item in args):
-                    return _reject_boolean(value)
-                return value
+        def literal_input(value: Any, info: ValidationInfo) -> Any:
+            # Pydantic's strict Literal validator still treats 1 as True and 1.0
+            # as 1. Omitted defaults reach Python unchanged, so require a native
+            # literal here while retaining lax conversion for supplied values.
+            if info.context == "tool_default" and not any(
+                type(value) is type(item) and value == item for item in args
+            ):
+                raise ValueError("default does not match a declared Literal value")
+            if (
+                isinstance(value, bool)
+                and any(type(item) in (int, float) for item in args)
+                and not any(value is item for item in args)
+            ):
+                return _reject_boolean(value)
+            return value
 
-            return Annotated[annotation, BeforeValidator(literal_input)]
-        return annotation
+        return Annotated[annotation, BeforeValidator(literal_input)]
     raise TypeError(f"unsupported input annotation: {annotation!r}")
 
 

@@ -6,7 +6,7 @@ import threading
 from typing import Annotated, Any, Literal, List
 
 import pytest
-from pydantic import BeforeValidator, StrictInt
+from pydantic import BeforeValidator, Strict, StrictInt
 
 from toolang.base.errors import ToolangError
 from toolang.base.types.tool import ToolContext
@@ -238,6 +238,9 @@ def test_resolved_annotations_drive_schema_and_explicit_schema_is_preserved():
         List,
         Annotated[int, BeforeValidator(int)],
         Literal[float("inf")],  # type: ignore[invalid-type-form]
+        Annotated[Literal["x"], Strict()],
+        Annotated[int | str, Strict()],
+        Annotated[None, Strict()],
     ],
 )
 def test_unsupported_annotations_fail_preparation(annotation):
@@ -295,3 +298,55 @@ def test_kwargs_do_not_allow_invalid_or_reserved_names(arguments):
 
     with pytest.raises(ToolangError):
         create_function_tool(work).bind_arguments(arguments)
+
+
+@pytest.mark.parametrize(
+    "annotation,default",
+    [
+        (Literal[True], 1),
+        (Literal[False], 0.0),
+        (Literal[1], 1.0),
+        (list[Literal[True]], [1]),
+        (dict[str, Literal[False]], {"flag": 0}),
+        (Literal[True] | str, 1),
+    ],
+)
+def test_literal_defaults_must_not_require_conversion(annotation, default):
+    def work(value=default):
+        return value
+
+    work.__annotations__ = {"value": annotation}
+    with pytest.raises(ToolangError, match="value"):
+        create_function_tool(tool()(work))
+
+
+def test_literal_defaults_keep_valid_union_branches_and_lax_supplied_values(tmp_path):
+    @tool()
+    def work(
+        flag: Literal[True] = True, value: Literal[True] | int = 1, number: float = 1
+    ):
+        return {"flag": flag, "value": value, "number": number}
+
+    wrapped = create_function_tool(work)
+    assert wrapped.bind_arguments({}) == {}
+    bound = wrapped.bind_arguments({"flag": 1, "value": 1})
+    assert bound["flag"] is True
+    assert bound["value"] is True
+    output = asyncio.run(wrapped.invoke({}, _context(tmp_path))).output
+    assert output["flag"] is True and type(output["value"]) is int
+    assert output["number"] == 1
+
+
+def test_forward_references_can_use_retained_closure_aliases():
+    value_type = list[int]
+
+    @tool()
+    def work(value: "value_type"):
+        return {"value": value_type(value)}
+
+    wrapped = create_function_tool(work)
+    assert wrapped.definition().parameters["properties"]["value"] == {
+        "type": "array",
+        "items": {"type": "integer"},
+    }
+    assert wrapped.bind_arguments({"value": ["7"]}) == {"value": [7]}
