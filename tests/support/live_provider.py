@@ -31,12 +31,13 @@ async def create_live_agent(
     root: Path,
     *,
     model: str,
+    source: str = LIVE_PROVIDER_SOURCE,
 ) -> tuple[AgentSetup, AgentState]:
     """Create fixed agent snapshots that resolve one real model query."""
 
-    program = Program.from_source(LIVE_PROVIDER_SOURCE)
+    program = Program.from_source(source)
     root_revision = sha256(b"live-provider-smoke-root").hexdigest()
-    home_revision = sha256(LIVE_PROVIDER_SOURCE.encode("utf-8")).hexdigest()
+    home_revision = sha256(source.encode("utf-8")).hexdigest()
     state = AgentState(
         name="alice",
         revision=agent_state_revision(root_revision, home_revision, name="alice"),

@@ -13,6 +13,7 @@ import pytest
 from tests.support.execution_assertions import (
     assert_run_event_integrity,
     event_labels,
+    execution_snapshot,
     without_runtime_snapshots,
     route_snapshots,
 )
@@ -271,6 +272,14 @@ agic reply(_: Part[]) -> Part[]:
                 without_runtime_snapshots(call.call.messages)
                 for call in harness.adapter.invocations
             ] == [[Message.user("hello")]] * (retries + 1)
+            assert all(
+                execution_snapshot(call.call)
+                == {
+                    "runnable": "agent::agic:reply",
+                    "entered_by": "run",
+                }
+                for call in harness.adapter.invocations
+            )
             assert active[0].preceded_by == (ControlRef.for_run(run.id, retries),)
             assert (
                 harness.store.select_pointer(Pointer(active[0].input[0])).runtime

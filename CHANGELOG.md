@@ -39,6 +39,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Fixed
 
+- Every agic Model Call now carries a runtime-owned
+  `<toolang:execution runnable="..." entered_by="run|exec"/>` declaration even
+  with `context = none`, naming the current runnable and whether it was entered
+  by `run` or a committed `exec`, to prevent repeating the original invocation.
+
 - Model-requested `exec` now records the target-bound values in its control and
   builds its replacement locals from them, fixing successful passthrough Runs
   that exposed unreadable typed output. Already-corrupt historical exec records
