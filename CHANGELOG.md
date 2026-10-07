@@ -7,6 +7,8 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ## [Unreleased]
 
+## [0.4.0a2] - 2026-10-07
+
 ### Added
 
 - The `_toolang/runnables` tool (wire name `_toolang__runnables`) discovers
@@ -329,7 +331,8 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 - The formatter normalizes `exec` statements consistently with other flow
   statements. (#676)
 
-[Unreleased]: https://github.com/openhat-ai/toolang/compare/v0.4.0a1...HEAD
+[Unreleased]: https://github.com/openhat-ai/toolang/compare/v0.4.0a2...HEAD
+[0.4.0a2]: https://github.com/openhat-ai/toolang/compare/v0.4.0a1...v0.4.0a2
 [0.4.0a1]: https://github.com/openhat-ai/toolang/compare/v0.3.6...v0.4.0a1
 [0.3.6]: https://github.com/openhat-ai/toolang/compare/v0.3.5...v0.3.6
 [0.3.5]: https://github.com/openhat-ai/toolang/compare/v0.3.4...v0.3.5
