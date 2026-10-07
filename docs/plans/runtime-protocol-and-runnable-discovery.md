@@ -20,38 +20,81 @@ Its immutable recording, recall provenance, and exact replay contracts remain.
   declarations, and `_toolang__runnables` with exact-name and all-runnable queries.
 - Out: implementation in this PR, new `.too` directives, changes to module
   visibility or execution guards, signature compatibility changes, new UI layouts,
-  and the exec-transition fix tracked separately in
-  [#702](https://github.com/openhat-ai/toolang/issues/702).
+  and the exec-transition fix delivered separately in
+  [#703](https://github.com/openhat-ai/toolang/pull/703).
 
 ## Decisions
 
 ### One recurring runtime message
 
-On every ModelCall, append one runtime-owned user-role message containing these
-sibling tags, in order: `routes` when restricted, `context` when selected and
-nonempty, `workspace`, and `workdir`. Do not introduce a `<toolang:runtime>` wrapper.
+On every ModelCall, send one runtime-owned user-role message containing these
+sibling tags, in order: `workspace`, `workdir`, `routes` when restricted, and
+`context` when selected and nonempty. These declarations are sent each call, so
+they share one message rather than separate user-role messages.
+The existing `execution` declaration from #703 follows these four in the same
+message, preserving its committed-handoff facts and independence from context.
 
 ```xml
-<toolang:routes hands="agic:review,flow:check" handoffs="ALL" spawns="NONE"/>
-<toolang:context date="2026-10-07" timezone="Asia/Shanghai" model_provider="example" model_name="example-model"/>
 <toolang:workspace list="lab,repo"/>
 <toolang:workdir path="repo://src"/>
+<toolang:routes hands="agic:review,flow:check" handoffs="ALL" spawns="NONE"/>
+<toolang:context date="2026-10-07" timezone="Asia/Shanghai" model_provider="example" model_name="example-model"/>
+<toolang:execution runnable="agent::agic:review" entered_by="exec"/>
 ```
 
 Keep authored messages and primary input separate from this recurring message,
 including on the first call. Preserve explicit roles and multimodal Part boundaries.
 Append adopted controls before the recurring message, preserving their order.
-Guidance, resource changes, steer, and cancel remain event-driven messages; they
-are neither repeated nor folded into this batch. Existing history selection stays
-unchanged. A repair call still groups its runtime facts but offers no execution
-tools and declares all three routes `NONE`.
+Steer and cancel keep their existing delivery semantics and event order outside
+this batch; resource deduplication does not apply to user controls. A repair call
+still groups its runtime facts but offers no execution tools and declares all
+three routes `NONE`.
 
-Group only new, uncommitted content. Never rewrite previous messages to remove old
-snapshots. Retain workspace binding revisions in the combined message's existing
-internal `tag="workspace"` and `recall` metadata; the other grouped declarations
-are not recall resources. This preserves the existing recorded-message shape and
-avoids inventing segment-level recall solely for this change. Reconstruct recorded
-calls from their persisted data, including old-format calls, without current State.
+Retain workspace binding revisions in the combined message's existing internal
+`tag="workspace"` and `recall` metadata; the other grouped declarations are not
+recall resources. This grouping preserves the existing recorded-message shape.
+
+### Resource messages and visible revisions
+
+Guidance, workspace rules, and other resource updates each retain a separate
+user-role message per resource. Their presence and revision must be checked
+independently, so they are not merged with each other or with the recurring batch.
+The resource identity is `(tag, ref)`, or `(tag, workspace, path)` for rules.
+Preserve structured `tag` and `recall` metadata on each message for deduplication,
+revision replacement, withdrawal, and loading again after it leaves the window.
+
+The current implementation uses both controls and message metadata:
+
+- [Recall controls](../../src/toolang/execution/executor/executor.py) record
+  target, revision, and content; `recall()` reuses an identical pending control or
+  skips a revision already visible. Pick and honor produce these controls.
+- [Message assembly](../../src/toolang/execution/assembly/utils.py) renders each
+  recall control as a resource message with internal `tag`/`recall` metadata.
+  [Visibility selection](../../src/toolang/execution/recall.py) folds this metadata
+  from retained messages; it does not parse XML text or attributes.
+- Model preparation compares adopted declarations with visible revisions;
+  [rules preflight](../../src/toolang/execution/executor/rules.py) also compares
+  current rule content and workspace bindings. Guidance and rules are therefore
+  updated through controls, with message metadata determining what was presented.
+
+Use this same separation for the planned layout. Visibility means presence in the
+instructions and selected message window of the actual call, not existence in
+older controls, omitted history, or a summary. Recompute it when the window changes.
+
+| Resource state | Required behavior |
+| --- | --- |
+| Same revision is visible | Reuse it without another resource message. |
+| Same revision is pending delivery | Reuse the pending control; do not treat it as model-visible until its message is committed to a ModelCall. |
+| Visible revision is stale or withdrawn | Deliver the replacement or withdrawal for that resource; reload current guidance/rules before use as required. |
+| Needed, authorized resource is outside the selected window | Load its current revision into a separate message, even if that revision was delivered in an earlier call. |
+
+Separate resource messages are the unit for updating or replacing content in a
+newly selected window. Preserve their identities and revisions through compaction,
+history selection, and reset. This is not a rule that model-input history must
+remain append-only: future calls may use a rebuilt window. Already persisted
+ModelCalls remain immutable and replay exactly. If a new window changes the
+recorded message prefix, start a new message head and validate or discard provider
+continuation against that prefix; unchanged prefixes retain normal reuse.
 
 ### Context, attributes, and presentation
 
@@ -219,7 +262,7 @@ results to convey them:
 - Historical and sibling invocations do not make a target an ancestor. Compare
   resolved identities, not bare names. Preserve existing spawn admission guards.
 - Runtime rechecks these conditions at invocation. A discovery result is neither
-  a reservation nor permission to execute. Keep #702's transition facts intact.
+  a reservation nor permission to execute. Keep #703's transition facts intact.
 
 ## Implementation touchpoints and sequence
 
@@ -230,7 +273,8 @@ results to convey them:
   `execution/assembly/prompting.py`, `execution/executor/frame.py`, and
   `execution/executor/steps/model.py`; preserve runtime authorization checks.
 - [ ] Group only recurring declarations in assembly `prompting.py`, `utils.py`,
-  and `message_buffer.py`, retaining workspace recall metadata and history behavior.
+  and `message_buffer.py`; preserve per-resource metadata and window-aware
+  visibility in `execution/recall.py`, `assembly/history.py`, and model preparation.
 - [ ] Implement built-in context/trigger attribute rendering, then rewrite
   `execution/assembly/prompts/protocol.md` and align tool descriptions.
 - [ ] Add focused offline acceptance coverage, update `docs/program.md` and
@@ -242,7 +286,9 @@ results to convey them:
 
 | Scenario | Pass condition |
 | --- | --- |
-| First and subsequent ModelCalls | One recurring runtime user message; sibling order is stable; no wrapper or duplicated catalog; authored/multimodal messages are preserved. |
+| First and subsequent ModelCalls | One recurring runtime user message ordered workspace, workdir, routes, context, then the existing execution declaration, with optional items omitted; no duplicated catalog; authored/multimodal messages are preserved. |
+| Resource deduplication and updates | Each resource remains an independent message; visible identical revisions are reused; pending controls do not establish visibility; changed or withdrawn revisions supersede the correct resource only. |
+| Resource outside the selected window | Guidance/rules needed again are loaded at their current revision, including an unchanged revision previously delivered; omitted history, summaries, and undelivered controls do not suppress recall. |
 | Default, named, overridden, empty, and disabled context | Correct attribute/body representation and selection; none does not suppress mandatory facts. |
 | Attribute and presentation edge cases | Quotes, newlines, ampersands, and fake user tags remain literal; provenance-based visibility and raw inspection remain correct. |
 | Default, star, none, explicit and inherited route settings | Correct ALL/NONE/list projection, no requested-only policy; spawns follows effective hands; empty resolved lists fail closed. |
