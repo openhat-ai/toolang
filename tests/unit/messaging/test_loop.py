@@ -239,7 +239,11 @@ def test_hosted_lifespan_starts_and_stops_messaging(tmp_path, monkeypatch, enabl
     core.close = AsyncMock()
     core.state.run = AsyncMock()
     core.setup.run = AsyncMock()
-    core.setup.messaging_config = CONFIG if enabled else None
+    from toolang.setup.messaging import MessagingSetup
+
+    core.setup.current.return_value.messaging = MessagingSetup(
+        CONFIG if enabled else None, "owner"
+    )
     scheduler = MagicMock()
     scheduler.start, scheduler.pause, scheduler.stop = (
         AsyncMock(),
@@ -358,7 +362,7 @@ def test_coop_is_unavailable_without_configuration_or_online_agent(tmp_path):
                 .invoke({"group": "all", "body": "hi"}, context)
             )
         server = FakeServer(server_type="valkey")
-        coop = CoopToolset({"url": CONFIG.url})
+        coop = CoopToolset({"url": CONFIG.url, "groups": []})
         setattr(coop, "connection", lambda: make_client(server))
         with pytest.raises(MessagingError, match="not online"):
             await coop.tools()["contacts"].invoke({}, context)

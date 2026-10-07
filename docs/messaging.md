@@ -1,6 +1,6 @@
 # Messaging
 
-`too text` and `coop` share the same messaging client. Start a standard Valkey server externally, then configure the Toolang root (`~/.toolang/config.toml` by default):
+`too text`, `too team`, `coop`, and the agent message loop consume messaging settings resolved by `setup`. The default URL is `redis://localhost:6379/0`; no configuration is required for local Valkey. Start Valkey externally. Override defaults in the Toolang root (`~/.toolang/config.toml` by default):
 
 ```toml
 [human]
@@ -17,7 +17,7 @@ Optionally add custom memberships to each agent's `config.toml`:
 groups = ["gc_dev"]
 ```
 
-Restart agents after configuration changes. Agents on different machines communicate by using the same reachable Valkey instance. Agent names must be unique there; human names cannot collide with agent names.
+Set `[messaging].enabled = false` in root or agent configuration to opt out. Restart agents after configuration changes. Agents on different machines communicate by using the same reachable Valkey instance. Agent names must be unique there; human names cannot collide with agent names.
 
 ```sh
 too start alice

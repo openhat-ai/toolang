@@ -9,6 +9,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Added
 
+- Messaging is enabled by default: `[messaging].url` defaults to
+  `redis://localhost:6379/0`, so a local Valkey server needs no configuration,
+  and `[messaging].enabled = false` in the root or an agent's `config.toml` opts
+  out.
+
 - `too text TARGET [MESSAGE...]` opens a conversation or sends a message and exits.
   It resolves agent names, custom `gc_` groups, and canonical conversation IDs, with
   `--dm`/`--group` to disambiguate a name collision. Omitting the message opens

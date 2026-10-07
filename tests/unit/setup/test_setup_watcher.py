@@ -404,15 +404,57 @@ def test_messaging_config_is_shared_and_frozen_until_restart(tmp_path, monkeypat
     monkeypatch.setattr(watcher_module, "load_toolsets_with_sources", load_toolsets)
     first = asyncio.run(watcher.refresh())
     first.toolsets()
-    initial = watcher.messaging_config
+    assert first.messaging is not None
+    initial = first.messaging.config
     assert initial is not None and initial.url == "redis://first"
     assert captured[-1]["coop"] == {"url": initial.url, "groups": list(initial.groups)}
     config.write_text('[messaging]\nurl = "redis://second"\ngroups = ["gc_other"]\n')
     second = asyncio.run(watcher.refresh())
     second.toolsets()
-    assert watcher.messaging_config == initial
+    assert second.messaging is first.messaging
     assert captured[-1]["coop"]["url"] == initial.url
     restarted, _ = _watcher(monkeypatch, tmp_path)
     asyncio.run(restarted.refresh())
-    assert restarted.messaging_config is not None
-    assert restarted.messaging_config.url == "redis://second"
+    restarted_messaging = restarted.current().messaging
+    assert restarted_messaging is not None and restarted_messaging.config is not None
+    assert restarted_messaging.config.url == "redis://second"
+
+
+@pytest.mark.parametrize(
+    "config",
+    ["", '[messaging]\ngroups = ["gc_dev"]\n', "[messaging]\nenabled = false\n"],
+)
+def test_messaging_consumers_share_setup_defaults(tmp_path, monkeypatch, config):
+    from toolang.cli.common.messaging import settings
+    from toolang.messaging.config import MessagingConfig
+    from toolang.messaging.errors import MessagingError
+    from toolang.plugin.toolsets.coop import CoopToolset
+    from toolang.plugin.types import LoadedPlugin
+
+    (tmp_path / "config.toml").write_text(config)
+    watcher, _ = _watcher(monkeypatch, tmp_path)
+
+    def load_toolsets(*, config):
+        return {
+            "coop": LoadedPlugin(
+                "coop", "coop", CoopToolset(config["coop"]), "built-in"
+            )
+        }
+
+    monkeypatch.setattr(watcher_module, "load_toolsets_with_sources", load_toolsets)
+    setup = asyncio.run(watcher.refresh())
+    assert setup.messaging is not None
+    coop = setup.toolsets()["coop"]
+    assert isinstance(coop, CoopToolset)
+    assert coop.config == setup.messaging.config
+    if "false" in config:
+        assert setup.messaging.config is None
+        with pytest.raises(MessagingError, match="disabled"):
+            settings(tmp_path)
+    else:
+        resolved, human = settings(tmp_path)
+        assert resolved == setup.messaging.config
+        assert human == setup.messaging.human
+        assert resolved == MessagingConfig(
+            "redis://localhost:6379/0", ("gc_dev",) if "groups" in config else ()
+        )

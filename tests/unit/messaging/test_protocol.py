@@ -9,7 +9,7 @@ import pytest
 from valkey.exceptions import ConnectionError, ResponseError
 
 from toolang.messaging.client import MessagingClient, group_key, online_key
-from toolang.messaging.config import MessagingConfig, human_name
+from toolang.messaging.config import MessagingConfig
 from toolang.messaging.errors import MessagingError, SendUnconfirmed
 from toolang.messaging.schemas import (
     Message,
@@ -54,17 +54,7 @@ def test_noncanonical_names_fail(group):
         conversation(group)
 
 
-def test_config_and_message_validation():
-    assert MessagingConfig.from_config({}) is None
-    assert human_name({}, default="owner") == "owner"
-    assert human_name({"human": {"name": "other"}}, default="owner") == "other"
-    config = MessagingConfig.from_config(
-        {"messaging": {"url": "redis://localhost", "groups": ["gc_dev", "gc_dev"]}}
-    )
-    assert config is not None and config.groups == ("gc_dev",)
-    for raw in ({}, {"url": "bad"}, {"url": "redis://localhost", "groups": ["all"]}):
-        with pytest.raises(MessagingError):
-            MessagingConfig.from_config({"messaging": raw})
+def test_message_validation():
     message = Message.create("owner", 'literal $x {{file}}\n"quote"')
     UUID(message.id)
     assert Message.decode(message.encode()) == message

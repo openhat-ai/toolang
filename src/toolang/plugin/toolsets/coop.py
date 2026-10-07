@@ -18,7 +18,7 @@ class CoopToolset:
 
     def __init__(self, config: Mapping[str, Any]):
         self.config = (
-            MessagingConfig.from_config({"messaging": config}) if config else None
+            MessagingConfig(config["url"], tuple(config["groups"])) if config else None
         )
 
     def connection(self) -> MessagingClient:

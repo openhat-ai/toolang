@@ -7,7 +7,6 @@ from collections.abc import Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 import logging
-import getpass
 import json
 import os
 from pathlib import Path
@@ -48,7 +47,6 @@ from toolang.up.logging import (
 )
 from toolang.work.scheduler import JobScheduler
 from toolang.work.messaging import MessagingLoop
-from toolang.messaging.config import human_name
 
 DEFAULT_WATCH_DEBOUNCE_MS = state_watcher.DEFAULT_DEBOUNCE_MS
 RUNTIME_SHUTDOWN_TASK_TIMEOUT_SEC = 1.0
@@ -281,13 +279,12 @@ def serve(
                 get_agent_state=current_state,
             )
             await scheduler.start()
-            if core.setup.messaging_config is not None:
+            messaging_setup = current_setup().messaging
+            if messaging_setup is not None and messaging_setup.config is not None:
                 messaging = MessagingLoop(
                     layout=spec.layout,
-                    owner=human_name(
-                        load_setup_config(spec.layout), default=getpass.getuser()
-                    ),
-                    config=core.setup.messaging_config,
+                    owner=messaging_setup.human,
+                    config=messaging_setup.config,
                     executor=core.executor,
                     threads=core.threads,
                     get_agent_setup=current_setup,

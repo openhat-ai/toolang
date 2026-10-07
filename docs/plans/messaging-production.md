@@ -10,7 +10,8 @@ Paths are relative to `src/toolang/`.
 | --- | --- | --- |
 | `too text` | `cli/toolang/commands/text/` | Send-and-exit; interactive TUI; history; tmux window reuse. |
 | `too team` | `cli/toolang/commands/team.py` | List groups, members, online status, and latest message time. |
-| Messaging core | `messaging/{config,schemas,client}.py` | Protocol, configuration, directory, membership, presence, Valkey I/O. |
+| Messaging setup | `setup/messaging.py`, `AgentSetup.messaging` | Resolve defaults, overrides, and human identity once; supply CLI, tools, and hosting. |
+| Messaging core | `messaging/{config,schemas,client}.py` | Concrete configuration, protocol, directory, membership, presence, Valkey I/O. |
 | `CoopToolset` | `plugin/toolsets/coop.py` | Expose `contacts` / `send` through the shared core. |
 | `MessagingLoop` | `work/messaging.py` | Batch messages into `agic:msg` or default; persist local cursors/context/results. |
 | Terminal helpers | `cli/common/` | Share Chat input, Rich rendering, finalize output, and `libtmux` placement. |
@@ -32,7 +33,7 @@ too team                 # List all and custom groups.
 ## Messaging contract
 
 - IDs: `all`, `gc_<name>`, `dm_<agent>`, `dm_<a>_<b>`; sort agent pairs by raw UTF-8 name. Percent-encode components except ASCII letters, digits, and `-`. Names are case-sensitive and stable.
-- Root configuration: `[human].name` defaults to OS username; `[messaging].url` selects external Valkey. Agent `[messaging].groups` declares custom memberships. Configuration changes require restart.
+- Root configuration: `[human].name` defaults to OS username; `[messaging].url` defaults to `redis://localhost:6379/0`; `[messaging].enabled = false` opts out. Agent `[messaging].groups` declares custom memberships. Configuration changes require restart.
 - Keys: `too:agents` Hash (agent → owner); `too:groups` Set; `too:agent:A:online` expiring token; `too:group:G:members` Set; `too:group:G:msg` Stream.
 - Message: Stream field `data` contains `{id, sender, body, in_reply_to, origin}`. Only the shared core creates/validates envelopes and writes messages.
 - Registration prepares `all` and owner DMs; agent DMs materialize on first use. Discover through Valkey, including remote agents. Preserve offline membership; token-check presence renewal/removal and reject duplicate live identities.

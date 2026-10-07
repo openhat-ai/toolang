@@ -1,16 +1,14 @@
-"""Resolve CLI messaging configuration at the invocation boundary."""
+"""Consume the root messaging setup for CLI commands."""
 
-import getpass
 from pathlib import Path
 
-from toolang.cli.config import load_config
-from toolang.messaging.config import MessagingConfig, human_name
+from toolang.messaging.config import MessagingConfig
 from toolang.messaging.errors import MessagingError
+from toolang.setup.messaging import load_messaging_setup
 
 
 def settings(root: Path) -> tuple[MessagingConfig, str]:
-    config = load_config(root / "config.toml")
-    messaging = MessagingConfig.from_config(config)
-    if messaging is None:
-        raise MessagingError("Set [messaging].url in the root config.toml first")
-    return messaging, human_name(config, default=getpass.getuser())
+    setup = load_messaging_setup(root)
+    if setup.config is None:
+        raise MessagingError("Messaging is disabled in the root configuration")
+    return setup.config, setup.human

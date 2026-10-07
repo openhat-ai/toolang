@@ -14,8 +14,7 @@ from toolang.base.protocols.model import ModelAdapter, ModelCatalog
 from toolang.base.types.model import ModelCatalogSnapshot, ModelOverride
 from toolang.base.types.policy import AgentCeiling, RunDefaults, RunLimits
 from toolang.common.layout import AgentLayout
-from toolang.common.config_sources import merge_mappings
-from toolang.messaging.config import MessagingConfig
+from .messaging import MessagingSetup, resolve_messaging_setup
 from toolang.plugin.config import merge_plugin_configs
 from toolang.common.config_sources import ConfigSource, config_sources
 from toolang.plugin.loading import (
@@ -136,7 +135,6 @@ class SetupWatcher:
             )
             for item in plugin_provenance(group=group)
         )
-        self.messaging_config: MessagingConfig | None = None
         self._setup: AgentSetup | None = None
         self._diagnostics: tuple[SetupDiagnostic, ...] = ()
         self._refresh_lock = asyncio.Lock()
@@ -194,14 +192,18 @@ class SetupWatcher:
         adapter_configs = merge_plugin_configs(configs, family="model_adapter")
         toolset_configs = merge_plugin_configs(configs, family="toolset")
         if self._setup is None:
-            self.messaging_config = MessagingConfig.from_config(merge_mappings(configs))
-        if self.messaging_config is not None:
-            toolset_configs["coop"] = {
-                "url": self.messaging_config.url,
-                "groups": list(self.messaging_config.groups),
-            }
+            human_config = next(
+                (
+                    source.config
+                    for source in inputs.sources
+                    if source.path == self.layout.root_config
+                ),
+                {},
+            )
+            messaging = resolve_messaging_setup(configs, human_config=human_config)
         else:
-            toolset_configs["coop"] = {}
+            messaging = self._setup.messaging
+        toolset_configs["coop"] = messaging.toolset_config() if messaging else {}
         catalog_path = resolve_model_catalog_path(
             self.layout,
             explicit=self._model_catalog_override,
@@ -249,6 +251,7 @@ class SetupWatcher:
                 ),
                 "adapters": adapter_configs,
                 "toolsets": toolset_configs,
+                "human": messaging.human if messaging else None,
                 "allow": allow,
                 "defaults": defaults,
                 "limits": limits,
@@ -278,6 +281,7 @@ class SetupWatcher:
             revision=revision,
             load=load,
             catalog_sources=catalog_sources,
+            messaging=messaging,
             adapter_configs=adapter_configs,
             toolset_configs=toolset_configs,
             catalog_configs=catalog_configs,
@@ -443,6 +447,7 @@ def _build_setup(
     defaults: RunDefaults,
     limits: RunLimits,
     compact: CompactConfig,
+    messaging: MessagingSetup | None,
     validate_defaults: bool,
 ) -> AgentSetup:
     """Publish captured revisions with per-setup synchronous lazy loaders."""
@@ -518,6 +523,7 @@ def _build_setup(
         defaults=defaults,
         limits=limits,
         compact=compact,
+        messaging=messaging,
         catalog_sources=catalog_sources,
         _load_models=load_model_data,
         _load_tools=load_tool_collection,

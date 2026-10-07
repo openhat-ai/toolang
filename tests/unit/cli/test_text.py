@@ -194,3 +194,28 @@ def test_follow_reconnects_from_last_displayed_id_without_replaying_history(
             ]
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("arguments", [["team"], ["text", "all", "hello"]])
+def test_messaging_commands_work_without_config_file(
+    tmp_path, monkeypatch, capsys, arguments
+):
+    server = FakeServer(server_type="valkey")
+    expected = MessagingConfig("redis://localhost:6379/0")
+
+    def client(config):
+        assert config == expected
+        return MessagingClient(
+            config, client=FakeAsyncValkey(server=server, decode_responses=True)
+        )
+
+    async def register():
+        async with client(expected) as connection:
+            await connection.register("alice", "owner", "token")
+
+    asyncio.run(register())
+    monkeypatch.setattr(team, "MessagingClient", client)
+    monkeypatch.setattr(text, "MessagingClient", client)
+    assert not (tmp_path / "config.toml").exists()
+    assert cli.main(["--root", str(tmp_path), *arguments]) == 0
+    assert "Error" not in capsys.readouterr().err
