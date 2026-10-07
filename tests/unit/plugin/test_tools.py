@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 
 from toolang.base.errors import ToolangError
+from toolang.base.examples.tools import create_math_add_toolset
 from toolang.base.protocols.tool import Tool
 from toolang.base.types.tool import ToolContext, ToolService, ServiceToolContext
 from toolang.plugin.toolsets.fs import create_toolset as create_filesystem_tool
@@ -18,6 +19,55 @@ from toolang.plugin.toolsets.service import (
 )
 from toolang.plugin.toolsets.shell import create_toolset as create_shell_tool
 from toolang.plugin.toolsets.web import create_toolset as create_web_tool
+
+
+@pytest.mark.parametrize(
+    "factory,name,arguments",
+    [
+        (create_math_add_toolset, "add", {"values": [True]}),
+        (create_web_tool, "search", {"query": "test", "top_k": True}),
+        (create_shell_tool, "execute", {"command": "true", "timeout_sec": True}),
+        (create_shell_tool, "execute", {"command": "true", "max_output_chars": True}),
+        (create_filesystem_tool, "read", {"path": "repo://file", "max_chars": True}),
+    ],
+)
+def test_bundled_numeric_arguments_reject_booleans_before_paths(
+    tmp_path, factory, name, arguments
+):
+    wrapped = factory({}).tools()[name]
+    context = ToolContext(tmp_path, tmp_path)
+    with pytest.raises(ToolangError, match="Boolean values are not numbers"):
+        wrapped.paths(arguments, context)
+    with pytest.raises(ToolangError, match="Boolean values are not numbers"):
+        asyncio.run(wrapped.invoke(arguments, context))
+
+
+def test_math_schema_and_filesystem_binding(tmp_path):
+    math = create_math_add_toolset({}).tools()["add"]
+    assert math.definition().parameters["properties"]["values"] == {
+        "type": "array",
+        "items": {"type": "number"},
+    }
+    assert (
+        asyncio.run(
+            math.invoke({"values": ["1", "2.5"]}, ToolContext(tmp_path, tmp_path))
+        ).output["sum"]
+        == 3.5
+    )
+    read = create_filesystem_tool({}).tools()["read"]
+    (tmp_path / "file").write_text("abcd")
+    context = ToolContext(tmp_path, tmp_path, {"repo": tmp_path})
+    raw = {"path": "repo://file", "max_chars": "2"}
+    assert read.bind_arguments(raw) == {"path": "repo://file", "max_chars": 2}
+    assert read.paths(raw, context) == {"repo": ("/file",)}
+    assert asyncio.run(read.invoke(raw, context)).output["text"] == "ab"
+    assert raw["max_chars"] == "2"
+    assert (
+        not {"workspace", "context"} & read.definition().parameters["properties"].keys()
+    )
+    for key in ("workspace", "cwd", "context", "unknown"):
+        with pytest.raises(ToolangError):
+            read.paths({**raw, key: "repo"}, context)
 
 
 def _tool_context(

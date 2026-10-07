@@ -21,11 +21,12 @@ from tests.support.execution_harness import (
     PublicationTracer,
     RecordingTool,
 )
-from toolang.base.types.message import Message, ToolResultPart
+from toolang.base.types.message import ImagePart, Message, TextPart, ToolResultPart
 from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.base.types.tool import ToolContext
 from toolang.common.layout import AgentLayout
 from toolang.execution.executor.steps.tool import invoke_tool_call
+from toolang.execution.store import RunStore
 from toolang.execution.values import parts_from_value
 from toolang.execution.records import (
     ExecControlPayload,
@@ -36,12 +37,201 @@ from toolang.execution.types import (
     ErrorRef,
     FieldRef,
     ThreadPrefix,
-    TypedRef,
     ToolStepGiven,
 )
 from toolang.lang.input import resolve_input_parts
+from toolang.lang.types import Array, Struct
 from toolang.state.prepare import prepare_agent_state
 from toolang.state.watcher import StateWatcher
+
+
+@pytest.mark.parametrize("action", ["exec", "run", "async run", "spawn"])
+@pytest.mark.parametrize(
+    "type_name,raw,expected",
+    [
+        ("Part[]", "work", Array("Part[]", (TextPart("work"),))),
+        ("Part[]", [], Array("Part[]", ())),
+        (
+            "Part[]",
+            [
+                {"type": "text", "text": "work"},
+                {"type": "image", "image_url": "https://example.com/a.png"},
+            ],
+            Array("Part[]", (TextPart("work"), ImagePart("https://example.com/a.png"))),
+        ),
+        ("Part", "work", TextPart("work")),
+        ("Number", "7", 7),
+        ("Boolean", "true", True),
+        ("Json", "false", "false"),
+        ("Number[]", "[1,2]", Array("Number[]", (1, 2))),
+        (
+            "Number[][]",
+            [[1, 2], []],
+            Array("Number[][]", (Array("Number[]", (1, 2)), Array("Number[]", ()))),
+        ),
+        (
+            "Packet",
+            {"content": ["work"]},
+            Struct("Packet", {"content": Array("Part[]", (TextPart("work"),))}),
+        ),
+    ],
+)
+def test_runtime_calls_persist_bound_inputs(
+    tmp_path, monkeypatch, action, type_name, raw, expected
+):
+    arguments: dict[str, Any] = {
+        "runnable": "flow:target",
+        "input": {"_": raw, "note": "extra"},
+    }
+    if action == "async run":
+        arguments["async"] = True
+    call = ToolCall(
+        "start",
+        "provider-start",
+        f"_toolang__{'run' if action == 'async run' else action}",
+        arguments,
+    )
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=f"""
+struct Packet:
+  content: Part[]
+agic caller() -> {type_name if action == "exec" else "Text"}:
+  recall = none
+  context = none
+  instruct = none
+  user: Call target.
+flow target(_: {type_name}, note: Part[]) -> {type_name}:
+  pass
+""",
+        responses=[],
+    )
+    calls = []
+
+    async def invoke(model, request, *, environ, **kwargs):
+        calls.append(request)
+        if len(calls) == 1:
+            return ModelCallResult(tool_calls=(call,))
+        result = last_tool_result(request)
+        assert result.error is None, result
+        if len(calls) == 2 and action in ("async run", "spawn"):
+            return ModelCallResult(
+                tool_calls=(
+                    ToolCall(
+                        "wait",
+                        "provider-wait",
+                        "_toolang__await",
+                        {"target": result.output["id"]},
+                    ),
+                )
+            )
+        return ModelCallResult(message=Message.assistant("done"))
+
+    monkeypatch.setattr(harness.adapter, "invoke", invoke)
+    monkeypatch.setattr(harness.adapter, "stream", invoke)
+    tracer = RecordingRunTracer()
+
+    async def scenario():
+        async with harness:
+            root = await harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    runnable="caller",
+                ),
+                tracer=tracer,
+            )
+            assert root.status == "succeeded", root.error
+            if harness.executor._tasks:
+                await asyncio.gather(*harness.executor._tasks)
+            controls = [
+                control
+                for run in harness.store.list_runs(limit=None)
+                for control in harness.store.list_run_controls(run_id=run.id)
+                if isinstance(control.payload, (RunControlPayload, ExecControlPayload))
+                and control.payload.runnable == "flow:target"
+            ]
+            assert len(controls) == 1
+            control = controls[0]
+            assert isinstance(control.payload, (RunControlPayload, ExecControlPayload))
+            assert control.payload.input["_"] == expected
+            assert control.payload.input["note"] == Array(
+                "Part[]", (TextPart("extra"),)
+            )
+            target = harness.store.get_run(run_id=control.ref.target.id)
+            assert target is not None and target.output is not None
+            assert harness.store.resolve_value(target.output.value) == expected
+            step = harness.store.list_steps(run_id=root.id)[1]
+            assert isinstance(step.given, ToolStepGiven)
+            assert step.given.call == call
+            return target.id
+
+    target_id = asyncio.run(scenario())
+    assert_replayed(harness.store.db_path, tracer.events)
+    reopened = RunStore(harness.store.db_path, read_only=True)
+    try:
+        target = reopened.get_run(run_id=target_id)
+        assert target is not None and target.output is not None
+        assert reopened.resolve_value(target.output.value) == expected
+    finally:
+        reopened.close()
+
+
+@pytest.mark.parametrize("action", ["exec", "run", "async run", "spawn"])
+@pytest.mark.parametrize(
+    "input",
+    [
+        {"_": "bad", "count": "8"},
+        {"_": "7", "count": "bad"},
+        {"_": True, "count": 8},
+        {"_": "7"},
+        {"_": "7", "count": 8, "extra": 1},
+    ],
+)
+def test_runtime_calls_reject_invalid_input_before_admission(tmp_path, action, input):
+    arguments = {
+        "runnable": "target",
+        "input": input,
+        **({"async": True} if action == "async run" else {}),
+    }
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+agic caller() -> Text:
+  recall = none
+  user: Call target.
+flow target(_: Number, count: Number) -> Number:
+  pass
+""",
+        responses=[
+            ModelCallResult(
+                tool_calls=(
+                    ToolCall(
+                        "bad",
+                        "bad",
+                        f"_toolang__{'run' if action == 'async run' else action}",
+                        arguments,
+                    ),
+                )
+            ),
+            ModelCallResult(message=Message.assistant("done")),
+        ],
+    )
+
+    async def scenario():
+        async with harness:
+            root = await harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    runnable="caller",
+                )
+            )
+            assert root.status == "succeeded", root.error
+            result = last_tool_result(harness.adapter.invocations[1].call)
+            assert result.error is not None
+            assert harness.store.list_runs(limit=None) == [root]
+            assert not harness.store.list_run_controls(run_id=root.id, kind="exec")
+
+    asyncio.run(scenario())
 
 
 @pytest.mark.parametrize("kind", ["agic", "flow"])
@@ -1357,18 +1547,14 @@ agic target(_: Text) -> Text:
             execute = controls[0]
             assert execute.status == "applied"
             assert isinstance(execute.payload, ExecControlPayload)
-            source = FieldRef.from_path(steps[0].ref, "output", "value", 0)
             assert execute.payload.state == harness.state.revision
             assert execute.payload.runnable == "agic:target"
             assert execute.triggered_by == steps[1].ref
             assert steps[2].preceded_by == (execute.ref,)
             assert len(execute.payload.input) == 1
             control_value = execute.payload.input["_"]
-            assert isinstance(control_value, TypedRef)
-            assert control_value.type == "Json"
-            assert control_value.ref == source.select("input", "input", "_")
-            assert harness.store.resolve_value(control_value) == "work"
-            assert steps[2].input == (source.select("input", "input", "_"),)
+            assert control_value == "work"
+            assert steps[2].input == ()
             target_call = harness.adapter.invocations[1].call
             assert {
                 tool.name for tool in harness.adapter.invocations[0].call.tools

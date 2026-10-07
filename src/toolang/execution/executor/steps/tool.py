@@ -11,7 +11,7 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 import re
 import time
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from toolang.base.protocols.tool import Tool, ToolHistory, ToolRuntime
 from toolang.base.types.message import Message, ToolResultPart
@@ -238,6 +238,7 @@ async def _execute(
     plugin_name = "-"
     summary_context = _tool_summary_context(call, None)
     operation: Tool | Exception | None = None
+    arguments: Mapping[str, Any] | None = None
     context: ToolContext | None = None
     step = StepRef.from_local(run.run_id, (step_index,))
     runtime: _ToolRuntime | None = None
@@ -247,7 +248,7 @@ async def _execute(
         state_ref: ControlRef,
     ) -> StepBegin:
         nonlocal plugin_name, summary_context
-        nonlocal operation, context, runtime
+        nonlocal operation, context, runtime, arguments
         runtime_tools = (
             prepared.run.setup.tools().runtime if trigger == "runtime" else {}
         )
@@ -268,6 +269,7 @@ async def _execute(
                 raise ToolangError("compact can only be initiated by model preflight")
             if tool is None:
                 raise ToolangError(f"unknown tool call: {call.name}")
+            arguments = tool.bind_arguments(call.input)
             if (
                 call.name == "_toolang__await"
                 and state.execution is not None
@@ -298,7 +300,7 @@ async def _execute(
                 if state.execution is not None
                 else run.cwd,
             )
-            tool_paths = tool.paths(call.input, context)
+            tool_paths = tool.paths(arguments, context)
             paths = tuple(
                 (workspace, path)
                 for workspace, values in (tool_paths or {}).items()
@@ -358,7 +360,9 @@ async def _execute(
     )
     try:
         assert operation is not None
-        record = await invoke_tool_call(call=call, tool=operation, context=context)
+        record = await invoke_tool_call(
+            call=call, tool=operation, context=context, arguments=arguments
+        )
     except asyncio.CancelledError:
         await _cancel(
             state,
@@ -768,6 +772,7 @@ async def invoke_tool_call(
     call: ToolCall,
     tool: Tool | Exception,
     context: ToolContext | None,
+    arguments: Mapping[str, Any] | None = None,
 ) -> ToolCallResult:
     """Translate the plugin result into an execution result with call identity."""
 
@@ -775,7 +780,8 @@ async def invoke_tool_call(
         if isinstance(tool, Exception):
             raise tool
         assert context is not None
-        result = await tool.invoke(call.input, context)
+        bound = tool.bind_arguments(call.input) if arguments is None else arguments
+        result = await tool.invoke(bound, context)
         output, error = result.output, result.error
     except Exception as exc:
         output = {}

@@ -31,6 +31,7 @@ Subclass `Tool` from `toolang.base.protocols.tool`; value types live in
 class Tool:
     name: str
     def definition(self) -> ToolDefinition: ...
+    def bind_arguments(self, arguments) -> dict[str, Any]: ...
     async def invoke(self, arguments, context) -> ToolResult: ...
     def summary(self, arguments, result=None) -> str | None: ...
     def paths(self, arguments, context) -> Mapping[str, tuple[str, ...]] | None: ...
@@ -40,6 +41,13 @@ class Tool:
 object. A non-null `error` reports failure and may accompany partial output.
 Raised exceptions become tool errors; cancellation remains executor-owned.
 Call IDs, timing, and execution records are not plugin result fields.
+
+`bind_arguments` synchronously returns a new mapping of supplied values. Its
+default implementation copies the mapping, leaving argument semantics to the
+plugin. Overrides must be pure and idempotent. The executor binds before path
+preflight and passes the bound values to `paths` and `invoke`; a binding error
+produces a failed Tool Step without calling either. Call records and `summary`
+retain the raw input for diagnostics.
 
 The two optional methods default to `None`:
 
@@ -69,10 +77,32 @@ Ordinary tools receive none of those dependencies.
 
 The used function adapter remains available: annotate a sync/async function with
 `@tool(summary=..., paths=...)`, then `create_function_tool(function)`.
-Hooks have exactly the Tool signatures and see the original arguments (including
-omitted defaults). An explicit `context` function parameter is injected. Return
+At creation, the adapter resolves input annotations and prepares Pydantic v2
+adapters for both binding and inferred JSON schemas. Supported annotations are
+`str`, `int`, `float`, `bool`, `None`, `list[T]`, `dict[str, T]`, unions/optionals,
+`Literal`, and Pydantic strict types, recursively. Missing annotations and `Any`
+preserve supplied native values. Unresolved or unsupported input annotations,
+positional-only parameters, `*args`, and invalid defaults fail preparation.
+
+Binding accepts Pydantic's lax conversions, such as `"7"` to `int` and `"false"`
+to `bool`. Numeric branches reject Booleans and non-finite values; strict types
+remain strict. Strings are not parsed as JSON collections or obtained by a
+blanket `str(value)` conversion. Required arguments must be supplied. Unknown
+names fail unless the function declares `**kwargs`, whose annotation binds each
+extra value. Omitted defaults remain omitted in hooks and are applied by Python
+at invocation. An explicit `context` parameter receives the runtime context;
+callers cannot supply it, even through `**kwargs`.
+
+Hooks have exactly the Tool signatures. `summary` sees raw supplied arguments;
+`paths` sees bound supplied arguments, including during direct calls outside
+the executor. **Migration:** remove raw numeric/Boolean string parsing from
+paths hooks, remove undeclared inputs or declare `**kwargs`, and fix unsupported
+annotations and wrong-typed defaults. Explicit `@tool(parameters=...)` schemas
+are preserved, including domain constraints, but do not replace Python binding
+or add JSON-Schema validation; domain checks still belong to the plugin. Return
 `ToolResult` directly, or let the adapter wrap a dict, None (empty output), or a
-JSON value (`{"value": value}`). The unused Typer adapter is not provided.
+JSON value (`{"value": value}`). Return annotations do not add output validation.
+The unused Typer adapter is not provided.
 
 The history toolset receives `HistoryToolContext.history`, a read-only `ToolHistory`
 interface bound by the executor to the current agent Store and caller Thread.

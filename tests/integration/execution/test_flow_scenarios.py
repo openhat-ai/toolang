@@ -25,11 +25,12 @@ from tests.support.execution_harness import (
     ScriptedModelAdapter,
     ScriptedModelTurn,
 )
-from toolang.base.types.message import Message, TextPart, message_text
+from toolang.base.types.message import ImagePart, Message, TextPart, message_text
 from toolang.base.types.model import ModelRequest
 from toolang.base.types.policy import RunDefaults, RunPolicy
 from toolang.base.types.run import ModelCallResult, ModelUsage
 from toolang.common.errors import ToolangError
+from toolang.common.layout import AgentLayout
 from toolang.execution.events import RunBegin, RunEnd
 from toolang.execution.executor import AgentCeiling, RunExecutor, RunLimits
 from toolang.execution.inspection.history import RunHistory
@@ -59,8 +60,249 @@ from toolang.execution.types import (
 )
 from toolang.lang import Program
 from toolang.lang.input import CallInput, resolve_input_parts
-from toolang.lang.types import Array
+from toolang.lang.types import Array, Struct
 from toolang.state.prepare import prepare_agent_state
+
+
+@pytest.mark.parametrize("count", ["8", "bad"])
+def test_child_input_binding_does_not_rewrite_parent_locals(
+    tmp_path, monkeypatch, count
+):
+    from toolang.execution.executor import executor as execution_module
+
+    bind = execution_module._bind_child_input
+    checked = []
+
+    def observe(runnable, locals, **kwargs):
+        before = dict(locals)
+        try:
+            return bind(runnable, locals, **kwargs)
+        finally:
+            assert locals == before
+            assert all(locals[name] is local for name, local in before.items())
+            assert locals["_"].value == "7" and locals["_"].type_name == "Text"
+            assert (
+                locals["count"].value == count and locals["count"].type_name == "Text"
+            )
+            checked.append(True)
+
+    monkeypatch.setattr(execution_module, "_bind_child_input", observe)
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+flow parent(_: Text, count: Text) -> Text:
+  let result = run child
+flow child(_: Number, count: Number) -> Number:
+  pass
+""",
+        responses=[],
+    )
+
+    async def scenario():
+        async with harness:
+            root = await harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    runnable="parent",
+                    named={"_": "7", "count": count},
+                )
+            )
+            assert checked == [True]
+            assert root.status == ("succeeded" if count == "8" else "failed")
+            children = harness.store.list_run_tree(root_run_id=root.id)[1:]
+            if count == "8":
+                assert (
+                    root.output is not None
+                    and harness.store.resolve_value(root.output.value) == "7"
+                )
+                assert len(children) == 1
+                entry = harness.store.list_run_controls(run_id=children[0].id)[0]
+                assert isinstance(entry.payload, RunControlPayload)
+                assert entry.payload.input == CallInput({"_": 7, "count": 8})
+            else:
+                assert children == []
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("changed_revision", [False, True])
+def test_rerun_preserves_native_module_values_and_absence(tmp_path, changed_revision):
+    layout = AgentLayout.resident(tmp_path, "alice")
+    flows = layout.home / "flows"
+    flows.mkdir(parents=True)
+    target = flows / "relay.too"
+    source = """
+struct Packet:
+  content: Part[]
+flow relay(_: Packet, native: Json, nullable: Json, absent?: Text) -> Packet:
+  pass
+"""
+    target.write_text(source)
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="flow main() -> Text:\n  pass\n",
+        responses=[],
+        prepare_state=True,
+    )
+    packet = Struct(
+        "Packet",
+        {"content": Array("Part[]", (TextPart("hello"), ImagePart(file_id="image-1")))},
+    )
+    values = {"_": packet, "native": "false", "nullable": None}
+
+    async def scenario():
+        async with harness:
+            original = await harness.executor.run(
+                replace(
+                    harness.run_spec(
+                        thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                        runnable="relay",
+                        named=values,
+                    ),
+                    input=CallInput(values),
+                )
+            )
+            assert original.status == "succeeded", original.error
+            controls = harness.store.list_run_controls(run_id=original.id)
+            fresh = harness.state
+            if changed_revision:
+                target.write_text(source + "\n## Updated module documentation.\n")
+                fresh = prepare_agent_state(layout)
+            rerun = await harness.executor.rerun(
+                original.id, setup=harness.setup, state=fresh
+            )
+            assert rerun.status == "succeeded", rerun.error
+            entry = harness.store.list_run_controls(run_id=rerun.id)[0]
+            assert isinstance(entry.payload, RunControlPayload)
+            assert entry.payload.input == CallInput(values)
+            assert (
+                rerun.output is not None
+                and harness.store.resolve_value(rerun.output.value) == packet
+            )
+            assert harness.store.get_run(run_id=original.id) == original
+            assert harness.store.list_run_controls(run_id=original.id) == controls
+
+    asyncio.run(scenario())
+
+
+def test_rerun_rejects_changed_struct_fields_without_admission(tmp_path):
+    source = "struct Packet:\n  value: Text\nflow task(_: Packet) -> Packet:\n  pass\n"
+    harness = ExecutionHarness.create(
+        tmp_path, source=source, responses=[], prepare_state=True
+    )
+
+    async def scenario():
+        async with harness:
+            original = await harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    runnable="task",
+                    named={"_": {"value": "7"}},
+                )
+            )
+            assert original.status == "succeeded", original.error
+            controls = harness.store.list_run_controls(run_id=original.id)
+            harness.setup.layout.program.write_text(
+                source.replace("value: Text", "value: Number")
+            )
+            fresh = prepare_agent_state(harness.setup.layout)
+            with pytest.raises(ToolangError, match="Number"):
+                harness.executor.rerun(original.id, setup=harness.setup, state=fresh)
+            assert harness.store.list_runs(limit=None) == [original]
+            assert harness.store.list_run_controls(run_id=original.id) == controls
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("changed_revision", [False, True])
+def test_rerun_binds_native_input_to_fresh_signature(tmp_path, changed_revision):
+    source = "flow task(_: Text, count: Text) -> Text:\n  pass\n"
+    harness = ExecutionHarness.create(
+        tmp_path, source=source, responses=[], prepare_state=True
+    )
+
+    async def scenario():
+        async with harness:
+            original = await harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    runnable="task",
+                    named={"_": "7", "count": "8"},
+                )
+            )
+            controls = harness.store.list_run_controls(run_id=original.id)
+            fresh = harness.state
+            if changed_revision:
+                harness.setup.layout.program.write_text(
+                    source.replace("Text", "Number")
+                )
+                fresh = prepare_agent_state(harness.setup.layout)
+            rerun = await harness.executor.rerun(
+                original.id, setup=harness.setup, state=fresh
+            )
+            assert rerun.status == "succeeded", rerun.error
+            entry = harness.store.list_run_controls(run_id=rerun.id)[0]
+            assert isinstance(entry.payload, RunControlPayload)
+            assert entry.payload.input == CallInput(
+                {"_": 7, "count": 8} if changed_revision else {"_": "7", "count": "8"}
+            )
+            assert rerun.output is not None
+            assert harness.store.resolve_value(rerun.output.value) == (
+                7 if changed_revision else "7"
+            )
+            assert harness.store.get_run(run_id=original.id) == original
+            assert harness.store.list_run_controls(run_id=original.id) == controls
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "signature,values,new_signature",
+    [
+        (
+            "_: Text, count: Text",
+            {"_": "bad", "count": "8"},
+            "_: Number, count: Number",
+        ),
+        (
+            "_: Text, count: Text",
+            {"_": "7", "count": "bad"},
+            "_: Number, count: Number",
+        ),
+        ("_: Text", {"_": "7"}, "_: Text, required: Text"),
+        ("_: Text, removed: Text", {"_": "7", "removed": "x"}, "_: Text"),
+        ("_: Text[]", {"_": ["7"]}, "_: Number[]"),
+    ],
+)
+def test_rerun_rejects_invalid_fresh_input_without_admission(
+    tmp_path, signature, values, new_signature
+):
+    source = f"flow task({signature}) -> Json:\n  pass\n"
+    harness = ExecutionHarness.create(
+        tmp_path, source=source, responses=[], prepare_state=True
+    )
+
+    async def scenario():
+        async with harness:
+            original = await harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    runnable="task",
+                    named=values,
+                )
+            )
+            assert original.status == "succeeded", original.error
+            controls = harness.store.list_run_controls(run_id=original.id)
+            harness.setup.layout.program.write_text(
+                source.replace(signature, new_signature)
+            )
+            fresh = prepare_agent_state(harness.setup.layout)
+            with pytest.raises((ToolangError, TypeError, ValueError)):
+                harness.executor.rerun(original.id, setup=harness.setup, state=fresh)
+            assert harness.store.list_runs(limit=None) == [original]
+            assert harness.store.list_run_controls(run_id=original.id) == controls
+
+    asyncio.run(scenario())
 
 
 def _output_value(harness: ExecutionHarness, run_id: str) -> object:

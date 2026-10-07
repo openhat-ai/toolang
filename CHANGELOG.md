@@ -7,6 +7,48 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ## [Unreleased]
 
+### Added
+
+- The `Tool` plugin protocol gains `bind_arguments(arguments)`, a synchronous,
+  side-effect-free hook that returns a new mapping of supplied arguments. The
+  executor binds after resolving the tool and before `paths`, passing the bound
+  values to `paths` and `invoke`; a binding error fails the Tool Step without
+  calling either. The default copies the mapping, so hand-written tools keep
+  their argument semantics, and raw call input stays available to `summary` and
+  call records.
+
+### Changed
+
+- **Breaking:** `@tool` function tools now bind supplied arguments against their
+  resolved signature before path preflight and invocation. Values follow
+  Pydantic's lax conversions (`"7"` becomes `7`), numeric branches reject
+  Booleans and non-finite values, strict types stay strict, and callers cannot
+  supply the reserved `context`. Unknown names, missing required values, and
+  invalid values now fail the call instead of being silently dropped or passed
+  through. Migration: declare intended inputs or a real `**kwargs`, and remove
+  raw numeric/Boolean string parsing from function `paths` hooks, which now
+  receive bound values.
+
+- Function-tool JSON schemas now derive from resolved input annotations, so
+  postponed annotations such as `int`, `bool`, and `list[str]` produce typed
+  schemas instead of empty ones. Unresolved or unsupported annotations,
+  positional-only parameters, `*args`, and wrong-typed defaults now fail tool
+  preparation with an error naming the parameter. Explicit
+  `@tool(parameters=...)` schemas are preserved and neither disable binding nor
+  add validation.
+
+### Fixed
+
+- Model-requested `exec` now records the target-bound values in its control and
+  builds its replacement locals from them, fixing successful passthrough Runs
+  that exposed unreadable typed output. Already-corrupt historical exec records
+  are not repaired; invoke the affected work again.
+
+- `rerun` now binds restored native source inputs to the selected target in its
+  captured fresh State before admission, so a stored Text `"7"` can satisfy a
+  fresh Number parameter. Newly required, removed, unknown, or incompatible
+  arguments reject the whole rerun without modifying the source Run.
+
 ## [0.4.0a1] - 2026-10-06
 
 ### Added

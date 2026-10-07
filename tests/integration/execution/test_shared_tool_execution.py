@@ -9,6 +9,9 @@ import pytest
 
 from toolang.base.errors import ToolangError
 from toolang.base.types.tool import ToolResult
+from toolang.base.utils.function_tools import create_function_tool, tool
+from toolang.plugin.toolsets.loading import LoadedTool
+from toolang.plugin.toolsets.registry import ToolRef
 from tests.support.execution_assertions import (
     assert_replayed,
     assert_run_event_integrity,
@@ -29,6 +32,78 @@ from toolang.execution.store import RunStore
 from toolang.execution.types import ThreadPrefix, ToolStepGiven
 from toolang.state.prepare import prepare_agent_state
 from toolang.state.watcher import StateWatcher
+
+
+@pytest.mark.parametrize("value", ["7", "bad", True])
+def test_tool_binding_precedes_paths_and_keeps_raw_records(tmp_path, value):
+    seen = []
+
+    def paths(arguments, context):
+        seen.append(("paths", dict(arguments)))
+        return {}
+
+    @tool(
+        paths=paths,
+        summary=lambda arguments, result: f"Raw count {arguments['count']!r}",
+    )
+    def work(count: int):
+        seen.append(("body", {"count": count}))
+        return {"count": count}
+
+    loaded = LoadedTool(
+        "test", "built-in", ToolRef("test", "test", "work"), create_function_tool(work)
+    )
+    raw = {"count": value}
+    call = ToolCall("call", "provider", loaded.name, raw)
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="agic task() -> Text:\n  context = none\n  user: Task.\n",
+        tools={loaded.name: loaded},
+        responses=[
+            ModelCallResult(tool_calls=(call,)),
+            ModelCallResult(message=Message.assistant("done")),
+        ],
+    )
+    tracer = RecordingRunTracer()
+
+    async def scenario():
+        async with harness:
+            root = await harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    runnable="task",
+                ),
+                tracer=tracer,
+            )
+            assert root.status == "succeeded", root.error
+            step = harness.store.list_steps(run_id=root.id)[1]
+            assert isinstance(step.given, ToolStepGiven)
+            assert step.given.call == call
+            assert step.given.summary == f"Raw count {value!r}"
+            assert step.output is not None and isinstance(
+                step.output.value, ToolResultPart
+            )
+            result = step.output.value
+            assert raw == {"count": value}
+            assert result.call_id == "provider" and result.tool_call_id == "call"
+            if value == "7":
+                assert seen == [("paths", {"count": 7}), ("body", {"count": 7})]
+                assert result.output == {"count": 7} and result.error is None
+                assert step.status == "succeeded"
+            else:
+                assert seen == []
+                assert result.error is not None and "count" in result.error
+                assert step.status == "failed"
+            replies = [
+                part
+                for message in harness.adapter.invocations[1].call.messages
+                for part in message.parts
+                if isinstance(part, ToolResultPart)
+            ]
+            assert replies == [result]
+
+    asyncio.run(scenario())
+    assert_replayed(harness.store.db_path, tracer.events)
 
 
 @pytest.mark.parametrize("phase", ["paths", "invoke"])

@@ -12,7 +12,6 @@ from toolang.base.protocols.tool import ToolRuntime
 from toolang.base.types.tool import ToolContext, ToolResult
 from toolang.base.types.message import ToolResultPart
 from toolang.base.utils.workspace_paths import resolve_input_path, workspace_uri
-from toolang.lang.input import CallInput
 
 from ..records import RecallControlPayload
 from ..assembly.tool_replies import control_summary
@@ -31,7 +30,6 @@ from ..types import (
     SkillRecallTarget,
     ServiceRecallTarget,
     StepRef,
-    TypedRef,
     WorkspaceRecallTarget,
 )
 from .common import _ExecuteCommitted, _RunRejected
@@ -282,14 +280,7 @@ class _ToolRuntime(ToolRuntime):
                 state.prepared.run,
                 target,
                 values,
-                control_input=CallInput(
-                    {
-                        name: TypedRef(
-                            self.source.select("input", "input", name), "Json"
-                        )
-                        for name in values
-                    }
-                ),
+                control_input=values,
                 state=captured,
                 state_ref=state_ref,
             )
