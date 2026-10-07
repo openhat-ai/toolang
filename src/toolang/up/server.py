@@ -28,13 +28,14 @@ from toolang.base.types.model import ModelOverride
 from toolang.base.types.policy import AgentCeiling
 from toolang.catalog import CapsManager, JobsManager
 from toolang.common.config import resolve_ui_base_url
+from toolang.common.config_sources import merge_mappings
 from toolang.common.env_logger import PY_LOG_ENV_VAR
 from toolang.common.layout import AgentLayout
 from toolang.execution.executor.resources import validate_agent_ceiling
 from toolang.plugin.sandboxes.host import HOST_SANDBOX_DESCRIPTION_ENV
 from toolang.setup import AgentSetup
 from toolang.plugin.models.query import filter_models
-from toolang.setup.config import load_setup_config
+from toolang.setup.config import load_agent_config, load_setup_config
 from toolang.state import watcher as state_watcher
 from toolang.state.state import AgentState
 from toolang.up import process as agents
@@ -46,6 +47,7 @@ from toolang.up.logging import (
     configure_logging,
 )
 from toolang.work.scheduler import JobScheduler
+from toolang.work.messaging import MessagingConfig, MessagingLoop
 
 DEFAULT_WATCH_DEBOUNCE_MS = state_watcher.DEFAULT_DEBOUNCE_MS
 RUNTIME_SHUTDOWN_TASK_TIMEOUT_SEC = 1.0
@@ -247,6 +249,9 @@ def serve(
         ceiling=ceiling,
     )
     shutdown_signal = threading.Event()
+    messaging = MessagingConfig.from_config(
+        merge_mappings([load_setup_config(spec.layout), load_agent_config(spec.layout)])
+    )
     caps_manager = CapsManager(spec.layout)
     jobs_manager = JobsManager(spec.layout)
 
@@ -279,6 +284,16 @@ def serve(
             )
             await scheduler.start()
             app.state.job_scheduler = scheduler
+            if messaging is not None:
+                messages = MessagingLoop(
+                    layout=spec.layout,
+                    executor=core.executor,
+                    threads=core.threads,
+                    get_agent_setup=current_setup,
+                    get_agent_state=current_state,
+                    config=messaging,
+                )
+                tasks.append(asyncio.create_task(messages.run(stop_signal)))
             tasks.extend(
                 [
                     asyncio.create_task(

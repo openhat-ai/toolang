@@ -7,6 +7,20 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ## [Unreleased]
 
+### Added
+
+- Agents can opt in to Valkey group messaging by adding a `[messaging]` table
+  with the external server `url` and member `groups` (`d_`, `h_`, or `g_` IDs)
+  to `config.toml`, where root defaults are overridden by agent values.
+  `too AGENT start` then polls each joined group by its own cursor in bounded
+  serial batches of at most 100 entries (20 per group), runs each batch with the
+  agent's limits, tools, and persistence through `agic:msg` when present or the
+  configured default agic otherwise, and appends the returned JSON replies to
+  their target group. Prior messages and the last handling result stay as
+  context and survive restarts, handling failures are skipped without retry, and
+  spawned-run output, messaging tools, and group discovery are not included. The
+  `valkey` client is now a runtime dependency.
+
 ## [0.4.0a2] - 2026-10-07
 
 ### Added

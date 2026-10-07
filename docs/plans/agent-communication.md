@@ -1,6 +1,6 @@
 # Communication data model
 
-Approved implementation scope: messaging only, in one module started with the agent; batch calls use `agic:msg` or a default handler, and replies go to the target group. No event/semaphore/board implementation or plugin framework. The remaining model is design-only.
+Approved implementation scope: messaging only, in one module started with the agent; batch calls use `agic:msg` or a default handler, and replies go to the target group. Connect to externally started Valkey. No event/semaphore/board implementation or plugin framework. See [messaging usage](../messaging.md). The remaining model is design-only.
 
 `A/T/R/K` are agent/thread/root-run/resource IDs. `G` is a group ID. `P` is `too:agent:A` or `too:group:G`.
 
@@ -34,4 +34,4 @@ Open: member discovery/registration; abandoned board claims; ownership and recon
 
 Touchpoints: [channels](../../src/toolang/base/protocols/channel.py), [events](../../src/toolang/execution/events.py), [records](../../src/toolang/execution/records.py), [relay](../../src/toolang/api/common.py), [plugins](../../src/toolang/plugin/).
 
-Acceptance: collision-free key boundaries; independent cursors; new-channel aggregation; one concurrent claimant; stale revision/token rejection; record-based recovery with explicit gaps.
+Messaging acceptance: independent cursors; bounded serial batches; arrivals during handling remain for the next batch; prior context/results survive restart; own replies do not trigger handling; direct replies require group membership; failed batches are skipped; the loop starts/stops with the agent.
