@@ -72,7 +72,7 @@ rules use workspace and path instead. A declaration with removed="true" withdraw
 the resource. Declarations remain effective until replaced or withdrawn.
 Resource declarations with content carry an opaque revision identifier.
 A runtime-owned `&lt;toolang:execution runnable="agent::agic:review" entered_by="exec"/&gt;`
-is appended on every Model Call, independently of `context = none`. Only the
+is supplied on every agic Model Call, independently of `context = none`. Only the
 latest execution declaration is authoritative. `runnable` is the fully qualified
 current runnable, including its module; `entered_by` is `run` for Run entry or
 `exec` after a committed transfer. You are already executing that runnable's body

@@ -39,7 +39,7 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Fixed
 
-- Every Model Call now carries a runtime-owned
+- Every agic Model Call now carries a runtime-owned
   `<toolang:execution runnable="..." entered_by="run|exec"/>` declaration even
   with `context = none`, naming the current runnable and whether it was entered
   by `run` or a committed `exec`, to prevent repeating the original invocation.
