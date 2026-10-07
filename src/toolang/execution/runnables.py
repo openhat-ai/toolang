@@ -84,19 +84,21 @@ class AgicRoutes:
     handoffs: tuple[str, ...] = ()
     resolved: tuple[RunnableRoute, ...] = ()
 
-    @property
-    def requested_only(self) -> tuple[RouteAction, ...]:
-        """Identify default public routes that require a named user request."""
+    def scopes(self, state: AgentState) -> tuple[str, str, str]:
+        """Project effective restrictions independently of active-path eligibility."""
 
-        return tuple(
-            action
-            for action, references in (
-                ("run", self.hands),
-                ("spawn", self.hands),
-                ("exec", self.handoffs),
+        def scope(action: RouteAction, references: tuple[str, ...]) -> str:
+            if not references or references == ("*",):
+                return "ALL"
+            refs = (
+                runnable_ref(state, route.runnable)
+                for route in self.resolved
+                if action in route.actions
             )
-            if not references
-        )
+            return ",".join(refs) or "NONE"
+
+        hands = scope("run", self.hands)
+        return hands, scope("exec", self.handoffs), hands
 
     def allows(self, action: RouteAction, target: ResolvedRunnable) -> bool:
         """Return whether authored routing authority permits one target."""
@@ -144,18 +146,7 @@ def resolve_agic_routes(
         ("spawn", hands),
         ("exec", handoffs),
     )
-    if module == "agent":
-        index = getattr(state, "runnables", None)
-        if index is None:
-            index = program_runnable_index(state_program(state))
-        targets = tuple(resolve_public_runnable(state, name) for name in index)
-    elif module not in state.modules:
-        targets = ()
-    else:
-        targets = tuple(
-            resolve_call_target(state, module, name)
-            for name in program_runnable_index(state_program(state, module))
-        )
+    targets = visible_runnables(state, module)
     for route_action, references in groups:
         if references == ("none",):
             continue
@@ -174,19 +165,10 @@ def resolve_agic_routes(
                 )
             )
         for item in selected:
-            target = ResolvedRunnable(
-                name=item.name,
-                module=item.module,
-                executable=item.executable,
-            )
-            actions_by_ref.setdefault(target.ref, set()).add(route_action)
+            actions_by_ref.setdefault(item.ref, set()).add(route_action)
     resolved = tuple(
         RunnableRoute(
-            runnable=ResolvedRunnable(
-                name=item.name,
-                module=item.module,
-                executable=item.executable,
-            ),
+            runnable=item,
             actions=tuple(
                 action for action in ("run", "spawn", "exec") if action in actions
             ),
@@ -195,6 +177,43 @@ def resolve_agic_routes(
         if (actions := actions_by_ref.get(item.ref)) is not None
     )
     return AgicRoutes(hands=hands, handoffs=handoffs, resolved=resolved)
+
+
+def visible_runnables(state: AgentState, module: str) -> tuple[ResolvedRunnable, ...]:
+    """Enumerate the caller's namespace without route or active-path filtering."""
+
+    if module == "agent":
+        index = getattr(state, "runnables", None)
+        if index is None:
+            index = program_runnable_index(state_program(state))
+        return tuple(resolve_public_runnable(state, name) for name in index)
+    if module not in state.modules:
+        return ()
+    return tuple(
+        resolve_call_target(state, module, name)
+        for name in program_runnable_index(state_program(state, module))
+    )
+
+
+def runnable_ref(state: AgentState, target: ResolvedRunnable) -> str:
+    """Use public aliases where unique; qualify private module identities."""
+
+    public = state.runnables.get(target.name)
+    if (
+        public is not None
+        and state.runnable_modules[target.name] == target.module
+        and public.kind == target.executable.kind
+    ):
+        return target.ref
+    return target.qualified
+
+
+def bound_runnable(state: AgentState, module: str, reference: str) -> ResolvedRunnable:
+    """Resolve a captured binding without adopting a newer declaration."""
+
+    parsed = parse_runnable_ref_parts(reference)
+    executable = resolve_bound_runnable(state, module, reference)
+    return ResolvedRunnable(parsed.name, module, executable)
 
 
 def _directive_values(agic: Runnable, name: str) -> tuple[str, ...]:
@@ -500,19 +519,17 @@ def available_runnable_defaults(
         return None, None
 
 
-def runnable_descriptions(
-    state: AgentState, routes: AgicRoutes
-) -> tuple[dict[str, object], ...]:
-    """Return data-only descriptions selected by authored routing authority."""
-    return tuple(_runnable_description(state, route) for route in routes.resolved)
-
-
 def runnable_signature(
     state: AgentState,
     module: str,
     runnable: Runnable,
+    *,
+    documentation_limit: int | None = RUNNABLE_DOCUMENTATION_MAX_CHARS,
 ) -> dict[str, object]:
-    """Describe one signature for declarations and input-validation feedback."""
+    """Describe a signature while preserving the concise validation format.
+
+    A None limit requests discovery's complete docs, including struct field docs.
+    """
 
     structs = {item.name: item for item in state.modules[module].structs}
     output = runnable.output or ("Part[]" if isinstance(runnable, AgicDecl) else "Json")
@@ -524,9 +541,7 @@ def runnable_signature(
     return {
         "input": (
             {
-                "documentation": (runnable.input.doc or "")[
-                    :RUNNABLE_DOCUMENTATION_MAX_CHARS
-                ],
+                "documentation": (runnable.input.doc or "")[:documentation_limit],
                 "optional": runnable.input.optional,
                 "type": runnable.input.type_name or "Part[]",
             }
@@ -535,9 +550,7 @@ def runnable_signature(
         ),
         "parameters": [
             {
-                "documentation": (parameter.doc or "")[
-                    :RUNNABLE_DOCUMENTATION_MAX_CHARS
-                ],
+                "documentation": (parameter.doc or "")[:documentation_limit],
                 "name": parameter.name,
                 "optional": parameter.optional,
                 "type": parameter.type_name or "Part[]",
@@ -545,21 +558,9 @@ def runnable_signature(
             for parameter in runnable.params
         ],
         "output": output,
-        "structs": _reachable_structs(signature_types, structs=structs),
-    }
-
-
-def _runnable_description(
-    state: AgentState,
-    route: RunnableRoute,
-) -> dict[str, object]:
-    target = route.runnable
-    runnable = target.executable
-    return {
-        "actions": list(route.actions),
-        "documentation": (runnable.doc or "")[:RUNNABLE_DOCUMENTATION_MAX_CHARS],
-        "ref": target.ref,
-        **runnable_signature(state, target.module, runnable),
+        "structs": _reachable_structs(
+            signature_types, structs=structs, documentation_limit=documentation_limit
+        ),
     }
 
 
@@ -567,6 +568,7 @@ def _reachable_structs(
     types: tuple[str, ...],
     *,
     structs: dict[str, StructDecl],
+    documentation_limit: int | None = RUNNABLE_DOCUMENTATION_MAX_CHARS,
 ) -> list[dict[str, object]]:
     seen: set[str] = set()
     result: list[dict[str, object]] = []
@@ -583,12 +585,17 @@ def _reachable_structs(
         seen.add(name)
         result.append(
             {
-                "documentation": (struct.doc or "")[:RUNNABLE_DOCUMENTATION_MAX_CHARS],
+                "documentation": (struct.doc or "")[:documentation_limit],
                 "fields": [
                     {
                         "name": field.name,
                         "optional": field.optional,
                         "type": field.type_name,
+                        **(
+                            {"documentation": field.doc or ""}
+                            if documentation_limit is None
+                            else {}
+                        ),
                     }
                     for field in struct.fields
                 ],

@@ -44,6 +44,8 @@ class ToolHistory(Protocol):
 class ToolRuntime(Protocol):
     """Trusted operations bound by the executor to one runtime Tool Step."""
 
+    async def runnables(self, name: str | None = None) -> ToolResult: ...
+
     async def run(
         self, runnable: str, input: Mapping[str, Any], *, asynchronous: bool = False
     ) -> ToolResult: ...

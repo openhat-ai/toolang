@@ -19,7 +19,11 @@ from tests.integration.execution.test_pick_guidance import (
     _pick,
     _write_guidance,
 )
-from tests.support.execution_assertions import assert_replayed, route_snapshots
+from tests.support.execution_assertions import (
+    assert_replayed,
+    route_scopes,
+    runtime_message,
+)
 from tests.support.execution_harness import (
     PublicationTracer,
     RecordingRunTracer,
@@ -37,7 +41,7 @@ from toolang.state.prepare import prepare_agent_state
 
 def _workspace_messages(call):
     return [
-        message_text(message.parts)
+        message_text(message.parts).splitlines()[0]
         for message in call.messages
         if message.tag == "workspace"
     ]
@@ -234,11 +238,9 @@ def test_publication_preserves_bound_psyches_and_runnable_authority(tmp_path):
             assert run.status == "succeeded", run.error
             first, last = (i.call for i in harness.adapter.invocations)
             assert "Resident advice." in first.instructions
-            assert [item["ref"] for item in route_snapshots(first)["hands"]] == [
-                "agic:helper"
-            ]
+            assert route_scopes(first)["hands"] == "agic:helper"
             assert "Resident advice." in last.instructions
-            assert route_snapshots(last) == route_snapshots(first)
+            assert route_scopes(last) == route_scopes(first)
             assert not _declarations(harness, run, "psyche")
 
     asyncio.run(scenario())
@@ -297,32 +299,20 @@ def test_publication_cannot_expand_bound_route_authority_and_replays(tmp_path, c
             assert all(call.instructions == calls[0].instructions for call in calls)
             for call in calls:
                 hands, handoffs, type_name = versions[0]
-                snapshots = route_snapshots(call)
+                snapshots = route_scopes(call)
                 for tag, enabled in (("hands", hands), ("handoffs", handoffs)):
-                    assert [item["ref"] for item in snapshots[tag]] == (
-                        ["agic:helper"] if enabled else []
-                    )
-                    if enabled:
-                        assert snapshots[tag][0]["input"] == {
-                            "documentation": "",
-                            "type": type_name,
-                            "optional": False,
-                        }
-                text = next(
-                    message_text(m.parts)
-                    for m in reversed(call.messages)
-                    if message_text(m.parts).startswith("<toolang:hands ")
-                )
+                    assert snapshots[tag] == ("agic:helper" if enabled else "NONE")
+                text = message_text(runtime_message(call).parts)
                 if context == "custom":
-                    assert (
-                        text.index("<toolang:hands ")
-                        < text.index("<toolang:handoffs ")
-                        < text.index("<toolang:context>")
+                    assert text.index("<toolang:routes ") < text.index(
+                        "<toolang:context>"
                     )
                     assert "User context." in text
                 else:
                     assert "<toolang:context>" not in text
-            assert route_snapshots(calls[0]) == {"hands": [], "handoffs": []}
+            assert route_scopes(calls[0]) == dict.fromkeys(
+                ("hands", "handoffs", "spawns"), "NONE"
+            )
             controls = [
                 c
                 for c in harness.store.list_run_controls(run_id=run.id)
@@ -340,7 +330,7 @@ def test_publication_cannot_expand_bound_route_authority_and_replays(tmp_path, c
     assert_replayed(harness.store.db_path, tracer.events)
 
 
-def test_route_budget_failure_does_not_publish_partial_snapshots(tmp_path):
+def test_runnable_docs_do_not_inflate_recurring_route_messages(tmp_path):
     def source(description):
         return "\n\n".join(
             f"## {description}\nagic action_{i:02d}:\n  Act." for i in range(64)
@@ -373,11 +363,11 @@ def test_route_budget_failure_does_not_publish_partial_snapshots(tmp_path):
                 ),
                 tracer=tracer,
             )
-            assert run.status == "failed"
-            assert len(harness.adapter.invocations) == 1
-            assert (
-                len(route_snapshots(harness.adapter.invocations[0].call)["hands"]) == 64
-            )
+            assert run.status == "succeeded", run.error
+            assert len(harness.adapter.invocations) == 2
+            for invocation in harness.adapter.invocations:
+                assert len(route_scopes(invocation.call)["hands"].split(",")) == 64
+                assert "界" not in message_text(runtime_message(invocation.call).parts)
             assert not any(
                 isinstance(c.payload, RecallControlPayload)
                 for c in harness.store.list_run_controls(run_id=run.id)

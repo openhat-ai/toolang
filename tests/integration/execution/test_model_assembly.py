@@ -12,6 +12,7 @@ import pytest
 
 from tests.support.execution_assertions import (
     assert_replayed,
+    runtime_message,
     without_runtime_snapshots,
 )
 from tests.support.execution_harness import (
@@ -84,7 +85,7 @@ async def _run(harness, thread, text, tracer, *, runnable="seed", horizon=None):
 @pytest.mark.parametrize(
     "declarations,selection,expected",
     [
-        pytest.param("", "", "model_provider: test", id="bundled"),
+        pytest.param("", "", 'model_provider="test"', id="bundled"),
         pytest.param(
             "context: Private context for {{agent.name}}.\n",
             "",
@@ -160,18 +161,18 @@ def test_context_selection_keeps_data_and_current_input_out_of_instructions(
             assert text.endswith("Current user objective.")
             assert text.count("Current user objective.") == 1
             assert "Agent behavior." not in text and "Unselected context." not in text
+            assert message == Message.user("Current user objective.")
+            runtime_text = message_text(runtime_message(call).parts)
             if expected is None:
-                assert message == Message.user("Current user objective.")
+                assert "<toolang:context" not in runtime_text
             else:
                 assert expected not in call.instructions
-                assert text.count(expected) == 1
-                assert text.startswith("<toolang:context>\n")
-                assert (
-                    text.count("<toolang:context>")
-                    == text.count("</toolang:context>")
-                    == 1
-                )
-                assert text.endswith("</toolang:context>\n\nCurrent user objective.")
+                assert runtime_text.count(expected) == 1
+                assert runtime_text.count("<toolang:context") == 1
+                if declarations:
+                    assert runtime_text.count("</toolang:context>") == 1
+                else:
+                    assert "</toolang:context>" not in runtime_text
 
     asyncio.run(scenario())
     assert_replayed(harness.store.db_path, tracer.events)
@@ -218,10 +219,10 @@ def test_cross_run_baselines_do_not_duplicate_historical_contributions(
                 for step in steps
                 if isinstance(step.given, StoredModelStepGiven)
             ]
-            assert [len(given.call.messages.delta) for given in givens] == [3, 7, 11]
+            assert [len(given.call.messages.delta) for given in givens] == [2, 5, 8]
             assert [
                 sum(m.source is None for m in g.call.messages.delta) for g in givens
-            ] == [3, 3, 3]
+            ] == [2, 2, 2]
             assert isinstance(givens[1].call.messages.delta[0].content[0], ContentRef)
             assert (
                 givens[1].call.messages.delta[0].content
@@ -549,22 +550,15 @@ def test_each_call_records_context_without_rerendering_history(
             assert reads == [(first.id, second.id)]
             assert len(renderings) == 2  # two complete historical roots
             before, after, final = [
-                without_runtime_snapshots(item.call.messages)
-                for item in harness.adapter.invocations[-3:]
+                list(item.call.messages) for item in harness.adapter.invocations[-3:]
             ]
-            assert before[
-                : len(
-                    without_runtime_snapshots(
-                        harness.adapter.invocations[1].call.messages
-                    )
-                )
-            ] == without_runtime_snapshots(harness.adapter.invocations[1].call.messages)
+            assert before[: len(harness.adapter.invocations[1].call.messages)] == list(
+                harness.adapter.invocations[1].call.messages
+            )
             for messages, count in ((before, 3), (after, 3), (final, 4)):
                 assert (
                     sum(
-                        message_text(message.parts).count(
-                            context or "<toolang:context>"
-                        )
+                        message_text(message.parts).count(context or "<toolang:context")
                         for message in messages
                     )
                     == count
@@ -579,7 +573,7 @@ def test_each_call_records_context_without_rerendering_history(
                     assert (
                         sum(
                             message_text(message.parts).count(
-                                context or "<toolang:context>"
+                                context or "<toolang:context"
                             )
                             for message in render_delta(
                                 tuple(
@@ -897,10 +891,10 @@ agic child() -> Text:
             calls = [item.call for item in harness.adapter.invocations[2:]]
             messages = [without_runtime_snapshots(call.messages) for call in calls]
             assert messages[0][0] == summary_message("Old far.")
-            assert "Snapshot: Old far." in message_text(messages[1][0].parts)
-            assert "Snapshot: New far." in message_text(messages[2][-1].parts)
+            assert "Snapshot: Old far." in message_text(runtime_message(calls[1]).parts)
+            assert "Snapshot: New far." in message_text(runtime_message(calls[2]).parts)
             assert messages[3][0] == summary_message("New far.")
-            assert "Snapshot: New far." in message_text(messages[4][0].parts)
+            assert "Snapshot: New far." in message_text(runtime_message(calls[4]).parts)
             assert messages[5][0] == summary_message("New far.")
             for index in (1, 2, 4):
                 assert summary_message("Old far.") not in messages[index]

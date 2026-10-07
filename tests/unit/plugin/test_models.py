@@ -5,7 +5,7 @@ from tests.support.execution_assertions import without_runtime_snapshots
 
 from collections.abc import Mapping
 import asyncio
-from dataclasses import replace
+from dataclasses import dataclass, replace
 import logging
 from pathlib import Path
 import tomllib
@@ -1375,12 +1375,14 @@ def test_model_call_keeps_content_separate_and_schema_detached(
     _, buffer, _, request, recorded = _candidate(state)
 
     assert request.instructions == prepared.instructions
-    assert request.messages[:-2] == list(prepared.inputs.rendered_input[1])
-    workspace_message, workdir_message = request.messages[-2:]
+    assert request.messages[:-1] == list(prepared.inputs.rendered_input[1])
+    workspace_message = request.messages[-1]
     assert workspace_message.tag == "workspace"
     assert workspace_message.recall is not None
-    assert workspace_message.parts == (TextPart('<toolang:workspace list=""/>'),)
-    assert workdir_message == Message.user('<toolang:workdir path=""/>')
+    assert workspace_message.parts == (
+        TextPart('<toolang:workspace list=""/>'),
+        TextPart('\n<toolang:workdir path=""/>'),
+    )
     assert request.messages is not buffer.messages
     assert request.messages[0] is buffer.messages[0]
     assert recorded.head == StepRef.from_local(prepared.run.run_id, (0,))
@@ -1948,7 +1950,7 @@ def test_agic_preserves_multimodal_steer_and_model_output() -> None:
     )
 
     assert result == Message(role="assistant", parts=(audio,))
-    assert provider.requests[0].messages[-3] == Message(
+    assert provider.requests[0].messages[-2] == Message(
         "user",
         (
             TextPart(
@@ -2297,6 +2299,12 @@ def test_responses_previous_response_id_replays_tool_output_without_item_id() ->
     ]
 
 
+@dataclass
+class _StaticInputs:
+    rendered_input: tuple = ("", (Message.user("hello"),), ())
+    routes: tuple[str, str, str] = ("ALL", "ALL", "ALL")
+
+
 def _prepared_agic(
     provider: _FakeModels,
     route: ModelRoute,
@@ -2352,9 +2360,7 @@ def _prepared_agic(
         instructions="",
         inputs=cast(
             Any,
-            SimpleNamespace(
-                rendered_input=("", (Message.user("hello"),), ()), runnables=()
-            ),
+            _StaticInputs(),
         ),
         tools={tool.name: tool},
         routes=AgicRoutes(),

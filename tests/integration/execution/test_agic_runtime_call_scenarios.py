@@ -12,7 +12,7 @@ from tests.support.execution_assertions import (
     assert_replayed,
     assert_run_event_integrity,
     last_tool_result,
-    route_snapshots,
+    route_scopes,
     without_runtime_snapshots,
 )
 from tests.support.execution_harness import (
@@ -284,30 +284,16 @@ agic helper() -> Text:
             )
 
             assert root.status == "succeeded", root.error
-            targets = route_snapshots(harness.adapter.invocations[0].call)[directive]
-            assert len(targets) == 1
-            assert targets[0]["ref"] == f"{kind}:main"
             assert (
-                targets[0]["documentation"] == "Use this entry for the general request."
+                route_scopes(harness.adapter.invocations[0].call)[directive]
+                == f"{kind}:main"
             )
             child_call = harness.adapter.invocations[1].call
-            child_routes = route_snapshots(child_call)
-            if directive == "hands":
-                assert child_routes[directive] == []
-                assert [item["ref"] for item in child_routes["handoffs"]] == (
-                    ["agic:helper"] if kind == "agic" else []
-                )
-            else:
-                # Exec removes the caller's rules and identity from the path.
-                expected = (
-                    ["agic:caller", "agic:helper"]
-                    if kind == "agic"
-                    else ["agic:caller"]
-                )
-                assert [item["ref"] for item in child_routes["hands"]] == expected
-                assert [item["ref"] for item in child_routes["handoffs"]] == (
-                    expected + ["agic:main"] if kind == "agic" else expected
-                )
+            assert route_scopes(child_call) == {
+                "hands": f"{kind}:main" if directive == "hands" else "ALL",
+                "handoffs": "ALL",
+                "spawns": f"{kind}:main" if directive == "hands" else "ALL",
+            }
             assert without_runtime_snapshots(child_call.messages) == [
                 Message.user("Main.")
             ]
@@ -413,24 +399,24 @@ agic child(_: Text) -> Text:
             assert persisted_result == result
             assert child_control.status == "applied"
             assert not any(m.tag == "run-result" for m in followup.messages)
-            parent_routes = route_snapshots(harness.adapter.invocations[0].call)
-            assert [item["ref"] for item in parent_routes["hands"]] == ["agic:child"]
-            assert [item["ref"] for item in parent_routes["handoffs"]] == [
-                "agic:parent",
-                "agic:child",
-            ]
-            assert route_snapshots(harness.adapter.invocations[1].call) == {
-                "hands": [],
-                "handoffs": [],
+            assert route_scopes(harness.adapter.invocations[0].call) == {
+                "hands": "agic:child",
+                "handoffs": "ALL",
+                "spawns": "agic:child",
             }
-            prohibitions = harness.adapter.invocations[1].call.instructions.split(
-                "## Don't", 1
-            )[1]
-            assert "call run, spawn, or exec without authorized routes" in prohibitions
+            assert route_scopes(harness.adapter.invocations[1].call) == {
+                "hands": "agic:child",
+                "handoffs": "ALL",
+                "spawns": "agic:child",
+            }
+            assert "route restrictions, and runtime guards permit it" in (
+                harness.adapter.invocations[1].call.instructions
+            )
             assert {
                 tool.name for tool in harness.adapter.invocations[1].call.tools
             } == {
                 "_toolang__chdir",
+                "_toolang__runnables",
                 "_toolang__exec",
                 "_toolang__pick",
                 "_toolang__run",
@@ -506,12 +492,14 @@ flow check(_: Part[]) -> Text:
             runs = harness.store.list_run_tree(root_run_id=root.id)
             assert len(runs) == 3
             reviewer_call = harness.adapter.invocations[1].call
-            assert reviewer_call.messages[-3] == Message.user(
-                '<toolang:hands enabled="false" requested_only="false"/>\n'
-                '<toolang:handoffs enabled="false" requested_only="true"/>\n'
-                '<toolang:execution runnable="agent::agic:reviewer" entered_by="run"/>\n\n'
-                "Review candidate"
-            )
+            assert without_runtime_snapshots(reviewer_call.messages) == [
+                Message.user("Review candidate")
+            ]
+            assert route_scopes(reviewer_call) == {
+                "hands": "flow:check",
+                "handoffs": "ALL",
+                "spawns": "flow:check",
+            }
 
     asyncio.run(scenario())
 
@@ -719,13 +707,9 @@ agic helper() -> Text:
             assert len(harness.store.list_run_tree(root_run_id=root.id)) == 3
             calls = [invocation.call for invocation in harness.adapter.invocations]
             assert len(calls) == 5
-            for index, call in enumerate(calls):
-                snapshots = route_snapshots(call)
-                assert [target["ref"] for target in snapshots["hands"]] == (
-                    ["agic:helper"] if index % 2 == 0 else []
-                )
-                assert [target["ref"] for target in snapshots["handoffs"]] == (
-                    ["agic:default", "agic:helper"] if index % 2 == 0 else []
+            for call in calls:
+                assert route_scopes(call) == dict.fromkeys(
+                    ("hands", "handoffs", "spawns"), "ALL"
                 )
 
     asyncio.run(scenario())
@@ -734,7 +718,7 @@ agic helper() -> Text:
 
 @pytest.mark.parametrize("count", [63, 64])
 @pytest.mark.parametrize("directives", ["", "  hands = *\n  handoffs = *\n"])
-def test_route_limit_includes_the_root_self_handoff(
+def test_unrestricted_routes_do_not_send_a_bounded_catalog(
     tmp_path: Path, count: int, directives: str
 ) -> None:
     harness = ExecutionHarness.create(
@@ -754,21 +738,10 @@ def test_route_limit_includes_the_root_self_handoff(
             root = await harness.executor.run(
                 harness.run_spec(thread=thread, runnable="agic:default")
             )
-            if count == 63:
-                assert root.status == "succeeded", root.error
-                snapshots = route_snapshots(harness.adapter.invocations[0].call)
-                assert len(snapshots["hands"]) == count
-                assert len(snapshots["handoffs"]) == count + 1
-                assert all(
-                    target["ref"] != "agic:default" for target in snapshots["hands"]
-                )
-                assert snapshots["handoffs"][0]["ref"] == "agic:default"
-            else:
-                assert root.status == "failed"
-                assert root.error == ErrorMessage(
-                    "Authorized routes exceed 64 targets. Narrow hands or handoffs."
-                )
-                assert harness.adapter.invocations == []
+            assert root.status == "succeeded", root.error
+            assert route_scopes(harness.adapter.invocations[0].call) == dict.fromkeys(
+                ("hands", "handoffs", "spawns"), "ALL"
+            )
 
     asyncio.run(scenario())
 
@@ -831,10 +804,8 @@ agic parent(_: Text, threshold: Number) -> Text:
             )
             assert result.output == {}
             for invocation in harness.adapter.invocations:
-                assert route_snapshots(invocation.call)["hands"] == []
-                assert [
-                    item["ref"] for item in route_snapshots(invocation.call)["handoffs"]
-                ] == ["agic:parent"]
+                assert route_scopes(invocation.call)["hands"] == "agic:parent"
+                assert route_scopes(invocation.call)["handoffs"] == "ALL"
 
     asyncio.run(scenario())
 
@@ -906,7 +877,11 @@ flow outer(_: Text) -> Text:
             )
             assert result.output == {}
             for invocation in harness.adapter.invocations:
-                assert route_snapshots(invocation.call) == {"hands": [], "handoffs": []}
+                assert route_scopes(invocation.call) == {
+                    "hands": "flow:outer",
+                    "handoffs": "ALL",
+                    "spawns": "flow:outer",
+                }
 
     asyncio.run(scenario())
 
@@ -1010,7 +985,11 @@ flow -> Text:
                 "_toolang/run cannot call the current or an ancestor runnable: flow:outer"
             )
             for invocation in harness.adapter.invocations:
-                assert route_snapshots(invocation.call) == {"hands": [], "handoffs": []}
+                assert route_scopes(invocation.call) == {
+                    "hands": "flow:outer",
+                    "handoffs": "ALL",
+                    "spawns": "flow:outer",
+                }
 
     asyncio.run(scenario())
 
@@ -1563,6 +1542,7 @@ agic target(_: Text) -> Text:
                 tool.name for tool in harness.adapter.invocations[0].call.tools
             } == {
                 "_toolang__chdir",
+                "_toolang__runnables",
                 "_toolang__exec",
                 "_toolang__pick",
                 "_toolang__run",
@@ -1572,6 +1552,7 @@ agic target(_: Text) -> Text:
             }
             assert {tool.name for tool in target_call.tools} == {
                 "_toolang__chdir",
+                "_toolang__runnables",
                 "_toolang__exec",
                 "_toolang__pick",
                 "_toolang__run",
@@ -1583,6 +1564,7 @@ agic target(_: Text) -> Text:
                 tool.name for tool in harness.adapter.invocations[2].call.tools
             } == {
                 "_toolang__chdir",
+                "_toolang__runnables",
                 "_toolang__exec",
                 "_toolang__pick",
                 "_toolang__run",
@@ -1764,16 +1746,19 @@ agic caller() -> Text:
             first_call = harness.adapter.invocations[0].call
             assert {tool.name for tool in first_call.tools} == {
                 "_toolang__chdir",
+                "_toolang__runnables",
                 "_toolang__exec",
                 "_toolang__pick",
                 "_toolang__run",
                 "_toolang__spawn",
                 "_toolang__await",
             }
-            assert route_snapshots(first_call) == {"hands": [], "handoffs": []}
+            assert route_scopes(first_call) == dict.fromkeys(
+                ("hands", "handoffs", "spawns"), "NONE"
+            )
             assert '"runnables"' not in first_call.instructions
-            prohibitions = first_call.instructions.split("## Don't", 1)[1]
-            assert "call run, spawn, or exec without authorized routes" in prohibitions
+            assert "An explicit user request" in first_call.instructions
+
             result = last_tool_result(harness.adapter.invocations[1].call)
             assert isinstance(result, ToolResultPart)
             assert result.error == "Runnable not found: target"
@@ -1923,10 +1908,7 @@ agic target() -> Text:
                 ["agic:target", "agic:caller", "agic:target"],
                 strict=True,
             ):
-                assert [
-                    route["ref"]
-                    for route in route_snapshots(invocation.call)["handoffs"]
-                ] == [expected]
+                assert route_scopes(invocation.call)["handoffs"] == expected
             assert "Call." in str(harness.adapter.invocations[2].call.messages)
 
     asyncio.run(scenario())
@@ -2250,6 +2232,7 @@ agic target(_: Text) -> Text:
             after_publication = harness.adapter.invocations[2].call
             assert {tool.name for tool in before_publication.tools} == {
                 "_toolang__chdir",
+                "_toolang__runnables",
                 "_toolang__exec",
                 "_toolang__pick",
                 "_toolang__run",
@@ -2259,6 +2242,7 @@ agic target(_: Text) -> Text:
             }
             assert {tool.name for tool in after_publication.tools} == {
                 "_toolang__chdir",
+                "_toolang__runnables",
                 "_toolang__exec",
                 "_toolang__pick",
                 "_toolang__run",
@@ -2351,16 +2335,17 @@ agic other() -> Text:
             runs = harness.store.list_run_tree(root_run_id=root.id)
             first = harness.adapter.invocations[0].call
             assert {"_toolang__run", "_toolang__exec"} <= {t.name for t in first.tools}
-            snapshots = route_snapshots(
-                first,
-                requested_only={
-                    directive: selection is None,
-                    other: False,
-                },
+            snapshots = route_scopes(first)
+            assert snapshots[other] == "NONE"
+            assert snapshots[directive] == (
+                "ALL"
+                if selection in (None, "*")
+                else f"{kind}:target"
+                if allowed
+                else "agic:other"
+                if selection == "other"
+                else "NONE"
             )
-            assert snapshots[other] == []
-            refs = [item["ref"] for item in snapshots[directive]]
-            assert (f"{kind}:target" in refs) == allowed
             if allowed:
                 target_run = (
                     next(run for run in runs if run.parent)
@@ -2378,20 +2363,6 @@ agic other() -> Text:
                     "_": "payload",
                     "count": 3,
                 }
-                target = next(
-                    item
-                    for item in snapshots[directive]
-                    if item["ref"] == f"{kind}:target"
-                )
-                assert target["input"]["type"] == "Text"
-                assert target["parameters"] == [
-                    {
-                        "documentation": "",
-                        "name": "count",
-                        "optional": False,
-                        "type": "Number",
-                    }
-                ]
                 assert root.output is not None
                 assert harness.store.resolve_value(root.output.value) == (
                     f"Summary: {target_output}" if operation == "run" else target_output
@@ -2403,10 +2374,9 @@ agic other() -> Text:
                     assert without_runtime_snapshots(
                         harness.adapter.invocations[1].call.messages
                     ) == [Message.user("payload 3")]
-                    assert route_snapshots(
+                    assert route_scopes(
                         harness.adapter.invocations[1].call,
-                        requested_only={"hands": False, "handoffs": False},
-                    ) == {"hands": [], "handoffs": []}
+                    ) == dict.fromkeys(("hands", "handoffs", "spawns"), "NONE")
                 if operation == "run":
                     resumed = harness.adapter.invocations[-1].call
                     result = last_tool_result(resumed)

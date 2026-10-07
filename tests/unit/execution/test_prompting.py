@@ -1,6 +1,7 @@
 """Adapter-facing assembly preserves structured data and stable protocol."""
 
 from dataclasses import replace
+import json
 from itertools import product
 from types import SimpleNamespace
 from typing import cast
@@ -71,9 +72,9 @@ def test_resources_are_individual_resident_triggers(skills, services):
 
 @pytest.mark.parametrize("kind", ["skill", "service"])
 @pytest.mark.parametrize(
-    "description,metadata,expected",
+    "description,metadata",
     [
-        ("Use {{literal}} & <text>.", {}, "Use {{literal}} & <text>."),
+        ("Use {{literal}} & <text>.", {}),
         (
             "Use when testing.",
             {
@@ -85,15 +86,13 @@ def test_resources_are_individual_resident_triggers(skills, services):
                 "missing": None,
                 "literal": " {{value}} & <text> ",
             },
-            'Use when testing.\ncount: 0\ndetails: {"a": 1, "z": 2}\n'
-            'enabled: false\nliteral: {{value}} & <text>\ntags: ["é", "<text>"]',
         ),
-        (None, {"transport": "stdio"}, "transport: stdio"),
-        (None, {}, ""),
+        (None, {"transport": "stdio"}),
+        (None, {}),
     ],
 )
 def test_triggers_preserve_literal_description_and_sorted_metadata(
-    kind, description, metadata, expected
+    kind, description, metadata
 ):
     program = Program.from_source("agic chat:\n  instruct = none\n  Hello.\n")
     inputs = instruction_inputs(
@@ -116,11 +115,15 @@ def test_triggers_preserve_literal_description_and_sorted_metadata(
     rendered, declarations = prompting.instructions(inputs)
 
     assert len(declarations) == 1
-    assert declarations[0].content == expected
+    payload = json.loads(declarations[0].content)
+    assert payload["description"] == (description or "")
+    assert payload["metadata"] == {k: v for k, v in metadata.items() if v is not None}
     root = ET.fromstring('<root xmlns:toolang="urn:test">' + rendered + "</root>")
     trigger = root.find(f"{{urn:test}}{kind}-trigger")
     assert trigger is not None and len(trigger) == 0
-    assert (trigger.text or "").strip() == expected
+    assert trigger.text is None
+    assert trigger.attrib["description"] == (description or "")
+    assert json.loads(trigger.attrib.get("metadata", "{}")) == payload["metadata"]
     assert trigger.attrib["ref"] == f"{kind}/test"
 
 
@@ -148,10 +151,7 @@ def test_protocol_is_static_and_first_across_runtime_facts(selection):
             "skill-guidance" in protocol
             and "wait for the guidance user message" in protocol
         )
-        assert (
-            "Treat triggers, pick receipts, memory, or summaries as loaded guidance"
-            in protocol.split("## Don't", 1)[1]
-        )
+        assert "A pick receipt is not guidance" in protocol
 
 
 def test_default_context_contains_only_dynamic_public_facts():
@@ -164,7 +164,7 @@ def test_default_context_contains_only_dynamic_public_facts():
     }
     assert (
         prompting._render_context(program, program.agics[0], context)
-        == "<toolang:context>\ndate: today\ntimezone: UTC\nmodel_provider: provider\nmodel_name: name\n</toolang:context>"
+        == '<toolang:context date="today" timezone="UTC" model_provider="provider" model_name="name"/>'
     )
     instructions = render_instructions(program, program.agics[0], context)
     assert "You are the alice Toolang agent." in instructions
@@ -272,17 +272,10 @@ def test_shared_inputs_render_literal_multimodal_input_once(monkeypatch) -> None
     )
     context, initial, invocations = inputs.rendered_input
     assert (
-        context == '<toolang:hands enabled="false" requested_only="false"/>\n'
-        '<toolang:handoffs enabled="false" requested_only="false"/>\n'
-        '<toolang:execution runnable="agent::agic:chat" entered_by="run"/>'
+        context == '<toolang:execution runnable="agent::agic:chat" entered_by="run"/>'
     )
     assert not invocations
-    assert initial == (
-        Message(
-            role="user",
-            parts=(TextPart(context + "\n\n" + primary[0].text), primary[1]),
-        ),
-    )
+    assert initial == (Message(role="user", parts=primary),)
     assert inputs.rendered_input is inputs.rendered_input
     assert inputs.template_values is inputs.template_values
     assert prompting.instructions(inputs) == prompting.instructions(inputs)
@@ -396,7 +389,15 @@ def test_explicit_default_always_resolves_with_module_or_system_content(
         declaration + f"agic work:\n  {kind} = default\n  user: Work.\n"
     )
     render = render_instructions if kind == "instruct" else prompting._render_context
-    text = render(program, program.agics[0], {})
+    text = render(
+        program,
+        program.agics[0],
+        {
+            "date": "2026-10-07",
+            "timezone": "UTC",
+            "model": {"provider": "test", "name": "test"},
+        },
+    )
     assert ("Module default." if overridden else "System default.") in text
     assert ("System default." if overridden else "Module default.") not in text
 

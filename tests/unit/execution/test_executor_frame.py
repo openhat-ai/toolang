@@ -389,13 +389,13 @@ def test_build_agic_frame_builds_one_complete_model_input(
     assert "sandbox: docker:python:3.13-slim" not in prepared.instructions
     assert "system: Linux 6.0 (aarch64)" not in prepared.instructions
     assert "working_directory: /workspace" not in prepared.instructions
-    assert "date: 2026-01-01" in prepared.inputs.rendered_input[0]
-    assert "timezone: UTC" in prepared.inputs.rendered_input[0]
-    assert "model_provider: test" in prepared.inputs.rendered_input[0]
+    assert 'date="2026-01-01"' in prepared.inputs.rendered_input[0]
+    assert 'timezone="UTC"' in prepared.inputs.rendered_input[0]
+    assert 'model_provider="test"' in prepared.inputs.rendered_input[0]
     assert [
         message_text(message.parts) for message in prepared.inputs.rendered_input[1]
     ] == [
-        prepared.inputs.rendered_input[0] + "\n\nAnswer: hello; focus=events",
+        "Answer: hello; focus=events",
     ]
 
 
@@ -567,7 +567,7 @@ def test_build_agic_frame_preserves_typed_multimodal_splices(tmp_path: Path) -> 
     )
 
     assert prepared.inputs.rendered_input[1][-1].parts == (
-        TextPart(prepared.inputs.rendered_input[0] + "\n\nReview this diagram "),
+        TextPart("Review this diagram "),
         image,
         TextPart(" with "),
         document,
@@ -664,11 +664,13 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
         assert steps[0].output == Output(value_for_type("Part[]", (audio,)), "_")
         assert store.run_output(run_id=record.id) == (audio,)
         assert len(adapter.requests) == 1
-        request_text = message_text(adapter.requests[0].messages[-3].parts)
-        assert f"date: {record.created_at.partition('T')[0]}" in request_text
-        assert "timezone: UTC" in request_text
-        assert request_text.endswith("Answer: hello; focus=events")
-        assert image in adapter.requests[0].messages[-3].parts
+        request_text = message_text(adapter.requests[0].messages[-1].parts)
+        assert f'date="{record.created_at.partition("T")[0]}"' in request_text
+        assert 'timezone="UTC"' in request_text
+        assert message_text(adapter.requests[0].messages[0].parts).endswith(
+            "Answer: hello; focus=events"
+        )
+        assert image in adapter.requests[0].messages[0].parts
         assert store.rebuild_model_call(steps[0]) == adapter.requests[0]
         begin = next(event for event in tracer.events if isinstance(event, StepBegin))
         assert begin.given == ModelStepGiven(
@@ -707,7 +709,7 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
         connection = sqlite3.connect(store.db_path)
         try:
             assert connection.execute("SELECT COUNT(*) FROM contents").fetchone() == (
-                5,
+                4,
             )
             assert (
                 connection.execute(

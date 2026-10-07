@@ -51,7 +51,6 @@ from .resources import (
 from ..runnables import (
     AgicRoutes,
     parse_runnable_ref,
-    runnable_descriptions,
     resolve_agic_routes,
 )
 from ..records import RecallControlPayload
@@ -181,18 +180,6 @@ def build_agic_frame(
     tools.update(runtime_tools)
     caps = resource_caps(state, resources, module=run.module)
     services = tuple(item for item in caps if item.kind == "service")
-    if runtime_tools and resolved_model.tool_call is True:
-        active = context.active_runnable_identities(run)
-        visible_routes = []
-        for route in routes.resolved:
-            if route.runnable.identity not in active:
-                visible_routes.append(route)
-            elif "exec" in route.actions and context.can_self_exec(run, route.runnable):
-                visible_routes.append(replace(route, actions=("exec",)))
-        routes = replace(routes, resolved=tuple(visible_routes))
-        runnables = runnable_descriptions(state, routes)
-    else:
-        runnables = ()
     route = resolved_model._toolang.route
     if not route.ready:
         raise ToolangError(f"model {resolved_model.ref!r} has no ready setup route")
@@ -266,10 +253,9 @@ def build_agic_frame(
             **history_variables(far, near, run.settings.recall),
         },
         values=variables,
-        runnables=runnables,
-        requested_only=routes.requested_only
+        routes=routes.scopes(state)
         if runtime_tools and resolved_model.tool_call is True
-        else (),
+        else ("NONE", "NONE", "NONE"),
         instruct=run.settings.instruct,
         context=run.settings.context,
         # State provenance points to the entry control (0) or committed exec,

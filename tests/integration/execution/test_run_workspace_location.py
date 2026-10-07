@@ -69,14 +69,8 @@ def test_cd_persists_location_and_relative_fs_uses_it(tmp_path):
                 in harness.adapter.invocations[0].call.instructions
             )
             assert [
-                [
-                    part.text
-                    for message in call.call.messages
-                    for part in message.parts
-                    if isinstance(part, TextPart)
-                    and part.text.startswith("<toolang:workdir ")
-                ][-1]
-                for call in harness.adapter.invocations
+                _locations(invocation.call)[-1]
+                for invocation in harness.adapter.invocations
             ] == [
                 '<toolang:workdir path="repo://"/>',
                 '<toolang:workdir path="repo://src"/>',
@@ -670,10 +664,13 @@ def _configured_home(tmp_path, roots):
 
 def _locations(call):
     return [
-        part.text
+        line
         for message in call.messages
+        if message.tag == "workspace"
         for part in message.parts
-        if isinstance(part, TextPart) and part.text.startswith("<toolang:workdir ")
+        if isinstance(part, TextPart)
+        for line in part.text.splitlines()
+        if line.startswith("<toolang:workdir ")
     ]
 
 

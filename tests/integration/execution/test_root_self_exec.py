@@ -9,7 +9,7 @@ from tests.support.execution_assertions import (
     assert_replayed,
     execution_snapshot,
     last_tool_result,
-    route_snapshots,
+    route_scopes,
 )
 from tests.support.execution_harness import (
     AsyncGate,
@@ -157,9 +157,9 @@ def test_model_root_self_exec_keeps_one_run(tmp_path, changed, unnamed):
             assert (
                 control.payload.state == (harness.published or harness.state).revision
             )
-            routes = route_snapshots(harness.adapter.invocations[0].call)
-            assert routes["hands"] == []
-            assert len(routes["handoffs"]) == 1
+            routes = route_scopes(harness.adapter.invocations[0].call)
+            assert routes["hands"] == "ALL"
+            assert routes["handoffs"] == "ALL"
             assert ("New root." if changed else "Old root.") in str(
                 harness.adapter.invocations[-1].call.messages
             )
@@ -252,9 +252,10 @@ def test_root_self_exec_still_requires_handoff_authorization(tmp_path):
                 )
             )
             assert root.status == "succeeded"
-            assert route_snapshots(harness.adapter.invocations[0].call) == {
-                "hands": [],
-                "handoffs": [],
+            assert route_scopes(harness.adapter.invocations[0].call) == {
+                "hands": "ALL",
+                "handoffs": "NONE",
+                "spawns": "ALL",
             }
             assert (
                 last_tool_result(harness.adapter.invocations[-1].call).error is not None

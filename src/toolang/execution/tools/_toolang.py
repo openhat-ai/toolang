@@ -25,7 +25,17 @@ TOOLSET_NAME = "_toolang"
 class ToolangTool(Tool):
     """One stateless tool using authority supplied by its executor."""
 
-    name: Literal["run", "spawn", "await", "exec", "pick", "honor", "compact", "chdir"]
+    name: Literal[
+        "run",
+        "spawn",
+        "await",
+        "exec",
+        "pick",
+        "honor",
+        "compact",
+        "chdir",
+        "runnables",
+    ]
     description: str
     parameters: dict[str, object]
 
@@ -102,6 +112,16 @@ class ToolangTool(Tool):
         if not isinstance(context, RuntimeToolContext):
             raise ToolangError("runtime operations are unavailable for this tool call")
         runtime = context.runtime
+        if self.name == "runnables":
+            name = arguments.get("name")
+            if set(arguments) - {"name"} or (
+                "name" in arguments
+                and (not isinstance(name, str) or not name or name != name.strip())
+            ):
+                raise ToolangError(
+                    "_toolang/runnables accepts an optional non-empty exact name"
+                )
+            return await runtime.runnables(name)
         if self.name == "chdir":
             path = arguments.get("path")
             if not isinstance(path, str) or not path or set(arguments) != {"path"}:
@@ -191,7 +211,7 @@ class ToolangTool(Tool):
 @dataclass(frozen=True, slots=True)
 class ToolangToolset(Toolset):
     name: str = TOOLSET_NAME
-    description: str | None = "Run, transfer, and recall guidance."
+    description: str | None = "Discover runnables, execute work, and recall guidance."
 
     def tools(self) -> Mapping[str, Tool]:
         return {tool.name: tool for tool in _TOOLS}
@@ -208,7 +228,7 @@ _RUN_PARAMETERS: dict[str, object] = {
     "properties": {
         "runnable": {
             "type": "string",
-            "description": "Public runnable ref: name, agic:name, or flow:name.",
+            "description": "Exact visible runnable name or ref, including module-qualified private refs.",
         },
         "input": {
             "type": "object",
@@ -224,6 +244,26 @@ _RUN_PARAMETERS: dict[str, object] = {
 }
 
 _TOOLS = (
+    ToolangTool(
+        "runnables",
+        "Discover runnable documentation and complete signatures, with the current "
+        "runnable and its active ancestors. Supply an exact name for one target, "
+        "or omit name for all visible targets. Use documentation as route triggers "
+        "for the task and signatures to construct input. Discovery does not execute "
+        "a target or authorize a call; current and visible ancestor signatures remain queryable.",
+        {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Exact runnable name or ref, such as review or agic:review. Omit for all visible runnables.",
+                }
+            },
+            "required": [],
+            "additionalProperties": False,
+        },
+    ),
     ToolangTool(
         "chdir",
         "Switch this Run's workdir. Call it alone in a Model Call. "
@@ -289,11 +329,12 @@ _TOOLS = (
     ),
     ToolangTool(
         "run",
-        "Run an authorized hand synchronously as a child Run. The tool reply returns "
+        "Run an authorized hand as a child Run. By default, wait and return "
         "its completed result as {type, value}, or an error if the child fails or is canceled. "
         "Use run when the caller needs the result for further processing. "
-        "Follow the latest hands scope and requested_only policy. Read the target "
-        "input signature and do not invent missing values. Acceptance selects the latest "
+        "Follow the current routes hands restriction. Query _toolang__runnables "
+        "when the target signature is missing. Read the target "
+        "input signature and supply required values explicitly. Acceptance selects the latest "
         "published version and rejects missing targets or changed signatures.",
         {
             **_RUN_PARAMETERS,
@@ -321,18 +362,20 @@ _TOOLS = (
         "exec",
         "Transfer the remainder of this Run to an authorized handoff target. "
         "The caller never resumes, and this must be the only tool call in the "
-        "Model Call. Use exec for a named invocation with no requested follow-up. "
-        "Follow the latest handoffs scope and requested_only policy.",
+        "Model Call. Use exec for a user-requested named agic or flow invocation "
+        "with no requested follow-up; the target supplies the final answer. "
+        "Follow the current routes handoffs restriction and query "
+        "_toolang__runnables when the target signature is missing.",
         _RUN_PARAMETERS,
     ),
     ToolangTool(
         "spawn",
         "Start an authorized hand as an independent root in a new empty thread. "
         "Returns id, thread, and the admission-time status without waiting. "
-        "Use the id with history tools; no completion message is injected. "
+        "Use _toolang__await with its id for the result; no completion message is injected. "
         "Work continues after this Run ends, until completion or executor shutdown. "
-        "Follow the same hands scope and requested_only policy as run, read the "
-        "target input signature, and supply explicit inputs.",
+        "Follow the current routes spawns restriction, query _toolang__runnables "
+        "when the target signature is missing, and supply explicit inputs.",
         _RUN_PARAMETERS,
     ),
 )

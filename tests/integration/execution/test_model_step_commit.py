@@ -97,7 +97,7 @@ agic chat(_: Part[]) -> Part[]:
             assert step.index == 0
             assert step.preceded_by == (ControlRef.for_run(run.id, 0),)
             assert isinstance(step.given, StoredModelStepGiven)
-            assert len(step.given.call.messages.delta) == 3
+            assert len(step.given.call.messages.delta) == 2
             assert len(harness.adapter.invocations) == 1
             assert without_runtime_snapshots(
                 harness.adapter.invocations[0].call.messages
@@ -315,7 +315,7 @@ def test_reprepared_tool_loop_preserves_messages_and_input_dependencies(
                 len(step.given.call.messages.delta)
                 for step in steps
                 if isinstance(step.given, StoredModelStepGiven)
-            ] == [3, 6 if skip_tools else 5]
+            ] == [2, 4 if skip_tools else 3]
             first, second = harness.adapter.invocations
             assert (
                 second.call.messages[: len(first.call.messages)] == first.call.messages

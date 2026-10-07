@@ -200,7 +200,7 @@ def test_chat_named_invocation_keeps_the_next_turn_on_the_session_default(
     from toolang.cli.toolang.commands.chat import local
     from tests.support.execution_assertions import (
         last_tool_result,
-        route_snapshots,
+        route_scopes,
         without_runtime_snapshots,
     )
 
@@ -313,15 +313,9 @@ agic xyz(_: Text) -> Text:
         assert errors == []
         calls = [invocation.call for invocation in harness.adapter.invocations]
         assert len(calls) == (4 if operation == "run" else 2)
-        first = route_snapshots(
-            calls[0], requested_only={"hands": True, "handoffs": True}
+        assert route_scopes(calls[0]) == dict.fromkeys(
+            ("hands", "handoffs", "spawns"), "ALL"
         )
-        assert {entry["ref"] for entry in first["hands"]} == {"flow:abc", "agic:xyz"}
-        assert {entry["ref"] for entry in first["handoffs"]} == {
-            "agic:chat",
-            "flow:abc",
-            "agic:xyz",
-        }
         assert {"_toolang__run", "_toolang__exec"} <= {
             tool.name for tool in calls[0].tools
         }

@@ -28,6 +28,7 @@ def test_builtin_toolset_module_matches_registered_name(name: str) -> None:
 def test_installed_runtime_toolset_has_no_old_aliases() -> None:
     tools = ToolCollection.from_tools(load_tools())
     assert set(tools.runtime) == {
+        "_toolang__runnables",
         "_toolang__run",
         "_toolang__await",
         "_toolang__spawn",
@@ -56,9 +57,9 @@ def test_runnable_tool_descriptions_follow_user_intent_and_scope() -> None:
     tools = load_tools()
     run = tools["_toolang__run"].definition().description
     execute = tools["_toolang__exec"].definition().description
-    assert "further processing" in run and "hands scope and requested_only" in run
+    assert "further processing" in run and "routes hands restriction" in run
     assert "no requested follow-up" in execute
-    assert "handoffs scope and requested_only" in execute
+    assert "routes handoffs restriction" in execute
     assert "caller never resumes" in execute
     assert "Prefer run when either" not in execute
 
@@ -78,6 +79,10 @@ class _Runtime:
     def __init__(self, marker: str):
         self.marker = marker
         self.calls = []
+
+    async def runnables(self, name=None):
+        self.calls.append(name)
+        return ToolResult({"controls": [self.marker]})
 
     async def run(self, runnable, input, *, asynchronous=False):
         self.calls.append((runnable, dict(input)))
@@ -121,7 +126,9 @@ class _Runtime:
         return ToolResult({"controls": [self.marker]})
 
 
-@pytest.mark.parametrize("name", ["run", "spawn", "exec", "pick", "honor", "compact"])
+@pytest.mark.parametrize(
+    "name", ["run", "spawn", "exec", "pick", "honor", "compact", "runnables"]
+)
 def test_shared_plugin_keeps_per_call_authority_isolated(
     tmp_path: Path, name: str
 ) -> None:
@@ -130,7 +137,7 @@ def test_shared_plugin_keeps_per_call_authority_isolated(
     context = RuntimeToolContext(tmp_path, tmp_path, runtime=first)
     arguments = (
         {}
-        if name in {"compact"}
+        if name in {"compact", "runnables"}
         else {"paths": [{"workspace": "repo", "path": "/src"}]}
         if name == "honor"
         else {"kind": "skill", "ref": "skill/testing"}
@@ -168,6 +175,11 @@ def test_shared_plugin_keeps_per_call_authority_isolated(
         ("run", {"runnable": "child", "step": "another"}),
         ("exec", {"runnable": "child", "input": []}),
         ("run", {"runnable": ""}),
+        ("runnables", {"name": ""}),
+        ("runnables", {"name": " review "}),
+        ("runnables", {"name": None}),
+        ("runnables", {"name": []}),
+        ("runnables", {"name": "review", "module": "agent"}),
         ("spawn", {"runnable": "child", "thread": "term_source"}),
         ("spawn", {"runnable": "child", "input": []}),
         ("spawn", {"runnable": ""}),

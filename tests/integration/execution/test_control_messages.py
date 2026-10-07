@@ -114,7 +114,7 @@ agic chat(_: Part[]) -> Part[]:
                     )
                 first, following = (item.call for item in harness.adapter.invocations)
                 assert first.instructions.startswith("<toolang:protocol>")
-                assert "\n# Runtime contract\n" in first.instructions
+                assert "\n# Role and instruction sources\n" in first.instructions
                 assert "<toolang:instruct>" not in first.instructions
                 assert following.instructions == first.instructions
                 messages = without_runtime_snapshots(following.messages)
@@ -300,7 +300,7 @@ agic chat(_: Part[]) -> Part[]:
             assert calls[0].messages == calls[2].messages[: len(calls[0].messages)]
             assert (
                 sum(
-                    message_text(message.parts).count("<toolang:context>")
+                    message_text(message.parts).count("<toolang:context")
                     for message in calls[2].messages
                 )
                 == 3
