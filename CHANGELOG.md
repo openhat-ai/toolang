@@ -9,17 +9,35 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Added
 
+- The `coop` toolset adds `coop__contacts` and `coop__send` when the
+  `[messaging]` connection is configured. `coop__contacts` lists the configured
+  groups the agent has joined with their members, including idle groups, and
+  `coop__send(group, body, in_reply_to?)` immediately appends one message to a
+  joined group and returns a delivery receipt, filling in the message ID,
+  sender, run origin, and JSON envelope. Both tools use the `[messaging]`
+  connection, respect tool allow rules, and work in ordinary and spawned runs;
+  an unconfigured or unreachable Valkey server fails the call.
+
+- Group messaging input now includes `available_groups`, listing every
+  configured group the agent currently belongs to with its `members`, even
+  when a group has no new messages or falls beyond the batch limit, so
+  handlers can route replies to exact group IDs. Handlers reply with
+  `coop__send`; the final handler text is only a handling summary that is never
+  parsed for replies, and a single-group summary is kept for that group's next
+  batch while multi-group summaries stay in the run record.
+
 - Agents can opt in to Valkey group messaging by adding a `[messaging]` table
   with the external server `url` and member `groups` (`d_`, `h_`, or `g_` IDs)
   to `config.toml`, where root defaults are overridden by agent values.
   `too AGENT start` then polls each joined group by its own cursor in bounded
   serial batches of at most 100 entries (20 per group), runs each batch with the
   agent's limits, tools, and persistence through `agic:msg` when present or the
-  configured default agic otherwise, and appends the returned JSON replies to
-  their target group. Prior messages and the last handling result stay as
+  configured default agic otherwise, and records the messages handlers send with
+  `coop__send`, keeping successful receipts even when handling later fails and
+  never replaying them. Prior messages and the last handling result stay as
   context and survive restarts, handling failures are skipped without retry, and
-  spawned-run output, messaging tools, and group discovery are not included. The
-  `valkey` client is now a runtime dependency.
+  spawned-run output is not delivered automatically. The `valkey` client is now
+  a runtime dependency.
 
 ## [0.4.0a2] - 2026-10-07
 

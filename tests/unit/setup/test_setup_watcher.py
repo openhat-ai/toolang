@@ -17,6 +17,7 @@ from toolang.common.layout import AgentLayout
 from toolang.plugin.adapters.chat_completions import ChatCompletionsModelAdapter
 from toolang.plugin.adapters.responses import ResponsesModelAdapter
 from toolang.plugin.models.query import filter_models
+from toolang.plugin.toolsets.coop import CoopToolset
 from toolang.plugin.catalogs.models_dev.catalog import ModelsDevModelCatalog
 from toolang.setup import watcher as watcher_module
 from toolang.setup.watcher import SetupWatcher
@@ -130,6 +131,45 @@ def test_current_requires_initial_refresh(tmp_path: Path) -> None:
     watcher = SetupWatcher(AgentLayout.resident(tmp_path, "alice"), agent_context=False)
     with pytest.raises(RuntimeError, match="not been refreshed"):
         watcher.current()
+
+
+def test_messaging_config_supplies_coop_tools_and_refreshes_with_agent_overrides(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from toolang.plugin.toolsets.loading import load_toolsets_with_sources
+
+    _watcher(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        watcher_module, "load_toolsets_with_sources", load_toolsets_with_sources
+    )
+    layout = AgentLayout.resident(tmp_path, "alice")
+    layout.home.mkdir(parents=True)
+    layout.root_config.write_text(
+        '[messaging]\nurl = "redis://localhost:6379/0"\ngroups = ["g_root"]\n'
+    )
+    layout.config.write_text('[messaging]\ngroups = ["h_alice"]\n')
+    watcher = SetupWatcher(
+        layout, model_catalog=tmp_path / "catalog.json", validate_defaults=False
+    )
+
+    async def scenario():
+        first = await watcher.refresh()
+        coop = first.toolsets()["coop"]
+        assert isinstance(coop, CoopToolset) and coop.config is not None
+        assert coop.config.url == "redis://localhost:6379/0"
+        assert coop.config.groups == ("h_alice",)
+        assert "coop__send" in first.tools()
+        layout.config.write_text(
+            '[messaging]\ngroups = ["g_next"]\n[allow]\ntools = ["fs/*"]\n'
+        )
+        second = await watcher.refresh()
+        assert second.revision != first.revision
+        coop = second.toolsets()["coop"]
+        assert isinstance(coop, CoopToolset) and coop.config is not None
+        assert coop.config.groups == ("g_next",)
+        assert "coop__send" not in second.tools()
+
+    asyncio.run(scenario())
 
 
 def test_refresh_publishes_without_loading_adapters_tools_or_routes(

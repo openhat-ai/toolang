@@ -72,6 +72,7 @@ too = "toolang.cli.toolang.main:main"
 caps = "toolang.cli.caps.main:main"
 
 [project.entry-points."toolang.toolset"]
+coop = "toolang.plugin.toolsets.coop:create_toolset"
 _toolang = "toolang.execution.tools._toolang:create_toolset"
 fs = "toolang.plugin.toolsets.fs:create_toolset"
 history = "toolang.plugin.toolsets.history:create_toolset"

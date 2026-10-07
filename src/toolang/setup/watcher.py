@@ -29,6 +29,8 @@ from toolang.plugin.catalogs.models_dev.path import resolve_model_catalog_path
 from toolang.plugin.models.config import validate_models_config
 from toolang.plugin.models.resolution import resolve_model_reasoning
 from toolang.plugin.toolsets.collections import ToolCollection
+from toolang.plugin.toolsets.coop import MessagingConfig
+from toolang.common.config_sources import merge_mappings
 from toolang.plugin.toolsets.loading import (
     load_toolsets_with_sources,
     tools_from_toolsets,
@@ -190,6 +192,12 @@ class SetupWatcher:
         validate_models_config(configs)
         adapter_configs = merge_plugin_configs(configs, family="model_adapter")
         toolset_configs = merge_plugin_configs(configs, family="toolset")
+        messaging = MessagingConfig.from_config(merge_mappings(configs))
+        if messaging is not None:
+            toolset_configs["coop"] = {
+                "url": messaging.url,
+                "groups": list(messaging.groups),
+            }
         catalog_path = resolve_model_catalog_path(
             self.layout,
             explicit=self._model_catalog_override,

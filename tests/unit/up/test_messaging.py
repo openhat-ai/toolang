@@ -3,18 +3,27 @@
 import asyncio
 from copy import deepcopy
 import json
-from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from tests.support.execution_harness import ExecutionHarness
-from toolang.base.types.message import Message
-from toolang.base.types.run import ModelCallResult
+from tests.support.execution_harness import (
+    ExecutionHarness,
+    AsyncGate,
+    ScriptedModelTurn,
+)
+from toolang.base.types.message import Message, ToolResultPart, TextPart
+from toolang.base.types.run import ModelCallResult, ToolCall
+from toolang.execution.types import ThreadPrefix
 from toolang.common.layout import AgentLayout
 from toolang.up import server
 from toolang.work import messaging
+from toolang.plugin.toolsets.coop import CoopToolset
+from toolang.plugin.toolsets.loading import tools_from_toolsets
+from toolang.plugin.types import LoadedPlugin
+from toolang.base.types.tool import ToolContext
 from toolang.work.messaging import MessagingConfig, MessagingLoop
 
 
@@ -25,9 +34,12 @@ class MemoryValkey:
         self.closed = False
         self.sequence = 0
 
-    async def execute_command(self, command, key, member):
+    async def execute_command(self, command, key, *args):
+        if command == "SMEMBERS":
+            assert not args
+            return self.members.get(key, set())
         assert command == "SISMEMBER"
-        return member in self.members.get(key, set())
+        return args[0] in self.members.get(key, set())
 
     async def xread(self, streams, *, count):
         result = []
@@ -72,6 +84,24 @@ def make_loop(tmp_path, client, *, name="alice", groups=("g_dev",), harness=None
     )
 
 
+def tool_turn(name="coop__send", **arguments):
+    return ModelCallResult(tool_calls=(ToolCall("call-1", "call-1", name, arguments),))
+
+
+def make_harness(
+    tmp_path, client, *, source="agic:\n  {{_}}\n", responses=(), groups=("g_dev",)
+):
+    coop = CoopToolset(
+        {"url": "redis://localhost", "groups": list(groups)}, client=client
+    )
+    tools = tools_from_toolsets(
+        {"coop": LoadedPlugin("coop", "coop", coop, "built-in")}
+    )
+    return ExecutionHarness.create(
+        tmp_path, source=source, responses=responses, tools=tools
+    )
+
+
 def test_config_is_opt_in_and_validates_group_names():
     assert MessagingConfig.from_config({}) is None
     assert MessagingConfig.from_config(
@@ -92,32 +122,28 @@ def test_config_is_opt_in_and_validates_group_names():
 
 
 @pytest.mark.parametrize("custom", [False, True])
-def test_real_handler_replies_directly_and_next_batch_has_result(
-    tmp_path: Path, custom
-):
-    source = "agic msg(_: Json) -> Json:\n  {{_}}\n" if custom else "agic:\n  {{_}}\n"
-    response = {
-        "replies": [{"group": "g_dev", "body": "done", "in_reply_to": "message-1"}],
-        "noted": {"g_dev": "handled"},
-    }
-    harness = ExecutionHarness.create(
+def test_tool_replies_directly_and_next_batch_has_receipt_and_summary(tmp_path, custom):
+    client = MemoryValkey()
+    source = "agic msg(_: Json):\n  {{_}}\n" if custom else "agic:\n  {{_}}\n"
+    harness = make_harness(
         tmp_path,
+        client,
         source=source,
         responses=[
-            ModelCallResult(message=Message.assistant(json.dumps(response))),
-            ModelCallResult(message=Message.assistant('{"replies": []}')),
+            tool_turn(group="g_dev", body="done", in_reply_to="message-1"),
+            ModelCallResult(message=Message.assistant("Handled the request.")),
+            ModelCallResult(message=Message.assistant("Nothing more to send.")),
         ],
     )
 
     async def scenario():
         async with harness:
-            client = MemoryValkey()
             client.join("g_dev", "alice", "bob")
             raw = {"channel": "chat", "body": "original"}
             await client.send("g_dev", body="literal $prompt {{x}} @file", origin=raw)
             loop = make_loop(tmp_path, client, harness=harness)
             await loop.poll()
-            assert len(harness.adapter.invocations) == 1
+            assert len(harness.adapter.invocations) == 2
             assert "literal $prompt {{x}} @file" in repr(
                 harness.adapter.invocations[0].call.messages
             )
@@ -129,20 +155,20 @@ def test_real_handler_replies_directly_and_next_batch_has_result(
             assert sent["body"] == "done"
             assert sent["in_reply_to"] == "message-1"
             assert sent["origin"]["run"] == saved["result"]["run"]
-            record = harness.store.get_run(run_id=sent["origin"]["run"])
-            assert record is not None and record.status == "succeeded"
-
-            # Self messages advance the cursor without starting a feedback loop.
+            assert saved["result"]["replies"][0]["id"] == sent["id"]
             await loop.poll()
-            assert len(harness.adapter.invocations) == 1
+            assert len(harness.adapter.invocations) == 2
             await client.send("g_dev", body="next")
             restarted = make_loop(tmp_path, client, harness=harness)
             await restarted.poll()
-            assert len(harness.adapter.invocations) == 2
             prompt = repr(harness.adapter.invocations[-1].call.messages)
-            assert "handled" in prompt and "original" in prompt and "next" in prompt
+            assert (
+                "Handled the request." in prompt
+                and "original" in prompt
+                and "next" in prompt
+            )
             if not custom:
-                assert "Return only a JSON object" in prompt
+                assert "coop__send" in prompt
 
     asyncio.run(scenario())
 
@@ -180,6 +206,230 @@ def test_independent_cursors_and_arrivals_during_a_batch(tmp_path):
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("custom", [False, True])
+def test_handler_can_route_to_an_idle_group_from_the_available_directory(
+    tmp_path, custom
+):
+    client = MemoryValkey()
+    source = "agic msg(_: Json):\n  {{_}}\n" if custom else "agic:\n  {{_}}\n"
+    harness = make_harness(
+        tmp_path,
+        client,
+        source=source,
+        groups=("g_dev", "h_alice", "g_private"),
+        responses=[
+            tool_turn(group="h_alice", body="Received the relay"),
+            ModelCallResult(message=Message.assistant("Sent a DM.")),
+        ],
+    )
+
+    async def scenario():
+        async with harness:
+            client.join("g_dev", "alice", "bob")
+            client.join("h_alice", "alice", "owner")
+            client.join("g_private", "bob", "private-member")
+            await client.send("g_dev", body="Please reply to owner in your human DM")
+            loop = make_loop(
+                tmp_path,
+                client,
+                groups=("g_dev", "h_alice", "g_private"),
+                harness=harness,
+            )
+            loop.handle = AsyncMock(wraps=loop.handle)
+            await loop.poll()
+            batch = loop.handle.call_args.args[0]
+            assert batch["available_groups"] == [
+                {"group": "g_dev", "members": ["alice", "bob"]},
+                {"group": "h_alice", "members": ["alice", "owner"]},
+            ]
+            assert [item["group"] for item in batch["groups"]] == ["g_dev"]
+            prompt = repr(harness.adapter.invocations[0].call.messages)
+            assert "available_groups" in prompt and "owner" in prompt
+            assert "private-member" not in prompt
+            sent = json.loads(client.streams["too:group:h_alice:msg"][0][1]["data"])
+            assert sent["body"] == "Received the relay"
+            client.join("h_alice", "owner")
+            await client.send("g_dev", body="next")
+            loop.handle = AsyncMock()
+            await loop.poll()
+            assert loop.handle.call_args.args[0]["available_groups"] == [
+                {"group": "g_dev", "members": ["alice", "bob"]}
+            ]
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "summary",
+    [
+        "I sent the reply. No JSON needed.",
+        'Explanation.\n```json\n{"replies": [{"group": "g_dev", "body": "never send this"}]}\n```',
+        "{broken JSON",
+    ],
+)
+def test_delivery_does_not_parse_or_resend_the_final_output(tmp_path, summary):
+    client = MemoryValkey()
+    harness = make_harness(
+        tmp_path,
+        client,
+        responses=[
+            tool_turn(group="g_dev", body='Literal {braces}, [array], "你好"'),
+            ModelCallResult(message=Message.assistant(summary)),
+        ],
+    )
+
+    async def scenario():
+        async with harness:
+            client.join("g_dev", "alice", "bob")
+            await client.send("g_dev")
+            loop = make_loop(tmp_path, client, harness=harness)
+            await loop.poll()
+            assert loop.saved["g_dev"]["result"]["status"] == "succeeded"
+            assert len(client.streams["too:group:g_dev:msg"]) == 2
+            sent = json.loads(client.streams["too:group:g_dev:msg"][-1][1]["data"])
+            assert sent["body"] == 'Literal {braces}, [array], "你好"'
+            await loop.poll()
+            assert len(harness.adapter.invocations) == 2
+
+    asyncio.run(scenario())
+
+
+def test_send_is_delivered_before_run_completion_and_survives_cancellation(tmp_path):
+    client = MemoryValkey()
+    gate = AsyncGate()
+    harness = make_harness(
+        tmp_path,
+        client,
+        responses=[
+            tool_turn(group="g_dev", body="Sent immediately"),
+            ScriptedModelTurn(
+                ModelCallResult(message=Message.assistant("done")), gate=gate
+            ),
+        ],
+    )
+
+    async def scenario():
+        async with harness:
+            client.join("g_dev", "alice", "bob")
+            await client.send("g_dev")
+            loop = make_loop(tmp_path, client, harness=harness)
+            task = asyncio.create_task(loop.poll())
+            await asyncio.wait_for(gate.wait_until_entered(), 3)
+            assert len(client.streams["too:group:g_dev:msg"]) == 2
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            assert (
+                loop.saved["g_dev"]["result"]["replies"][0]["body"]
+                == "Sent immediately"
+            )
+            await loop.poll()
+            assert len(client.streams["too:group:g_dev:msg"]) == 2
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        {"group": "g_dev", "body": ""},
+        {"group": "g_bad:name", "body": "bad group"},
+        {"group": "g_private", "body": "forbidden"},
+        {"group": "g_dev", "body": "spoof", "sender": "owner"},
+        {"group": "g_dev", "body": "spoof", "origin": {"run": "other"}},
+    ],
+)
+def test_send_tool_rejects_invalid_or_unauthorized_messages(tmp_path, arguments):
+    client = MemoryValkey()
+    harness = make_harness(
+        tmp_path,
+        client,
+        responses=[
+            tool_turn(**arguments),
+            ModelCallResult(message=Message.assistant("Sending failed.")),
+        ],
+    )
+
+    async def scenario():
+        async with harness:
+            client.join("g_dev", "alice", "bob")
+            client.join("g_private", "bob")
+            await client.send("g_dev")
+            loop = make_loop(tmp_path, client, harness=harness)
+            await loop.poll()
+            assert len(client.streams["too:group:g_dev:msg"]) == 1
+            assert "too:group:g_private:msg" not in client.streams
+            assert loop.saved["g_dev"]["result"]["replies"] == []
+            results = [
+                step.output.value
+                for step in harness.store.list_steps(
+                    run_id=loop.saved["g_dev"]["result"]["run"]
+                )
+                if step.output and isinstance(step.output.value, ToolResultPart)
+            ]
+            assert len(results) == 1 and results[0].error
+
+    asyncio.run(scenario())
+
+
+def test_contacts_and_unconfigured_tools(tmp_path):
+    async def scenario():
+        client = MemoryValkey()
+        client.join("h_alice", "owner", "alice")
+        context = ToolContext(home=tmp_path / "alice", room=tmp_path)
+        coop = CoopToolset(
+            {"url": "redis://localhost", "groups": ["h_alice", "g_private"]},
+            client=cast(messaging.Valkey, client),
+        )
+        result = await coop.tools()["contacts"].invoke({}, context)
+        assert result.output == {
+            "groups": [{"group": "h_alice", "members": ["alice", "owner"]}]
+        }
+        with pytest.raises(ValueError, match="not configured"):
+            await (
+                CoopToolset({})
+                .tools()["send"]
+                .invoke({"group": "h_alice", "body": "hello"}, context)
+            )
+
+    asyncio.run(scenario())
+
+
+def test_spawned_run_sends_with_its_own_origin(tmp_path):
+    client = MemoryValkey()
+    harness = make_harness(
+        tmp_path,
+        client,
+        source="flow parent(_: Text) -> Text:\n  let job = spawn worker\nagic worker(_: Text) -> Text:\n  {{_}}\n",
+        responses=[
+            tool_turn(group="g_dev", body="Worker result"),
+            ModelCallResult(message=Message.assistant("Sent.")),
+        ],
+    )
+
+    async def scenario():
+        async with harness:
+            client.join("g_dev", "alice", "bob")
+            parent = await harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    runnable="flow:parent",
+                    primary=(TextPart("Do work"),),
+                )
+            )
+            while harness.executor._tasks:
+                await asyncio.gather(*tuple(harness.executor._tasks))
+            assert parent.status == "succeeded"
+            assert len(client.streams["too:group:g_dev:msg"]) == 1
+            message = json.loads(client.streams["too:group:g_dev:msg"][0][1]["data"])
+            assert message["origin"]["run"] != parent.id
+            worker = harness.store.get_run(run_id=message["origin"]["run"])
+            assert worker is not None and worker.status == "succeeded"
+            assert worker.thread != parent.thread
+
+    asyncio.run(scenario())
+
+
 def test_failure_and_malformed_messages_are_skipped_but_context_is_preserved(tmp_path):
     async def scenario():
         client = MemoryValkey()
@@ -203,22 +453,21 @@ def test_failure_and_malformed_messages_are_skipped_but_context_is_preserved(tmp
 
 
 @pytest.mark.parametrize("joined_target", [False, True])
-def test_membership_is_required_to_read_and_reply(tmp_path, joined_target):
-    harness = ExecutionHarness.create(
+def test_membership_is_required_to_read_and_send_to_other_groups(
+    tmp_path, joined_target
+):
+    client = MemoryValkey()
+    harness = make_harness(
         tmp_path,
-        source="agic msg(_: Json) -> Json:\n  {{_}}\n",
+        client,
         responses=[
-            ModelCallResult(
-                message=Message.assistant(
-                    '{"replies": [{"group": "g_other", "body": "no"}]}'
-                )
-            )
+            tool_turn(group="g_other", body="reply"),
+            ModelCallResult(message=Message.assistant("Handling complete.")),
         ],
     )
 
     async def scenario():
         async with harness:
-            client = MemoryValkey()
             await client.send("g_dev")
             loop = make_loop(tmp_path, client, harness=harness)
             await loop.poll()
@@ -228,10 +477,6 @@ def test_membership_is_required_to_read_and_reply(tmp_path, joined_target):
                 client.join("g_other", "alice", "carol")
             await loop.poll()
             assert ("too:group:g_other:msg" in client.streams) == joined_target
-            assert loop.saved["g_dev"]["result"]["status"] == (
-                "succeeded" if joined_target else "failed"
-            )
-            # Replies go to the chosen target, not implicitly to the source.
             assert len(client.streams["too:group:g_dev:msg"]) == 1
             assert loop.saved["g_dev"]["result"]["replies"] == []
 
@@ -266,6 +511,7 @@ def test_batch_bounds_rotation_and_conversation_context(tmp_path):
         batch = loop.handle.call_args.args[0]
         assert len(batch["groups"]) == 5
         assert sum(len(g["messages"]) for g in batch["groups"]) == 100
+        assert [item["group"] for item in batch["available_groups"]] == list(groups)
         await loop.poll()
         batch = loop.handle.call_args.args[0]
         assert batch["groups"][-1]["group"] == "g_5"

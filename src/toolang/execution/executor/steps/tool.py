@@ -17,6 +17,7 @@ from toolang.base.protocols.tool import Tool, ToolHistory, ToolRuntime
 from toolang.base.types.message import Message, ToolResultPart
 from toolang.base.types.run import ToolCall, ToolCallResult
 from toolang.base.types.tool import (
+    CoopToolContext,
     ToolContext,
     ToolResult,
     ToolService,
@@ -295,6 +296,7 @@ async def _execute(
                 )
             context = _tool_context(
                 layout=state.layout,
+                run_id=run.run_id,
                 sync_state=state.execution.executor._sync_state
                 if state.execution is not None
                 else None,
@@ -811,6 +813,7 @@ def _tool_context(
     *,
     layout: AgentLayout,
     tool: Tool,
+    run_id: str | None = None,
     services: tuple[ToolService, ...],
     sync_state: StateSync | None = None,
     runtime: ToolRuntime | None = None,
@@ -839,4 +842,6 @@ def _tool_context(
         return ServiceToolContext(*args, services=services)
     if plugin_name == "me":
         return MeToolContext(*args, layout=layout, sync_state=sync_state)
+    if plugin_name == "coop":
+        return CoopToolContext(*args, run_id=run_id)
     return ToolContext(*args)

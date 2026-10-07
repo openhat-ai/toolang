@@ -98,6 +98,13 @@ class ToolContext:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class CoopToolContext(ToolContext):
+    """Sender provenance supplied only to communication tools."""
+
+    run_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class RuntimeToolContext(ToolContext):
     """Executor authority supplied only to the runtime toolset."""
 
