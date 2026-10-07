@@ -55,7 +55,7 @@ class _ToolRuntime(ToolRuntime):
     source: FieldRef | None
     tool_call_count: int
     routes: AgicRoutes
-    adopted_state: AgentState
+    discovery_state: AgentState
     transfer: _ExecuteCommitted | None = None
     error: ErrorMessage | ErrorRef | None = None
     failure: Exception | None = None
@@ -78,8 +78,8 @@ class _ToolRuntime(ToolRuntime):
             # An exported flow alias can share its name with a private agic.
             # Discovery must retain both kinds even if execution identities match.
             targets = {
-                target.qualified: (self.adopted_state, target)
-                for target in visible_runnables(self.adopted_state, binding.module)
+                target.qualified: (self.discovery_state, target)
+                for target in visible_runnables(self.discovery_state, binding.module)
             }
             targets[current.qualified] = (binding.state, current)
         else:
@@ -90,8 +90,8 @@ class _ToolRuntime(ToolRuntime):
             if pinned is not None and pinned.qualified == current.qualified:
                 targets = {current.qualified: (binding.state, current)}
             else:
-                target = resolve_call_target(self.adopted_state, binding.module, name)
-                targets = {target.qualified: (self.adopted_state, target)}
+                target = resolve_call_target(self.discovery_state, binding.module, name)
+                targets = {target.qualified: (self.discovery_state, target)}
         entries = [
             {
                 "ref": runnable_ref(state, target),

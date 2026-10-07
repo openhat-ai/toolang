@@ -250,7 +250,7 @@ _TOOLS = (
         "runnable and its active ancestors. Supply an exact name for one target, "
         "or omit name for all visible targets. Use documentation as route triggers "
         "for the task and signatures to construct input. Discovery does not execute "
-        "a target or authorize a call; current and ancestor signatures remain queryable.",
+        "a target or authorize a call; current and visible ancestor signatures remain queryable.",
         {
             "type": "object",
             "properties": {
@@ -329,7 +329,7 @@ _TOOLS = (
     ),
     ToolangTool(
         "run",
-        "Run an authorized hand synchronously as a child Run. The tool reply returns "
+        "Run an authorized hand as a child Run. By default, wait and return "
         "its completed result as {type, value}, or an error if the child fails or is canceled. "
         "Use run when the caller needs the result for further processing. "
         "Follow the current routes hands restriction. Query _toolang__runnables "
@@ -372,7 +372,7 @@ _TOOLS = (
         "spawn",
         "Start an authorized hand as an independent root in a new empty thread. "
         "Returns id, thread, and the admission-time status without waiting. "
-        "Use the id with history tools; no completion message is injected. "
+        "Use _toolang__await with its id for the result; no completion message is injected. "
         "Work continues after this Run ends, until completion or executor shutdown. "
         "Follow the current routes spawns restriction, query _toolang__runnables "
         "when the target signature is missing, and supply explicit inputs.",

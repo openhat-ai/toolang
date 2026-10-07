@@ -256,24 +256,6 @@ async def _execute(
         tool = tools.get(call.name)
         plugin_name = _plugin_name(tool)
         summary_context = _tool_summary_context(call, tool)
-        runtime = (
-            _ToolRuntime(
-                state,
-                step,
-                source_ref,
-                tool_call_count,
-                routes or prepared.routes,
-                (
-                    state.execution.latest_state()
-                    if call.name == "_toolang__runnables"
-                    and state.execution is not None
-                    and state.execution.executor._state is not None
-                    else agent_state
-                ),
-            )
-            if plugin_name == "_toolang"
-            else None
-        )
         resolved_input = step_input
         try:
             if trigger == "model" and call.name == "_toolang__compact":
@@ -281,6 +263,24 @@ async def _execute(
             if tool is None:
                 raise ToolangError(f"unknown tool call: {call.name}")
             arguments = tool.bind_arguments(call.input)
+            if plugin_name == "_toolang":
+                # Capture discovery before StepBegin delivery can publish a new
+                # State; read failures still belong to this tool's result.
+                discovery_state = agent_state
+                if (
+                    call.name == "_toolang__runnables"
+                    and state.execution is not None
+                    and state.execution.executor._state is not None
+                ):
+                    discovery_state = state.execution.latest_state()
+                runtime = _ToolRuntime(
+                    state,
+                    step,
+                    source_ref,
+                    tool_call_count,
+                    routes or prepared.routes,
+                    discovery_state=discovery_state,
+                )
             if (
                 call.name == "_toolang__await"
                 and state.execution is not None

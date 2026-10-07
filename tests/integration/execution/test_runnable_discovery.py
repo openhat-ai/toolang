@@ -22,8 +22,10 @@ from tests.support.execution_harness import (
 )
 from toolang.base.types.message import Message, message_text
 from toolang.base.types.run import ModelCallResult, ToolCall
+from toolang.common.errors import ToolangError
 from toolang.common.layout import AgentLayout
-from toolang.execution.types import ThreadPrefix
+from toolang.execution.events import StepBegin, StepEnd
+from toolang.execution.types import ThreadPrefix, ToolStepGiven
 from toolang.state.prepare import prepare_agent_state
 
 
@@ -308,6 +310,104 @@ def test_current_uses_bound_declaration_and_others_use_tool_step_state(
             assert entries["flow:target"]["revision"] == harness.published.revision
             assert last_tool_result(calls[2]).output["runnables"] == [
                 entries["agic:chat"]
+            ]
+
+    asyncio.run(scenario())
+    assert_replayed(harness.store.db_path, tracer.events)
+
+
+def test_discovery_state_read_error_is_a_correlated_tool_failure(tmp_path):
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="agic chat():\n  Inspect.\n",
+        responses=[query(), answer()],
+    )
+    fail_next_read = False
+
+    def latest():
+        nonlocal fail_next_read
+        if fail_next_read:
+            fail_next_read = False
+            raise ToolangError("Published State temporarily unavailable")
+        return harness.state
+
+    class Tracer(RecordingRunTracer):
+        async def on_event(self, event):
+            nonlocal fail_next_read
+            await super().on_event(event)
+            if isinstance(event, StepEnd) and event.kind == "model":
+                fail_next_read = True
+
+    harness.executor._state = latest
+    tracer = Tracer()
+
+    async def scenario():
+        async with harness:
+            run = await harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    runnable="chat",
+                ),
+                tracer=tracer,
+            )
+            assert run.status == "succeeded", run.error
+            result = last_tool_result(harness.adapter.invocations[1].call)
+            assert result.tool_call_id == "query"
+            assert result.error == "Published State temporarily unavailable"
+            assert result.output == {}
+
+    asyncio.run(scenario())
+    assert_replayed(harness.store.db_path, tracer.events)
+
+
+def test_discovery_keeps_the_state_captured_before_tool_step_delivery(tmp_path):
+    source = "agic chat():\n  Inspect.\n## Before.\nflow target():\n  pass\n"
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=source,
+        prepare_state=True,
+        responses=[
+            query({"name": "target"}),
+            query({"name": "target"}, id="later"),
+            answer(),
+        ],
+    )
+
+    class Tracer(RecordingRunTracer):
+        async def on_event(self, event):
+            await super().on_event(event)
+            if (
+                isinstance(event, StepBegin)
+                and isinstance(event.given, ToolStepGiven)
+                and event.given.call.name == "_toolang__runnables"
+                and harness.published is None
+            ):
+                harness.setup.layout.program.write_text(
+                    source.replace("Before.", "After.")
+                )
+                harness.published = prepare_agent_state(harness.setup.layout)
+
+    tracer = Tracer()
+
+    async def scenario():
+        async with harness:
+            run = await harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    runnable="chat",
+                ),
+                tracer=tracer,
+            )
+            assert run.status == "succeeded", run.error
+            assert harness.published is not None
+            entries = [
+                last_tool_result(i.call).output["runnables"][0]
+                for i in harness.adapter.invocations[1:]
+            ]
+            assert [entry["doc"] for entry in entries] == ["Before.", "After."]
+            assert [entry["revision"] for entry in entries] == [
+                harness.state.revision,
+                harness.published.revision,
             ]
 
     asyncio.run(scenario())

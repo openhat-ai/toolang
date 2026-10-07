@@ -497,7 +497,8 @@ through `tools`; use `hands` or `handoffs` to authorize targets. Runtime tool
 definitions remain available independently of these lists.
 
 Each newly accepted named child Run selects the latest published State and checks
-its signature against the caller's bound definition or advertised model catalog.
+its signature against the caller's bound definition or the invoking Model Call's
+captured State.
 Missing targets and changed signatures reject the call. Accepted Runs retain
 their code, types, and directives; inline Agics belong to that same plan.
 Collection items select independently when accepted. Main-module

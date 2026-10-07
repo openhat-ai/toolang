@@ -165,19 +165,10 @@ def resolve_agic_routes(
                 )
             )
         for item in selected:
-            target = ResolvedRunnable(
-                name=item.name,
-                module=item.module,
-                executable=item.executable,
-            )
-            actions_by_ref.setdefault(target.ref, set()).add(route_action)
+            actions_by_ref.setdefault(item.ref, set()).add(route_action)
     resolved = tuple(
         RunnableRoute(
-            runnable=ResolvedRunnable(
-                name=item.name,
-                module=item.module,
-                executable=item.executable,
-            ),
+            runnable=item,
             actions=tuple(
                 action for action in ("run", "spawn", "exec") if action in actions
             ),
@@ -535,7 +526,10 @@ def runnable_signature(
     *,
     documentation_limit: int | None = RUNNABLE_DOCUMENTATION_MAX_CHARS,
 ) -> dict[str, object]:
-    """Describe one signature for declarations and input-validation feedback."""
+    """Describe a signature while preserving the concise validation format.
+
+    A None limit requests discovery's complete docs, including struct field docs.
+    """
 
     structs = {item.name: item for item in state.modules[module].structs}
     output = runnable.output or ("Part[]" if isinstance(runnable, AgicDecl) else "Json")

@@ -29,6 +29,19 @@ def answer(text):
     return ModelCallResult(message=Message.assistant(text))
 
 
+def discover(name=None):
+    return ModelCallResult(
+        tool_calls=(
+            ToolCall(
+                "discovery",
+                "discovery",
+                "_toolang__runnables",
+                {"name": name} if name is not None else {},
+            ),
+        )
+    )
+
+
 def publish(harness, source):
     harness.setup.layout.program.write_text(source)
     harness.published = prepare_agent_state(harness.setup.layout)
@@ -394,7 +407,7 @@ def test_failed_acceptance_has_no_child_and_reports_revisions(tmp_path, change):
 
 @pytest.mark.parametrize("routes", ["", "  hands = *\n"])
 @pytest.mark.parametrize("incompatible", [False, True])
-def test_model_catalog_is_frozen_but_acceptance_selects_latest(
+def test_model_frame_is_frozen_but_acceptance_selects_latest(
     tmp_path, incompatible, routes
 ):
     source = f"agic parent() -> Text:\n{routes}  context = none\n  user: Old parent.\n"
@@ -472,7 +485,7 @@ def test_model_catalog_is_frozen_but_acceptance_selects_latest(
 
 @pytest.mark.parametrize("routes", ["", "  hands = *\n  handoffs = *\n"])
 @pytest.mark.parametrize("operation, mode", [("run", "hands"), ("exec", "handoffs")])
-def test_unadvertised_target_waits_for_next_model_catalog(
+def test_new_target_waits_for_next_model_frame_and_becomes_discoverable(
     tmp_path, routes, operation, mode
 ):
     source = f"agic parent() -> Text:\n{routes}  context = none\n  Delegate.\n"
@@ -495,6 +508,7 @@ def test_unadvertised_target_waits_for_next_model_catalog(
                 ),
                 gate=gate,
             ),
+            discover("worker"),
             answer("done"),
         ],
     )
@@ -509,19 +523,24 @@ def test_unadvertised_target_waits_for_next_model_catalog(
             )
             await asyncio.wait_for(gate.wait_until_entered(), 2)
             assert route_scopes(harness.adapter.invocations[0].call)[mode] == "ALL"
-            publish(harness, source + "flow worker():\n  pass\n")
+            published = publish(harness, source + "flow worker():\n  pass\n")
             gate.release()
             root = await handle
             assert root.status == "succeeded", root.error
             assert harness.store.list_run_tree(root_run_id=root.id) == [root]
             assert last_tool_result(harness.adapter.invocations[1].call).error
             assert route_scopes(harness.adapter.invocations[1].call)[mode] == "ALL"
+            result = last_tool_result(harness.adapter.invocations[2].call)
+            assert result.error is None
+            (target,) = result.output["runnables"]
+            assert target["ref"] == "flow:worker"
+            assert target["revision"] == published.revision
 
     asyncio.run(scenario())
 
 
 @pytest.mark.parametrize("routes", ["", "  hands = *\n"])
-def test_tool_batch_reuses_frame_and_next_model_discovers_publication(tmp_path, routes):
+def test_tool_batch_reuses_frame_and_next_model_adopts_publication(tmp_path, routes):
     source = f"agic parent() -> Text:\n{routes}  context = none\n  Work.\n"
     skill = tmp_path / "agents/alice/skills/testing/SKILL.md"
     skill.parent.mkdir(parents=True)
@@ -583,14 +602,21 @@ def test_tool_batch_reuses_frame_and_next_model_discovers_publication(tmp_path, 
                 tracer=Tracer(),
             )
             await asyncio.wait_for(gate.wait_until_entered(), 2)
-            publish(harness, source + "flow worker():\n  pass\n")
+            published = publish(harness, source + "flow worker():\n  pass\n")
             gate.release()
             root = await handle
             assert root.status == "succeeded", root.error
             assert finished_tools == 2 and len(tool.calls) == 1
             assert "tools" not in reads
-            assert route_scopes(harness.adapter.invocations[0].call)["hands"] == "ALL"
-            assert route_scopes(harness.adapter.invocations[1].call)["hands"] == "ALL"
+            frames = [
+                step.given
+                for step in harness.store.list_steps(run_id=root.id)
+                if isinstance(step.given, StoredModelStepGiven)
+            ]
+            assert [frame.state for frame in frames] == [
+                harness.state.revision,
+                published.revision,
+            ]
             assert not last_tool_result(harness.adapter.invocations[1].call).error
 
     asyncio.run(scenario())
@@ -726,7 +752,7 @@ def test_flow_model_routes_are_local_and_keep_advertised_identity(
 
 
 @pytest.mark.parametrize("routes", ["", "  hands = *\n"])
-def test_deleted_flow_module_keeps_accepted_agic_and_withdraws_routes(tmp_path, routes):
+def test_deleted_flow_module_discovery_keeps_only_the_bound_agic(tmp_path, routes):
     from toolang.common.layout import AgentLayout
 
     home = tmp_path / "agents/alice"
@@ -747,12 +773,14 @@ def test_deleted_flow_module_keeps_accepted_agic_and_withdraws_routes(tmp_path, 
         state=initial,
         tools={tool.name: tool},
         responses=[
+            discover(),
             ScriptedModelTurn(
                 ModelCallResult(
                     tool_calls=(ToolCall("checkpoint", "checkpoint", tool.name, {}),)
                 ),
                 gate=gate,
             ),
+            discover(),
             answer("done"),
         ],
     )
@@ -771,21 +799,31 @@ def test_deleted_flow_module_keeps_accepted_agic_and_withdraws_routes(tmp_path, 
             gate.release()
             root = await handle
             assert root.status == "succeeded", root.error
-            first, second = [i.call for i in harness.adapter.invocations]
-            assert route_scopes(first)["hands"] == "ALL"
-            assert route_scopes(second)["hands"] == "ALL"
-            assert "Bound driver." in str(second.messages)
+            before = last_tool_result(harness.adapter.invocations[1].call)
+            after = last_tool_result(harness.adapter.invocations[3].call)
+            assert before.error is None and after.error is None
+            entries = {item["ref"]: item for item in before.output["runnables"]}
+            assert set(entries) == {
+                "flow:research",
+                "flows::research::agic:driver",
+                "flows::research::agic:helper",
+            }
+            assert after.output["runnables"] == [
+                entries["flows::research::agic:driver"]
+            ]
+            assert after.output["current"] == "flows::research::agic:driver"
+            assert "Bound driver." in str(harness.adapter.invocations[3].call.messages)
 
     asyncio.run(scenario())
 
 
-def test_model_catalog_uses_bound_state_without_publication_source(tmp_path):
+def test_discovery_uses_bound_state_without_publication_source(tmp_path):
     source = "agic parent() -> Text:\n  Work.\nflow worker():\n  pass\n"
     harness = ExecutionHarness.create(
         tmp_path,
         source=source,
         prepare_state=True,
-        responses=[answer("done")],
+        responses=[discover(), answer("done")],
     )
     harness.executor._state = None
 
@@ -804,6 +842,15 @@ def test_model_catalog_uses_bound_state_without_publication_source(tmp_path):
             first = harness.store.list_steps(run_id=root.id)[0]
             assert isinstance(first.given, StoredModelStepGiven)
             assert first.given.state == harness.state.revision
+            result = last_tool_result(harness.adapter.invocations[1].call)
+            assert result.error is None
+            assert [item["ref"] for item in result.output["runnables"]] == [
+                "agic:parent",
+                "flow:worker",
+            ]
+            assert {item["revision"] for item in result.output["runnables"]} == {
+                harness.state.revision,
+            }
 
     asyncio.run(scenario())
 
