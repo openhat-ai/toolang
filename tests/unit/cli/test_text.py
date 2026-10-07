@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock
 from fakeredis import FakeAsyncValkey, FakeServer
 import pytest
 from prompt_toolkit.application import create_app_session
+from prompt_toolkit.data_structures import Size
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
 from rich.console import Console
@@ -14,6 +15,7 @@ from rich.console import Console
 from toolang.cli.toolang import main as cli
 from toolang.cli.toolang.commands import text, team
 from toolang.cli.toolang.commands.text.tui import TextTui
+from toolang.cli.toolang.commands.text import tui
 from toolang.cli.toolang.commands.text.rendering import message_block, display_text
 from toolang.cli.common.terminal_surfaces import DARK_TERMINAL_SURFACES
 from toolang.messaging.client import MessagingClient
@@ -127,6 +129,56 @@ def test_narrow_rendering_and_terminal_escape_removal(width, sender):
     assert all(len(line) <= width for line in rendered.splitlines())
     assert "hello" in rendered.replace(" ", "").replace("\n", "")
     assert display_text("a\x08b\r\x00c") == "abc"
+
+
+@pytest.mark.parametrize("configured_width", [None, "72"])
+@pytest.mark.parametrize("sender", ["bryan", "alice"])
+def test_interactive_messages_use_chat_width_after_resize(
+    tmp_path, monkeypatch, messaging_cli, configured_width, sender
+):
+    if configured_width is None:
+        monkeypatch.delenv("TOOLANG_PROGRESS_MAX_WIDTH", raising=False)
+    else:
+        monkeypatch.setenv("TOOLANG_PROGRESS_MAX_WIDTH", configured_width)
+    monkeypatch.setenv("TOOLANG_COLOR_SCHEME", "dark")
+    monkeypatch.setattr(text.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(text.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(text, "resolve_launcher", lambda **kwargs: None)
+    output = StringIO()
+    monkeypatch.setattr(
+        tui,
+        "terminal_console",
+        lambda *, width: Console(file=output, width=width, color_system=None),
+    )
+
+    async def write_now(write):
+        write()
+
+    monkeypatch.setattr(tui, "run_in_terminal", write_now)
+
+    async def render_messages(ui):
+        ui.agents = {"alice"}
+        for columns in (200, 80, 160):
+            monkeypatch.setattr(
+                ui.app.output, "get_size", lambda: Size(rows=24, columns=columns)
+            )
+            output.seek(0)
+            output.truncate()
+            message = Message.create(sender, "word " * 90)
+            await ui.show([("1-0", {"data": message.encode()})])
+            lines = output.getvalue().splitlines()
+            limit = min(columns, int(configured_width or "120"))
+            assert all(len(line) <= limit for line in lines)
+            assert output.getvalue().split().count("word") == 90
+            # Human messages retain the left inset within the capped content area.
+            assert lines[0].index(sender) == (9 if sender == "bryan" else 0)
+
+    monkeypatch.setattr(TextTui, "run", render_messages)
+    with (
+        create_pipe_input() as pipe,
+        create_app_session(input=pipe, output=DummyOutput()),
+    ):
+        assert cli.main(["--root", str(tmp_path), "text", "all"]) == 0
 
 
 def test_text_tmux_identity_separates_root_connection_and_human(tmp_path):

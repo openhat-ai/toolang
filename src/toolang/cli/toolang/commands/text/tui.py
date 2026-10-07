@@ -14,6 +14,7 @@ from rich.text import Text
 from valkey.exceptions import ValkeyError
 
 from toolang.cli.common.console import terminal_console
+from toolang.cli.common.execution_progress.config import DEFAULT_MAX_PROGRESS_WIDTH
 from toolang.cli.common.input import InputBox
 from toolang.cli.common.input_history import InputHistoryStore
 from toolang.cli.common.scrollback import ScrollbackRenderer
@@ -34,9 +35,12 @@ class TextTui:
         human: str,
         state: Path,
         surfaces: TerminalSurfaces,
+        *,
+        max_width: int = DEFAULT_MAX_PROGRESS_WIDTH,
     ):
         self.client, self.group, self.human = client, group, human
         self.surfaces = surfaces
+        self.max_width = max_width
         self.draft = state / "draft.txt"
         self.status = "Connecting…"
         self.pending = False
@@ -168,7 +172,9 @@ class TextTui:
             else:
 
                 def write() -> None:
-                    width = self.app.output.get_size().columns
+                    width = max(
+                        1, min(self.app.output.get_size().columns, self.max_width)
+                    )
                     terminal_console(width=width).print(
                         message_block(
                             message, self.group, self.agents, width, self.surfaces

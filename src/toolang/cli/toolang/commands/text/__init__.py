@@ -3,6 +3,7 @@
 import asyncio
 from dataclasses import replace
 from hashlib import sha256
+import os
 from pathlib import Path
 import sys
 from typing import Annotated
@@ -13,6 +14,7 @@ from valkey.exceptions import ValkeyError
 
 from toolang.cli.common.context import context_root
 from toolang.cli.common.errors import TmuxPlacementError
+from toolang.cli.common.execution_progress.config import resolve_progress_max_width
 from toolang.cli.common.messaging import settings
 from toolang.cli.common.tmux import resolve_launcher
 from toolang.messaging.client import MessagingClient
@@ -100,11 +102,14 @@ def text_command(
             / identity
             / sha256(resolved.encode()).hexdigest()[:20]
         )
+        max_width = resolve_progress_max_width(os.environ)
         surfaces = resolve_terminal_surfaces()
 
         async def interactive() -> None:
             async with MessagingClient(config) as client:
-                await TextTui(client, resolved, human, state, surfaces).run()
+                await TextTui(
+                    client, resolved, human, state, surfaces, max_width=max_width
+                ).run()
 
         asyncio.run(interactive())
     except (

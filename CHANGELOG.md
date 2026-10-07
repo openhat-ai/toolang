@@ -9,6 +9,10 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Added
 
+- Interactive Text lays out messages within Chat's maximum content width (120
+  columns by default, configurable with `TOOLANG_PROGRESS_MAX_WIDTH`), capped by
+  the current terminal width.
+
 - Messaging is enabled by default: `[messaging].url` defaults to
   `redis://localhost:6379/0`, so a local Valkey server needs no configuration,
   and `[messaging].enabled = false` in the root or an agent's `config.toml` opts
