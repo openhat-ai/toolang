@@ -17,6 +17,12 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     """Register opt-in options shared by the test suite."""
 
     parser.addoption(
+        "--live-valkey",
+        action="store_true",
+        default=False,
+        help="run isolated Valkey and Text terminal checks",
+    )
+    parser.addoption(
         "--live-docker",
         action="store_true",
         default=False,
@@ -49,10 +55,12 @@ def pytest_collection_modifyitems(
     """Skip opt-in groups unless their explicit pytest option is present."""
 
     enabled = {
+        "live_valkey": config.getoption("--live-valkey") is True,
         "live_docker": config.getoption("--live-docker") is True,
         "live_provider": bool(config.getoption("--live-model")),
     }
     reasons = {
+        "live_valkey": "pass --live-valkey to run isolated Valkey checks",
         "live_docker": "pass --live-docker to run Docker tests",
         "live_provider": "pass --live-model to run real-provider tests",
     }

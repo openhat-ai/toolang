@@ -7,6 +7,32 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ## [Unreleased]
 
+### Added
+
+- `too text TARGET [MESSAGE...]` opens a conversation or sends a message and exits.
+  It resolves agent names, custom `gc_` groups, and canonical conversation IDs, with
+  `--dm`/`--group` to disambiguate a name collision. Omitting the message opens
+  interactive Text with a live input below the scrollback (Enter sends, Ctrl+J inserts
+  a newline, Ctrl+P/Ctrl+N browse sent input), preserves drafts on a failed send, and
+  keeps per-conversation history. Inside tmux each root/connection/human gets a session
+  and each conversation a reusable window; `TOOLANG_TMUX=0` stays in the invoking pane.
+
+- `too team` lists public and custom conversations with their members, online agents,
+  and latest message time.
+
+- The bundled `coop` toolset exposes `coop/contacts` (wire name `coop__contacts`) to
+  list registered agents and joined conversations, and `coop/send` (wire name
+  `coop__send`) to send a message immediately. Hosted agents poll an external Valkey
+  server and handle incoming batches through `agic:msg`, or the default agic, replying
+  in the source group; own messages do not re-trigger handling and failed or malformed
+  batches are logged and skipped.
+
+- Messaging is configured in the root `config.toml` with `[messaging].url` naming an
+  externally running Valkey server and `[human].name` (defaulting to the OS username),
+  plus optional per-agent `[messaging].groups`. Agents sharing that Valkey instance
+  communicate across machines, with membership, presence, and message streams kept
+  there. Adds the `valkey` runtime dependency; see `docs/messaging.md` for setup.
+
 ## [0.4.0a2] - 2026-10-07
 
 ### Added

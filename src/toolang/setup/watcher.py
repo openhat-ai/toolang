@@ -14,6 +14,8 @@ from toolang.base.protocols.model import ModelAdapter, ModelCatalog
 from toolang.base.types.model import ModelCatalogSnapshot, ModelOverride
 from toolang.base.types.policy import AgentCeiling, RunDefaults, RunLimits
 from toolang.common.layout import AgentLayout
+from toolang.common.config_sources import merge_mappings
+from toolang.messaging.config import MessagingConfig
 from toolang.plugin.config import merge_plugin_configs
 from toolang.common.config_sources import ConfigSource, config_sources
 from toolang.plugin.loading import (
@@ -134,6 +136,7 @@ class SetupWatcher:
             )
             for item in plugin_provenance(group=group)
         )
+        self.messaging_config: MessagingConfig | None = None
         self._setup: AgentSetup | None = None
         self._diagnostics: tuple[SetupDiagnostic, ...] = ()
         self._refresh_lock = asyncio.Lock()
@@ -190,6 +193,15 @@ class SetupWatcher:
         validate_models_config(configs)
         adapter_configs = merge_plugin_configs(configs, family="model_adapter")
         toolset_configs = merge_plugin_configs(configs, family="toolset")
+        if self._setup is None:
+            self.messaging_config = MessagingConfig.from_config(merge_mappings(configs))
+        if self.messaging_config is not None:
+            toolset_configs["coop"] = {
+                "url": self.messaging_config.url,
+                "groups": list(self.messaging_config.groups),
+            }
+        else:
+            toolset_configs["coop"] = {}
         catalog_path = resolve_model_catalog_path(
             self.layout,
             explicit=self._model_catalog_override,

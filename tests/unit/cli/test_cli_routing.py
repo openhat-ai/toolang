@@ -350,7 +350,7 @@ def test_cli_visible_commands_follow_the_public_panel_order() -> None:
             "stop",
         ),
         "Cap Commands": ("psyche", "skill", "service", "prompt"),
-        "Work Commands": ("chat", "chore", "task", "workspace"),
+        "Work Commands": ("chat", "text", "team", "chore", "task", "workspace"),
         "Inspection Commands": ("caps", "tools", "models", "providers", "inspect"),
         "Script Commands": ("init", "run"),
     }

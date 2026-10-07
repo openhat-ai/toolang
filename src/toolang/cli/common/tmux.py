@@ -337,6 +337,10 @@ class Launcher:
     agent: str
     _server: TmuxServer
     _pane: TmuxPane
+    session_mark: str = SESSION_AGENT
+    window_mark: str = MARK_THREAD
+    pad_kind: str = PAD_CHAT
+    session_name: str | None = None
 
     def place_chat(
         self, *, thread_id: str, argv: Sequence[str], directory: str
@@ -392,12 +396,12 @@ class Launcher:
                         start_directory=directory, window_shell=command, attach=False
                     )
                 operation = "mark"
-                window.set_option(MARK_THREAD, thread_id)
+                window.set_option(self.window_mark, thread_id)
                 window.rename_window(thread_id)
                 pad = window.panes[0]
                 action = "created"
             operation = "mark"
-            pad.set_option(MARK_PAD, PAD_CHAT)
+            pad.set_option(MARK_PAD, self.pad_kind)
         except Exception as exc:
             raise TmuxPlacementError(f"failed to {operation} chat pane: {exc}") from exc
 
@@ -450,13 +454,17 @@ class Launcher:
 
         sessions = self._server.sessions
         for session in sessions:
-            if _identity_option(session, SESSION_AGENT) == self.agent:
+            if _identity_option(session, self.session_mark) == self.agent:
                 return session
-        name = sanitize_session_name(self.agent)
+        if self.session_mark != SESSION_AGENT:
+            return None
+        name = sanitize_session_name(self.session_name or self.agent)
         for session in sessions:
             if _text(getattr(session, "session_name", None)) != name:
                 continue
-            if _identity_option(session, SESSION_AGENT):
+            if _identity_option(session, self.session_mark) or _identity_option(
+                session, "@toolang_text"
+            ):
                 continue
             self._own(session)
             return session
@@ -480,7 +488,7 @@ class Launcher:
 
         found: TmuxWindow | None = None
         for window in session.windows:
-            if _identity_option(window, MARK_THREAD) == thread_id:
+            if _identity_option(window, self.window_mark) == thread_id:
                 found = window
         return found
 
@@ -494,7 +502,7 @@ class Launcher:
 
         for pane in window.panes:
             if (
-                _identity_option(pane, MARK_PAD) == PAD_CHAT
+                _identity_option(pane, MARK_PAD) == self.pad_kind
                 and (getattr(pane, "pane_dead", "0") == "1") == dead
             ):
                 return pane
@@ -530,7 +538,7 @@ class Launcher:
     def _available_name(self) -> str:
         """The agent's session name, suffixed when a foreign session took it."""
 
-        base = sanitize_session_name(self.agent)
+        base = sanitize_session_name(self.session_name or self.agent)
         taken = {
             _text(getattr(item, "session_name", None)) for item in self._server.sessions
         }
@@ -544,10 +552,10 @@ class Launcher:
     def _own(self, session: TmuxSession) -> None:
         """Record ``@toolang_agent`` on a session that does not carry it yet."""
 
-        if _identity_option(session, SESSION_AGENT):
+        if _identity_option(session, self.session_mark):
             return
         try:
-            session.set_option(SESSION_AGENT, self.agent)
+            session.set_option(self.session_mark, self.agent)
         except Exception as exc:
             raise TmuxPlacementError(
                 f"Could not mark tmux agent session: {exc}"

@@ -389,3 +389,30 @@ def test_compact_changes_publish_new_setup_and_preserve_captured_values(
     watcher.layout.root_config.write_text('[compact]\nmodel = "unset"\n')
     assert asyncio.run(watcher.refresh()) is second
     assert watcher.diagnostics
+
+
+def test_messaging_config_is_shared_and_frozen_until_restart(tmp_path, monkeypatch):
+    config = tmp_path / "config.toml"
+    config.write_text('[messaging]\nurl = "redis://first"\ngroups = ["gc_dev"]\n')
+    watcher, _ = _watcher(monkeypatch, tmp_path)
+    captured = []
+
+    def load_toolsets(**kwargs):
+        captured.append(kwargs["config"])
+        return {}
+
+    monkeypatch.setattr(watcher_module, "load_toolsets_with_sources", load_toolsets)
+    first = asyncio.run(watcher.refresh())
+    first.toolsets()
+    initial = watcher.messaging_config
+    assert initial is not None and initial.url == "redis://first"
+    assert captured[-1]["coop"] == {"url": initial.url, "groups": list(initial.groups)}
+    config.write_text('[messaging]\nurl = "redis://second"\ngroups = ["gc_other"]\n')
+    second = asyncio.run(watcher.refresh())
+    second.toolsets()
+    assert watcher.messaging_config == initial
+    assert captured[-1]["coop"]["url"] == initial.url
+    restarted, _ = _watcher(monkeypatch, tmp_path)
+    asyncio.run(restarted.refresh())
+    assert restarted.messaging_config is not None
+    assert restarted.messaging_config.url == "redis://second"

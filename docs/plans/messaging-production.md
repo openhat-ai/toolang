@@ -49,10 +49,10 @@ too team                 # List all and custom groups.
 
 ## Delivery checklist
 
-- [ ] Extract the shared core; productionize `coop`, directory/presence, and agent lifecycle.
-- [ ] Add `text`, `team`, and Text TUI/tmux integration.
-- [ ] Test naming/escaping, literal command bodies, offline DMs, presence expiry, independent readers, full Stream IDs, reconnects, uncertain sends, narrow layouts, and window reuse.
-- [ ] Keep default tests offline; run isolated Valkey/tmux checks separately and complete [repository verification](../../AGENTS.md#verification).
-- [ ] Update usage docs and generate the changelog through `too aide.too update_changelog`; retire the Textual experiment after validation.
+- [x] Extract the shared core; productionize `coop`, directory/presence, and agent lifecycle.
+- [x] Add `text`, `team`, and Text TUI/tmux integration.
+- [x] Test naming/escaping, literal command bodies, offline DMs, presence expiry, independent readers, full Stream IDs, reconnects, uncertain sends, narrow layouts, and window reuse.
+- [x] Keep default tests offline; run isolated Valkey/tmux checks separately and complete [repository verification](../../AGENTS.md#verification).
+- [x] Update usage docs and generate the changelog through `too aide.too update_changelog`; leave the Textual prototype outside the production branch.
 
 No events, `coord`, authentication, managed Valkey, or coordination guarantees. Experimental data is not retained or migrated. The previous prototype is reference material only; implementation starts from origin/main.

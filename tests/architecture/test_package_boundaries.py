@@ -20,6 +20,7 @@ PACKAGES = (
     "execution",
     "up",
     "lang",
+    "messaging",
     "plugin",
     "setup",
     "state",
@@ -43,6 +44,7 @@ PACKAGE_IMPORT_RULES: dict[str, frozenset[str] | None] = {
             "catalog",
             "common",
             "execution",
+            "messaging",
             "plugin",
             "setup",
             "state",
@@ -52,8 +54,9 @@ PACKAGE_IMPORT_RULES: dict[str, frozenset[str] | None] = {
     # lang uses the shared error type and immutable metadata containers.
     "lang": frozenset({"base", "common"}),
     # Plugins may use package-neutral helpers from common.
-    "plugin": frozenset({"base", "common"}),
-    "setup": frozenset({"base", "common", "plugin"}),
+    "messaging": frozenset({"common"}),
+    "plugin": frozenset({"base", "common", "messaging"}),
+    "setup": frozenset({"base", "common", "plugin", "messaging"}),
     "state": None,  # TODO: Review the state package boundary.
     "work": None,  # TODO: Review the work package boundary.
 }

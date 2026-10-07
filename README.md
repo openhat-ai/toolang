@@ -118,6 +118,8 @@ Use these commands to run and manage agents. Add `--help` to any command for its
 too new <agent>                       # Create a local agent
 too clone <ref> <agent>               # Clone an agent
 too <agent> chat                      # Chat with an agent
+too text <target> [message...]        # Open a conversation or send a message
+too team                              # List messaging groups
 too [agent] home                      # Open a shell in agent home
 too serve <ref>                       # Run an agent in the foreground
 too start <agent>                     # Start an agent in the background
@@ -134,6 +136,8 @@ too providers                         # List available model providers
 too --help                            # Show common commands
 too more                              # Show additional commands
 ```
+
+Messaging requires an externally running Valkey server; see [messaging setup](docs/messaging.md).
 
 ## Links
 

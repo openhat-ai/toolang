@@ -116,3 +116,10 @@ class ServiceToolContext(ToolContext):
     """Effective services supplied only to the service toolset."""
 
     services: tuple[ToolService, ...]
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class CoopToolContext(ToolContext):
+    """Run identity supplied only to the messaging toolset."""
+
+    run_id: str | None = None

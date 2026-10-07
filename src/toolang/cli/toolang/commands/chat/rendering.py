@@ -15,6 +15,8 @@ from rich.style import Style
 from rich.text import Text
 from wcwidth import wcswidth
 
+from toolang.cli.common.console import terminal_console
+
 ACCENT_CELL = " "
 CONTROL_BAR_MARK = "▮"
 QUICK_COMMAND_CONTROL_ACCENT = "yellow"
@@ -47,15 +49,7 @@ def terminal_width(default: int = 100) -> int:
 
 
 def chat_console(*, width: int | None = None, file: TextIO | None = None) -> Console:
-    fixed_width = width or terminal_width()
-    return Console(
-        file=file,
-        width=fixed_width,
-        color_system="truecolor",
-        force_terminal=True,
-        legacy_windows=False,
-        _environ={"COLUMNS": str(fixed_width), "LINES": "24"},
-    )
+    return terminal_console(width=width or terminal_width(), file=file)
 
 
 def bar(
