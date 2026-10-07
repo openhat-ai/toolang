@@ -558,6 +558,20 @@ class RunExecutor:
             model_override=model_override,
             limits=limits if limits is not None else setup.limits,
         )
+        assert spec.bindings.runnable is not None
+        name, kind = parse_runnable_ref(spec.bindings.runnable)
+        module, target = resolve_state_runnable(spec.state, name, kind=kind)
+        spec = replace(
+            spec,
+            input=bind_runnable_input(
+                target,
+                spec.input,
+                structs={
+                    item.name: item
+                    for item in state_program(spec.state, module).structs
+                },
+            ),
+        )
         spec = replace(
             spec,
             horizon=(

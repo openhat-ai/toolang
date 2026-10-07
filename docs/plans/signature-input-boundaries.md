@@ -1,7 +1,7 @@
 # Signature-boundary Input Handling
 
-Status: proposed; implementation requires human approval. Baseline: `origin/main`
-at `0db8486b`. This is a feature definition, with no implementation changes.
+Status: approved for implementation after PR #700 merged. Definition baseline:
+`origin/main` at `0db8486b`.
 
 ## Goal and success criteria
 
@@ -165,21 +165,21 @@ arbitrary typed arrays or structural migrations between incompatible structs.
 
 ## Implementation sequence and touchpoints
 
-1. [ ] Implement function binding and annotation-derived schemas together with
+1. [x] Implement function binding and annotation-derived schemas together with
    the new hook, executor ordering, and wrapper forwarding. Keep this one
    reviewable change so preflight cannot lag behind invocation normalization.
    Touch `base/protocols/tool.py`, `base/utils/function_tools.py`,
    `plugin/toolsets/loading.py`, `plugin/toolsets/fs.py`, and
    `execution/executor/steps/tool.py` under `src/toolang/`.
-2. [ ] Correct exec's control input in
+2. [x] Correct exec's control input in
    `src/toolang/execution/executor/tool_runtime.py`; add runtime-call persistence
    and rejection regressions.
-3. [ ] Add rerun-only native rebinding in
+3. [x] Add rerun-only native rebinding in
    `src/toolang/execution/executor/executor.py`; cover local and HTTP admission
    and unchanged retry behavior.
-4. [ ] Update `docs/plugins.md` and `docs/call-input.md`; generate the relevant
+4. [x] Update `docs/plugins.md` and `docs/call-input.md`; generate the relevant
    `CHANGELOG.md` compatibility/fix entries through `too aide.too update_changelog`.
-5. [ ] Run the acceptance scenarios below and the repository's default
+5. [x] Run the acceptance scenarios below and the repository's default
    verification before each implementation commit. Fetch/rebase and verify
    again before handing off each PR; humans approve scope and merging.
 
@@ -219,8 +219,8 @@ Default checks: `uv run ruff check .`, `uv run ruff format --check .`,
 - No persistence format migration is required. Already-corrupt historical exec
   records are not repaired; affected work must be invoked again with valid input.
 
-Open questions: none for the proposed scope. Human approval of this definition
-is still required before implementation; independent review does not grant it.
+Open questions: none. Human approval was given after merging the definition;
+independent review alone does not grant implementation approval.
 
 ## Independent review
 

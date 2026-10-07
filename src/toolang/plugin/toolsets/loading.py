@@ -61,6 +61,9 @@ class LoadedTool(Tool):
     ) -> Mapping[str, tuple[str, ...]] | None:
         return self.leaf_tool.paths(arguments, context)
 
+    def bind_arguments(self, arguments: Mapping[str, Any]) -> dict[str, Any]:
+        return self.leaf_tool.bind_arguments(arguments)
+
     def summary(
         self,
         arguments: Mapping[str, Any],

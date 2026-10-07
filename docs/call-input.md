@@ -21,6 +21,21 @@ supplied to a `Json` parameter or returned by a flow remains a string: `"false"`
 does not become Boolean, and `"null"` does not become null. Internal calls bind
 existing values without parsing these strings again.
 
+Every new runnable invocation binds supplied values to the selected target's
+signature and fails if conversion is unavailable. Child-call coercion creates
+child inputs without rewriting parent frame locals; only the statement's normal
+result binding updates a parent local. Model-requested `exec` stores the bound
+values in its control record and replacement locals, while its Tool Step retains
+the raw call for inspection. Existing corrupt historical exec inputs are not
+repaired; invoke the affected work again.
+
+`rerun` restores native source inputs and binds them to the target in its captured
+fresh State before creating a new Run. Convertible values follow the new
+signature; newly required, removed, unknown, or incompatible arguments reject
+admission without modifying the source Run. It does not parse native Json strings
+again. `retry` retains its recorded State, input contract, and committed prefix;
+direct `RunSpec` inputs must already satisfy their contract.
+
 ## Terminology
 
 Use these short names in documentation, authored prose, and CLI help:

@@ -82,11 +82,9 @@ def test_named_paths_reject_symlink_escape_and_parent_traversal(tmp_path):
 )
 def test_path_aware_tools_preflight_the_run_location(tmp_path, name):
     context = _context(tmp_path)
-    args = (
-        {"command": "true"}
-        if name == "shell__execute"
-        else {"path": "file", "text": "x"}
-    )
+    args = {"command": "true"} if name == "shell__execute" else {"path": "file"}
+    if name in {"fs__write", "fs__append"}:
+        args["text"] = "x"
     if name in {"fs__list", "fs__glob"}:
         args = {}
     tool = load_tools()[name]

@@ -95,7 +95,12 @@ def test_parent_traversal_cannot_escape(fs, path):
 )
 def test_namespace_uri_is_just_a_workspace_reference(fs, name):
     with pytest.raises(ToolangError, match="workspace is not available: workspace"):
-        _invoke(fs, name, path="workspace://", text="bad")
+        _invoke(
+            fs,
+            name,
+            path="workspace://",
+            **({"text": "bad"} if name in {"write", "append"} else {}),
+        )
 
 
 def test_grants_must_exist_and_root_removal_is_rejected(fs):
@@ -330,7 +335,7 @@ def test_plain_paths_need_cwd_but_explicit_paths_do_not(fs):
         _invoke(fs, "write", path="file", workspace="repo", text="bad")
     with pytest.raises(ToolangError, match="requires a current workspace"):
         tools["shell__execute"].paths({"command": "true"}, context)
-    with pytest.raises(ToolangError, match="per-call cwd is unavailable"):
+    with pytest.raises(ToolangError, match="unknown tool parameter: cwd"):
         tools["shell__execute"].paths({"cwd": str(repo), "command": "true"}, context)
 
 
@@ -339,7 +344,12 @@ def test_plain_paths_need_cwd_but_explicit_paths_do_not(fs):
 )
 def test_home_is_not_an_implicit_filesystem_grant(fs, name):
     with pytest.raises(ToolangError, match="outside configured workspaces"):
-        _invoke(fs, name, path=str(fs[1].home), text="bad")
+        _invoke(
+            fs,
+            name,
+            path=str(fs[1].home),
+            **({"text": "bad"} if name in {"write", "append"} else {}),
+        )
     assert list(fs[1].home.iterdir()) == []
 
 

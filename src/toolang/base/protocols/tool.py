@@ -87,6 +87,10 @@ class Tool(ABC):
         """Plain call wording from arguments/result only; None uses executor wording."""
         return None
 
+    def bind_arguments(self, arguments: Mapping[str, Any]) -> dict[str, Any]:
+        """Return supplied arguments normalized without side effects or mutation."""
+        return dict(arguments)
+
     def paths(
         self, arguments: Mapping[str, Any], context: ToolContext
     ) -> Mapping[str, tuple[str, ...]] | None:

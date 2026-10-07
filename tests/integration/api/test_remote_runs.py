@@ -34,6 +34,7 @@ from toolang.execution.types import ThreadPrefix
 from toolang.lang.input import CallInput
 from toolang.lang.types import Array, Struct
 from toolang.up import AgentCore
+from toolang.state.prepare import prepare_agent_state
 from tests.support.execution_assertions import without_runtime_snapshots
 from tests.support.execution_harness import ExecutionHarness, TEST_MODEL_REF
 
@@ -54,6 +55,65 @@ class _Snapshot:
 
     async def refresh(self) -> object:
         raise AssertionError("run request boundaries must not refresh publications")
+
+
+@pytest.mark.parametrize("value", ["7", "bad"])
+def test_http_rerun_binds_fresh_signature_before_admission(tmp_path, value):
+    source = "flow task(_: Text, count: Text) -> Text:\n  pass\n"
+    harness = ExecutionHarness.create(
+        tmp_path, source=source, responses=[], prepare_state=True
+    )
+    harness.store.close()
+    core = AgentCore(harness.setup.layout)
+    core.setup = _Snapshot(harness.setup)
+    core.state = _Snapshot(harness.state)
+    app = create_app(
+        core,
+        CapsManager(core.layout),
+        JobsManager(core.layout),
+        cors_allowed_origins=(),
+    )
+    try:
+        with TestClient(app) as client:
+            thread = client.post("/api/v1/threads", json={"client": "tui"}).json()[
+                "thread"
+            ]["id"]
+            response = client.post(
+                "/api/v1/runs/authored/stream",
+                json=_authored_request(
+                    thread,
+                    "source_request",
+                    source=value,
+                    runnable="flow:task",
+                    arguments={"count": "8"},
+                ),
+            )
+            assert response.status_code == 200, response.text
+            original_id = response.headers["X-Toolang-Run-ID"]
+            original = core.history.get_run(original_id)
+            core.layout.program.write_text(source.replace("Text", "Number"))
+            core.state = _Snapshot(prepare_agent_state(core.layout))
+            rerun = client.post(
+                f"/api/v1/runs/{original_id}/rerun/stream",
+                json={"request_id": "rerun_request"},
+            )
+            if value == "7":
+                assert rerun.status_code == 200, rerun.text
+                record = core.history.get_run(rerun.headers["X-Toolang-Run-ID"])
+                assert record is not None and record.status == "succeeded"
+                assert isinstance(record.controls[0].payload, RunControlPayload)
+                assert record.controls[0].payload.input == CallInput(
+                    {"_": 7, "count": 8}
+                )
+            else:
+                assert rerun.status_code == 409, rerun.text
+                assert "Number" in rerun.json()["detail"]
+                assert core.store.list_runs(limit=None) == [
+                    core.store.get_run(run_id=original_id)
+                ]
+            assert core.history.get_run(original_id) == original
+    finally:
+        asyncio.run(core.close())
 
 
 def _authored_request(

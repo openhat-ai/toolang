@@ -28,6 +28,9 @@ def test_default_hooks_and_result_contract(tmp_path):
     assert echo.summary({}) is None
     assert echo.summary({}, ToolResult()) is None
     assert echo.paths({}, context) is None
+    raw = {"value": 1}
+    assert echo.bind_arguments(raw) == raw
+    assert echo.bind_arguments(raw) is not raw
     assert asyncio.run(echo.invoke({"value": 1}, context)) == ToolResult({"value": 1})
     assert {f.name for f in fields(ToolResult)} == {"output", "error"}
     first, second = ToolResult(), ToolResult()

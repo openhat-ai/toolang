@@ -275,6 +275,7 @@ class _FilesystemTool(Tool):
     async def invoke(
         self, arguments: Mapping[str, Any], context: ToolContext
     ) -> ToolResult:
+        arguments = self.bind_arguments(arguments)
         value = self._target(arguments)
         resolved, name, relative = resolve_input_path(
             value, context, follow=self.name != "remove"
@@ -307,15 +308,19 @@ class _FilesystemTool(Tool):
     def paths(
         self, arguments: Mapping[str, Any], context: ToolContext
     ) -> Mapping[str, tuple[str, ...]]:
+        arguments = self.bind_arguments(arguments)
         value = self._target(arguments)
         _resolved, name, relative = resolve_input_path(
             value, context, follow=self.name != "remove"
         )
         return {name: (relative,)}
 
-    def _target(self, arguments: Mapping[str, Any]) -> str:
+    def bind_arguments(self, arguments: Mapping[str, Any]) -> dict[str, Any]:
         if "workspace" in arguments or "cwd" in arguments:
             raise ToolangError("fs accepts path, not workspace or cwd arguments")
+        return self.tool.bind_arguments(arguments)
+
+    def _target(self, arguments: Mapping[str, Any]) -> str:
         value = arguments.get("path", "." if self.name in {"list", "glob"} else None)
         if not isinstance(value, str) or not value:
             raise ToolangError("tool requires a non-empty path")
