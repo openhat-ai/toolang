@@ -366,6 +366,83 @@ def test_private_module_discovery_retains_aliases_and_hides_other_private_docs(
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("current", ["worker", "research"])
+def test_discovery_keeps_export_and_same_named_private_agic(tmp_path, current):
+    home = tmp_path / "agents/alice"
+    (home / "flows").mkdir(parents=True)
+    source = "flow main():\n  run research\n"
+    (home / "agent.too").write_text(source)
+    (home / "flows/research.too").write_text(
+        "## Exported flow.\nflow():\n  exec worker\n"
+        "## Private namesake.\nagic research():\n  Help.\n"
+        "agic worker():\n  Inspect.\n"
+    )
+    state = prepare_agent_state(AgentLayout.resident(tmp_path, "alice"))
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=source,
+        state=state,
+        program=state.modules["agent"],
+        responses=[
+            *(
+                [
+                    ModelCallResult(
+                        tool_calls=(
+                            ToolCall(
+                                "transfer",
+                                "transfer",
+                                "_toolang__exec",
+                                {"runnable": "agic:research"},
+                            ),
+                        )
+                    )
+                ]
+                if current == "research"
+                else []
+            ),
+            query(),
+            query({"name": "flow:research"}, id="export"),
+            query({"name": "flows::research::agic:research"}, id="private"),
+            answer(),
+        ],
+    )
+    tracer = RecordingRunTracer()
+
+    async def scenario():
+        async with harness:
+            run = await harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    runnable="main",
+                ),
+                tracer=tracer,
+            )
+            assert run.status == "succeeded", run.error
+            results = [
+                last_tool_result(i.call) for i in harness.adapter.invocations[-3:]
+            ]
+            assert all(result.error is None for result in results)
+            assert all(
+                result.output["current"] == f"flows::research::agic:{current}"
+                for result in results
+            )
+            entries = {e["ref"]: e for e in results[0].output["runnables"]}
+            assert set(entries) == {
+                "flow:research",
+                "flows::research::agic:research",
+                "flows::research::agic:worker",
+            }
+            for result, ref, doc in (
+                (results[1], "flow:research", "Exported flow."),
+                (results[2], "flows::research::agic:research", "Private namesake."),
+            ):
+                assert result.output["runnables"] == [entries[ref]]
+                assert entries[ref]["doc"] == doc
+
+    asyncio.run(scenario())
+    assert_replayed(harness.store.db_path, tracer.events)
+
+
 def test_exec_removes_old_restrictions_without_rewriting_prior_batches(tmp_path):
     harness = ExecutionHarness.create(
         tmp_path,

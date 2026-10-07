@@ -75,21 +75,23 @@ class _ToolRuntime(ToolRuntime):
         current = target_for(binding)
         current_ref = runnable_ref(binding.state, current)
         if name is None:
+            # An exported flow alias can share its name with a private agic.
+            # Discovery must retain both kinds even if execution identities match.
             targets = {
-                target.identity: (self.adopted_state, target)
+                target.qualified: (self.adopted_state, target)
                 for target in visible_runnables(self.adopted_state, binding.module)
             }
-            targets[current.identity] = (binding.state, current)
+            targets[current.qualified] = (binding.state, current)
         else:
             try:
                 pinned = resolve_call_target(binding.state, binding.module, name)
             except ToolangError:
                 pinned = None
-            if pinned is not None and pinned.identity == current.identity:
-                targets = {current.identity: (binding.state, current)}
+            if pinned is not None and pinned.qualified == current.qualified:
+                targets = {current.qualified: (binding.state, current)}
             else:
                 target = resolve_call_target(self.adopted_state, binding.module, name)
-                targets = {target.identity: (self.adopted_state, target)}
+                targets = {target.qualified: (self.adopted_state, target)}
         entries = [
             {
                 "ref": runnable_ref(state, target),
