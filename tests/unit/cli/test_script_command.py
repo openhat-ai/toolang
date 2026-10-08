@@ -1709,6 +1709,7 @@ def test_script_routes_quiet_execution_through_a_remote_runtime(
         for key, value in runtime_options.items()
         if key != "workspace_additions"
     } == {
+        "temporary": True,
         "sandbox": "docker",
         "dev": tmp_path / "dist",
         "show_progress": False,

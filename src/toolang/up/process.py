@@ -278,7 +278,11 @@ class AgentProcess:
                 )
         return report if matches else None
 
-    def status(self, *, ui_base_url: str) -> AgentStatus | None:
+    def status(
+        self, *, ui_base_url: str, check_health: bool = False
+    ) -> AgentStatus | None:
+        """Inspect the workload, optionally requiring HTTP readiness for running."""
+
         if not self.layout.home.is_dir():
             return None
         from toolang.up.sandbox import load_state_sandbox, _health_ready
@@ -298,7 +302,7 @@ class AgentProcess:
                     endpoint = reference.ref.endpoint
                     status = (
                         "running"
-                        if report.get("status") == "running"
+                        if (not check_health and report.get("status") == "running")
                         or _health_ready(f"{endpoint.rstrip('/')}/healthz")
                         else "starting"
                     )

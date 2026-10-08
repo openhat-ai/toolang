@@ -26,13 +26,15 @@ from toolang.execution.schemas import (
     RetryRequest,
     RunDetail,
     RunRequest,
+    ThreadInfo,
 )
-from toolang.execution.types import ControlTiming, RunCommand, RunRef
+from toolang.execution.types import ControlTiming, RunCommand, RunRef, ThreadRef
 
 _LOGGER = logging.getLogger(__name__)
 _RUN_ID_HEADER = "X-Toolang-Run-ID"
 _RUN_DETAIL_ADAPTER = TypeAdapter(RunDetail)
 _CONTROL_INFO_ADAPTER = TypeAdapter(ControlInfo)
+_THREAD_INFO_ADAPTER = TypeAdapter(ThreadInfo)
 _RUN_REQUEST_ADAPTER = TypeAdapter(RunRequest)
 _MODEL_REQUEST_ADAPTER = TypeAdapter(ModelRequest)
 _MODEL_OVERRIDE_ADAPTER = TypeAdapter(ModelOverride)
@@ -247,6 +249,44 @@ class RemoteRunClient:
             await asyncio.gather(*readers, return_exceptions=True)
         if self._owns_http and self._http is not None:
             await self._http.aclose()
+
+    async def fork_thread(self, thread_id: str, *, run_id: str) -> ThreadInfo:
+        """Fork through a recorded run using the owning agent."""
+
+        return await self._mutate_thread(thread_id, "fork", run_id=run_id)
+
+    async def rewind_thread(self, thread_id: str, *, run_id: str) -> ThreadInfo:
+        """Rewind before a recorded run using the owning agent."""
+
+        return await self._mutate_thread(thread_id, "rewind", run_id=run_id)
+
+    async def _mutate_thread(
+        self, thread_id: str, action: str, *, run_id: str
+    ) -> ThreadInfo:
+        ThreadRef.parse(thread_id)
+        RunRef.parse(run_id)
+        response = await self._request(
+            "POST",
+            f"/api/v1/threads/{thread_id}/{action}",
+            operation=action,
+            json={"run_id": run_id},
+        )
+        body = _response_json(response, operation=action)
+        try:
+            thread = _THREAD_INFO_ADAPTER.validate_python(
+                cast(dict[str, object], body).get("thread")
+                if isinstance(body, dict)
+                else None
+            )
+        except ValidationError as exc:
+            raise RemoteRunClientError(
+                f"remote thread {action} returned invalid thread data"
+            ) from exc
+        if (thread.id == thread_id) != (action == "rewind"):
+            raise RemoteRunClientError(
+                f"remote thread {action} returned an unexpected thread"
+            )
+        return thread
 
     async def _wait_for_acceptance(
         self,

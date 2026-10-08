@@ -88,6 +88,103 @@ def _available_port() -> int:
         return int(stream.getsockname()[1])
 
 
+def test_concurrent_cli_acquisition_shares_a_persistent_host(tmp_path: Path) -> None:
+    layout = AgentLayout.resident(tmp_path / "toolang", "alice")
+    layout.home.mkdir(parents=True)
+    layout.program.write_text("# Agent alice\n")
+    layout.config.write_text(f"[api]\nport = {_available_port()}\n")
+    port = _available_port()
+    env = {
+        **os.environ,
+        "TOOLANG_ROOT": str(layout.root),
+        "TOOLANG_AGENT_PORT": str(port),
+    }
+    release = tmp_path / "release"
+    ready = [tmp_path / f"ready-{index}" for index in range(2)]
+    code = """
+from pathlib import Path
+import sys
+import time
+from toolang.cli.common.agent_server import acquire_agent_server
+from toolang.common.layout import AgentLayout
+
+layout = AgentLayout.resident(Path(sys.argv[1]), "alice")
+with acquire_agent_server(layout, sandbox="host", show_progress=False) as server:
+    Path(sys.argv[2]).write_text(server.endpoint)
+    deadline = time.monotonic() + 30
+    while not Path(sys.argv[3]).exists():
+        if time.monotonic() > deadline:
+            raise TimeoutError("callers did not overlap")
+        time.sleep(0.02)
+    if sys.argv[4] == "1":
+        raise LookupError("caller failed after acquisition")
+"""
+    workers = []
+    try:
+        for index, marker in enumerate(ready):
+            workers.append(
+                subprocess.Popen(
+                    (
+                        sys.executable,
+                        "-c",
+                        code,
+                        str(layout.root),
+                        str(marker),
+                        str(release),
+                        str(index),
+                    ),
+                    env=env,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                )
+            )
+        deadline = time.monotonic() + 25
+        while not all(marker.exists() for marker in ready):
+            for worker in workers:
+                if worker.poll() is not None:
+                    raise AssertionError(worker.communicate(timeout=1))
+            assert time.monotonic() < deadline, (
+                "both callers must acquire before either exits"
+            )
+            time.sleep(0.05)
+        assert [marker.read_text() for marker in ready] == [
+            f"http://localhost:{port}"
+        ] * 2
+        state = SandboxState.load(layout.sandbox_state)
+        assert state is not None
+        release.touch()
+        for index, worker in enumerate(workers):
+            _output, error = worker.communicate(timeout=10)
+            assert worker.returncode == index, error
+        assert SandboxState.load(layout.sandbox_state) == state
+        with urlopen(f"{state.ref.endpoint}/healthz", timeout=2) as response:
+            assert response.status == 200
+    finally:
+        release.touch()
+        for worker in workers:
+            if worker.poll() is None:
+                worker.kill()
+            worker.communicate(timeout=5)
+        if SandboxState.load(layout.sandbox_state) is not None:
+            subprocess.run(
+                (
+                    sys.executable,
+                    "-m",
+                    "toolang.cli.toolang",
+                    "--root",
+                    str(layout.root),
+                    "stop",
+                    "alice",
+                    "--force",
+                ),
+                env=env,
+                capture_output=True,
+                timeout=10,
+                check=False,
+            )
+
+
 def test_direct_server_registers_and_stops_without_signalling_shell(
     tmp_path: Path,
 ) -> None:

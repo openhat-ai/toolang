@@ -6,7 +6,8 @@ import asyncio
 import os
 from pathlib import Path
 import sys
-from typing import Annotated, Literal, cast
+from collections.abc import Awaitable, Callable
+from typing import Annotated, Literal, TypeVar
 from uuid import uuid4
 
 import typer
@@ -24,7 +25,7 @@ from toolang.cli.common.policy import (
 )
 from toolang.common.layout import AgentLayout
 from toolang.execution.client import RunClient, RunHandle
-from toolang.execution.executor import RunExecutor
+from toolang.execution.remote import RemoteRunClient, RemoteRunClientError
 from toolang.execution.inspection.history import RunHistory
 from toolang.execution.records import (
     RunControlPayload,
@@ -34,7 +35,6 @@ from toolang.execution.schemas import (
     RetryRequest,
     RunDetail,
 )
-from toolang.execution.threads import ThreadManager
 from toolang.execution.types import (
     RunCommand,
     StepRef,
@@ -81,16 +81,14 @@ def steer_command(
 ) -> None:
     """Persist one next-step steer control."""
 
-    with open_execution(ctx, required=True, writable=True) as resources:
+    with open_execution(ctx, required=True) as resources:
         if resources is None:  # pragma: no cover
             raise RuntimeError("execution resources were not opened")
         run_id = _active_run_id(RunHistory(resources.store), run)
-        user_call(
-            RunExecutor(resources.store, resources.ids).steer,
-            run_id=run_id,
-            message=Message.user(message),
-            timing="next_step",
-        )
+    _remote_action(
+        context_layout(ctx),
+        lambda client: client.steer(run_id, Message.user(message)),
+    )
     typer.echo(f"steered {run_id}")
 
 
@@ -107,14 +105,11 @@ def cancel_command(
 ) -> None:
     """Persist one immediate cancel control."""
 
-    with open_execution(ctx, required=True, writable=True) as resources:
+    with open_execution(ctx, required=True) as resources:
         if resources is None:  # pragma: no cover
             raise RuntimeError("execution resources were not opened")
         run_id = _active_run_id(RunHistory(resources.store), run)
-        user_call(
-            RunExecutor(resources.store, resources.ids).cancel,
-            run_id=run_id,
-        )
+    _remote_action(context_layout(ctx), lambda client: client.cancel(run_id))
     typer.echo(f"canceled {run_id}")
 
 
@@ -261,16 +256,15 @@ def rewind_command(
 ) -> None:
     """Rewind one idle thread before a terminal anchor run."""
 
-    with open_execution(ctx, required=True, writable=True) as resources:
+    with open_execution(ctx, required=True) as resources:
         if resources is None:  # pragma: no cover
             raise RuntimeError("execution resources were not opened")
         history = RunHistory(resources.store)
         thread_id, run_id = _anchor(history, point)
-        user_call(
-            ThreadManager(resources.store, resources.ids).rewind,
-            thread_id=thread_id,
-            run_id=run_id,
-        )
+    _remote_action(
+        context_layout(ctx),
+        lambda client: client.rewind_thread(thread_id, run_id=run_id),
+    )
     typer.echo(f"rewound {thread_id} before {run_id}")
     if chat:
         _open_chat(ctx, thread_id)
@@ -292,22 +286,39 @@ def fork_command(
 ) -> None:
     """Fork one thread through a terminal anchor run."""
 
-    with open_execution(ctx, required=True, writable=True) as resources:
+    with open_execution(ctx, required=True) as resources:
         if resources is None:  # pragma: no cover
             raise RuntimeError("execution resources were not opened")
         history = RunHistory(resources.store)
         thread_id, run_id = _anchor(history, point)
-        forked_id = cast(
-            str,
-            user_call(
-                ThreadManager(resources.store, resources.ids).fork,
-                thread_id=thread_id,
-                run_id=run_id,
-            ),
-        )
+    forked = _remote_action(
+        context_layout(ctx),
+        lambda client: client.fork_thread(thread_id, run_id=run_id),
+    )
+    forked_id = forked.id
     typer.echo(f"forked {forked_id} through {run_id}")
     if chat:
         _open_chat(ctx, forked_id)
+
+
+_Result = TypeVar("_Result")
+
+
+def _remote_action(
+    layout: AgentLayout,
+    action: Callable[[RemoteRunClient], Awaitable[_Result]],
+) -> _Result:
+    async def execute(server: AgentServerRef) -> _Result:
+        async with acquire_run_client(server) as client:
+            return await action(client)
+
+    try:
+        with acquire_agent_server(layout, sandbox=None) as server:
+            if server is None:
+                raise AgentServerAcquisitionError("agent acquisition requires a server")
+            return asyncio.run(execute(server))
+    except (OSError, ToolangError, ValueError, RuntimeError) as exc:
+        raise ClickException(str(exc)) from exc
 
 
 def _active_run_id(history: RunHistory, target: str) -> str:
@@ -367,6 +378,8 @@ def _run_retry_or_rerun(
             model_catalog=model_catalog,
             show_progress=show_progress,
         ) as server:
+            if server is None:
+                raise AgentServerAcquisitionError("agent acquisition requires a server")
             return asyncio.run(
                 _execute_retry_or_rerun(
                     layout=layout,
@@ -377,7 +390,6 @@ def _run_retry_or_rerun(
                     commands=commands,
                     model_override=model_override,
                     show_progress=show_progress,
-                    model_catalog=model_catalog,
                 )
             )
     except AgentServerAcquisitionError as exc:
@@ -412,14 +424,13 @@ def _rerun_model_override(
 async def _execute_retry_or_rerun(
     *,
     layout: AgentLayout,
-    server: AgentServerRef | None,
+    server: AgentServerRef,
     kind: Literal["retry", "rerun"],
     source: str,
     anchor: StepRef | None,
     commands: tuple[RunCommand, ...],
     model_override: ModelOverride | None,
     show_progress: bool,
-    model_catalog: Path | None,
 ) -> RunDetail:
     environ = load_runtime_environ(layout, base_environ=os.environ)
     run_id = source if kind == "retry" else None
@@ -436,11 +447,7 @@ async def _execute_retry_or_rerun(
         else None
     )
     try:
-        async with acquire_run_client(
-            layout,
-            server,
-            model_catalog=model_catalog,
-        ) as client:
+        async with acquire_run_client(server) as client:
             request_id = f"term_{uuid4().hex}"
             handle = (
                 await client.retry(
@@ -465,9 +472,15 @@ async def _execute_retry_or_rerun(
             )
             try:
                 return await handle.wait()
-            except BaseException:
+            except (asyncio.CancelledError, KeyboardInterrupt):
                 await _cancel_restart(client, handle, operation=kind)
                 raise
+            except RemoteRunClientError as exc:
+                raise RemoteRunClientError(
+                    f"{exc}; inspect accepted run {handle.run_id}",
+                    status_code=exc.status_code,
+                    detail=exc.detail,
+                ) from exc
     finally:
         if tracer is not None:
             tracer.close()

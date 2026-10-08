@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, cast
 
@@ -10,7 +12,6 @@ import pytest
 from toolang.cli.common import tmux
 from toolang.cli.common.errors import TmuxPlacementError
 from toolang.common.layout import AgentLayout
-from toolang.execution.inspection.history import RunHistory
 from toolang.execution.store import RunStore
 from typer._click.exceptions import ClickException
 from toolang.cli.toolang.commands.chat import main as chat
@@ -588,31 +589,40 @@ def test_place_chat_displays_window_or_pane_creation_failure(
     assert not window.pads and not session.opened
 
 
-def test_cli_allocates_thread_before_launch_and_preserves_parsed_options(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("run_here", [False, True])
+def test_cli_allocates_hosted_thread_before_launch_and_applies_startup_options_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, run_here: bool
 ) -> None:
     layout = AgentLayout.resident(tmp_path / "root with spaces", "chat")
     captured: dict[str, Any] = {}
 
+    class Session:
+        def create_thread(self) -> str:
+            captured["created"] = True
+            return "term_hosted"
+
+    @contextmanager
+    def runtime(_ctx: Any, **kwargs: Any) -> Iterator[Session]:
+        captured["startup"] = kwargs
+        yield Session()
+        captured["closed"] = True
+
     class RecordingLauncher:
         def place_chat(self, **kwargs: Any) -> bool:
-            store = RunStore(layout.run_store, read_only=True)
-            try:
-                detail = RunHistory(store).get_thread(kwargs["thread_id"], run_limit=0)
-                assert detail is not None and detail.run_count == 0
-            finally:
-                store.close()
+            assert captured["created"] and captured["closed"]
+            assert not layout.run_store.exists()
             captured.update(kwargs)
-            return False
+            return run_here
 
     monkeypatch.setattr(chat.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr(chat.sys.stdout, "isatty", lambda: True)
     monkeypatch.setattr(chat, "context_layout", lambda _ctx: layout)
     monkeypatch.setattr(chat, "resolve_launcher", lambda **_kwargs: RecordingLauncher())
+    monkeypatch.setattr(chat, "_chat_runtime", runtime)
     monkeypatch.setattr(
         chat,
         "_chat_interactive",
-        lambda *_args, **_kwargs: pytest.fail("must hand off"),
+        lambda _ctx, **kwargs: captured.update(interactive=kwargs),
     )
     chat.chat_command(
         cast(Any, None),
@@ -624,7 +634,22 @@ def test_cli_allocates_thread_before_launch_and_preserves_parsed_options(
         limits=["steps=5"],
         compact_model="provider/model",
     )
-    assert captured["thread_id"].startswith("term_")
+    assert captured["thread_id"] == "term_hosted"
+    assert captured["startup"] == {
+        "sandbox": "docker:cfg",
+        "dev": Path("my wheel"),
+        "model_catalog": Path("catalog.toml"),
+        "compact_model": "provider/model",
+        "workspace": None,
+        "workdir": None,
+    }
+    if run_here:
+        assert captured["interactive"]["thread_id"] == "term_hosted"
+        assert captured["interactive"]["dev"] is None
+        assert captured["interactive"]["compact_model"] is None
+        assert captured["interactive"]["model_catalog"] is None
+    else:
+        assert "interactive" not in captured
     assert captured["argv"] == [
         chat.sys.executable,
         "-m",
@@ -635,10 +660,7 @@ def test_cli_allocates_thread_before_launch_and_preserves_parsed_options(
         "chat",
         "--thread",
         captured["thread_id"],
-        "--catalog=catalog.toml",
         "--sandbox=docker:cfg",
-        "--dev=my wheel",
-        "--compact-model=provider/model",
         "--allow=tools=a,b",
         "--default=runnable=agic:chat",
         "--limit=steps=5",
@@ -672,21 +694,35 @@ def test_direct_chat_does_not_allocate_thread_or_touch_tmux(
     assert tmux.resolve_marks() is None
 
 
-def test_tmux_thread_reuses_validates_and_keeps_empty_threads(tmp_path: Path) -> None:
+def test_tmux_existing_thread_is_reused_before_runtime_acquisition(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     layout = AgentLayout.resident(tmp_path, "eve")
-    first = chat._tmux_thread(layout, None)
-    assert chat._tmux_thread(layout, first) == first
-    second = chat._tmux_thread(layout, None)
-    assert second != first
+    store = RunStore(layout.run_store)
+    store.create_thread(thread_id="term_existing", created_at="2026-10-08T00:00:00Z")
+    store.close()
+    captured: dict[str, Any] = {}
+
+    class Launcher:
+        def place_chat(self, **kwargs: Any) -> bool:
+            captured.update(kwargs)
+            return False
+
+    monkeypatch.setattr(chat.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(chat.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(chat, "context_layout", lambda _ctx: layout)
+    monkeypatch.setattr(chat, "resolve_launcher", lambda **_kwargs: Launcher())
+    monkeypatch.setattr(
+        chat, "_chat_runtime", lambda *_a, **_kw: pytest.fail("must hand off first")
+    )
+    monkeypatch.setattr(
+        "toolang.cli.common.execution.context_layout", lambda _ctx: layout
+    )
+    chat.chat_command(cast(Any, None), thread="term_existing", dev=Path("wheel"))
+    assert captured["thread_id"] == "term_existing"
+    assert "--dev=wheel" in captured["argv"]
     with pytest.raises(ClickException, match="thread not found"):
-        chat._tmux_thread(layout, "term_missing")
-    store = RunStore(layout.run_store, read_only=True)
-    try:
-        threads = RunHistory(store).list_threads()
-        assert {thread.id for thread in threads} == {first, second}
-        assert all(thread.run_count == 0 for thread in threads)
-    finally:
-        store.close()
+        chat.chat_command(cast(Any, None), thread="term_missing")
 
 
 def test_current_unmarked_pane_is_used_only_in_the_exact_thread_window(

@@ -19,6 +19,7 @@ from typing import Any, cast
 from types import SimpleNamespace
 
 
+import httpx
 import pytest
 import typer
 from typer._click.utils import strip_ansi
@@ -77,6 +78,9 @@ from toolang.lang.types import Array, Struct
 from toolang.setup import AgentSetup, ToolCollection
 from toolang.up import process as agents
 from toolang.up.types import AgentServerRef
+from toolang.up import AgentCore
+from toolang.api.app import create_app
+from toolang.catalog import CapsManager, JobsManager
 from toolang.work.state import load_ready_jobs
 from toolang.work.store import JobStore
 from toolang.base.protocols.tool import Tool
@@ -2365,7 +2369,54 @@ def test_visiting_selector_reads_inspection_without_fetching(
     }
 
 
-def test_run_controls_are_persisted_without_an_api_server(tmp_path: Path) -> None:
+@pytest.fixture
+def hosted_agent(monkeypatch):
+    cores = []
+    async_client = httpx.AsyncClient
+
+    def host(layout):
+        core = AgentCore(layout)
+        cores.append(core)
+        agents.write_runtime_state(
+            layout,
+            endpoint="http://runtime.test:7001",
+            sandbox="host",
+            started_at="2026-10-08T00:00:00Z",
+            pid=123,
+            sandbox_description="Test OS 1.0 arm64",
+        )
+        app = create_app(
+            core, CapsManager(layout), JobsManager(layout), cors_allowed_origins=()
+        )
+        requests = []
+
+        async def observe(request):
+            requests.append((request.method, request.url.path))
+
+        @contextmanager
+        def acquire(selected, **_kwargs):
+            assert selected == layout
+            yield AgentServerRef(sandbox="host", endpoint="http://runtime.test:7001")
+
+        def client_factory(**kwargs):
+            return async_client(
+                **kwargs,
+                transport=httpx.ASGITransport(app=app),
+                event_hooks={"request": [observe]},
+            )
+
+        monkeypatch.setattr(thread_commands, "acquire_agent_server", acquire)
+        monkeypatch.setattr(httpx, "AsyncClient", client_factory)
+        return requests
+
+    yield host
+    for core in cores:
+        asyncio.run(core.close())
+
+
+def test_run_controls_are_persisted_through_the_agent_api(
+    tmp_path: Path, hosted_agent
+) -> None:
     root = tmp_path / "toolang"
     _create_agent(root)
     layout = AgentLayout.resident(root, "alice")
@@ -2381,6 +2432,7 @@ def test_run_controls_are_persisted_without_an_api_server(tmp_path: Path) -> Non
     finally:
         store.close()
 
+    requests = hosted_agent(layout)
     steer = _invoke(root, "alice", "steer", "term_active", "Focus on tests")
     cancel = _invoke(root, "alice", "cancel", "run_active")
 
@@ -2388,6 +2440,10 @@ def test_run_controls_are_persisted_without_an_api_server(tmp_path: Path) -> Non
     assert steer.stdout.strip() == "steered run_active"
     assert cancel.exit_code == 0
     assert cancel.stdout.strip() == "canceled run_active"
+    assert [path for method, path in requests if method == "POST"] == [
+        "/api/v1/runs/run_active/steer",
+        "/api/v1/runs/run_active/cancel",
+    ]
     reopened = RunStore(layout.run_store)
     try:
         controls = reopened.list_run_controls(run_id="run_active")
@@ -2405,7 +2461,7 @@ def test_run_controls_are_persisted_without_an_api_server(tmp_path: Path) -> Non
 
 
 @pytest.mark.parametrize("tty", (False, True), ids=("non-tty", "tty"))
-def test_retry_and_rerun_execute_locally_with_limit_overrides(
+def test_retry_and_rerun_preserve_limit_overrides(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     tty: bool,
@@ -2452,13 +2508,11 @@ agic reply(_: Part[]) -> Part[]:
         **_kwargs: object,
     ):
         runtime_selections.append(sandbox)
-        yield None
+        yield AgentServerRef(sandbox="host", endpoint="http://runtime.test:7001")
 
     @asynccontextmanager
     async def run_client(
-        _layout: AgentLayout,
-        _server: AgentServerRef | None,
-        **_kwargs: object,
+        _server: AgentServerRef,
     ):
         executor = RunExecutor(
             harness.store,
@@ -2652,11 +2706,7 @@ agic reply(_: Part[]) -> Part[]:
         )
 
     @asynccontextmanager
-    async def run_client(
-        _layout: AgentLayout,
-        _server: AgentServerRef | None,
-        **_kwargs: object,
-    ):
+    async def run_client(_server: AgentServerRef):
         yield _Client()
 
     monkeypatch.setattr(thread_commands, "acquire_agent_server", agent_server_context)
@@ -2710,6 +2760,7 @@ agic reply(_: Part[]) -> Part[]:
 
 def test_thread_fork_and_rewind_use_thread_manager_semantics(
     tmp_path: Path,
+    hosted_agent,
 ) -> None:
     root = tmp_path / "toolang"
     _create_agent(root)
@@ -2735,6 +2786,7 @@ def test_thread_fork_and_rewind_use_thread_manager_semantics(
     finally:
         store.close()
 
+    requests = hosted_agent(layout)
     fork = _invoke(root, "alice", "fork", "term_source")
 
     assert fork.exit_code == 0
@@ -2754,6 +2806,10 @@ def test_thread_fork_and_rewind_use_thread_manager_semantics(
 
     assert rewind.exit_code == 0
     assert rewind.stdout.strip() == "rewound term_source before run_second"
+    assert [path for method, path in requests if method == "POST"] == [
+        "/api/v1/threads/term_source/fork",
+        "/api/v1/threads/term_source/rewind",
+    ]
     reopened = RunStore(layout.run_store)
     try:
         rewound = RunHistory(reopened).get_thread("term_source")
@@ -2766,7 +2822,7 @@ def test_thread_fork_and_rewind_use_thread_manager_semantics(
 @pytest.mark.parametrize("command", ("fork", "rewind"))
 @pytest.mark.parametrize("inherited", (False, True), ids=("owned", "inherited"))
 def test_thread_commands_anchor_on_roots_with_child_runs(
-    tmp_path: Path, command: str, inherited: bool
+    tmp_path: Path, command: str, inherited: bool, hosted_agent
 ) -> None:
     root = tmp_path / "toolang"
     _create_agent(root)
@@ -2816,6 +2872,7 @@ def test_thread_commands_anchor_on_roots_with_child_runs(
     finally:
         store.close()
 
+    hosted_agent(layout)
     result = _invoke(root, "alice", command, thread_id)
 
     assert result.exit_code == 0, result.stderr
