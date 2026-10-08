@@ -27,8 +27,8 @@ def test_agent_table_fills_body_width_and_preserves_long_tokens(width):
     text = "".join(segment.text for segment in segments)
     assert "…" not in text
     assert token in "".join(text.split())
-    ruler = next(line for line in text.splitlines() if "─" in line)
-    assert len(ruler.strip()) == width - min(8, width // 5) - 4
+    ruler = next(line for line in text.splitlines()[2:] if "─" in line)
+    assert len(ruler.strip()) == width - 4
     assert all(len(line) <= width for line in text.splitlines())
 
 
@@ -37,13 +37,14 @@ def test_agent_headings_lists_and_rules_follow_chat_layout():
     lines = [
         line.rstrip() for line in "".join(s.text for s in render(source)).splitlines()
     ]
-    assert "• alice" in lines
+    assert lines[0] == "  " + "┄" * 58
+    assert lines[1] == "• alice"
     assert "  Heading" in lines
     assert "  • outer" in lines
     assert "    • inner" in lines
     assert "  1 first" in lines
     assert "  2 second" in lines
-    assert "  " + "─" * 48 in lines
+    assert "  " + "─" * 56 in lines
 
 
 @pytest.mark.parametrize("surfaces", [DARK_TERMINAL_SURFACES, LIGHT_TERMINAL_SURFACES])
