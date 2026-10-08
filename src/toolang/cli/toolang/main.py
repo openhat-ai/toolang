@@ -51,6 +51,7 @@ WORK_COMMAND_PANEL = "Work Commands"
 CAPS_COMMAND_PANEL = "Cap Commands"
 INSPECTION_COMMAND_PANEL = "Inspection Commands"
 SCRIPT_COMMAND_PANEL = "Script Commands"
+TEAMING_COMMAND_PANEL = "Teaming Commands"
 RUN_COMMAND_PANEL = "Run Commands"
 THREAD_COMMAND_PANEL = "Thread Commands"
 RUNTIME_COMMAND_PANEL = "Runtime Commands"
@@ -66,7 +67,7 @@ _AGENT_PANEL_COMMAND_ORDER = (
     "start",
     "stop",
 )
-_WORK_PANEL_COMMAND_ORDER = ("chat", "text", "hub", "chore", "task", "workspace")
+_WORK_PANEL_COMMAND_ORDER = ("chat", "chore", "task", "workspace")
 _CAPS_PANEL_COMMAND_ORDER = ("psyche", "skill", "service", "prompt")
 _RUN_PANEL_COMMAND_ORDER = ("steer", "cancel", "retry", "rerun")
 _THREAD_PANEL_COMMAND_ORDER = ("fork", "rewind")
@@ -78,6 +79,7 @@ _INSPECTION_PANEL_COMMAND_ORDER = (
     "inspect",
 )
 _SCRIPT_PANEL_COMMAND_ORDER = ("init", "run")
+_TEAMING_PANEL_COMMAND_ORDER = ("hub", "text")
 # Root-hidden run and thread commands stay discoverable in target help.
 _TARGET_HELP_COMMANDS = frozenset(
     (*_RUN_PANEL_COMMAND_ORDER, *_THREAD_PANEL_COMMAND_ORDER)
@@ -95,6 +97,7 @@ _VISIBLE_COMMAND_ORDER = (
     *_WORK_PANEL_COMMAND_ORDER,
     *_INSPECTION_PANEL_COMMAND_ORDER,
     *_SCRIPT_PANEL_COMMAND_ORDER,
+    *_TEAMING_PANEL_COMMAND_ORDER,
 )
 # Root-hidden run and thread commands still need an order for target help.
 _COMMAND_ORDER = (
@@ -402,7 +405,7 @@ _registered_command(
     "toolang.cli.toolang.commands.text:text_command",
     help="Send messages or open a conversation",
     context_settings={"allow_interspersed_args": False},
-    rich_help_panel=WORK_COMMAND_PANEL,
+    rich_help_panel=TEAMING_COMMAND_PANEL,
 )
 
 _registered_group(
@@ -410,7 +413,7 @@ _registered_group(
     name="hub",
     help="Manage the teaming Hub",
     no_args_is_help=True,
-    rich_help_panel=WORK_COMMAND_PANEL,
+    rich_help_panel=TEAMING_COMMAND_PANEL,
 )
 
 

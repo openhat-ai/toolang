@@ -338,7 +338,8 @@ def test_cli_control_commands_have_consistent_order_and_descriptions() -> None:
     assert {name: group.commands[name].help for name in expected} == expected
 
 
-def test_cli_visible_commands_follow_the_public_panel_order() -> None:
+@pytest.mark.parametrize("arguments", [[], ["--help"], ["-h"]])
+def test_cli_visible_commands_follow_the_public_panel_order(arguments, capsys) -> None:
     group = typer.main.get_command(cli.app)
     expected = {
         "Agent Commands": (
@@ -353,9 +354,10 @@ def test_cli_visible_commands_follow_the_public_panel_order() -> None:
             "stop",
         ),
         "Cap Commands": ("psyche", "skill", "service", "prompt"),
-        "Work Commands": ("chat", "text", "hub", "chore", "task", "workspace"),
+        "Work Commands": ("chat", "chore", "task", "workspace"),
         "Inspection Commands": ("caps", "tools", "models", "providers", "inspect"),
         "Script Commands": ("init", "run"),
+        "Teaming Commands": ("hub", "text"),
     }
 
     assert isinstance(group, TyperGroup)
@@ -369,6 +371,20 @@ def test_cli_visible_commands_follow_the_public_panel_order() -> None:
         assert {
             getattr(group.commands[name], "rich_help_panel", None) for name in names
         } == {panel}
+
+    assert _call_main(arguments) == 0
+    output = capsys.readouterr()
+    assert not output.err
+    help_text = strip_ansi(output.out)
+    panels = [*expected, "Options"]
+    positions = [help_text.index(f"{panel}:") for panel in panels]
+    assert positions == sorted(positions)
+    for (panel, names), next_panel in zip(expected.items(), panels[1:]):
+        section = help_text.split(f"{panel}:\n", 1)[1].split(f"{next_panel}:", 1)[0]
+        assert (
+            tuple(line.split()[0] for line in section.splitlines() if line.strip())
+            == names
+        )
 
 
 def test_workspace_commands_follow_the_public_order() -> None:
