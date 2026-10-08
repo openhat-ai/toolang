@@ -90,7 +90,9 @@ def _set_status(
         def __init__(self, selected: AgentLayout) -> None:
             assert selected == layout
 
-        def status(self, *, ui_base_url: str) -> AgentStatus | None:
+        def status(
+            self, *, ui_base_url: str, check_health: bool = False
+        ) -> AgentStatus | None:
             assert ui_base_url == "https://ui.test"
             return status
 
@@ -882,3 +884,53 @@ def test_persistent_host_survives_command_completion_and_failure(
             acquire()
     else:
         acquire()
+
+
+@pytest.mark.parametrize("ready", (True, False))
+def test_persistent_acquisition_waits_for_http_after_running_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, ready: bool
+) -> None:
+    import os
+
+    from toolang.plugin.sandboxes.host import process_ref
+
+    layout = AgentLayout.resident(tmp_path, "alice")
+    layout.home.mkdir(parents=True)
+    ref = process_ref(os.getpid(), "http://localhost:8123")
+    SandboxState("host", ref).save(layout.sandbox_state)
+    agent_server.agents.write_runtime_state(
+        layout,
+        endpoint=ref.endpoint,
+        started_at="2026-10-08T00:00:00Z",
+        pid=os.getpid(),
+        process_created=ref.meta["created"],
+    )
+    probes: list[str] = []
+
+    def health(url: str) -> bool:
+        probes.append(url)
+        return ready and len(probes) > 1
+
+    monkeypatch.setattr(agent_server.sandbox_runtime, "_health_ready", health)
+    monkeypatch.setattr(agent_server.time, "sleep", lambda _duration: None)
+    monkeypatch.setattr(agent_server, "AGENT_READY_TIMEOUT_SEC", 1 if ready else 0)
+    monkeypatch.setattr(
+        agent_server,
+        "_resolve_inactive_launch",
+        lambda *_a, **_kw: pytest.fail("must not start a competing runtime"),
+    )
+    # A direct serve process publishes this report before HTTP starts listening.
+    status = agent_server.agents.AgentProcess(layout).status(ui_base_url="")
+    assert status is not None and status.status == "running"
+    assert not probes
+
+    if ready:
+        with agent_server.acquire_agent_server(layout, sandbox="host") as server:
+            assert server == AgentServerRef(sandbox="host", endpoint=ref.endpoint)
+        assert probes == [f"{ref.endpoint}/healthz"] * 2
+    else:
+        with pytest.raises(agent_server.AgentServerAcquisitionError, match="ready"):
+            with agent_server.acquire_agent_server(layout, sandbox="host"):
+                pytest.fail("unready runtime acquired")
+        assert probes == [f"{ref.endpoint}/healthz"]
+    assert SandboxState.load(layout.sandbox_state) == SandboxState("host", ref)

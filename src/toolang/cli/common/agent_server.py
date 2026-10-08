@@ -129,7 +129,9 @@ def _prepare_agent_server(
     workspace_additions: Mapping[str, str] | None,
     temporary: bool,
 ) -> AgentServerRef | sandbox_runtime.SandboxHandle | None:
-    status = agents.AgentProcess(layout).status(ui_base_url=ui_base_url)
+    status = agents.AgentProcess(layout).status(
+        ui_base_url=ui_base_url, check_health=not temporary
+    )
     if status is not None and status.status in {"preparing", "starting"}:
         if temporary:
             raise AgentServerAcquisitionError(
@@ -142,7 +144,9 @@ def _prepare_agent_server(
                     f"agent {layout.name} did not become ready; see {layout.runtime_log}"
                 )
             time.sleep(0.1)
-            status = agents.AgentProcess(layout).status(ui_base_url=ui_base_url)
+            status = agents.AgentProcess(layout).status(
+                ui_base_url=ui_base_url, check_health=True
+            )
         if status is None or status.status != "running":
             raise AgentServerAcquisitionError(
                 f"agent {layout.name} stopped before becoming ready; see {layout.runtime_log}"
