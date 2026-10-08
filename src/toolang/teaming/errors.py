@@ -19,6 +19,10 @@ class LeaseLost(MessagingError):
     """The agent no longer owns the lease for this operation."""
 
 
+class HubIdentityChanged(MessagingError):
+    """The Hub no longer matches the client's fixed backend or human identity."""
+
+
 class SendUnconfirmed(MessagingError):
     """The server may have accepted the message; do not retransmit automatically."""
 

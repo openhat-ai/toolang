@@ -11,6 +11,7 @@ import httpx
 from toolang.execution.errors import SnapshotLimitError
 from .errors import (
     BackendUnavailable,
+    HubIdentityChanged,
     MessagingError,
     SendUnconfirmed,
     EventProtocolError,
@@ -121,7 +122,7 @@ class HubClient:
         if code == "hub_changed":
             if self._lease is not None:
                 raise BackendUnavailable("Hub identity changed; reconnecting")
-            raise MessagingError("Hub identity changed; reopen Text")
+            raise HubIdentityChanged("Hub identity changed; reopen Text")
         raise MessagingError(str(detail))
 
     async def agents(self) -> dict[str, str]:

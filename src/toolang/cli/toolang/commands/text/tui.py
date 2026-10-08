@@ -2,11 +2,11 @@
 
 import asyncio
 from pathlib import Path
-from time import monotonic
 from typing import Any
 
 from prompt_toolkit.application import Application, run_in_terminal
 from prompt_toolkit.filters import Condition, has_focus
+from prompt_toolkit.formatted_text import StyleAndTextTuples
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.layout import HSplit, HorizontalAlign, Layout, VSplit, Window
 from prompt_toolkit.layout.controls import FormattedTextControl
@@ -15,41 +15,46 @@ from rich.text import Text
 
 from toolang.cli.common.console import terminal_console
 from toolang.cli.common.execution_progress.config import DEFAULT_MAX_PROGRESS_WIDTH
-from toolang.cli.common.execution_progress.formatting import display_width, truncate
 from toolang.cli.common.input import InputBox
 from toolang.cli.common.input_history import InputHistoryStore
 from toolang.cli.common.scrollback import ScrollbackRenderer
 from toolang.cli.common.terminal_surfaces import TerminalSurfaces
 from toolang.common.files import atomic_write_text
 from toolang.teaming.client import HubClient
-from toolang.teaming.errors import BackendUnavailable, MessagingError, SendUnconfirmed
-from toolang.teaming.schemas import Message
+from toolang.teaming.errors import (
+    BackendUnavailable,
+    HubIdentityChanged,
+    MessagingError,
+    SendUnconfirmed,
+)
+from toolang.teaming.schemas import Conversation, Message, target
 
 from .rendering import display_text, message_block
+from .status import conversation_name, status_line
 
 
 class TextTui:
     def __init__(
         self,
         client: HubClient,
-        group: str,
+        conversation: Conversation,
         human: str,
         state: Path,
         surfaces: TerminalSurfaces,
         *,
         read_only: bool,
-        label: str | None = None,
         max_width: int = DEFAULT_MAX_PROGRESS_WIDTH,
     ):
-        self.client, self.group, self.human = client, group, human
+        self.client, self.group, self.human = client, conversation.id, human
         self.surfaces = surfaces
         self.read_only = read_only
-        self.label = label or group
+        self.label = conversation_name(conversation, human)
+        self.members = conversation.members
+        self.online_count: int | None = None
         self.max_width = max_width
         self.draft = state / "draft.txt"
         self.connection = "Connecting…"
         self.status = ""
-        self.sent_until = 0.0
         self.pending = False
         self.cursor = "0-0"
         self.agents: set[str] = set()
@@ -164,37 +169,39 @@ class TextTui:
         # Keep the three-row input and footer usable in very short terminals.
         return int(self.app.output.get_size().rows >= 5)
 
-    def status_text(self) -> list[tuple[str, str]]:
-        status = self.status
-        if status == "Sent" and (
-            monotonic() >= self.sent_until or self.connection != "Connected"
-        ):
-            status = ""
-        state = self.connection + (f" · {status}" if status else "")
-        if self.read_only:
-            state = f"Read-only · {state}"
-        label = self.label
-        left = " ".join(display_text(f" {label} · {state}").split())
-        width = self.content_width()
-        hint = (
-            "Ctrl+Q quit"
-            if self.read_only
-            else "Enter send · Ctrl+J newline · Ctrl+Q quit"
+    def status_text(self) -> StyleAndTextTuples:
+        connected = self.connection == "Connected"
+        warning = False
+        if not connected:
+            left = self.connection
+            warning = self.connection != "Connecting…"
+        elif self.status not in {"", "Sending…", "Sent"}:
+            left, warning = self.status, True
+        else:
+            left = f"from {target(self.human).name}"
+            if self.read_only:
+                left += " · read-only"
+        online = (
+            self.online_count if connected and self.online_count is not None else "?"
         )
-        if display_width(left) + display_width(hint) + 2 > width:
-            hint = "Ctrl+Q quit" if width >= 30 else ""
-        left = truncate(left, max(1, width - display_width(hint) - (2 if hint else 0)))
-        gap = " " * max(0, width - display_width(left) - display_width(hint))
-        warning = self.connection in {"Reconnecting…", "Stopped"} or status not in {
-            "",
-            "Sending…",
-            "Sent",
-        }
-        return [
-            ("class:status.warning" if warning else "class:status", left),
-            ("", gap),
-            ("class:status", hint),
-        ]
+        return status_line(
+            left,
+            self.label,
+            f"{online}/{len(self.members)}",
+            width=self.content_width(),
+            warning=warning,
+        )
+
+    async def refresh_directory(self) -> None:
+        agents = set(await self.client.agents())
+        groups = await self.client.contacts()
+        info = next((info for info in groups if info["group"] == self.group), None)
+        if info is None:
+            raise MessagingError(f"Unknown group: {self.group}")
+        self.agents = agents
+        self.members = tuple(info["members"])
+        self.online_count = len(agents.intersection(info["online"], self.members))
+        self.invalidate()
 
     def save_draft(self) -> None:
         if self.read_only:
@@ -213,6 +220,8 @@ class TextTui:
         try:
             await self.client.send(self.group, body=body)
         except MessagingError as exc:
+            if isinstance(exc, HubIdentityChanged):
+                self.connection = "Reopen Text"
             self.status = (
                 "Send not confirmed"
                 if isinstance(exc, SendUnconfirmed)
@@ -222,7 +231,6 @@ class TextTui:
         else:
             self.connection = "Connected"
             self.status = "Sent"
-            self.sent_until = monotonic() + 2
             self.prompt.accept_submission(body)
             self.save_draft()
         finally:
@@ -273,7 +281,7 @@ class TextTui:
                     or reconnecting
                     or asyncio.get_running_loop().time() >= refresh_at
                 ):
-                    self.agents = set(await self.client.agents())
+                    await self.refresh_directory()
                     refresh_at = asyncio.get_running_loop().time() + 10
                 if not initialized:
                     entries = await self.client.history(self.group)
@@ -301,7 +309,9 @@ class TextTui:
                 reconnecting = True
                 delay = min(delay * 2, 5)
             except MessagingError as exc:
-                self.connection = "Stopped"
+                self.connection = (
+                    "Reopen Text" if isinstance(exc, HubIdentityChanged) else "Stopped"
+                )
                 self.status = str(exc)
                 self.invalidate()
                 await self.print_notice(self.status)

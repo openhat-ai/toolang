@@ -37,7 +37,7 @@ from toolang.teaming.backend import Backend, group_key
 from toolang.teaming.config import BackendConfig
 from toolang.teaming.errors import SendUnconfirmed
 from toolang.teaming.schemas import Message
-from toolang.teaming.schemas import HubConnection
+from toolang.teaming.schemas import Conversation, HubConnection
 from toolang.teaming.api import create_app
 from toolang.teaming.client import HubClient
 
@@ -181,7 +181,9 @@ def test_human_observer_sees_both_agents_left_without_a_composer(
                 isinstance(control, BufferControl)
                 for control in ui.app.layout.find_all_controls()
             )
-            assert "agent:alice ↔ agent:bob · Read-only" in str(ui.status_text())
+            ui.connection = "Connected"
+            assert "from bryan · read-only" in str(ui.status_text())
+            assert "dm_alice_bob" in str(ui.status_text())
             assert "Enter send" not in str(ui.status_text())
             await ui.send("accidental send")
             assert len(await ui.client.history(ui.group)) == 2
@@ -269,7 +271,7 @@ def test_failed_send_preserves_draft_and_success_does_not_erase_new_typing(
             client = AsyncMock()
             ui = TextTui(
                 client,
-                "all",
+                Conversation("group:all", "group", ("human:bryan", "agent:alice")),
                 "human:bryan",
                 tmp_path,
                 DARK_TERMINAL_SURFACES,
@@ -553,7 +555,14 @@ def test_follow_reconnects_from_last_displayed_id_without_replaying_history(
             create_app_session(input=pipe, output=DummyOutput()),
         ):
             client = AsyncMock()
-            client.agents.return_value = {"alice": "bryan"}
+            client.agents.return_value = {"agent:alice": "human:bryan"}
+            client.contacts.return_value = [
+                {
+                    "group": "group:all",
+                    "members": ["human:bryan", "agent:alice"],
+                    "online": ["agent:alice"],
+                }
+            ]
             first = (
                 "100-9",
                 {"data": Message.create("agent:alice", "history").encode()},
@@ -571,7 +580,7 @@ def test_follow_reconnects_from_last_displayed_id_without_replaying_history(
             client.check_cursor.return_value = None
             ui = TextTui(
                 client,
-                "all",
+                Conversation("group:all", "group", ("human:bryan", "agent:alice")),
                 "human:bryan",
                 tmp_path,
                 DARK_TERMINAL_SURFACES,
@@ -596,6 +605,7 @@ def test_follow_reconnects_from_last_displayed_id_without_replaying_history(
                 await ui.follow()
             assert shown == ["100-9", "100-10"]
             client.history.assert_awaited_once()
+            assert client.contacts.await_count == 2
             assert [call.kwargs["after"] for call in client.read.call_args_list] == [
                 "100-9",
                 "100-9",
@@ -628,3 +638,47 @@ def test_messaging_commands_work_without_config_file(
     assert not (tmp_path / "config.toml").exists()
     assert cli.main(["--root", str(tmp_path), *arguments]) == 0
     assert "Error" not in capsys.readouterr().err
+
+
+def test_footer_refresh_uses_hub_membership_and_agent_presence(
+    tmp_path, messaging_cli, monkeypatch
+):
+    monkeypatch.setattr(text.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(text.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(text, "resolve_launcher", lambda **kwargs: None)
+    monkeypatch.setenv("TOOLANG_COLOR_SCHEME", "dark")
+
+    async def inspect_ui(ui):
+        async with (
+            messaging_cli(actor="human:visitor") as visitor,
+            messaging_cli(actor="agent:bob") as bob,
+            messaging_cli(actor="agent:alice") as alice,
+        ):
+            await bob.register("human:visitor")
+            await alice.join_group("group:dev")
+            assert ui.online_count is None
+            await ui.refresh_directory()
+            ui.connection = "Connected"
+            assert len(ui.members) == 2 and ui.online_count == 1
+            assert "1/2" in str(ui.status_text())
+            await visitor.join_group("group:dev")
+            await ui.refresh_directory()
+            assert len(ui.members) == 3 and ui.online_count == 1
+            await bob.join_group("group:dev")
+            await ui.refresh_directory()
+            assert len(ui.members) == 4 and ui.online_count == 2
+            assert "2/4" in str(ui.status_text())
+            await bob.unregister()
+            await ui.refresh_directory()
+            assert len(ui.members) == 4 and ui.online_count == 1
+            async with messaging_cli(actor="human:newcomer"):
+                await ui.refresh_directory()
+                assert len(ui.members) == 4 and ui.online_count == 1
+                assert "1/4" in str(ui.status_text())
+
+    monkeypatch.setattr(TextTui, "run", inspect_ui)
+    with (
+        create_pipe_input() as pipe,
+        create_app_session(input=pipe, output=DummyOutput()),
+    ):
+        assert cli.main(["--root", str(tmp_path), "text", "dev"]) == 0

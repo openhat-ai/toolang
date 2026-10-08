@@ -115,12 +115,11 @@ def text_command(
                 info = await client.conversation(resolved)
                 await TextTui(
                     client,
-                    resolved,
+                    info,
                     human,
                     state,
                     surfaces,
                     read_only=not info.allows_sender(human),
-                    label=info.label,
                     max_width=max_width,
                 ).run()
 
