@@ -4,6 +4,7 @@ import asyncio
 from contextlib import suppress
 from pathlib import Path
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -24,6 +25,7 @@ from toolang.teaming.config import BackendConfig
 from toolang.teaming.errors import MessagingError
 from valkey.asyncio import Valkey
 from toolang.teaming.schemas import Message
+from toolang.up.hub import HubProcess
 
 pytestmark = pytest.mark.live_valkey
 
@@ -118,7 +120,87 @@ def test_standard_backend_registration_streams_and_expiry(valkey):
     asyncio.run(scenario())
 
 
-def test_real_text_terminal_sends_reads_and_reuses_tmux(valkey, tmp_path):
+@pytest.fixture
+def running_hub(valkey, tmp_path):
+    (tmp_path / "config.toml").write_text(
+        f'[teaming]\nhuman = "owner"\n[teaming.backend]\nurl = "{valkey.url}"\n'
+    )
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        port = listener.getsockname()[1]
+    hub = HubProcess(tmp_path)
+    command = [
+        sys.executable,
+        "-m",
+        "toolang.cli.toolang.main",
+        "--root",
+        str(tmp_path),
+        "hub",
+        "serve",
+        "--port",
+        str(port),
+    ]
+    record = hub.start(command)
+    try:
+        assert record.port == port and hub.ready(record)
+        yield hub
+    finally:
+        hub.stop(force=True)
+
+
+def test_hub_cli_lifecycle_and_backend_independence(valkey, tmp_path):
+    (tmp_path / "config.toml").write_text(
+        f'[teaming]\nhuman = "owner"\n[teaming.backend]\nurl = "{valkey.url}"\n'
+    )
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        port = listener.getsockname()[1]
+    command = [
+        sys.executable,
+        "-m",
+        "toolang.cli.toolang.main",
+        "--root",
+        str(tmp_path),
+    ]
+
+    def run(*args):
+        return subprocess.run(
+            [*command, *args], capture_output=True, text=True, timeout=30
+        )
+
+    async def register():
+        async with MessagingClient(valkey, actor="agent:alice") as agent:
+            await agent.register("human:owner")
+
+    asyncio.run(register())
+    hub = HubProcess(tmp_path)
+    try:
+        result = run("hub", "start", "--port", str(port))
+        assert result.returncode == 0, result.stderr + hub.log.read_text()
+        assert f"127.0.0.1:{port}" in result.stdout
+        result = run("hub", "status")
+        assert result.returncode == 0 and "Hub running" in result.stdout
+        assert run("hub", "start", "--port", str(port)).returncode != 0
+        assert run("text", "all", "via Hub").returncode == 0
+        assert run("hub", "stop").returncode == 0
+        assert "Hub stopped" in run("hub", "status").stdout
+        assert run("text", "all", "requires Hub").returncode != 0
+
+        async def verify():
+            async with MessagingClient(valkey, actor="agent:alice") as agent:
+                await agent.renew()
+                rows = await agent.history("group:all")
+                assert len(rows) == 1
+                assert Message.decode(rows[0][1]["data"]).body == "via Hub"
+                # Agent messaging still works after Hub has stopped.
+                await agent.send("group:all", body="without Hub")
+
+        asyncio.run(verify())
+    finally:
+        hub.stop(force=True)
+
+
+def test_real_text_terminal_sends_reads_and_reuses_tmux(valkey, tmp_path, running_hub):
     if not shutil.which("tmux"):
         pytest.skip("tmux is not installed")
 

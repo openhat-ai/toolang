@@ -1,11 +1,13 @@
 """Text CLI literals, drafts, scrollback presentation, and tmux identities."""
 
 import asyncio
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from io import StringIO
 from unittest.mock import AsyncMock
 
 from fakeredis import FakeAsyncValkey, FakeServer
+import httpx
 import pytest
 from prompt_toolkit.application import create_app_session
 from prompt_toolkit.application.current import set_app
@@ -28,6 +30,24 @@ from toolang.teaming.backend import Backend, group_key
 from toolang.teaming.config import BackendConfig
 from toolang.teaming.errors import SendUnconfirmed
 from toolang.teaming.schemas import Message
+from toolang.teaming.schemas import HubConnection
+from toolang.teaming.api import create_app
+from toolang.teaming.client import HubClient
+
+
+def install_hub(monkeypatch, client, *, human="human:bryan", identity="test"):
+    connection = HubConnection("http://hub", "test-token", human, identity)
+
+    @asynccontextmanager
+    async def hub(config):
+        app = create_app(client(actor=human), token=config.token)
+        async with app.router.lifespan_context(app):
+            async with HubClient(config, transport=httpx.ASGITransport(app)) as remote:
+                yield remote
+
+    for module in (text, directory):
+        monkeypatch.setattr(module, "HubClient", hub)
+        monkeypatch.setattr(module, "settings", lambda root: (connection, human))
 
 
 def typed(name):
@@ -58,8 +78,7 @@ def messaging_cli(tmp_path, monkeypatch):
     (tmp_path / "config.toml").write_text(
         '[teaming]\nhuman = "bryan"\n[teaming.backend]\nurl = "redis://test"\n'
     )
-    monkeypatch.setattr(text, "MessagingClient", client)
-    monkeypatch.setattr(directory, "MessagingClient", client)
+    install_hub(monkeypatch, client, identity=config.identity)
     return client
 
 
@@ -518,7 +537,7 @@ def test_messaging_commands_work_without_config_file(
     server = FakeServer(server_type="valkey")
     expected = BackendConfig("redis://localhost:6379/0")
 
-    def client(config, *, actor):
+    def client(config=expected, *, actor):
         assert config == expected
         return MessagingClient(
             config,
@@ -528,8 +547,7 @@ def test_messaging_commands_work_without_config_file(
             ),
         )
 
-    monkeypatch.setattr(directory, "MessagingClient", client)
-    monkeypatch.setattr(text, "MessagingClient", client)
+    install_hub(monkeypatch, client, identity=expected.identity)
     assert not (tmp_path / "config.toml").exists()
     assert cli.main(["--root", str(tmp_path), *arguments]) == 0
     assert "Error" not in capsys.readouterr().err

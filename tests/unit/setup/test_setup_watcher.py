@@ -432,7 +432,7 @@ def test_teaming_config_is_shared_and_frozen_until_restart(tmp_path, monkeypatch
 
 @pytest.mark.parametrize("enabled", [False, True])
 def test_teaming_consumers_share_scoped_configuration(tmp_path, monkeypatch, enabled):
-    from toolang.cli.common.messaging import settings
+    from toolang.setup.teaming import load_teaming_root
     from toolang.teaming.config import BackendConfig
     from toolang.plugin.toolsets.msg import MsgToolset
     from toolang.plugin.types import LoadedPlugin
@@ -455,10 +455,10 @@ def test_teaming_consumers_share_scoped_configuration(tmp_path, monkeypatch, ena
     msg = setup.toolsets()["msg"]
     assert isinstance(msg, MsgToolset)
     assert msg.config == (setup.teaming.root.backend if enabled else None)
-    resolved, human = settings(tmp_path)
+    resolved = load_teaming_root(tmp_path)
     assert (
-        resolved
+        resolved.backend
         == setup.teaming.root.backend
         == BackendConfig("redis://localhost:6379/0")
     )
-    assert human == setup.teaming.root.human
+    assert resolved.human == setup.teaming.root.human

@@ -85,6 +85,44 @@ configuration, and publish the actual endpoint. Invalid ports or conflicts on
 explicitly selected ports fail; Hub never silently changes port. Valid explicit
 ports are `1..65535`. Temporary agent port selection is unchanged.
 
+## Hub transport
+
+One Hub per root binds `127.0.0.1`. Remote access/authentication is outside this
+delivery. Its private `.runtime/hub.json` records PID/creation time, endpoint,
+human, backend identity, and a generated bearer token. Text discovers this record;
+it never guesses a port or starts Hub implicitly. Configuration changes require
+restart. Lifecycle commands verify process identity and never manage agents or
+Redis/Valkey. A process lock prevents concurrent Hubs for the same root.
+
+Startup registers the configured human and requires backend readiness. Authenticated
+`GET /healthz` checks current backend availability. Messaging routes under `/msg`
+delegate to the existing service as that human; requests cannot supply an actor
+or agent origin. No agent execution routes are mounted.
+
+| Method/path | Result |
+| --- | --- |
+| `GET /msg/targets`, `/msg/agents`, `/msg/groups` | Targets, ownership, conversation directory. |
+| `POST /msg/resolve` | Resolve Text shorthand to a canonical conversation. |
+| `GET /msg/groups/{group}` | Conversation metadata and members. |
+| `POST /msg/groups` | Create a custom group. |
+| `PUT/DELETE /msg/groups/{group}/membership` | Join/leave as the configured human. |
+| `GET /msg/groups/{group}/messages` | Forward reads (`after`) or recent history; count `1..1000`. |
+| `GET /msg/groups/{group}/cursor?after=…` | Retention-gap notice or invalid future cursor. |
+| `POST /msg/messages` | Send with a caller-preallocated UUID; return the existing receipt. |
+
+History rows carry `stream_id` and raw message JSON (`data`, nullable for a corrupt
+record), preserving cursor advancement past malformed records. Service errors
+carry `code`/`detail`: invalid operations `400`, backend outages `503`, uncertain
+sends `502`; authentication failures return `401`. Clients never retry writes.
+A lost send response reports its UUID for manual reconciliation; this is not an
+idempotency guarantee.
+
+Acceptance adds HTTP/service parity (including Unicode, membership, corrupt rows,
+and uncertainty), token/actor isolation, unavailable-backend startup, concurrent
+start, stale PID safety, stop isolation, actual-port discovery, and CLI/environment/
+config precedence. Tests use an in-memory backend by default and isolated optional
+Redis/Valkey processes for lifecycle/Text smoke tests.
+
 ## Targets and conversations
 
 Canonical targets are `agent:alice`, `human:brice`, and `group:dev`. Identities are
@@ -214,8 +252,8 @@ only its own data. Preserve Text literal bodies, drafts, input, tmux, and render
 | `msg/leave_group(group)` | Caller leaves a custom group. |
 
 Replace `coop` with `msg`; reserve `coord` without tools. Services enforce the same
-rules for CLI, HTTP, and tools. Group administration CLI/HTTP details belong to the
-Hub definition; no separate groups/members discovery tool is needed.
+rules for CLI, HTTP, and tools. Group administration is available through tools
+and Hub HTTP; no additional CLI commands or discovery tools are introduced.
 
 ## Subscriptions and remaining definitions
 
@@ -226,8 +264,8 @@ IDs preserved. Export only locally originated events; Hub imports never re-expor
 Transport envelopes identify event, origin agent, and topic; names cannot collide
 across agents. Messaging retention does not imply observation replay.
 
-Before their respective PRs, define Hub wire routes/listener discovery, subscription
-library/topic encoding/overflow/reconnect policy, and activity presentation.
+Before their respective PRs, define subscription library/topic encoding/overflow/
+reconnect policy and activity presentation.
 PyPubSub remains a candidate. Do not expand coordination in these PRs.
 
 ## Acceptance and touchpoints

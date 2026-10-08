@@ -11,7 +11,7 @@ from typer._click.exceptions import ClickException
 
 from toolang.cli.common.context import context_root
 from toolang.cli.common.messaging import settings
-from toolang.teaming.messaging import MessagingClient
+from toolang.teaming.client import HubClient
 from toolang.teaming.errors import TeamingError
 from toolang.teaming.schemas import stream_id
 from .rendering import display_text
@@ -30,7 +30,7 @@ def directory_command(ctx: typer.Context) -> None:
         config, human = settings(context_root(ctx))
 
         async def listing():
-            async with MessagingClient(config, actor=human) as client:
+            async with HubClient(config) as client:
                 return await client.contacts(
                     include_preview=True
                 ), await client.agents()

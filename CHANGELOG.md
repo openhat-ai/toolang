@@ -9,6 +9,20 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Added
 
+- The root-scoped teaming Hub is managed with `too hub start`, `serve`,
+  `stop`, and `status`: `start` runs it in the background and waits for
+  backend readiness, `serve` runs it in the foreground, `stop` leaves agents
+  and Redis/Valkey running, and `status` reports the endpoint and current
+  backend readiness. Hub binds `127.0.0.1` and records its actual endpoint,
+  human, backend identity, and generated bearer token in the root's private
+  `.runtime/hub.json`.
+
+- Hub `start`/`serve` ports resolve as `--port` > `TOOLANG_HUB_PORT` >
+  `teaming.hub.port` > `7000`, and resident agent `start`/`serve` resolves
+  its API port as `--port` > `TOOLANG_AGENT_PORT` > home `[api] port` > a
+  free recorded port, otherwise an available port in `7001`–`7999`;
+  temporary agents keep their existing selection.
+
 - Humans can observe an agent DM in Interactive Text read-only: both agents'
   messages appear, the composer is removed, and the footer shows `Read-only`,
   with existing history and drafts retained. Text continues to present the
@@ -79,6 +93,12 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   see `docs/messaging.md` for setup. (#708)
 
 ### Changed
+
+- `too text` and Interactive Text now reach messaging through the Hub HTTP
+  API instead of connecting to Redis/Valkey directly, so run `too hub start`
+  before using Text and reopen Text after restarting the Hub. Agents and
+  their `msg` tools still communicate directly with the backend and remain
+  independent of the Hub.
 
 - **Breaking:** the experimental `coop` toolset (wire names `coop__contacts` and
   `coop__send`), the public `CoopToolContext` type, the `too team` command,

@@ -64,6 +64,9 @@ class MessagingClient:
     async def close(self) -> None:
         await self._backend.close()
 
+    async def check_backend(self) -> None:
+        await self._backend.ping()
+
     @property
     def _lease(self) -> str:
         return self.token if target(self.actor).kind == "agent" else ""
@@ -213,8 +216,10 @@ class MessagingClient:
         in_reply_to: str | None = None,
         run: str | None = None,
         thread: str | None = None,
+        message_id: str | None = None,
     ) -> dict[str, Any]:
-        message = Message.create(
+        message = Message(
+            message_id if message_id is not None else str(uuid4()),
             self.actor,
             body,
             in_reply_to,

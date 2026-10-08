@@ -1,11 +1,11 @@
-"""Resolve root teaming configuration for human messaging clients."""
+"""Discover the running root Hub for human messaging clients."""
 
 from pathlib import Path
 
-from toolang.teaming.config import BackendConfig
-from toolang.setup.teaming import load_teaming_root
+from toolang.teaming.schemas import HubConnection
+from toolang.up.hub import HubProcess
 
 
-def settings(root: Path) -> tuple[BackendConfig, str]:
-    config = load_teaming_root(root)
-    return config.backend, config.human
+def settings(root: Path) -> tuple[HubConnection, str]:
+    config = HubProcess(root).connection()
+    return config, config.human

@@ -564,7 +564,11 @@ def resolve_runtime_port(
         layout.root,
         exclude_agent=layout.name,
     )
-    if preferred is not None and preferred not in assigned:
+    if (
+        preferred is not None
+        and preferred not in assigned
+        and _port_is_available(host, preferred)
+    ):
         return preferred
     for port in range(AUTO_RUNTIME_PORT_MIN, AUTO_RUNTIME_PORT_MAX + 1):
         if port not in assigned and _port_is_available(host, port):

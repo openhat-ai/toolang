@@ -489,6 +489,55 @@ def test_runtime_commands_reject_inbox_option(command: str) -> None:
     assert "No such option: --inbox" in strip_ansi(result.stderr)
 
 
+@pytest.mark.parametrize("command", ["start", "serve"])
+@pytest.mark.parametrize(
+    "option,env,configured,expected",
+    [
+        (None, None, None, None),
+        (None, None, 7123, 7123),
+        (None, "7223", 7123, 7223),
+        (7323, "bad", 7123, 7323),
+    ],
+)
+def test_resident_commands_resolve_ports_before_launch(
+    tmp_path, monkeypatch, command, option, env, configured, expected
+):
+    layout = _create_agent(tmp_path)
+    if configured is not None:
+        layout.config.write_text(f"[api]\nport = {configured}\n")
+    monkeypatch.delenv("TOOLANG_AGENT_PORT", raising=False)
+    if env is not None:
+        monkeypatch.setenv("TOOLANG_AGENT_PORT", env)
+    captured = []
+
+    async def resolve_launch(**kwargs):
+        captured.append(kwargs["port"])
+        return _launch_spec(**kwargs)
+
+    async def launch(spec, **kwargs):
+        return SimpleNamespace(
+            state=SimpleNamespace(
+                ref=SandboxRef(
+                    runtime_id="test",
+                    endpoint=spec.serve.endpoint,
+                )
+            )
+        )
+
+    async def run(spec, **kwargs):
+        return 0
+
+    monkeypatch.setattr(sandbox_runtime, "resolve_launch", resolve_launch)
+    monkeypatch.setattr(sandbox_runtime, "launch", launch)
+    monkeypatch.setattr(sandbox_runtime, "run", run)
+    options = [] if option is None else ["--port", str(option)]
+    result = runner.invoke(
+        cli.app, ["--root", str(tmp_path), command, "alice", *options]
+    )
+    assert result.exit_code == 0, result.stderr
+    assert captured == [expected]
+
+
 def test_start_launches_in_background_and_reports_endpoint(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

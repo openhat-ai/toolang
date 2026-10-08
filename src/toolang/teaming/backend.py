@@ -156,6 +156,9 @@ class Backend:
         except ValkeyError as exc:
             raise BackendUnavailable("Could not close the teaming backend") from exc
 
+    async def ping(self) -> None:
+        await self._call("PING")
+
     async def _call(self, command: str, *args: Any) -> Any:
         try:
             return await self._client.execute_command(command, *args)

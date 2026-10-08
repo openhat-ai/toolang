@@ -9,6 +9,8 @@ from typing import Any, Literal, cast
 import unicodedata
 from uuid import UUID, uuid4
 
+from pydantic import BaseModel, ConfigDict
+
 from .errors import MessagingError
 
 TargetKind = Literal["agent", "human", "group"]
@@ -147,3 +149,36 @@ class Message:
 
     def encode(self) -> str:
         return json.dumps(self.data(), ensure_ascii=False)
+
+
+class HubRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+
+class ResolveRequest(HubRequest):
+    target: str
+    kind: Literal["dm", "group"] | None = None
+
+
+class CreateGroupRequest(HubRequest):
+    name: str
+
+
+class SendRequest(HubRequest):
+    id: str
+    target: str
+    body: str
+    in_reply_to: str | None = None
+
+
+class HistoryEntry(BaseModel):
+    stream_id: str
+    data: str | None = None
+
+
+@dataclass(frozen=True)
+class HubConnection:
+    endpoint: str
+    token: str
+    human: str
+    identity: str
