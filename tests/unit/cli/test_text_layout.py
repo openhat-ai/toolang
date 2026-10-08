@@ -20,9 +20,10 @@ from toolang.messaging.schemas import Message
 
 class TerminalOutput(DummyOutput):
     columns = 200
+    rows = 30
 
     def get_size(self):
-        return Size(rows=30, columns=self.columns)
+        return Size(rows=self.rows, columns=self.columns)
 
 
 @asynccontextmanager
@@ -53,7 +54,13 @@ def test_input_and_footer_share_message_width_after_resize_and_clear(tmp_path):
                     assert screen is not None
                     rows = 2 + max(1, (len(draft) + width - 4) // (width - 4))
                     assert ui.prompt.rows() == rows
-                    for row in range(rows):
+                    for column in range(columns):
+                        cell = screen.data_buffer[0][column]
+                        assert cell.char == " "
+                        assert not ui.app.style.get_attrs_for_style_str(
+                            cell.style
+                        ).bgcolor
+                    for row in range(1, rows + 1):
                         for column in range(columns):
                             cell = screen.data_buffer[row][column]
                             attrs = ui.app.style.get_attrs_for_style_str(cell.style)
@@ -62,12 +69,42 @@ def test_input_and_footer_share_message_width_after_resize_and_clear(tmp_path):
                             elif column >= width:
                                 assert not attrs.bgcolor
                     footer = "".join(
-                        screen.data_buffer[rows][column].char
+                        screen.data_buffer[rows + 1][column].char
                         for column in range(columns)
                     ).rstrip()
                     assert len(footer) <= width
                     assert "alice" in footer and "dm_alice" not in footer
                     assert "Ctrl+Q quit" in footer
+
+    asyncio.run(scenario())
+
+
+def test_input_spacing_preserves_multiline_editing_in_short_terminals(tmp_path):
+    async def scenario():
+        async with text_app(tmp_path) as (ui, output):
+            draft = "one\ntwo\nthree\nfour\nfive\nsix"
+            ui.prompt.replace_input(draft)
+            for rows in (30, 8, 5, 4, 30):
+                output.rows = rows
+                ui.app.render_counter += 1
+                ui.app.renderer.render(ui.app, ui.app.layout)
+                screen = ui.app.renderer.last_rendered_screen
+                assert screen is not None
+                lines = [
+                    "".join(
+                        screen.data_buffer[row][column].char for column in range(120)
+                    )
+                    for row in range(screen.height)
+                ]
+                assert not any("Window too small" in line for line in lines)
+                assert any("six" in line for line in lines)
+                assert any("Ctrl+Q quit" in line for line in lines)
+                assert ui.prompt.buffer.text == draft
+                if rows >= 5:
+                    assert not lines[0].strip()
+                    assert not ui.app.style.get_attrs_for_style_str(
+                        screen.data_buffer[0][1].style
+                    ).bgcolor
 
     asyncio.run(scenario())
 

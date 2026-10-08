@@ -212,6 +212,9 @@ def test_real_text_terminal_sends_reads_and_reuses_tmux(valkey, tmp_path):
                     if "Write a message" in line.plain
                 )
                 console = Console()
+                gap = painted[input_row - 2]
+                assert not gap.plain.strip()
+                assert gap.get_style_at_offset(console, 1).bgcolor is None
                 for line in painted[input_row - 1 : input_row + 2]:
                     for column in range(1, min(width, 120)):
                         assert line.get_style_at_offset(

@@ -55,7 +55,9 @@ class TextTui:
             history_store=InputHistoryStore(state / "input.jsonl"),
             on_input=self.save_draft,
             normalize=lambda text: text,
-            get_max_rows=lambda: max(3, self.app.output.get_size().rows - 1),
+            get_max_rows=lambda: max(
+                3, self.app.output.get_size().rows - 1 - self._input_gap_rows()
+            ),
             get_width=self.content_width,
         )
         if self.draft.exists():
@@ -105,6 +107,7 @@ class TextTui:
                     [
                         HSplit(
                             [
+                                Window(height=self._input_gap_rows),
                                 self.prompt.container(),
                                 Window(
                                     FormattedTextControl(self.status_text),
@@ -148,6 +151,10 @@ class TextTui:
 
     def content_width(self) -> int:
         return max(1, min(self.app.output.get_size().columns, self.max_width))
+
+    def _input_gap_rows(self) -> int:
+        # Keep the three-row input and footer usable in very short terminals.
+        return int(self.app.output.get_size().rows >= 5)
 
     def status_text(self) -> list[tuple[str, str]]:
         status = self.status

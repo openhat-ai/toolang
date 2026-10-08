@@ -9,6 +9,10 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Added
 
+- Interactive Text reserves a dedicated blank row above its input box in
+  addition to the message separator, preserving message-to-message spacing, and
+  omits the gap on terminals shorter than five rows to keep editing space.
+
 - Interactive Text bounds its input box and footer to the same content width
   as its messages, so both stay inside the terminal and line up with the
   scrollback on wide terminals.
