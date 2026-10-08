@@ -17,37 +17,49 @@ from rich.console import Console
 from rich.color import Color
 
 from toolang.cli.toolang import main as cli
-from toolang.cli.toolang.commands import text, team
+from toolang.cli.toolang.commands import text
+from toolang.cli.toolang.commands.text import directory
 from toolang.cli.toolang.commands.text.tui import TextTui
 from toolang.cli.toolang.commands.text import tui
 from toolang.cli.toolang.commands.text.rendering import message_block, display_text
 from toolang.cli.common.terminal_surfaces import DARK_TERMINAL_SURFACES
-from toolang.messaging.client import MessagingClient, group_key
-from toolang.messaging.config import MessagingConfig
-from toolang.messaging.errors import SendUnconfirmed
-from toolang.messaging.schemas import Message
+from toolang.teaming.messaging import MessagingClient
+from toolang.teaming.backend import Backend, group_key
+from toolang.teaming.config import BackendConfig
+from toolang.teaming.errors import SendUnconfirmed
+from toolang.teaming.schemas import Message
+
+
+def typed(name):
+    return f"{'agent' if name in {'alice', 'bob'} else 'human'}:{name}"
 
 
 @pytest.fixture
 def messaging_cli(tmp_path, monkeypatch):
     server = FakeServer(server_type="valkey")
-    config = MessagingConfig("redis://test", ("gc_dev",))
+    config = BackendConfig("redis://test")
 
-    def client(_config=config):
+    def client(_config=config, *, actor="human:bryan"):
         return MessagingClient(
-            config, client=FakeAsyncValkey(server=server, decode_responses=True)
+            config,
+            actor=actor,
+            backend=Backend(
+                config, client=FakeAsyncValkey(server=server, decode_responses=True)
+            ),
         )
 
     async def register():
-        async with client() as connected:
-            await connected.register("alice", "bryan", "token")
+        async with client(actor="agent:alice") as agent, client() as human:
+            await agent.register("human:bryan")
+            await human.create_group("dev")
+            await human.resolve("agent:alice")
 
     asyncio.run(register())
     (tmp_path / "config.toml").write_text(
-        '[messaging]\nurl = "redis://test"\n[human]\nname = "bryan"\n'
+        '[teaming]\nhuman = "bryan"\n[teaming.backend]\nurl = "redis://test"\n'
     )
     monkeypatch.setattr(text, "MessagingClient", client)
-    monkeypatch.setattr(team, "MessagingClient", client)
+    monkeypatch.setattr(directory, "MessagingClient", client)
     return client
 
 
@@ -70,38 +82,44 @@ def test_send_body_is_literal_and_exits_on_ack(
 
     async def check():
         async with messaging_cli() as client:
-            entries = await client.history("dm_alice")
+            entries = await client.history(await client.resolve("agent:alice"))
             assert len(entries) == 1
             message = Message.decode(entries[0][1]["data"])
-            assert message.body == expected and message.sender == "bryan"
+            assert message.body == expected and message.sender == "human:bryan"
 
     asyncio.run(check())
 
 
-def test_team_lists_groups_and_interactive_requires_tty(
+def test_directory_lists_groups_and_interactive_requires_tty(
     tmp_path, capsys, messaging_cli
 ):
-    assert cli.main(["--root", str(tmp_path), "team"]) == 0
+    assert cli.main(["--root", str(tmp_path), "text"]) == 0
     output = capsys.readouterr().out
-    assert "gc_dev" in output and "alice" in output and "all" in output
-    assert "dm_alice" in output
+    assert "group:dev" in output and "alice" in output and "group:all" in output
     assert cli.main(["--root", str(tmp_path), "text", "alice"]) == 1
     assert "TTY" in capsys.readouterr().err
+    assert cli.main(["--root", str(tmp_path), "team"]) != 0
     assert cli.main(["--root", str(tmp_path), "alice,", "hello"]) != 0
 
 
-def test_human_cannot_send_into_agent_dm(tmp_path, capsys, messaging_cli):
-    async def prepare():
-        async with messaging_cli() as client:
-            await client.register("bob", "bryan", "bob-token")
+async def agent_pair(factory, *, messages=False):
+    async with factory(actor="agent:alice") as alice, factory(actor="agent:bob") as bob:
+        await bob.register("human:bryan")
+        group = await alice.resolve("agent:bob")
+        if messages:
+            await alice.send(group, body="hello")
+            await bob.send(group, body="hello")
+        return group
 
-    asyncio.run(prepare())
-    assert cli.main(["--root", str(tmp_path), "text", "dm_alice_bob", "join"]) == 1
+
+def test_human_cannot_send_into_agent_dm(tmp_path, capsys, messaging_cli):
+    group = asyncio.run(agent_pair(messaging_cli))
+    assert cli.main(["--root", str(tmp_path), "text", group, "join"]) == 1
     assert "read-only" in capsys.readouterr().err.lower()
 
     async def check():
         async with messaging_cli() as client:
-            assert await client.history("dm_alice_bob") == []
+            assert await client.history(group) == []
 
     asyncio.run(check())
 
@@ -109,19 +127,7 @@ def test_human_cannot_send_into_agent_dm(tmp_path, capsys, messaging_cli):
 def test_human_observer_sees_both_agents_left_without_a_composer(
     tmp_path, messaging_cli, monkeypatch
 ):
-    async def prepare():
-        async with messaging_cli() as client:
-            await client.register("bob", "bryan", "bob-token")
-            for sender in ("alice", "bob"):
-                await client.send(
-                    "dm_alice_bob", sender=sender, agent=True, body="hello"
-                )
-            await client.redis.xadd(
-                group_key("dm_alice_bob", "msg"),
-                {"data": Message.create("bryan", "old human message").encode()},
-            )
-
-    asyncio.run(prepare())
+    group = asyncio.run(agent_pair(messaging_cli, messages=True))
     monkeypatch.setattr(text.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr(text.sys.stdout, "isatty", lambda: True)
     monkeypatch.setattr(text, "resolve_launcher", lambda **kwargs: None)
@@ -139,24 +145,22 @@ def test_human_observer_sees_both_agents_left_without_a_composer(
     monkeypatch.setattr(tui, "run_in_terminal", write_now)
 
     async def inspect_ui(ui):
-        ui.agents = {"alice", "bob"}
         await ui.show(await ui.client.history(ui.group))
         lines = output.getvalue().splitlines()
         assert next(line for line in lines if line.strip() == "alice").startswith(
             "alice"
         )
         assert next(line for line in lines if line.strip() == "bob").startswith("bob")
-        assert "old human message" in output.getvalue()
         with set_app(ui.app):
             ui.app.renderer.render(ui.app, ui.app.layout)
             assert not any(
                 isinstance(control, BufferControl)
                 for control in ui.app.layout.find_all_controls()
             )
-            assert "@alice ↔ @bob · Read-only" in str(ui.status_text())
+            assert "agent:alice ↔ agent:bob · Read-only" in str(ui.status_text())
             assert "Enter send" not in str(ui.status_text())
             await ui.send("accidental send")
-            assert len(await ui.client.history(ui.group)) == 3
+            assert len(await ui.client.history(ui.group)) == 2
             await ui.app.cancel_and_wait_for_background_tasks()
 
     monkeypatch.setattr(TextTui, "run", inspect_ui)
@@ -164,56 +168,54 @@ def test_human_observer_sees_both_agents_left_without_a_composer(
         create_pipe_input() as pipe,
         create_app_session(input=pipe, output=DummyOutput()),
     ):
-        assert cli.main(["--root", str(tmp_path), "text", "dm_alice_bob"]) == 0
+        assert cli.main(["--root", str(tmp_path), "text", group]) == 0
 
 
-def test_team_directory_shows_existing_dms_presence_and_recent_previews(
+def test_directory_shows_presence_previews_and_does_not_create_conversations(
     tmp_path, capsys, messaging_cli, monkeypatch
 ):
-    monkeypatch.setenv("COLUMNS", "180")
+    monkeypatch.setenv("COLUMNS", "240")
 
     async def prepare():
-        async with messaging_cli() as client:
-            await client.register("bob", "bryan", "bob-token")
-            await client.register("carol", "bryan", "carol-token")
-            await client.unregister("alice", "token")
-            await client.resolve("dm_alice_bob")
+        pair = await agent_pair(messaging_cli)
+        async with (
+            messaging_cli(actor="agent:alice") as alice,
+            messaging_cli() as human,
+        ):
+            await alice.unregister()
+            own = await human.resolve("agent:alice")
+            # Inject ordered Stream IDs and a malformed record through the backend fixture.
+            raw = human._backend._client
             for group, sid, data in (
-                ("all", "1000-0", Message.create("bryan", "public").encode()),
-                ("gc_dev", "2000-0", Message.create("bob", "older").encode()),
-                ("dm_alice", "3000-0", "malformed"),
                 (
-                    "dm_alice_bob",
+                    "group:all",
+                    "1000-0",
+                    Message.create("human:bryan", "public").encode(),
+                ),
+                ("group:dev", "2000-0", Message.create("agent:bob", "older").encode()),
+                (own, "3000-0", "malformed"),
+                (
+                    pair,
                     "3000-1",
-                    Message.create("bob", "hello\x1b[2J\nworld").encode(),
+                    Message.create("agent:bob", "hello\x1b[2J\nworld").encode(),
                 ),
             ):
-                await client.redis.xadd(group_key(group, "msg"), {"data": data}, id=sid)
-            return await client.group_ids()
+                await raw.xadd(group_key(group, "messages"), {"data": data}, id=sid)
+            return pair, own, {g["group"] for g in await human.contacts()}
 
-    before = asyncio.run(prepare())
-    assert cli.main(["--root", str(tmp_path), "team"]) == 0
+    pair, own, before = asyncio.run(prepare())
+    assert cli.main(["--root", str(tmp_path), "text"]) == 0
     output = capsys.readouterr().out
     rows = [row.split() for row in output.splitlines() if row.strip()]
-    assert [row[0] for row in rows[1:-1]] == [
-        "all",
-        "dm_alice_bob",
-        "dm_alice",
-        "gc_dev",
-        "dm_bob",
-        "dm_carol",
-    ]
-    assert "○alice ↔ ●bob" in output
-    assert "bryan ↔ ○alice" in output
-    assert "●bryan" not in output and "○bryan" not in output
+    assert [row[0] for row in rows[1:-1]] == ["group:all", pair, own, "group:dev"]
+    assert "○agent:alice ↔ ●agent:bob" in output
+    assert "●human:bryan" not in output and "○human:bryan" not in output
     assert "bob: hello world" in output and "\x1b" not in output
-    assert "Message unavailable" in output
-    assert "too text <target>" in output
+    assert "Message unavailable" in output and "too text <target>" in output
 
     async def unchanged():
         async with messaging_cli() as client:
-            assert await client.group_ids() == before
-            assert "dm_bob_carol" not in before
+            assert {g["group"] for g in await client.contacts()} == before
 
     asyncio.run(unchanged())
 
@@ -226,10 +228,10 @@ def test_team_directory_shows_existing_dms_presence_and_recent_previews(
         ("2025-10-08T09:10:00+00:00", "2025-10-08 09:10"),
     ],
 )
-def test_team_message_time_is_compact_without_losing_date(timestamp, expected):
+def test_directory_message_time_is_compact_without_losing_date(timestamp, expected):
     now = datetime(2026, 10, 8, 10, tzinfo=timezone.utc)
     sid = f"{int(datetime.fromisoformat(timestamp).timestamp() * 1000)}-0"
-    assert team._message_time(sid, now) == expected
+    assert directory._message_time(sid, now) == expected
 
 
 def test_failed_send_preserves_draft_and_success_does_not_erase_new_typing(
@@ -244,7 +246,7 @@ def test_failed_send_preserves_draft_and_success_does_not_erase_new_typing(
             ui = TextTui(
                 client,
                 "all",
-                "bryan",
+                "human:bryan",
                 tmp_path,
                 DARK_TERMINAL_SURFACES,
                 read_only=False,
@@ -278,11 +280,13 @@ def test_failed_send_preserves_draft_and_success_does_not_erase_new_typing(
 @pytest.mark.parametrize("width", [1, 2, 3, 4, 16, 80])
 @pytest.mark.parametrize("sender", ["alice", "bryan"])
 def test_narrow_rendering_and_terminal_escape_removal(width, sender):
-    message = Message.create(sender, "hello\x1b[2J\x1b]52;c;secret\x07 **world**")
+    message = Message.create(
+        typed(sender), "hello\x1b[2J\x1b]52;c;secret\x07 **world**"
+    )
     output = StringIO()
     console = Console(file=output, width=width, color_system=None)
     console.print(
-        message_block(message, "bryan", {"alice"}, width, DARK_TERMINAL_SURFACES)
+        message_block(message, "human:bryan", {"alice"}, width, DARK_TERMINAL_SURFACES)
     )
     rendered = output.getvalue()
     assert "secret" not in rendered and "\x1b" not in rendered
@@ -297,8 +301,8 @@ def test_left_message_marker_has_aligned_header_and_wrapped_body(identity):
     console = Console(file=output, width=40, color_system=None)
     console.print(
         message_block(
-            Message.create("alice", "word " * 20 + "\n\n**Last paragraph**"),
-            identity,
+            Message.create("agent:alice", "word " * 20 + "\n\n**Last paragraph**"),
+            typed(identity),
             {"alice", "bob"},
             40,
             DARK_TERMINAL_SURFACES,
@@ -317,8 +321,8 @@ def test_owner_name_is_above_padded_background_at_top_right():
     output = StringIO()
     console = Console(file=output, width=40, color_system=None)
     block = message_block(
-        Message.create("bryan", "x" * 28 + "\nshort"),
-        "bryan",
+        Message.create("human:bryan", "x" * 28 + "\nshort"),
+        "human:bryan",
         {"alice"},
         40,
         DARK_TERMINAL_SURFACES,
@@ -353,8 +357,8 @@ def test_message_side_follows_identity_and_name_aligns_with_marker(identity, sen
     console = Console(file=output, width=40, color_system=None)
     agent = sender in {"alice", "bob"}
     block = message_block(
-        Message.create(sender, "first\n\nlast"),
-        identity,
+        Message.create(typed(sender), "first\n\nlast"),
+        typed(identity),
         {"alice", "bob"},
         40,
         DARK_TERMINAL_SURFACES,
@@ -409,7 +413,7 @@ def test_interactive_messages_use_chat_width_after_resize(
             )
             output.seek(0)
             output.truncate()
-            message = Message.create(sender, "word " * 90)
+            message = Message.create(typed(sender), "word " * 90)
             await ui.show([("1-0", {"data": message.encode()})])
             lines = output.getvalue().splitlines()
             limit = min(columns, int(configured_width or "120"))
@@ -445,7 +449,7 @@ def test_text_tmux_identity_separates_root_connection_and_human(tmp_path):
 def test_follow_reconnects_from_last_displayed_id_without_replaying_history(
     tmp_path, monkeypatch
 ):
-    from valkey.exceptions import ConnectionError
+    from toolang.teaming.errors import BackendUnavailable
 
     async def scenario():
         with (
@@ -454,14 +458,17 @@ def test_follow_reconnects_from_last_displayed_id_without_replaying_history(
         ):
             client = AsyncMock()
             client.agents.return_value = {"alice": "bryan"}
-            first = ("100-9", {"data": Message.create("alice", "history").encode()})
+            first = (
+                "100-9",
+                {"data": Message.create("agent:alice", "history").encode()},
+            )
             second = (
                 "100-10",
-                {"data": Message.create("alice", "during disconnect").encode()},
+                {"data": Message.create("agent:alice", "during disconnect").encode()},
             )
             client.history.return_value = [first]
             client.read.side_effect = [
-                ConnectionError("offline"),
+                BackendUnavailable("offline"),
                 [second],
                 asyncio.CancelledError(),
             ]
@@ -469,7 +476,7 @@ def test_follow_reconnects_from_last_displayed_id_without_replaying_history(
             ui = TextTui(
                 client,
                 "all",
-                "bryan",
+                "human:bryan",
                 tmp_path,
                 DARK_TERMINAL_SURFACES,
                 read_only=False,
@@ -504,25 +511,24 @@ def test_follow_reconnects_from_last_displayed_id_without_replaying_history(
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("arguments", [["team"], ["text", "all", "hello"]])
+@pytest.mark.parametrize("arguments", [["text"], ["text", "all", "hello"]])
 def test_messaging_commands_work_without_config_file(
     tmp_path, monkeypatch, capsys, arguments
 ):
     server = FakeServer(server_type="valkey")
-    expected = MessagingConfig("redis://localhost:6379/0")
+    expected = BackendConfig("redis://localhost:6379/0")
 
-    def client(config):
+    def client(config, *, actor):
         assert config == expected
         return MessagingClient(
-            config, client=FakeAsyncValkey(server=server, decode_responses=True)
+            config,
+            actor=actor,
+            backend=Backend(
+                config, client=FakeAsyncValkey(server=server, decode_responses=True)
+            ),
         )
 
-    async def register():
-        async with client(expected) as connection:
-            await connection.register("alice", "owner", "token")
-
-    asyncio.run(register())
-    monkeypatch.setattr(team, "MessagingClient", client)
+    monkeypatch.setattr(directory, "MessagingClient", client)
     monkeypatch.setattr(text, "MessagingClient", client)
     assert not (tmp_path / "config.toml").exists()
     assert cli.main(["--root", str(tmp_path), *arguments]) == 0

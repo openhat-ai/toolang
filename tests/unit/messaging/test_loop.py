@@ -15,26 +15,39 @@ from tests.support.execution_harness import (
 from toolang.base.types.message import Message as ModelMessage
 from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.common.layout import AgentLayout
-from toolang.messaging.client import MessagingClient, group_key
-from toolang.messaging.config import MessagingConfig
-from toolang.plugin.toolsets.coop import CoopToolset
+from toolang.teaming.messaging import MessagingClient
+from toolang.teaming.backend import Backend, group_key
+from toolang.teaming.config import BackendConfig, TeamingHomeConfig, TeamingRootConfig
+from toolang.plugin.toolsets.msg import MsgToolset
 from toolang.plugin.toolsets.loading import tools_from_toolsets
 from toolang.plugin.types import LoadedPlugin
 from toolang.work.messaging import MessagingLoop
 
-CONFIG = MessagingConfig("redis://test", ("gc_dev", "gc_other"))
+CONFIG = BackendConfig("redis://test")
+REPLY_TO = "ad451d5a-7465-4d2d-b0b6-f06490657d5f"
 
 
-def make_client(server):
+def make_client(server, actor="agent:alice"):
     return MessagingClient(
-        CONFIG, client=FakeAsyncValkey(server=server, decode_responses=True)
+        CONFIG,
+        actor=actor,
+        backend=Backend(
+            CONFIG, client=FakeAsyncValkey(server=server, decode_responses=True)
+        ),
     )
+
+
+async def prepare(agent, human):
+    await agent.register("human:owner")
+    for name in ("dev", "other"):
+        await human.create_group(name)
+        await agent.join_group(f"group:{name}")
 
 
 def make_loop(path, client, harness=None):
     return MessagingLoop(
         layout=AgentLayout.resident(path, "alice"),
-        owner="owner",
+        owner="human:owner",
         config=CONFIG,
         client=client,
         executor=harness.executor if harness else MagicMock(),
@@ -44,12 +57,10 @@ def make_loop(path, client, harness=None):
     )
 
 
-def harness_with_coop(path, server, responses, source="agic:\n  {{_}}\n"):
-    coop = CoopToolset({"url": CONFIG.url, "groups": list(CONFIG.groups)})
-    setattr(coop, "connection", lambda: make_client(server))
-    tools = tools_from_toolsets(
-        {"coop": LoadedPlugin("coop", "coop", coop, "built-in")}
-    )
+def harness_with_msg(path, server, responses, source="agic:\n  {{_}}\n"):
+    msg = MsgToolset({"url": CONFIG.url})
+    setattr(msg, "connection", lambda context: make_client(server))
+    tools = tools_from_toolsets({"msg": LoadedPlugin("msg", "msg", msg, "built-in")})
     return ExecutionHarness.create(
         path, source=source, responses=responses, tools=tools
     )
@@ -63,12 +74,12 @@ def test_tool_reply_receipt_context_and_restart(tmp_path, custom):
             ToolCall(
                 "call-1",
                 "call-1",
-                "coop__send",
-                {"group": "gc_dev", "body": "done", "in_reply_to": "request"},
+                "msg__send",
+                {"target": "group:dev", "body": "done", "in_reply_to": REPLY_TO},
             ),
         )
     )
-    harness = harness_with_coop(
+    harness = harness_with_msg(
         tmp_path,
         server,
         [
@@ -80,25 +91,29 @@ def test_tool_reply_receipt_context_and_restart(tmp_path, custom):
     )
 
     async def scenario():
-        async with harness, make_client(server) as client:
-            await client.register("alice", "owner", "token")
-            await client.send(
-                "gc_dev", sender="owner", body="literal $prompt {{x}} @file"
-            )
+        async with (
+            harness,
+            make_client(server) as client,
+            make_client(server, "human:owner") as human,
+        ):
+            await prepare(client, human)
+            await human.send("group:dev", body="literal $prompt {{x}} @file")
             loop = make_loop(tmp_path, client, harness)
             await loop.poll()
-            saved = loop.saved["gc_dev"]
+            saved = loop.saved["group:dev"]
             assert saved["result"]["status"] == "succeeded"
             receipt = saved["result"]["replies"][0]
+            handled = harness.store.get_run(run_id=saved["result"]["run"])
+            assert handled is not None
             assert receipt["message"]["origin"] == {
-                "agent": "alice",
+                "thread": handled.thread.id,
                 "run": saved["result"]["run"],
             }
-            assert receipt["message"]["in_reply_to"] == "request"
-            assert len(await client.history("gc_dev")) == 2
+            assert receipt["message"]["in_reply_to"] == REPLY_TO
+            assert len(await client.history("group:dev")) == 2
             await loop.poll()  # Own reply is context, never another model invocation.
             assert len(harness.adapter.invocations) == 2
-            await client.send("gc_dev", sender="owner", body="next")
+            await human.send("group:dev", body="next")
             restarted = make_loop(tmp_path, client, harness)
             restarted.load()
             await restarted.poll()
@@ -109,7 +124,7 @@ def test_tool_reply_receipt_context_and_restart(tmp_path, custom):
                 and "next" in prompt
             )
             assert (
-                len(await client.history("gc_dev")) == 3
+                len(await client.history("group:dev")) == 3
             )  # Final summaries are not messages.
 
     asyncio.run(scenario())
@@ -118,29 +133,34 @@ def test_tool_reply_receipt_context_and_restart(tmp_path, custom):
 def test_failed_batches_skip_bad_entries_and_rotate_groups(tmp_path):
     async def scenario():
         server = FakeServer(server_type="valkey")
-        async with make_client(server) as client:
-            await client.register("alice", "owner", "token")
-            await client.redis.xadd(group_key("gc_dev", "msg"), {"data": "broken"})
+        async with (
+            make_client(server) as client,
+            make_client(server, "human:owner") as human,
+        ):
+            await prepare(client, human)
+            await FakeAsyncValkey(server=server, decode_responses=True).xadd(
+                group_key("group:dev", "messages"), {"data": "broken"}
+            )
             for i in range(25):
-                await client.send("gc_dev", sender="owner", body=str(i))
-            await client.send("gc_other", sender="owner", body="other context")
+                await human.send("group:dev", body=str(i))
+            await human.send("group:other", body="other context")
             loop = make_loop(tmp_path, client)
             loop.handle = AsyncMock(side_effect=RuntimeError("handler failed"))
             await loop.poll()
-            assert len(loop.saved["gc_dev"]["messages"]) == 19
-            assert loop.saved["gc_dev"]["result"]["status"] == "failed"
+            assert len(loop.saved["group:dev"]["messages"]) == 19
+            assert loop.saved["group:dev"]["result"]["status"] == "failed"
             await loop.poll()
-            assert loop.handle.call_args[0][0]["groups"][0]["group"] == "gc_other"
+            assert loop.handle.call_args[0][0]["groups"][0]["group"] == "group:other"
             assert (
                 loop.handle.call_args[0][0]["groups"][0]["previous"]["messages"] == []
             )
             await loop.poll()
             batch = loop.handle.call_args[0][0]["groups"][0]
             assert batch["previous"]["result"]["error"] == "handler failed"
-            assert len(loop.saved["gc_dev"]["messages"]) == 20
+            assert len(loop.saved["group:dev"]["messages"]) == 20
             assert (
-                json.loads(loop.path.read_text())["gc_dev"]["cursor"]
-                == loop.saved["gc_dev"]["cursor"]
+                json.loads(loop.path.read_text())["group:dev"]["cursor"]
+                == loop.saved["group:dev"]["cursor"]
             )
 
     asyncio.run(scenario())
@@ -149,7 +169,7 @@ def test_failed_batches_skip_bad_entries_and_rotate_groups(tmp_path):
 def test_arrivals_during_handling_and_cancellation_save_delivered_receipts(tmp_path):
     server = FakeServer(server_type="valkey")
     gate = AsyncGate()
-    harness = harness_with_coop(
+    harness = harness_with_msg(
         tmp_path,
         server,
         [
@@ -158,8 +178,8 @@ def test_arrivals_during_handling_and_cancellation_save_delivered_receipts(tmp_p
                     ToolCall(
                         "send",
                         "send",
-                        "coop__send",
-                        {"group": "gc_dev", "body": "delivered"},
+                        "msg__send",
+                        {"target": "group:dev", "body": "delivered"},
                     ),
                 )
             ),
@@ -171,17 +191,21 @@ def test_arrivals_during_handling_and_cancellation_save_delivered_receipts(tmp_p
     )
 
     async def scenario():
-        async with harness, make_client(server) as client:
-            await client.register("alice", "owner", "token")
-            source = await client.send("gc_dev", sender="owner", body="please reply")
+        async with (
+            harness,
+            make_client(server) as client,
+            make_client(server, "human:owner") as human,
+        ):
+            await prepare(client, human)
+            source = await human.send("group:dev", body="please reply")
             loop = make_loop(tmp_path, client, harness)
             task = asyncio.create_task(loop.poll())
             await asyncio.wait_for(gate.wait_until_entered(), 2)
-            await client.send("gc_dev", sender="owner", body="arrived during handler")
+            await human.send("group:dev", body="arrived during handler")
             task.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await task
-            saved = loop.saved["gc_dev"]
+            saved = loop.saved["group:dev"]
             assert saved["cursor"] == source["stream_id"]
             assert saved["result"]["status"] == "cancelled"
             assert len(saved["result"]["replies"]) == 1
@@ -192,12 +216,12 @@ def test_arrivals_during_handling_and_cancellation_save_delivered_receipts(tmp_p
 
 def test_heartbeat_continues_during_slow_batch_and_reconnects(tmp_path, monkeypatch):
     from toolang.work import messaging
-    from valkey.exceptions import ConnectionError
+    from toolang.teaming.errors import BackendUnavailable
 
     async def scenario():
         client = MagicMock()
         client.register = AsyncMock(
-            side_effect=[ConnectionError("temporarily unavailable"), None]
+            side_effect=[BackendUnavailable("temporarily unavailable"), None]
         )
         client.renew = AsyncMock()
         client.unregister = AsyncMock()
@@ -222,7 +246,7 @@ def test_heartbeat_continues_during_slow_batch_and_reconnects(tmp_path, monkeypa
         with pytest.raises(asyncio.CancelledError):
             await task
         assert client.register.await_count == 2
-        client.unregister.assert_awaited_once_with("alice", loop.token)
+        client.unregister.assert_awaited_once_with()
         client.close.assert_awaited_once()
 
     asyncio.run(scenario())
@@ -239,10 +263,10 @@ def test_hosted_lifespan_starts_and_stops_messaging(tmp_path, monkeypatch, enabl
     core.close = AsyncMock()
     core.state.run = AsyncMock()
     core.setup.run = AsyncMock()
-    from toolang.setup.messaging import MessagingSetup
+    from toolang.setup.teaming import TeamingSetup
 
-    core.setup.current.return_value.messaging = MessagingSetup(
-        CONFIG if enabled else None, "owner"
+    core.setup.current.return_value.teaming = TeamingSetup(
+        TeamingRootConfig("human:owner", CONFIG, 7000), TeamingHomeConfig(enabled)
     )
     scheduler = MagicMock()
     scheduler.start, scheduler.pause, scheduler.stop = (
@@ -300,10 +324,10 @@ def test_hosted_lifespan_starts_and_stops_messaging(tmp_path, monkeypatch, enabl
 def test_spawned_worker_sends_with_its_own_run_origin(tmp_path):
     from toolang.base.types.message import TextPart
     from toolang.execution.types import ThreadPrefix
-    from toolang.messaging.schemas import Message
+    from toolang.teaming.schemas import Message
 
     server = FakeServer(server_type="valkey")
-    harness = harness_with_coop(
+    harness = harness_with_msg(
         tmp_path,
         server,
         [
@@ -312,8 +336,8 @@ def test_spawned_worker_sends_with_its_own_run_origin(tmp_path):
                     ToolCall(
                         "send",
                         "send",
-                        "coop__send",
-                        {"group": "gc_dev", "body": "Worker result"},
+                        "msg__send",
+                        {"target": "group:dev", "body": "Worker result"},
                     ),
                 )
             ),
@@ -323,8 +347,12 @@ def test_spawned_worker_sends_with_its_own_run_origin(tmp_path):
     )
 
     async def scenario():
-        async with harness, make_client(server) as client:
-            await client.register("alice", "owner", "token")
+        async with (
+            harness,
+            make_client(server) as client,
+            make_client(server, "human:owner") as human,
+        ):
+            await prepare(client, human)
             parent = await harness.executor.run(
                 harness.run_spec(
                     thread=harness.threads.create(prefix=ThreadPrefix.TERM),
@@ -335,7 +363,7 @@ def test_spawned_worker_sends_with_its_own_run_origin(tmp_path):
             while harness.executor._tasks:
                 await asyncio.gather(*tuple(harness.executor._tasks))
             assert parent.status == "succeeded"
-            entries = await client.history("gc_dev")
+            entries = await client.history("group:dev")
             assert len(entries) == 1
             message = Message.decode(entries[0][1]["data"])
             assert message.origin is not None and message.origin["run"] != parent.id
@@ -344,27 +372,83 @@ def test_spawned_worker_sends_with_its_own_run_origin(tmp_path):
                 worker is not None
                 and worker.status == "succeeded"
                 and worker.thread != parent.thread
+                and message.origin["thread"] == worker.thread.id
             )
 
     asyncio.run(scenario())
 
 
-def test_coop_is_unavailable_without_configuration_or_online_agent(tmp_path):
+def test_msg_is_unavailable_without_configuration_and_fences_offline_sends(tmp_path):
     from toolang.base.types.tool import ToolContext
-    from toolang.messaging.errors import MessagingError
+    from toolang.teaming.errors import MessagingError
 
     async def scenario():
         context = ToolContext(tmp_path / "alice", tmp_path / "room")
-        with pytest.raises(MessagingError, match="not configured"):
+        with pytest.raises(MessagingError, match="disabled"):
             await (
-                CoopToolset({})
+                MsgToolset({})
                 .tools()["send"]
-                .invoke({"group": "all", "body": "hi"}, context)
+                .invoke({"target": "group:all", "body": "hi"}, context)
             )
         server = FakeServer(server_type="valkey")
-        coop = CoopToolset({"url": CONFIG.url, "groups": []})
-        setattr(coop, "connection", lambda: make_client(server))
-        with pytest.raises(MessagingError, match="not online"):
-            await coop.tools()["contacts"].invoke({}, context)
+        async with make_client(server) as agent:
+            await agent.register("human:owner")
+            await agent.unregister()
+        msg = MsgToolset({"url": CONFIG.url})
+        setattr(msg, "connection", lambda context: make_client(server))
+        assert set(msg.tools()) == {
+            "targets",
+            "send",
+            "create_group",
+            "join_group",
+            "leave_group",
+        }
+        with pytest.raises(MessagingError, match="lease lost"):
+            await msg.tools()["send"].invoke(
+                {"target": "group:all", "body": "hi"}, context
+            )
+
+    asyncio.run(scenario())
+
+
+def test_all_msg_tools_use_the_context_identity(tmp_path):
+    from toolang.base.types.tool import MsgToolContext
+    from toolang.teaming.errors import MessagingError
+
+    async def scenario():
+        server = FakeServer(server_type="valkey")
+        async with make_client(server) as agent:
+            await agent.register("human:owner")
+        msg = MsgToolset({"url": CONFIG.url})
+        setattr(
+            msg,
+            "connection",
+            lambda context: make_client(server, f"agent:{context.home.name}"),
+        )
+        context = MsgToolContext(
+            tmp_path / "alice",
+            tmp_path / "room",
+            run_id="run_test",
+            thread_id="term_test",
+        )
+        tools = msg.tools()
+        result = await tools["targets"].invoke({}, context)
+        assert result.output["participants"][0]["target"] == "human:owner"
+        created = await tools["create_group"].invoke({"name": "dev"}, context)
+        assert created.output == {"group": "group:dev", "members": ["agent:alice"]}
+        sent = await tools["send"].invoke(
+            {"target": "group:dev", "body": "hello"}, context
+        )
+        assert sent.output["message"]["sender"] == "agent:alice"
+        assert sent.output["message"]["origin"] == {
+            "run": "run_test",
+            "thread": "term_test",
+        }
+        left = await tools["leave_group"].invoke({"group": "group:dev"}, context)
+        assert left.output["members"] == []
+        joined = await tools["join_group"].invoke({"group": "group:dev"}, context)
+        assert joined.output["members"] == ["agent:alice"]
+        with pytest.raises(MessagingError, match="Invalid target"):
+            await tools["send"].invoke({"target": "dev", "body": "ambiguous"}, context)
 
     asyncio.run(scenario())

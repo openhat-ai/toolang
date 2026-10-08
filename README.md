@@ -119,7 +119,7 @@ too new <agent>                       # Create a local agent
 too clone <ref> <agent>               # Clone an agent
 too <agent> chat                      # Chat with an agent
 too text <target> [message...]        # Open a conversation or send a message
-too team                              # List messaging groups
+too text                              # List messaging conversations
 too [agent] home                      # Open a shell in agent home
 too serve <ref>                       # Run an agent in the foreground
 too start <agent>                     # Start an agent in the background
@@ -137,7 +137,7 @@ too --help                            # Show common commands
 too more                              # Show additional commands
 ```
 
-Messaging requires an externally running Valkey server; see [messaging setup](docs/messaging.md).
+Optional teaming requires an externally running Redis or Valkey server; see [messaging setup](docs/messaging.md).
 
 ## Links
 

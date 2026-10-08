@@ -16,7 +16,7 @@ from rich.console import Console
 
 from toolang.cli.common.terminal_surfaces import LIGHT_TERMINAL_SURFACES
 from toolang.cli.toolang.commands.text import tui
-from toolang.messaging.schemas import Message
+from toolang.teaming.schemas import Message
 
 
 class TerminalOutput(DummyOutput):
@@ -28,16 +28,19 @@ class TerminalOutput(DummyOutput):
 
 
 @asynccontextmanager
-async def text_app(tmp_path, *, group="dm_alice", read_only=False):
+async def text_app(
+    tmp_path, *, group="group:conversation", label="agent:alice", read_only=False
+):
     output = TerminalOutput()
     with create_app_session(input=DummyInput(), output=output):
         app = tui.TextTui(
             AsyncMock(),
             group,
-            "bryan",
+            "human:bryan",
             tmp_path,
             LIGHT_TERMINAL_SURFACES,
             read_only=read_only,
+            label=label,
         )
         with set_app(app.app):
             try:
@@ -128,7 +131,7 @@ def test_history_batch_uses_one_scrollback_write(tmp_path, monkeypatch):
             monkeypatch.setattr(tui, "run_in_terminal", write)
             ui.agents = {"alice"}
             entries = [
-                (f"1-{index}", {"data": Message.create("alice", body).encode()})
+                (f"1-{index}", {"data": Message.create("agent:alice", body).encode()})
                 for index, body in enumerate(("first message", "second message"))
             ]
             await ui.show(entries)
@@ -151,7 +154,7 @@ def test_footer_expires_sent_status_and_prioritizes_reconnection(tmp_path, monke
             def footer():
                 return fragment_list_to_text(ui.status_text())
 
-            assert "@alice · Connected · Sent" in footer()
+            assert "agent:alice · Connected · Sent" in footer()
             assert "Enter send" in footer()
             monkeypatch.setattr(tui, "monotonic", lambda: 102.0)
             assert "Sent" not in footer()
@@ -170,15 +173,17 @@ def test_footer_expires_sent_status_and_prioritizes_reconnection(tmp_path, monke
 @pytest.mark.parametrize(
     "group,label,read_only",
     [
-        ("all", "#all", False),
-        ("gc_dev", "#dev", False),
-        ("dm_alice", "@alice", False),
-        ("dm_alice_bob", "@alice ↔ @bob", True),
+        ("group:all", "all", False),
+        ("group:dev", "dev", False),
+        ("group:one", "agent:alice ↔ human:bryan", False),
+        ("group:two", "agent:alice ↔ agent:bob", True),
     ],
 )
 def test_footer_identifies_conversation_kind(tmp_path, group, label, read_only):
     async def scenario():
-        async with text_app(tmp_path, group=group, read_only=read_only) as (ui, _):
+        async with text_app(
+            tmp_path, group=group, label=label, read_only=read_only
+        ) as (ui, _):
             footer = fragment_list_to_text(ui.status_text())
             assert footer.startswith(label + " · ")
             assert ("Read-only" in footer) == read_only
@@ -191,7 +196,7 @@ def test_read_only_view_preserves_previous_draft(tmp_path):
     (tmp_path / "draft.txt").write_text("unsent message")
 
     async def scenario():
-        async with text_app(tmp_path, group="dm_alice_bob", read_only=True) as (ui, _):
+        async with text_app(tmp_path, group="group:private", read_only=True) as (ui, _):
             assert not ui.prompt.buffer.text
             await ui.send("accidental send")
             ui.save_draft()

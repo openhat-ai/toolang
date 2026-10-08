@@ -31,63 +31,73 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   print repeated scrollback notices. Failures show `Send failed` or `Send not
   confirmed` so an unconfirmed message is checked before retrying.
 
-- `too team` lists DMs as well as groups, pinning `all` first and ordering the
-  rest by recent activity, with online/offline badges for agents only and a
-  preview of the latest message beside the target that opens the conversation.
+- `too text` with no target lists conversations, pinning `group:all` first and
+  ordering the rest by recent activity, listing each conversation's participants
+  with online/offline badges for agents only and a preview of the latest message
+  beside the target that opens the conversation. (#708)
 
-- Interactive Text starts left-aligned names and body text in column 3, with a
-  `•` marker on the first body line rather than the name. Owner names sit
-  outside and above the background at the upper right; owner bodies have two
-  cells of horizontal padding on each side and one row above and below, and their
-  first body line carries Chat's cyan `▮` marker in the outermost right
-  padding cell. Right-aligned agent DMs have no marker, and very narrow terminals
-  reduce the decoration to preserve content.
+- Interactive Text starts left-aligned names and the first body line's `•` marker
+  in column 1, with body text in column 3. Owner names sit outside and above the
+  background at the upper right; owner bodies have two cells of horizontal
+  padding on each side and one row above and below, and their first body line
+  carries Chat's cyan `▮` marker in the outermost right padding cell.
+  Right-aligned agent DMs carry a `•` at the right edge of their first body line,
+  and very narrow terminals reduce the decoration to preserve content.
 
 - Interactive Text lays out messages within Chat's maximum content width (120
   columns by default, configurable with `TOOLANG_PROGRESS_MAX_WIDTH`), capped by
   the current terminal width.
 
-- Messaging is enabled by default: `[messaging].url` defaults to
-  `redis://localhost:6379/0`, so a local Valkey server needs no configuration,
-  and `[messaging].enabled = false` in the root or an agent's `config.toml` opts
-  out.
+- Teaming is opt-in: an agent participates only after its `config.toml` sets
+  `[teaming].enabled = true` (default `false`), and a disabled agent makes no
+  backend connections. The backend URL defaults to `redis://localhost:6379/0`,
+  so a local Redis or Valkey server needs no URL. (#708)
 
 - `too text TARGET [MESSAGE...]` opens a conversation or sends a message and exits.
-  It resolves agent names, custom `gc_` groups, and canonical conversation IDs, with
-  `--dm`/`--group` to disambiguate a name collision. Omitting the message opens
+  It resolves a bare name that matches exactly one participant or conversation, plus
+  canonical `agent:`, `human:`, and `group:` targets (`all` means the public
+  `group:all`), with `--dm`/`--group` to disambiguate. Omitting the message opens
   interactive Text with a live input below the scrollback (Enter sends, Ctrl+J inserts
   a newline, Ctrl+P/Ctrl+N browse sent input), preserves drafts on a failed send, and
   keeps per-conversation history. Inside tmux each root/connection/human gets a session
-  and each conversation a reusable window; `TOOLANG_TMUX=0` stays in the invoking pane.
+  and each conversation a reusable window; `TOOLANG_TMUX=0` stays in the invoking pane. (#708)
 
-- `too team` lists public and custom conversations with their members, online agents,
-  and latest message time.
+- The bundled `msg` toolset exposes `msg/targets` (wire name `msg__targets`) to
+  list registered participants and accessible conversations with their canonical
+  targets, `msg/send` (wire name `msg__send`) to send a message immediately, and
+  `msg/create_group`, `msg/join_group`, and `msg/leave_group` to create and manage
+  custom groups. Enabled hosted agents poll an external Redis or Valkey server and
+  handle incoming batches through `agic:msg`, or the default agic, replying in the
+  source group; own messages do not re-trigger handling and failed or malformed
+  batches are logged and skipped. (#708)
 
-- The bundled `coop` toolset exposes `coop/contacts` (wire name `coop__contacts`) to
-  list registered agents and joined conversations, and `coop/send` (wire name
-  `coop__send`) to send a message immediately. Hosted agents poll an external Valkey
-  server and handle incoming batches through `agic:msg`, or the default agic, replying
-  in the source group; own messages do not re-trigger handling and failed or malformed
-  batches are logged and skipped.
-
-- Messaging is configured in the root `config.toml` with `[messaging].url` naming an
-  externally running Valkey server and `[human].name` (defaulting to the OS username),
-  plus optional per-agent `[messaging].groups`. Agents sharing that Valkey instance
-  communicate across machines, with membership, presence, and message streams kept
-  there. Adds the `valkey` runtime dependency; see `docs/messaging.md` for setup.
+- Teaming is configured in the root `config.toml` under `[teaming]`: `human`
+  (defaulting to the OS username) and `[teaming.backend].url` naming an externally
+  running Redis or Valkey server. Membership, presence, and message streams live in
+  that backend, so agents sharing it communicate across machines, and root settings
+  cannot appear in an agent's `config.toml`. Adds the `valkey` runtime dependency;
+  see `docs/messaging.md` for setup. (#708)
 
 ### Changed
 
-- Direct conversations accept messages only from their two participants.
-  Nonparticipant sends, including a human inserting into an agent DM, are now
-  rejected by the shared messaging core and one-shot `too text` sends. Use a
-  shared custom group or `all` to include a third participant; existing history
-  and drafts are retained.
+- **Breaking:** the experimental `coop` toolset (wire names `coop__contacts` and
+  `coop__send`), the public `CoopToolContext` type, the `too team` command,
+  `[human]` and `[messaging]` configuration, and old conversation IDs are replaced
+  by the `msg` toolset and `MsgToolContext`, typed `agent:`/`human:`/`group:`
+  targets, and `too text`, with no data migration or compatibility aliases.
+  Configure `teaming.human` and `teaming.backend.url` in the root `config.toml`
+  and `teaming.enabled` in each agent home; see `docs/messaging.md`. (#708)
+
+- Direct conversations accept messages only from their two participants, and
+  custom groups only from their members. Nonparticipant sends, including a human
+  inserting into an agent DM, are now rejected by the shared messaging core and
+  one-shot `too text` sends. Use a shared custom group or `group:all` to include a
+  third participant; existing history and drafts are retained. (#708)
 
 - Text aligns messages by the current identity — the reader's own on the right
   and every other sender on the left — with names aligned to the outer-edge
-  marker, and footer labels identify `#group` conversations and `@agent` /
-  `@alice ↔ @bob` direct conversations.
+  marker, and footer labels name the conversation: its group name (or `all`) or a
+  direct conversation's `agent:alice ↔ agent:bob` participants. (#708)
 
 ## [0.4.0a2] - 2026-10-07
 

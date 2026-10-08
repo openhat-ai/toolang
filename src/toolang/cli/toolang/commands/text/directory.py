@@ -8,14 +8,13 @@ from rich.console import Console
 from rich.table import Table
 from rich.text import Text
 from typer._click.exceptions import ClickException
-from valkey.exceptions import ValkeyError
 
 from toolang.cli.common.context import context_root
 from toolang.cli.common.messaging import settings
-from toolang.messaging.client import MessagingClient
-from toolang.messaging.errors import MessagingError
-from toolang.messaging.schemas import conversation, stream_id
-from .text.rendering import display_text
+from toolang.teaming.messaging import MessagingClient
+from toolang.teaming.errors import TeamingError
+from toolang.teaming.schemas import stream_id
+from .rendering import display_text
 
 
 def _message_time(sid: str, now: datetime) -> str:
@@ -26,12 +25,12 @@ def _message_time(sid: str, now: datetime) -> str:
     return timestamp.strftime(pattern)
 
 
-def team_command(ctx: typer.Context) -> None:
+def directory_command(ctx: typer.Context) -> None:
     try:
-        config, _human = settings(context_root(ctx))
+        config, human = settings(context_root(ctx))
 
         async def listing():
-            async with MessagingClient(config) as client:
+            async with MessagingClient(config, actor=human) as client:
                 return await client.contacts(
                     include_preview=True
                 ), await client.agents()
@@ -39,7 +38,7 @@ def team_command(ctx: typer.Context) -> None:
         groups, agents = asyncio.run(listing())
         groups.sort(
             key=lambda group: (
-                group["group"] != "all",
+                group["group"] != "group:all",
                 *(-part for part in stream_id(group["latest"] or "0-0")),
                 group["group"],
             )
@@ -51,9 +50,7 @@ def team_command(ctx: typer.Context) -> None:
         now = datetime.now().astimezone()
         for group in groups:
             participants = Text()
-            separator = (
-                " ↔ " if conversation(group["group"]).kind in {"owner", "dm"} else " · "
-            )
+            separator = " ↔ " if group["kind"] == "direct" else " · "
             for member in sorted(
                 group["members"], key=lambda name: (name in agents, name)
             ):
@@ -80,5 +77,5 @@ def team_command(ctx: typer.Context) -> None:
         console.print(
             Text("● online  ○ offline · Open: too text <target>", style="dim")
         )
-    except (MessagingError, ValkeyError, ValueError, OSError) as exc:
+    except (TeamingError, ValueError, OSError) as exc:
         raise ClickException(str(exc)) from exc

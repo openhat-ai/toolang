@@ -14,7 +14,7 @@ from toolang.base.protocols.model import ModelAdapter, ModelCatalog
 from toolang.base.types.model import ModelCatalogSnapshot, ModelOverride
 from toolang.base.types.policy import AgentCeiling, RunDefaults, RunLimits
 from toolang.common.layout import AgentLayout
-from .messaging import MessagingSetup, resolve_messaging_setup
+from .teaming import TeamingSetup, resolve_teaming_setup
 from toolang.plugin.config import merge_plugin_configs
 from toolang.common.config_sources import ConfigSource, config_sources
 from toolang.plugin.loading import (
@@ -192,18 +192,12 @@ class SetupWatcher:
         adapter_configs = merge_plugin_configs(configs, family="model_adapter")
         toolset_configs = merge_plugin_configs(configs, family="toolset")
         if self._setup is None:
-            human_config = next(
-                (
-                    source.config
-                    for source in inputs.sources
-                    if source.path == self.layout.root_config
-                ),
-                {},
+            teaming = resolve_teaming_setup(
+                inputs.sources, root=self.layout.root_config, home=self.layout.config
             )
-            messaging = resolve_messaging_setup(configs, human_config=human_config)
         else:
-            messaging = self._setup.messaging
-        toolset_configs["coop"] = messaging.toolset_config() if messaging else {}
+            teaming = self._setup.teaming
+        toolset_configs["msg"] = teaming.toolset_config() if teaming else {}
         catalog_path = resolve_model_catalog_path(
             self.layout,
             explicit=self._model_catalog_override,
@@ -251,7 +245,7 @@ class SetupWatcher:
                 ),
                 "adapters": adapter_configs,
                 "toolsets": toolset_configs,
-                "human": messaging.human if messaging else None,
+                "human": teaming.root.human if teaming else None,
                 "allow": allow,
                 "defaults": defaults,
                 "limits": limits,
@@ -281,7 +275,7 @@ class SetupWatcher:
             revision=revision,
             load=load,
             catalog_sources=catalog_sources,
-            messaging=messaging,
+            teaming=teaming,
             adapter_configs=adapter_configs,
             toolset_configs=toolset_configs,
             catalog_configs=catalog_configs,
@@ -447,7 +441,7 @@ def _build_setup(
     defaults: RunDefaults,
     limits: RunLimits,
     compact: CompactConfig,
-    messaging: MessagingSetup | None,
+    teaming: TeamingSetup | None,
     validate_defaults: bool,
 ) -> AgentSetup:
     """Publish captured revisions with per-setup synchronous lazy loaders."""
@@ -523,7 +517,7 @@ def _build_setup(
         defaults=defaults,
         limits=limits,
         compact=compact,
-        messaging=messaging,
+        teaming=teaming,
         catalog_sources=catalog_sources,
         _load_models=load_model_data,
         _load_tools=load_tool_collection,

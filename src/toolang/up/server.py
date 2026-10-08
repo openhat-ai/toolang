@@ -279,12 +279,13 @@ def serve(
                 get_agent_state=current_state,
             )
             await scheduler.start()
-            messaging_setup = current_setup().messaging
-            if messaging_setup is not None and messaging_setup.config is not None:
+            messaging_setup = current_setup().teaming
+            if messaging_setup is not None and messaging_setup.home.enabled:
                 messaging = MessagingLoop(
                     layout=spec.layout,
-                    owner=messaging_setup.human,
-                    config=messaging_setup.config,
+                    owner=messaging_setup.root.human,
+                    config=messaging_setup.root.backend,
+                    endpoint=spec.endpoint,
                     executor=core.executor,
                     threads=core.threads,
                     get_agent_setup=current_setup,

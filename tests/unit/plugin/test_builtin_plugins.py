@@ -16,7 +16,7 @@ from toolang.plugin.catalogs.models_dev.path import PACKAGED_MODEL_CATALOG
     [
         (
             "toolset",
-            {"_toolang", "coop", "fs", "history", "me", "service", "shell", "web"},
+            {"_toolang", "msg", "fs", "history", "me", "service", "shell", "web"},
         ),
         ("model_catalog", {"models_dev", "ollama", "llama_cpp"}),
         (

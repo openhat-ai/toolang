@@ -18,18 +18,21 @@ from rich.console import Console
 from rich.text import Text
 
 from toolang.cli.common.tmux import Launcher
-from toolang.messaging.client import MessagingClient, online_key
-from toolang.messaging.config import MessagingConfig
-from toolang.messaging.schemas import Message
+from toolang.teaming.messaging import MessagingClient
+from toolang.teaming.backend import online_key
+from toolang.teaming.config import BackendConfig
+from toolang.teaming.errors import MessagingError
+from valkey.asyncio import Valkey
+from toolang.teaming.schemas import Message
 
 pytestmark = pytest.mark.live_valkey
 
 
-@pytest.fixture
-def valkey():
-    executable = shutil.which("valkey-server")
+@pytest.fixture(params=["valkey-server", "redis-server"])
+def valkey(request):
+    executable = shutil.which(request.param)
     if executable is None:
-        pytest.skip("valkey-server is not installed")
+        pytest.skip(f"{request.param} is not installed")
     with tempfile.TemporaryDirectory(prefix="too-valkey-", dir="/tmp") as directory:
         socket = Path(directory) / "socket"
         with (Path(directory) / "server.log").open("w") as log:
@@ -59,38 +62,58 @@ def valkey():
                     ).read_text()
                     time.sleep(0.01)
                 assert socket.exists()
-                yield MessagingConfig(f"unix://{socket}", ("gc_dev",))
+                yield BackendConfig(f"unix://{socket}")
             finally:
                 process.terminate()
                 process.wait(timeout=5)
 
 
-def test_standard_valkey_registration_streams_and_expiry(valkey):
+def test_standard_backend_registration_streams_and_expiry(valkey):
     async def scenario():
-        async with MessagingClient(valkey) as alice, MessagingClient(valkey) as bob:
+        async with (
+            MessagingClient(valkey, actor="agent:alice", token="old") as alice,
+            MessagingClient(valkey, actor="agent:bob") as bob,
+            MessagingClient(valkey, actor="human:owner") as human,
+            Valkey.from_url(valkey.url, decode_responses=True) as raw,
+        ):
             await asyncio.gather(
-                alice.register("alice", "owner", "a"), bob.register("bob", "owner", "b")
+                alice.register("human:owner"), bob.register("human:owner")
             )
-            receipt = await alice.send(
-                "dm_alice_bob", sender="alice", agent=True, run="run_wire", body="hello"
+            groups = await asyncio.gather(
+                alice.resolve("agent:bob"), bob.resolve("agent:alice")
             )
-            assert await alice.read("dm_alice_bob") == await bob.read("dm_alice_bob")
+            assert groups[0] == groups[1]
+            group = groups[0]
+            receipt = await alice.send(group, run="run_wire", body="hello")
+            assert await alice.read(group) == await bob.read(group)
             assert (
-                Message.decode((await bob.history("dm_alice_bob"))[0][1]["data"]).id
+                Message.decode((await bob.history(group))[0][1]["data"]).id
                 == receipt["message"]["id"]
             )
-            await alice.redis.pexpire(online_key("alice"), 10)
+            await raw.pexpire(online_key("agent:alice"), 10)
             for _ in range(100):
-                if not await alice.redis.exists(online_key("alice")):
+                if not await raw.exists(online_key("agent:alice")):
                     break
                 await asyncio.sleep(0.01)
-            assert not await alice.redis.exists(online_key("alice"))
-            assert await bob.resolve("alice") == "dm_alice"
-            await bob.send("dm_alice", sender="owner", body="queued while offline")
-            await alice.register("alice", "owner", "new")
-            assert len(await alice.history("dm_alice")) == 1
-            await alice.unregister("alice", "a")
-            assert await alice.redis.get(online_key("alice")) == "new"
+            assert not await raw.exists(online_key("agent:alice"))
+            with pytest.raises(MessagingError, match="lease lost"):
+                await alice.send(group, body="stale")
+            own = (await human.send("agent:alice", body="queued while offline"))[
+                "group"
+            ]
+            async with MessagingClient(
+                valkey, actor="agent:alice", token="new"
+            ) as replacement:
+                await replacement.register("human:owner")
+                assert len(await replacement.history(own)) == 1
+                await alice.unregister()
+                assert await raw.hget(online_key("agent:alice"), "token") == "new"
+                await replacement.create_group("dev")
+                await bob.join_group("group:dev")
+                await bob.send("group:dev", body="joined")
+                await bob.leave_group("group:dev")
+                with pytest.raises(MessagingError, match="not a member"):
+                    await bob.read("group:dev")
 
     asyncio.run(scenario())
 
@@ -100,13 +123,17 @@ def test_real_text_terminal_sends_reads_and_reuses_tmux(valkey, tmp_path):
         pytest.skip("tmux is not installed")
 
     async def register():
-        async with MessagingClient(valkey) as client:
-            await client.register("alice", "owner", "token")
-            await client.send("gc_dev", sender="owner", body="retained greeting")
+        async with (
+            MessagingClient(valkey, actor="agent:alice") as agent,
+            MessagingClient(valkey, actor="human:owner") as human,
+        ):
+            await agent.register("human:owner")
+            await human.create_group("dev")
+            await human.send("group:dev", body="retained greeting")
 
     asyncio.run(register())
     (tmp_path / "config.toml").write_text(
-        f'[human]\nname = "owner"\n[messaging]\nurl = "{valkey.url}"\n'
+        f'[teaming]\nhuman = "owner"\n[teaming.backend]\nurl = "{valkey.url}"\n'
     )
     with tempfile.TemporaryDirectory(prefix="too-text-tmux-", dir="/tmp") as directory:
         tmux = libtmux.Server(
@@ -147,13 +174,13 @@ def test_real_text_terminal_sends_reads_and_reuses_tmux(valkey, tmp_path):
                 "--root",
                 str(tmp_path),
                 "text",
-                "gc_dev",
+                "group:dev",
             ]
             from toolang.cli.common.errors import TmuxPlacementError
 
             with suppress(TmuxPlacementError):
                 launcher.place_chat(
-                    thread_id="gc_dev", argv=argv, directory=str(tmp_path)
+                    thread_id="group:dev", argv=argv, directory=str(tmp_path)
                 )
             session = next(s for s in tmux.sessions if s.session_name == "text-owner")
             window = session.windows[0]
@@ -184,7 +211,7 @@ def test_real_text_terminal_sends_reads_and_reuses_tmux(valkey, tmp_path):
                     if "dev" in footer and len(footer) == min(width, 120):
                         break
                     time.sleep(0.02)
-                assert "dev" in footer and "gc_dev" not in footer, screen()
+                assert "dev" in footer and "group:dev" not in footer, screen()
                 assert len(footer) == min(width, 120)
                 target.send_keys("resize draft", enter=False)
                 for _ in range(300):
@@ -228,10 +255,10 @@ def test_real_text_terminal_sends_reads_and_reuses_tmux(valkey, tmp_path):
             assert "Connected · Sent" in screen(), screen()
 
             async def check():
-                async with MessagingClient(valkey) as client:
+                async with MessagingClient(valkey, actor="human:owner") as client:
                     messages = [
                         Message.decode(fields["data"])
-                        for _, fields in await client.history("gc_dev")
+                        for _, fields in await client.history("group:dev")
                     ]
                     assert [m.body for m in messages] == [
                         "retained greeting",
@@ -241,7 +268,7 @@ def test_real_text_terminal_sends_reads_and_reuses_tmux(valkey, tmp_path):
             asyncio.run(check())
             with suppress(TmuxPlacementError):
                 launcher.place_chat(
-                    thread_id="gc_dev", argv=argv, directory=str(tmp_path)
+                    thread_id="group:dev", argv=argv, directory=str(tmp_path)
                 )
             assert len(session.windows) == 1 and len(window.panes) == 1
             # Another group owns a separate live draft and input history.
@@ -252,21 +279,22 @@ def test_real_text_terminal_sends_reads_and_reuses_tmux(valkey, tmp_path):
             assert len(session.windows) == 2
 
             async def prepare_dm():
-                async with MessagingClient(valkey) as client:
-                    await client.register("bob", "owner", "bob-token")
-                    for sender in ("alice", "bob"):
-                        await client.send(
-                            "dm_alice_bob",
-                            sender=sender,
-                            agent=True,
-                            body="agent greeting",
-                        )
+                async with (
+                    MessagingClient(valkey, actor="agent:alice") as alice,
+                    MessagingClient(valkey, actor="agent:bob") as bob,
+                ):
+                    await alice.register("human:owner")
+                    await bob.register("human:owner")
+                    group = await alice.resolve("agent:bob")
+                    for agent in (alice, bob):
+                        await agent.send(group, body="agent greeting")
+                    return group
 
-            asyncio.run(prepare_dm())
+            direct = asyncio.run(prepare_dm())
             with suppress(TmuxPlacementError):
                 launcher.place_chat(
-                    thread_id="dm_alice_bob",
-                    argv=[*argv[:-1], "dm_alice_bob"],
+                    thread_id=direct,
+                    argv=[*argv[:-1], direct],
                     directory=str(tmp_path),
                 )
             observer = session.windows[-1].panes[0]
@@ -279,17 +307,17 @@ def test_real_text_terminal_sends_reads_and_reuses_tmux(valkey, tmp_path):
                     break
                 time.sleep(0.02)
             observed = observed_screen()
-            assert "@alice ↔ @bob · Read-only · Connected" in observed, observed
+            assert "agent:alice ↔ agent:bob · Read-only · Connected" in observed, (
+                observed
+            )
             assert "Write a message" not in observed and "Enter send" not in observed
             assert any(line.startswith("alice") for line in observed.splitlines())
             assert any(line.startswith("bob") for line in observed.splitlines())
             observer.send_keys("human cannot join this DM", enter=True)
 
             async def agent_reply():
-                async with MessagingClient(valkey) as client:
-                    await client.send(
-                        "dm_alice_bob", sender="bob", agent=True, body="still receiving"
-                    )
+                async with MessagingClient(valkey, actor="agent:bob") as client:
+                    await client.send(direct, body="still receiving")
 
             asyncio.run(agent_reply())
             for _ in range(300):
@@ -299,11 +327,11 @@ def test_real_text_terminal_sends_reads_and_reuses_tmux(valkey, tmp_path):
             assert "still receiving" in observed_screen(), observed_screen()
 
             async def unchanged_participants():
-                async with MessagingClient(valkey) as client:
-                    entries = await client.history("dm_alice_bob")
+                async with MessagingClient(valkey, actor="human:owner") as client:
+                    entries = await client.history(direct)
                     assert [
                         Message.decode(fields["data"]).sender for _, fields in entries
-                    ] == ["alice", "bob", "bob"]
+                    ] == ["agent:alice", "agent:bob", "agent:bob"]
 
             asyncio.run(unchanged_participants())
             observer.send_keys("C-q", enter=False)

@@ -66,7 +66,7 @@ def test_all_filesystem_operations_and_uri_results(fs):
         "repo://file%GG",
         "repo://%FF",
         "repo://%00",
-        "runspace://coop/file",
+        "runspace://msg/file",
         "WORKSPACE://repo/file",
     ],
 )

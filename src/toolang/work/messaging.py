@@ -18,19 +18,19 @@ from toolang.execution.runnables import resolve_runnable_reference, runnable_fal
 from toolang.execution.threads import ThreadManager
 from toolang.execution.types import ThreadPrefix
 from toolang.lang.input import resolve_runnable_input
-from toolang.messaging.client import MessagingClient, RENEW_SECONDS, host_token
-from toolang.messaging.config import MessagingConfig
-from toolang.messaging.errors import MessagingError
-from toolang.messaging.schemas import Message, stream_id
+from toolang.teaming.messaging import MessagingClient, RENEW_SECONDS
+from toolang.teaming.config import BackendConfig
+from toolang.teaming.errors import MessagingError
+from toolang.teaming.schemas import Message, stream_id
 from toolang.setup import AgentSetup
 from toolang.state.state import AgentState
 
 logger = logging.getLogger(__name__)
 _CONTEXT = 20
 _INSTRUCTIONS = """Handle this message batch as the receiving agent.
-Use coop/contacts to find agents and conversations; never inspect other agents'
+Use msg/targets to find agents and conversations; never inspect other agents'
 threads, files, configuration, or shell sessions to discover how to communicate.
-Reply using coop/send to the source group, with in_reply_to set to the source
+Reply using msg/send to the source group, with in_reply_to set to the source
 message ID, unless explicitly asked to contact someone elsewhere. The tool owns
 the envelope and delivery. Never resend a successful tool send. Your final output
 is a brief handling summary, not a chat message or a replies JSON object.
@@ -38,7 +38,7 @@ Previous messages/results are context only. Do not re-handle your own messages,
 acknowledgements, completed discussions, or requests addressed only to others.
 If no action is needed, simply note that. Do not send acknowledgements of acknowledgements.
 Delegate substantial work to an available spawn target, preserving source context;
-tell the worker to send its result via coop/send. Do not await it in this handler.
+tell the worker to send its result via msg/send. Do not await it in this handler.
 Batch:
 """
 
@@ -49,16 +49,17 @@ class MessagingLoop:
         *,
         layout: AgentLayout,
         owner: str,
-        config: MessagingConfig,
+        config: BackendConfig,
         executor: RunExecutor,
         threads: ThreadManager,
         get_agent_setup: Callable[[], AgentSetup],
         get_agent_state: Callable[[], AgentState],
         client: MessagingClient | None = None,
+        endpoint: str = "",
     ):
-        self.agent, self.owner = layout.name, owner
-        self.client = client or MessagingClient(config)
-        self.token = host_token()
+        self.agent, self.owner = f"agent:{layout.name}", owner
+        self.client = client or MessagingClient(config, actor=self.agent)
+        self.endpoint = endpoint
         self.executor, self.threads = executor, threads
         self.get_setup, self.get_state = get_agent_setup, get_agent_state
         self.path = layout.channel_room("messaging") / f"v1-{config.identity}.json"
@@ -87,7 +88,7 @@ class MessagingLoop:
             self.load()
             while not stop.is_set():
                 try:
-                    await self.client.register(self.agent, self.owner, self.token)
+                    await self.client.register(self.owner, endpoint=self.endpoint)
                     async with asyncio.TaskGroup() as tasks:
                         tasks.create_task(self._heartbeat(stop))
                         tasks.create_task(self._consume(stop))
@@ -104,14 +105,14 @@ class MessagingLoop:
             logger.exception("Messaging stopped; check configuration and checkpoint")
         finally:
             with suppress(Exception):
-                await self.client.unregister(self.agent, self.token)
+                await self.client.unregister()
             await self.client.close()
 
     async def _heartbeat(self, stop: asyncio.Event) -> None:
         while not stop.is_set():
             await self._wait(stop, RENEW_SECONDS)
             if not stop.is_set():
-                await self.client.renew(self.agent, self.token)
+                await self.client.renew()
 
     async def _consume(self, stop: asyncio.Event) -> None:
         while not stop.is_set():
@@ -124,7 +125,7 @@ class MessagingLoop:
             await asyncio.wait_for(stop.wait(), seconds)
 
     async def poll(self) -> None:
-        groups = await self.client.contacts(agent=self.agent)
+        groups = await self.client.contacts()
         # Round-robin independently of membership changes.
         groups.sort(key=lambda g: (g["group"] <= self.last_group, g["group"]))
         for info in groups:
@@ -230,7 +231,7 @@ class MessagingLoop:
                 result = step.output.value if step.output is not None else None
                 if (
                     isinstance(result, ToolResultPart)
-                    and result.tool_name == "coop__send"
+                    and result.tool_name == "msg__send"
                     and result.error is None
                 ):
                     outcome["replies"].append(result.output)

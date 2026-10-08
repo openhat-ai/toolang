@@ -119,7 +119,8 @@ class ServiceToolContext(ToolContext):
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class CoopToolContext(ToolContext):
-    """Run identity supplied only to the messaging toolset."""
+class MsgToolContext(ToolContext):
+    """Execution identity supplied only to the messaging toolset."""
 
     run_id: str | None = None
+    thread_id: str | None = None

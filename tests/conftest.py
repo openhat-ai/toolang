@@ -20,7 +20,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         "--live-valkey",
         action="store_true",
         default=False,
-        help="run isolated Valkey and Text terminal checks",
+        help="run isolated Redis/Valkey and Text terminal checks",
     )
     parser.addoption(
         "--live-docker",
@@ -60,7 +60,7 @@ def pytest_collection_modifyitems(
         "live_provider": bool(config.getoption("--live-model")),
     }
     reasons = {
-        "live_valkey": "pass --live-valkey to run isolated Valkey checks",
+        "live_valkey": "pass --live-valkey to run isolated Redis/Valkey checks",
         "live_docker": "pass --live-docker to run Docker tests",
         "live_provider": "pass --live-model to run real-provider tests",
     }

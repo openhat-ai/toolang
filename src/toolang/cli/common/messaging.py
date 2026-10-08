@@ -1,14 +1,11 @@
-"""Consume the root messaging setup for CLI commands."""
+"""Resolve root teaming configuration for human messaging clients."""
 
 from pathlib import Path
 
-from toolang.messaging.config import MessagingConfig
-from toolang.messaging.errors import MessagingError
-from toolang.setup.messaging import load_messaging_setup
+from toolang.teaming.config import BackendConfig
+from toolang.setup.teaming import load_teaming_root
 
 
-def settings(root: Path) -> tuple[MessagingConfig, str]:
-    setup = load_messaging_setup(root)
-    if setup.config is None:
-        raise MessagingError("Messaging is disabled in the root configuration")
-    return setup.config, setup.human
+def settings(root: Path) -> tuple[BackendConfig, str]:
+    config = load_teaming_root(root)
+    return config.backend, config.human

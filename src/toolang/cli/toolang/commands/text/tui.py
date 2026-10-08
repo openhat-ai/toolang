@@ -12,7 +12,6 @@ from prompt_toolkit.layout import HSplit, HorizontalAlign, Layout, VSplit, Windo
 from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.styles import Style
 from rich.text import Text
-from valkey.exceptions import ValkeyError
 
 from toolang.cli.common.console import terminal_console
 from toolang.cli.common.execution_progress.config import DEFAULT_MAX_PROGRESS_WIDTH
@@ -22,11 +21,11 @@ from toolang.cli.common.input_history import InputHistoryStore
 from toolang.cli.common.scrollback import ScrollbackRenderer
 from toolang.cli.common.terminal_surfaces import TerminalSurfaces
 from toolang.common.files import atomic_write_text
-from toolang.messaging.client import MessagingClient
-from toolang.messaging.errors import MessagingError, SendUnconfirmed
-from toolang.messaging.schemas import Message
+from toolang.teaming.messaging import MessagingClient
+from toolang.teaming.errors import BackendUnavailable, MessagingError, SendUnconfirmed
+from toolang.teaming.schemas import Message
 
-from .rendering import conversation_label, display_text, message_block
+from .rendering import display_text, message_block
 
 
 class TextTui:
@@ -39,11 +38,13 @@ class TextTui:
         surfaces: TerminalSurfaces,
         *,
         read_only: bool,
+        label: str | None = None,
         max_width: int = DEFAULT_MAX_PROGRESS_WIDTH,
     ):
         self.client, self.group, self.human = client, group, human
         self.surfaces = surfaces
         self.read_only = read_only
+        self.label = label or group
         self.max_width = max_width
         self.draft = state / "draft.txt"
         self.connection = "Connecting…"
@@ -172,7 +173,7 @@ class TextTui:
         state = self.connection + (f" · {status}" if status else "")
         if self.read_only:
             state = f"Read-only · {state}"
-        label = conversation_label(self.group)
+        label = self.label
         left = " ".join(display_text(f" {label} · {state}").split())
         width = self.content_width()
         hint = (
@@ -210,8 +211,8 @@ class TextTui:
         self.status = "Sending…"
         self.invalidate()
         try:
-            await self.client.send(self.group, sender=self.human, body=body)
-        except (MessagingError, ValkeyError) as exc:
+            await self.client.send(self.group, body=body)
+        except MessagingError as exc:
             self.status = (
                 "Send not confirmed"
                 if isinstance(exc, SendUnconfirmed)
@@ -294,7 +295,7 @@ class TextTui:
                     self.connection = "Connected"
                     self.invalidate()
                 reconnecting, delay = False, 0.5
-            except ValkeyError:
+            except BackendUnavailable:
                 self.connection = "Reconnecting…"
                 self.invalidate()
                 reconnecting = True

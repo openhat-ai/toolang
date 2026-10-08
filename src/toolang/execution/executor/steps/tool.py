@@ -17,7 +17,7 @@ from toolang.base.protocols.tool import Tool, ToolHistory, ToolRuntime
 from toolang.base.types.message import Message, ToolResultPart
 from toolang.base.types.run import ToolCall, ToolCallResult
 from toolang.base.types.tool import (
-    CoopToolContext,
+    MsgToolContext,
     ToolContext,
     ToolResult,
     ToolService,
@@ -302,6 +302,7 @@ async def _execute(
                 tool=tool,
                 services=prepared.services,
                 run_id=run.run_id,
+                thread_id=run.thread,
                 runtime=runtime,
                 history=_ToolHistory(state.execution.store.db_path, run.thread)
                 if plugin_name == "history" and state.execution is not None
@@ -815,6 +816,7 @@ def _tool_context(
     tool: Tool,
     services: tuple[ToolService, ...],
     run_id: str | None = None,
+    thread_id: str | None = None,
     sync_state: StateSync | None = None,
     runtime: ToolRuntime | None = None,
     history: ToolHistory | None = None,
@@ -838,8 +840,8 @@ def _tool_context(
         return RuntimeToolContext(*args, runtime=runtime)
     if plugin_name == "history" and history is not None:
         return HistoryToolContext(*args, history=history)
-    if plugin_name == "coop":
-        return CoopToolContext(*args, run_id=run_id)
+    if plugin_name == "msg":
+        return MsgToolContext(*args, run_id=run_id, thread_id=thread_id)
     if plugin_name == "service":
         return ServiceToolContext(*args, services=services)
     if plugin_name == "me":

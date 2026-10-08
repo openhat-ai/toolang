@@ -10,16 +10,14 @@ from typing import Annotated
 
 import typer
 from typer._click.exceptions import ClickException
-from valkey.exceptions import ValkeyError
 
 from toolang.cli.common.context import context_root
 from toolang.cli.common.errors import TmuxPlacementError
 from toolang.cli.common.execution_progress.config import resolve_progress_max_width
 from toolang.cli.common.messaging import settings
 from toolang.cli.common.tmux import resolve_launcher
-from toolang.messaging.client import MessagingClient
-from toolang.messaging.errors import MessagingError
-from toolang.messaging.schemas import conversation
+from toolang.teaming.messaging import MessagingClient
+from toolang.teaming.errors import TeamingError
 
 
 def text_identity(root: Path, connection: str, human: str) -> str:
@@ -29,8 +27,9 @@ def text_identity(root: Path, connection: str, human: str) -> str:
 def text_command(
     ctx: typer.Context,
     target: Annotated[
-        str, typer.Argument(help="Agent name, group name, or canonical conversation ID")
-    ],
+        str | None,
+        typer.Argument(help="Agent name, group name, or canonical conversation ID"),
+    ] = None,
     body: Annotated[
         list[str] | None,
         typer.Argument(help="Literal message; omit to open interactive input"),
@@ -42,6 +41,13 @@ def text_command(
         bool, typer.Option("--group", help="Resolve target as a custom group name")
     ] = False,
 ) -> None:
+    if target is None:
+        if dm or group:
+            raise ClickException("A target is required with --dm or --group")
+        from .directory import directory_command
+
+        directory_command(ctx)
+        return
     root = context_root(ctx)
     if dm and group:
         raise ClickException("Use only one of --dm or --group")
@@ -52,14 +58,12 @@ def text_command(
         config, human = settings(root)
 
         async def resolve_or_send() -> str:
-            async with MessagingClient(config) as client:
+            async with MessagingClient(config, actor=human) as client:
                 resolved = await client.resolve(
                     target, kind="dm" if dm else "group" if group else None
                 )
                 if words:
-                    receipt = await client.send(
-                        resolved, sender=human, body=" ".join(words)
-                    )
+                    receipt = await client.send(resolved, body=" ".join(words))
                     typer.echo(f"Sent {receipt['message']['id']} to {resolved}")
                 return resolved
 
@@ -107,24 +111,22 @@ def text_command(
         surfaces = resolve_terminal_surfaces()
 
         async def interactive() -> None:
-            async with MessagingClient(config) as client:
-                agents = await client.agents()
-                if human in agents:
-                    raise MessagingError("Human name conflicts with a registered agent")
+            async with MessagingClient(config, actor=human) as client:
+                info = await client.conversation(resolved)
                 await TextTui(
                     client,
                     resolved,
                     human,
                     state,
                     surfaces,
-                    read_only=not conversation(resolved).allows_sender(human, agents),
+                    read_only=not info.allows_sender(human),
+                    label=info.label,
                     max_width=max_width,
                 ).run()
 
         asyncio.run(interactive())
     except (
-        MessagingError,
-        ValkeyError,
+        TeamingError,
         TmuxPlacementError,
         ValueError,
         OSError,

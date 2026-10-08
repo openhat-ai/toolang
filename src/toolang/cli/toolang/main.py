@@ -66,7 +66,7 @@ _AGENT_PANEL_COMMAND_ORDER = (
     "start",
     "stop",
 )
-_WORK_PANEL_COMMAND_ORDER = ("chat", "text", "team", "chore", "task", "workspace")
+_WORK_PANEL_COMMAND_ORDER = ("chat", "text", "chore", "task", "workspace")
 _CAPS_PANEL_COMMAND_ORDER = ("psyche", "skill", "service", "prompt")
 _RUN_PANEL_COMMAND_ORDER = ("steer", "cancel", "retry", "rerun")
 _THREAD_PANEL_COMMAND_ORDER = ("fork", "rewind")
@@ -402,12 +402,6 @@ _registered_command(
     "toolang.cli.toolang.commands.text:text_command",
     help="Send messages or open a conversation",
     context_settings={"allow_interspersed_args": False},
-    rich_help_panel=WORK_COMMAND_PANEL,
-)
-_registered_command(
-    "team",
-    "toolang.cli.toolang.commands.team:team_command",
-    help="List conversations, participants, and latest messages",
     rich_help_panel=WORK_COMMAND_PANEL,
 )
 

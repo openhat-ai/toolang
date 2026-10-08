@@ -20,7 +20,7 @@ PACKAGES = (
     "execution",
     "up",
     "lang",
-    "messaging",
+    "teaming",
     "plugin",
     "setup",
     "state",
@@ -44,7 +44,7 @@ PACKAGE_IMPORT_RULES: dict[str, frozenset[str] | None] = {
             "catalog",
             "common",
             "execution",
-            "messaging",
+            "teaming",
             "plugin",
             "setup",
             "state",
@@ -54,9 +54,9 @@ PACKAGE_IMPORT_RULES: dict[str, frozenset[str] | None] = {
     # lang uses the shared error type and immutable metadata containers.
     "lang": frozenset({"base", "common"}),
     # Plugins may use package-neutral helpers from common.
-    "messaging": frozenset({"common"}),
-    "plugin": frozenset({"base", "common", "messaging"}),
-    "setup": frozenset({"base", "common", "plugin", "messaging"}),
+    "teaming": frozenset({"common"}),
+    "plugin": frozenset({"base", "common", "teaming"}),
+    "setup": frozenset({"base", "common", "plugin", "teaming"}),
     "state": None,  # TODO: Review the state package boundary.
     "work": None,  # TODO: Review the work package boundary.
 }
@@ -380,3 +380,21 @@ def test_external_click_is_confined_to_the_editor() -> None:
     assert not violations, (
         "Use Typer outside external editor integration:\n" + "\n".join(violations)
     )
+
+
+def test_backend_driver_is_confined_to_teaming_backend() -> None:
+    boundary = SOURCE_ROOT / "teaming" / "backend.py"
+    violations = []
+    for path in SOURCE_ROOT.rglob("*.py"):
+        if path == boundary:
+            continue
+        for node in ast.walk(ast.parse(path.read_text(), filename=str(path))):
+            if isinstance(node, ast.Import):
+                names = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom) and not node.level:
+                names = [node.module or ""]
+            else:
+                continue
+            if any(name.split(".")[0] in {"redis", "valkey"} for name in names):
+                violations.append(f"{path.relative_to(SOURCE_ROOT)}:{node.lineno}")
+    assert not violations, "Driver imports outside backend: " + ", ".join(violations)
