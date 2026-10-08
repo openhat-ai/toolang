@@ -1,121 +1,205 @@
-# Local subscriptions
+# Canonical event subscriptions
 
-Proposed protocol for stage 4 of [teaming](teaming.md); implementation follows
-human approval. Stages 1–3 are merged as #709, #708, and #710.
+Agreed architecture for stage 4 of [teaming](teaming.md), replacing the earlier
+live-only proposal. Stages 1–3 merged as #709, #708, and #710. This PR defines the
+design without runtime changes. Resolve the remaining choices below before
+implementing the affected scope.
 
-## Goal and scope
+## Goal and ownership
 
-Clients independently observe an agent, thread, or root run with descendants,
-without Redis/Valkey or teaming enabled. Slow/disconnected clients must neither
-stall execution nor disrupt other observers; queues and cleanup are bounded.
+One agent runtime owns one executor and one canonical event stream. Independent
+tracers and run/thread/agent clients observe it without blocking execution or
+requiring Redis/Valkey. Optional teaming exports the same source events; local
+and Hub subscriptions share boundary and structural-prefill rules.
 
-This stage adds the agent stream and replaces the existing API relay's queue
-plumbing. Hub event forwarding, global subscriptions, activity commands, replay,
-and coordination remain in stage 5 or later.
+Resident-agent CLI operations that need execution must ensure the agent is ready
+and use its API. Concurrent starters converge on the same runtime. Remove host
+embedding from these paths; retain the runtime after the command by default.
+Optional stop-on-exit applies only to the instance started by that command, never
+an attached/replacement instance, and must not cancel other active work. Resolve
+configuration/environment/CLI policy at the call site. Script mode is a separate,
+unresolved lifecycle decision; its eventual policy must preserve single ownership
+when sharing an agent home.
 
-## Shared fanout
+Current host CLI acquisition permits embedding; CLI-started guests stop on exit.
+The hosted executor permits multiple active roots in one thread; preserve this
+concurrency while consolidating execution ownership.
 
-- `common/pubsub.py` uses [`pypubsub>=4.0.7,<5`](https://pypi.org/project/Pypubsub/4.0.7/)
-  for registration/dispatch, with an isolated `Publisher` per bus. Values are
-  generic; execution, HTTP, and backend dependencies stay outside this module.
-- One subscription selects one exact string tuple. Encode its compact UTF-8 JSON
-  as URL-safe Base64 without padding, prefixed with `t_`: one flat library topic,
-  without wildcard matching or accidental hierarchy from dots/Unicode in names.
-- Serialize publisher operations per bus. Callbacks only enqueue into bounded
-  standard-library queues; retain callbacks strongly and coalesce asyncio
-  wake-ups. The bound applies before scheduling across threads, including while
-  the receiving loop is paused.
-- The API supplies **256 queued events per client**, plus bounded framework
-  buffers and in-flight writes. Preserve publication order per subscription and
-  existing root-tree order; unrelated concurrent publishers have no wall-clock order.
-- Overflow detaches that subscriber, clears its backlog, and latches its reason.
-  Receive distinguishes events, timeout, closed, and overflow. Idempotent close
-  clears queued items, wakes receives, and prevents further enqueue while preserving
-  an existing overflow reason. A closed receiving loop detaches the subscriber
-  without failing publication. Remove empty topics;
-  publishing without listeners creates none. A closed bus rejects subscriptions,
-  releases existing subscribers, and ignores late publications.
+```text
+executor / thread mutations -> commit records -> canonical stream
+                                                +-> caller tracers
+                                                +-> local API subscriptions
+                                                +-> teaming exporter, if enabled
+```
 
-## Routing and HTTP
+Create the stream before accepting work, including scheduler/messaging work.
+Publish every source event once, independently of caller-supplied tracers; replace
+the fallback-only `root_tracer` wiring. `tracer=` registers an observer before the
+first event. Callbacks run on the subscriber side; their exceptions, network I/O,
+and backpressure never enter the execution path.
 
-Keys use the hosted agent's literal name and stored IDs. Each Agent API owns a
-separate bus, even when two apps host equal names.
+## Cursor and persistence
 
-| Scope | Exact internal topic | HTTP endpoint |
-| --- | --- | --- |
-| Agent | `("agent", agent)` | New `GET /api/v1/stream` |
-| Thread | `("thread", agent, thread)` | Existing `GET /api/v1/threads/{thread_id}/stream` |
-| Root run | `("run", agent, root_run)` | Existing `GET /api/v1/runs/{run_id}/stream` |
+Use one agent-wide cursor `(runtime_epoch, seq)`, encoded as an opaque token.
+Sequence assignment, durable projection, and cache publication follow one order
+across threads, roots, and parallel descendants. Only this short publication
+section is serialized; execution remains concurrent. Assign the cursor before
+projection, commit the record and cursor together, then publish with that cursor.
+Delta events receive sequence numbers but are not individually persisted.
 
-`api/common.py` retains the execution-aware relay. Internal deliveries carry
-agent, thread, root run (null for thread mutations), and canonical event. Publish
-each run event once per applicable scope, preserving descendants' actual run IDs.
-Thread mutations reach their thread and agent; forks also reach the source thread,
-with one agent delivery.
+Run/Step records gain indexed `begin_cursor` and `end_cursor`; durable thread
+operations retain their event cursor. Keep actual run/step identities, parent
+links, and root/thread routing context. Add `thread_id` to `RunBegin` so agent
+observers can organize events without another lookup. Clients supply a cursor,
+not a separate step path. Existing timestamps/control revisions are not event
+cursors and cannot substitute for these fields.
 
-All scopes emit the canonical event only, using `execution/events.py` serializers.
-An agent observer joining mid-run resolves thread/ancestry through run detail;
-canonical run events do not contain that routing context.
-Preserve the [existing SSE contract](../api.md#run-and-thread-endpoints), including
-validation, root termination, admission ordering, and 15-second keep-alives.
-Agent/thread streams remain open until disconnect, overflow, or shutdown.
-Closing any GET or POST stream never cancels execution.
+Run/thread subscriptions filter the same sequence; gaps from filtering or safe
+delta compaction are valid. Retry does not reset the runtime sequence. Restart
+uses a new epoch; never numerically compare sequences from different epochs.
+Legacy records without cursor metadata require structural initialization rather
+than invented historical positions.
 
-Overflow emits `event: stream_error`, `data: {"code":"overflow"}`, then closes.
-It can be the first POST frame if overflow precedes consumption; the accepted
-`X-Toolang-Run-ID` remains valid. Check overflow and queued events again after
-awaiting terminal-status lookups, before taking the empty-stream shortcut.
-Clients handle this transport frame before canonical decoding; it never reaches
-tracers or persistence. Frames already handed to transport may precede it.
+## Cache and fanout
 
-Keep FastAPI's generator SSE support. Pure ASGI middleware limits each SSE `send`
-to five seconds, including headers, without timing idle event waits or changing
-other responses. The current FastAPI generator path constructs `StreamingResponse`
-directly, so subclassing `EventSourceResponse` cannot enforce this deadline.
-Timeout unwinds the request and dependencies; blocked sockets may close without
-the error frame. Verify cleanup through the real ASGI path, including framework
-prefetch and disconnect exceptions.
+Maintain one bounded, ordered agent cache. Each subscriber owns a scan cursor,
+scope, structural state, and a bounded in-flight batch, rather than another full
+event queue. Filter after scanning and advance over nonmatching events.
 
-The API owns bus cleanup and composes it with any supplied lifespan. Hosting closes
-the bus at shutdown before Uvicorn waits for streams; lifespan cleanup is also
-idempotent. Disconnect, timeout, overflow, and shutdown release every affected
-subscription, including one blocked in receive.
+Use an isolated [PyPubSub Publisher](https://pypi.org/project/Pypubsub/4.0.7/)
+per runtime through `common/pubsub.py` (`pypubsub>=4.0.7,<5`). Its callbacks only
+signal availability; coalesce cross-thread wakeups and retain listeners strongly.
+Execution owns the cache, cursors, and reconstruction. Scopes are filters, not
+separately published copies. Close releases listeners and wakes waiting readers.
 
-## Reconnect and compatibility
-
-Keep live-only delivery: no SSE IDs, replay log, or `Last-Event-ID` resumption.
-GET observers discard old partials, resubscribe, then refresh durable snapshots.
-There is no atomic snapshot/stream boundary. During refresh, coalesce incoming
-events into a dirty flag and refresh again if needed; never append buffered deltas
-to snapshot output or regress terminal records. Live partials remain disposable
-and may be incomplete; completed parts/outputs replace them. Update the existing
-API reconnect guidance to describe this refresh policy.
-
-POST streams never reconnect/retry automatically. On `stream_error` or premature
-EOF, `execution/remote.py` reports incomplete observation and retains the accepted
-run ID for inspection. Document overflow handling and snapshot refresh for external
-clients; normal frames/results remain unchanged.
-
-## Acceptance and touchpoints
-
-| Scenario | Pass condition |
+| Watermark | Meaning |
 | --- | --- |
-| Two clients at every scope | Both observe each matching event once and in publication order; closing one leaves the other active. |
-| Routing | Unrelated threads/runs/apps stay isolated; descendant IDs survive; mid-run agent observers can resolve ancestry; a fork reaches both thread scopes and the agent once. |
-| Slow client | At the bus boundary, capacity plus one publish detaches only the full subscriber; a concurrently draining client continues and execution completes. |
-| Worker-thread burst | A paused receiving loop cannot bypass the capacity limit through scheduled callbacks. |
-| Cleanup | Close/overflow/shutdown wakes blocked receives; no retained topics/listeners or re-enqueue after closure, including publication races. |
-| ASGI lifecycle | Blocked header/body writes release dependencies within the deadline; idle streams survive it; disconnect and hosting shutdown release subscriptions with bounded prefetch. |
-| HTTP compatibility | Existing stream tests pass; terminal attachment, validation, admission, and normal canonical payloads remain unchanged. |
-| Overflow races | Overflow before the first POST frame or during terminal lookup produces an error, never a successful empty stream; accepted run IDs survive. |
-| Recovery | Reconnect guidance discards buffered deltas; POST overflow/abrupt close reports incomplete observation without retry/cancel; fresh GETs observe subsequent events. |
-| Standalone operation | Agent/thread/root streams work with teaming disabled and backend connection attempts forbidden. |
+| `floor` | End of the entirely evicted prefix. |
+| `tail` | Latest published sequence. |
+| `read_floor` | Minimum active scan cursor, including tracers/exporter; `tail` with no readers. |
 
-Implementation touches `common/pubsub.py`, `api/common.py`, `api/app.py`, the
-agent/run/thread routers, `up/server.py`, `execution/remote.py`, dependency files,
-`docs/api.md`, and focused fanout/API/remote-client tests. Update the changelog
-through the existing runnable and run the [default checks](../../AGENTS.md#verification).
+Within an epoch, `floor <= cursor < tail` reads the retained suffix;
+`cursor == tail` waits, `cursor < floor` requires records, and `cursor > tail`
+is invalid.
+Checking coverage, acquiring a batch, and entering a wait must avoid eviction
+races and missed wakeups. Readers retain acquired batches while sending them;
+a scan cursor is not a remote processing acknowledgement.
 
-Risks: queue capacity bounds event count, not individual payload size; reconnect
-cannot recover live-only deltas. No open protocol choices remain. Human approval
-is required before implementation.
+Preserve the normal cache window. Under capacity pressure, compact only finalized
+steps whose cached deltas have been taken by every active reader. `StepEnd` alone
+does not authorize immediate deletion. Remove those `PartDelta` entries without
+renumbering survivors or advancing `floor`; retain structural/final events.
+Compact each actual step independently, never its still-running descendants.
+
+If a lagging reader prevents reclamation at the hard limit, fail that subscription
+explicitly with overflow and release its retention constraint. Other readers and
+execution continue. Evict the oldest prefix if further space is needed, advancing
+`floor`. Never silently remove unread progress from a continuing subscriber or
+allow one to pin unbounded memory. Bound cache count/bytes, batches, and framework
+buffering, including publishers on worker threads.
+
+## One subscription algorithm
+
+| Scope | Included events | Lifetime |
+| --- | --- | --- |
+| Run | Root and all admitted descendants, preserving actual IDs. | Until the tree is terminal and matching queued events are drained. |
+| Thread | Its run trees and mutations; forks also reach the source thread. | Remains open across runs. |
+| Agent | All local execution/thread events, once each. | Remains open across threads. |
+
+1. Atomically establish observation and a safe boundary `B`, with a corresponding
+   consistent records view. Capture the active run set at that boundary; newly
+   admitted runs must fall into either prefill or the subsequent stream.
+2. If the requested cursor `C` is covered, normalize the retained prefix `(C, B]`.
+   Otherwise query structural records in that range and reconstruct Begin/End
+   events. Supply missing ancestor Begins and required active structure. A cursor
+   that once named a delta needs no exact delta-to-record lookup.
+3. Send the catchup/prefill prefix, then the suffix after `B`. Preserve structural
+   order and original source identities. Synthetic context must not advance or rewind
+   the committed resume cursor; acknowledge `B` only after all its prefill is
+   delivered. Recheck suffix coverage if prefill outlives cache retention.
+
+On first attachment without a cursor, a run scope initializes its recorded tree;
+thread/agent scopes initialize active trees and follow subsequent events. History
+browsing remains separate. Cursor recovery must also cover trees that completed
+while disconnected, not merely those currently running.
+
+For a step joined after its original `StepBegin`, supply missing Run/Step Begins
+and suppress that step's incomplete `Part*` progress through its `StepEnd`.
+Forward the final End, then stream later steps normally. The same normalization
+handles attachment at an End. Track this per step: other branches and child-run
+structure continue. A branch's `StepEnd` is not a completion boundary for its
+siblings; parent `RunEnd` is not enough if background descendants remain active.
+
+Record cursors provide lookup, not historical snapshots. All mutations relevant
+to prefill must respect the boundary protocol, including admission, retry, and
+rewind. Never pair old `B` with newer mutable records. Retry can delete/reuse step
+identities: when the requested version cannot be reconstructed, explicitly reset
+the affected view and initialize current records. An incompatible epoch uses the
+same reset path; clients clear affected partial state before applying prefill.
+
+## HTTP and lifecycle
+
+Keep SSE and [existing execution routes](../api.md#run-and-thread-endpoints):
+
+| Method/path | Behavior |
+| --- | --- |
+| `GET /api/v1/stream` | New agent subscription. |
+| `GET /api/v1/threads/{thread_id}/stream` | Thread subscription. |
+| `GET /api/v1/runs/{run_id}/stream` | Root-tree subscription. |
+| Existing POST execution streams | Start and subscribe before the first event. |
+
+GET and POST accept optional `after` tokens; resume checkpoints use SSE IDs.
+Validate cursor/scope before POST admission. Normal successful start-and-subscribe
+begins with the root `RunBegin`, which supplies the run ID. Keep the existing
+`X-Toolang-Run-ID` header for compatibility, without making it a protocol
+requirement. A cursor controls observation, not execution idempotency: never
+automatically repeat POST after a disconnect. Once the run ID is known, reconnect
+through GET. Lost responses before learning the ID need a separate request-ID
+reconciliation contract.
+
+Reuse canonical event serializers. Reset/checkpoint/error frames are transport
+control, not execution events. Overflow sends `stream_error` with
+`{"code":"overflow"}` and closes; failed writes can close without that frame.
+Latch overflow and recheck it and queued events after awaited terminal lookups.
+An error before the first POST event must not appear as successful completion.
+Disconnecting any subscription never cancels execution.
+
+Keep native FastAPI generator SSE, 15-second keep-alives, and a five-second
+deadline per ASGI `send`, including headers but excluding idle event waits.
+Implement the deadline at the ASGI boundary: the generator path constructs a
+plain `StreamingResponse`, bypassing response-subclass send overrides. Runtime
+shutdown wakes subscriptions before the server waits for streams; API cleanup
+only detaches observers. The runtime closes the canonical source after final
+executor persistence, with bounded observer/exporter drain. Cleanup is idempotent.
+
+## Delivery, verification, and remaining choices
+
+Implement in order: resident CLI ownership/lifecycle, canonical cursor persistence
+and cache, local subscription normalization/HTTP, then
+[teaming observation](teaming.md#subscriptions-and-remaining-definitions).
+
+| Acceptance scenario | Pass condition |
+| --- | --- |
+| Concurrent CLI acquisition | One runtime/executor; defaults keep it running; stop-on-exit cannot stop another instance/workload. |
+| Multiple publishers and observers | Parallel roots in one thread, multiple threads, descendants, and worker-thread mutations share ordered unique cursors; slow/failing tracers do not delay execution. |
+| Durable publication | Begin/End cursors commit with records before delivery; failed projection publishes nothing; restart/legacy cursors never alias current events. |
+| Every scope and start-and-subscribe | Correct isolation/ancestry; earliest POST events are captured; one client's closure leaves others running; background descendants are observed through completion. |
+| Mid-run attachment and replay | Missing Begins precede Ends; only incomplete steps suppress Part progress; finalized history needs no deltas; disconnected clients recover completed trees. |
+| Consistent handoff | Completion/admission/retry/rewind during prefill causes neither omission nor future-state leakage; unavailable historical versions explicitly reset. |
+| Cache pressure | Slow readers retain unread deltas until explicit overflow; only consumed finalized deltas compact; legal holes resume correctly; memory and wakeups stay bounded. |
+| Transport races and shutdown | Actual ASGI blocked writes release dependencies; idle streams survive; overflow wins terminal races; no POST replay or implicit execution cancellation. |
+| Local/Hub parity | Equivalent retained events/records produce equivalent prefill and per-agent order; teaming disabled makes no backend calls. |
+
+Touchpoints: `cli/common/agent_server.py` and agent execution callers; `up/core.py`
+and `up/server.py`; `execution/events.py`, `records.py`, `store.py`, executor
+publication/spawn paths and a subscription module; `common/pubsub.py`; API/remote
+stream adapters; dependencies, `docs/api.md`, and focused lifecycle/store/stream
+tests. Runtime PRs update the changelog through the existing runnable and run the
+[default checks](../../AGENTS.md#verification).
+
+Remaining choices: script lifecycle; stop-on-exit option/environment/config names
+and scope; cache/batch budgets and oversized-event handling; exact cursor,
+reset/checkpoint, and request-ID reconciliation wire contracts. Implementation
+must specify how the records read view is pinned at `B`, including retry
+invalidation. Hub storage/retention details are settled in stage 5. These are
+explicit follow-ups, not guarantees already provided by the current runtime.

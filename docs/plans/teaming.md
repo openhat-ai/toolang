@@ -14,7 +14,7 @@ services. `coord` is reserved; its operations are outside this delivery.
 | 1. Design | Record these contracts and the acceptance criteria. | None. |
 | 2. [#708](https://github.com/openhat-ai/toolang/pull/708), revised | Deliver `teaming` messaging, typed targets, scoped setup, backend membership, `msg`, and Text. Replace `team` with bare `text`. | Design. |
 | 3. Hub | Add Hub API/client, `hub start/serve/stop/status`, port overrides, and route Text through Hub. | Revised #708. |
-| 4. [Local subscriptions](local-subscriptions.md) | Share process-local fanout and add agent/thread/root-run subscriptions with independent clients. | Design and local protocol approval. |
+| 4. [Canonical subscriptions](local-subscriptions.md) | Unify resident CLI runtime ownership; persist canonical cursors; add shared caching and agent/thread/root-run catchup. | Design and remaining local protocol decisions. |
 | 5. Team observation | Bridge agent events through the backend; add global subscriptions and `top`/agent `top`. | Hub and local subscriptions. |
 
 PR #708 is reused, not replaced by a parallel messaging implementation. Its Text
@@ -229,7 +229,9 @@ Hub process records and subscription queues remain local.
 
 Disabled agents make no backend connections and keep local execution/API working.
 Enabled agents own registration, presence, consumption, and event export; refresh
-membership between batches. Backend reconnects do not block local execution.
+membership between batches. Messaging and event export share one teaming lifecycle
+and lease, rather than registering competing identities. Backend reconnects do
+not block local execution.
 Hub checks the externally managed backend before readiness; starting/stopping Hub
 neither enables/stops agents nor manages Redis/Valkey.
 
@@ -262,17 +264,55 @@ and Hub HTTP; no additional CLI commands or discovery tools are introduced.
 
 ## Subscriptions and remaining definitions
 
-Use one local fanout implementation for agent and Hub, with independent client
-queues and cleanup. Canonical execution events stay in `execution/events.py`.
-Topics cover agent/thread/root-run; root-run includes descendants with actual run
-IDs preserved. Export only locally originated events; Hub imports never re-export.
-Transport envelopes identify event, origin agent, and topic; names cannot collide
-across agents. Messaging retention does not imply observation replay.
+The [canonical subscription protocol](local-subscriptions.md) owns source cursors,
+cache watermarks, structural prefill, parallel-run handling, and HTTP recovery.
+Local agent and Hub use the same boundary rules: select a stable boundary, fill
+missing structure/final results from its records view, then follow the suffix.
+Reuse this execution-aware normalization; storage readers and transports differ.
 
-The proposed [local subscription protocol](local-subscriptions.md) defines the
-library, topic encoding, overflow, and reconnect policy for stage 4. Before stage
-5, define the cross-agent transport envelope and activity presentation. Do not
-expand coordination in these PRs.
+```text
+agent canonical stream -> teaming exporter -> backend Stream -> Hub clients
+```
+
+`teaming/events.py` owns the asynchronous exporter, registered before agent work
+starts; `teaming/backend.py` remains the only driver boundary. Export locally
+originated canonical events once, preserving actual run IDs and source cursors.
+Client-specific prefill is not republished as new canonical execution. Hub imports
+never re-export, and disabling teaming removes only this optional outlet.
+
+Stage 5 uses one shared event Stream under `P:events:*`, with agent/thread/root
+filters rather than separate copies for each scope. Entries carry origin agent,
+`runtime_epoch`, `seq`, thread/root routing context, and the canonical event.
+Use [XADD](https://valkey.io/commands/xadd/) and independent
+[XREAD](https://valkey.io/commands/xread/) cursors, not competing consumer groups
+or ephemeral Pub/Sub. Hub can read backend history and block for live events
+without another mandatory in-memory fanout layer.
+
+| Position | Contract |
+| --- | --- |
+| Source cursor | Preserved agent/epoch/sequence identity, ordered within its agent. |
+| Backend Stream ID | Hub delivery/resume position across agents; reception order, not global causality. |
+
+Backend structure projections retain the source Begin/End cursors and corresponding
+backend positions needed to locate prefill. Append and projection updates are
+atomic; the boundary's records view must remain consistent while it is read.
+Persist enough structural/final data for Hub prefill without a live origin agent.
+This shared algorithm does not make different agents' source sequences comparable.
+
+Retained exporter backlog resumes in source order. Uncertain writes require
+source-identity deduplication and lease fencing before retry. Filtering/compacted
+delta holes are legal; sequence discontinuity alone is not proof of loss. Buffer
+overflow, lost source history, or an empty restarted backend requires explicit
+resynchronization from agent records. Missing deltas are disposable; missing
+structure/final results must be repaired before claiming continuous observation.
+Recovery markers are transport control, not invented source execution events;
+Hub marks stale/incomplete views until recovery establishes a new boundary.
+
+Before stage 5 implementation, define backend key/value schemas, projection
+versioning, retention, deduplication/recovery transactions, exact Hub routes and
+wire envelopes, and activity presentation. Backend retention is separate from
+the local readers' cache watermark and from messaging retention. Do not expand
+coordination in these PRs.
 
 ## Acceptance and touchpoints
 
@@ -282,8 +322,8 @@ expand coordination in these PRs.
 | Storage (#708) | Concurrent creation; stale lease rejection; persistent membership; independent readers; full cursor order/gaps; uncertain writes; no vendor imports outside backend. |
 | CLI/tools (#708) | Bare Text directory, no `team`, preserved interactive Text behavior, five `msg` tools, no `coop`. |
 | Hub | Readiness failure, lifecycle isolation, port precedence/conflicts/discovery, Text HTTP parity. |
-| Local subscriptions | Two clients at each topic level; independent disconnect/overflow; no backend required. |
-| Team observation | Agent isolation, multiple Hub clients, origin identity, no forwarding loops, local/global `top`. |
+| Local subscriptions | Canonical cursor/prefill/cache acceptance in the linked plan; no backend required. |
+| Team observation | Local/Hub boundary parity, multiple clients, preserved source identity/order, stale-lease and duplicate-write rejection, outage/retention recovery, no forwarding loops, local/global `top`. |
 
 Likely files: new `teaming/`, existing `api/common.py`, setup watcher/types,
 `up/server.py`, `work/messaging.py`, toolset factory/context, CLI routing/Text,
