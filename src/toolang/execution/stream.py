@@ -187,20 +187,25 @@ class CanonicalStream:
         if not self._over_limit():
             return
         read_floor = self._read_floor()
+        last_part: dict[StepRef, int] = {}
         completed: dict[StepRef, list[int]] = {}
         for frame in self._events:
-            if isinstance(frame.event, StepEnd):
-                completed.setdefault(frame.event.step, []).append(frame.cursor.seq)
+            if isinstance(frame.event, PartBegin | PartDelta | PartEnd):
+                last_part[frame.event.step] = frame.cursor.seq
+            elif isinstance(frame.event, StepEnd):
+                boundary = last_part.pop(frame.event.step, None)
+                if boundary is not None:
+                    # StepEnd establishes finality; the last Part establishes
+                    # when readers have acquired all disposable progress.
+                    completed.setdefault(frame.event.step, []).append(boundary)
         self._compact(completed, read_floor)
         # Drop a blocking reader before sacrificing structural cache coverage.
         # Only finalized Parts can justify releasing retention this way.
         while self._over_limit():
             blocked = (
-                ends[index]
-                for frame in self._events
-                if isinstance(frame.event, PartBegin | PartDelta | PartEnd)
-                if (ends := completed.get(frame.event.step))
-                if (index := bisect_right(ends, frame.cursor.seq)) < len(ends)
+                boundaries[index]
+                for boundaries in completed.values()
+                if (index := bisect_right(boundaries, read_floor)) < len(boundaries)
             )
             boundary = min(blocked, default=None)
             if boundary is None:
@@ -208,7 +213,8 @@ class CanonicalStream:
             for reader in tuple(self._readers):
                 if reader._seq < boundary:
                     reader._overflow()
-            self._compact(completed, self._read_floor())
+            read_floor = self._read_floor()
+            self._compact(completed, read_floor)
         while self._over_limit():
             evicted = self._events.popleft()
             self._bytes -= evicted.size
@@ -219,16 +225,16 @@ class CanonicalStream:
 
     def _compact(self, completed: dict[StepRef, list[int]], read_floor: int) -> None:
         consumed = {
-            step: ends[index - 1]
-            for step, ends in completed.items()
-            if (index := bisect_right(ends, read_floor))
+            step: boundaries[index - 1]
+            for step, boundaries in completed.items()
+            if (index := bisect_right(boundaries, read_floor))
         }
         retained = deque(
             frame
             for frame in self._events
             if not (
                 isinstance(frame.event, PartBegin | PartDelta | PartEnd)
-                and frame.cursor.seq < consumed.get(frame.event.step, -1)
+                and frame.cursor.seq <= consumed.get(frame.event.step, -1)
             )
         )
         self._events = retained
@@ -253,7 +259,7 @@ class StreamReader:
         self._ready = asyncio.Event()
         self._scheduled = False
         self._closed = False
-        self._error: StreamOverflowError | None = None
+        self._overflowed = False
         self._until: int | None = None
 
     @property
@@ -276,7 +282,7 @@ class StreamReader:
             self._ready.set()
 
     def _overflow(self) -> None:
-        self._error = StreamOverflowError("canonical event subscription overflow")
+        self._overflowed = True
         self._source._readers.discard(self)
         self._notify()
         self._source._signal.disconnect(self._notify)
@@ -292,8 +298,8 @@ class StreamReader:
                 self._notify()
 
     def check(self) -> None:
-        if self._error is not None:
-            raise self._error
+        if self._overflowed:
+            raise StreamOverflowError("canonical event subscription overflow")
 
     def _matches(self, frame: CanonicalEvent) -> bool:
         if self._root is not None and frame.root_run_id != self._root:
@@ -401,7 +407,7 @@ class TraceObserver:
         except StopAsyncIteration:
             pass
         except StreamOverflowError:
-            _LOGGER.exception("run tracer subscription overflow")
+            _LOGGER.warning("run tracer subscription overflow")
         finally:
             self.reader.close()
             if self._deadline is not None:

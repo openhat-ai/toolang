@@ -1,10 +1,17 @@
 """Durable canonical boundaries across run trees and thread mutations."""
 
 import asyncio
+import gc
+import weakref
 
 import pytest
 
-from tests.support.execution_harness import ExecutionHarness, RecordingRunTracer
+from tests.support.execution_harness import (
+    AsyncGate,
+    ExecutionHarness,
+    RecordingRunTracer,
+    ScriptedModelTurn,
+)
 from toolang.base.types.message import Message, TextPart
 from toolang.base.types.run import ModelCallResult
 from toolang.execution.events import (
@@ -19,7 +26,7 @@ from toolang.execution.events import (
 )
 from toolang.execution.records import RetryControlPayload
 from toolang.execution.store import RunStore
-from toolang.execution.stream import CanonicalStream, Publication
+from toolang.execution.stream import CanonicalStream, Publication, StreamLimits
 from toolang.execution.threads import ThreadManager
 from toolang.execution.types import EventCursor, Pointer, ThreadPrefix
 
@@ -248,5 +255,43 @@ def test_failing_tracer_cannot_change_run_result(tmp_path, caplog):
             assert isinstance(tracer.events[0], RunBegin)
             assert isinstance(tracer.events[-1], RunEnd)
             assert "run tracer event handling failed" in caplog.text
+
+    asyncio.run(scenario())
+
+
+def test_overflowed_tracer_is_released_while_execution_continues(tmp_path):
+    gate = AsyncGate()
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="agic reply:\n  user: Work\n",
+        responses=[
+            ScriptedModelTurn(
+                result=ModelCallResult(message=Message.assistant("done")), gate=gate
+            )
+        ],
+    )
+    harness.executor.stream.limits = StreamLimits(batch_bytes=1)
+
+    async def scenario():
+        async with harness:
+            tracer = RecordingRunTracer()
+            reference = weakref.ref(tracer)
+            handle = harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    runnable="reply",
+                    primary=(TextPart("input"),),
+                ),
+                tracer=tracer,
+            )
+            del tracer
+            await asyncio.wait_for(gate.wait_until_entered(), 5)
+            assert handle.observer is not None
+            await asyncio.wait_for(handle.observer.task, 5)
+            assert not handle.task.done()
+            gc.collect()
+            assert reference() is None
+            gate.release()
+            assert (await handle).status == "succeeded"
 
     asyncio.run(scenario())

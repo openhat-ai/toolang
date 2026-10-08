@@ -189,7 +189,6 @@ class _RunCanceled(asyncio.CancelledError):
 @dataclass(slots=True)
 class _ActiveRun:
     task: asyncio.Task[RunRecord]
-    tracer: RunTracer | None
     root_run_id: str
     thread_id: str
     loop: asyncio.AbstractEventLoop = field(repr=False)
@@ -912,13 +911,12 @@ class RunExecutor:
                 lambda _task: self._observers.discard(observer)
             )
         task = asyncio.create_task(
-            self._execute_owned(bound, runnable, tracer=tracer, retry=retry),
+            self._execute_owned(bound, runnable, retry=retry),
             name=f"toolang-run-{bound.run_id}",
             context=Context() if independent else None,
         )
         active = _ActiveRun(
             task=task,
-            tracer=tracer,
             root_run_id=bound.root_run_id,
             thread_id=bound.thread,
             loop=loop,
@@ -950,7 +948,6 @@ class RunExecutor:
         bound: BoundRun,
         runnable: AgicDecl | FlowDecl,
         *,
-        tracer: RunTracer | None,
         retry: ControlRecord | None = None,
     ) -> RunRecord:
         task = asyncio.current_task()
@@ -958,7 +955,7 @@ class RunExecutor:
             raise RuntimeError("run execution requires an asyncio task")
         with self._active_lock:
             active = self._active.get(bound.run_id)
-        if active is None or active.task is not task or active.tracer is not tracer:
+        if active is None or active.task is not task:
             raise RuntimeError(f"run ownership missing: {bound.run_id}")
         started_at = time.perf_counter()
         emit = self._handler(active)

@@ -2,7 +2,9 @@
 
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
+import gc
 from typing import Any, cast
+import weakref
 
 import pytest
 
@@ -168,6 +170,28 @@ def test_parts_survive_finalization_until_consumed_and_capacity_pressure():
     asyncio.run(scenario())
 
 
+def test_finalization_compacts_consumed_parts_without_overflowing_current_reader():
+    async def scenario():
+        source = CanonicalStream(limits=StreamLimits(events=4))
+        reader = source.subscribe()
+        events = progress()
+        for event in events[:-1]:
+            emit(source, event)
+        acquired = await reader.receive()
+        assert len(acquired.events) == 4
+        # The reader has every Part. StepEnd can reclaim them immediately under
+        # pressure while remaining available as the reader's next event.
+        emit(source, events[-1])
+        assert [frame.event for frame in (await reader.receive()).events] == [
+            events[-1]
+        ]
+        assert source.floor.seq == 0
+        assert len(acquired.events) == 4
+        reader.close()
+
+    asyncio.run(scenario())
+
+
 def test_lagging_reader_overflows_before_structural_cache_is_evicted():
     async def scenario():
         source = CanonicalStream(limits=StreamLimits(events=6))
@@ -177,7 +201,7 @@ def test_lagging_reader_overflows_before_structural_cache_is_evicted():
             emit(source, event)
         await fast.receive()
         emit(source, RunEnd("run_a", "succeeded"))
-        assert slow._error is None  # Finalization alone never clears unread Parts.
+        slow.check()  # Finalization alone never clears unread Parts.
         emit(source, begin("run_b"))
         with pytest.raises(StreamOverflowError):
             await slow.receive()
@@ -186,6 +210,34 @@ def test_lagging_reader_overflows_before_structural_cache_is_evicted():
         assert slow not in source._readers
         slow.close()
         fast.close()
+
+    asyncio.run(scenario())
+
+
+def test_overflow_does_not_retain_finished_observer_frames():
+    from toolang.execution import stream
+    from toolang.execution.events import RunTracer
+
+    class Tracer(RunTracer):
+        async def on_event(self, event):
+            pass
+
+    async def scenario():
+        source = CanonicalStream(limits=StreamLimits(events=1))
+        tracer = Tracer()
+        reference = weakref.ref(tracer)
+        observer = stream.TraceObserver(source.subscribe(), tracer)
+        del tracer
+        emit(source, begin())
+        emit(source, RunEnd("run_a", "succeeded"))
+        await observer.task
+        gc.collect()
+        assert reference() is None
+        # Overflow stays latched even after cleanup, without retaining an
+        # exception instance and its consumer traceback on the reader.
+        for _ in range(2):
+            with pytest.raises(StreamOverflowError):
+                observer.reader.check()
 
     asyncio.run(scenario())
 
