@@ -10,7 +10,8 @@ from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from toolang.api.common import RUN_ID_HEADER, LiveEventRelay
+from toolang.api.common import RUN_ID_HEADER, SSESendDeadline
+from toolang.execution.subscriptions import Subscriptions
 from toolang.catalog import CapsManager, JobsManager
 from toolang.catalog.errors import CatalogConflictError, CatalogNotFoundError
 from toolang.up import AgentCore
@@ -57,17 +58,10 @@ def get_job_scheduler(request: Request) -> JobScheduler:
     return cast(JobScheduler, request.app.state.job_scheduler)
 
 
-def get_live_events(request: Request) -> LiveEventRelay:
-    """Return the process-local live event relay."""
-
-    return cast(LiveEventRelay, request.app.state.live_events)
-
-
 AgentCoreDep = Annotated[AgentCore, Depends(get_agent_core)]
 CapsManagerDep = Annotated[CapsManager, Depends(get_caps_manager)]
 JobsManagerDep = Annotated[JobsManager, Depends(get_jobs_manager)]
 JobSchedulerDep = Annotated[JobScheduler, Depends(get_job_scheduler)]
-LiveEventRelayDep = Annotated[LiveEventRelay, Depends(get_live_events)]
 
 
 def create_app(
@@ -88,8 +82,8 @@ def create_app(
     app.state.agent_core = core
     app.state.caps_manager = caps
     app.state.jobs_manager = jobs
-    live_events = LiveEventRelay(core.executor.stream)
-    app.state.live_events = live_events
+    app.state.subscriptions = Subscriptions(core.executor.stream, core.store.db_path)
+    app.add_middleware(cast(Any, SSESendDeadline))
 
     @app.exception_handler(CatalogNotFoundError)
     async def catalog_not_found(

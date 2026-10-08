@@ -61,6 +61,10 @@ class _Bytes(httpx.AsyncByteStream):
 class _Tracer(RunTracer):
     events: list[RunEvent] = field(default_factory=list)
     fail: bool = False
+    snapshots: list[tuple[RunEvent, ...]] = field(default_factory=list)
+
+    async def on_snapshot(self, events: tuple[RunEvent, ...]) -> None:
+        self.snapshots.append(events)
 
     async def on_event(self, event: RunEvent) -> None:
         self.events.append(event)
@@ -548,7 +552,9 @@ def test_remote_client_rejects_invalid_stream_protocol(
     error: str,
 ) -> None:
     async def handler(_request: httpx.Request) -> httpx.Response:
-        return response
+        return httpx.Response(
+            response.status_code, headers=response.headers, stream=response.stream
+        )
 
     async def scenario() -> None:
         http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
@@ -570,7 +576,7 @@ def test_remote_client_rejects_invalid_stream_protocol(
 
 
 @pytest.mark.parametrize("after_begin", [False, True])
-def test_remote_client_reports_overflow_without_retrying_or_canceling(after_begin):
+def test_remote_client_recovers_overflow_without_resubmitting_or_canceling(after_begin):
     async def handler(_request: httpx.Request) -> httpx.Response:
         chunks = []
         if after_begin:
@@ -594,7 +600,8 @@ def test_remote_client_reports_overflow_without_retrying_or_canceling(after_begi
             await client.disconnect()
         assert tracer.events == ([_begin()] if after_begin else [])
         assert [(method, url) for method, url, _ in transport.requests] == [
-            ("POST", "http://runtime.test/api/v1/runs/authored/stream")
+            ("POST", "http://runtime.test/api/v1/runs/authored/stream"),
+            *(("GET", "http://runtime.test/api/v1/runs/run_remote/stream"),) * 3,
         ]
 
     asyncio.run(scenario())
@@ -925,5 +932,108 @@ def test_remote_client_isolates_tracer_failures() -> None:
         assert [event.type for event in tracer.events] == ["run_begin", "run_end"]
         await client.disconnect()
         await http.aclose()
+
+    asyncio.run(scenario())
+
+
+def test_remote_client_recovers_with_get_and_commits_only_complete_prefill():
+    from toolang.execution.types import EventCursor
+
+    epoch = "1" * 32
+    first, boundary = str(EventCursor(epoch, 1)), str(EventCursor(epoch, 5))
+    posts = 0
+    resumes = []
+    tracer = _Tracer()
+
+    def encode(event, data, cursor=None):
+        return (
+            (f"id: {cursor}\n" if cursor else "")
+            + f"event: {event}\ndata: {json.dumps(data)}\n\n"
+        ).encode()
+
+    async def handler(request):
+        nonlocal posts
+        if request.method == "POST":
+            posts += 1
+            return _stream_response(
+                stream=_Bytes(
+                    encode(
+                        "run_begin",
+                        {**run_event_to_data(_begin()), "cursor": first},
+                        first,
+                    )
+                )
+            )
+        if request.url.path.endswith("/stream"):
+            resumes.append(request.url.params["after"])
+            chunks = [
+                encode(
+                    "stream_prefill",
+                    {
+                        "cursor": boundary,
+                        "scope": {"kind": "run", "id": "run_remote"},
+                        "roots": ["run_remote"],
+                    },
+                ),
+                encode(
+                    "run_begin",
+                    {**run_event_to_data(_begin()), "cursor": first, "context": True},
+                ),
+                encode(
+                    "run_end",
+                    {**run_event_to_data(_end()), "cursor": boundary, "context": True},
+                ),
+            ]
+            # First recovery loses the checkpoint. Its prefix must not advance C.
+            if len(resumes) == 2:
+                chunks.append(
+                    encode("stream_checkpoint", {"cursor": boundary}, boundary)
+                )
+            return _stream_response(stream=_Bytes(*chunks))
+        return httpx.Response(
+            200, json=_DETAIL_ADAPTER.dump_python(_detail(), mode="json")
+        )
+
+    async def scenario():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+            client = RemoteRunClient("https://runtime.test", client=http)
+            await client.connect()
+            handle = await client.run(_request(), tracer=tracer)
+            assert (await handle.wait()).status == "succeeded"
+            await client.disconnect()
+        assert posts == 1
+        assert resumes == [first, first]
+        assert (
+            sum(
+                isinstance(event, RunEnd)
+                for events in tracer.snapshots
+                for event in events
+            )
+            == 1
+        )
+
+    asyncio.run(scenario())
+
+
+def test_remote_client_accepts_run_begin_without_compatibility_header():
+    async def handler(request):
+        if request.method == "POST":
+            return httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                stream=_event_stream(_begin(), _end()),
+            )
+        return httpx.Response(
+            200, json=_DETAIL_ADAPTER.dump_python(_detail(), mode="json")
+        )
+
+    async def scenario():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+            client = RemoteRunClient("https://runtime.test", client=http)
+            await client.connect()
+            handle = await client.run(_request())
+            assert handle.run_id == "run_remote"
+            assert (await handle.wait()).status == "succeeded"
+            await client.disconnect()
 
     asyncio.run(scenario())

@@ -153,6 +153,18 @@ class CanonicalStream:
             if publication._pending:
                 self._signal.notify()
 
+    @contextmanager
+    def boundary(
+        self,
+    ) -> Iterator[tuple[EventCursor, EventCursor, tuple[CanonicalEvent, ...]]]:
+        """Capture records and register a suffix reader at one publication boundary.
+
+        Only the first SQLite read belongs under this gate. Reconstruction and
+        delivery must happen after leaving it.
+        """
+        with self._lock:
+            yield self.tail, self.floor, tuple(self._events)
+
     def subscribe(
         self,
         *,

@@ -23,7 +23,8 @@ from toolang.cli.common.policy import (
 )
 from toolang.common.errors import ToolangError
 from toolang.common.layout import AgentLayout
-from toolang.execution.events import PartDelta, RunBegin, RunEnd, RunEvent, StepEnd
+from toolang.execution.events import RunObservation, RunSnapshot
+from toolang.execution.events import PartDelta, RunBegin, RunEnd, StepEnd
 from toolang.execution.inspection.history import RunHistory
 from toolang.execution.records import execution_error_message
 from toolang.execution.policy import merge_run_overrides
@@ -633,6 +634,7 @@ class _ScriptedRunRenderer:
     def __init__(self) -> None:
         self._assistant_open = False
         self._text_delta_steps: set[StepRef] = set()
+        self._final_steps: dict[StepRef, StepEnd] = {}
         self._terminal: RunEnd | None = None
         self._state_failure: str | None = None
 
@@ -648,10 +650,22 @@ class _ScriptedRunRenderer:
     def reset(self) -> None:
         self._close()
         self._text_delta_steps.clear()
+        self._final_steps.clear()
         self._terminal = None
         self._state_failure = None
 
-    def render(self, event: RunEvent) -> None:
+    def render(self, event: RunObservation) -> None:
+        if isinstance(event, RunSnapshot):
+            self._text_delta_steps.clear()
+            for item in event.events:
+                if (
+                    isinstance(item, StepEnd)
+                    and self._final_steps.get(item.step) != item
+                ):
+                    self.render(item)
+                elif isinstance(item, RunEnd):
+                    self._terminal = item
+            return
         if isinstance(event, RunBegin):
             self._text_delta_steps.clear()
             self._terminal = None
@@ -663,6 +677,7 @@ class _ScriptedRunRenderer:
             self._write(event.delta.text)
             return
         if isinstance(event, StepEnd):
+            self._final_steps[event.step] = event
             if event.kind != "model" or event.step in self._text_delta_steps:
                 return
             value = event.output.value if event.output is not None else ()

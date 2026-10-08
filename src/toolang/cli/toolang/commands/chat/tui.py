@@ -31,13 +31,13 @@ from typer._click.exceptions import ClickException
 from toolang.base.types.message import ToolResultPart
 from toolang.base.utils.workspace_paths import parse_cwd
 from toolang.cli.common.execution_progress.operations import runtime_operation_name
+from toolang.execution.events import RunObservation, RunSnapshot
 from toolang.execution.events import (
     PartBegin,
     PartDelta,
     PartEnd,
     RunBegin,
     RunEnd,
-    RunEvent,
     StepBegin,
     StepEnd,
 )
@@ -93,6 +93,7 @@ from .presenter import ChatRunPresenter
 from .title import ChatTitle
 
 _RUN_EVENT_TYPES = (
+    RunSnapshot,
     RunBegin,
     StepBegin,
     PartBegin,
@@ -1135,7 +1136,7 @@ class ChatTuiApp:
         threading.Thread(target=consume, daemon=True).start()
         return True
 
-    def handle_run_event(self, event: RunEvent) -> None:
+    def handle_run_event(self, event: RunObservation) -> None:
         if isinstance(event, RunBegin) and event.parent is None:
             self._status_run_id = event.run
         if (
@@ -1252,7 +1253,7 @@ class ChatTuiApp:
         threading.Thread(target=consume, daemon=True).start()
 
 
-def _is_run_event(value: object) -> TypeGuard[RunEvent]:
+def _is_run_event(value: object) -> TypeGuard[RunObservation]:
     return isinstance(value, _RUN_EVENT_TYPES)
 
 

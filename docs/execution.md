@@ -95,9 +95,10 @@ HTTP origin. It sends self-contained, materialized requests to
 the accepted run's SSE response, and uses the existing run detail, cancel, and
 steer endpoints. The server owns setup/state snapshots, request validation,
 authored-input resolution, and file includes; mutable session defaults and
-fallback rules never cross the request boundary. The client never
-retries a run or reconnects an incomplete stream because the live event
-protocol has no replay cursor. Disconnecting the client detaches its readers and
+fallback rules never cross the request boundary. After an interrupted stream,
+the client makes up to three GET reconnection attempts using its committed
+cursor (100 ms, 500 ms, and 1 s delays); it never repeats a POST. Structural
+replacement clears unfinished Parts before presentation. Disconnecting detaches readers and
 owned HTTP resources without canceling server runs or managing the server
 process.
 
@@ -106,9 +107,8 @@ layout, starting a persistent host or guest runtime when needed. Concurrent
 starters reuse the same runtime. Chat uses its API after endpoint health and
 profile checks. Non-run HTTP operations remain in the Chat client:
 runtime/model/runnable inspection, run-default
-adoption, thread creation, and result reads. A stream failure after acceptance is
-recovered from durable run detail without retrying the run or synthesizing
-missing `RunEvent` values. Closing Chat leaves the runtime running.
+adoption, thread creation, and result reads. If cursor recovery fails after acceptance, Chat falls back to durable run detail
+without retrying execution. Closing Chat leaves the runtime running.
 Retry/rerun and steer/cancel/fork/rewind likewise ensure a hosted runtime and
 perform mutations through its API. A retry/rerun observation failure reports the
 accepted run ID without canceling execution; an explicit CLI interrupt requests

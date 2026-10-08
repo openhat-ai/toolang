@@ -22,7 +22,10 @@ from tests.support.execution_harness import (
     ScriptedModelTurn,
 )
 from toolang.api.app import create_app
-from toolang.api.common import LiveEventRelay, sse_stream
+from toolang.api.common import sse_stream
+from toolang.execution.subscriptions import Subscriptions, StreamScope
+from toolang.execution.store import RunStore
+from toolang.execution.events import event_from_data
 from toolang.base.types.message import (
     DocumentPart,
     Message,
@@ -245,7 +248,12 @@ agic answer(_: Part[]) -> Part[]:
         ]
         assert [event.type for event in decoded] == [event for event, _data in events]
         assert [run_event_to_data(event) for event in decoded] == [
-            data for _event, data in events
+            {
+                key: value
+                for key, value in data.items()
+                if key not in {"cursor", "context"}
+            }
+            for _event, data in events
         ]
         assert all(data["type"] == event for event, data in events)
         assert isinstance(decoded[2], PartBegin)
@@ -563,12 +571,22 @@ agic answer(_: Part[]) -> Part[]:
         asyncio.run(core.close())
 
 
-def test_live_relay_preserves_complete_root_run_tree_order() -> None:
+def test_live_relay_preserves_complete_root_run_tree_order(tmp_path) -> None:
     async def scenario() -> None:
         source = CanonicalStream()
-        relay = LiveEventRelay(source)
-        run = relay.subscribe_run("run_test")
-        thread = relay.subscribe_thread("term_test")
+        store = RunStore(tmp_path / "runs.db")
+        project_run_start(
+            store,
+            run_id="run_test",
+            thread_id="term_test",
+            origin="chat",
+            input=Message.user("test"),
+        )
+        relay = Subscriptions(source, store.db_path)
+        run_attachment = await relay.reserve()
+        thread_attachment = await relay.reserve()
+        run = run_attachment.attach(StreamScope(root="run_test"), started=True)
+        thread = thread_attachment.attach(StreamScope(thread="term_test"), started=True)
         events = (
             RunBegin(
                 run="run_test",
@@ -619,24 +637,29 @@ def test_live_relay_preserves_complete_root_run_tree_order() -> None:
             with source.publication() as publication:
                 publication.append(event, thread_id="term_test", root_run_id="run_test")
 
-        run_events = [await run.receive(timeout=1) for _event in events]
-        thread_events = [await thread.receive(timeout=1) for _event in events]
+        run_events = [event_from_data((await run.receive()).data) for _event in events]
+        thread_events = [
+            event_from_data((await thread.receive()).data) for _event in events
+        ]
         run.close()
         thread.close()
 
         assert run_events == list(events)
         assert thread_events == list(events)
-        assert run.empty
-        assert thread.empty
+        relay.stop()
+        store.close()
+        assert not source._readers
 
     asyncio.run(scenario())
 
 
-def test_live_relay_accepts_thread_events_from_worker_threads() -> None:
+def test_live_relay_accepts_thread_events_from_worker_threads(tmp_path) -> None:
     async def scenario() -> None:
         source = CanonicalStream()
-        relay = LiveEventRelay(source)
-        subscription = relay.subscribe_thread("term_test")
+        store = RunStore(tmp_path / "runs.db")
+        relay = Subscriptions(source, store.db_path)
+        attachment = await relay.reserve()
+        subscription = attachment.attach(StreamScope(thread="term_test"), started=True)
         event = ThreadCreated(
             thread="term_test",
             control=ControlRef.for_thread("term_test", 0),
@@ -652,10 +675,12 @@ def test_live_relay_accepts_thread_events_from_worker_threads() -> None:
         worker = threading.Thread(target=publish)
         worker.start()
         worker.join()
-        observed = await subscription.receive(timeout=1)
+        observed = event_from_data((await subscription.receive()).data)
         subscription.close()
 
         assert observed == event
+        relay.stop()
+        store.close()
 
     asyncio.run(scenario())
 
@@ -723,7 +748,9 @@ def test_existing_run_stream_attaches_to_live_events(tmp_path: Path) -> None:
 
         assert errors == []
         assert response.status_code == 200
-        assert [event for event, _data in events] == ["run_begin", "run_end"]
+        assert events[0][0] == "stream_prefill"
+        assert events[-1][0] == "run_end"
+        assert "stream_checkpoint" in [event for event, _data in events]
     finally:
         asyncio.run(core.close())
 
@@ -820,7 +847,7 @@ def test_event_collections_are_removed_and_missing_streams_are_404(
         asyncio.run(core.close())
 
 
-def test_sse_generator_close_removes_subscription() -> None:
+def test_sse_generator_close_removes_subscription(tmp_path) -> None:
     class ConnectedRequest:
         app = SimpleNamespace(state=SimpleNamespace())
 
@@ -829,12 +856,20 @@ def test_sse_generator_close_removes_subscription() -> None:
 
     async def scenario() -> None:
         source = CanonicalStream()
-        relay = LiveEventRelay(source)
-        subscription = relay.subscribe_run("run_test")
+        store = RunStore(tmp_path / "runs.db")
+        project_run_start(
+            store,
+            run_id="run_test",
+            thread_id="term_test",
+            origin="chat",
+            input=Message.user("test"),
+        )
+        relay = Subscriptions(source, store.db_path)
+        attachment = await relay.reserve()
+        subscription = attachment.attach(StreamScope(root="run_test"), started=True)
         stream = sse_stream(
             cast(Request, ConnectedRequest()),
             subscription,
-            terminal_run_id="run_test",
         )
         with source.publication() as publication:
             publication.append(
@@ -852,6 +887,8 @@ def test_sse_generator_close_removes_subscription() -> None:
 
         assert first.event == "run_begin"
         assert not source._readers
+        relay.stop()
+        store.close()
 
     asyncio.run(scenario())
 

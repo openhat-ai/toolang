@@ -7490,3 +7490,22 @@ def test_chat_palette_reaches_live_committed_and_durable_output(
     app.handle_submit("/output run_saved")
     assert len(written) == 1
     assert_colors(written[0])
+
+
+def test_snapshot_cannot_duplicate_a_completed_chat_or_replace_another_run():
+    from toolang.execution.events import RunSnapshot
+
+    app = FakeApp()
+    presenter = app.presenter
+    root = RunBegin("run_one", ControlRef.for_run("run_one", 0))
+    end = RunEnd("run_one", "succeeded", finished_at="2026-01-01T00:00:02Z")
+    presenter.handle(root, app)
+    presenter.handle(end, app)
+    finalized = list(app.finalized)
+    presenter.handle(RunSnapshot((root, end)), app)
+    assert app.finalized == finalized and app.active_run is None
+    other = RunBegin("run_two", ControlRef.for_run("run_two", 0))
+    presenter.handle(other, app)
+    live = list(app.live_blocks)
+    presenter.handle(RunSnapshot((root, end)), app)
+    assert app.live_blocks == live and app.active_run == "run_two"

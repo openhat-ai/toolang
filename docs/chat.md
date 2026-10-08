@@ -345,8 +345,9 @@ does not apply to host mode. Closing Chat leaves the server running, including
 one it started. Use `too stop <agent>` to stop it explicitly.
 
 Remote acceptance records the root run id before the first event so cancel and
-steer remain addressable. If an accepted stream disconnects, the TUI keeps the
-queue paused and polls durable run detail after 500 ms, 1 s, 2 s, and then every
+steer remain addressable. An interrupted stream first resumes with GET and the
+last committed cursor; completed structure replaces partial rendering. If these
+bounded attempts fail, the TUI keeps the queue paused and polls durable run detail after 500 ms, 1 s, 2 s, and then every
 5 s. Terminal durable truth finalizes the run without inventing missed events
 and directs the user to `/output RUN_ID` for the complete output. An ambiguous
 pre-acceptance failure, missing accepted run, or invalid recovery identity

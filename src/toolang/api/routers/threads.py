@@ -7,8 +7,9 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 
-from toolang.api.app import AgentCoreDep, LiveEventRelayDep
-from toolang.api.common import EventSubscription, sse_stream
+from toolang.api.app import AgentCoreDep
+from toolang.api.common import StreamAttachmentDep, sse_stream
+from toolang.execution.subscriptions import EventSubscription, StreamScope
 from toolang.api.schemas import (
     ThreadCreateRequest,
     ThreadForkRequest,
@@ -27,11 +28,11 @@ router = APIRouter(prefix="/threads", tags=["threads"])
 
 async def _subscribe_thread(
     core: AgentCoreDep,
-    live: LiveEventRelayDep,
+    attachment: StreamAttachmentDep,
     thread_id: str,
 ) -> AsyncIterator[EventSubscription]:
     _thread_or_404(core, thread_id)
-    subscription = live.subscribe_thread(thread_id)
+    subscription = attachment.attach(StreamScope(thread=thread_id))
     try:
         yield subscription
     finally:

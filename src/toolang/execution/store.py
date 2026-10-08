@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 import sqlite3
 import threading
+import time
 from typing import Any, Literal, cast
 
 from toolang.base.types.message import (
@@ -171,6 +172,192 @@ class RunStore:
     def close(self) -> None:
         with self._lock:
             self._conn.close()
+
+    def pin_stream_snapshot(
+        self,
+        *,
+        seconds: float,
+        max_bytes: int,
+        max_records: int = 10000,
+    ) -> None:
+        """Pin and bound an independently owned read-only connection."""
+        if not self.read_only or self._conn.in_transaction:
+            raise ValueError("stream snapshots require a fresh read-only store")
+        deadline = time.monotonic() + seconds
+        remaining_bytes, remaining_records = max_bytes, max_records
+
+        def bounded_row(cursor: sqlite3.Cursor, values: tuple[Any, ...]) -> sqlite3.Row:
+            nonlocal remaining_bytes, remaining_records
+            remaining_records -= 1
+            remaining_bytes -= sum(
+                len(value.encode())
+                if isinstance(value, str)
+                else len(value)
+                if isinstance(value, bytes)
+                else 8
+                for value in values
+            )
+            if (
+                remaining_records < 0
+                or remaining_bytes < 0
+                or time.monotonic() >= deadline
+            ):
+                raise ValueError("stream snapshot read budget exceeded")
+            return sqlite3.Row(cursor, values)
+
+        # Bound every read, including model-call expansion and historical thread
+        # projection, before their JSON payloads are decoded into Python objects.
+        self._conn.row_factory = bounded_row
+        self._conn.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, max_bytes)
+        self._conn.set_progress_handler(lambda: time.monotonic() >= deadline, 1000)
+        with self._lock:
+            self._conn.execute("BEGIN")
+            self._conn.execute("SELECT id FROM runs LIMIT 1").fetchone()
+
+    def expire_stream_snapshot(self) -> None:
+        """Release the pinned WAL view even when its reconstruction worker is queued."""
+        if not self.read_only:
+            raise ValueError("only read-only snapshots may expire")
+        # This private connection is serialized by SQLite. Do not wait for the
+        # worker's Python lock: it may be decoding rows rather than running SQL.
+        try:
+            self._conn.interrupt()
+            self._conn.rollback()
+        except sqlite3.Error:
+            pass  # The worker may already have closed its connection.
+
+    @property
+    def stream_has_cursors(self) -> bool:
+        with self._lock:
+            return int(self._conn.execute("PRAGMA user_version").fetchone()[0]) >= 53
+
+    def stream_records(
+        self,
+        *,
+        root: str | None,
+        thread: str | None,
+        after: str | None,
+        complete: bool,
+        extra_roots: tuple[str, ...] = (),
+        limit: int = 10000,
+    ) -> tuple[list[RunRecord], list[StepRecord]]:
+        """Read physical trees selected by activity or durable changes.
+
+        Logical thread history intentionally does not hide rewound runs or copy
+        inherited runs into a fork's event scope.
+        """
+        changed = (
+            """
+            r.status IN ('pending', 'running')
+            OR (:after IS NOT NULL AND (
+                (r.begin_cursor > :after AND r.begin_cursor <= :ceiling)
+                OR (r.end_cursor > :after AND r.end_cursor <= :ceiling)
+                OR EXISTS (SELECT 1 FROM steps s WHERE s.run = r.id AND (
+                    (s.begin_cursor > :after AND s.begin_cursor <= :ceiling)
+                    OR (s.end_cursor > :after AND s.end_cursor <= :ceiling)))
+                OR EXISTS (SELECT 1 FROM controls c WHERE c.scope = 'run'
+                    AND c.target = r.id AND c.event_cursor > :after
+                    AND c.event_cursor <= :ceiling)))
+        """
+            if self.stream_has_cursors
+            else "r.status IN ('pending', 'running')"
+        )
+        query = f"""
+            WITH RECURSIVE tree(id, root) AS (
+                SELECT id, id FROM runs WHERE parent IS NULL
+                    AND (:root IS NULL OR id = :root)
+                    AND (:thread IS NULL OR thread = :thread)
+                UNION ALL
+                SELECT r.id, tree.root FROM runs r JOIN tree
+                    ON substr(r.parent, 1, instr(r.parent, '.') - 1) = tree.id
+            ), selected(root) AS (
+                SELECT DISTINCT tree.root FROM tree JOIN runs r ON r.id = tree.id
+                WHERE :complete OR :root IS NOT NULL OR {changed}
+                    OR tree.root IN (SELECT value FROM json_each(:extra))
+            )
+            SELECT r.* FROM runs r JOIN tree ON tree.id = r.id
+            JOIN selected ON selected.root = tree.root ORDER BY r.rowid LIMIT :limit
+        """
+        params = dict(
+            root=root,
+            thread=thread,
+            after=after,
+            ceiling=after[:33] + "f" * 16 if after is not None else None,
+            complete=complete,
+            extra=json.dumps(extra_roots),
+            limit=limit + 1,
+        )
+        with self._lock:
+            rows = self._conn.execute(query, params).fetchall()
+            if len(rows) > limit:
+                raise ValueError("stream snapshot record budget exceeded")
+            runs = [_run_from_row(row) for row in rows]
+            rows = self._conn.execute(
+                "SELECT * FROM steps WHERE run IN (SELECT value FROM json_each(?)) LIMIT ?",
+                (json.dumps([run.id for run in runs]), limit - len(runs) + 1),
+            ).fetchall()
+            if len(rows) + len(runs) > limit:
+                raise ValueError("stream snapshot record budget exceeded")
+        return runs, sorted(
+            (_step_from_row(row) for row in rows),
+            key=lambda step: (step.run_id, step.ref.indices),
+        )
+
+    def stream_thread_controls(
+        self,
+        *,
+        thread: str | None,
+        after: str | None,
+        limit: int = 10000,
+    ) -> tuple[ControlRecord, ...]:
+        """Return durable thread mutations, including forks of the selected source."""
+        cursor_filter = (
+            ""
+            if after is None or not self.stream_has_cursors
+            else (" AND event_cursor > :after AND event_cursor <= :ceiling")
+        )
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM controls WHERE scope = 'thread' AND status = 'applied' "
+                "AND (:thread IS NULL OR target = :thread OR json_extract(payload, '$.fork_from') = :thread) "
+                f"{cursor_filter} ORDER BY rowid LIMIT :limit",
+                dict(
+                    thread=thread,
+                    after=after,
+                    ceiling=after[:33] + "f" * 16 if after else None,
+                    limit=limit + 1,
+                ),
+            ).fetchall()
+        if len(rows) > limit:
+            raise ValueError("stream snapshot control budget exceeded")
+        return tuple(_control_from_row(row) for row in rows)
+
+    def stream_rewound_runs(
+        self, payload: RewindControlPayload, *, limit: int = 10000
+    ) -> tuple[str, ...]:
+        """Recover one rewind's captured interval without current-history guesses."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM runs WHERE parent IS NULL ORDER BY rowid LIMIT ?",
+                (limit + 1,),
+            ).fetchall()
+            controls = self._conn.execute(
+                "SELECT * FROM controls WHERE scope = 'thread' ORDER BY rowid LIMIT ?",
+                (limit + 1,),
+            ).fetchall()
+        if len(rows) + len(controls) > limit:
+            raise ValueError("stream snapshot history budget exceeded")
+        view = _ThreadProjection(
+            [_run_from_row(row) for row in rows],
+            [_control_from_row(row) for row in controls],
+        )
+        history = view.history(str(payload.rewind_if.target), head=payload.rewind_if)
+        ids = [run.id for run in history]
+        start, end = (
+            ids.index(str(payload.rewind_from)),
+            ids.index(str(payload.rewind_through)),
+        )
+        return tuple(ids[start : end + 1])
 
     def record_event_cursor(
         self,

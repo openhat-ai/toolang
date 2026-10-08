@@ -153,8 +153,24 @@ RunEvent = Annotated[
 ]
 
 
+@dataclass(frozen=True, slots=True)
+class RunSnapshot:
+    """Replace a presenter's structural state and discard unfinished Parts."""
+
+    events: tuple[RunEvent, ...]
+    type: Literal["run_snapshot"] = field(default="run_snapshot", init=False)
+
+
+RunObservation = RunEvent | RunSnapshot
+
+
 class RunTracer(ABC):
     """Observe the ordered run tree started by one caller."""
+
+    async def on_snapshot(self, events: tuple[RunEvent, ...]) -> None:
+        """Apply structural recovery; presenters override this to replace state."""
+        for event in events:
+            await self.on_event(event)
 
     @abstractmethod
     async def on_event(self, event: RunEvent) -> None:
@@ -264,6 +280,18 @@ def run_event_from_data(data: object) -> RunEvent:
     if payload is not None:
         data = payload
     return _RUN_EVENT_ADAPTER.validate_python(data)
+
+
+def event_from_data(data: object) -> ExecutionEvent:
+    """Parse run events and committed thread/retry mutations."""
+    if isinstance(data, dict) and cast(dict[str, Any], data).get("type") in {
+        "thread_created",
+        "thread_forked",
+        "thread_rewound",
+        "run_retried",
+    }:
+        return _EXECUTION_EVENT_ADAPTER.validate_python(data)
+    return run_event_from_data(data)
 
 
 class ThreadListener(ABC):

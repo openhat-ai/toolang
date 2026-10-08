@@ -16,7 +16,8 @@ from toolang.base.types.run import ModelCallResult
 from toolang.catalog import CapsManager, JobsManager
 from toolang.cli.toolang.commands.chat.base import RunAccepted, RunWorkdirUpdated
 from toolang.cli.toolang.commands.chat.remote import RemoteChatSession
-from toolang.execution.events import RunBegin, RunEnd, RunEvent
+from toolang.execution.events import RunObservation
+from toolang.execution.events import RunBegin, RunEnd
 from toolang.execution.types import RunOverride
 from toolang.lang.input import CallInput
 from toolang.state.prepare import prepare_agent_state
@@ -87,7 +88,7 @@ agic chat(_: Part[]) -> Part[]:
         expected_sandbox="host",
         transport=httpx.ASGITransport(app=app),
     )
-    events: list[RunEvent] = []
+    events: list[RunObservation] = []
     states: list[object] = []
     errors: list[str] = []
 

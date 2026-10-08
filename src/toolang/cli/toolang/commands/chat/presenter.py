@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from toolang.execution.events import RunBegin, RunEnd, RunEvent, StepBegin, StepEnd
+from toolang.execution.events import RunObservation, RunSnapshot
+from toolang.execution.events import RunBegin, RunEnd, StepBegin, StepEnd
 from toolang.execution.schemas import ControlInfo, RunDetail
 from toolang.execution.types import StepRef
 
@@ -36,6 +37,8 @@ class ChatRunPresenter:
         inline_code_background: str = DARK_TERMINAL_SURFACES.inline_code_background,
     ) -> None:
         self._root_run_id: str | None = None
+        self._root_identity: tuple[str, str] | None = None
+        self._completed: tuple[str, str] | None = None
         self._projector = ProgressProjector()
         self._progress: dict[str, blocks.ExecutionProgressBlock] = {}
         self._max_width = max_width
@@ -47,7 +50,48 @@ class ChatRunPresenter:
         self._feedback = blocks.SteerFeedbackBlock(max_width=max_width)
         self._stream_complete = True
 
-    def handle(self, event: RunEvent, app: AppContext) -> None:
+    def handle(self, event: RunObservation, app: AppContext) -> None:
+        if isinstance(event, RunSnapshot):
+            root = next(
+                (
+                    item
+                    for item in event.events
+                    if isinstance(item, RunBegin) and item.parent is None
+                ),
+                None,
+            )
+            if root is not None and (
+                app.get_active_run() not in {None, root.run}
+                or (root.run, str(root.control)) == self._completed
+            ):
+                return
+            if root is not None:
+                if self._root_run_id is None:
+                    self._begin_root(root, app)
+                else:
+                    self._root_identity = (root.run, str(root.control))
+                    summary = self._run_summary(app, root.run)
+                    if summary is not None:
+                        summary.update(root)
+                        summary.started_at = root.started_at
+            self._active_steps = {
+                item.step
+                for item in event.events
+                if isinstance(item, StepBegin)
+                and item.step.run_id == app.get_active_run()
+            } - {item.step for item in event.events if isinstance(item, StepEnd)}
+            self._consumed.update(
+                (str(ref.target), ref.index)
+                for item in event.events
+                if isinstance(item, StepBegin)
+                for ref in item.preceded_by
+            )
+            self._apply(self._projector.restore(event.events), app)
+            self._adopt_steers(app)
+            for item in event.events:
+                if isinstance(item, RunEnd) and item.run == self._root_run_id:
+                    self._end_root(item, app)
+            return
         if isinstance(event, RunBegin) and event.parent is None:
             if not self._begin_root(event, app):
                 return
@@ -266,6 +310,7 @@ class ChatRunPresenter:
         if app.get_active_run() not in {None, event.run}:
             return False
         self._root_run_id = event.run
+        self._root_identity = (event.run, str(event.control))
         app.set_active_run(event.run)
         self._finalize_root_control(app, event)
         self._append_tail(
@@ -275,6 +320,7 @@ class ChatRunPresenter:
         return True
 
     def _end_root(self, event: RunEnd, app: AppContext) -> None:
+        self._completed = self._root_identity
         self._finish_steers(app, complete=self._stream_complete)
         summary = self._run_summary(app, event.run)
         if summary is None:

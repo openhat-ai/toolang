@@ -29,6 +29,7 @@ from toolang.cli.common.remote_runtime import (
     RemoteRuntimeIdentity as _RuntimeIdentity,
     parse_remote_runtime_identity as _runtime_identity,
 )
+from toolang.execution.events import RunObservation, RunSnapshot
 from toolang.execution.events import RunEvent, RunTracer
 from toolang.execution.remote import RemoteRunClient, RemoteRunClientError
 from toolang.execution.runnables import parse_runnable_ref
@@ -87,10 +88,13 @@ class _RemoteChatProtocolError(RemoteChatError):
 
 @dataclass(slots=True)
 class _CallbackTracer(RunTracer):
-    callback: Callable[[RunEvent], None]
+    callback: Callable[[RunObservation], None]
 
     async def on_event(self, event: RunEvent) -> None:
         self.callback(event)
+
+    async def on_snapshot(self, events: tuple[RunEvent, ...]) -> None:
+        self.callback(RunSnapshot(events))
 
 
 class RemoteChatSession:
@@ -309,7 +313,7 @@ class RemoteChatSession:
     def run(
         self,
         request: RunRequest,
-        on_event: Callable[[RunEvent], None],
+        on_event: Callable[[RunObservation], None],
         on_error: Callable[[str], None],
         on_state: Callable[[ChatRunState], None] | None = None,
     ) -> None:
@@ -757,7 +761,7 @@ class RemoteChatSession:
     async def _run(
         self,
         request: RunRequest,
-        on_event: Callable[[RunEvent], None],
+        on_event: Callable[[RunObservation], None],
         on_state: Callable[[ChatRunState], None] | None,
     ) -> None:
         if self._blocked_message is not None:

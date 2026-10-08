@@ -448,7 +448,8 @@ flow child(_: Text):
 def test_spawn_routes_background_events_and_keeps_selectable_provenance(
     tmp_path: Path, monkeypatch, dispatch_failure: bool
 ):
-    from toolang.api.common import EventSubscription
+    from toolang.execution.subscriptions import Subscriptions, StreamScope
+    from toolang.execution.events import event_from_data
     from toolang.execution.events import RunBegin, RunEnd, ThreadCreated
     from toolang.execution.types import Pointer
 
@@ -505,27 +506,30 @@ agic child() -> Text:
             assert selected.child("thread").runtime == handle.thread
             if not dispatch_failure:
                 await asyncio.wait_for(gate.wait_until_entered(), 2)
-            subscription = EventSubscription(
-                harness.executor.stream.subscribe(
-                    after=baseline,
-                    thread_id=handle.thread,
-                )
-            )
-            assert isinstance(await subscription.receive(timeout=1), ThreadCreated)
+            relay = Subscriptions(harness.executor.stream, harness.store.db_path)
+            attachment = await relay.reserve(str(baseline))
+            subscription = attachment.attach(StreamScope(thread=handle.thread))
+
+            async def receive():
+                while True:
+                    frame = await subscription.receive()
+                    if frame.event.startswith("stream_"):
+                        continue
+                    return event_from_data(frame.data)
+
+            assert isinstance(await receive(), ThreadCreated)
             if not dispatch_failure:
-                begin = await subscription.receive(timeout=1)
+                begin = await receive()
                 assert isinstance(begin, RunBegin) and begin.run == handle.id
                 gate.release()
-            while not isinstance(
-                event := await subscription.receive(timeout=1), RunEnd
-            ):
+            while not isinstance(event := await receive(), RunEnd):
                 assert event is not None
             assert event.run == handle.id
             assert event.status == ("failed" if dispatch_failure else "succeeded")
             assert all(
                 not isinstance(e, RunBegin) or e.run != handle.id for e in tracer.events
             )
-            subscription.close()
+            attachment.close()
 
     asyncio.run(scenario())
 

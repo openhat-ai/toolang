@@ -351,7 +351,10 @@ def serve(
             webui_url,
             extra={"color_message": "Agent started webui=\x1b[1m%s\x1b[0m"},
         ),
-        on_stopping=lambda: logger.info("Agent stopping"),
+        on_stopping=lambda: (
+            app.state.subscriptions.stop(),
+            logger.info("Agent stopping"),
+        ),
         on_stopped=lambda: logger.info("Agent stopped"),
     )
     return 0

@@ -19,6 +19,7 @@ from toolang.common.ids import IdIssuer
 from toolang.common.layout import AgentLayout
 from toolang.execution.calls import materialize_model_request
 from toolang.execution.client import LocalRunClient, RunClient
+from toolang.execution.events import RunObservation, RunSnapshot
 from toolang.execution.events import RunEvent, RunTracer
 from toolang.execution.executor import RunExecutor
 from toolang.execution.inspection.history import RunHistory
@@ -70,10 +71,13 @@ from .policy import (
 
 @dataclass(slots=True)
 class _CallbackTracer(RunTracer):
-    callback: Callable[[RunEvent], None]
+    callback: Callable[[RunObservation], None]
 
     async def on_event(self, event: RunEvent) -> None:
         self.callback(event)
+
+    async def on_snapshot(self, events: tuple[RunEvent, ...]) -> None:
+        self.callback(RunSnapshot(events))
 
 
 class LocalChatSession:
@@ -459,7 +463,7 @@ class LocalChatSession:
     def run(
         self,
         request: RunRequest,
-        on_event: Callable[[RunEvent], None],
+        on_event: Callable[[RunObservation], None],
         on_error: Callable[[str], None],
         on_state: Callable[[ChatRunState], None] | None = None,
     ) -> None:
@@ -534,7 +538,7 @@ class LocalChatSession:
     async def _run(
         self,
         request: RunRequest,
-        on_event: Callable[[RunEvent], None],
+        on_event: Callable[[RunObservation], None],
         on_state: Callable[[ChatRunState], None] | None = None,
     ) -> None:
         handle = await self.run_client.run(

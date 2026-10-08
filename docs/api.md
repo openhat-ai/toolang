@@ -924,7 +924,8 @@ The process keeps one `AgentCore`, `CapsManager`, and `JobsManager` for the
 application lifetime. `AgentCore` owns the process-local executor, history,
 thread manager, setup watcher, and state watcher. These owners are stored on
 `app.state` and exposed through small typed request dependencies. The API also
-owns one process-local `LiveEventRelay` for live SSE subscribers.
+uses the execution-owned `Subscriptions` service over the executor's canonical
+stream and records.
 Application-wide FastAPI dependencies are reserved for side-effect-only
 concerns such as authentication or common validation. FastAPI lifespan owns
 required startup and shutdown; module globals and `ContextVar` do not carry
@@ -951,6 +952,7 @@ script runs and TUI execution do not consume this endpoint.
 ## Agent Endpoints
 
 - `GET /healthz`
+- `GET /api/v1/stream`
 - `GET /api/v1/profile`
 - `GET /api/v1/models`
 - `GET /api/v1/tools`
@@ -1183,7 +1185,7 @@ For multipart payload details:
   be a full `data:...;base64,...` URL
 - `file_id` references a document already uploaded to the selected provider
 
-Both run-streaming endpoints return the canonical `RunEvent` SSE protocol. A WebUI
+Both run-streaming endpoints return the execution SSE protocol described below. A WebUI
 that needs another presentation shape adapts these events client-side; the API
 does not maintain a second chat event vocabulary.
 
@@ -1503,36 +1505,55 @@ validation of the complete request.
 `RunDetail` with a nonempty resolved output. An unknown thread and a known
 thread without a result return distinct `404` details.
 
-An accepted response exposes `X-Toolang-Run-ID` and subscribes to the live root
-run before execution can publish its first event. CORS exposes the header to
-allowed browser origins. The first event is the matching root `run_begin`, the
-stream ends at its `run_end`, and disconnecting only removes the subscription;
-it does not cancel the run. Clients must not retry an ambiguous start or
-reconnect an incomplete stream because events have no replay cursor.
+An accepted response exposes `X-Toolang-Run-ID` for compatibility; CORS exposes
+it to allowed origins. New-run POST streams begin with root `run_begin`, which
+also supplies the ID. Retry starts with `run_retried` and initializes its retained
+prefix. Observation is installed before admission. Disconnecting never cancels
+execution; reconnect with GET once the run ID is known, never repeat POST.
 
 Clients create a thread explicitly with `POST /api/v1/threads` before the first
 run. The thread request accepts `web`, `term`, `tui`, `chat`, or `script` as its
 client placement; `script` creates a `script_*` thread.
 
-Run and thread streams expose only live events; Toolang does not persist an
-exact event log or provide a historical `/events` collection.
-`GET /api/v1/runs/{run_id}/stream` accepts only a root run id and carries the
-complete recursive run tree. Child runs remain individually inspectable through
-their run-detail endpoint. A child-run stream request returns `409` and
-identifies the root run to subscribe to.
+All execution POST streams and these GET streams accept optional `?after=CURSOR`:
 
-A reconnecting client establishes and buffers the live stream before reading
-run or thread detail from durable records. It then uses the durable detail as
-its baseline and applies buffered and subsequent events idempotently. Streams
-do not emit SSE ids and ignore `Last-Event-ID`, because the server cannot replay
-a precise historical cursor.
+| Endpoint | Scope and lifetime |
+| --- | --- |
+| `/api/v1/stream` | This agent's events; stays open. |
+| `/api/v1/threads/{thread_id}/stream` | Physical events of this thread, including forks from it; stays open. |
+| `/api/v1/runs/{run_id}/stream` | Complete root tree, through its last active descendant. A child ID returns `409` with the root ID. |
 
-Streams use SSE framing directly: the SSE `event` field is the canonical event
-type, and `data` is that event's serialized payload. The API does not wrap a
-`RunEvent` or `ThreadEvent` in a second transport event type.
+Cursors are opaque agent-wide positions. Invalid or future cursors return `422`
+before POST admission. Filtering leaves legitimate gaps. Use `after` explicitly;
+`Last-Event-ID` alone does not select a cursor. The server replays retained events
+or reconstructs structure from records at a fixed boundary, then sends its live
+suffix. Finalized steps need no `part_*` replay. Joining an unfinished step supplies
+its missing ancestors and suppresses partial progress through `step_end`.
+Without `after`, a root initializes its recorded tree; thread/agent scopes initialize
+active trees. Incompatible epochs replace the whole selected scope, including
+retained terminal trees. Historical inspection remains separate; there is no
+exact historical `/events` collection.
+
+SSE `event` is the event name and `data` its payload. Source events carry `cursor`
+and an SSE ID. Structural context carries `context: true`, an optional original
+`cursor`, and **no new SSE ID**. Treat structure as upserts; an already applied End
+must survive a repeated Begin of the same incarnation. SSE parsers may retain a
+previous ID on context frames; do not acknowledge these as new source positions.
+
+| Control | Payload and action |
+| --- | --- |
+| `stream_prefill` | `{"cursor": B, "scope": {"kind": "run", "id": ID}, "roots": [ROOT, ...]}` starts replacement of listed trees. `kind` is `run`, `thread`, or `agent`; agent scope omits `id`. `roots: null` replaces the entire scope. Buffer the following structural context. |
+| `stream_checkpoint` | `{"cursor": B}`, with SSE ID B. Apply the complete replacement, then commit B; a disconnected prefix commits nothing. Also advances over filtered/suppressed events. |
+| `stream_error` | `{"code": "overflow"}` or `{"code": "snapshot_limit"}` ends this subscription. A failed write may close without an error frame. |
+
+Clear unfinished Part rendering on each attachment. `StreamClientState` handles
+replacement and checkpoint commits before dispatch to presentation. Keep-alive
+comments/checkpoints occur every 15 seconds; each ASGI write, including headers,
+has a five-second deadline. Idle event waits do not consume that deadline.
 
 Canonical run progress event names are:
 
+- `run_retried` (retry invalidation)
 - `run_begin`
 - `step_begin`
 - `part_begin`
@@ -1554,13 +1575,13 @@ the Part; signatures can also occur on normal text and tool-call Parts. Signatur
 fragments are not separate events. Deltas are live only; completed Parts are
 durable and available through existing output/inspection endpoints.
 
-The Part format requires execution-store schema **49**. Opening an incompatible
-store fails without modifying it; no migration or reset is performed. See the
+Execution-store schema **53** persists structural cursors. Writable schema-52
+stores upgrade in place; legacy records without cursors initialize from structure. See the
 [model adapter contract](plugins.md#model-adapter) for the required indexed
 stream interface. Human output continues to omit reasoning and native fields.
 
-Run control acceptance and status are durable `ControlRecord` truth, not
-synthetic stream events. A thread stream may additionally carry
+Run control acceptance and status are durable `ControlRecord` truth. Retry also
+publishes `run_retried` with its control, invalidated steps, and removed runs. A thread stream may additionally carry
 `thread_created`, `thread_forked`, and `thread_rewound`, and aggregates live run
 events belonging to that thread.
 

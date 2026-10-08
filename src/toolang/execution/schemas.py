@@ -28,6 +28,7 @@ from toolang.base.types.policy import RunPolicy
 from toolang.base.types.run import ModelCall
 from toolang.lang.input import CallInput, validate_runnable_input_names
 from toolang.lang.types import Array, Struct, parse_runnable_ref_parts
+from .events import ExecutionEvent, event_to_data
 from .records import (
     ControlPayloadField,
     run_preparation,
@@ -42,6 +43,7 @@ from .records import (
     step_message_role,
 )
 from .types import (
+    EventCursor,
     ControlRef,
     ControlTiming,
     ControlKind,
@@ -898,3 +900,28 @@ def _output_parts(output: Output | None) -> tuple[Part, ...]:
     if output is None:
         return ()
     return parts_from_value(output.value)
+
+
+STREAM_PREFILL_MAX_BYTES = 16 * 1024 * 1024
+
+
+@dataclass(frozen=True, slots=True)
+class StreamFrame:
+    event: str
+    data: dict[str, Any]
+    id: str | None = None
+
+    @classmethod
+    def source(
+        cls, event: ExecutionEvent, cursor: str | None, *, context: bool = False
+    ) -> StreamFrame:
+        data = event_to_data(event)
+        if context:
+            data["context"] = True
+        if cursor is not None:
+            data["cursor"] = cursor
+        return cls(event.type, data, None if context else cursor)
+
+    @classmethod
+    def checkpoint(cls, cursor: EventCursor) -> StreamFrame:
+        return cls("stream_checkpoint", {"cursor": str(cursor)}, str(cursor))

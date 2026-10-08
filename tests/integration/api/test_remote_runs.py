@@ -712,7 +712,9 @@ agic chat(_: Part[]) -> Part[]:
         retry_detail = core.history.get_run(source_id)
         rerun_detail = core.history.get_run(rerun_id)
 
-        assert source_events[0][0] == retry_events[0][0] == "run_begin"
+        assert source_events[0][0] == "run_begin"
+        assert retry_events[0][0] == "run_retried"
+        assert retry_events[1][0] == "stream_prefill"
         assert retry_events[-1][0] == rerun_events[-1][0] == "run_end"
         assert retry.headers["X-Toolang-Run-ID"] == source_id
         assert rerun_id != source_id
@@ -901,5 +903,58 @@ def test_authored_attachments_reject_changed_state_before_acceptance(tmp_path):
             assert response.status_code == 422
             assert "source changed" in response.json()["detail"]
             assert core.store.list_runs(thread_id=thread, limit=None) == []
+    finally:
+        asyncio.run(core.close())
+
+
+@pytest.mark.parametrize("cursor", ["invalid", "future"])
+def test_post_validates_cursor_before_admission(tmp_path, cursor):
+    from toolang.execution.types import EventCursor
+
+    harness = ExecutionHarness.create(
+        tmp_path, source="agic answer:\n  Work\n", responses=[]
+    )
+    harness.store.close()
+    core = AgentCore(harness.setup.layout)
+    core.setup, core.state = _Snapshot(harness.setup), _Snapshot(harness.state)
+    app = create_app(
+        core,
+        CapsManager(core.layout),
+        JobsManager(core.layout),
+        cors_allowed_origins=(),
+    )
+    try:
+        with TestClient(app) as client:
+            thread = client.post("/api/v1/threads", json={"client": "tui"}).json()[
+                "thread"
+            ]["id"]
+            before = core.executor.stream.tail
+            after = (
+                str(EventCursor(before.epoch, before.seq + 100))
+                if cursor == "future"
+                else cursor
+            )
+            response = client.post(
+                "/api/v1/runs/authored/stream",
+                params={"after": after},
+                json=_authored_request(
+                    thread, "rejected_cursor", runnable="agic:answer"
+                ),
+            )
+            assert response.status_code == 422
+            assert not core.store.list_runs()
+            assert core.executor.stream.tail == before
+            assert not core.executor.stream._readers
+            paths = client.get("/openapi.json").json()["paths"]
+            for path, method in [
+                ("/api/v1/stream", "get"),
+                ("/api/v1/threads/{thread_id}/stream", "get"),
+                ("/api/v1/runs/{run_id}/stream", "get"),
+                ("/api/v1/runs/authored/stream", "post"),
+            ]:
+                assert any(
+                    item["name"] == "after"
+                    for item in paths[path][method]["parameters"]
+                )
     finally:
         asyncio.run(core.close())

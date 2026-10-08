@@ -101,6 +101,7 @@ class ProgressProjector:
         self._committed_boundaries: set[str] = set()
         self._repeat_ordinals: dict[tuple[StepRef, int], int] = {}
         self._sequence = 0
+        self._rendered: dict[str, ProgressBlock] = {}
         self._ends_with_blank = False
 
     @property
@@ -143,6 +144,19 @@ class ProgressProjector:
             committed = (self._diagnostic_block(str(exc)),)
             self._note_committed(committed)
             return ProgressUpdate(committed=committed, live=())
+
+    def restore(self, events: tuple[RunEvent, ...]) -> ProgressUpdate:
+        """Replace structural state without printing unchanged committed output."""
+        rendered = self._rendered
+        self.__init__(show_boundaries=self.show_boundaries, clock=self._clock)
+        committed: list[ProgressBlock] = []
+        update = ProgressUpdate()
+        for event in events:
+            update = self.handle(event)
+            committed.extend(
+                block for block in update.committed if rendered.get(block.key) != block
+            )
+        return ProgressUpdate(committed=tuple(committed), live=update.live)
 
     def _route_background(self, event: RunEvent) -> bool:
         """Reduce background scopes independently of caller Step containment."""
@@ -216,6 +230,7 @@ class ProgressProjector:
 
     def _note_committed(self, blocks: tuple[ProgressBlock, ...]) -> None:
         for block in blocks:
+            self._rendered[block.key] = block
             if not block.rows:
                 continue
             row = block.rows[-1]

@@ -19,7 +19,17 @@ from toolang.base.money import cost_text
 from toolang.base.types.message import Message
 from toolang.base.types.model import ModelOverride, ModelRequest
 from toolang.execution.client import RunHandle
-from toolang.execution.events import RunBegin, RunEnd, RunTracer, run_event_from_data
+from toolang.execution.events import (
+    RunBegin,
+    RunRetried,
+    RunSnapshot,
+    RunTracer,
+    ThreadCreated,
+    ThreadForked,
+    ThreadRewound,
+)
+from toolang.execution.stream_client import StreamClientState
+from toolang.execution.schemas import StreamFrame
 from toolang.execution.schemas import (
     ControlInfo,
     RerunRequest,
@@ -53,6 +63,10 @@ class RemoteRunClientError(RuntimeError):
         super().__init__(message)
         self.status_code = status_code
         self.detail = detail
+
+
+class _InterruptedStream(RemoteRunClientError):
+    """A recoverable stream failure after a committed cursor."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -315,6 +329,7 @@ class RemoteRunClient:
         accepted: asyncio.Future[str],
         delivery: asyncio.Event,
     ) -> None:
+        state = StreamClientState()
         try:
             http = self._require_connected()
             async with aconnect_sse(
@@ -329,7 +344,26 @@ class RemoteRunClient:
                     await response.aread()
                     raise _http_error(response, operation=operation)
                 _require_event_stream(response)
-                run_id = _response_run_id(response)
+                events = source.aiter_sse()
+                if _RUN_ID_HEADER in response.headers:
+                    run_id = _response_run_id(response)
+                else:
+                    try:
+                        first_event = await anext(events)
+                        first_data = json.loads(first_event.data)
+                        if (
+                            not isinstance(first_data, dict)
+                            or first_event.event not in {"run_begin", "run_retried"}
+                            or first_data.get("type") != first_event.event
+                            or first_data.get("parent") is not None
+                        ):
+                            raise ValueError("first event has no accepted root")
+                        run_id = str(RunRef.parse(first_data.get("run")))
+                    except (StopAsyncIteration, TypeError, ValueError) as exc:
+                        raise RemoteRunClientError(
+                            "remote run returned an invalid accepted run ID"
+                        ) from exc
+                    events = _prepend_event(first_event, events)
                 if operation == "retry" and run_id != source_run_id:
                     raise RemoteRunClientError(
                         "remote retry did not accept the source run ID"
@@ -340,7 +374,44 @@ class RemoteRunClient:
                     )
                 accepted.set_result(run_id)
                 await delivery.wait()
-                await self._consume_events(source.aiter_sse(), run_id, tracer=tracer)
+                try:
+                    await self._consume_events(
+                        events, run_id, tracer=tracer, state=state
+                    )
+                    return
+                except (httpx.HTTPError, _InterruptedStream):
+                    pass
+            # Never resubmit POST. A known run ID is enough; without a committed
+            # cursor, GET initializes its entire recorded tree. A cursor permits
+            # a smaller catchup independently of the admission request.
+            for attempt, delay in enumerate((0.1, 0.5, 1.0)):
+                await asyncio.sleep(delay)
+                await self._present(tracer, state.attach())
+                try:
+                    async with aconnect_sse(
+                        http,
+                        "GET",
+                        self._url(f"/api/v1/runs/{run_id}/stream"),
+                        params={"after": state.cursor}
+                        if state.cursor is not None
+                        else {},
+                        timeout=_stream_timeout(http.timeout),
+                    ) as resumed:
+                        if not resumed.response.is_success:
+                            await resumed.response.aread()
+                            raise _http_error(resumed.response, operation="resume")
+                        _require_event_stream(resumed.response)
+                        await self._consume_events(
+                            resumed.aiter_sse(),
+                            run_id,
+                            tracer=tracer,
+                            state=state,
+                            resumed=True,
+                        )
+                        return
+                except (httpx.HTTPError, _InterruptedStream):
+                    if attempt == 2:
+                        raise
         except asyncio.CancelledError:
             if not accepted.done() and not self._connected:
                 accepted.set_exception(
@@ -373,57 +444,108 @@ class RemoteRunClient:
         run_id: str,
         *,
         tracer: RunTracer | None,
+        state: StreamClientState | None = None,
+        resumed: bool = False,
     ) -> None:
-        first = True
-        async for wire_event in events:
+        state = state or StreamClientState()
+        first = not resumed
+        root_seen = False
+        async for wire in events:
             try:
-                data = json.loads(wire_event.data)
+                data = json.loads(wire.data)
             except json.JSONDecodeError as exc:
                 raise RemoteRunClientError(
                     "remote run stream returned invalid event JSON"
                 ) from exc
-            if wire_event.event == "stream_error":
-                if isinstance(data, dict) and data.get("code") == "overflow":
-                    raise RemoteRunClientError(
+            if not isinstance(data, dict):
+                label = "stream error" if wire.event == "stream_error" else "run event"
+                raise RemoteRunClientError(
+                    f"remote run stream returned an invalid {label}"
+                )
+            if wire.event == "stream_error":
+                code = data.get("code")
+                if code == "overflow":
+                    raise _InterruptedStream(
                         f"remote run subscription overflow: {run_id}"
                     )
-                raise RemoteRunClientError(
-                    "remote run stream returned an invalid stream error"
-                )
-            try:
-                event = run_event_from_data(data)
-            except (TypeError, ValueError) as exc:
-                raise RemoteRunClientError(
-                    "remote run stream returned an invalid run event"
-                ) from exc
-            if wire_event.event != event.type:
-                raise RemoteRunClientError(
-                    "remote run stream event name does not match its payload"
-                )
-            if first:
-                if (
-                    not isinstance(event, RunBegin)
-                    or event.parent is not None
-                    or event.run != run_id
-                ):
-                    raise RemoteRunClientError(
-                        "remote run stream did not begin with the accepted root run"
-                    )
-                first = False
-            elif isinstance(event, RunBegin) and event.parent is None:
+                raise RemoteRunClientError(f"remote run stream error: {code}")
+            if (
+                root_seen
+                and not resumed
+                and wire.event == "run_begin"
+                and data.get("parent") is None
+                and not data.get("context")
+                and not data.get("cursor")
+            ):
                 raise RemoteRunClientError(
                     "remote run stream returned a second root run"
                 )
-            if tracer is not None:
-                try:
-                    await tracer.on_event(event)
-                except Exception:
-                    _LOGGER.exception("remote run tracer event handling failed")
-            if isinstance(event, RunEnd) and event.run == run_id:
-                return
-        raise RemoteRunClientError(
-            f"remote run stream ended before root completion: {run_id}"
-        )
+            try:
+                observations = state.feed(
+                    StreamFrame(wire.event, data, wire.id or None)
+                )
+            except (TypeError, ValueError) as exc:
+                raise RemoteRunClientError(
+                    f"remote run stream returned invalid data: {exc}"
+                ) from exc
+            for event in observations:
+                if isinstance(event, RunRetried):
+                    if event.run != run_id:
+                        raise RemoteRunClientError(
+                            "remote retry returned an unexpected root run"
+                        )
+                    continue
+                if isinstance(event, RunSnapshot):
+                    roots = [
+                        item
+                        for item in event.events
+                        if isinstance(item, RunBegin) and item.parent is None
+                    ]
+                    if any(item.run != run_id for item in roots):
+                        raise RemoteRunClientError(
+                            "remote prefill returned an unexpected root run"
+                        )
+                    if roots:
+                        first = False
+                    await self._present(tracer, event)
+                    continue
+                if isinstance(event, ThreadCreated | ThreadForked | ThreadRewound):
+                    raise RemoteRunClientError(
+                        "remote run stream returned a thread event"
+                    )
+                if first:
+                    if (
+                        not isinstance(event, RunBegin)
+                        or event.parent is not None
+                        or event.run != run_id
+                    ):
+                        raise RemoteRunClientError(
+                            "remote run stream did not begin with the accepted root run"
+                        )
+                    first = False
+                if isinstance(event, RunBegin) and event.parent is None:
+                    if event.run != run_id or root_seen:
+                        raise RemoteRunClientError(
+                            "remote run stream returned a second root run"
+                        )
+                    root_seen = True
+                await self._present(tracer, event)
+        if not state.complete(run_id):
+            raise _InterruptedStream(
+                f"remote run stream ended before root completion: {run_id}"
+            )
+
+    @staticmethod
+    async def _present(tracer: RunTracer | None, event) -> None:
+        if tracer is None:
+            return
+        try:
+            if isinstance(event, RunSnapshot):
+                await tracer.on_snapshot(event.events)
+            else:
+                await tracer.on_event(event)
+        except Exception:
+            _LOGGER.exception("remote run tracer event handling failed")
 
     async def _run_detail(self, run_id: str) -> RunDetail:
         RunRef.parse(run_id)
@@ -512,6 +634,14 @@ class RemoteRunClient:
         self._readers.discard(reader)
         if not reader.cancelled():
             _ = reader.exception()
+
+
+async def _prepend_event(
+    first: ServerSentEvent, events: AsyncIterator[ServerSentEvent]
+) -> AsyncIterator[ServerSentEvent]:
+    yield first
+    async for event in events:
+        yield event
 
 
 def _normalize_endpoint(endpoint: str) -> str:

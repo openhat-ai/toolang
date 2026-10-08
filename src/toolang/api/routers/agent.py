@@ -1,11 +1,15 @@
 """Formal agent inspection routes."""
 
 import re
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Mapping
 from typing import Any, Literal
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 
+from fastapi.sse import EventSourceResponse, ServerSentEvent
+
+from toolang.api.common import StreamAttachmentDep, sse_stream
+from toolang.execution.subscriptions import StreamScope
 from toolang.api.app import AgentCoreDep
 from toolang.api.schemas import RuntimeIdentityPayload, RuntimeSandboxPayload
 from toolang.base.types.model import Model
@@ -34,6 +38,17 @@ from toolang.execution.executor.resources import (
 )
 
 router = APIRouter(tags=["agent"])
+
+
+@router.get(
+    "/stream", summary="Stream Agent Events", response_class=EventSourceResponse
+)
+async def agent_stream(
+    request: Request, attachment: StreamAttachmentDep
+) -> AsyncIterator[ServerSentEvent]:
+    subscription = attachment.attach(StreamScope())
+    async for event in sse_stream(request, subscription):
+        yield event
 
 
 @router.get("/profile", summary="Get Profile")
