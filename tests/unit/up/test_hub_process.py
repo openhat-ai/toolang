@@ -128,6 +128,28 @@ def test_client_construction_failure_removes_starting_record(tmp_path, monkeypat
     assert not hub.path.exists()
 
 
+def test_starting_hub_reserves_port_before_backend_access(tmp_path, monkeypatch):
+    import toolang.up.hub as module
+
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        port = listener.getsockname()[1]
+
+    def check_reservation(*args, **kwargs):
+        with socket.socket() as competitor:
+            competitor.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            with pytest.raises(OSError):
+                competitor.bind(("127.0.0.1", port))
+                competitor.listen()
+        raise TeamingError("Stop after checking reservation")
+
+    monkeypatch.setattr(module, "MessagingClient", check_reservation)
+    config = TeamingRootConfig("human:owner", BackendConfig("redis://localhost"), port)
+    with pytest.raises(TeamingError, match="Stop after checking reservation"):
+        serve(tmp_path, config, port=port)
+    assert not HubProcess(tmp_path).path.exists()
+
+
 def test_failed_and_timed_out_start_leave_no_child(tmp_path):
     hub = HubProcess(tmp_path)
     with pytest.raises(TeamingError, match="startup failed"):

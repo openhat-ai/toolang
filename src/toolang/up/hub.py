@@ -142,6 +142,8 @@ def serve(root: Path, config: TeamingRootConfig, *, port: int) -> int:
             listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             try:
                 listener.bind(("127.0.0.1", port))
+                # Bind alone allows a competing listener during startup on Linux.
+                listener.listen()
             except OSError as exc:
                 raise TeamingError(f"Cannot bind Hub port {port}: {exc}") from exc
             record = HubRecord(

@@ -121,6 +121,10 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Fixed
 
+- The Hub now listens before backend access, reserving its endpoint so
+  another process cannot claim the same port while startup is in
+  progress. (#710)
+
 - Authenticated Hub API requests restore the human's registration and the
   system membership when the backend restarted empty, without retrying the
   failed message append. (#710)
