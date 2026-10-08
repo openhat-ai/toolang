@@ -353,3 +353,8 @@ def test_driver_never_retries_writes_even_with_url_retry_option():
             await backend.close()
 
     asyncio.run(scenario())
+
+
+def test_agent_cannot_use_an_empty_token_to_bypass_lease_checks():
+    with pytest.raises(MessagingError, match="lease token"):
+        MessagingClient(CONFIG, actor="agent:alice", token="")

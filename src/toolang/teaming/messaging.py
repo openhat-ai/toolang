@@ -42,9 +42,11 @@ class MessagingClient:
         backend: Backend | None = None,
         token: str | None = None,
     ):
-        participant(actor)
+        who = participant(actor)
         self.config, self.actor = config, actor
         self.token = token if token is not None else host_token()
+        if who.kind == "agent" and (not isinstance(self.token, str) or not self.token):
+            raise MessagingError("Agent lease token must be nonempty text")
         self._backend = backend or Backend(config)
 
     async def __aenter__(self) -> MessagingClient:
