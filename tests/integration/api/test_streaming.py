@@ -58,6 +58,7 @@ from toolang.execution.records import (
     ThreadPeer,
 )
 from toolang.execution.schemas import RunDetail, ThreadDetail
+from toolang.execution.stream import CanonicalStream
 from toolang.execution.types import (
     ControlRef,
     FieldRef,
@@ -564,10 +565,10 @@ agic answer(_: Part[]) -> Part[]:
 
 def test_live_relay_preserves_complete_root_run_tree_order() -> None:
     async def scenario() -> None:
-        relay = LiveEventRelay()
+        source = CanonicalStream()
+        relay = LiveEventRelay(source)
         run = relay.subscribe_run("run_test")
         thread = relay.subscribe_thread("term_test")
-        tracer = relay.trace(thread_id="term_test")
         events = (
             RunBegin(
                 run="run_test",
@@ -615,7 +616,8 @@ def test_live_relay_preserves_complete_root_run_tree_order() -> None:
             ),
         )
         for event in events:
-            await tracer.on_event(event)
+            with source.publication() as publication:
+                publication.append(event, thread_id="term_test", root_run_id="run_test")
 
         run_events = [await run.receive(timeout=1) for _event in events]
         thread_events = [await thread.receive(timeout=1) for _event in events]
@@ -632,7 +634,8 @@ def test_live_relay_preserves_complete_root_run_tree_order() -> None:
 
 def test_live_relay_accepts_thread_events_from_worker_threads() -> None:
     async def scenario() -> None:
-        relay = LiveEventRelay()
+        source = CanonicalStream()
+        relay = LiveEventRelay(source)
         subscription = relay.subscribe_thread("term_test")
         event = ThreadCreated(
             thread="term_test",
@@ -642,7 +645,11 @@ def test_live_relay_accepts_thread_events_from_worker_threads() -> None:
             created_at="2026-01-01T00:00:00Z",
         )
 
-        worker = threading.Thread(target=relay.on_event, args=(event,))
+        def publish() -> None:
+            with source.publication() as publication:
+                publication.append(event)
+
+        worker = threading.Thread(target=publish)
         worker.start()
         worker.join()
         observed = await subscription.receive(timeout=1)
@@ -674,38 +681,37 @@ def test_existing_run_stream_attaches_to_live_events(tmp_path: Path) -> None:
         JobsManager(core.layout),
         cors_allowed_origins=(),
     )
-    relay = cast(LiveEventRelay, app.state.live_events)
     errors: list[str] = []
 
     def publish() -> None:
         deadline = time.monotonic() + 2
         while time.monotonic() < deadline:
-            with relay._lock:
-                if relay._runs.get("run_live"):
+            with core.executor.stream._lock:
+                if core.executor.stream._readers:
                     break
             time.sleep(0.01)
         else:
             errors.append("run stream did not subscribe")
             return
-        tracer = relay.trace(thread_id="script_live")
-
-        async def emit() -> None:
-            await tracer.on_event(
+        with core.executor.stream.publication() as publication:
+            publication.append(
                 RunBegin(
                     run="run_live",
                     control=ControlRef.for_run("run_live", 0),
                     started_at="2026-01-01T00:00:00Z",
-                )
+                ),
+                thread_id="script_live",
+                root_run_id="run_live",
             )
-            await tracer.on_event(
+            publication.append(
                 RunEnd(
                     run="run_live",
                     status="succeeded",
                     finished_at="2026-01-01T00:00:01Z",
-                )
+                ),
+                thread_id="script_live",
+                root_run_id="run_live",
             )
-
-        asyncio.run(emit())
 
     worker = threading.Thread(target=publish)
     worker.start()
@@ -822,27 +828,30 @@ def test_sse_generator_close_removes_subscription() -> None:
             return False
 
     async def scenario() -> None:
-        relay = LiveEventRelay()
+        source = CanonicalStream()
+        relay = LiveEventRelay(source)
         subscription = relay.subscribe_run("run_test")
-        tracer = relay.trace(thread_id="term_test")
         stream = sse_stream(
             cast(Request, ConnectedRequest()),
             subscription,
             terminal_run_id="run_test",
         )
-        await tracer.on_event(
-            RunBegin(
-                run="run_test",
-                control=ControlRef.for_run("run_test", 0),
-                started_at="2026-01-01T00:00:00Z",
+        with source.publication() as publication:
+            publication.append(
+                RunBegin(
+                    run="run_test",
+                    control=ControlRef.for_run("run_test", 0),
+                    started_at="2026-01-01T00:00:00Z",
+                ),
+                thread_id="term_test",
+                root_run_id="run_test",
             )
-        )
 
         first = await anext(stream)
         await stream.aclose()
 
         assert first.event == "run_begin"
-        assert relay._runs == {}
+        assert not source._readers
 
     asyncio.run(scenario())
 

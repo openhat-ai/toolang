@@ -2,9 +2,10 @@
 
 Agreed architecture for stage 4 of [teaming](teaming.md), replacing the earlier
 live-only proposal. Stages 1–3 merged as #709, #708, and #710; this design merged
-as #711. The first implementation covers hosted CLI ownership. Canonical cursors,
-cache, normalization, and teaming export follow. Resolve remaining choices before
-implementing the affected scope.
+as #711. Hosted CLI ownership merged as #712. The next implementation provides
+canonical cursor persistence, a bounded shared cache, and independent tracers; existing SSE
+reads this source with its live-only contract. Normalization/HTTP resume and
+teaming export follow. Resolve remaining choices before implementing their scope.
 
 ## Goal and ownership
 
@@ -44,7 +45,9 @@ and backpressure never enter the execution path.
 
 ## Cursor and persistence
 
-Use one agent-wide cursor `(runtime_epoch, seq)`, encoded as an opaque token.
+Use one agent-wide cursor `(runtime_epoch, seq)`, encoded as an opaque token:
+32 lowercase UUID hex digits, a dot, and a 16-digit lowercase hex sequence.
+Sequence zero denotes the initial boundary; published events start at one.
 Sequence assignment, durable projection, and cache publication follow one order
 across threads, roots, and parallel descendants. Only this short publication
 section is serialized; execution remains concurrent. Assign the cursor before
@@ -64,8 +67,9 @@ references for mutation identity, without another independent version counter.
 Run/thread subscriptions filter the same sequence; gaps from filtering or safe
 delta compaction are valid. Retry does not reset the runtime sequence. Restart
 uses a new epoch; never numerically compare sequences from different epochs.
-Legacy records without cursor metadata require structural initialization rather
-than invented historical positions.
+Schema 53 adds nullable cursor columns and indexes. Writable schema-52 stores
+upgrade in place; read-only access to schema 52 leaves it unchanged. Legacy
+records require structural initialization rather than invented historical positions.
 
 An accepted retry emits canonical `RunRetried` before its new `RunBegin`, carrying
 root/thread, retry control reference, invalidated step references, and
@@ -116,7 +120,12 @@ explicitly with overflow and release its retention constraint. Other readers and
 execution continue. Evict the oldest prefix if further space is needed, advancing
 `floor`. Never silently remove unread progress from a continuing subscriber or
 allow one to pin unbounded memory. Bound cache count/bytes, batches, and framework
-buffering, including publishers on worker threads.
+buffering, including publishers on worker threads. The initial internal budgets
+are 4,096 cached events / 16 MiB of serialized event data and 128 scanned events /
+1 MiB per acquired batch. An event exceeding a cache or matching batch budget
+fails affected readers with overflow; durable execution continues. Tracers drain
+for at most one second after completion/shutdown, then detach and cancel their
+callback task. These budgets are not configuration options in this stage.
 
 ## One subscription algorithm
 
@@ -256,8 +265,8 @@ tests. Runtime PRs update the changelog through the existing runnable and run th
 [default checks](../../AGENTS.md#verification).
 
 Remaining choices: script lifecycle; stop-on-exit option/environment/config names
-and scope; cache/batch/snapshot budgets and oversized-event handling; exact cursor,
-prefill/checkpoint/error payload schemas, and request-ID reconciliation. The
-checkpoint commit rules and retry mutation semantics above are fixed. Hub
+and scope; snapshot budgets and transport buffering; exact prefill/checkpoint/error
+payload schemas, and request-ID reconciliation. Cache/batch budgets and cursor
+encoding are fixed above. The checkpoint commit rules and retry mutation semantics above are fixed. Hub
 storage/versioning/retention details are settled in stage 5. These are explicit
 follow-ups, not guarantees already provided by the current runtime.

@@ -94,6 +94,15 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Changed
 
+- Live run and thread subscriptions and caller run tracers now share one
+  bounded canonical event stream, so observation no longer blocks execution.
+  A subscription that falls behind receives a `stream_error` with code
+  `overflow` and closes while the run keeps executing. (#713)
+
+- The run store schema 52 upgrades automatically to 53, adding durable event
+  cursor columns to runs, steps, and controls while preserving records whose
+  cursors are null; schema 52 stores remain readable in read-only mode. (#713)
+
 - Execution commands apply `--catalog` and `--compact-model` only when
   starting an agent runtime, and now reject `--catalog` when attaching to
   a running one instead of ignoring it; stop the agent before changing

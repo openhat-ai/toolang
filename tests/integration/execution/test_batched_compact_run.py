@@ -249,6 +249,8 @@ def test_restart_at_durable_boundaries_preserves_child_and_checkpoint(
             adopt = _Execution.compact
 
             async def crash_after_event(*args, **kwargs):
+                if committed and method == "accept_run":
+                    raise ProcessCrash()
                 result = await emit(*args, **kwargs)
                 if committed:
                     raise ProcessCrash()
@@ -275,8 +277,6 @@ def test_restart_at_durable_boundaries_preserves_child_and_checkpoint(
                     return original(*args, **kwargs)
                 if after:
                     result = original(*args, **kwargs)
-                    if method == "accept_run":
-                        raise ProcessCrash()
                     # Run/Step projection and publication each have an outer transaction.
                     committed = True
                     return result
@@ -451,6 +451,7 @@ def test_cancel_at_internal_event_boundaries_closes_lifecycle(
                 await asyncio.Future()
 
     tracer = CancelTracer()
+    h.intercept_events(tracer)
 
     async def scenario():
         async with h:

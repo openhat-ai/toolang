@@ -271,6 +271,7 @@ def test_unchanged_native_self_exec_remains_cancelable(tmp_path, monkeypatch, ti
         tmp_path, source="flow grow():\n  exec grow\n", responses=[]
     )
     tracer = RecordingRunTracer()
+    harness.intercept_events(tracer)
 
     async def scenario():
         scheduled = False

@@ -167,6 +167,9 @@ def test_cancel_during_steer_skipped_batch_closes_all_calls(tmp_path: Path) -> N
             ):
                 await tool_gate.wait()
 
+    tracer = Tracer()
+    harness.intercept_events(tracer)
+
     async def scenario() -> None:
         async with harness:
             handle = harness.executor.run(
@@ -174,7 +177,7 @@ def test_cancel_during_steer_skipped_batch_closes_all_calls(tmp_path: Path) -> N
                     thread=harness.threads.create(prefix=ThreadPrefix.TERM),
                     runnable="chat",
                 ),
-                tracer=Tracer(),
+                tracer=tracer,
             )
             await asyncio.wait_for(model_gate.wait_until_entered(), 1)
             handle.steer(Message.user("skip"), timing="next_step")
@@ -248,6 +251,7 @@ agic chat(_: Part[]) -> Part[]:
                     )
 
     tracer = Tracer()
+    harness.intercept_events(tracer)
 
     async def scenario() -> None:
         async with harness:

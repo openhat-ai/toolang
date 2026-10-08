@@ -530,6 +530,10 @@ def test_remote_client_rejects_invalid_endpoints(endpoint: str) -> None:
             "ended before root completion",
         ),
         (
+            _stream_response(stream=_Bytes(b"event: stream_error\ndata: []\n\n")),
+            "invalid stream error",
+        ),
+        (
             httpx.Response(
                 200,
                 headers={"content-type": "application/json"},
@@ -561,6 +565,37 @@ def test_remote_client_rejects_invalid_stream_protocol(
 
         await client.disconnect()
         await http.aclose()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("after_begin", [False, True])
+def test_remote_client_reports_overflow_without_retrying_or_canceling(after_begin):
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        chunks = []
+        if after_begin:
+            chunks.append(
+                f"event: run_begin\ndata: {json.dumps(run_event_to_data(_begin()))}\n\n".encode()
+            )
+        chunks.append(b'event: stream_error\ndata: {"code":"overflow"}\n\n')
+        return _stream_response(stream=_Bytes(*chunks))
+
+    async def scenario():
+        transport = _Transport(handler)
+        async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
+            client = RemoteRunClient("http://runtime.test", client=http)
+            tracer = _Tracer()
+            await client.connect()
+            handle = await client.run(_request(), tracer=tracer)
+            with pytest.raises(
+                RemoteRunClientError, match="subscription overflow: run_remote"
+            ):
+                await handle.wait()
+            await client.disconnect()
+        assert tracer.events == ([_begin()] if after_begin else [])
+        assert [(method, url) for method, url, _ in transport.requests] == [
+            ("POST", "http://runtime.test/api/v1/runs/authored/stream")
+        ]
 
     asyncio.run(scenario())
 

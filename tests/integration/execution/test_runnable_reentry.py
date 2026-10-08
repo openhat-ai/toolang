@@ -168,6 +168,7 @@ flow outer() -> Text[]:
                     harness.published = prepare_agent_state(harness.setup.layout)
 
     tracer = Tracer()
+    harness.intercept_events(tracer)
 
     async def scenario():
         async with harness:

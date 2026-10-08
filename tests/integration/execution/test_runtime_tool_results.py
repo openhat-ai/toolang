@@ -183,6 +183,7 @@ def test_steer_during_result_delivery_preserves_result_once(
         ],
     )
     tracer = DeliveryTracer()
+    harness.intercept_events(tracer)
 
     async def scenario() -> None:
         async with harness:
@@ -281,6 +282,7 @@ def test_interruption_before_result_commit_preserves_completed_result(
         ],
     )
     tracer = CommitTracer()
+    harness.intercept_events(tracer)
 
     async def scenario() -> None:
         async with harness:
@@ -577,6 +579,7 @@ def test_steer_during_execute_delivery_keeps_committed_transfer(tmp_path: Path) 
         ],
     )
     tracer = DeliveryTracer()
+    harness.intercept_events(tracer)
 
     async def scenario() -> None:
         async with harness:
@@ -669,6 +672,7 @@ def test_steer_at_tool_begin_closes_the_started_step(
         ],
     )
     tracer = BeginTracer()
+    harness.intercept_events(tracer)
 
     async def scenario() -> None:
         async with harness:
@@ -743,6 +747,7 @@ def test_immediate_steer_during_skipped_batch_preserves_all_results(
         ],
     )
     tracer = SkipTracer()
+    harness.intercept_events(tracer)
 
     async def scenario() -> None:
         async with harness:

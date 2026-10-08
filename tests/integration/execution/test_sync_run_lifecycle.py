@@ -175,6 +175,7 @@ agic child():
         else [],
     )
     tracer = Tracer()
+    harness.intercept_events(tracer)
 
     async def scenario():
         async with harness:

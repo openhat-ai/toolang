@@ -778,6 +778,7 @@ def test_guidance_refreshes_between_batches_and_supports_revision_reversals(
                     harness.published = prepare_agent_state(harness.setup.layout)
 
     tracer = Tracer()
+    harness.intercept_events(tracer)
 
     async def scenario():
         async with harness:
@@ -826,6 +827,7 @@ def test_canceled_delivery_keeps_recall_but_does_not_make_it_visible(tmp_path: P
                 await asyncio.sleep(0)
 
     tracer = Tracer()
+    harness.intercept_events(tracer)
 
     async def scenario():
         nonlocal handle
@@ -875,6 +877,7 @@ def test_pick_sees_controls_added_at_the_tool_boundary(tmp_path: Path):
                 )
 
     tracer = Tracer()
+    harness.intercept_events(tracer)
 
     async def scenario():
         async with harness:
@@ -929,6 +932,7 @@ def test_compaction_excludes_old_guidance_even_when_far_mentions_it(
                 )
 
     tracer = Tracer()
+    harness.intercept_events(tracer)
 
     async def scenario():
         nonlocal horizon

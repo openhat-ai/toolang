@@ -2216,6 +2216,7 @@ agic target(_: Text) -> Text:
         tracer = PublicationTracer(
             harness, {"publication-public-target": await watcher.refresh()}
         )
+        harness.intercept_events(tracer)
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.TERM)
             root = await harness.executor.run(

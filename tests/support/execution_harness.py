@@ -485,6 +485,34 @@ class ExecutionHarness:
             ),
         )
 
+    def intercept_events(self, probe: RunTracer) -> None:
+        """Use this tracer as scoped execution fault injection in tests only.
+
+        Pass it through tracer= on the chosen run. The hook executes inline at
+        runtime boundaries; ordinary tracers remain independent subscribers.
+        """
+        emit = self.executor._emit_event_locked
+        launch = self.executor._launch
+        roots: set[str] = set()
+
+        def launch_with_probe(*args, **kwargs):
+            selected = kwargs.get("tracer") is probe
+            if selected:
+                kwargs["tracer"] = None
+            handle = launch(*args, **kwargs)
+            if selected:
+                roots.add(handle.run_id)
+                handle.task.add_done_callback(lambda _: roots.discard(handle.run_id))
+            return handle
+
+        async def intercepted(active, event):
+            await emit(active, event)
+            if active.root_run_id in roots:
+                await probe.on_event(event)
+
+        setattr(self.executor, "_launch", launch_with_probe)
+        setattr(self.executor, "_emit_event_locked", intercepted)
+
     async def __aenter__(self) -> Self:
         return self
 

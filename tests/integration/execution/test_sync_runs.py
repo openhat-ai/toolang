@@ -111,6 +111,7 @@ def test_batch_runs_finish_before_replies_and_next_tools(tmp_path: Path) -> None
                 )
 
     tracer = Tracer()
+    harness.intercept_events(tracer)
 
     async def scenario() -> None:
         async with harness:
@@ -485,6 +486,7 @@ def test_cancel_target_preserves_caller_and_remaining_batch(
         tmp_path, source=SOURCE, tools={tool.name: tool}, responses=responses
     )
     tracer = Tracer()
+    harness.intercept_events(tracer)
 
     async def scenario() -> None:
         async with harness:

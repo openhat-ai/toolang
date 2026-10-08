@@ -382,6 +382,14 @@ class RemoteRunClient:
                 raise RemoteRunClientError(
                     "remote run stream returned invalid event JSON"
                 ) from exc
+            if wire_event.event == "stream_error":
+                if isinstance(data, dict) and data.get("code") == "overflow":
+                    raise RemoteRunClientError(
+                        f"remote run subscription overflow: {run_id}"
+                    )
+                raise RemoteRunClientError(
+                    "remote run stream returned an invalid stream error"
+                )
             try:
                 event = run_event_from_data(data)
             except (TypeError, ValueError) as exc:

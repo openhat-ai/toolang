@@ -406,6 +406,7 @@ agic next() -> Part[]:
             )
 
     hooked = Tracer()
+    harness.intercept_events(hooked)
     asyncio.run(scenario())
     assert_replayed(harness.store.db_path, tracer.events)
 
@@ -523,6 +524,7 @@ def test_each_call_records_context_without_rerendering_history(
                 compacted = True
 
     tracer = Tracer()
+    harness.intercept_events(tracer)
     reads = []
     renderings = []
     read = harness.store.list_steps_for_runs
@@ -1019,6 +1021,7 @@ def test_compact_adoption_replaces_history_and_preserves_now(tmp_path: Path) -> 
                 )
 
     tracer = Tracer()
+    harness.intercept_events(tracer)
 
     async def scenario():
         nonlocal horizon
@@ -1125,6 +1128,7 @@ def test_compaction_between_tools_resets_the_last_model_baseline(tmp_path):
                 adopted = True
 
     tracer = Tracer()
+    harness.intercept_events(tracer)
 
     async def scenario():
         nonlocal horizon

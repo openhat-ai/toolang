@@ -118,7 +118,6 @@ async def _run_stream(
                 ),
             ),
             request_id=payload.request_id,
-            tracer=live.trace(thread_id=thread_id),
         )
     except (ToolangError, TypeError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -135,15 +134,12 @@ async def _run_authored_stream(
     response: Response,
     payload: AuthoredRunRequest,
 ) -> AsyncIterator[_AcceptedRunStream]:
-    thread_id = _run_thread(core, payload.thread_id)
+    _run_thread(core, payload.thread_id)
     run_request = parse_authored_run(payload)
     if run_request.attachments is None:
         run_request = replace(run_request, attachments={})
     try:
-        handle = core.executor.run(
-            run_request,
-            tracer=live.trace(thread_id=thread_id),
-        )
+        handle = core.executor.run(run_request)
     except (OSError, ToolangError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     subscription = _subscribe_accepted_run(live, response, handle)
@@ -163,10 +159,7 @@ async def _retry_authored_stream(
     source = _terminal_root_or_409(core, run_id)
     request = parse_authored_retry(source.id, payload)
     try:
-        handle = core.executor.retry(
-            request,
-            tracer=live.trace(thread_id=str(source.thread)),
-        )
+        handle = core.executor.retry(request)
     except (ToolangError, TypeError, ValueError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     subscription = _subscribe_accepted_run(live, response, handle)
@@ -186,10 +179,7 @@ async def _rerun_authored_stream(
     source = _terminal_root_or_409(core, run_id)
     request = parse_authored_rerun(source.id, payload)
     try:
-        handle = core.executor.rerun(
-            request,
-            tracer=live.trace(thread_id=str(source.thread)),
-        )
+        handle = core.executor.rerun(request)
     except (ToolangError, TypeError, ValueError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     subscription = _subscribe_accepted_run(live, response, handle)
@@ -497,7 +487,6 @@ def steer_run(
 )
 async def retry_run(
     core: AgentCoreDep,
-    live: LiveEventRelayDep,
     run_id: str,
     payload: RunRetryRequest | None = None,
 ) -> RunCommandResult:
@@ -516,7 +505,6 @@ async def retry_run(
                 else None
             ),
             request_id=request.request_id,
-            tracer=live.trace(thread_id=str(source.thread)),
         )
     except (ToolangError, TypeError, ValueError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -532,7 +520,6 @@ async def retry_run(
 )
 async def rerun_run(
     core: AgentCoreDep,
-    live: LiveEventRelayDep,
     run_id: str,
     payload: RunRerunRequest | None = None,
 ) -> RunCommandResult:
@@ -556,7 +543,6 @@ async def rerun_run(
                 else None
             ),
             request_id=request.request_id,
-            tracer=live.trace(thread_id=str(source.thread)),
         )
     except (ToolangError, TypeError, ValueError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc

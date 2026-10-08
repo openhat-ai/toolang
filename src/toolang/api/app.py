@@ -88,11 +88,8 @@ def create_app(
     app.state.agent_core = core
     app.state.caps_manager = caps
     app.state.jobs_manager = jobs
-    live_events = LiveEventRelay()
+    live_events = LiveEventRelay(core.executor.stream)
     app.state.live_events = live_events
-    core.threads.listener = live_events
-    core.executor.thread_listener = live_events
-    core.executor.root_tracer = lambda thread_id: live_events.trace(thread_id=thread_id)
 
     @app.exception_handler(CatalogNotFoundError)
     async def catalog_not_found(

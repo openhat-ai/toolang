@@ -90,6 +90,7 @@ from .types import (
     ControlStatus,
     AgentResources,
     ContentRef,
+    EventCursor,
     ErrorMessage,
     ErrorRef,
     FieldRef,
@@ -126,8 +127,8 @@ from .types import (
 from .schemas import Record, RecordSelection, select_record
 from .values import parts_from_value
 
-_SCHEMA_VERSION = 52
-_SUPPORTED_SCHEMA_VERSIONS = (_SCHEMA_VERSION,)
+_SCHEMA_VERSION = 53
+_SUPPORTED_SCHEMA_VERSIONS = (52, _SCHEMA_VERSION)
 
 
 class RunStore:
@@ -170,6 +171,37 @@ class RunStore:
     def close(self) -> None:
         with self._lock:
             self._conn.close()
+
+    def record_event_cursor(
+        self,
+        ref: RunRef | StepRef | ControlRef,
+        cursor: str,
+        *,
+        boundary: Literal["begin", "end"] | None = None,
+    ) -> bool:
+        """Stamp the first publication inside the owning mutation transaction."""
+        EventCursor.parse(cursor)
+        if isinstance(ref, ControlRef):
+            table, column = "controls", "event_cursor"
+        elif boundary in {"begin", "end"}:
+            table = "runs" if isinstance(ref, RunRef) else "steps"
+            column = f"{boundary}_cursor"
+        else:
+            raise ValueError("run and step cursors require a boundary")
+        with self.write_transaction():
+            changed = self._conn.execute(
+                f"UPDATE {table} SET {column} = ? WHERE id = ? AND {column} IS NULL",
+                (cursor, str(ref)),
+            ).rowcount
+            if (
+                not changed
+                and self._conn.execute(
+                    f"SELECT 1 FROM {table} WHERE id = ?", (str(ref),)
+                ).fetchone()
+                is None
+            ):
+                raise ValueError(f"event record not found: {ref}")
+            return bool(changed)
 
     @contextmanager
     def write_transaction(self) -> Iterator[None]:
@@ -294,6 +326,7 @@ class RunStore:
         finished_at: str | None,
         claimed: bool,
         triggered_by: StepRef | None = None,
+        revision: int | None = None,
     ) -> None:
         scope = "run" if isinstance(ref.target, RunRef) else "thread"
         self._conn.execute(
@@ -317,7 +350,7 @@ class RunStore:
                 created_at,
                 finished_at,
                 int(claimed),
-                self._next_run_control_revision(),
+                revision if revision is not None else self._next_run_control_revision(),
                 str(triggered_by) if triggered_by is not None else None,
             ),
         )
@@ -994,8 +1027,7 @@ class RunStore:
             raise ValueError("retry requires an Agent State revision")
         _validate_canonical_sandbox(sandbox)
         _validate_request_id(request_id)
-        with self._lock:
-            self._conn.execute("BEGIN IMMEDIATE")
+        with self.write_transaction():
             try:
                 if request_id is not None and (
                     self._conn.execute(
@@ -1097,6 +1129,11 @@ class RunStore:
                     else ()
                 )
                 control_ref = ControlRef(RunRef(run_id), index)
+                revision = self._next_run_control_revision()
+                removed_steps, removed_runs = self._delete_retry_suffix(
+                    tree_runs=tree_runs,
+                    steps=trimmed,
+                )
                 self._insert_control(
                     ref=control_ref,
                     kind="retry",
@@ -1106,6 +1143,8 @@ class RunStore:
                         limits=limits,
                         model_request=model_request,
                         retry_from=resolved_anchor,
+                        invalidated_steps=removed_steps,
+                        removed_runs=removed_runs,
                     ),
                     request=request_id,
                     status="applied",
@@ -1113,10 +1152,7 @@ class RunStore:
                     created_at=created_at,
                     finished_at=created_at,
                     claimed=True,
-                )
-                self._delete_retry_suffix(
-                    tree_runs=tree_runs,
-                    steps=trimmed,
+                    revision=revision,
                 )
                 self._conn.execute(
                     """
@@ -1139,7 +1175,8 @@ class RunStore:
                     UPDATE runs
                     SET control = ?,
                         status = 'pending', output = NULL, error = NULL,
-                        started_at = NULL, finished_at = NULL
+                        started_at = NULL, finished_at = NULL,
+                        begin_cursor = NULL, end_cursor = NULL
                     WHERE id = ?
                     """,
                     (str(control_ref), run_id),
@@ -1151,14 +1188,9 @@ class RunStore:
                     "SELECT * FROM controls WHERE id = ?",
                     (str(control_ref),),
                 ).fetchone()
-                self._conn.commit()
             except sqlite3.IntegrityError as exc:
-                self._conn.rollback()
                 identity = request_id or run_id
                 raise ValueError(f"run retry already exists: {identity}") from exc
-            except Exception:
-                self._conn.rollback()
-                raise
         if updated_run_row is None or control_row is None:
             raise RuntimeError(f"run retry acceptance failed: {run_id}")
         return (
@@ -1485,8 +1517,7 @@ class RunStore:
             if not valid_run_id(anchor):
                 raise ValueError(f"invalid anchor run id: {anchor!r}")
         _validate_request_id(request_id)
-        with self._lock:
-            self._conn.execute("BEGIN IMMEDIATE")
+        with self.write_transaction():
             try:
                 if request_id is not None and (
                     self._conn.execute(
@@ -1566,14 +1597,9 @@ class RunStore:
                     "SELECT * FROM controls WHERE id = ?",
                     (str(control_ref),),
                 ).fetchone()
-                self._conn.commit()
             except sqlite3.IntegrityError as exc:
-                self._conn.rollback()
                 identity = request_id or thread_id
                 raise ValueError(f"thread control already exists: {identity}") from exc
-            except Exception:
-                self._conn.rollback()
-                raise
         if thread_row is None or control_row is None:
             raise RuntimeError(f"thread fork failed: {thread_id}")
         return _thread_from_row(thread_row), _control_from_row(control_row)
@@ -1596,8 +1622,7 @@ class RunStore:
                 raise ValueError(f"invalid anchor run id: {anchor!r}")
         _validate_request_id(request_id)
         index: int | None = None
-        with self._lock:
-            self._conn.execute("BEGIN IMMEDIATE")
+        with self.write_transaction():
             try:
                 if request_id is not None and (
                     self._conn.execute(
@@ -1664,16 +1689,11 @@ class RunStore:
                     "SELECT * FROM controls WHERE id = ?",
                     (str(control_ref),),
                 ).fetchone()
-                self._conn.commit()
             except sqlite3.IntegrityError as exc:
-                self._conn.rollback()
                 identity = request_id or (
                     f"{thread_id}@{index}" if index is not None else thread_id
                 )
                 raise ValueError(f"thread control already exists: {identity}") from exc
-            except Exception:
-                self._conn.rollback()
-                raise
         if updated_thread is None or control_row is None:
             raise RuntimeError(f"thread rewind failed: {thread_id}")
         return (
@@ -2759,11 +2779,11 @@ class RunStore:
         *,
         tree_runs: Sequence[str],
         steps: Sequence[StepRef],
-    ) -> None:
+    ) -> tuple[tuple[StepRef, ...], tuple[str, ...]]:
         """Delete a retry suffix and every child run it owns."""
 
         if not steps:
-            return
+            return (), ()
         step_keys = {str(step) for step in steps}
         placeholders = ", ".join("?" for _ in tree_runs)
         run_rows = self._conn.execute(
@@ -2869,6 +2889,17 @@ class RunStore:
             raise ValueError(
                 f"retry would delete referenced horizon {referenced[0]}; use rerun"
             )
+        invalidated: set[StepRef] = set(steps)
+        if removed_runs:
+            invalidated.update(
+                StepRef.parse(row["id"])
+                for row in self._conn.execute(
+                    "SELECT id FROM steps WHERE run IN ({})".format(
+                        ", ".join("?" for _ in removed_runs)
+                    ),
+                    tuple(removed_runs),
+                )
+            )
         if removed_runs:
             removed_placeholders = ", ".join("?" for _ in removed_runs)
             removed_params = tuple(removed_runs)
@@ -2885,6 +2916,9 @@ class RunStore:
             ((str(step),) for step in steps),
         )
         self._delete_triggered_controls(step_keys, removed_runs)
+        return tuple(sorted(invalidated, key=lambda ref: str(ref))), tuple(
+            sorted(removed_runs)
+        )
 
     def _delete_triggered_controls(
         self, step_keys: set[str], removed_runs: set[str]
@@ -3827,7 +3861,7 @@ class RunStore:
                     read_only=False,
                 )
             allowed = (
-                (_SCHEMA_VERSION,)
+                _SUPPORTED_SCHEMA_VERSIONS
                 if self.read_only
                 else (0, *_SUPPORTED_SCHEMA_VERSIONS)
             )
@@ -3937,6 +3971,22 @@ class RunStore:
                 "CREATE INDEX IF NOT EXISTS idx_threads_updated ON threads(updated_at)"
             )
             self._conn.execute("CREATE INDEX IF NOT EXISTS idx_steps_run ON steps(run)")
+            for table, names in (
+                ("runs", ("begin_cursor", "end_cursor")),
+                ("steps", ("begin_cursor", "end_cursor")),
+                ("controls", ("event_cursor",)),
+            ):
+                columns = {
+                    row[1] for row in self._conn.execute(f"PRAGMA table_info({table})")
+                }
+                for name in names:
+                    if name not in columns:
+                        self._conn.execute(
+                            f"ALTER TABLE {table} ADD COLUMN {name} TEXT"
+                        )
+                    self._conn.execute(
+                        f"CREATE INDEX IF NOT EXISTS idx_{table}_{name} ON {table}({name})"
+                    )
             self._conn.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
             self._conn.commit()
 
@@ -4159,6 +4209,8 @@ def _run_from_row(row: sqlite3.Row) -> RunRecord:
         label="run occurrence",
     )
     return RunRecord(
+        begin_cursor=cast(str | None, dict(row).get("begin_cursor")),
+        end_cursor=cast(str | None, dict(row).get("end_cursor")),
         id=str(row["id"]),
         parent=(
             StepRef.parse(str(row["parent"])) if row["parent"] is not None else None
@@ -4208,6 +4260,8 @@ def _step_from_row(row: sqlite3.Row) -> StepRecord:
         raise ValueError("stored step noted must be JSON null or an object")
     noted_data = _load_json(str(raw["noted"]))
     return StepRecord(
+        begin_cursor=cast(str | None, raw.get("begin_cursor")),
+        end_cursor=cast(str | None, raw.get("end_cursor")),
         id=str(raw["id"]),
         kind=kind,
         input=field_refs_from_data(input_data),
@@ -4251,6 +4305,7 @@ def _control_from_row(row: sqlite3.Row) -> ControlRecord:
     kind = cast(ControlKind, row["kind"])
     payload = control_payload_from_data(kind, _load_json(str(row["payload"])))
     return ControlRecord(
+        event_cursor=cast(str | None, dict(row).get("event_cursor")),
         id=str(row["id"]),
         kind=kind,
         payload=payload,

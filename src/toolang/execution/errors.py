@@ -15,6 +15,14 @@ class HistoryChangedError(RuntimeError):
     """A captured history read can no longer be reconstructed from current facts."""
 
 
+class StreamGapError(RuntimeError):
+    """A cursor needs records recovery because its cached suffix is unavailable."""
+
+
+class StreamOverflowError(RuntimeError):
+    """An observer exceeded its bounded retention window."""
+
+
 class RunStoreSchemaError(RuntimeError):
     """Raised when one run store cannot be opened by this runtime."""
 

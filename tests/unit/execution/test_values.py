@@ -528,7 +528,7 @@ def test_preparation_payload_rejects_instead_of_dropping_invalid_input() -> None
         control_payload_from_data("run", data)
 
 
-def test_retry_payload_stores_only_attempt_settings_and_anchor() -> None:
+def test_retry_payload_stores_attempt_settings_anchor_and_invalidation() -> None:
     payload = RetryControlPayload(
         resources=AgentResources(models=("test/model",)),
         limits=RunLimits(),
@@ -536,7 +536,14 @@ def test_retry_payload_stores_only_attempt_settings_and_anchor() -> None:
         retry_from=StepRef.from_local("run_1", (2,)),
     )
     data = control_payload_to_data(payload)
-    assert set(data) == {"resources", "limits", "model_request", "retry_from"}
+    assert set(data) == {
+        "resources",
+        "limits",
+        "model_request",
+        "retry_from",
+        "invalidated_steps",
+        "removed_runs",
+    }
     assert data["retry_from"] == "run_1.2"
     assert control_payload_from_data("retry", data) == payload
     unanchored = replace(payload, retry_from=None)
