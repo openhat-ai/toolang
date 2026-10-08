@@ -179,7 +179,11 @@ class MessagingClient:
         return group
 
     async def contacts(
-        self, *, agent: str | None = None, include_dms: bool = True
+        self,
+        *,
+        agent: str | None = None,
+        include_dms: bool = True,
+        include_preview: bool = False,
     ) -> list[dict[str, Any]]:
         agents = await self.agents()
         if agent is not None and (
@@ -211,6 +215,16 @@ class MessagingClient:
                     "latest": latest[0][0] if latest else None,
                 }
             )
+            if include_preview:
+                preview = None
+                if latest:
+                    try:
+                        message = Message.decode(latest[0][1]["data"])
+                    except (KeyError, MessagingError):
+                        pass
+                    else:
+                        preview = {"sender": message.sender, "body": message.body[:160]}
+                result[-1]["preview"] = preview
         return result
 
     async def send(

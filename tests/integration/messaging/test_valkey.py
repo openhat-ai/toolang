@@ -11,7 +11,11 @@ import time
 from typing import Any, cast
 
 import libtmux
+from libtmux.constants import OptionScope
 import pytest
+from rich.color import Color
+from rich.console import Console
+from rich.text import Text
 
 from toolang.cli.common.tmux import Launcher
 from toolang.messaging.client import MessagingClient, online_key
@@ -112,6 +116,13 @@ def test_real_text_terminal_sends_reads_and_reuses_tmux(valkey, tmp_path):
             session_name="origin", attach=False, window_command="sleep 60"
         )
         try:
+            # Keep erased live prompts out of tmux's history capture.
+            tmux.set_option(
+                "scroll-on-clear",
+                "off",
+                global_=True,
+                scope=OptionScope.Window,
+            )
             pane = source.active_window.panes[0]
             launcher = Launcher(
                 agent="isolated-text",
@@ -125,7 +136,11 @@ def test_real_text_terminal_sends_reads_and_reuses_tmux(valkey, tmp_path):
             # A detached test server has no client to switch; placement remains real.
             argv = [
                 "env",
+                "TERM=xterm-256color",
+                "NO_COLOR=",
+                "PROMPT_TOOLKIT_COLOR_DEPTH=DEPTH_24_BIT",
                 "TOOLANG_COLOR_SCHEME=dark",
+                "TOOLANG_PROGRESS_MAX_WIDTH=120",
                 sys.executable,
                 "-m",
                 "toolang.cli.toolang.main",
@@ -152,12 +167,62 @@ def test_real_text_terminal_sends_reads_and_reuses_tmux(valkey, tmp_path):
                     break
                 time.sleep(0.02)
             assert "retained greeting" in screen(), screen()
+            assert not screen().startswith("\n"), repr(
+                target.capture_pane(start=-200, escape_sequences=True)
+            )
+            for width in (200, 60, 180):
+                window.resize(width=width, height=30)
+                for _ in range(300):
+                    footer = next(
+                        (
+                            line
+                            for line in reversed(target.capture_pane())
+                            if "Ctrl+Q quit" in line
+                        ),
+                        "",
+                    )
+                    if "dev" in footer and len(footer) == min(width, 120):
+                        break
+                    time.sleep(0.02)
+                assert "dev" in footer and "gc_dev" not in footer, screen()
+                assert len(footer) == min(width, 120)
+                target.send_keys("resize draft", enter=False)
+                for _ in range(300):
+                    if "resize draft" in "\n".join(target.capture_pane()):
+                        break
+                    time.sleep(0.02)
+                assert "resize draft" in screen(), screen()
+                target.send_keys("C-u", enter=False)
+                for _ in range(300):
+                    current = "\n".join(target.capture_pane())
+                    if "Write a message" in current and "resize draft" not in current:
+                        break
+                    time.sleep(0.02)
+                assert "Write a message" in current and "resize draft" not in current
+                painted = Text.from_ansi(
+                    "\n".join(
+                        target.capture_pane(
+                            escape_sequences=True, preserve_trailing=True
+                        )
+                    )
+                ).split("\n")
+                input_row = next(
+                    index
+                    for index, line in enumerate(painted)
+                    if "Write a message" in line.plain
+                )
+                console = Console()
+                for line in painted[input_row - 1 : input_row + 2]:
+                    for column in range(1, min(width, 120)):
+                        assert line.get_style_at_offset(
+                            console, column
+                        ).bgcolor == Color.parse("#1f1f1f")
             target.send_keys("terminal reply", enter=True)
             for _ in range(300):
-                if "Sent " in screen():
+                if "Connected · Sent" in screen():
                     break
                 time.sleep(0.02)
-            assert "Sent " in screen(), screen()
+            assert "Connected · Sent" in screen(), screen()
 
             async def check():
                 async with MessagingClient(valkey) as client:
@@ -184,5 +249,4 @@ def test_real_text_terminal_sends_reads_and_reuses_tmux(valkey, tmp_path):
             assert len(session.windows) == 2
             target.send_keys("C-q", enter=False)
         finally:
-            with suppress(Exception):
-                tmux.kill_server()
+            tmux.kill()

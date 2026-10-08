@@ -1,6 +1,7 @@
 """Text CLI literals, drafts, scrollback presentation, and tmux identities."""
 
 import asyncio
+from datetime import datetime, timezone
 from io import StringIO
 from unittest.mock import AsyncMock
 
@@ -19,7 +20,7 @@ from toolang.cli.toolang.commands.text.tui import TextTui
 from toolang.cli.toolang.commands.text import tui
 from toolang.cli.toolang.commands.text.rendering import message_block, display_text
 from toolang.cli.common.terminal_surfaces import DARK_TERMINAL_SURFACES
-from toolang.messaging.client import MessagingClient
+from toolang.messaging.client import MessagingClient, group_key
 from toolang.messaging.config import MessagingConfig
 from toolang.messaging.errors import SendUnconfirmed
 from toolang.messaging.schemas import Message
@@ -81,10 +82,75 @@ def test_team_lists_groups_and_interactive_requires_tty(
     assert cli.main(["--root", str(tmp_path), "team"]) == 0
     output = capsys.readouterr().out
     assert "gc_dev" in output and "alice" in output and "all" in output
-    assert "dm_alice" not in output
+    assert "dm_alice" in output
     assert cli.main(["--root", str(tmp_path), "text", "alice"]) == 1
     assert "TTY" in capsys.readouterr().err
     assert cli.main(["--root", str(tmp_path), "alice,", "hello"]) != 0
+
+
+def test_team_directory_shows_existing_dms_presence_and_recent_previews(
+    tmp_path, capsys, messaging_cli, monkeypatch
+):
+    monkeypatch.setenv("COLUMNS", "180")
+
+    async def prepare():
+        async with messaging_cli() as client:
+            await client.register("bob", "bryan", "bob-token")
+            await client.register("carol", "bryan", "carol-token")
+            await client.unregister("alice", "token")
+            await client.resolve("dm_alice_bob")
+            for group, sid, data in (
+                ("all", "1000-0", Message.create("bryan", "public").encode()),
+                ("gc_dev", "2000-0", Message.create("bob", "older").encode()),
+                ("dm_alice", "3000-0", "malformed"),
+                (
+                    "dm_alice_bob",
+                    "3000-1",
+                    Message.create("bob", "hello\x1b[2J\nworld").encode(),
+                ),
+            ):
+                await client.redis.xadd(group_key(group, "msg"), {"data": data}, id=sid)
+            return await client.group_ids()
+
+    before = asyncio.run(prepare())
+    assert cli.main(["--root", str(tmp_path), "team"]) == 0
+    output = capsys.readouterr().out
+    rows = [row.split() for row in output.splitlines() if row.strip()]
+    assert [row[0] for row in rows[1:-1]] == [
+        "all",
+        "dm_alice_bob",
+        "dm_alice",
+        "gc_dev",
+        "dm_bob",
+        "dm_carol",
+    ]
+    assert "○alice ↔ ●bob" in output
+    assert "bryan ↔ ○alice" in output
+    assert "●bryan" not in output and "○bryan" not in output
+    assert "bob: hello world" in output and "\x1b" not in output
+    assert "Message unavailable" in output
+    assert "too text <target>" in output
+
+    async def unchanged():
+        async with messaging_cli() as client:
+            assert await client.group_ids() == before
+            assert "dm_bob_carol" not in before
+
+    asyncio.run(unchanged())
+
+
+@pytest.mark.parametrize(
+    "timestamp,expected",
+    [
+        ("2026-10-08T09:10:00+00:00", "09:10"),
+        ("2026-10-07T09:10:00+00:00", "10-07 09:10"),
+        ("2025-10-08T09:10:00+00:00", "2025-10-08 09:10"),
+    ],
+)
+def test_team_message_time_is_compact_without_losing_date(timestamp, expected):
+    now = datetime(2026, 10, 8, 10, tzinfo=timezone.utc)
+    sid = f"{int(datetime.fromisoformat(timestamp).timestamp() * 1000)}-0"
+    assert team._message_time(sid, now) == expected
 
 
 def test_failed_send_preserves_draft_and_success_does_not_erase_new_typing(
@@ -97,12 +163,18 @@ def test_failed_send_preserves_draft_and_success_does_not_erase_new_typing(
         ):
             client = AsyncMock()
             ui = TextTui(client, "all", "bryan", tmp_path, DARK_TERMINAL_SURFACES)
-            monkeypatch.setattr(ui, "print_notice", AsyncMock())
+            notice = AsyncMock()
+            monkeypatch.setattr(ui, "print_notice", notice)
             ui.prompt.replace_input("original")
-            client.send.side_effect = SendUnconfirmed("Send not confirmed")
+            client.send.side_effect = SendUnconfirmed(
+                "Send not confirmed (message recoverable-id)"
+            )
             await ui.send("original")
             assert ui.prompt.buffer.text == "original"
             assert ui.draft.read_text() == "original"
+            notice.assert_awaited_once_with(
+                "Send not confirmed (message recoverable-id)"
+            )
             client.send.side_effect = None
             client.send.return_value = {"message": {"id": "accepted"}}
             ui.prompt.replace_input("new draft")
@@ -111,7 +183,8 @@ def test_failed_send_preserves_draft_and_success_does_not_erase_new_typing(
             assert ui.prompt.history.get_strings() == ["original"]
             await ui.send("new draft")
             assert ui.prompt.buffer.text == ""
-            assert "accepted" in ui.status
+            assert ui.status == "Sent"
+            assert "accepted" not in str(ui.status_text())
 
     asyncio.run(scenario())
 
@@ -286,7 +359,8 @@ def test_follow_reconnects_from_last_displayed_id_without_replaying_history(
                 ui.cursor = entries[-1][0]
 
             monkeypatch.setattr(ui, "show", show)
-            monkeypatch.setattr(ui, "print_notice", AsyncMock())
+            notice = AsyncMock()
+            monkeypatch.setattr(ui, "print_notice", notice)
             sleep = asyncio.sleep
 
             async def yield_once(_seconds):
@@ -302,6 +376,8 @@ def test_follow_reconnects_from_last_displayed_id_without_replaying_history(
                 "100-9",
                 "100-10",
             ]
+            notice.assert_not_awaited()
+            assert ui.connection == "Connected"
 
     asyncio.run(scenario())
 

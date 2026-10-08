@@ -407,7 +407,7 @@ _registered_command(
 _registered_command(
     "team",
     "toolang.cli.toolang.commands.team:team_command",
-    help="List messaging groups and online agents",
+    help="List conversations, participants, and latest messages",
     rich_help_panel=WORK_COMMAND_PANEL,
 )
 

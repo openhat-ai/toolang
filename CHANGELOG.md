@@ -9,6 +9,23 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Added
 
+- Interactive Text bounds its input box and footer to the same content width
+  as its messages, so both stay inside the terminal and line up with the
+  scrollback on wide terminals.
+
+- Text renders every sender name at full brightness, with agent names in bold,
+  instead of dimming all of them.
+
+- Interactive Text keeps connection state (`Connecting…`, `Connected`,
+  `Reconnecting…`, or `Stopped`) persistently in its footer, with `Sending…`
+  while in flight and `Sent` for about two seconds, and reconnects no longer
+  print repeated scrollback notices. Failures show `Send failed` or `Send not
+  confirmed` so an unconfirmed message is checked before retrying.
+
+- `too team` lists DMs as well as groups, pinning `all` first and ordering the
+  rest by recent activity, with online/offline badges for agents only and a
+  preview of the latest message beside the target that opens the conversation.
+
 - Interactive Text starts left-aligned names and body text in column 3, with a
   `•` marker on the first body line rather than the name. Owner names sit
   outside and above the background at the upper right; owner bodies have two

@@ -26,12 +26,14 @@ class InputBox:
         on_input: Callable[[], None] | None = None,
         history_store: InputHistoryStore | None = None,
         get_max_rows: Callable[[], int] | None = None,
+        get_width: Callable[[], int] | None = None,
     ) -> None:
         self.invalidate = invalidate
         self.normalize = normalize
         self.placeholder = placeholder
         self.on_input = on_input
         self._get_max_rows = get_max_rows
+        self._get_width = get_width
         self.history = InMemoryHistory()
         self.history_store = history_store
         for entry in history_store.load() if history_store is not None else ():
@@ -59,9 +61,7 @@ class InputBox:
                 VSplit(
                     [
                         Window(
-                            width=lambda: min(
-                                1, max(0, get_app().output.get_size().columns - 2)
-                            ),
+                            width=lambda: min(1, max(0, self._width() - 2)),
                             style="class:input",
                             always_hide_cursor=True,
                             char=" ",
@@ -85,9 +85,7 @@ class InputBox:
                             char=" ",
                         ),
                         Window(
-                            width=lambda: min(
-                                2, max(0, get_app().output.get_size().columns - 3)
-                            ),
+                            width=lambda: min(2, max(0, self._width() - 3)),
                             style="class:input",
                             always_hide_cursor=True,
                             char=" ",
@@ -105,9 +103,7 @@ class InputBox:
         return VSplit(
             [
                 Window(
-                    width=lambda: min(
-                        1, max(0, get_app().output.get_size().columns - 1)
-                    ),
+                    width=lambda: min(1, max(0, self._width() - 1)),
                     style="class:control.run",
                     always_hide_cursor=True,
                     char=ACCENT_CELL,
@@ -211,9 +207,12 @@ class InputBox:
         if self.on_input is not None:
             self.on_input()
 
+    def _width(self) -> int:
+        columns = get_app().output.get_size().columns
+        return max(1, min(columns, self._get_width() if self._get_width else columns))
+
     def _input_rows(self) -> int:
-        terminal_width = get_app().output.get_size().columns
-        input_width = max(1, terminal_width - 4)
+        input_width = max(1, self._width() - 4)
         # BufferControl reserves one trailing cursor cell per logical line.
         rows = sum(
             max(1, (get_cwidth(line) + input_width) // input_width)

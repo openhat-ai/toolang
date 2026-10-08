@@ -9,7 +9,7 @@ Paths are relative to `src/toolang/`.
 | Component | Module | Responsibility |
 | --- | --- | --- |
 | `too text` | `cli/toolang/commands/text/` | Send-and-exit; interactive TUI; history; tmux window reuse. |
-| `too team` | `cli/toolang/commands/team.py` | List groups, members, online status, and latest message time. |
+| `too team` | `cli/toolang/commands/team.py` | List conversations, participants, online status, and latest message previews. |
 | Messaging setup | `setup/messaging.py`, `AgentSetup.messaging` | Resolve defaults, overrides, and human identity once; supply CLI, tools, and hosting. |
 | Messaging core | `messaging/{config,schemas,client}.py` | Concrete configuration, protocol, directory, membership, presence, Valkey I/O. |
 | `CoopToolset` | `plugin/toolsets/coop.py` | Expose `contacts` / `send` through the shared core. |
@@ -24,11 +24,12 @@ too text alice           # Open the owner DM with alice.
 too text dev             # Open gc_dev.
 too text all             # Open the public group.
 too text alice hello     # Send and exit; do not wait for a reply.
-too team                 # List all and custom groups.
+too team                 # List all existing conversations, including DMs.
 ```
 
 - Canonical IDs resolve directly; ambiguous bare names require `--dm` / `--group` before the target. Unknown targets error.
 - After the target, remove one optional leading `--`; join shell arguments as literal text. Quoted whitespace/newlines survive. Interactive mode requires a TTY.
+- Team directory: Target, Participants, Latest message. Mark online/offline agents beside their names; humans have no presence marker. Pin `all`, then sort by newest message, with empty conversations last. Show a compact local timestamp and single-line preview; do not create unused agent pairs.
 
 ## Messaging contract
 
@@ -46,6 +47,8 @@ too team                 # List all and custom groups.
 - Human: control-bar style on the right. Agent: model-output style on the left. Opposite-side gutters; body text stays left-aligned.
 - Agent DM: model-output style on both sides; sorted participants have fixed left/right positions.
 - Bottom live input; finalize into scrollback. Catch up retained history, then follow without duplicate or missing entries.
+- Input, footer, and messages share the configured maximum width. Keep one external separator row and batch scrollback writes. Names use normal foreground, with agent names bold. Preserve message padding and first-body-line markers.
+- Footer: friendly conversation name, connection state, transient `Sent` for two seconds, and keyboard hints. Reconnection stays in the footer; actionable errors retain their detailed notice and draft. Normal status omits message UUIDs.
 - tmux: session per root/connection/human, window per group; reopen by identity. Keep drafts/history independent. Outside tmux, run in the current terminal. Copy mode handles history browsing. Preserve existing Chat behavior.
 
 ## Delivery checklist
@@ -55,5 +58,6 @@ too team                 # List all and custom groups.
 - [x] Test naming/escaping, literal command bodies, offline DMs, presence expiry, independent readers, full Stream IDs, reconnects, uncertain sends, narrow layouts, and window reuse.
 - [x] Keep default tests offline; run isolated Valkey/tmux checks separately and complete [repository verification](../../AGENTS.md#verification).
 - [x] Update usage docs and generate the changelog through `too aide.too update_changelog`; leave the Textual prototype outside the production branch.
+- Follow-up acceptance: input backgrounds remain continuous through resize/clear; footer fits narrow terminals; reconnect does not add scrollback notices; directory includes existing DMs, sorts correctly, and tolerates malformed previews. Verify isolated terminal startup/history and repainting.
 
 No events, `coord`, authentication, managed Valkey, or coordination guarantees. Experimental data is not retained or migrated. The previous prototype is reference material only; implementation starts from origin/main.

@@ -166,6 +166,38 @@ def test_independent_readers_retention_and_ambiguous_targets():
     asyncio.run(scenario())
 
 
+def test_contact_previews_are_optional_bounded_and_membership_filtered():
+    async def scenario():
+        redis = FakeAsyncValkey(decode_responses=True)
+        async with MessagingClient(
+            MessagingConfig("redis://test"), client=redis
+        ) as client:
+            for name in ("alice", "bob", "carol"):
+                await client.register(name, "owner", name)
+            await client.send("dm_bob_carol", sender="bob", agent=True, body="private")
+            await client.send("dm_alice", sender="owner", body="x" * 300)
+            await redis.xadd(group_key("all", "msg"), {"data": "malformed"})
+            assert all("preview" not in group for group in await client.contacts())
+            groups = {
+                group["group"]: group
+                for group in await client.contacts(agent="alice", include_preview=True)
+            }
+            assert set(groups) == {"all", "dm_alice"}
+            assert groups["all"]["preview"] is None
+            assert groups["dm_alice"]["preview"] == {
+                "sender": "owner",
+                "body": "x" * 160,
+            }
+            owner_groups = {
+                group["group"]: group
+                for group in await client.contacts(include_preview=True)
+            }
+            assert owner_groups["dm_bob_carol"]["preview"]["body"] == "private"
+            assert owner_groups["dm_bob"]["preview"] is None
+
+    asyncio.run(scenario())
+
+
 def test_uncertain_send_is_not_retried_and_returns_recoverable_id(monkeypatch):
     async def scenario():
         redis = FakeAsyncValkey(decode_responses=True)

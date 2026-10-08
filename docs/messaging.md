@@ -21,7 +21,7 @@ Set `[messaging].enabled = false` in root or agent configuration to opt out. Res
 
 ```sh
 too start alice
-too team                       # Public/custom groups, members, online agents, latest message.
+too team                       # Existing conversations, including owner and agent DMs.
 too text alice                 # Owner DM; interactive input.
 too text dev                   # Custom group gc_dev.
 too text all hello             # Send and exit after acknowledgment.
@@ -30,9 +30,11 @@ too text --dm alice hello      # Disambiguate an agent/group name collision.
 too text --group alice hello
 ```
 
-Interactive Text keeps a live input below ordinary scrollback. Enter sends; Ctrl+J inserts a newline; Ctrl+P/Ctrl+N browse sent input; Ctrl+Q exits. Failed sends preserve the draft. In tmux, each root/connection/human has a session and each conversation has a reusable window; switch windows to switch conversations. Use tmux copy mode for history. `TOOLANG_TMUX=0` keeps Text in the invoking pane.
+`too team` shows reusable targets, participants with online/offline agent markers, and a compact timestamp/message preview. `all` comes first, then conversations by latest activity, with empty conversations last. Listing does not create unused agent pairs.
 
-Messages align within Chat's maximum content width (120 columns by default, configurable with `TOOLANG_PROGRESS_MAX_WIDTH`), capped by the current terminal width.
+Interactive Text keeps a live input below ordinary scrollback. Enter sends; Ctrl+J inserts a newline; Ctrl+P/Ctrl+N browse sent input; Ctrl+Q exits. The footer shows the conversation name, connection state, and a brief `Sent` confirmation. Reconnection updates the footer; failed sends show details and preserve the draft. In tmux, each root/connection/human has a session and each conversation has a reusable window; switch windows to switch conversations. Use tmux copy mode for history. `TOOLANG_TMUX=0` keeps Text in the invoking pane.
+
+Messages, input, and footer align within Chat's maximum content width (120 columns by default, configurable with `TOOLANG_PROGRESS_MAX_WIDTH`), capped by the current terminal width.
 Left-aligned names and body text start in column 3, with a `•` marker on the first body line. Owner names sit above the message background at the top right; the body has two cells of horizontal padding on each side and one row above and below. The first owner body line has Chat's cyan `▮` marker in the outermost right padding cell. Extremely narrow terminals reduce horizontal decoration to preserve content.
 
 ## Conversations and keys

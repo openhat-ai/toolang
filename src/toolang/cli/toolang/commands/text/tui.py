@@ -2,12 +2,13 @@
 
 import asyncio
 from pathlib import Path
+from time import monotonic
 from typing import Any
 
 from prompt_toolkit.application import Application, run_in_terminal
 from prompt_toolkit.filters import Condition, has_focus
 from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.layout import HSplit, Layout, Window
+from prompt_toolkit.layout import HSplit, HorizontalAlign, Layout, VSplit, Window
 from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.styles import Style
 from rich.text import Text
@@ -15,14 +16,15 @@ from valkey.exceptions import ValkeyError
 
 from toolang.cli.common.console import terminal_console
 from toolang.cli.common.execution_progress.config import DEFAULT_MAX_PROGRESS_WIDTH
+from toolang.cli.common.execution_progress.formatting import display_width, truncate
 from toolang.cli.common.input import InputBox
 from toolang.cli.common.input_history import InputHistoryStore
 from toolang.cli.common.scrollback import ScrollbackRenderer
 from toolang.cli.common.terminal_surfaces import TerminalSurfaces
 from toolang.common.files import atomic_write_text
 from toolang.messaging.client import MessagingClient
-from toolang.messaging.errors import MessagingError
-from toolang.messaging.schemas import Message
+from toolang.messaging.errors import MessagingError, SendUnconfirmed
+from toolang.messaging.schemas import Message, conversation
 
 from .rendering import display_text, message_block
 
@@ -42,7 +44,9 @@ class TextTui:
         self.surfaces = surfaces
         self.max_width = max_width
         self.draft = state / "draft.txt"
-        self.status = "Connecting…"
+        self.connection = "Connecting…"
+        self.status = ""
+        self.sent_until = 0.0
         self.pending = False
         self.cursor = "0-0"
         self.agents: set[str] = set()
@@ -52,6 +56,7 @@ class TextTui:
             on_input=self.save_draft,
             normalize=lambda text: text,
             get_max_rows=lambda: max(3, self.app.output.get_size().rows - 1),
+            get_width=self.content_width,
         )
         if self.draft.exists():
             self.prompt.replace_input(self.draft.read_text(encoding="utf-8"))
@@ -96,11 +101,21 @@ class TextTui:
 
         self.app: Application[None] = Application(
             layout=Layout(
-                HSplit(
+                VSplit(
                     [
-                        self.prompt.container(),
-                        Window(FormattedTextControl(self.status_text), height=1),
-                    ]
+                        HSplit(
+                            [
+                                self.prompt.container(),
+                                Window(
+                                    FormattedTextControl(self.status_text),
+                                    height=1,
+                                    wrap_lines=False,
+                                ),
+                            ],
+                            width=self.content_width,
+                        ),
+                    ],
+                    align=HorizontalAlign.LEFT,
                 ),
                 focused_element=self.prompt.buffer,
             ),
@@ -108,11 +123,14 @@ class TextTui:
             full_screen=False,
             erase_when_done=True,
             mouse_support=False,
+            refresh_interval=0.5,
             style=Style.from_dict(
                 {
                     "input": f"bg:{surfaces.input_background}",
                     "input.placeholder": "dim",
                     "control.run": "bg:ansibrightcyan",
+                    "status": "dim",
+                    "status.warning": "ansiyellow",
                 }
             ),
         )
@@ -128,10 +146,34 @@ class TextTui:
         if hasattr(self, "app"):
             self.app.invalidate()
 
-    def status_text(self) -> str:
-        return display_text(
-            f" {self.group} · {self.human} · {self.status} · Ctrl+J newline · Ctrl+Q quit"
-        )
+    def content_width(self) -> int:
+        return max(1, min(self.app.output.get_size().columns, self.max_width))
+
+    def status_text(self) -> list[tuple[str, str]]:
+        status = self.status
+        if status == "Sent" and (
+            monotonic() >= self.sent_until or self.connection != "Connected"
+        ):
+            status = ""
+        state = self.connection + (f" · {status}" if status else "")
+        label = conversation(self.group).label
+        left = " ".join(display_text(f" {label} · {state}").split())
+        width = self.content_width()
+        hint = "Enter send · Ctrl+J newline · Ctrl+Q quit"
+        if display_width(left) + display_width(hint) + 2 > width:
+            hint = "Ctrl+Q quit" if width >= 30 else ""
+        left = truncate(left, max(1, width - display_width(hint) - (2 if hint else 0)))
+        gap = " " * max(0, width - display_width(left) - display_width(hint))
+        warning = self.connection in {"Reconnecting…", "Stopped"} or status not in {
+            "",
+            "Sending…",
+            "Sent",
+        }
+        return [
+            ("class:status.warning" if warning else "class:status", left),
+            ("", gap),
+            ("class:status", hint),
+        ]
 
     def save_draft(self) -> None:
         try:
@@ -144,45 +186,54 @@ class TextTui:
         self.status = "Sending…"
         self.invalidate()
         try:
-            receipt = await self.client.send(self.group, sender=self.human, body=body)
+            await self.client.send(self.group, sender=self.human, body=body)
         except (MessagingError, ValkeyError) as exc:
-            self.status = str(exc)
-            await self.print_notice(self.status)
+            self.status = (
+                "Send not confirmed"
+                if isinstance(exc, SendUnconfirmed)
+                else "Send failed"
+            )
+            await self.print_notice(str(exc))
         else:
+            self.connection = "Connected"
+            self.status = "Sent"
+            self.sent_until = monotonic() + 2
             self.prompt.accept_submission(body)
             self.save_draft()
-            self.status = f"Sent {receipt['message']['id']}"
         finally:
             self.pending = False
             self.invalidate()
 
     async def print_notice(self, text: str) -> None:
         await run_in_terminal(
-            lambda: terminal_console(width=self.app.output.get_size().columns).print(
+            lambda: terminal_console(width=self.content_width()).print(
                 Text(display_text(text), style="yellow")
             )
         )
 
     async def show(self, entries: list[tuple[str, dict[str, str]]]) -> None:
-        for sid, fields in entries:
-            try:
-                message = Message.decode(fields["data"])
-            except (KeyError, MessagingError):
-                await self.print_notice(f"Skipped malformed message at {sid}")
-            else:
+        if not entries:
+            return
 
-                def write() -> None:
-                    width = max(
-                        1, min(self.app.output.get_size().columns, self.max_width)
+        def write() -> None:
+            width = self.content_width()
+            console = terminal_console(width=width)
+            for sid, fields in entries:
+                try:
+                    message = Message.decode(fields["data"])
+                except (KeyError, MessagingError):
+                    console.print(
+                        Text(f"Skipped malformed message at {sid}", style="yellow")
                     )
-                    terminal_console(width=width).print(
+                else:
+                    console.print(
                         message_block(
                             message, self.group, self.agents, width, self.surfaces
                         )
                     )
 
-                await run_in_terminal(write)
-            self.cursor = sid
+        await run_in_terminal(write)
+        self.cursor = entries[-1][0]
 
     async def follow(self) -> None:
         initialized = False
@@ -215,20 +266,17 @@ class TextTui:
                     await self.show(
                         await self.client.read(self.group, after=self.cursor)
                     )
-                if reconnecting or self.status == "Connecting…":
-                    self.status = "Connected"
+                if self.connection != "Connected":
+                    self.connection = "Connected"
                     self.invalidate()
                 reconnecting, delay = False, 0.5
             except ValkeyError:
-                if not reconnecting:
-                    await self.print_notice(
-                        "Disconnected; reconnecting. Your draft is retained."
-                    )
-                self.status = "Reconnecting…"
+                self.connection = "Reconnecting…"
                 self.invalidate()
                 reconnecting = True
                 delay = min(delay * 2, 5)
             except MessagingError as exc:
+                self.connection = "Stopped"
                 self.status = str(exc)
                 self.invalidate()
                 await self.print_notice(self.status)

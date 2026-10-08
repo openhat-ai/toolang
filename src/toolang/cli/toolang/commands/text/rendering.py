@@ -44,7 +44,7 @@ def message_block(
     body_width = max(1, width - gutter)
     header = Text(
         display_text(message.sender),
-        style="dim",
+        style="bold" if agent else "not dim",
         justify="right" if right and not agent else "left",
     )
     body = display_text(message.body)
