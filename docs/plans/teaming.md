@@ -268,7 +268,9 @@ The [canonical subscription protocol](local-subscriptions.md) owns source cursor
 cache watermarks, structural prefill, parallel-run handling, and HTTP recovery.
 Local agent and Hub use the same boundary rules: select a stable boundary, fill
 missing structure/final results from its records view, then follow the suffix.
-Reuse this execution-aware normalization; storage readers and transports differ.
+Use the execution-owned normalizer with a backend reader; do not copy its state
+machine into teaming or HTTP. Backend positions order delivery; source cursors
+identify record incarnations.
 
 ```text
 agent canonical stream -> teaming exporter -> backend Stream -> Hub clients
@@ -299,18 +301,13 @@ atomic; the boundary's records view must remain consistent while it is read.
 Persist enough structural/final data for Hub prefill without a live origin agent.
 This shared algorithm does not make different agents' source sequences comparable.
 
-Export canonical `RunRetried` mutations even on an uninterrupted connection.
-Before exposing replacement events, atomically append the mutation and apply its
-persisted invalidation set: remove obsolete steps/descendants, retain unaffected
-prefixes, and clear the root's old terminal result. Record the retry control/version
-and source cursor so a duplicate mutation cannot delete newer reused paths.
-Preserve invalidation metadata for records recovery; Begin/End upserts alone
-cannot represent deleted rows. The same mutation/reset rules apply to Hub live,
-cached, and records-prefill readers.
-
-Hub records prefill follows the linked checkpoint protocol: no intermediate SSE
-IDs, then one checkpoint at backend boundary `B` after the complete prefix. Source
-cursors carried by reconstructed events must not advance that delivery cursor.
+Append canonical `RunRetried` and apply its persisted invalidation set atomically,
+before replacement events. Deduplicate by source/control identity before changing
+projections; repeated mutations cannot delete newer reused paths. Retain enough
+mutation metadata to select affected trees for records recovery. The shared
+normalizer handles live/cached mutations and current-tree replacement prefill;
+Begin/End upserts alone cannot represent deleted rows. Its checkpoint uses backend
+boundary `B`, never a reconstructed event's source cursor.
 
 Retained exporter backlog resumes in source order. Uncertain writes require
 source-identity deduplication and lease fencing before retry. Filtering/compacted
@@ -336,7 +333,7 @@ coordination in these PRs.
 | CLI/tools (#708) | Bare Text directory, no `team`, preserved interactive Text behavior, five `msg` tools, no `coop`. |
 | Hub | Readiness failure, lifecycle isolation, port precedence/conflicts/discovery, Text HTTP parity. |
 | Local subscriptions | Canonical cursor/prefill/cache acceptance in the linked plan; no backend required. |
-| Team observation | Local/Hub boundary and interrupted-prefill parity; retry deletion/prefix preservation in every read path; duplicate invalidations cannot erase replacements; multiple clients, source order, lease fencing, outage recovery, no forwarding loops, local/global `top`. |
+| Team observation | Run the shared normalization scenarios against the backend reader; verify multiple clients, source order, lease fencing, duplicate rejection, outage recovery, no forwarding loops, local/global `top`. |
 
 Likely files: new `teaming/`, existing `api/common.py`, setup watcher/types,
 `up/server.py`, `work/messaging.py`, toolset factory/context, CLI routing/Text,
