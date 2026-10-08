@@ -9,6 +9,10 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Added
 
+- Interactive Text renders each agent's name and its `•` message marker in the
+  same non-dim ANSI color derived from the name, kept stable across restarts
+  and conversations.
+
 - The root-scoped teaming Hub is managed with `too hub start`, `serve`,
   `stop`, and `status`: `start` runs it in the background and waits for
   backend readiness, `serve` runs it in the foreground, `stop` leaves agents

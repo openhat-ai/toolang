@@ -2,6 +2,7 @@
 
 import re
 import unicodedata
+from hashlib import sha256
 
 from rich.align import Align
 from rich.console import Group, RenderableType
@@ -18,6 +19,12 @@ from toolang.teaming.schemas import Message, Conversation, target
 _ESCAPE = re.compile(
     r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b\[[0-?]*[ -/]*[@-~]|\x1b[@-_]"
 )
+_AGENT_COLORS = ("red", "green", "yellow", "blue", "magenta", "cyan")
+
+
+def _agent_color(name: str) -> str:
+    """Keep each name's ANSI color stable across processes and conversations."""
+    return _AGENT_COLORS[sha256(name.encode("utf-8")).digest()[0] % len(_AGENT_COLORS)]
 
 
 def display_text(value: str) -> str:
@@ -36,14 +43,16 @@ def message_block(
     width: int,
     surfaces: TerminalSurfaces,
 ) -> RenderableType:
-    agent = target(message.sender).kind == "agent"
+    sender = target(message.sender)
+    agent = sender.kind == "agent"
     right = message.sender == identity
     width = max(1, width)
     gutter = min(8, width // 5)
     body_width = max(1, width - gutter)
+    header_style = f"{_agent_color(sender.name)} bold not dim" if agent else "not dim"
     header: RenderableType = Text(
-        display_text(target(message.sender).name),
-        style="bold" if agent else "not dim",
+        display_text(sender.name),
+        style=header_style,
         justify="right" if right else "left",
     )
     body = display_text(message.body)
@@ -62,7 +71,7 @@ def message_block(
     if padding:
         marker = Text(
             "•" if agent else CONTROL_BAR_MARK,
-            style="dim" if agent else f"{RUN_CONTROL_ACCENT} not dim",
+            style=header_style if agent else f"{RUN_CONTROL_ACCENT} not dim",
             justify="right" if right else "left",
         )
         columns = Table.grid(padding=0, expand=True)

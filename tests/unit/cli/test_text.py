@@ -4,6 +4,10 @@ import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from io import StringIO
+import json
+import os
+import subprocess
+import sys
 from unittest.mock import AsyncMock
 
 from fakeredis import FakeAsyncValkey, FakeServer
@@ -16,7 +20,7 @@ from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.layout.controls import BufferControl
 from prompt_toolkit.output import DummyOutput
 from rich.console import Console
-from rich.color import Color
+from rich.color import Color, ColorType
 
 from toolang.cli.toolang import main as cli
 from toolang.cli.toolang.commands import text
@@ -24,7 +28,10 @@ from toolang.cli.toolang.commands.text import directory
 from toolang.cli.toolang.commands.text.tui import TextTui
 from toolang.cli.toolang.commands.text import tui
 from toolang.cli.toolang.commands.text.rendering import message_block, display_text
-from toolang.cli.common.terminal_surfaces import DARK_TERMINAL_SURFACES
+from toolang.cli.common.terminal_surfaces import (
+    DARK_TERMINAL_SURFACES,
+    LIGHT_TERMINAL_SURFACES,
+)
 from toolang.teaming.messaging import MessagingClient
 from toolang.teaming.backend import Backend, group_key
 from toolang.teaming.config import BackendConfig
@@ -366,6 +373,70 @@ def test_owner_name_is_above_padded_background_at_top_right():
     assert accents[0].style.color == Color.parse("bright_cyan")
     assert accents[0].style.dim is False
     assert accents[0].style.bgcolor is None
+
+
+@pytest.mark.parametrize("name", ["alice", "bob", "agent七"])
+@pytest.mark.parametrize("own_message", [False, True])
+@pytest.mark.parametrize("surfaces", [DARK_TERMINAL_SURFACES, LIGHT_TERMINAL_SURFACES])
+def test_agent_name_and_marker_share_ansi_color_without_dimming(
+    name, own_message, surfaces
+):
+    sender = f"agent:{name}"
+    console = Console(width=60)
+    segments = list(
+        console.render(
+            message_block(
+                Message.create(sender, "body text"),
+                sender if own_message else "human:bryan",
+                set(),
+                60,
+                surfaces,
+            )
+        )
+    )
+    header = next(segment for segment in segments if name in segment.text)
+    marker = next(segment for segment in segments if "•" in segment.text)
+    body = next(segment for segment in segments if "body text" in segment.text)
+    assert header.style is not None and marker.style is not None
+    assert header.style.color is not None
+    assert header.style.color.type == ColorType.STANDARD
+    assert marker.style.color == header.style.color
+    assert header.style.dim is False and marker.style.dim is False
+    assert header.style.bold
+    assert body.style is None or body.style.color is None
+
+
+def test_agent_name_colors_survive_process_restart_and_message_order():
+    script = """
+import json
+import sys
+from rich.console import Console
+from toolang.cli.common.terminal_surfaces import DARK_TERMINAL_SURFACES
+from toolang.cli.toolang.commands.text.rendering import message_block
+from toolang.teaming.schemas import Message
+
+console = Console(width=60)
+colors = {}
+for name in sys.argv[1:]:
+    block = message_block(Message.create(f"agent:{name}", "body"), "human:reader",
+                          set(), 60, DARK_TERMINAL_SURFACES)
+    segment = next(s for s in console.render(block) if name in s.text)
+    colors[name] = segment.style.color.name
+print(json.dumps(colors))
+"""
+    names = ["alice", "bob", "charlie", "agent七"]
+    results = []
+    for seed, order in (("1", names), ("2", list(reversed(names)))):
+        result = subprocess.run(
+            [sys.executable, "-c", script, *order],
+            env={**os.environ, "PYTHONHASHSEED": seed},
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        results.append(json.loads(result.stdout))
+    assert results[0] == results[1]
+    assert len(set(results[0].values())) > 1
 
 
 @pytest.mark.parametrize("identity", ["alice", "bryan"])
