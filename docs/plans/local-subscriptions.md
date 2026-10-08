@@ -15,6 +15,8 @@ and Hub subscriptions share boundary and structural-prefill rules.
 Resident-agent CLI operations that need execution must ensure the agent is ready
 and use its API. Concurrent starters converge on the same runtime. Remove host
 embedding from these paths; retain the runtime after the command by default.
+Mutations of subscribed run/thread structure also go through this owner; an
+out-of-process writer must not bypass cursor assignment and publication.
 Optional stop-on-exit applies only to the instance started by that command, never
 an attached/replacement instance, and must not cancel other active work. Resolve
 configuration/environment/CLI policy at the call site. Script mode is a separate,
@@ -59,6 +61,14 @@ delta compaction are valid. Retry does not reset the runtime sequence. Restart
 uses a new epoch; never numerically compare sequences from different epochs.
 Legacy records without cursor metadata require structural initialization rather
 than invented historical positions.
+
+An accepted retry emits canonical `RunRetried` before its new `RunBegin`, carrying
+root/thread, retry control reference/version, invalidated step references, and
+removed descendant run IDs. Compute effective sets before deletion; persist them
+and the cursor with retry admission. Clear the root's terminal result and mark it
+pending, preserving unaffected prefixes/background work. Apply this mutation
+before replacement events in live delivery, cached replay, and reconstruction.
+Deduplicate by retry control identity so repeats cannot erase newer reused paths.
 
 ## Cache and fanout
 
@@ -110,13 +120,22 @@ buffering, including publishers on worker threads.
    consistent records view. Capture the active run set at that boundary; newly
    admitted runs must fall into either prefill or the subsequent stream.
 2. If the requested cursor `C` is covered, normalize the retained prefix `(C, B]`.
-   Otherwise query structural records in that range and reconstruct Begin/End
-   events. Supply missing ancestor Begins and required active structure. A cursor
-   that once named a delta needs no exact delta-to-record lookup.
-3. Send the catchup/prefill prefix, then the suffix after `B`. Preserve structural
-   order and original source identities. Synthetic context must not advance or rewind
-   the committed resume cursor; acknowledge `B` only after all its prefill is
-   delivered. Recheck suffix coverage if prefill outlives cache retention.
+   Deliver source events in canonical order with their resume IDs; missing
+   ancestor context has no SSE ID. Otherwise query structural records and retry
+   invalidations in that range, reconstructing current Begin/End structure at `B`.
+   A cursor that once named a delta needs no exact delta-to-record lookup.
+3. For records prefill, send `stream_prefill` declaring boundary `B`, then the
+   structural prefix, then `stream_checkpoint` with SSE ID `B`. No prefill frame,
+   including reconstructed source events, carries an SSE ID before that final
+   checkpoint. Send live events after `B` only after the checkpoint; recheck
+   suffix coverage if prefill outlives cache retention.
+
+Records prefill contains no deltas and may group records by run. Clients retain
+the previous committed cursor until applying the complete prefix and checkpoint;
+repeated prefill is an idempotent structural upsert by record/version identity.
+Begins do not clear an applied End of the same version. Disconnect before the
+checkpoint retries from the old cursor. Source identities remain metadata,
+separate from the delivery checkpoint. A reset clears only the declared view.
 
 On first attachment without a cursor, a run scope initializes its recorded tree;
 thread/agent scopes initialize active trees and follow subsequent events. History
@@ -132,10 +151,17 @@ siblings; parent `RunEnd` is not enough if background descendants remain active.
 
 Record cursors provide lookup, not historical snapshots. All mutations relevant
 to prefill must respect the boundary protocol, including admission, retry, and
-rewind. Never pair old `B` with newer mutable records. Retry can delete/reuse step
-identities: when the requested version cannot be reconstructed, explicitly reset
-the affected view and initialize current records. An incompatible epoch uses the
-same reset path; clients clear affected partial state before applying prefill.
+rewind. Locally, open a separate read-only SQLite transaction and perform its
+first read under the publication gate when capturing `B`, pinning the WAL view;
+release that gate before reconstruction or network I/O. Do not hold the executor's
+store connection/lock for a subscriber's read lifetime. Bound snapshot lifetime
+and release it on completion/termination; expiry fails prefill without committing
+its checkpoint. Never combine newer mutable records with old `B`.
+Historical rows already removed by retry require a declared reset and current
+structural prefill; retained retry invalidations still apply
+when both source events and records are available. An incompatible epoch also
+resets the view. Reset recovery includes affected terminal trees, not only the
+active-tree initialization used for a new observer.
 
 ## HTTP and lifecycle
 
@@ -149,17 +175,20 @@ Keep SSE and [existing execution routes](../api.md#run-and-thread-endpoints):
 | Existing POST execution streams | Start and subscribe before the first event. |
 
 GET and POST accept optional `after` tokens; resume checkpoints use SSE IDs.
-Validate cursor/scope before POST admission. Normal successful start-and-subscribe
-begins with the root `RunBegin`, which supplies the run ID. Keep the existing
-`X-Toolang-Run-ID` header for compatibility, without making it a protocol
+Validate cursor/scope before POST admission. Successful new-run start-and-subscribe
+begins with the root `RunBegin`, which supplies the run ID; retry streams expose
+`RunRetried` first for their already-known root, installing observation before
+retry admission. Keep the existing `X-Toolang-Run-ID` header for compatibility,
+without making it a protocol
 requirement. A cursor controls observation, not execution idempotency: never
 automatically repeat POST after a disconnect. Once the run ID is known, reconnect
 through GET. Lost responses before learning the ID need a separate request-ID
 reconciliation contract.
 
-Reuse canonical event serializers. Reset/checkpoint/error frames are transport
-control, not execution events. Overflow sends `stream_error` with
-`{"code":"overflow"}` and closes; failed writes can close without that frame.
+Reuse canonical event serializers, adding the source `RunRetried` event. Prefill,
+reset, checkpoint, and error frames are transport control, not source mutations.
+Overflow sends `stream_error` with `{"code":"overflow"}` and closes; failed writes
+can close without that frame.
 Latch overflow and recheck it and queued events after awaited terminal lookups.
 An error before the first POST event must not appear as successful completion.
 Disconnecting any subscription never cancels execution.
@@ -185,7 +214,9 @@ and cache, local subscription normalization/HTTP, then
 | Durable publication | Begin/End cursors commit with records before delivery; failed projection publishes nothing; restart/legacy cursors never alias current events. |
 | Every scope and start-and-subscribe | Correct isolation/ancestry; earliest POST events are captured; one client's closure leaves others running; background descendants are observed through completion. |
 | Mid-run attachment and replay | Missing Begins precede Ends; only incomplete steps suppress Part progress; finalized history needs no deltas; disconnected clients recover completed trees. |
-| Consistent handoff | Completion/admission/retry/rewind during prefill causes neither omission nor future-state leakage; unavailable historical versions explicitly reset. |
+| Interrupted grouped prefill | Disconnect after A's 140 but before B's 120/130 keeps the old cursor; retry loses no records, duplicates no structural nodes, and checkpoints only after the complete prefix. |
+| Retry invalidation | A shorter retry removes obsolete steps/descendants and preserves the retained prefix in live, cached, and records paths; duplicate invalidations cannot delete replacement records. |
+| Consistent handoff | A pinned read view stays at `B` while writers progress; admission/retry/rewind causes neither omission nor future-state leakage; unavailable historical versions explicitly reset, including affected terminal trees. |
 | Cache pressure | Slow readers retain unread deltas until explicit overflow; only consumed finalized deltas compact; legal holes resume correctly; memory and wakeups stay bounded. |
 | Transport races and shutdown | Actual ASGI blocked writes release dependencies; idle streams survive; overflow wins terminal races; no POST replay or implicit execution cancellation. |
 | Local/Hub parity | Equivalent retained events/records produce equivalent prefill and per-agent order; teaming disabled makes no backend calls. |
@@ -198,8 +229,8 @@ tests. Runtime PRs update the changelog through the existing runnable and run th
 [default checks](../../AGENTS.md#verification).
 
 Remaining choices: script lifecycle; stop-on-exit option/environment/config names
-and scope; cache/batch budgets and oversized-event handling; exact cursor,
-reset/checkpoint, and request-ID reconciliation wire contracts. Implementation
-must specify how the records read view is pinned at `B`, including retry
-invalidation. Hub storage/retention details are settled in stage 5. These are
-explicit follow-ups, not guarantees already provided by the current runtime.
+and scope; cache/batch/snapshot budgets and oversized-event handling; exact cursor,
+prefill/reset/checkpoint payload schemas, and request-ID reconciliation. The
+checkpoint commit rules and retry mutation semantics above are fixed. Hub
+storage/versioning/retention details are settled in stage 5. These are explicit
+follow-ups, not guarantees already provided by the current runtime.
