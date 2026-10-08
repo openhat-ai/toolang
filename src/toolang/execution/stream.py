@@ -284,8 +284,12 @@ class StreamReader:
     def finish(self) -> None:
         """Drain through the current tail, then release observation."""
         with self._source._lock:
-            self._until = self._source._tail
-            self._notify()
+            if self._until is None:
+                self._until = self._source._tail
+            if self._seq >= self._until:
+                self.close()
+            else:
+                self._notify()
 
     def check(self) -> None:
         if self._error is not None:
@@ -352,6 +356,8 @@ class StreamReader:
                             if self._until is not None
                             else source._tail
                         )
+                    if self._until is not None and self._seq >= self._until:
+                        self.close()
                     return EventBatch(tuple(events), self.cursor)
                 if source._closed:
                     self.close()

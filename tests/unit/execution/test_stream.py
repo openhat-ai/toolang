@@ -247,6 +247,36 @@ def test_close_wakes_idle_readers_and_releases_listeners(close_source):
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("finish_before_receive", [False, True])
+def test_finished_reader_keeps_its_acquired_batch_without_pinning_future_events(
+    finish_before_receive,
+):
+    async def scenario():
+        source = CanonicalStream(limits=StreamLimits(events=3))
+        reader = source.subscribe(root_run_id="run_a")
+        emit(source, begin())
+        emit(source, RunEnd("run_a", "succeeded"))
+        if finish_before_receive:
+            reader.finish()
+            emit(source, begin("run_b"), root="run_b")
+            reader.finish()
+        batch = await reader.receive()
+        assert batch.cursor.seq == 2
+        if not finish_before_receive:
+            reader.finish()
+        for _ in range(4):
+            emit(source, begin("run_b"), root="run_b")
+        reader.finish()  # Repeated cleanup must not extend the cutoff.
+        reader.check()
+        assert [frame.event.type for frame in batch.events] == ["run_begin", "run_end"]
+        with pytest.raises(StopAsyncIteration):
+            await reader.receive()
+        assert source.read_floor == source.tail
+        assert not source._signal._listeners
+
+    asyncio.run(scenario())
+
+
 def test_compaction_of_an_older_attempt_does_not_overflow_a_current_reader():
     async def scenario():
         source = CanonicalStream(limits=StreamLimits(events=7))
