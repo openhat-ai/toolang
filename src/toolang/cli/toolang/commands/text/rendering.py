@@ -6,13 +6,13 @@ import unicodedata
 from rich.align import Align
 from rich.console import Group, RenderableType
 from rich.constrain import Constrain
-from rich.markdown import Markdown
 from rich.padding import Padding
 from rich.table import Table
 from rich.text import Text
 
 from toolang.cli.common.terminal_surfaces import TerminalSurfaces
 from toolang.cli.common.control_bars import CONTROL_BAR_MARK, RUN_CONTROL_ACCENT
+from toolang.cli.common.markdown import TerminalMarkdown
 from toolang.teaming.schemas import Message, Conversation, target
 
 _ESCAPE = re.compile(
@@ -47,7 +47,17 @@ def message_block(
         justify="right" if right else "left",
     )
     body = display_text(message.body)
-    content: RenderableType = Markdown(body, hyperlinks=False) if agent else Text(body)
+    content: RenderableType = (
+        TerminalMarkdown(
+            body,
+            code_background=surfaces.code_background,
+            inline_code_background=surfaces.inline_code_background,
+            code_foreground=None,
+            hyperlinks=False,
+        )
+        if agent
+        else Text(body)
+    )
     padding = min(2, (body_width - 1) // 2)
     if padding:
         marker = Text(

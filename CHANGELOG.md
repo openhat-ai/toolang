@@ -148,6 +148,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Fixed
 
+- Text renders agent messages with the shared terminal Markdown layout:
+  fenced and inline code use the resolved terminal surfaces, tables fill
+  the message body width and fold long cells instead of truncating them,
+  and headings, lists, quotes, and rules align with the body text.
+
 - `too retry` and `too rerun` keep an accepted run executing when observing
   it fails and report the accepted run ID, instead of canceling it; only an
   explicit interrupt or cancellation still cancels the accepted run.
