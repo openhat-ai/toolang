@@ -94,6 +94,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Changed
 
+- Interactive Text moves the message marker (`•` for agents, `▮`
+  for humans) onto the sender-name row and insets names by the same
+  horizontal padding as the message body, instead of placing the marker
+  on the first body line.
+
 - Root help groups `hub` and `text` under a new `Teaming Commands` panel
   instead of `Work Commands`; command names, options, and routing are
   unchanged.
