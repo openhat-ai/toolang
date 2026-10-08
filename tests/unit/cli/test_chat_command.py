@@ -926,7 +926,7 @@ def test_chat_ui_paths_follow_the_selected_layout(
     )
 
 
-def test_chat_runtime_uses_a_temporary_remote_runtime(
+def test_chat_runtime_forwards_dev_when_acquiring_a_guest(
     tmp_path: Path,
     monkeypatch: Any,
 ) -> None:
@@ -971,29 +971,29 @@ def test_chat_runtime_uses_a_temporary_remote_runtime(
     assert opened is True
 
 
-def test_chat_runtime_closes_temporary_runtime_after_remote_initialization_failure(
+def test_chat_runtime_exits_acquisition_context_after_initialization_failure(
     tmp_path: Path,
     monkeypatch: Any,
 ) -> None:
     layout = AgentLayout.roaming(tmp_path / "alice.too")
-    cleaned = False
+    exited = False
 
     @contextmanager
     def agent_server_context(
         _layout: AgentLayout,
         **_kwargs: object,
     ) -> Iterator[AgentServerRef]:
-        nonlocal cleaned
+        nonlocal exited
         try:
             yield AgentServerRef(
                 sandbox="docker:python:3.13-slim",
                 endpoint="http://127.0.0.1:8123",
             )
         finally:
-            cleaned = True
+            exited = True
 
     def failed_remote(*_args: object, **_kwargs: object) -> object:
-        raise chat.RemoteChatError("temporary remote initialization failed")
+        raise chat.RemoteChatError("remote initialization failed")
 
     monkeypatch.setattr(chat, "context_layout", lambda _ctx: layout)
     monkeypatch.setattr(chat, "ui_base_url", lambda: "")
@@ -1007,4 +1007,4 @@ def test_chat_runtime_closes_temporary_runtime_after_remote_initialization_failu
         ):
             raise AssertionError("failed remote must not open Chat")
 
-    assert cleaned is True
+    assert exited is True

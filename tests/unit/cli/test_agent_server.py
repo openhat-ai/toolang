@@ -247,8 +247,10 @@ def test_agent_server_rejects_an_unready_agent(
 
 
 @pytest.mark.parametrize("status", (None, "stopped", "failed"))
+@pytest.mark.parametrize("body_fails", (False, True))
 def test_agent_server_opens_embedded_host_and_releases_stopped_state(
     status: str | None,
+    body_fails: bool,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -272,15 +274,40 @@ def test_agent_server_opens_embedded_host_and_releases_stopped_state(
         agent_server.sandbox_runtime, "release_stopped", release_stopped
     )
 
-    with agent_server.acquire_agent_server(
-        layout,
-        temporary=True,
-        sandbox=None,
-        ui_base_url="https://ui.test",
-    ) as selected:
-        assert selected is None
+    error = ValueError("script evaluation failed")
+
+    def run_script() -> None:
+        with agent_server.acquire_agent_server(
+            layout,
+            temporary=True,
+            sandbox=None,
+            ui_base_url="https://ui.test",
+        ) as selected:
+            assert selected is None
+            if body_fails:
+                raise error
+
+    if body_fails:
+        with pytest.raises(ValueError) as captured:
+            run_script()
+        assert captured.value is error
+    else:
+        run_script()
 
     assert released == [layout]
+
+
+def test_agent_server_wraps_management_lock_failure(tmp_path: Path) -> None:
+    layout = AgentLayout.resident(tmp_path, "alice")
+    lock_path = layout.sandbox_state.with_suffix(".lock")
+    lock_path.mkdir(parents=True)
+
+    with pytest.raises(agent_server.AgentServerAcquisitionError) as captured:
+        with agent_server.acquire_agent_server(layout, sandbox="host"):
+            pytest.fail("must not acquire without the management lock")
+
+    assert isinstance(captured.value.__cause__, IsADirectoryError)
+    assert str(lock_path) in str(captured.value)
 
 
 @pytest.mark.parametrize("dev", [Path("."), Path("dist")])

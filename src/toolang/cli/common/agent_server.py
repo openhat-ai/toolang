@@ -60,29 +60,43 @@ def acquire_agent_server(
     """Ensure a persistent server; temporary scripts retain their existing lifecycle."""
 
     # Share the management lock with start/serve/stop, releasing it before caller work.
-    with file_write_lock(layout.sandbox_state.with_suffix(".lock")):
-        acquired = _prepare_agent_server(
-            layout,
-            sandbox=sandbox,
-            dev=dev,
-            model_catalog=model_catalog,
-            ui_base_url=ui_base_url,
-            base_environ=base_environ,
-            show_progress=show_progress,
-            compact_override=compact_override,
-            workspace_additions=workspace_additions,
-            temporary=temporary,
-        )
-    handle = acquired if isinstance(acquired, sandbox_runtime.SandboxHandle) else None
+    try:
+        with file_write_lock(layout.sandbox_state.with_suffix(".lock")):
+            acquired = _prepare_agent_server(
+                layout,
+                sandbox=sandbox,
+                dev=dev,
+                model_catalog=model_catalog,
+                ui_base_url=ui_base_url,
+                base_environ=base_environ,
+                show_progress=show_progress,
+                compact_override=compact_override,
+                workspace_additions=workspace_additions,
+                temporary=temporary,
+            )
+    except AgentServerAcquisitionError:
+        raise
+    except (
+        ImportError,
+        OSError,
+        RuntimeError,
+        ToolangError,
+        TypeError,
+        ValueError,
+    ) as exc:
+        raise AgentServerAcquisitionError(str(exc)) from exc
+
+    if not isinstance(acquired, sandbox_runtime.SandboxHandle):
+        yield acquired
+        return
+
+    handle = acquired
     server: AgentServerRef | None = None
     body_error: BaseException | None = None
     try:
-        if isinstance(acquired, sandbox_runtime.SandboxHandle):
-            server = AgentServerRef(
-                sandbox=acquired.state.sandbox, endpoint=acquired.state.ref.endpoint
-            )
-        else:
-            server = acquired
+        server = AgentServerRef(
+            sandbox=handle.state.sandbox, endpoint=handle.state.ref.endpoint
+        )
         yield server
     except BaseException as exc:
         body_error = exc
@@ -90,7 +104,7 @@ def acquire_agent_server(
             raise AgentServerAcquisitionError(str(exc)) from exc
         raise
     finally:
-        if handle is not None and (temporary or server is None):
+        if temporary or server is None:
             shutdown_progress = make_cli_progress(
                 enabled=show_progress,
                 leading_gap=True,
@@ -173,34 +187,14 @@ def _prepare_agent_server(
             )
         return _attached_server(layout, status, requested=sandbox)
 
-    try:
-        selected = sandbox_runtime.resolve_selection(layout, explicit=sandbox)
-    except (
-        ImportError,
-        OSError,
-        RuntimeError,
-        ToolangError,
-        TypeError,
-        ValueError,
-    ) as exc:
-        raise AgentServerAcquisitionError(str(exc)) from exc
+    selected = sandbox_runtime.resolve_selection(layout, explicit=sandbox)
     if selected == "host" and dev is not None:
         raise AgentServerAcquisitionError(
             "--dev only applies to guest sandboxes; host uses the current "
             "Toolang installation."
         )
     if selected == "host" and temporary:
-        try:
-            asyncio.run(sandbox_runtime.release_stopped(layout))
-        except (
-            ImportError,
-            OSError,
-            RuntimeError,
-            ToolangError,
-            TypeError,
-            ValueError,
-        ) as exc:
-            raise AgentServerAcquisitionError(str(exc)) from exc
+        asyncio.run(sandbox_runtime.release_stopped(layout))
         return None
 
     launch = _resolve_inactive_launch(
