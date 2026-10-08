@@ -14,7 +14,7 @@ services. `coord` is reserved; its operations are outside this delivery.
 | 1. Design | Record these contracts and the acceptance criteria. | None. |
 | 2. [#708](https://github.com/openhat-ai/toolang/pull/708), revised | Deliver `teaming` messaging, typed targets, scoped setup, backend membership, `msg`, and Text. Replace `team` with bare `text`. | Design. |
 | 3. Hub | Add Hub API/client, `hub start/serve/stop/status`, port overrides, and route Text through Hub. | Revised #708. |
-| 4. Local subscriptions | Share process-local fanout and add agent/thread/root-run subscriptions with independent clients. | Design. |
+| 4. [Local subscriptions](local-subscriptions.md) | Share process-local fanout and add agent/thread/root-run subscriptions with independent clients. | Design and local protocol approval. |
 | 5. Team observation | Bridge agent events through the backend; add global subscriptions and `top`/agent `top`. | Hub and local subscriptions. |
 
 PR #708 is reused, not replaced by a parallel messaging implementation. Its Text
@@ -269,9 +269,10 @@ IDs preserved. Export only locally originated events; Hub imports never re-expor
 Transport envelopes identify event, origin agent, and topic; names cannot collide
 across agents. Messaging retention does not imply observation replay.
 
-Before their respective PRs, define subscription library/topic encoding/overflow/
-reconnect policy and activity presentation.
-PyPubSub remains a candidate. Do not expand coordination in these PRs.
+The proposed [local subscription protocol](local-subscriptions.md) defines the
+library, topic encoding, overflow, and reconnect policy for stage 4. Before stage
+5, define the cross-agent transport envelope and activity presentation. Do not
+expand coordination in these PRs.
 
 ## Acceptance and touchpoints
 
