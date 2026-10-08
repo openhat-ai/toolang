@@ -98,10 +98,13 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Changed
 
-- Interactive Text draws a dim `─` rule from each agent sender name to
-  the edge of the message body, mirrored before the name for right-aligned own
-  messages, and omits it when the width cannot fit the full name plus a rule
-  character. Human headers and name, marker, and body styling are unchanged.
+- Interactive Text draws a dim bright-black `┄` rule on its own row below
+  each agent's complete name, starting at the body inset and reaching the
+  message area's right edge; it is present even at narrow widths and with
+  wrapped names. Left-aligned messages, including human bubbles, now fill the
+  available configured content width, while own right-aligned messages keep
+  their gutter. Sender name and marker colors and non-dim styling are
+  unchanged.
 
 - Interactive Text moves the message marker (`•` for agents, `▮`
   for humans) onto the sender-name row and insets names by the same

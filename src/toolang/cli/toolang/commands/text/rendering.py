@@ -48,7 +48,7 @@ def message_block(
     agent = sender.kind == "agent"
     right = message.sender == identity
     width = max(1, width)
-    gutter = min(8, width // 5)
+    gutter = min(8, width // 5) if right else 0
     body_width = max(1, width - gutter)
     header_style = f"{_agent_color(sender.name)} bold not dim" if agent else "not dim"
     name = Text(
@@ -58,8 +58,6 @@ def message_block(
     )
     padding = min(2, (body_width - 1) // 2)
     header: RenderableType = name
-    if agent and name.cell_len + 2 <= body_width - 2 * padding:
-        header = Rule(name, style="dim", align="right" if right else "left")
     body = display_text(message.body)
     content: RenderableType = (
         TerminalMarkdown(
@@ -91,14 +89,19 @@ def message_block(
             (1, 0, 1, 0),
             style=f"not dim on {surfaces.input_background}",
         )
-    return Padding(
-        Align(
-            Constrain(Group(header, content), body_width),
-            align="right" if right else "left",
-            width=width,
-        ),
-        (0, 0, 1, 0),
+    rows = (
+        Group(
+            header,
+            Padding(Rule(characters="┄", style="bright_black dim"), (0, 0, 0, padding)),
+            content,
+        )
+        if agent
+        else Group(header, content)
     )
+    block: RenderableType = Constrain(rows, body_width)
+    if right:
+        block = Align(block, align="right", width=width)
+    return Padding(block, (0, 0, 1, 0))
 
 
 def conversation_label(info: Conversation) -> str:

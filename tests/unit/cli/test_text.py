@@ -333,8 +333,9 @@ def test_left_message_marker_has_aligned_header_and_wrapped_body(identity):
         )
     )
     lines = output.getvalue().splitlines()
-    assert lines[0].rstrip() == "• alice " + "─" * 22
-    assert lines[1].startswith("  word")
+    assert lines[0].rstrip() == "• alice"
+    assert lines[1] == "  " + "┄" * 38
+    assert lines[2].startswith("  word")
     assert all(line.startswith("  ") for line in lines[1:] if line.strip())
     assert output.getvalue().count("•") == 1
     assert output.getvalue().split().count("word") == 20
