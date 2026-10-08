@@ -4,10 +4,18 @@ from dataclasses import replace
 
 import pytest
 
-from toolang.execution.events import RunBegin, RunEnd, RunRetried, RunSnapshot
+from toolang.execution.events import (
+    RunBegin,
+    RunEnd,
+    RunRetried,
+    RunSnapshot,
+    StepBegin,
+    StepEnd,
+)
 from toolang.execution.stream_client import StreamClientState
 from toolang.execution.schemas import StreamFrame
-from toolang.execution.types import ControlRef, EventCursor
+from toolang.execution.types import ControlRef, EventCursor, StepRef
+from toolang.lang.ast import RunStmt, Span
 
 
 def cursor(seq):
@@ -94,3 +102,82 @@ def test_incomplete_prefill_rejects_mismatched_checkpoint():
     with pytest.raises(ValueError, match="does not complete"):
         state.feed(StreamFrame.checkpoint(EventCursor.parse(cursor(3))))
     assert state.cursor is None
+
+
+@pytest.mark.parametrize("prefill", [False, True])
+def test_nested_background_completion_waits_for_each_run_subtree(prefill):
+    state = StreamClientState()
+    root = RunBegin("run_root", ControlRef.for_run("run_root", 0))
+    outer = StepBegin(
+        StepRef.parse("run_root.0"),
+        "run",
+        RunStmt(span=Span(line=1), runnable="child", asynchronous=True),
+    )
+    child = RunBegin("run_child", ControlRef.for_run("run_child", 0), parent=outer.step)
+    inner = StepBegin(
+        StepRef.parse("run_child.0"),
+        "run",
+        RunStmt(span=Span(line=1), runnable="leaf", asynchronous=True),
+    )
+    leaf = RunBegin("run_leaf", ControlRef.for_run("run_leaf", 0), parent=inner.step)
+    side = StepBegin(
+        StepRef.parse("run_root.1"),
+        "run",
+        RunStmt(span=Span(line=1), runnable="sibling", asynchronous=True),
+    )
+    sibling = RunBegin(
+        "run_sibling", ControlRef.for_run("run_sibling", 0), parent=side.step
+    )
+    child_end = RunEnd("run_child", "succeeded")
+    events = (
+        root,
+        outer,
+        child,
+        StepEnd(outer.step, "run", "succeeded"),
+        inner,
+        leaf,
+        StepEnd(inner.step, "run", "succeeded"),
+        side,
+        sibling,
+        StepEnd(side.step, "run", "succeeded"),
+        child_end,
+    )
+    if prefill:
+        state.feed(
+            StreamFrame(
+                "stream_prefill",
+                {
+                    "cursor": cursor(len(events)),
+                    "scope": {"kind": "run", "id": root.run},
+                    "roots": [root.run],
+                },
+            )
+        )
+    for seq, event in enumerate(events, 1):
+        observations = state.feed(
+            StreamFrame.source(event, cursor(seq), context=prefill)
+        )
+    if prefill:
+        observations = state.feed(
+            StreamFrame.checkpoint(EventCursor.parse(cursor(seq)))
+        )
+    else:
+        assert observations == ()
+    assert child_end not in state.snapshot().events
+    assert not state.complete(root.run)
+    assert not state.complete(child.run)
+
+    leaf_end = RunEnd(leaf.run, "succeeded")
+    restored = state.feed(StreamFrame.source(leaf_end, cursor(seq + 1)))
+    assert len(restored) == 1 and isinstance(restored[0], RunSnapshot)
+    assert restored[0].events.index(leaf_end) < restored[0].events.index(child_end)
+    assert state.complete(child.run)
+    assert not state.complete(root.run)  # Its other branch is still running.
+    root_end = RunEnd(root.run, "succeeded")
+    assert state.feed(StreamFrame.source(root_end, cursor(seq + 2))) == ()
+    finished = state.feed(
+        StreamFrame.source(RunEnd(sibling.run, "succeeded"), cursor(seq + 3))
+    )
+    assert len(finished) == 1 and isinstance(finished[0], RunSnapshot)
+    assert finished[0].events[-1] == root_end
+    assert state.complete(root.run)

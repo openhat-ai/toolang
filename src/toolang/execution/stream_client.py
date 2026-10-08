@@ -140,23 +140,36 @@ class StreamClientState:
         if changed and replacing:
             return (self.snapshot(),)
         if changed and isinstance(event, RunEnd):
+            incomplete = self._incomplete_runs()
+            if event.run in incomplete:
+                return ()
             begin = self._records.get(("run_begin", event.run))
             if (
                 isinstance(begin, RunBegin)
-                and begin.parent is None
-                and not self.complete(event.run)
+                and begin.parent is not None
+                and ("run_end", begin.parent.run_id) in self._records
+                and begin.parent.run_id not in incomplete
             ):
-                return ()
-            if isinstance(begin, RunBegin) and begin.parent is not None:
-                root = begin
-                while root.parent is not None:
-                    parent = self._records.get(("run_begin", root.parent.run_id))
-                    if not isinstance(parent, RunBegin):
-                        break
-                    root = parent
-                if ("run_end", root.run) in self._records and self.complete(root.run):
-                    return (self.snapshot(),)
+                # Release deferred ancestor Ends in structural order, including
+                # intermediate background runs while other branches stay active.
+                return (self.snapshot(),)
         return (event,) if changed else ()
+
+    def _incomplete_runs(self) -> set[str]:
+        parents = {
+            event.run: event.parent.run_id if event.parent is not None else None
+            for event in self._records.values()
+            if isinstance(event, RunBegin)
+        }
+        incomplete: set[str] = set()
+        for run in parents:
+            if ("run_end", run) in self._records:
+                continue
+            current: str | None = run
+            while current is not None and current not in incomplete:
+                incomplete.add(current)
+                current = parents.get(current)
+        return incomplete
 
     def _replace(self, replacement: dict[str, Any]) -> None:
         roots = replacement["roots"]
@@ -246,6 +259,7 @@ class StreamClientState:
         return True
 
     def snapshot(self) -> RunSnapshot:
+        incomplete = self._incomplete_runs()
         children: dict[str | StepRef | None, list[str | StepRef]] = defaultdict(list)
         begins: dict[str | StepRef, RunBegin | StepBegin] = {}
         ends: dict[str | StepRef, RunEnd | StepEnd] = {}
@@ -267,11 +281,7 @@ class StreamClientState:
             if ending:
                 if key in ends:
                     begin = begins[key]
-                    if (
-                        isinstance(begin, RunBegin)
-                        and begin.parent is None
-                        and not self.complete(begin.run)
-                    ):
+                    if isinstance(begin, RunBegin) and begin.run in incomplete:
                         continue
                     events.append(ends[key])
             else:
@@ -281,7 +291,8 @@ class StreamClientState:
         return RunSnapshot(tuple(events))
 
     def complete(self, root: str) -> bool:
-        runs = self._descendants({root})
-        return self._prefix is None and all(
-            ("run_end", run) in self._records for run in runs
+        return (
+            self._prefix is None
+            and ("run_end", root) in self._records
+            and root not in self._incomplete_runs()
         )
