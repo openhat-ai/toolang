@@ -16,7 +16,7 @@ from toolang.cli.common.errors import TmuxPlacementError
 from toolang.cli.common.execution_progress.config import resolve_progress_max_width
 from toolang.cli.common.messaging import settings
 from toolang.cli.common.tmux import resolve_launcher
-from toolang.teaming.messaging import MessagingClient
+from toolang.teaming.client import HubClient
 from toolang.teaming.errors import TeamingError
 
 
@@ -58,7 +58,7 @@ def text_command(
         config, human = settings(root)
 
         async def resolve_or_send() -> str:
-            async with MessagingClient(config, actor=human) as client:
+            async with HubClient(config) as client:
                 resolved = await client.resolve(
                     target, kind="dm" if dm else "group" if group else None
                 )
@@ -111,7 +111,7 @@ def text_command(
         surfaces = resolve_terminal_surfaces()
 
         async def interactive() -> None:
-            async with MessagingClient(config, actor=human) as client:
+            async with HubClient(config) as client:
                 info = await client.conversation(resolved)
                 await TextTui(
                     client,

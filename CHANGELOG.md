@@ -9,6 +9,20 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Added
 
+- The root-scoped teaming Hub is managed with `too hub start`, `serve`,
+  `stop`, and `status`: `start` runs it in the background and waits for
+  backend readiness, `serve` runs it in the foreground, `stop` leaves agents
+  and Redis/Valkey running, and `status` reports the endpoint and current
+  backend readiness. Hub binds `127.0.0.1` and records its actual endpoint,
+  human, backend identity, and generated bearer token in the root's private
+  `.runtime/hub.json`.
+
+- Hub `start`/`serve` ports resolve as `--port` > `TOOLANG_HUB_PORT` >
+  `teaming.hub.port` > `7000`, and resident agent `start`/`serve` resolves
+  its API port as `--port` > `TOOLANG_AGENT_PORT` > home `[api] port` > a
+  free recorded port, otherwise an available port in `7001`–`7999`;
+  temporary agents keep their existing selection.
+
 - Humans can observe an agent DM in Interactive Text read-only: both agents'
   messages appear, the composer is removed, and the footer shows `Read-only`,
   with existing history and drafts retained. Text continues to present the
@@ -80,6 +94,12 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Changed
 
+- `too text` and Interactive Text now reach messaging through the Hub HTTP
+  API instead of connecting to Redis/Valkey directly, so run `too hub start`
+  before using Text and reopen Text after restarting the Hub. Agents and
+  their `msg` tools still communicate directly with the backend and remain
+  independent of the Hub.
+
 - **Breaking:** the experimental `coop` toolset (wire names `coop__contacts` and
   `coop__send`), the public `CoopToolContext` type, the `too team` command,
   `[human]` and `[messaging]` configuration, and old conversation IDs are replaced
@@ -98,6 +118,20 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   and every other sender on the left — with names aligned to the outer-edge
   marker, and footer labels name the conversation: its group name (or `all`) or a
   direct conversation's `agent:alice ↔ agent:bob` participants. (#708)
+
+### Fixed
+
+- The Hub now listens before backend access, reserving its endpoint so
+  another process cannot claim the same port while startup is in
+  progress. (#710)
+
+- Authenticated Hub API requests restore the human's registration and the
+  system membership when the backend restarted empty, without retrying the
+  failed message append. (#710)
+
+- A Hub process that is still starting is reported as `starting` by `too hub
+  status` and can be stopped with `too hub stop --force` before the backend
+  is ready. (#710)
 
 ## [0.4.0a2] - 2026-10-07
 

@@ -21,7 +21,7 @@ from toolang.cli.common.input_history import InputHistoryStore
 from toolang.cli.common.scrollback import ScrollbackRenderer
 from toolang.cli.common.terminal_surfaces import TerminalSurfaces
 from toolang.common.files import atomic_write_text
-from toolang.teaming.messaging import MessagingClient
+from toolang.teaming.client import HubClient
 from toolang.teaming.errors import BackendUnavailable, MessagingError, SendUnconfirmed
 from toolang.teaming.schemas import Message
 
@@ -31,7 +31,7 @@ from .rendering import display_text, message_block
 class TextTui:
     def __init__(
         self,
-        client: MessagingClient,
+        client: HubClient,
         group: str,
         human: str,
         state: Path,

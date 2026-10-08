@@ -118,6 +118,7 @@ Use these commands to run and manage agents. Add `--help` to any command for its
 too new <agent>                       # Create a local agent
 too clone <ref> <agent>               # Clone an agent
 too <agent> chat                      # Chat with an agent
+too hub start                        # Start the messaging Hub; requires Redis/Valkey
 too text <target> [message...]        # Open a conversation or send a message
 too text                              # List messaging conversations
 too [agent] home                      # Open a shell in agent home

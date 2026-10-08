@@ -438,6 +438,7 @@ def resolve_startup(
     workdir: str | None = None,
 ) -> RuntimeLaunch:
     from toolang.up import sandbox as sandbox_runtime
+    from toolang.cli.common.ports import agent_port
 
     root, agent = target.root, target.name
     workspaces = resolve_workspaces(
@@ -450,6 +451,7 @@ def resolve_startup(
         raise ClickException(active_agent_error(existing))
     environ = load_runtime_environ(target, base_environ=os.environ)
     environ["TOOLANG_ROOT"] = str(root)
+    port = user_call(agent_port, target, port, environ=environ)
     if model_catalog := resolve_model_catalog_option(model_catalog):
         environ[MODEL_CATALOG_ENV] = str(model_catalog)
     log_plan = resolve_agent_logging(

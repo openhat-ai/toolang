@@ -11,6 +11,9 @@ human = "brice" # Defaults to the OS username.
 
 [teaming.backend]
 url = "redis://localhost:6379/0"
+
+[teaming.hub]
+port = 7000
 ```
 
 Enable each participating agent in `<agent-home>/config.toml`, then restart it:
@@ -26,6 +29,8 @@ Membership is stored only in the backend, never in configuration. Experimental
 aliases or data migration.
 
 ```sh
+too hub start                       # Background Hub; requires Redis/Valkey.
+too hub status                      # Endpoint and backend readiness.
 too text                            # Conversations, membership, presence, previews.
 too text alice                      # Private conversation with a unique target.
 too text agent:alice hello          # Send and exit after acknowledgment.
@@ -33,7 +38,25 @@ too text human:alex hello
 too text group:dev                   # Existing custom group.
 too text all hello                   # Public group:all.
 too text alice -- hello -sdf         # Flags after target are literal message text.
+too hub stop                        # Leaves agents and Redis/Valkey running.
 ```
+
+`too hub serve` runs in the foreground. Hub binds `127.0.0.1`; Text discovers its
+actual endpoint and bearer token from the private root `.runtime/hub.json` file.
+Start Hub before using Text. Agents and their `msg` tools communicate directly
+with the backend and remain independent of Hub.
+
+`too hub status` reports `starting` while waiting for the backend;
+`too hub stop --force` can stop a stalled startup. After an empty backend restart,
+Hub restores the configured human's registration on the next authenticated
+request. Lost messages and custom groups are not restored.
+
+Hub `start`/`serve` ports resolve as `--port` > `TOOLANG_HUB_PORT` >
+`teaming.hub.port` > `7000`. Resident agent `start`/`serve` uses `--port` >
+`TOOLANG_AGENT_PORT` > home `[api] port` > recorded/available `7001`–`7999`.
+Explicit ports must be `1..65535`; an occupied explicit port fails. Overrides do
+not change configuration. Restart to apply configuration changes; reopen Text
+after restarting Hub. Temporary agents keep their existing port selection.
 
 Targets use `agent:`, `human:`, or `group:`. IDs are case-sensitive Unicode
 letters/numbers with combining marks and `-_.`; the first character must be a
@@ -69,4 +92,4 @@ retrying; check history before resending. Local checkpoints live under the agent
 `.runtime/channels/messaging/`; Text drafts/history live under root `.runtime/text/`.
 
 The [teaming plan](plans/teaming.md) defines keys, values, and delivery stages.
-Hub, subscriptions, activity commands, and coordination are subsequent work.
+Subscriptions, activity commands, and coordination are subsequent work.

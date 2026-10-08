@@ -42,6 +42,38 @@ def test_server_initializes_setup_and_state_once_concurrently() -> None:
     assert state.calls == 1
 
 
+def test_resident_default_port_reuses_free_record_or_selects_available(
+    tmp_path, monkeypatch
+):
+    layout = AgentLayout.resident(tmp_path, "alice")
+    monkeypatch.setattr(server.agents, "preferred_runtime_port", lambda layout: 7123)
+    monkeypatch.setattr(
+        server.agents, "assigned_runtime_ports", lambda *args, **kwargs: {7001}
+    )
+    monkeypatch.setattr(server, "_port_is_available", lambda host, port: port != 7002)
+    assert (
+        server.resolve_runtime_port(
+            host="127.0.0.1", explicit_port=None, layout=layout, temporary=False
+        )
+        == 7123
+    )
+    monkeypatch.setattr(
+        server, "_port_is_available", lambda host, port: port not in {7123, 7002}
+    )
+    assert (
+        server.resolve_runtime_port(
+            host="127.0.0.1", explicit_port=None, layout=layout, temporary=False
+        )
+        == 7003
+    )
+    assert (
+        server.resolve_runtime_port(
+            host="127.0.0.1", explicit_port=7223, layout=layout, temporary=False
+        )
+        == 7223
+    )
+
+
 def test_serve_argv_contains_only_server_inputs(tmp_path: Path) -> None:
     layout = AgentLayout.resident(tmp_path, "alice")
     spec = resolve_serve(
