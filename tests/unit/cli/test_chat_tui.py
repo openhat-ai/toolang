@@ -2124,7 +2124,9 @@ def test_chat_prompt_grows_for_wrapped_input(
 ) -> None:
     output = _TerminalOutput()
     output.columns = 10
-    monkeypatch.setattr(widgets, "get_app", lambda: SimpleNamespace(output=output))
+    monkeypatch.setattr(
+        "toolang.cli.common.input.get_app", lambda: SimpleNamespace(output=output)
+    )
     prompt = widgets.PromptBox(lambda _event: None, lambda: None)
 
     prompt.buffer.text = "12345"
@@ -6878,7 +6880,9 @@ def test_chat_extremely_narrow_controls_retain_a_body_cell(
 ) -> None:
     output = _TerminalOutput()
     output.columns = width
-    monkeypatch.setattr(widgets, "get_app", lambda: SimpleNamespace(output=output))
+    monkeypatch.setattr(
+        "toolang.cli.common.input.get_app", lambda: SimpleNamespace(output=output)
+    )
     prompt = widgets.PromptBox(lambda _event: None, lambda: None)
     accent, content = prompt.container().children
     assert isinstance(accent, Window) and callable(accent.width)

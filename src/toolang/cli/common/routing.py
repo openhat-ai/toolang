@@ -19,6 +19,7 @@ def extract_root_args(
     argv: Sequence[str],
     *,
     extra_value_options: Collection[str] = (),
+    literal_commands: Collection[str] = (),
 ) -> tuple[list[str], list[str]]:
     """Separate root options from command arguments without crossing `--`."""
 
@@ -29,7 +30,7 @@ def extract_root_args(
     index = 0
     while index < len(argv):
         token = argv[index]
-        if token == "--":
+        if token == "--" or (not body and token in literal_commands):
             body.extend(argv[index:])
             break
         if token in value_options:

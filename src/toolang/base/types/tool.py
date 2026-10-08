@@ -116,3 +116,11 @@ class ServiceToolContext(ToolContext):
     """Effective services supplied only to the service toolset."""
 
     services: tuple[ToolService, ...]
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class MsgToolContext(ToolContext):
+    """Execution identity supplied only to the messaging toolset."""
+
+    run_id: str | None = None
+    thread_id: str | None = None

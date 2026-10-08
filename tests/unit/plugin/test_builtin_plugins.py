@@ -14,7 +14,10 @@ from toolang.plugin.catalogs.models_dev.path import PACKAGED_MODEL_CATALOG
 @pytest.mark.parametrize(
     ("family", "names"),
     [
-        ("toolset", {"_toolang", "fs", "history", "me", "service", "shell", "web"}),
+        (
+            "toolset",
+            {"_toolang", "msg", "fs", "history", "me", "service", "shell", "web"},
+        ),
         ("model_catalog", {"models_dev", "ollama", "llama_cpp"}),
         (
             "model_adapter",

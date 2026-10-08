@@ -804,3 +804,43 @@ def test_chat_reentry_preserves_placement_and_config_rules(
     assert observed["workspace"] == ["repo=."]
     assert observed["workdir"] == "repo://"
     assert ("TEST_REENTRY_DOTENV" in observed["env"]) == (placement != "roaming")
+
+
+def test_text_placement_reuses_group_and_never_adopts_chat_session():
+    from dataclasses import replace
+
+    chat_session = FakeSession("$0", "text-owner")
+    chat_session.options[tmux.SESSION_AGENT] = "alice"
+    server = FakeServer([chat_session])
+    launcher = replace(
+        _launcher(server, FakePane(session_id="$0"), "root-url-human"),
+        session_mark="@toolang_text",
+        window_mark="@toolang_group",
+        pad_kind="text",
+        session_name="text-owner",
+    )
+    arguments: dict[str, Any] = dict(
+        thread_id="gc_dev", argv=["too", "text", "gc_dev"], directory="/tmp"
+    )
+    assert launcher.place_chat(**arguments) is False
+    assert len(server.created) == 1
+    session = server.sessions[-1]
+    assert session.session_name == "text-owner-2"
+    assert session.options["@toolang_text"] == "root-url-human"
+    window = session.windows[0]
+    assert window.options["@toolang_group"] == "gc_dev"
+    assert window.panes[0].options[tmux.MARK_PAD] == "text"
+    assert launcher.place_chat(**arguments) is False
+    assert len(server.created) == 1 and len(session.windows) == 1
+    assert not window.pads
+    other = replace(launcher, agent="different-connection")
+    assert other.place_chat(**arguments) is False
+    assert len(server.created) == 2
+
+
+def test_chat_does_not_adopt_a_text_session_with_the_same_display_name():
+    session = FakeSession("$0", "text-owner")
+    session.options["@toolang_text"] = "root-url-human"
+    launcher = _launcher(FakeServer([session]), FakePane(session_id="$9"), "text-owner")
+    assert launcher.agent_session() is None
+    assert tmux.SESSION_AGENT not in session.options

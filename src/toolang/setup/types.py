@@ -18,6 +18,7 @@ from toolang.base.protocols.tool import Toolset
 from toolang.base.types.model import Model, ModelOverride, Provider
 from toolang.base.types.policy import RunDefaults, RunLimits
 from toolang.common.layout import AgentLayout, IMPLICIT_WORKSPACE_NAME
+from .teaming import TeamingSetup
 from toolang.plugin.toolsets.collections import ToolCollection
 from toolang.plugin.types import LoadedPlugin
 
@@ -163,6 +164,7 @@ class AgentSetup:
     defaults: RunDefaults = RunDefaults()
     limits: RunLimits = RunLimits()
     compact: CompactConfig = CompactConfig()
+    teaming: TeamingSetup | None = None
     catalog_sources: Mapping[str, tuple[str, str]] = field(default_factory=dict)
     _load_models: Callable[[AgentSetup], _ModelData] = field(
         default=lambda _setup: _empty_model_data(), repr=False, compare=False

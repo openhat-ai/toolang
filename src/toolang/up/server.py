@@ -46,6 +46,7 @@ from toolang.up.logging import (
     configure_logging,
 )
 from toolang.work.scheduler import JobScheduler
+from toolang.work.messaging import MessagingLoop
 
 DEFAULT_WATCH_DEBOUNCE_MS = state_watcher.DEFAULT_DEBOUNCE_MS
 RUNTIME_SHUTDOWN_TASK_TIMEOUT_SEC = 1.0
@@ -278,6 +279,19 @@ def serve(
                 get_agent_state=current_state,
             )
             await scheduler.start()
+            messaging_setup = current_setup().teaming
+            if messaging_setup is not None and messaging_setup.home.enabled:
+                messaging = MessagingLoop(
+                    layout=spec.layout,
+                    owner=messaging_setup.root.human,
+                    config=messaging_setup.root.backend,
+                    endpoint=spec.endpoint,
+                    executor=core.executor,
+                    threads=core.threads,
+                    get_agent_setup=current_setup,
+                    get_agent_state=current_state,
+                )
+                tasks.append(asyncio.create_task(messaging.run(stop_signal)))
             app.state.job_scheduler = scheduler
             tasks.extend(
                 [

@@ -57,6 +57,7 @@ dependencies = [
     "libtmux==0.62.0",
     "msgspec>=0.21.1,<1",
     "psutil>=7,<8",
+    "valkey>=6,<7",
 ]
 
 [project.urls]
@@ -72,6 +73,7 @@ caps = "toolang.cli.caps.main:main"
 
 [project.entry-points."toolang.toolset"]
 _toolang = "toolang.execution.tools._toolang:create_toolset"
+msg = "toolang.plugin.toolsets.msg:create_toolset"
 fs = "toolang.plugin.toolsets.fs:create_toolset"
 history = "toolang.plugin.toolsets.history:create_toolset"
 service = "toolang.plugin.toolsets.service:create_toolset"
@@ -99,6 +101,7 @@ docker = "toolang.plugin.sandboxes.docker:create_sandbox"
 
 [dependency-groups]
 dev = [
+  "fakeredis[lua]>=2.31,<3",
   "hatchling>=1.27.0",
   "httpx2>=2,<3",
   "pdoc>=15,<16",
@@ -121,6 +124,7 @@ target-version = "py311"
 testpaths = ["tests"]
 pythonpath = ["."]
 markers = [
+    "live_valkey: opt-in checks using isolated local Redis/Valkey and tmux processes",
     "live_docker: opt-in checks that use the local Docker engine and network",
     "live_provider: opt-in smoke tests that call a real model provider",
 ]

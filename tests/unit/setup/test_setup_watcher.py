@@ -389,3 +389,76 @@ def test_compact_changes_publish_new_setup_and_preserve_captured_values(
     watcher.layout.root_config.write_text('[compact]\nmodel = "unset"\n')
     assert asyncio.run(watcher.refresh()) is second
     assert watcher.diagnostics
+
+
+def test_teaming_config_is_shared_and_frozen_until_restart(tmp_path, monkeypatch):
+    config = tmp_path / "config.toml"
+    config.write_text('[teaming.backend]\nurl = "redis://first"\n')
+    watcher, _ = _watcher(monkeypatch, tmp_path)
+    watcher = SetupWatcher(
+        watcher.layout, model_catalog=tmp_path / "catalog.json", validate_defaults=False
+    )
+    watcher.layout.home.mkdir(parents=True, exist_ok=True)
+    watcher.layout.config.write_text("[teaming]\nenabled = true\n")
+    captured = []
+
+    def load_toolsets(**kwargs):
+        captured.append(kwargs["config"])
+        return {}
+
+    monkeypatch.setattr(watcher_module, "load_toolsets_with_sources", load_toolsets)
+    first = asyncio.run(watcher.refresh())
+    first.toolsets()
+    assert first.teaming is not None
+    initial = first.teaming.root.backend
+    assert initial.url == "redis://first"
+    assert captured[-1]["msg"] == {"url": initial.url}
+    config.write_text('[teaming.backend]\nurl = "redis://second"\n')
+    second = asyncio.run(watcher.refresh())
+    second.toolsets()
+    assert second.teaming is first.teaming
+    assert captured[-1]["msg"]["url"] == initial.url
+    restarted, _ = _watcher(monkeypatch, tmp_path)
+    restarted = SetupWatcher(
+        restarted.layout,
+        model_catalog=tmp_path / "catalog.json",
+        validate_defaults=False,
+    )
+    asyncio.run(restarted.refresh())
+    restarted_teaming = restarted.current().teaming
+    assert restarted_teaming is not None
+    assert restarted_teaming.root.backend.url == "redis://second"
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_teaming_consumers_share_scoped_configuration(tmp_path, monkeypatch, enabled):
+    from toolang.cli.common.messaging import settings
+    from toolang.teaming.config import BackendConfig
+    from toolang.plugin.toolsets.msg import MsgToolset
+    from toolang.plugin.types import LoadedPlugin
+
+    watcher, _ = _watcher(monkeypatch, tmp_path)
+    watcher = SetupWatcher(
+        watcher.layout, model_catalog=tmp_path / "catalog.json", validate_defaults=False
+    )
+    watcher.layout.home.mkdir(parents=True, exist_ok=True)
+    watcher.layout.config.write_text(f"[teaming]\nenabled = {str(enabled).lower()}\n")
+
+    def load_toolsets(*, config):
+        return {
+            "msg": LoadedPlugin("msg", "msg", MsgToolset(config["msg"]), "built-in")
+        }
+
+    monkeypatch.setattr(watcher_module, "load_toolsets_with_sources", load_toolsets)
+    setup = asyncio.run(watcher.refresh())
+    assert setup.teaming is not None
+    msg = setup.toolsets()["msg"]
+    assert isinstance(msg, MsgToolset)
+    assert msg.config == (setup.teaming.root.backend if enabled else None)
+    resolved, human = settings(tmp_path)
+    assert (
+        resolved
+        == setup.teaming.root.backend
+        == BackendConfig("redis://localhost:6379/0")
+    )
+    assert human == setup.teaming.root.human
