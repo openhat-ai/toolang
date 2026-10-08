@@ -9,6 +9,10 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Added
 
+- Interactive Text renders each agent's name and its `•` message marker in the
+  same non-dim ANSI color derived from the name, kept stable across restarts
+  and conversations.
+
 - The root-scoped teaming Hub is managed with `too hub start`, `serve`,
   `stop`, and `status`: `start` runs it in the background and waits for
   backend readiness, `serve` runs it in the foreground, `stop` leaves agents
@@ -94,6 +98,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Changed
 
+- Interactive Text moves the message marker (`•` for agents, `▮`
+  for humans) onto the sender-name row and insets names by the same
+  horizontal padding as the message body, instead of placing the marker
+  on the first body line.
+
 - Root help groups `hub` and `text` under a new `Teaming Commands` panel
   instead of `Work Commands`; command names, options, and routing are
   unchanged.
@@ -147,6 +156,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   direct conversation's `agent:alice ↔ agent:bob` participants. (#708)
 
 ### Fixed
+
+- Text renders agent messages with the shared terminal Markdown layout:
+  fenced and inline code use the resolved terminal surfaces, tables fill
+  the message body width and fold long cells instead of truncating them,
+  and headings, lists, quotes, and rules align with the body text.
 
 - `too retry` and `too rerun` keep an accepted run executing when observing
   it fails and report the accepted run ID, instead of canceling it; only an
