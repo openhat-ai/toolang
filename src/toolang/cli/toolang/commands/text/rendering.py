@@ -8,6 +8,7 @@ from rich.align import Align
 from rich.console import Group, RenderableType
 from rich.constrain import Constrain
 from rich.padding import Padding
+from rich.rule import Rule
 from rich.table import Table
 from rich.text import Text
 
@@ -50,11 +51,15 @@ def message_block(
     gutter = min(8, width // 5)
     body_width = max(1, width - gutter)
     header_style = f"{_agent_color(sender.name)} bold not dim" if agent else "not dim"
-    header: RenderableType = Text(
+    name = Text(
         display_text(sender.name),
         style=header_style,
         justify="right" if right else "left",
     )
+    padding = min(2, (body_width - 1) // 2)
+    header: RenderableType = name
+    if agent and name.cell_len + 2 <= body_width - 2 * padding:
+        header = Rule(name, style="dim", align="right" if right else "left")
     body = display_text(message.body)
     content: RenderableType = (
         TerminalMarkdown(
@@ -67,7 +72,6 @@ def message_block(
         if agent
         else Text(body)
     )
-    padding = min(2, (body_width - 1) // 2)
     if padding:
         marker = Text(
             "•" if agent else CONTROL_BAR_MARK,

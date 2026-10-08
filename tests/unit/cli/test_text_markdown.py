@@ -27,7 +27,7 @@ def test_agent_table_fills_body_width_and_preserves_long_tokens(width):
     text = "".join(segment.text for segment in segments)
     assert "…" not in text
     assert token in "".join(text.split())
-    ruler = next(line for line in text.splitlines() if "─" in line)
+    ruler = next(line for line in text.splitlines()[1:] if "─" in line)
     assert len(ruler.strip()) == width - min(8, width // 5) - 4
     assert all(len(line) <= width for line in text.splitlines())
 
@@ -37,7 +37,7 @@ def test_agent_headings_lists_and_rules_follow_chat_layout():
     lines = [
         line.rstrip() for line in "".join(s.text for s in render(source)).splitlines()
     ]
-    assert "• alice" in lines
+    assert lines[0] == "• alice " + "─" * 42
     assert "  Heading" in lines
     assert "  • outer" in lines
     assert "    • inner" in lines
