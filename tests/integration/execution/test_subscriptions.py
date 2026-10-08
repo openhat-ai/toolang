@@ -99,6 +99,98 @@ def test_resume_recovers_completed_trees_after_cache_loss(tmp_path, scope_kind):
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("scope_kind", ["run", "thread", "agent"])
+def test_concurrent_roots_keep_scopes_and_client_lifetimes_independent(
+    tmp_path, scope_kind
+):
+    from tests.support.execution_harness import AsyncGate, ScriptedModelTurn
+
+    gates = [AsyncGate() for _ in range(3)]
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="agic example:\n  Work\n",
+        responses=[
+            ScriptedModelTurn(
+                ModelCallResult(message=Message.assistant("done")), gate=gate
+            )
+            for gate in gates
+        ],
+    )
+
+    async def scenario():
+        async with harness:
+            one, two = [
+                harness.threads.create(prefix=ThreadPrefix.TERM) for _ in range(2)
+            ]
+            handles = []
+            try:
+                for thread, gate in zip((one, one, two), gates):
+                    handles.append(
+                        harness.executor.run(
+                            harness.run_spec(
+                                thread=thread,
+                                runnable="example",
+                                primary=(TextPart("input"),),
+                            )
+                        )
+                    )
+                    await asyncio.wait_for(gate.wait_until_entered(), 2)
+                expected = {
+                    handle.run_id
+                    for handle in handles[
+                        : {"run": 1, "thread": 2, "agent": 3}[scope_kind]
+                    ]
+                }
+                scope = (
+                    StreamScope(root=handles[0].run_id)
+                    if scope_kind == "run"
+                    else StreamScope(thread=one)
+                    if scope_kind == "thread"
+                    else StreamScope()
+                )
+                service = Subscriptions(harness.executor.stream, harness.store.db_path)
+                attachment = await service.reserve()
+                sub = attachment.attach(scope)
+                detached = await service.reserve()
+                detached.attach(scope)
+                detached.close()
+                begins = set()
+                while True:
+                    frame = await sub.receive()
+                    if frame.event == "run_begin":
+                        begins.add(frame.data["run"])
+                    if frame.event == "stream_checkpoint":
+                        break
+                assert begins == expected
+                for gate in gates:
+                    gate.release()
+                results = await asyncio.gather(*handles)
+                assert all(result.status == "succeeded" for result in results)
+                ended = set()
+                while ended != expected:
+                    frame = await asyncio.wait_for(sub.receive(), 2)
+                    if frame.event == "run_end":
+                        assert frame.data["run"] in expected
+                        ended.add(frame.data["run"])
+                if scope_kind == "run":
+                    with pytest.raises(StopAsyncIteration):
+                        await sub.receive()
+                else:
+                    waiting = asyncio.create_task(sub.receive())
+                    await asyncio.sleep(0)
+                    assert not waiting.done()
+                    attachment.close()
+                    with pytest.raises(StopAsyncIteration):
+                        await asyncio.wait_for(waiting, 2)
+                attachment.close()
+                assert not harness.executor.stream._readers
+            finally:
+                for gate in gates:
+                    gate.release()
+
+    asyncio.run(scenario())
+
+
 def test_post_retry_reservation_starts_with_mutation_not_old_end(tmp_path):
     harness = ExecutionHarness.create(
         tmp_path,
@@ -122,7 +214,7 @@ def test_post_retry_reservation_starts_with_mutation_not_old_end(tmp_path):
             handle = harness.executor.retry(
                 first.id, setup=harness.setup, state=harness.state
             )
-            sub = reservation.attach(StreamScope(root=first.id), started=True)
+            sub = reservation.attach(StreamScope(root=first.id), start="retry")
             frames = await drain(sub)
             assert frames[0].event == "run_retried"
             assert frames[-1].event == "run_end"
@@ -159,7 +251,7 @@ def test_root_stream_drains_queued_retry_past_terminal_boundary(
                 )
             )
             if attach_pending:
-                sub = reservation.attach(StreamScope(root=handle.run_id), started=True)
+                sub = reservation.attach(StreamScope(root=handle.run_id), start="new")
             first = await handle
             if not attach_pending:
                 sub = reservation.attach(StreamScope(root=first.id))
@@ -390,7 +482,7 @@ agic child:
             handle = harness.executor.retry(
                 run.id, setup=harness.setup, state=harness.state
             )
-            sub = reservation.attach(StreamScope(root=run.id), started=True)
+            sub = reservation.attach(StreamScope(root=run.id), start="retry")
             frames = await drain(sub)
             assert frames[0].event == "stream_prefill"
             for frame in frames:

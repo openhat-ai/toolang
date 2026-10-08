@@ -123,7 +123,7 @@ async def _run_stream(
         )
     except (ToolangError, TypeError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    subscription = attachment.attach(StreamScope(root=handle.run_id), started=True)
+    subscription = attachment.attach(StreamScope(root=handle.run_id), start="new")
     response.headers[RUN_ID_HEADER] = handle.run_id
     try:
         yield handle, subscription
@@ -145,7 +145,7 @@ async def _run_authored_stream(
         handle = core.executor.run(run_request)
     except (OSError, ToolangError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    subscription = attachment.attach(StreamScope(root=handle.run_id), started=True)
+    subscription = attachment.attach(StreamScope(root=handle.run_id), start="new")
     response.headers[RUN_ID_HEADER] = handle.run_id
     try:
         yield handle, subscription
@@ -166,7 +166,7 @@ async def _retry_authored_stream(
         handle = core.executor.retry(request)
     except (ToolangError, TypeError, ValueError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    subscription = attachment.attach(StreamScope(root=handle.run_id), started=True)
+    subscription = attachment.attach(StreamScope(root=handle.run_id), start="retry")
     response.headers[RUN_ID_HEADER] = handle.run_id
     try:
         yield handle, subscription
@@ -187,7 +187,7 @@ async def _rerun_authored_stream(
         handle = core.executor.rerun(request)
     except (ToolangError, TypeError, ValueError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    subscription = attachment.attach(StreamScope(root=handle.run_id), started=True)
+    subscription = attachment.attach(StreamScope(root=handle.run_id), start="new")
     response.headers[RUN_ID_HEADER] = handle.run_id
     try:
         yield handle, subscription

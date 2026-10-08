@@ -1137,8 +1137,22 @@ class ChatTuiApp:
         return True
 
     def handle_run_event(self, event: RunObservation) -> None:
-        if isinstance(event, RunBegin) and event.parent is None:
-            self._status_run_id = event.run
+        observations = event.events if isinstance(event, RunSnapshot) else (event,)
+        root = next(
+            (
+                item
+                for item in observations
+                if isinstance(item, RunBegin) and item.parent is None
+            ),
+            None,
+        )
+        if root is not None:
+            if isinstance(event, RunSnapshot) and self.active_run_id not in {
+                None,
+                root.run,
+            }:
+                return
+            self._status_run_id = root.run
         if (
             isinstance(event, PartEnd)
             and event.step.run_id == self._status_run_id
@@ -1151,7 +1165,7 @@ class ChatTuiApp:
                 self.status_bar.set_run_workspace(_workspace_label(cwd))
                 self._invalidate_ui()
         events.handle_run_event(event, self.app_context)
-        if isinstance(event, RunEnd):
+        if any(isinstance(item, RunEnd) for item in observations):
             self.title.refresh()
 
     def _apply_run_workdir(self, run_id: str, workdir: str | None) -> None:

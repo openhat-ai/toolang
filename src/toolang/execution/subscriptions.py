@@ -11,7 +11,7 @@ from pathlib import Path
 import sqlite3
 import threading
 import time
-from typing import Any
+from typing import Any, Literal
 
 from .errors import StreamGapError, StreamOverflowError
 from .events import (
@@ -160,13 +160,20 @@ class Attachment:
         self.on_close: Callable[[], None] = lambda: None
         self._closed = False
 
-    def attach(self, scope: StreamScope, *, started: bool = False) -> EventSubscription:
+    def attach(
+        self, scope: StreamScope, *, start: Literal["new", "retry"] | None = None
+    ) -> EventSubscription:
         """Capture B and the first SQLite read before yielding the admission turn."""
         if self._closed:
             raise RuntimeError("attachment is closed")
         if self.subscription is not None:
             raise RuntimeError("attachment already used")
-        after = self.after or (self.admitted_after if started else None)
+        # A newly allocated root has no history before this admission. Preserve
+        # its first source Begin even when the caller's cursor needs recovery in
+        # another scope or epoch. Retry still recovers the existing root from C.
+        after = self.admitted_after if start == "new" else self.after
+        if after is None and start == "retry":
+            after = self.admitted_after
         try:
             with self.source.boundary() as (boundary, floor, cache):
                 self.store.pin_stream_snapshot(
@@ -189,7 +196,7 @@ class Attachment:
                 boundary,
                 floor,
                 cache,
-                started=started and self.after is None,
+                started=start == "new" or (start == "retry" and self.after is None),
                 admission_overflowed=admission_overflowed,
             )
             return self.subscription

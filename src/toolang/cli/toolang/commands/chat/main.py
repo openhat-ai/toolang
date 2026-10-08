@@ -656,6 +656,8 @@ class _ScriptedRunRenderer:
 
     def render(self, event: RunObservation) -> None:
         if isinstance(event, RunSnapshot):
+            self._close()
+            self._terminal = None
             self._text_delta_steps.clear()
             for item in event.events:
                 if (
@@ -664,7 +666,7 @@ class _ScriptedRunRenderer:
                 ):
                     self.render(item)
                 elif isinstance(item, RunEnd):
-                    self._terminal = item
+                    self.render(item)
             return
         if isinstance(event, RunBegin):
             self._text_delta_steps.clear()

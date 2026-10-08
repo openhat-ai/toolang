@@ -958,3 +958,46 @@ def test_post_validates_cursor_before_admission(tmp_path, cursor):
                 )
     finally:
         asyncio.run(core.close())
+
+
+@pytest.mark.parametrize("cursor_kind", ["evicted", "previous_epoch"])
+def test_new_run_with_old_cursor_still_starts_with_identifying_begin(
+    tmp_path, cursor_kind
+):
+    from toolang.execution.stream import StreamLimits
+    from toolang.execution.types import EventCursor
+
+    harness = ExecutionHarness.create(
+        tmp_path, source="flow example:\n  let result = Done\n", responses=[]
+    )
+    harness.store.close()
+    core = AgentCore(harness.setup.layout)
+    core.setup, core.state = _Snapshot(harness.setup), _Snapshot(harness.state)
+    app = create_app(
+        core,
+        CapsManager(core.layout),
+        JobsManager(core.layout),
+        cors_allowed_origins=(),
+    )
+    source = core.executor.stream
+    source.limits = StreamLimits(events=1)
+    after = str(EventCursor(source.epoch if cursor_kind == "evicted" else "0" * 32, 0))
+    try:
+        with TestClient(app) as client:
+            for _ in range(2):
+                thread = client.post("/api/v1/threads", json={"client": "tui"}).json()[
+                    "thread"
+                ]["id"]
+            source.limits = StreamLimits()
+            response = client.post(
+                "/api/v1/runs/authored/stream",
+                params={"after": after},
+                json=_authored_request(thread, "old_cursor", runnable="flow:example"),
+            )
+            assert response.status_code == 200, response.text
+            frames = _sse_events(response.text)
+            assert frames[0][0] == "run_begin"
+            assert frames[0][1]["run"] == response.headers["X-Toolang-Run-ID"]
+            assert frames[0][1].get("context") is not True
+    finally:
+        asyncio.run(core.close())

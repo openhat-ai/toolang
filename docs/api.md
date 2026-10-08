@@ -1510,6 +1510,8 @@ it to allowed origins. New-run POST streams begin with root `run_begin`, which
 also supplies the ID. Retry starts with `run_retried` and initializes its retained
 prefix. Observation is installed before admission. Disconnecting never cancels
 execution; reconnect with GET once the run ID is known, never repeat POST.
+An older `after` cursor cannot prepend recovery to a newly admitted root: its
+subscription starts at admission. Retry and GET recover the existing scope from `after`.
 
 Clients create a thread explicitly with `POST /api/v1/threads` before the first
 run. The thread request accepts `web`, `term`, `tui`, `chat`, or `script` as its

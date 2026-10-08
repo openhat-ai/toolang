@@ -585,8 +585,8 @@ def test_live_relay_preserves_complete_root_run_tree_order(tmp_path) -> None:
         relay = Subscriptions(source, store.db_path)
         run_attachment = await relay.reserve()
         thread_attachment = await relay.reserve()
-        run = run_attachment.attach(StreamScope(root="run_test"), started=True)
-        thread = thread_attachment.attach(StreamScope(thread="term_test"), started=True)
+        run = run_attachment.attach(StreamScope(root="run_test"), start="new")
+        thread = thread_attachment.attach(StreamScope(thread="term_test"), start="new")
         events = (
             RunBegin(
                 run="run_test",
@@ -659,7 +659,7 @@ def test_live_relay_accepts_thread_events_from_worker_threads(tmp_path) -> None:
         store = RunStore(tmp_path / "runs.db")
         relay = Subscriptions(source, store.db_path)
         attachment = await relay.reserve()
-        subscription = attachment.attach(StreamScope(thread="term_test"), started=True)
+        subscription = attachment.attach(StreamScope(thread="term_test"), start="new")
         event = ThreadCreated(
             thread="term_test",
             control=ControlRef.for_thread("term_test", 0),
@@ -866,7 +866,7 @@ def test_sse_generator_close_removes_subscription(tmp_path) -> None:
         )
         relay = Subscriptions(source, store.db_path)
         attachment = await relay.reserve()
-        subscription = attachment.attach(StreamScope(root="run_test"), started=True)
+        subscription = attachment.attach(StreamScope(root="run_test"), start="new")
         stream = sse_stream(
             cast(Request, ConnectedRequest()),
             subscription,
