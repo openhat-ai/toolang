@@ -37,7 +37,8 @@ def test_agent_headings_lists_and_rules_follow_chat_layout():
     lines = [
         line.rstrip() for line in "".join(s.text for s in render(source)).splitlines()
     ]
-    assert "• Heading" in lines
+    assert "• alice" in lines
+    assert "  Heading" in lines
     assert "  • outer" in lines
     assert "    • inner" in lines
     assert "  1 first" in lines

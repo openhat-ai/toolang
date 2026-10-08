@@ -41,7 +41,7 @@ def message_block(
     width = max(1, width)
     gutter = min(8, width // 5)
     body_width = max(1, width - gutter)
-    header = Text(
+    header: RenderableType = Text(
         display_text(target(message.sender).name),
         style="bold" if agent else "not dim",
         justify="right" if right else "left",
@@ -69,8 +69,9 @@ def message_block(
         columns.add_column(width=padding, no_wrap=True)
         columns.add_column(ratio=1, overflow="fold")
         columns.add_column(width=padding, no_wrap=True)
-        columns.add_row("" if right else marker, content, marker if right else "")
-        content = columns
+        columns.add_row("" if right else marker, header, marker if right else "")
+        header = columns
+        content = Padding(content, (0, padding))
     if not agent:
         content = Padding(
             content,

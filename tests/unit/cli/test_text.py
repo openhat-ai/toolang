@@ -166,10 +166,8 @@ def test_human_observer_sees_both_agents_left_without_a_composer(
     async def inspect_ui(ui):
         await ui.show(await ui.client.history(ui.group))
         lines = output.getvalue().splitlines()
-        assert next(line for line in lines if line.strip() == "alice").startswith(
-            "alice"
-        )
-        assert next(line for line in lines if line.strip() == "bob").startswith("bob")
+        assert any(line.startswith("• alice") for line in lines)
+        assert any(line.startswith("• bob") for line in lines)
         with set_app(ui.app):
             ui.app.renderer.render(ui.app, ui.app.layout)
             assert not any(
@@ -328,9 +326,9 @@ def test_left_message_marker_has_aligned_header_and_wrapped_body(identity):
         )
     )
     lines = output.getvalue().splitlines()
-    assert lines[0].rstrip() == "alice"
-    assert lines[1].startswith("• word")
-    assert all(line.startswith("  ") for line in lines[2:] if line.strip())
+    assert lines[0].rstrip() == "• alice"
+    assert lines[1].startswith("  word")
+    assert all(line.startswith("  ") for line in lines[1:] if line.strip())
     assert output.getvalue().count("•") == 1
     assert output.getvalue().split().count("word") == 20
     assert any(line.rstrip() == "  Last paragraph" for line in lines)
@@ -348,9 +346,9 @@ def test_owner_name_is_above_padded_background_at_top_right():
     )
     console.print(block)
     lines = output.getvalue().splitlines()
-    assert lines[0] == " " * 35 + "bryan"
+    assert lines[0] == " " * 33 + "bryan ▮"
     assert lines[1] == " " * 40
-    assert lines[2] == " " * 10 + "x" * 28 + " ▮"
+    assert lines[2] == " " * 10 + "x" * 28 + "  "
     assert lines[3] == " " * 10 + "short" + " " * 25
     assert lines[4:] == [" " * 40, " " * 40]
     background_widths = [
@@ -367,11 +365,12 @@ def test_owner_name_is_above_padded_background_at_top_right():
     assert accents[0].style is not None
     assert accents[0].style.color == Color.parse("bright_cyan")
     assert accents[0].style.dim is False
+    assert accents[0].style.bgcolor is None
 
 
 @pytest.mark.parametrize("identity", ["alice", "bryan"])
 @pytest.mark.parametrize("sender", ["alice", "bob", "bryan", "visitor"])
-def test_message_side_follows_identity_and_name_aligns_with_marker(identity, sender):
+def test_message_marker_shares_name_row_and_name_aligns_with_body(identity, sender):
     output = StringIO()
     console = Console(file=output, width=40, color_system=None)
     agent = sender in {"alice", "bob"}
@@ -385,13 +384,16 @@ def test_message_side_follows_identity_and_name_aligns_with_marker(identity, sen
     console.print(block)
     lines = output.getvalue().splitlines()
     marker = "•" if agent else "▮"
-    body = next(line for line in lines if marker in line)
+    header = lines[0]
+    body = next(line for line in lines[1:] if "first" in line)
+    assert marker in header
+    assert all(marker not in line for line in lines[1:])
     if sender == identity:
-        assert lines[0].endswith(sender)
-        assert body.index(marker) == 39
+        assert header.endswith(sender + " " + marker)
+        assert header.index(sender) + len(sender) == 38
     else:
-        assert lines[0].startswith(sender)
-        assert body.startswith(marker + " first")
+        assert header.startswith(marker + " " + sender)
+        assert header.index(sender) == body.index("first") == 2
     assert output.getvalue().count(marker) == 1
     background = any(
         segment.style and segment.style.bgcolor for segment in console.render(block)
@@ -439,7 +441,7 @@ def test_interactive_messages_use_chat_width_after_resize(
             assert all(len(line) <= limit for line in lines)
             assert output.getvalue().split().count("word") == 90
             assert lines[0].index(sender) == (
-                limit - len(sender) if sender == "bryan" else 0
+                limit - len(sender) - 2 if sender == "bryan" else 2
             )
 
     monkeypatch.setattr(TextTui, "run", render_messages)
