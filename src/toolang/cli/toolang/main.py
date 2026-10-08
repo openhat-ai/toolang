@@ -403,7 +403,7 @@ _registered_group(
 _registered_command(
     "text",
     "toolang.cli.toolang.commands.text:text_command",
-    help="Send messages or open a conversation",
+    help="Text agents or groups",
     context_settings={"allow_interspersed_args": False},
     rich_help_panel=TEAMING_COMMAND_PANEL,
 )
@@ -411,7 +411,7 @@ _registered_command(
 _registered_group(
     "toolang.cli.toolang.commands.hub:hub_app",
     name="hub",
-    help="Manage the teaming Hub",
+    help="Manage the agent teaming service",
     no_args_is_help=True,
     rich_help_panel=TEAMING_COMMAND_PANEL,
 )

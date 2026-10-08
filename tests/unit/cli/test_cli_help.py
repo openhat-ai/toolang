@@ -104,6 +104,26 @@ def test_lazy_command_exposes_short_help_without_loading():
     assert "Detailed documentation." not in output
 
 
+@pytest.mark.parametrize(
+    ("command", "description"),
+    [
+        ("hub", "Manage the agent teaming service"),
+        ("text", "Text agents or groups"),
+    ],
+)
+def test_teaming_descriptions_match_root_and_command_help(
+    command, description, tmp_path, capsys
+):
+    assert too_main(["--root", str(tmp_path), "--help"]) == 0
+    rows = [
+        " ".join(line.split())
+        for line in strip_ansi(capsys.readouterr().out).splitlines()
+    ]
+    assert f"{command} {description}" in rows
+    assert too_main(["--root", str(tmp_path), command, "--help"]) == 0
+    assert strip_ansi(capsys.readouterr().out).startswith(f"{description}.\n")
+
+
 @pytest.mark.parametrize("application", [app, caps_app])
 def test_declared_help_omits_final_period(application):
     pending = [(typer.main.get_command(application), None)]
