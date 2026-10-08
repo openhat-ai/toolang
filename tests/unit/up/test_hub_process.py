@@ -4,7 +4,9 @@ from dataclasses import replace
 import fcntl
 import os
 import socket
+import subprocess
 import sys
+import time
 from unittest.mock import Mock
 
 import psutil
@@ -12,6 +14,7 @@ import pytest
 
 from toolang.teaming.config import BackendConfig, TeamingRootConfig
 from toolang.teaming.errors import TeamingError
+from toolang.cli.toolang import main as cli
 from toolang.up.hub import HubProcess, serve
 from toolang.up.records import HubRecord
 
@@ -105,6 +108,26 @@ def test_unavailable_backend_exits_and_does_not_publish_ready(tmp_path):
     assert HubProcess(tmp_path).current() is None
 
 
+def test_client_construction_failure_removes_starting_record(tmp_path, monkeypatch):
+    import toolang.up.hub as module
+
+    hub = HubProcess(tmp_path)
+
+    def fail(*args, **kwargs):
+        current = hub.current()
+        assert current is not None and current.status == "starting"
+        raise TeamingError("Invalid backend")
+
+    monkeypatch.setattr(module, "MessagingClient", fail)
+    config = TeamingRootConfig("human:owner", BackendConfig("redis://localhost"), 7000)
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        port = listener.getsockname()[1]
+    with pytest.raises(TeamingError, match="Invalid backend"):
+        serve(tmp_path, config, port=port)
+    assert not hub.path.exists()
+
+
 def test_failed_and_timed_out_start_leave_no_child(tmp_path):
     hub = HubProcess(tmp_path)
     with pytest.raises(TeamingError, match="startup failed"):
@@ -114,3 +137,56 @@ def test_failed_and_timed_out_start_leave_no_child(tmp_path):
     with pytest.raises(TeamingError, match="startup timed out"):
         hub.start([sys.executable, "-c", script], timeout=0.5)
     assert not psutil.pid_exists(int(pidfile.read_text()))
+
+
+def test_starting_hub_is_visible_and_force_stoppable(tmp_path, capsys):
+    # Hold registration before readiness, just as a slow backend connection would.
+    script = """
+import asyncio
+import sys
+from pathlib import Path
+import toolang.up.hub as module
+from toolang.teaming.config import BackendConfig, TeamingRootConfig
+root, port = Path(sys.argv[1]), int(sys.argv[2])
+class SlowClient:
+    actor = "human:owner"
+    def __init__(self, *args, **kwargs): pass
+    async def __aenter__(self):
+        (root / "starting").touch()
+        await asyncio.sleep(60)
+        return self
+    async def __aexit__(self, *args): pass
+    async def check_backend(self): pass
+module.MessagingClient = SlowClient
+module.serve(root, TeamingRootConfig("human:owner", BackendConfig("redis://localhost"), port), port=port)
+"""
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        port = listener.getsockname()[1]
+    with (tmp_path / "child.log").open("w") as log:
+        process = subprocess.Popen(
+            [sys.executable, "-c", script, str(tmp_path), str(port)],
+            stdout=log,
+            stderr=log,
+        )
+        try:
+            deadline = time.monotonic() + 10
+            while not (tmp_path / "starting").exists() and time.monotonic() < deadline:
+                assert process.poll() is None, (tmp_path / "child.log").read_text()
+                time.sleep(0.02)
+            assert (tmp_path / "starting").exists()
+            hub = HubProcess(tmp_path)
+            current = hub.current()
+            assert current is not None and current.pid == process.pid
+            assert current.status == "starting" and not hub.ready(current)
+            with pytest.raises(TeamingError, match="Hub is starting"):
+                hub.connection()
+            assert cli.main(["--root", str(tmp_path), "hub", "status"]) == 0
+            assert "Hub starting" in capsys.readouterr().out
+            assert cli.main(["--root", str(tmp_path), "hub", "stop", "--force"]) == 0
+            assert process.poll() is not None
+            assert hub.current() is None
+        finally:
+            if process.poll() is None:
+                process.kill()
+            process.wait(timeout=5)

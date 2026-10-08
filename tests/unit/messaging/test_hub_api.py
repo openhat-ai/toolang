@@ -19,6 +19,53 @@ from toolang.teaming.schemas import HubConnection, Message
 CONNECTION = HubConnection("http://hub", "test-token", "human:owner", "test")
 
 
+@pytest.mark.parametrize("first_request", ["health", "create", "send", "directory"])
+def test_hub_recovers_human_registration_after_empty_backend_restart(first_request):
+    async def scenario():
+        server = FakeServer(server_type="valkey")
+        human = client(server, CONNECTION.human)
+        app = create_app(human, token=CONNECTION.token)
+        async with (
+            app.router.lifespan_context(app),
+            HubClient(CONNECTION, transport=httpx.ASGITransport(app)) as hub,
+            httpx.AsyncClient(
+                transport=httpx.ASGITransport(app), base_url="http://hub"
+            ) as http,
+        ):
+            server.connected = False
+            assert (
+                await http.get(
+                    "/healthz", headers={"Authorization": f"Bearer {CONNECTION.token}"}
+                )
+            ).status_code == 503
+            server.connected = True
+            await human._backend._client.flushdb()
+            assert (await http.get("/healthz")).status_code == 401
+            assert await human._backend.participants() == {}
+            if first_request == "health":
+                response = await http.get(
+                    "/healthz", headers={"Authorization": f"Bearer {CONNECTION.token}"}
+                )
+                assert response.status_code == 200
+            elif first_request == "create":
+                await hub.create_group("recovered")
+            elif first_request == "send":
+                await hub.send("group:all", body="after recovery")
+            else:
+                assert [item["group"] for item in await hub.contacts()] == ["group:all"]
+            assert CONNECTION.human in await human._backend.participants()
+            assert await human._backend.members("group:all") == (CONNECTION.human,)
+            if first_request != "send":
+                await hub.send("group:all", body="after recovery")
+            assert len(await hub.history("group:all")) == 1
+            # Registration remains idempotent and does not undo custom membership.
+            await hub.create_group("custom")
+            await hub.leave_group("group:custom")
+            assert (await hub.conversation("group:custom")).members == ()
+
+    asyncio.run(scenario())
+
+
 def test_http_messaging_matches_service_and_isolates_agent_conversations():
     async def scenario():
         server = FakeServer(server_type="valkey")

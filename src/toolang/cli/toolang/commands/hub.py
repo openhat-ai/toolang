@@ -96,5 +96,11 @@ def status(ctx: typer.Context) -> None:
     if record is None:
         typer.echo("Hub stopped")
         return
-    state = "running" if hub.ready(record) else "unavailable"
+    state = (
+        "starting"
+        if record.status == "starting"
+        else "running"
+        if hub.ready(record)
+        else "unavailable"
+    )
     typer.echo(f"Hub {state}: {record.connection.endpoint}")

@@ -52,7 +52,7 @@ class MessagingClient:
     async def __aenter__(self) -> MessagingClient:
         if target(self.actor).kind == "human":
             try:
-                await self._backend.register(self.actor)
+                await self.register_human()
             except BaseException:
                 await self.close()
                 raise
@@ -66,6 +66,11 @@ class MessagingClient:
 
     async def check_backend(self) -> None:
         await self._backend.ping()
+
+    async def register_human(self) -> None:
+        """Ensure the human and system membership exist without changing custom groups."""
+        target(self.actor, kind="human")
+        await self._backend.register(self.actor)
 
     @property
     def _lease(self) -> str:

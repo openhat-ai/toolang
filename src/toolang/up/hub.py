@@ -53,10 +53,14 @@ class HubProcess:
         record = self.current()
         if record is None:
             raise TeamingError("Hub is not running; run 'too hub start'")
+        if record.status == "starting":
+            raise TeamingError("Hub is starting; wait for readiness")
         return record.connection
 
     @staticmethod
     def ready(record: HubRecord) -> bool:
+        if record.status == "starting":
+            return False
         try:
             with httpx.Client(trust_env=False, timeout=1) as client:
                 response = client.get(
@@ -147,22 +151,31 @@ def serve(root: Path, config: TeamingRootConfig, *, port: int) -> int:
                 token=secrets.token_urlsafe(32),
                 human=config.human,
                 identity=config.backend.identity,
+                status="starting",
             )
-            app = create_app(
-                MessagingClient(config.backend, actor=config.human),
-                token=record.token,
-                on_ready=lambda: record.save(hub.path),
-            )
-            server = uvicorn.Server(
-                uvicorn.Config(
-                    app,
-                    host="127.0.0.1",
-                    port=port,
-                    access_log=False,
-                    timeout_graceful_shutdown=5,
-                )
-            )
+
+            def publish_ready() -> None:
+                nonlocal record
+                ready_record = record.model_copy(update={"status": "running"})
+                ready_record.save(hub.path)
+                record = ready_record
+
             try:
+                record.save(hub.path)
+                app = create_app(
+                    MessagingClient(config.backend, actor=config.human),
+                    token=record.token,
+                    on_ready=publish_ready,
+                )
+                server = uvicorn.Server(
+                    uvicorn.Config(
+                        app,
+                        host="127.0.0.1",
+                        port=port,
+                        access_log=False,
+                        timeout_graceful_shutdown=5,
+                    )
+                )
                 try:
                     server.run(sockets=[listener])
                 except SystemExit as exc:

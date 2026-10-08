@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -25,6 +26,7 @@ class HubRecord(BaseModel):
     token: str = Field(min_length=32)
     human: str
     identity: str
+    status: Literal["starting", "running"] = "running"
 
     @property
     def connection(self) -> HubConnection:

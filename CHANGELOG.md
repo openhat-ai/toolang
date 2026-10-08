@@ -119,6 +119,16 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   marker, and footer labels name the conversation: its group name (or `all`) or a
   direct conversation's `agent:alice ↔ agent:bob` participants. (#708)
 
+### Fixed
+
+- Authenticated Hub API requests restore the human's registration and the
+  system membership when the backend restarted empty, without retrying the
+  failed message append. (#710)
+
+- A Hub process that is still starting is reported as `starting` by `too hub
+  status` and can be stopped with `too hub stop --force` before the backend
+  is ready. (#710)
+
 ## [0.4.0a2] - 2026-10-07
 
 ### Added

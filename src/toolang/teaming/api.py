@@ -32,13 +32,16 @@ def create_app(
     if not token:
         raise ValueError("Hub bearer token must not be empty")
 
-    async def authenticate(
+    async def prepare_request(
         authorization: Annotated[str | None, Header()] = None,
     ) -> None:
         if not secrets.compare_digest(
             (authorization or "").encode(), f"Bearer {token}".encode()
         ):
             raise HTTPException(401, "Hub authentication required")
+        # The backend may have restarted empty without this Hub observing an outage.
+        # Restore only registration; never retry a message append.
+        await client.register_human()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -51,7 +54,7 @@ def create_app(
     app = FastAPI(
         title="Toolang Hub API",
         lifespan=lifespan,
-        dependencies=[Depends(authenticate)],
+        dependencies=[Depends(prepare_request)],
         docs_url=None,
         redoc_url=None,
         openapi_url=None,

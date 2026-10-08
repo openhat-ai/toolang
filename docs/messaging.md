@@ -46,6 +46,11 @@ actual endpoint and bearer token from the private root `.runtime/hub.json` file.
 Start Hub before using Text. Agents and their `msg` tools communicate directly
 with the backend and remain independent of Hub.
 
+`too hub status` reports `starting` while waiting for the backend;
+`too hub stop --force` can stop a stalled startup. After an empty backend restart,
+Hub restores the configured human's registration on the next authenticated
+request. Lost messages and custom groups are not restored.
+
 Hub `start`/`serve` ports resolve as `--port` > `TOOLANG_HUB_PORT` >
 `teaming.hub.port` > `7000`. Resident agent `start`/`serve` uses `--port` >
 `TOOLANG_AGENT_PORT` > home `[api] port` > recorded/available `7001`–`7999`.

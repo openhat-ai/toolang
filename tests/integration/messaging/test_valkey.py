@@ -21,6 +21,7 @@ from rich.text import Text
 from toolang.cli.common.tmux import Launcher
 from toolang.teaming.messaging import MessagingClient
 from toolang.teaming.backend import online_key
+from toolang.teaming.client import HubClient
 from toolang.teaming.config import BackendConfig
 from toolang.teaming.errors import MessagingError
 from valkey.asyncio import Valkey
@@ -142,10 +143,32 @@ def running_hub(valkey, tmp_path):
     ]
     record = hub.start(command)
     try:
-        assert record.port == port and hub.ready(record)
+        assert record.port == port and record.status == "running" and hub.ready(record)
         yield hub
     finally:
         hub.stop(force=True)
+
+
+def test_hub_recovers_after_backend_data_loss(valkey, running_hub):
+    original = running_hub.current()
+
+    async def scenario():
+        async with (
+            Valkey.from_url(valkey.url, decode_responses=True) as raw,
+            HubClient(running_hub.connection()) as client,
+        ):
+            await client.send("group:all", body="before reset")
+            # Only the fixture's isolated Unix-socket backend is cleared.
+            await raw.flushdb()
+            await client.create_group("recovered")
+            receipt = await client.send("group:all", body="after reset")
+            rows = await client.history("group:all")
+            assert len(rows) == 1
+            assert Message.decode(rows[0][1]["data"]).id == receipt["message"]["id"]
+            assert (await client.conversation("group:all")).members == ("human:owner",)
+
+    asyncio.run(scenario())
+    assert running_hub.current() == original
 
 
 def test_hub_cli_lifecycle_and_backend_independence(valkey, tmp_path):
