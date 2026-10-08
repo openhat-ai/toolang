@@ -6,6 +6,8 @@ from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from contextlib import closing, contextmanager
 from pathlib import Path
 from typing import Any
+from types import SimpleNamespace
+import asyncio
 import sqlite3
 
 import pytest
@@ -45,6 +47,8 @@ from toolang.execution.types import (
     StepRef,
 )
 from toolang.lang.input import CallInput
+from toolang.state.prepare import prepare_agent_state
+from toolang.state.watcher import StateWatcher
 from toolang.up.types import AgentServerRef
 from toolang.up import process as agents
 
@@ -285,6 +289,7 @@ class _Client:
     def __init__(self) -> None:
         self.created = 0
         self.starts: list[tuple[str, str, ModelRequest | None]] = []
+        self.state_watcher: Any = SimpleNamespace(diagnostics=lambda: ())
 
     def list_models(
         self,
@@ -829,6 +834,7 @@ def test_chat_default_options_build_session_override_without_warning(
 def test_chat_runtime_builds_process_local_execution_resources(
     tmp_path: Path,
     monkeypatch: Any,
+    capsys,
 ) -> None:
     captured: dict[str, object] = {}
     source = tmp_path / "alice.too"
@@ -890,6 +896,47 @@ def test_chat_runtime_builds_process_local_execution_resources(
         "compact_override": ModelOverride(identity="test/compact", effort="low"),
     }
     assert captured["closed"] is True
+    assert capsys.readouterr().err == ""
+
+
+@pytest.mark.parametrize("placement", ["resident", "visiting"])
+def test_chat_warns_before_using_cached_state_after_source_rejection(
+    tmp_path, monkeypatch, capsys, placement
+):
+    layout = AgentLayout(tmp_path, "alice", placement)
+    layout.home.mkdir(parents=True)
+    layout.program.write_text("agic:\n  tools = none\n  Reply directly.\n")
+    previous = prepare_agent_state(layout)
+    layout.program.write_text("agic broken(:\n")
+    watcher = StateWatcher(layout)
+    refresh = asyncio.run(watcher.refresh_result())
+    assert refresh.state.revision == previous.revision
+    assert refresh.diagnostics
+
+    class Session(_Client):
+        def __init__(self, *_args, **_kwargs):
+            super().__init__()
+            self.state_watcher = watcher
+
+        def close(self):
+            pass
+
+    @contextmanager
+    def acquire(*_args, **_kwargs):
+        yield None
+
+    monkeypatch.setattr(chat, "context_layout", lambda _ctx: layout)
+    monkeypatch.setattr(chat, "acquire_agent_server", acquire)
+    monkeypatch.setattr(chat, "load_runtime_environ", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(chat, "LocalChatSession", Session)
+
+    with chat._chat_runtime(
+        object(),  # type: ignore[arg-type]
+        sandbox="host",
+    ):
+        warning = capsys.readouterr().err
+        assert "Using previous agent state" in warning
+        assert refresh.diagnostics[0].message in warning
 
 
 def test_chat_runtime_uses_remote_execution_without_local_environment(
