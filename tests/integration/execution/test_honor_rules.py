@@ -170,6 +170,7 @@ def test_honor_precedes_blocked_batch_and_retry_executes_once(
                         )
 
     tracer = Tracer()
+    harness.intercept_events(tracer)
 
     async def scenario():
         async with harness:
@@ -287,6 +288,7 @@ def test_honor_rechecks_changes_including_empty_and_removed_rules(tmp_path, chan
                     file.write_text("" if change == "empty" else "Changed rules.")
 
     tracer = Tracer()
+    harness.intercept_events(tracer)
 
     async def scenario():
         async with harness:
@@ -382,6 +384,7 @@ def test_interrupted_honor_closes_every_announced_tool_call(
                 await asyncio.sleep(0)
 
     tracer = Tracer()
+    harness.intercept_events(tracer)
 
     async def scenario():
         nonlocal handle
@@ -710,6 +713,7 @@ def test_pending_revisions_follow_a_b_a_order_and_deleted_rules_can_return(tmp_p
                     file.unlink()
 
     tracer = Tracer()
+    harness.intercept_events(tracer)
 
     async def scenario():
         async with harness:

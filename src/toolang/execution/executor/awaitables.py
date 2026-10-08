@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import nullcontext
 from contextvars import Context
 from typing import TYPE_CHECKING
 
@@ -64,65 +63,75 @@ def admission(
             if result_type is not None
             else None,
         )
-    with execution.store.write_transaction() if asynchronous else nullcontext():
-        execution.store.accept_run(
-            run_id=binding.run_id,
-            parent=binding.parent,
-            thread=binding.thread,
-            resources=binding.resources,
-            limits=binding.limits,
-            state=binding.state.revision,
-            runnable=_bound_runnable(binding),
-            model_request=binding.model_request,
-            input=binding.control_input,
-            sandbox=None,
-            cwd=binding.cwd,
-            occurrence=binding.occurrence,
-            request_id=None,
-            created_at=binding.created_at,
-            horizon=binding.horizon,
-            launch_context=context,
-            triggered_by=binding.parent if asynchronous else None,
-        )
-        if handle is None:
-            return
-        assert binding.parent is not None
-        source = execution.store.get_step(ref=binding.parent)
-        if source is None:
-            raise RuntimeError("async admission requires its source Step")
-        if isinstance(source.given, RunStmt) and source.given.asynchronous:
-            output = Output(handle, source.given.binding)
-            noted = None
-        elif (
-            isinstance(source.given, ToolStepGiven)
-            and source.given.call.input.get("async") is True
-        ):
-            call = source.given.call
-            output = Output(
-                ToolResultPart(
-                    tool_call_id=call.tool_call_id,
-                    call_id=call.call_id,
-                    tool_name=call.name,
-                    tool_family=call.name,
-                    output={
-                        "id": handle.id,
-                        "thread": handle.thread,
-                        "status": "pending",
-                    },
-                )
+    with execution.executor.stream.publication() as publication:
+        with execution.store.write_transaction():
+            execution.store.accept_run(
+                run_id=binding.run_id,
+                parent=binding.parent,
+                thread=binding.thread,
+                resources=binding.resources,
+                limits=binding.limits,
+                state=binding.state.revision,
+                runnable=_bound_runnable(binding),
+                model_request=binding.model_request,
+                input=binding.control_input,
+                sandbox=None,
+                cwd=binding.cwd,
+                occurrence=binding.occurrence,
+                request_id=None,
+                created_at=binding.created_at,
+                horizon=binding.horizon,
+                launch_context=context,
+                triggered_by=binding.parent if asynchronous else None,
             )
-            noted = ToolStepNoted(summary=f"Started {handle.id} in {handle.thread}")
-        else:
-            raise RuntimeError("async admission requires an async run Step")
-        execution.store.finish_step(
-            ref=source.ref,
-            kind=source.kind,
-            status="succeeded",
-            output=output,
-            noted=noted,
-            error=None,
-            finished_at=binding.created_at,
-        )
+            if handle is None:
+                return
+            assert binding.parent is not None
+            source = execution.store.get_step(ref=binding.parent)
+            if source is None:
+                raise RuntimeError("async admission requires its source Step")
+            if isinstance(source.given, RunStmt) and source.given.asynchronous:
+                output = Output(handle, source.given.binding)
+                noted = None
+            elif (
+                isinstance(source.given, ToolStepGiven)
+                and source.given.call.input.get("async") is True
+            ):
+                call = source.given.call
+                output = Output(
+                    ToolResultPart(
+                        tool_call_id=call.tool_call_id,
+                        call_id=call.call_id,
+                        tool_name=call.name,
+                        tool_family=call.name,
+                        output={
+                            "id": handle.id,
+                            "thread": handle.thread,
+                            "status": "pending",
+                        },
+                    )
+                )
+                noted = ToolStepNoted(summary=f"Started {handle.id} in {handle.thread}")
+            else:
+                raise RuntimeError("async admission requires an async run Step")
+            execution.store.finish_step(
+                ref=source.ref,
+                kind=source.kind,
+                status="succeeded",
+                output=output,
+                noted=noted,
+                error=None,
+                finished_at=binding.created_at,
+            )
+            execution.executor._publish_step_ends(
+                publication,
+                (source.ref,),
+                thread_id=binding.thread,
+                root_run_id=binding.root_run_id,
+            )
+
+    if execution._active is not None:
+        execution._active.early_ends.add(source.ref)
 
 
 def start(

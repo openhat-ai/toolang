@@ -131,6 +131,7 @@ def test_cancel_during_model_begin_records_one_canceled_step(
                 await gate.wait()
 
     tracer = Tracer()
+    harness.intercept_events(tracer)
     monkeypatch.setattr(_Execution, "begin_step", wait_before_begin)
 
     async def scenario() -> None:
@@ -292,6 +293,7 @@ def test_reprepared_tool_loop_preserves_messages_and_input_dependencies(
                 )
 
     tracer = Tracer()
+    harness.intercept_events(tracer)
     begin = _Execution.begin_step
 
     async def reprepare(execution, build, *, run_id):

@@ -50,6 +50,7 @@ class RunBegin:
     parent: StepRef | None = None
     occurrence: Occurrence | None = None
     started_at: str = ""
+    thread_id: str = ""
     type: Literal["run_begin"] = field(default="run_begin", init=False)
 
     def __post_init__(self) -> None:
@@ -200,7 +201,21 @@ ThreadEvent = Annotated[
     ThreadCreated | ThreadForked | ThreadRewound,
     Field(discriminator="type"),
 ]
-ExecutionEvent = RunEvent | ThreadEvent
+
+
+@dataclass(frozen=True, slots=True)
+class RunRetried:
+    """A committed retry invalidated one recorded suffix before re-execution."""
+
+    run: str
+    thread_id: str
+    control: ControlRef
+    invalidated_steps: tuple[StepRef, ...]
+    removed_runs: tuple[str, ...]
+    type: Literal["run_retried"] = field(default="run_retried", init=False)
+
+
+ExecutionEvent = RunEvent | ThreadEvent | RunRetried
 
 _RUN_EVENT_ADAPTER = TypeAdapter(RunEvent)
 _EXECUTION_EVENT_ADAPTER = TypeAdapter(ExecutionEvent)

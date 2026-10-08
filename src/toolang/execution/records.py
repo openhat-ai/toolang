@@ -226,6 +226,8 @@ class RunRecord:
     created_at: str = ""
     started_at: str = ""
     finished_at: str | None = None
+    begin_cursor: str | None = None
+    end_cursor: str | None = None
 
     def __post_init__(self) -> None:
         if not valid_run_id(self.id):
@@ -383,6 +385,8 @@ class RetryControlPayload:
     limits: RunLimits
     retry_from: StepRef | None
     model_request: ModelRequest | None = None
+    invalidated_steps: tuple[StepRef, ...] = ()
+    removed_runs: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if self.retry_from is not None and not isinstance(self.retry_from, StepRef):
@@ -663,6 +667,8 @@ class StepRecord:
     created_at: str = ""
     started_at: str = ""
     finished_at: str | None = None
+    begin_cursor: str | None = None
+    end_cursor: str | None = None
 
     def __post_init__(self) -> None:
         self.ref
@@ -718,6 +724,7 @@ class ControlRecord:
     error: str | None = None
     created_at: str = ""
     finished_at: str | None = None
+    event_cursor: str | None = None
 
     def __post_init__(self) -> None:
         ref = self.ref
@@ -972,6 +979,11 @@ def control_payload_from_data(kind: ControlKind, data: object) -> ControlPayload
         limits = run_limits_from_data(limits_raw)
         if kind == "retry":
             return RetryControlPayload(
+                invalidated_steps=tuple(
+                    StepRef.parse(item)
+                    for item in cast(list[str], payload.get("invalidated_steps", []))
+                ),
+                removed_runs=tuple(cast(list[str], payload.get("removed_runs", []))),
                 resources=resources,
                 limits=limits,
                 retry_from=StepRef.parse(cast(str, payload["retry_from"]))
@@ -1084,6 +1096,8 @@ def control_payload_to_data(payload: ControlPayload) -> dict[str, object]:
         return _run_payload_data(payload)
     if isinstance(payload, RetryControlPayload):
         return {
+            "invalidated_steps": [str(step) for step in payload.invalidated_steps],
+            "removed_runs": list(payload.removed_runs),
             "resources": payload.resources.to_data(),
             "limits": run_limits_to_data(payload.limits),
             "model_request": _MODEL_REQUEST_ADAPTER.dump_python(

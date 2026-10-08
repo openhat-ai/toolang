@@ -243,6 +243,7 @@ def test_record_registry_serializes_exact_record_shapes(tmp_path: Path) -> None:
             "updated_at",
         }
         assert set(control_data) == {
+            "event_cursor",
             "id",
             "kind",
             "payload",
@@ -255,6 +256,8 @@ def test_record_registry_serializes_exact_record_shapes(tmp_path: Path) -> None:
             "finished_at",
         }
         assert set(run_data) == {
+            "begin_cursor",
+            "end_cursor",
             "id",
             "parent",
             "thread",
@@ -269,6 +272,8 @@ def test_record_registry_serializes_exact_record_shapes(tmp_path: Path) -> None:
             "finished_at",
         }
         assert set(step_data) == {
+            "begin_cursor",
+            "end_cursor",
             "preceded_by",
             "aborted_by",
             "id",
@@ -628,7 +633,14 @@ def test_every_control_payload_variant_has_one_canonical_record_shape() -> None:
                 limits,
                 StepRef.from_local("run_control", (0,)),
             ),
-            {"resources", "limits", "model_request", "retry_from"},
+            {
+                "resources",
+                "limits",
+                "model_request",
+                "retry_from",
+                "invalidated_steps",
+                "removed_runs",
+            },
         ),
         (
             "chdir",
@@ -690,6 +702,7 @@ def test_every_control_payload_variant_has_one_canonical_record_shape() -> None:
         data = record_to_data(record)
 
         assert set(data) == {
+            "event_cursor",
             "id",
             "kind",
             "payload",

@@ -98,6 +98,7 @@ def test_flow_handoffs_allow_scheduled_cancellation(tmp_path, monkeypatch, timin
         responses=[],
     )
     tracer = RecordingRunTracer()
+    harness.intercept_events(tracer)
 
     async def scenario():
         scheduled = False
@@ -352,6 +353,7 @@ agic successor() -> Text:
         responses=[answer("done")],
     )
     tracer = RecordingRunTracer()
+    harness.intercept_events(tracer)
     original_finish = harness.store.finish_step
     injected = False
 

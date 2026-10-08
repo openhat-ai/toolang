@@ -20,7 +20,7 @@ from toolang.base.types.message import Message, TextPart
 from toolang.base.types.run import ModelCallResult
 from toolang.cli.common.script_progress import ScriptRunPresenter
 from toolang.cli.toolang.commands.chat.presenter import ChatRunPresenter
-from toolang.execution.events import RunTracer
+from toolang.execution.events import RunBegin, RunTracer
 from toolang.execution.types import ThreadPrefix
 
 
@@ -82,6 +82,7 @@ def test_compaction_progress_in_chat_and_script(tmp_path, status, tty, width):
         responses=[reply("old " * 18000), reply("recent")],
     )
     gate = AsyncGate()
+    rendered = asyncio.Event()
     output = Terminal() if tty else StringIO()
     script = ScriptRunPresenter(run_id=None, stream=output, width=width)
     chat, app = ChatRunPresenter(max_width=width), ChatScreen()
@@ -90,6 +91,8 @@ def test_compaction_progress_in_chat_and_script(tmp_path, status, tty, width):
         async def on_event(self, event):
             await script.on_event(event)
             chat.handle(event, cast(Any, app))
+            if isinstance(event, RunBegin) and event.runnable == "_:compact":
+                rendered.set()
 
     async def scenario():
         async with h:
@@ -133,7 +136,9 @@ def test_compaction_progress_in_chat_and_script(tmp_path, status, tty, width):
                 tracer=Tracer(),
             )
             try:
-                await asyncio.wait_for(gate.wait_until_entered(), 3)
+                await asyncio.wait_for(
+                    asyncio.gather(gate.wait_until_entered(), rendered.wait()), 3
+                )
                 for text in (terminal_text(output, width), app.text(width)):
                     assert "Compacting thread history" in text
                     assert "HIDDEN_COMPACT_SUMMARY" not in text

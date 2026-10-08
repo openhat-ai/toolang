@@ -340,6 +340,7 @@ def test_discovery_state_read_error_is_a_correlated_tool_failure(tmp_path):
 
     harness.executor._state = latest
     tracer = Tracer()
+    harness.intercept_events(tracer)
 
     async def scenario():
         async with harness:
@@ -388,6 +389,7 @@ def test_discovery_keeps_the_state_captured_before_tool_step_delivery(tmp_path):
                 harness.published = prepare_agent_state(harness.setup.layout)
 
     tracer = Tracer()
+    harness.intercept_events(tracer)
 
     async def scenario():
         async with harness:

@@ -15,7 +15,7 @@ from toolang.execution.types import ContentRef
     [
         pytest.param(28, id="historical"),
         pytest.param(51, id="previous"),
-        pytest.param(53, id="future"),
+        pytest.param(54, id="future"),
     ],
 )
 @pytest.mark.parametrize("read_only", (False, True))
@@ -37,7 +37,7 @@ def test_run_store_rejects_any_other_schema_without_modifying_it(
         RunStore(path, read_only=read_only)
 
     assert raised.value.version == schema_version
-    assert raised.value.current == 52
+    assert raised.value.current == 53
     assert raised.value.read_only is read_only
     assert path.read_bytes() == before
     connection = sqlite3.connect(path)
@@ -92,7 +92,7 @@ def test_run_store_opens_the_current_schema(tmp_path: Path) -> None:
 
     connection = sqlite3.connect(path)
     try:
-        assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 52
+        assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 53
         columns = {
             table: {
                 str(row[1]) for row in connection.execute(f"PRAGMA table_info({table})")
@@ -109,6 +109,8 @@ def test_run_store_opens_the_current_schema(tmp_path: Path) -> None:
                 "updated_at",
             },
             "runs": {
+                "begin_cursor",
+                "end_cursor",
                 "id",
                 "parent",
                 "thread",
@@ -123,6 +125,8 @@ def test_run_store_opens_the_current_schema(tmp_path: Path) -> None:
                 "finished_at",
             },
             "steps": {
+                "begin_cursor",
+                "end_cursor",
                 "preceded_by",
                 "aborted_by",
                 "id",
@@ -142,6 +146,7 @@ def test_run_store_opens_the_current_schema(tmp_path: Path) -> None:
                 "finished_at",
             },
             "controls": {
+                "event_cursor",
                 "triggered_by",
                 "id",
                 "scope",
@@ -253,3 +258,77 @@ def test_run_store_concurrent_first_open(tmp_path, monkeypatch):
         for index in range(4):
             path = tmp_path / f"runs-{index}.db"
             list(pool.map(open_store, [path] * 8))
+
+
+def test_schema_52_records_remain_readable_and_upgrade_without_invented_cursors(
+    tmp_path,
+):
+    from tests.support.execution_fixtures import project_run_start, project_step
+    from toolang.base.types.message import Message
+
+    path = tmp_path / "runs.db"
+    store = RunStore(path)
+    run = project_run_start(
+        store,
+        run_id="run_legacy",
+        thread_id="term_legacy",
+        origin="chat",
+        input=Message.user("hello"),
+    )
+    assert run.started_at is not None
+    step = project_step(
+        store,
+        run_id=run.id,
+        step_index=0,
+        kind="value",
+        status="succeeded",
+        input=(),
+        output=(),
+        started_at=run.started_at,
+        finished_at=run.started_at,
+    )
+    controls = store.list_controls()
+    store.close()
+    cursor_columns = {
+        "runs": ("begin_cursor", "end_cursor"),
+        "steps": ("begin_cursor", "end_cursor"),
+        "controls": ("event_cursor",),
+    }
+    connection = sqlite3.connect(path)
+    for table, columns in cursor_columns.items():
+        for column in columns:
+            connection.execute(f"DROP INDEX idx_{table}_{column}")
+            connection.execute(f"ALTER TABLE {table} DROP COLUMN {column}")
+    connection.execute("PRAGMA user_version=52")
+    connection.commit()
+    connection.close()
+    before = path.read_bytes()
+
+    readonly = RunStore(path, read_only=True)
+    assert readonly.get_run(run_id=run.id) == run
+    assert readonly.get_step(ref=step.ref) == step
+    assert readonly.list_controls() == controls
+    readonly.close()
+    assert path.read_bytes() == before
+
+    upgraded = RunStore(path)
+    assert upgraded.get_run(run_id=run.id) == run
+    assert upgraded.get_step(ref=step.ref) == step
+    assert upgraded.list_controls() == controls
+    upgraded.close()
+    connection = sqlite3.connect(path)
+    try:
+        assert connection.execute("PRAGMA user_version").fetchone() == (53,)
+        indexes = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'index'"
+            )
+        }
+        assert all(
+            f"idx_{table}_{column}" in indexes
+            for table, columns in cursor_columns.items()
+            for column in columns
+        )
+    finally:
+        connection.close()

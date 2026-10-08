@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 from collections.abc import Callable, Mapping
 from dataclasses import replace
 from typing import TYPE_CHECKING, Literal
@@ -42,8 +41,6 @@ from .common import BoundRun, Local, _RunRejected
 if TYPE_CHECKING:
     from .executor import _Execution
 
-_LOGGER = logging.getLogger(__name__)
-
 
 async def accept(
     execution: _Execution,
@@ -59,10 +56,7 @@ async def accept(
 ) -> AwaitableHandle:
     from .executor import _bound_runnable, _child_binding, _setup_sandbox
 
-    dispatch_failure: RunEnd | None = None
-
     def admit() -> AwaitableHandle:
-        nonlocal dispatch_failure
         executor = execution.executor
         executor._require_available()
         state, state_ref = state_snapshot or (parent.state, parent.state_ref)
@@ -155,42 +149,57 @@ async def accept(
 
         # There is no suspension between the availability check, transaction,
         # and registration. stop() cannot miss an admitted root on this loop.
-        handle, created = execution.store.accept_spawn(
-            handle=handle,
-            source=step,
-            peer=ThreadPeer(
-                type="agent", name=parent.setup.layout.name, thread=parent.thread
-            ),
-            resources=resources,
-            limits=bound.limits,
-            state=state.revision,
-            runnable=_bound_runnable(bound),
-            model_request=bound.model_request,
-            input=bound.control_input,
-            sandbox=_setup_sandbox(bound.setup),
-            cwd=bound.cwd,
-            created_at=bound.created_at,
-            context=LaunchContext(
-                bound.settings,
-                bound.workspaces,
-                bound.captured_iterations,
-                result_contract,
-            ),
-        )
-        if created:
-            executor.notify_thread(
-                ThreadCreated(
-                    thread=handle.thread,
-                    control=ControlRef.for_thread(handle.thread, 0),
-                    origin="chat",
+        with executor.stream.publication() as publication:
+            with executor.store.write_transaction():
+                handle, created = execution.store.accept_spawn(
+                    handle=handle,
+                    source=step,
                     peer=ThreadPeer(
                         type="agent",
                         name=parent.setup.layout.name,
                         thread=parent.thread,
                     ),
+                    resources=resources,
+                    limits=bound.limits,
+                    state=state.revision,
+                    runnable=_bound_runnable(bound),
+                    model_request=bound.model_request,
+                    input=bound.control_input,
+                    sandbox=_setup_sandbox(bound.setup),
+                    cwd=bound.cwd,
                     created_at=bound.created_at,
+                    context=LaunchContext(
+                        bound.settings,
+                        bound.workspaces,
+                        bound.captured_iterations,
+                        result_contract,
+                    ),
                 )
-            )
+                if created:
+                    event = ThreadCreated(
+                        thread=handle.thread,
+                        control=ControlRef.for_thread(handle.thread, 0),
+                        origin="chat",
+                        peer=ThreadPeer(
+                            type="agent",
+                            name=parent.setup.layout.name,
+                            thread=parent.thread,
+                        ),
+                        created_at=bound.created_at,
+                    )
+                    executor.store.record_event_cursor(
+                        event.control, publication.cursor
+                    )
+                    publication.append(event)
+                    executor._publish_step_ends(
+                        publication,
+                        (step,),
+                        thread_id=parent.thread,
+                        root_run_id=parent.root_run_id,
+                    )
+        if created:
+            if execution._active is not None:
+                execution._active.early_ends.add(step)
             try:
                 executor._launch(
                     bound,
@@ -207,7 +216,14 @@ async def accept(
                     error=ErrorMessage(str(exc)),
                     finished_at=utc_now(),
                 )
-                executor._persist.on_event(dispatch_failure)
+                with executor.stream.publication() as publication:
+                    with executor.store.write_transaction():
+                        event = executor._persist.on_event(
+                            dispatch_failure, cursor=publication.cursor
+                        )
+                        publication.append(
+                            event, root_run_id=handle.id, thread_id=handle.thread
+                        )
         return handle
 
     if execution._active is None:
@@ -215,12 +231,6 @@ async def accept(
     else:
         async with execution._active.event_lock:
             handle = admit()
-    if dispatch_failure is not None and execution.executor.root_tracer is not None:
-        try:
-            tracer = execution.executor.root_tracer(handle.thread)
-            await tracer.on_event(dispatch_failure)
-        except Exception:
-            _LOGGER.exception("spawn dispatch failure observer failed")
     return handle
 
 

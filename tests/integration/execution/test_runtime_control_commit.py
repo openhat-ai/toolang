@@ -17,8 +17,9 @@ from tests.support.execution_harness import (
 )
 from toolang.base.types.message import Message, TextPart
 from toolang.base.types.run import ModelCallResult, ToolCall
-from toolang.execution.events import PartEnd, StepEnd
+from toolang.execution.events import StepEnd
 from toolang.execution.store import RunStore
+from toolang.execution.stream import TraceObserver
 from toolang.execution.types import ThreadPrefix
 
 
@@ -54,51 +55,55 @@ flow child(_: Text) -> Text:
             ModelCallResult(message=Message.assistant("Started")),
         ],
     )
-    if target_fails:
-        from toolang.execution.executor.stmts import let
+    from toolang.execution.executor.stmts import let
 
-        def fail_target(*args, **kwargs):
-            raise RuntimeError("target execution failed")
-
-        monkeypatch.setattr(let, "evaluate_content", fail_target)
-    method = "accept_spawn" if operation == "spawn" else "accept_exec_control"
-    original = getattr(harness.store, method)
+    original = let.evaluate_content
     committed = []
 
-    def inspect_commit(**kwargs):
-        result = original(**kwargs)
-        source = kwargs["source" if operation == "spawn" else "triggered_by"]
+    def inspect_target(*args, **kwargs):
         reader = RunStore(harness.store.db_path, read_only=True)
         try:
+            control = next(
+                c
+                for c in reader.list_controls()
+                if c.kind == ("create" if operation == "spawn" else "exec")
+                and c.triggered_by is not None
+            )
+            source = control.triggered_by
+            assert source is not None
             controls = tuple(
                 c for c in reader.list_controls() if c.triggered_by == source
             )
             committed.append((reader.get_step(ref=source), controls))
         finally:
             reader.close()
-        return result
+        if target_fails:
+            raise RuntimeError("target execution failed")
+        return original(*args, **kwargs)
 
-    monkeypatch.setattr(harness.store, method, inspect_commit)
+    monkeypatch.setattr(let, "evaluate_content", inspect_target)
     tracer = RecordingRunTracer()
-    harness.executor.root_tracer = lambda thread: tracer
 
     async def scenario():
         async with harness:
+            observer = TraceObserver(harness.executor.stream.subscribe(), tracer)
             parent = await harness.executor.run(
                 harness.run_spec(
                     thread=harness.threads.create(prefix=ThreadPrefix.TERM),
                     runnable=f"{caller}:{caller}_parent",
                     primary=(TextPart("work"),) if caller == "flow" else None,
                 ),
-                tracer=tracer,
             )
             await asyncio.gather(*tuple(harness.executor._tasks))
+            observer.finish()
+            await observer.drain()
             assert parent.status == (
                 "failed" if operation == "exec" and target_fails else "succeeded"
             )
             ((source, controls),) = committed
             assert source is not None and source.status == "succeeded"
             assert source.finished_at is not None
+            assert source.end_cursor is not None
             assert {c.kind for c in controls} == (
                 {"create", "run"} if operation == "spawn" else {"exec"}
             )
@@ -185,7 +190,7 @@ flow child() -> Text:
 @pytest.mark.parametrize("operation", ["spawn", "exec"])
 @pytest.mark.parametrize("interruption", ["steer", "cancel"])
 def test_committed_tool_end_is_delivered_after_interruption_at_event_lock(
-    tmp_path: Path, operation: str, interruption: str
+    tmp_path: Path, monkeypatch, operation: str, interruption: str
 ) -> None:
     gate = AsyncGate()
     blockers = []
@@ -193,13 +198,6 @@ def test_committed_tool_end_is_delivered_after_interruption_at_event_lock(
     async def hold_event_lock(run_id):
         async with harness.executor._active[run_id].event_lock:
             await gate.wait()
-
-    class CommitTracer(RecordingRunTracer):
-        async def on_event(self, event):
-            await super().on_event(event)
-            if isinstance(event, PartEnd) and event.step.index == 1 and not blockers:
-                blockers.append(asyncio.create_task(hold_event_lock(event.step.run_id)))
-                await asyncio.sleep(0)
 
     harness = ExecutionHarness.create(
         tmp_path,
@@ -227,7 +225,16 @@ agic child() -> Text:
             ModelCallResult(message=Message.assistant("Done")),
         ],
     )
-    tracer = CommitTracer()
+    original_emit = harness.executor._emit_event
+
+    async def interruptible_emit(active, event):
+        if isinstance(event, StepEnd) and event.step.index == 1 and not blockers:
+            blockers.append(asyncio.create_task(hold_event_lock(event.step.run_id)))
+            await asyncio.sleep(0)
+        await original_emit(active, event)
+
+    monkeypatch.setattr(harness.executor, "_emit_event", interruptible_emit)
+    tracer = RecordingRunTracer()
 
     async def scenario():
         async with harness:

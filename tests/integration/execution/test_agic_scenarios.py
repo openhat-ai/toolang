@@ -1007,9 +1007,8 @@ def test_interrupted_model_persists_partial_output(
 
 
 @pytest.mark.parametrize("boundary", ["part_begin", "part_end", "step_end"])
-@pytest.mark.parametrize("interruption", ["cancel", "steer"])
-def test_interrupting_model_result_delivery_preserves_step_output(
-    tmp_path: Path, boundary: str, interruption: str
+def test_slow_model_observer_does_not_delay_execution(
+    tmp_path: Path, boundary: str
 ) -> None:
     gate = AsyncGate()
 
@@ -1043,21 +1042,14 @@ def test_interrupting_model_result_delivery_preserves_step_output(
                 tracer=tracer,
             )
             await asyncio.wait_for(gate.wait_until_entered(), timeout=1)
-            if interruption == "cancel":
-                control = handle.cancel(timing="immediate")
-            else:
-                control = handle.steer(
-                    Message.user("change direction"), timing="immediate"
-                )
-            run = await asyncio.wait_for(handle, timeout=2)
-            assert run.status == (
-                "canceled" if interruption == "cancel" else "succeeded"
-            )
+            await asyncio.wait_for(asyncio.shield(handle.task), timeout=1)
+            run = harness.store.get_run(run_id=handle.run_id)
+            assert run is not None and run.status == "succeeded"
             first = harness.store.list_steps(run_id=run.id)[0]
-            assert first.status == (
-                "succeeded" if boundary == "step_end" else "canceled"
-            )
-            assert first.aborted_by == (None if boundary == "step_end" else control.ref)
+            assert first.status == "succeeded"
+            assert first.aborted_by is None
+            gate.release()
+            await handle
             assert first.output is not None
             assert parts_from_value(first.output.value) == parts
             assert_run_event_integrity(tracer.events)
@@ -1105,23 +1097,9 @@ def test_streaming_completed_images_preserve_order_without_duplicates(
 @pytest.mark.parametrize("boundary", ["part_begin", "part_end"])
 @pytest.mark.parametrize("tool_name", ["math__double", "_toolang__exec"])
 def test_cancel_during_tool_result_delivery_preserves_output(
-    tmp_path: Path, boundary: str, tool_name: str
+    tmp_path: Path, monkeypatch, boundary: str, tool_name: str
 ) -> None:
     gate = AsyncGate()
-
-    class DeliveryTracer(RecordingRunTracer):
-        waiting = False
-
-        async def on_event(self, event: RunEvent) -> None:
-            await super().on_event(event)
-            if (
-                isinstance(event, (PartBegin, PartEnd))
-                and event.type == boundary
-                and event.step.index == 1
-                and not self.waiting
-            ):
-                self.waiting = True
-                await gate.wait()
 
     tool = RecordingTool("math__double", output={"value": 6})
     harness = ExecutionHarness.create(
@@ -1143,7 +1121,23 @@ def test_cancel_during_tool_result_delivery_preserves_output(
             )
         ],
     )
-    tracer = DeliveryTracer()
+    original_emit = harness.executor._emit_event
+    waiting = False
+
+    async def delayed_emit(active, event):
+        nonlocal waiting
+        await original_emit(active, event)
+        if (
+            isinstance(event, (PartBegin, PartEnd))
+            and event.type == boundary
+            and event.step.index == 1
+            and not waiting
+        ):
+            waiting = True
+            await gate.wait()
+
+    monkeypatch.setattr(harness.executor, "_emit_event", delayed_emit)
+    tracer = RecordingRunTracer()
 
     async def scenario() -> None:
         async with harness:

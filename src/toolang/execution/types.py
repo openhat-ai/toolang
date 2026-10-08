@@ -2152,3 +2152,34 @@ class RunnableSettings:
     handoffs: tuple[str, ...] = ()
     instruct: PromptSetting | None = None
     context: PromptSetting | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class EventCursor:
+    """One position in an agent runtime; epochs are never ordered."""
+
+    epoch: str
+    seq: int
+
+    def __post_init__(self) -> None:
+        if len(self.epoch) != 32 or any(
+            c not in "0123456789abcdef" for c in self.epoch
+        ):
+            raise ValueError("invalid event cursor epoch")
+        if type(self.seq) is not int or not 0 <= self.seq < 2**64:
+            raise ValueError("invalid event cursor sequence")
+
+    def __str__(self) -> str:
+        return f"{self.epoch}.{self.seq:016x}"
+
+    @classmethod
+    def parse(cls, value: str) -> EventCursor:
+        if not isinstance(value, str) or len(value) != 49 or value[32] != ".":
+            raise ValueError("invalid event cursor")
+        try:
+            cursor = cls(value[:32], int(value[33:], 16))
+        except ValueError as exc:
+            raise ValueError("invalid event cursor") from exc
+        if str(cursor) != value:
+            raise ValueError("invalid event cursor")
+        return cursor

@@ -1878,6 +1878,15 @@ wheels = [
 ]
 
 [[package]]
+name = "pypubsub"
+version = "4.0.7"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/c9/ae/873ab0911ba6ae395f05a788cd509af4ade15585740e1f0bc7673775f469/pypubsub-4.0.7.tar.gz", hash = "sha256:ec8b5cb147624958320e992602380cc5d0e4b36b1c59844d05e425a3003c09dc", size = 179165, upload-time = "2025-12-08T05:35:21.402Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/47/bf/17587e7cdefbf66cb3f0bced126c11a6d4c0b9b78a3eb90bbd0a49963d58/pypubsub-4.0.7-py3-none-any.whl", hash = "sha256:89c3e274e634fea19de881bb45152815d9c1aaa0120215f85200ba56843372f4", size = 72280, upload-time = "2025-12-08T05:35:20.439Z" },
+]
+
+[[package]]
 name = "pytest"
 version = "9.1.1"
 source = { registry = "https://pypi.org/simple" }
@@ -2538,6 +2547,7 @@ dependencies = [
     { name = "psutil" },
     { name = "pydantic" },
     { name = "pyjwt" },
+    { name = "pypubsub" },
     { name = "python-dateutil" },
     { name = "python-dotenv" },
     { name = "python-frontmatter" },
@@ -2589,6 +2599,7 @@ requires-dist = [
     { name = "psutil", specifier = ">=7,<8" },
     { name = "pydantic", specifier = ">=2.11,<3" },
     { name = "pyjwt", specifier = ">=2.15.0" },
+    { name = "pypubsub", specifier = ">=4.0.7,<5" },
     { name = "python-dateutil", specifier = ">=2.9,<3" },
     { name = "python-dotenv", specifier = ">=1.0,<2" },
     { name = "python-frontmatter", specifier = ">=1.1.0" },

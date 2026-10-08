@@ -44,7 +44,6 @@ class AgentCore:
         self.layout = layout
         self.store = RunStore(layout.run_store)
         self.ids = IdIssuer(layout.id_state)
-        self.threads = ThreadManager(self.store, self.ids)
         self.history = RunHistory(self.store)
         allow_overrides = dict(ceiling_overrides or {})
         self.setup = SetupWatcher(
@@ -77,6 +76,7 @@ class AgentCore:
             load_state=lambda revision: self.state.load(revision),
             default_workdir=workdir,
         )
+        self.threads = ThreadManager(self.store, self.ids, stream=self.executor.stream)
         self.executor.start()
 
     async def close(self) -> None:

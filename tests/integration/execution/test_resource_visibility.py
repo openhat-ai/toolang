@@ -461,6 +461,7 @@ def test_definition_changes_invalidate_and_refresh_guidance(tmp_path, kind, name
     tracer = PublicationTracer(
         harness, {str(i + 1): value for i, value in enumerate(states)}
     )
+    harness.intercept_events(tracer)
 
     async def scenario():
         async with harness:

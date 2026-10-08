@@ -8,7 +8,14 @@ from toolang.lang.ast import AwaitStmt
 
 from ..events import RunBegin, RunEnd, RunEvent, StepBegin, StepEnd
 from ..store import RunStore
-from ..types import ErrorMessage, ErrorRef, Output, ToolStepGiven, value_for_type
+from ..types import (
+    ErrorMessage,
+    ErrorRef,
+    Output,
+    RunRef,
+    ToolStepGiven,
+    value_for_type,
+)
 
 
 class _PersistSink:
@@ -17,7 +24,7 @@ class _PersistSink:
     def __init__(self, store: RunStore) -> None:
         self._store = store
 
-    def on_event(self, event: RunEvent) -> RunEvent:
+    def on_event(self, event: RunEvent, *, cursor: str | None = None) -> RunEvent:
         """Persist one run event in emission order."""
 
         if isinstance(event, RunBegin):
@@ -27,14 +34,27 @@ class _PersistSink:
                 occurrence=event.occurrence,
                 started_at=event.started_at,
             )
+            if cursor is not None:
+                self._store.record_event_cursor(
+                    RunRef(event.run), cursor, boundary="begin"
+                )
             return event
         if isinstance(event, StepBegin):
             self._begin_step(event)
+            if cursor is not None:
+                self._store.record_event_cursor(event.step, cursor, boundary="begin")
             return event
         if isinstance(event, StepEnd):
-            return self._finish_step(event)
+            event = self._finish_step(event)
+            if cursor is not None:
+                self._store.record_event_cursor(event.step, cursor, boundary="end")
+            return event
         if isinstance(event, RunEnd):
             self._finish_run(event)
+            if cursor is not None:
+                self._store.record_event_cursor(
+                    RunRef(event.run), cursor, boundary="end"
+                )
         return event
 
     def _begin_step(self, event: StepBegin) -> None:

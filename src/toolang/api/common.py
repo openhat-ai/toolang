@@ -1,188 +1,75 @@
-"""Live event relay and canonical SSE helpers."""
+"""Live canonical-stream adapters and SSE encoding."""
 
 from __future__ import annotations
 
 import asyncio
+from collections import deque
 from collections.abc import AsyncGenerator, Callable
-from dataclasses import dataclass
-import threading
-from typing import Literal
 
 from fastapi import Request
 from fastapi.sse import ServerSentEvent
 
+from toolang.execution.errors import StreamOverflowError
 from toolang.execution.events import (
-    RunBegin,
     RunEnd,
     RunEvent,
-    RunTracer,
+    RunRetried,
     ThreadEvent,
-    ThreadForked,
-    ThreadListener,
     event_to_data,
 )
-
+from toolang.execution.stream import CanonicalStream, StreamReader
 
 RUN_ID_HEADER = "X-Toolang-Run-ID"
-
 KEEP_ALIVE_SEC = 15.0
 LiveEvent = RunEvent | ThreadEvent
-LiveEventKind = Literal["run", "thread"]
-
-
-@dataclass(frozen=True, slots=True)
-class _Subscriber:
-    loop: asyncio.AbstractEventLoop
-    queue: asyncio.Queue[LiveEvent]
 
 
 class EventSubscription:
-    """One immediately registered live event subscription."""
+    """Adapt bounded canonical batches to the existing live-only HTTP contract."""
 
-    def __init__(
-        self,
-        relay: LiveEventRelay,
-        *,
-        kind: LiveEventKind,
-        key: str,
-    ) -> None:
-        self._relay = relay
-        self._kind = kind
-        self._key = key
-        self._subscriber = _Subscriber(
-            loop=asyncio.get_running_loop(),
-            queue=asyncio.Queue(),
-        )
-        self._closed = False
-        relay._add(kind, key, self._subscriber)
+    def __init__(self, reader: StreamReader) -> None:
+        self._reader = reader
+        self._pending: deque[LiveEvent] = deque()
+
+    async def _next(self) -> LiveEvent:
+        while not self._pending:
+            batch = await self._reader.receive()
+            # Retry invalidation and resume controls enter HTTP with normalization.
+            self._pending.extend(
+                frame.event
+                for frame in batch.events
+                if not isinstance(frame.event, RunRetried)
+            )
+        self._reader.check()
+        return self._pending.popleft()
 
     async def receive(self, *, timeout: float) -> LiveEvent | None:
-        """Return the next event, or None when the keep-alive interval elapses."""
-
         try:
-            return await asyncio.wait_for(
-                self._subscriber.queue.get(),
-                timeout=timeout,
-            )
+            return await asyncio.wait_for(self._next(), timeout=timeout)
         except TimeoutError:
             return None
 
     @property
     def empty(self) -> bool:
-        return self._subscriber.queue.empty()
+        self._reader.check()
+        return not self._pending and self._reader.empty
 
     def close(self) -> None:
-        if self._closed:
-            return
-        self._closed = True
-        self._relay._remove(self._kind, self._key, self._subscriber)
+        self._pending.clear()
+        self._reader.close()
 
 
-class LiveEventRelay(ThreadListener):
-    """Fan out process-local run and thread events to API subscribers."""
+class LiveEventRelay:
+    """Select scopes from the executor's source without republishing events."""
 
-    def __init__(self) -> None:
-        self._runs: dict[str, set[_Subscriber]] = {}
-        self._threads: dict[str, set[_Subscriber]] = {}
-        self._lock = threading.Lock()
-
-    def trace(self, *, thread_id: str) -> RunTracer:
-        """Create one tracer that publishes a newly started run tree."""
-
-        return _RelayRunTracer(self, thread_id=thread_id)
+    def __init__(self, source: CanonicalStream) -> None:
+        self.source = source
 
     def subscribe_run(self, run_id: str) -> EventSubscription:
-        return EventSubscription(self, kind="run", key=run_id)
+        return EventSubscription(self.source.subscribe(root_run_id=run_id))
 
     def subscribe_thread(self, thread_id: str) -> EventSubscription:
-        return EventSubscription(self, kind="thread", key=thread_id)
-
-    def on_event(self, event: ThreadEvent) -> None:
-        """Publish one committed thread mutation from any caller thread."""
-
-        thread_ids = {event.thread}
-        if isinstance(event, ThreadForked):
-            thread_ids.add(event.source_thread)
-        self._publish(self._threads, thread_ids, event)
-
-    def publish_run(
-        self,
-        event: RunEvent,
-        *,
-        root_run_id: str,
-        thread_id: str,
-    ) -> None:
-        self._publish(self._runs, {root_run_id}, event)
-        self._publish(self._threads, {thread_id}, event)
-
-    def _add(
-        self,
-        kind: LiveEventKind,
-        key: str,
-        subscriber: _Subscriber,
-    ) -> None:
-        collection = self._runs if kind == "run" else self._threads
-        with self._lock:
-            collection.setdefault(key, set()).add(subscriber)
-
-    def _remove(
-        self,
-        kind: LiveEventKind,
-        key: str,
-        subscriber: _Subscriber,
-    ) -> None:
-        collection = self._runs if kind == "run" else self._threads
-        with self._lock:
-            subscribers = collection.get(key)
-            if subscribers is None:
-                return
-            subscribers.discard(subscriber)
-            if not subscribers:
-                collection.pop(key, None)
-
-    def _publish(
-        self,
-        collection: dict[str, set[_Subscriber]],
-        keys: set[str],
-        event: LiveEvent,
-    ) -> None:
-        with self._lock:
-            subscribers = {
-                subscriber for key in keys for subscriber in collection.get(key, ())
-            }
-        try:
-            current_loop = asyncio.get_running_loop()
-        except RuntimeError:
-            current_loop = None
-        for subscriber in subscribers:
-            if subscriber.loop is current_loop:
-                subscriber.queue.put_nowait(event)
-                continue
-            try:
-                subscriber.loop.call_soon_threadsafe(
-                    subscriber.queue.put_nowait,
-                    event,
-                )
-            except RuntimeError:
-                continue
-
-
-class _RelayRunTracer(RunTracer):
-    def __init__(self, relay: LiveEventRelay, *, thread_id: str) -> None:
-        self._relay = relay
-        self._thread_id = thread_id
-        self._root_run_id: str | None = None
-
-    async def on_event(self, event: RunEvent) -> None:
-        if self._root_run_id is None:
-            if not isinstance(event, RunBegin | RunEnd):
-                raise RuntimeError("run trace must begin with a root lifecycle event")
-            self._root_run_id = event.run
-        self._relay.publish_run(
-            event,
-            root_run_id=self._root_run_id,
-            thread_id=self._thread_id,
-        )
+        return EventSubscription(self.source.subscribe(thread_id=thread_id))
 
 
 async def sse_stream(
@@ -203,7 +90,8 @@ async def sse_stream(
                 and subscription.empty
                 and await asyncio.to_thread(stopped)
             ):
-                return
+                if subscription.empty:
+                    return
             event = await subscription.receive(timeout=KEEP_ALIVE_SEC)
             if event is None:
                 yield ServerSentEvent(comment="keep-alive")
@@ -218,6 +106,10 @@ async def sse_stream(
                 and event.run == terminal_run_id
             ):
                 return
+    except StreamOverflowError:
+        yield ServerSentEvent(event="stream_error", data={"code": "overflow"})
+    except StopAsyncIteration:
+        return
     finally:
         subscription.close()
 

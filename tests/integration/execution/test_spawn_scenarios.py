@@ -448,8 +448,8 @@ flow child(_: Text):
 def test_spawn_routes_background_events_and_keeps_selectable_provenance(
     tmp_path: Path, monkeypatch, dispatch_failure: bool
 ):
-    from toolang.api.common import LiveEventRelay
-    from toolang.execution.events import RunBegin, RunEnd, ThreadCreated, ThreadListener
+    from toolang.api.common import EventSubscription
+    from toolang.execution.events import RunBegin, RunEnd, ThreadCreated
     from toolang.execution.types import Pointer
 
     gate = AsyncGate()
@@ -468,18 +468,6 @@ agic child() -> Text:
             )
         ],
     )
-    relay = LiveEventRelay()
-    notifications = []
-    subscriptions = []
-
-    class Listener(ThreadListener):
-        def on_event(self, event):
-            notifications.append(event)
-            subscriptions.append(relay.subscribe_thread(event.thread))
-            relay.on_event(event)
-
-    harness.executor.thread_listener = Listener()
-    harness.executor.root_tracer = lambda thread: relay.trace(thread_id=thread)
     if dispatch_failure:
         original_launch = harness.executor._launch
 
@@ -493,6 +481,7 @@ agic child() -> Text:
     async def scenario():
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            baseline = harness.executor.stream.tail
             tracer = RecordingRunTracer()
             parent = await harness.executor.run(
                 harness.run_spec(
@@ -516,10 +505,12 @@ agic child() -> Text:
             assert selected.child("thread").runtime == handle.thread
             if not dispatch_failure:
                 await asyncio.wait_for(gate.wait_until_entered(), 2)
-            assert len(notifications) == 1 and isinstance(
-                notifications[0], ThreadCreated
+            subscription = EventSubscription(
+                harness.executor.stream.subscribe(
+                    after=baseline,
+                    thread_id=handle.thread,
+                )
             )
-            subscription = subscriptions[0]
             assert isinstance(await subscription.receive(timeout=1), ThreadCreated)
             if not dispatch_failure:
                 begin = await subscription.receive(timeout=1)

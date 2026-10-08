@@ -312,6 +312,7 @@ def test_interruption_during_cleanup_still_persists_adopted_output(
         ],
     )
     tracer = Tracer()
+    harness.intercept_events(tracer)
 
     async def scenario() -> None:
         async with harness:
@@ -399,6 +400,7 @@ def test_interrupted_model_end_preserves_referenced_output(
         ],
     )
     tracer = Tracer()
+    harness.intercept_events(tracer)
 
     async def scenario() -> None:
         async with harness:
@@ -505,6 +507,7 @@ def test_steer_and_interrupted_model_begin_replay_once(
         ],
     )
     tracer = Tracer()
+    harness.intercept_events(tracer)
     steer = Message(
         "user", (TextPart("new direction"), ImagePart(file_id="steer-image"))
     )

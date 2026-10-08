@@ -16,6 +16,7 @@ from toolang.execution.executor.iteration import (
     iteration_scope,
     snapshot,
 )
+from toolang.execution.stream import TraceObserver
 from toolang.execution.types import AwaitableHandle, ThreadPrefix
 
 
@@ -43,17 +44,16 @@ flow worker(_: Text) -> Text:
         responses=[ModelCallResult(message=Message.assistant("done"))],
     )
     tracer = RecordingRunTracer()
-    harness.executor.root_tracer = lambda _thread: tracer
 
     async def scenario():
         async with harness:
+            observer = TraceObserver(harness.executor.stream.subscribe(), tracer)
             parent = await harness.executor.run(
                 harness.run_spec(
                     thread=harness.threads.create(prefix=ThreadPrefix.TERM),
                     runnable="flow:parent",
                     primary=(TextPart("input"),),
                 ),
-                tracer=tracer,
             )
             while harness.executor._tasks:
                 await asyncio.gather(*tuple(harness.executor._tasks))
@@ -71,6 +71,8 @@ flow worker(_: Text) -> Text:
                 for message in invocation.call.messages
                 if message.role == "user"
             )
+        observer.finish()
+        await observer.drain()
         assert_replayed(harness.store.db_path, tracer.events)
 
     asyncio.run(scenario())
@@ -147,10 +149,10 @@ agic reader(_: Text) -> Text:
         responses=[ModelCallResult(message=Message.assistant("done"))],
     )
     tracer = RecordingRunTracer()
-    harness.executor.root_tracer = lambda _thread: tracer
 
     async def scenario():
         async with harness:
+            observer = TraceObserver(harness.executor.stream.subscribe(), tracer)
             # Start with two completed caller frames; independent roots must
             # read their captured data after the task-local scope is gone.
             frames = tuple(
@@ -164,7 +166,6 @@ agic reader(_: Text) -> Text:
                         runnable="flow:parent",
                         primary=(TextPart("input"),),
                     ),
-                    tracer=tracer,
                 )
             while harness.executor._tasks:
                 await asyncio.gather(*tuple(harness.executor._tasks))
@@ -177,6 +178,8 @@ agic reader(_: Text) -> Text:
                 for message in invocation.call.messages
                 if message.role == "user"
             )
+        observer.finish()
+        await observer.drain()
         assert_replayed(harness.store.db_path, tracer.events)
 
     asyncio.run(scenario())
