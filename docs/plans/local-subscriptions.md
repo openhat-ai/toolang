@@ -4,7 +4,8 @@ Agreed architecture for stage 4 of [teaming](teaming.md), replacing the earlier
 live-only proposal. Stages 1–3 merged as #709, #708, and #710; this design merged
 as #711. Hosted CLI ownership merged as #712; canonical cursor persistence,
 the bounded cache, and independent tracers merged as #713. Local normalization,
-HTTP resume, and client adaptation are delivered together. Teaming export follows.
+HTTP resume, and client adaptation merged together as #717.
+[Team observation](team-observation.md) follows.
 
 ## Goal and ownership
 
