@@ -2464,3 +2464,25 @@ def test_restore_replaces_transient_parts_without_reprinting_final_output():
     )
     assert "new final" in str(finished.committed)
     assert "diagnostic" not in str(finished)
+
+
+def test_restore_does_not_repeat_finalized_streamed_markdown():
+    root = RunBegin("run_test", ControlRef.for_run("run_test", 0))
+    first = StepBegin(StepRef.parse("run_test.0"), "model", _model())
+    end = StepEnd(
+        first.step, "model", "succeeded", output=_parts("# Heading\n\nAnswer")
+    )
+    live = StepBegin(StepRef.parse("run_test.1"), "model", _model())
+    projector = ProgressProjector()
+    for event in (
+        root,
+        first,
+        PartBegin(first.step, 0, "text"),
+        PartDelta(first.step, 0, TextDelta("# Heading\n\nAnswer")),
+        PartEnd(first.step, 0, TextPart("# Heading\n\nAnswer")),
+        end,
+        live,
+    ):
+        projector.handle(event)
+    restored = projector.restore((root, first, end, live))
+    assert not restored.committed

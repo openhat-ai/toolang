@@ -133,6 +133,49 @@ def test_post_retry_reservation_starts_with_mutation_not_old_end(tmp_path):
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("attach_pending", [False, True])
+def test_root_stream_drains_queued_retry_past_terminal_boundary(
+    tmp_path, attach_pending
+):
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="agic example:\n  Work\n",
+        responses=[
+            RuntimeError("fail"),
+            ModelCallResult(message=Message.assistant("ok")),
+        ],
+    )
+
+    async def scenario():
+        async with harness:
+            source = harness.executor.stream
+            source.limits = StreamLimits(batch_events=1)
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            service = Subscriptions(source, harness.store.db_path)
+            reservation = await service.reserve()
+            handle = harness.executor.run(
+                harness.run_spec(
+                    thread=thread, runnable="example", primary=(TextPart("input"),)
+                )
+            )
+            if attach_pending:
+                sub = reservation.attach(StreamScope(root=handle.run_id), started=True)
+            first = await handle
+            if not attach_pending:
+                sub = reservation.attach(StreamScope(root=first.id))
+            retried = await harness.executor.retry(
+                first.id, setup=harness.setup, state=harness.state
+            )
+            assert retried.status == "succeeded"
+            frames = await drain(sub)
+            assert any(frame.event == "run_retried" for frame in frames)
+            assert frames[-1].event == "run_end"
+            assert frames[-1].data["status"] == "succeeded"
+            reservation.close()
+
+    asyncio.run(scenario())
+
+
 def test_snapshot_does_not_hold_main_store_or_publication_gate(tmp_path):
     harness = ExecutionHarness.create(
         tmp_path, source="flow example:\n  let result = Done\n", responses=[]

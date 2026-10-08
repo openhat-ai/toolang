@@ -607,7 +607,11 @@ class EventSubscription:
             return frame
         while True:
             if not self._batch:
-                if self.scope.root is not None and not self._active:
+                if (
+                    self.scope.root is not None
+                    and not self._active
+                    and self.reader.empty
+                ):
                     raise StopAsyncIteration
                 batch = await self.reader.receive()
                 self._batch.extend(batch.events)

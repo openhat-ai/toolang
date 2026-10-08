@@ -102,6 +102,7 @@ class ProgressProjector:
         self._repeat_ordinals: dict[tuple[StepRef, int], int] = {}
         self._sequence = 0
         self._rendered: dict[str, ProgressBlock] = {}
+        self._completed_steps: dict[StepRef, StepEnd] = {}
         self._ends_with_blank = False
 
     @property
@@ -133,6 +134,8 @@ class ProgressProjector:
             ):
                 self._async_sources.add(event.step)
             committed = tuple(self._reduce(event))
+            if isinstance(event, StepEnd):
+                self._completed_steps[event.step] = event
             self._note_committed(committed)
             return ProgressUpdate(
                 committed=committed,
@@ -148,11 +151,16 @@ class ProgressProjector:
     def restore(self, events: tuple[RunEvent, ...]) -> ProgressUpdate:
         """Replace structural state without printing unchanged committed output."""
         rendered = self._rendered
+        completed = self._completed_steps
         self.__init__(show_boundaries=self.show_boundaries, clock=self._clock)
         committed: list[ProgressBlock] = []
         update = ProgressUpdate()
         for event in events:
             update = self.handle(event)
+            # A streamed model can commit several Markdown fragments whose shape
+            # differs from the single final-output block reconstructed from End.
+            if isinstance(event, StepEnd) and completed.get(event.step) == event:
+                continue
             committed.extend(
                 block for block in update.committed if rendered.get(block.key) != block
             )
