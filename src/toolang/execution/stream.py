@@ -211,9 +211,15 @@ class CanonicalStream:
                     # when readers have acquired all disposable progress.
                     completed.setdefault(frame.event.step, []).append(boundary)
         self._compact(completed, read_floor)
-        # Drop a blocking reader before sacrificing structural cache coverage.
-        # Only finalized Parts can justify releasing retention this way.
+        # Prefer releasing an already-consumed prefix over failing a reader
+        # that has not yet acquired the final PartEnd. Reconsider retention
+        # after dropping only the slowest readers, so faster ones can continue.
         while self._over_limit():
+            if self._events[0].cursor.seq <= read_floor:
+                evicted = self._events.popleft()
+                self._bytes -= evicted.size
+                self._floor = evicted.cursor.seq
+                continue
             blocked = (
                 boundaries[index]
                 for boundaries in completed.values()
@@ -223,7 +229,7 @@ class CanonicalStream:
             if boundary is None:
                 break
             for reader in tuple(self._readers):
-                if reader._seq < boundary:
+                if reader._seq == read_floor:
                     reader._overflow()
             read_floor = self._read_floor()
             self._compact(completed, read_floor)

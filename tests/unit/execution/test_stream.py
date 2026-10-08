@@ -192,6 +192,34 @@ def test_finalization_compacts_consumed_parts_without_overflowing_current_reader
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("with_slow_reader", [False, True])
+def test_finalization_keeps_a_reader_waiting_for_the_last_part(with_slow_reader):
+    async def scenario():
+        source = CanonicalStream(limits=StreamLimits(events=4))
+        slow = source.subscribe() if with_slow_reader else None
+        fast = source.subscribe()
+        events = progress()
+        for event in events[:3]:
+            emit(source, event)
+        acquired = await fast.receive()
+        # A model publishes PartEnd and StepEnd in one turn. The reader only
+        # needs those two events; evict its consumed prefix instead of failing it.
+        for event in events[3:]:
+            emit(source, event)
+        assert [frame.event for frame in (await fast.receive()).events] == list(
+            events[3:]
+        )
+        assert [frame.event for frame in acquired.events] == list(events[:3])
+        assert source.floor.seq == 1
+        if slow is not None:
+            with pytest.raises(StreamOverflowError):
+                await slow.receive()
+            slow.close()
+        fast.close()
+
+    asyncio.run(scenario())
+
+
 def test_lagging_reader_overflows_before_structural_cache_is_evicted():
     async def scenario():
         source = CanonicalStream(limits=StreamLimits(events=6))
