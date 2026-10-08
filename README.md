@@ -114,6 +114,10 @@ See [examples](https://github.com/openhat-ai/toolang/tree/main/examples) for run
 
 Use these commands to run and manage agents. Add `--help` to any command for its usage and options.
 
+Chat, retry/rerun, and run/thread control commands start the agent when needed and
+use its API. The agent keeps running after the command exits; use `too stop <agent>`
+to stop it.
+
 ```bash
 too new <agent>                       # Create a local agent
 too clone <ref> <agent>               # Clone an agent

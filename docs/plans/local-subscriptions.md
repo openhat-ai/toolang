@@ -1,8 +1,9 @@
 # Canonical event subscriptions
 
 Agreed architecture for stage 4 of [teaming](teaming.md), replacing the earlier
-live-only proposal. Stages 1–3 merged as #709, #708, and #710. This PR defines the
-design without runtime changes. Resolve the remaining choices below before
+live-only proposal. Stages 1–3 merged as #709, #708, and #710; this design merged
+as #711. The first implementation covers hosted CLI ownership. Canonical cursors,
+cache, normalization, and teaming export follow. Resolve remaining choices before
 implementing the affected scope.
 
 ## Goal and ownership
@@ -23,7 +24,8 @@ configuration/environment/CLI policy at the call site. Script mode is a separate
 unresolved lifecycle decision; its eventual policy must preserve single ownership
 when sharing an agent home.
 
-Current host CLI acquisition permits embedding; CLI-started guests stop on exit.
+Chat, retry/rerun, and run/thread controls now use a persistent hosted runtime.
+Script mode still permits host embedding and stops script-created guests on exit.
 The hosted executor permits multiple active roots in one thread; preserve this
 concurrency while consolidating execution ownership.
 

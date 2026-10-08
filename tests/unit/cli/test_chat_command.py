@@ -193,9 +193,8 @@ def test_chat_latest_preserves_history_ties_and_includes_nonterminal_threads(
 
 
 @pytest.mark.parametrize("placement", ["resident", "roaming", "visiting"])
-@pytest.mark.parametrize("remote", [False, True])
-def test_chat_latest_uses_selected_history_for_local_and_remote_sessions(
-    placement, remote, chat_layout, tmp_path, monkeypatch
+def test_chat_latest_uses_selected_history_for_agent_sessions(
+    placement, chat_layout, tmp_path, monkeypatch
 ):
     layout = chat_layout
     selector = "alice"
@@ -231,18 +230,13 @@ def test_chat_latest_uses_selected_history_for_local_and_remote_sessions(
     @contextmanager
     def acquire(selected, **_kwargs):
         assert selected == layout
-        yield (
-            AgentServerRef(sandbox="host", endpoint="http://localhost:7001")
-            if remote
-            else None
-        )
+        yield AgentServerRef(sandbox="host", endpoint="http://localhost:7001")
 
     def open_tui(ctx, **kwargs):
         captured.update(layout=context_layout(ctx), thread=kwargs["thread_id"])
         assert kwargs["client"].created == 0
 
     monkeypatch.setattr(chat, "acquire_agent_server", acquire)
-    monkeypatch.setattr(chat, "LocalChatSession", Session)
     monkeypatch.setattr(chat, "RemoteChatSession", Session)
     monkeypatch.setattr(chat, "load_runtime_environ", lambda *_args, **_kwargs: {})
     monkeypatch.setattr(chat, "_chat_interactive_prompt_toolkit", open_tui)
@@ -252,7 +246,7 @@ def test_chat_latest_uses_selected_history_for_local_and_remote_sessions(
     monkeypatch.setenv("TOOLANG_ROOT", str(chat_layout.root))
     assert too_main([*prefix, selector, "chat", "--thread"]) == 0
     assert captured == {
-        "target": "http://localhost:7001" if remote else layout,
+        "target": "http://localhost:7001",
         "layout": layout,
         "thread": "term_existing",
         "closed": True,
@@ -826,72 +820,6 @@ def test_chat_default_options_build_session_override_without_warning(
     assert capsys.readouterr().err == ""
 
 
-def test_chat_runtime_builds_process_local_execution_resources(
-    tmp_path: Path,
-    monkeypatch: Any,
-) -> None:
-    captured: dict[str, object] = {}
-    source = tmp_path / "alice.too"
-    layout = AgentLayout.roaming(source)
-
-    class Session(_Client):
-        def __init__(self, layout: object, **kwargs: object) -> None:
-            super().__init__()
-            captured["layout"] = layout
-            captured["kwargs"] = kwargs
-
-        def close(self) -> None:
-            captured["closed"] = True
-
-    monkeypatch.setattr(chat, "context_layout", lambda _ctx: layout)
-    monkeypatch.setattr(chat, "ui_base_url", lambda: "https://ui.test")
-
-    @contextmanager
-    def agent_server_context(
-        selected: AgentLayout,
-        **kwargs: object,
-    ) -> Iterator[AgentServerRef | None]:
-        assert selected == layout
-        assert kwargs == {
-            "sandbox": "host",
-            "dev": None,
-            "model_catalog": None,
-            "ui_base_url": "https://ui.test",
-            "compact_override": ModelOverride(identity="test/compact", effort="low"),
-        }
-        yield None
-
-    monkeypatch.setattr(chat, "acquire_agent_server", agent_server_context)
-    monkeypatch.setattr(
-        chat,
-        "load_runtime_environ",
-        lambda _layout, *, base_environ: {
-            **base_environ,
-            "TOOLANG_ALLOW_MODELS": "env/*",
-            "TOOLANG_LIMIT_TIME": "30",
-            "TOOLANG_COMPACT_MODEL": "test/environment effort=high",
-        },
-    )
-    monkeypatch.setattr(chat, "LocalChatSession", Session)
-
-    with chat._chat_runtime(
-        object(),  # type: ignore[arg-type]
-        sandbox="host",
-        compact_model="test/compact effort=low",
-    ) as client:
-        assert isinstance(client, Session)
-
-    assert captured["layout"] == layout
-    assert captured["kwargs"] == {
-        "sandbox": "host",
-        "ceiling_overrides": {"models": ("env/*",)},
-        "default_overrides": {},
-        "limit_overrides": {"time": 30},
-        "compact_override": ModelOverride(identity="test/compact", effort="low"),
-    }
-    assert captured["closed"] is True
-
-
 def test_chat_runtime_uses_remote_execution_without_local_environment(
     tmp_path: Path,
     monkeypatch: Any,
@@ -973,13 +901,6 @@ def test_chat_runtime_does_not_fall_back_after_remote_health_failure(
     monkeypatch.setattr(chat, "ui_base_url", lambda: "")
     monkeypatch.setattr(chat, "acquire_agent_server", agent_server_context)
     monkeypatch.setattr(chat, "RemoteChatSession", failed_remote)
-    monkeypatch.setattr(
-        chat,
-        "LocalChatSession",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            AssertionError("running resident must not fall back to local execution")
-        ),
-    )
 
     with pytest.raises(ClickException, match="health failed"):
         with chat._chat_runtime(

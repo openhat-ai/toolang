@@ -230,6 +230,7 @@ def test_agent_server_rejects_an_unready_agent(
     with pytest.raises(agent_server.AgentServerAcquisitionError, match=status):
         with agent_server.acquire_agent_server(
             layout,
+            temporary=True,
             sandbox=None,
             ui_base_url="https://ui.test",
         ):
@@ -264,6 +265,7 @@ def test_agent_server_opens_embedded_host_and_releases_stopped_state(
 
     with agent_server.acquire_agent_server(
         layout,
+        temporary=True,
         sandbox=None,
         ui_base_url="https://ui.test",
     ) as selected:
@@ -299,7 +301,9 @@ def test_agent_server_rejects_dev_for_embedded_host(
             raise AssertionError("embedded host must not accept --dev")
 
 
-def test_agent_server_launches_and_cleans_up_a_temporary_guest(
+@pytest.mark.parametrize("temporary", (False, True))
+def test_agent_server_launches_with_the_requested_lifecycle(
+    temporary: bool,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -353,6 +357,7 @@ def test_agent_server_launches_and_cleans_up_a_temporary_guest(
 
     with agent_server.acquire_agent_server(
         layout,
+        temporary=temporary,
         sandbox="docker",
         dev=development,
         ui_base_url="https://ui.test",
@@ -367,10 +372,10 @@ def test_agent_server_launches_and_cleans_up_a_temporary_guest(
     assert calls == [
         ("launch", launch, None),
         "body",
-        ("stop", layout, handle, False, None),
+        *([("stop", layout, handle, False, None)] if temporary else []),
     ]
     assert progress.finished == 1
-    assert shutdown_progress.finished == 1
+    assert shutdown_progress.finished == int(temporary)
 
 
 def test_agent_server_warns_when_a_development_cli_uses_the_package_index(
@@ -555,6 +560,7 @@ def test_agent_server_cleanup_does_not_hide_a_body_failure(
     with pytest.raises(LookupError, match="body failed"):
         with agent_server.acquire_agent_server(
             layout,
+            temporary=True,
             sandbox="docker",
             ui_base_url="https://ui.test",
         ):
@@ -725,11 +731,12 @@ def test_inactive_launch_uses_fresh_environment_and_file_logging(
         "workspace_additions": None,
         "layout": layout,
         "sandbox": "docker",
+        "port": None,
         "dev": development,
         "output": "file",
         "log_path": layout.runtime_log,
         "log_spec": "error",
-        "temporary_port": True,
+        "temporary_port": False,
         "environ": {"LOGGED": "yes"},
         "ceiling_overrides": {"models": ("test/*",)},
         "default_overrides": {
@@ -785,3 +792,86 @@ def test_running_server_cannot_rebind_workspace_names(
                 layout, sandbox=None, workspace_additions=requested
             ):
                 pytest.fail("must not rebind running workspace roots")
+
+
+@pytest.mark.parametrize("outcome", ("running", "failed", "timeout"))
+def test_persistent_acquisition_waits_for_an_existing_startup(
+    tmp_path, monkeypatch, outcome
+):
+    layout = AgentLayout.resident(tmp_path, "alice")
+    statuses = iter(("starting", outcome))
+
+    class Process:
+        def __init__(self, _layout):
+            pass
+
+        def status(self, **_kwargs):
+            return _status(
+                value=next(statuses), endpoint="http://localhost:7001", sandbox="host"
+            )
+
+    monkeypatch.setattr(agent_server.agents, "AgentProcess", Process)
+    monkeypatch.setattr(agent_server.time, "sleep", lambda _duration: None)
+    monkeypatch.setattr(
+        agent_server, "AGENT_READY_TIMEOUT_SEC", 0 if outcome == "timeout" else 1
+    )
+    monkeypatch.setattr(
+        agent_server,
+        "_resolve_inactive_launch",
+        lambda *a, **k: pytest.fail("must not launch a second runtime"),
+    )
+    if outcome == "running":
+        with agent_server.acquire_agent_server(layout, sandbox="host") as server:
+            assert server == AgentServerRef(
+                sandbox="host", endpoint="http://localhost:7001"
+            )
+    else:
+        with pytest.raises(agent_server.AgentServerAcquisitionError, match="ready"):
+            with agent_server.acquire_agent_server(layout, sandbox="host"):
+                pytest.fail("unready runtime acquired")
+
+
+@pytest.mark.parametrize("interrupted", (False, True))
+def test_persistent_host_survives_command_completion_and_failure(
+    tmp_path, monkeypatch, interrupted
+):
+    layout = AgentLayout.resident(tmp_path, "alice")
+    _set_status(monkeypatch, layout, _status(value="stopped"))
+    monkeypatch.setattr(
+        agent_server.sandbox_runtime, "resolve_selection", lambda *a, **k: "host"
+    )
+    launch = SimpleNamespace(sandbox="host", dev_artifact=None)
+    monkeypatch.setattr(
+        agent_server, "_resolve_inactive_launch", lambda *a, **k: launch
+    )
+    handle = agent_server.sandbox_runtime.SandboxHandle(
+        cast(Any, None),
+        SandboxState(
+            sandbox="host", ref=SandboxRef("process-1", "http://localhost:7001")
+        ),
+    )
+
+    async def start(*_args, **_kwargs):
+        return handle
+
+    async def stop(*_args, **_kwargs):
+        pytest.fail("persistent acquisition must not stop the runtime")
+
+    monkeypatch.setattr(agent_server.sandbox_runtime, "launch", start)
+    monkeypatch.setattr(agent_server.sandbox_runtime, "stop_handle", stop)
+
+    def acquire():
+        with agent_server.acquire_agent_server(
+            layout, sandbox="host", ui_base_url="https://ui.test", show_progress=False
+        ) as server:
+            assert server == AgentServerRef(
+                sandbox="host", endpoint="http://localhost:7001"
+            )
+            if interrupted:
+                raise LookupError("caller failed")
+
+    if interrupted:
+        with pytest.raises(LookupError, match="caller failed"):
+            acquire()
+    else:
+        acquire()

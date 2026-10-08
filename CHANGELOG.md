@@ -94,6 +94,15 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Changed
 
+- `too chat`, `too retry`, `too rerun`, `too steer`, `too cancel`, `too fork`,
+  and `too rewind` now ensure a persistent agent runtime and use its API
+  instead of embedded host execution. The runtime starts when needed, is
+  shared by concurrent starters, waits for an in-progress startup to report
+  readiness, and keeps running after the command exits or fails; stop it with
+  `too stop <agent>`. `--dev` still applies only when starting a new non-host
+  runtime, and script runs keep their existing embedded-host and stop-on-exit
+  lifecycle.
+
 - `too text` and Interactive Text now reach messaging through the Hub HTTP
   API instead of connecting to Redis/Valkey directly, so run `too hub start`
   before using Text and reopen Text after restarting the Hub. Agents and

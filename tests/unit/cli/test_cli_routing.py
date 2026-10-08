@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from functools import wraps
 from importlib import import_module
 from pathlib import Path
@@ -31,6 +33,7 @@ from toolang.cli.toolang.routing import (
     normalize,
     select_target_help,
 )
+from toolang.cli.common.agent_server import AgentServerRef
 from toolang.cli.common.routing import extract_root_args
 from toolang.cli.common.lazy import LazyCommand
 from toolang.up import process as agents
@@ -967,8 +970,8 @@ def test_cli_opens_roaming_chat_with_its_exact_layout(
     captured: dict[str, object] = {}
 
     class Session:
-        def __init__(self, layout: AgentLayout, **_kwargs: object) -> None:
-            captured["layout"] = layout
+        def __init__(self, endpoint: str, **_kwargs: object) -> None:
+            assert endpoint == "http://runtime.test:7001"
 
         def close(self) -> None:
             captured["closed"] = True
@@ -982,7 +985,13 @@ def test_cli_opens_roaming_chat_with_its_exact_layout(
     def end_input(_prompt: str) -> str:
         raise EOFError
 
-    monkeypatch.setattr(chat_commands, "LocalChatSession", Session)
+    @contextmanager
+    def acquire(selected: AgentLayout, **_kwargs: object) -> Iterator[AgentServerRef]:
+        captured["layout"] = selected
+        yield AgentServerRef(sandbox="host", endpoint="http://runtime.test:7001")
+
+    monkeypatch.setattr(chat_commands, "acquire_agent_server", acquire)
+    monkeypatch.setattr(chat_commands, "RemoteChatSession", Session)
     monkeypatch.setattr("builtins.input", end_input)
     monkeypatch.setattr(chat_commands.sys.stdin, "isatty", lambda: False)
 
@@ -1245,8 +1254,8 @@ def test_cli_opens_visiting_chat_with_its_exact_layout(
     captured: dict[str, object] = {}
 
     class Session:
-        def __init__(self, selected: AgentLayout, **_kwargs: object) -> None:
-            captured["layout"] = selected
+        def __init__(self, endpoint: str, **_kwargs: object) -> None:
+            assert endpoint == "http://runtime.test:7001"
 
         def close(self) -> None:
             captured["closed"] = True
@@ -1263,7 +1272,14 @@ def test_cli_opens_visiting_chat_with_its_exact_layout(
     monkeypatch.setattr(
         agents, "resolve_visiting_layout", lambda *_args, **_kwargs: layout
     )
-    monkeypatch.setattr(chat_commands, "LocalChatSession", Session)
+
+    @contextmanager
+    def acquire(selected: AgentLayout, **_kwargs: object) -> Iterator[AgentServerRef]:
+        captured["layout"] = selected
+        yield AgentServerRef(sandbox="host", endpoint="http://runtime.test:7001")
+
+    monkeypatch.setattr(chat_commands, "acquire_agent_server", acquire)
+    monkeypatch.setattr(chat_commands, "RemoteChatSession", Session)
     monkeypatch.setattr("builtins.input", end_input)
     monkeypatch.setattr(chat_commands.sys.stdin, "isatty", lambda: False)
 

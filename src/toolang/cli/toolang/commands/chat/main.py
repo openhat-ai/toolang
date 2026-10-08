@@ -7,7 +7,6 @@ from contextlib import contextmanager
 from dataclasses import replace
 import os
 from pathlib import Path
-import sqlite3
 import sys
 from typing import cast
 
@@ -23,11 +22,7 @@ from toolang.cli.common.policy import (
     resolve_limit_overrides,
 )
 from toolang.common.errors import ToolangError
-from toolang.common.ids import IdIssuer
 from toolang.common.layout import AgentLayout
-from toolang.execution.store import RunStore
-from toolang.execution.threads import ThreadManager
-from toolang.execution.errors import RunStoreSchemaError
 from toolang.execution.events import PartDelta, RunBegin, RunEnd, RunEvent, StepEnd
 from toolang.execution.inspection.history import RunHistory
 from toolang.execution.records import execution_error_message
@@ -40,7 +35,6 @@ from toolang.execution.types import (
     RunOverride,
     SessionSetting,
     StepRef,
-    ThreadPrefix,
 )
 from toolang.lang.types import Array
 from toolang.cli.common.context import (
@@ -50,7 +44,7 @@ from toolang.cli.common.context import (
     ui_base_url,
     user_call,
 )
-from toolang.cli.common.execution import open_execution, run_store_schema_error
+from toolang.cli.common.execution import open_execution
 from toolang.cli.common.errors import TmuxPlacementError
 from toolang.cli.common.agent_server import (
     AgentServerAcquisitionError,
@@ -92,7 +86,6 @@ from .input import (
     parse_chat_input,
     slash_command_name,
 )
-from .local import LocalChatSession
 from .marks import ChatMarks
 from .presenter import ChatRunPresenter
 from .policy import run_override_error
@@ -122,7 +115,30 @@ def chat_command(
         except TmuxPlacementError as exc:
             raise ClickException(str(exc)) from exc
         if launcher is not None:
-            thread_id = user_call(_tmux_thread, layout, thread_id)
+            if thread_id is None:
+                with _chat_runtime(
+                    ctx,
+                    model_catalog=model_catalog,
+                    sandbox=sandbox,
+                    dev=dev,
+                    compact_model=compact_model,
+                    workspace=workspace,
+                    workdir=workdir,
+                ) as client:
+                    thread_id = user_call(client.create_thread)
+                # Startup options have been applied; the TUI now attaches.
+                dev = None
+                compact_model = None
+            else:
+                with open_execution(ctx, required=True) as resources:
+                    if (
+                        resources is None
+                        or RunHistory(resources.store).get_thread(
+                            thread_id, run_limit=0
+                        )
+                        is None
+                    ):
+                        raise ClickException(f"thread not found: {thread_id}")
             argv = _chat_argv(
                 layout,
                 thread_id=thread_id,
@@ -157,37 +173,6 @@ def chat_command(
         workspace=workspace,
         workdir=workdir,
     )
-
-
-def _tmux_thread(layout: AgentLayout, thread_id: str | None) -> str:
-    """Resolve durable identity before the launcher starts another process.
-
-    Execution state is shared with hosted runtimes, just as for the other local
-    thread commands. Allocating a thread does not start an agent or model.
-    """
-
-    if thread_id is not None and not layout.run_store.is_file():
-        raise ClickException(f"thread not found: {thread_id}")
-    try:
-        store = RunStore(layout.run_store, read_only=thread_id is not None)
-    except RunStoreSchemaError as exc:
-        raise ClickException(
-            run_store_schema_error(exc, path=layout.run_store)
-        ) from exc
-    except sqlite3.Error as exc:
-        raise ClickException(f"Could not open thread store: {exc}") from exc
-    try:
-        if thread_id is not None:
-            if RunHistory(store).get_thread(thread_id, run_limit=0) is None:
-                raise ClickException(f"thread not found: {thread_id}")
-            return thread_id
-        return ThreadManager(store, IdIssuer(layout.id_state)).create(
-            prefix=ThreadPrefix.TERM
-        )
-    except sqlite3.Error as exc:
-        raise ClickException(f"Could not prepare chat thread: {exc}") from exc
-    finally:
-        store.close()
 
 
 def _chat_argv(
@@ -311,7 +296,7 @@ def _chat_runtime(
     workspace: list[str] | None = None,
     workdir: str | None = None,
 ) -> Iterator[ChatClient]:
-    """Own one local, attached, or temporary-remote Chat session."""
+    """Attach Chat to the agent runtime, starting it when needed."""
 
     layout = context_layout(ctx)
     workspaces = user_call(
@@ -337,62 +322,20 @@ def _chat_runtime(
             ),
         )
         with server_context as server:
-            if server is not None:
-                remote: RemoteChatSession | None = None
-                try:
-                    remote = RemoteChatSession(
-                        server.endpoint,
-                        expected_sandbox=server.sandbox,
-                        **(
-                            {"workdir": workspaces.workdir}
-                            if workspaces.workdir
-                            else {}
-                        ),
-                    )
-                except (RemoteChatError, ValueError) as exc:
-                    if remote is not None:
-                        remote.close()
-                    raise ClickException(str(exc)) from exc
-                try:
-                    yield remote
-                finally:
-                    remote.close()
-                return
-
-            environ = load_runtime_environ(layout, base_environ=os.environ)
-            local = LocalChatSession(
-                layout,
-                sandbox="host",
-                **(
-                    {"workspace_additions": workspaces.additions}
-                    if workspaces.additions
-                    else {}
-                ),
-                **({"workdir": workspaces.workdir} if workspaces.workdir else {}),
-                compact_override=compact_override
-                or user_call(resolve_compact_override, environ),
-                **(
-                    {"model_catalog": model_catalog}
-                    if model_catalog is not None
-                    else {}
-                ),
-                ceiling_overrides=user_call(
-                    resolve_ceiling_overrides,
-                    environ,
-                ),
-                default_overrides=user_call(
-                    resolve_default_overrides,
-                    environ,
-                ),
-                limit_overrides=user_call(
-                    resolve_limit_overrides,
-                    environ,
-                ),
-            )
+            if server is None:
+                raise AgentServerAcquisitionError("agent acquisition requires a server")
             try:
-                yield local
+                remote = RemoteChatSession(
+                    server.endpoint,
+                    expected_sandbox=server.sandbox,
+                    **({"workdir": workspaces.workdir} if workspaces.workdir else {}),
+                )
+            except (RemoteChatError, ValueError) as exc:
+                raise ClickException(str(exc)) from exc
+            try:
+                yield remote
             finally:
-                local.close()
+                remote.close()
     except AgentServerAcquisitionError as exc:
         raise ClickException(str(exc)) from exc
 

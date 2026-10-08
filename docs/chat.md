@@ -329,22 +329,20 @@ Runtime surfaces should treat the canonical thread and root-run event streams
 as the source of progress truth. A web client adapts native `RunEvent` values
 into any UI-specific protocol locally.
 
-The TUI selects one `ExecutionRuntime` after materializing the agent layout. A
-healthy running AgentServer is reused for resident, roaming, and visiting
+The TUI ensures one AgentServer is ready after materializing the agent layout. A
+healthy running server is reused for resident, roaming, and visiting
 layouts. An explicit `--sandbox` must match that runtime; Chat never stops or
 reconfigures an attached server. When no server is active, Chat resolves the
 explicit selector, then the merged root/agent `[sandbox]` binding, then `host`.
-Host execution uses the process-local `LocalRunClient`; a non-host selector
-starts a temporary AgentServer and uses `RemoteRunClient` through its API.
-Chat stops only the temporary workload it launched. Both paths render the same
-native `RunEvent` values. `--dev [PATH]` may provide a Toolang wheel, or a
-directory containing one, when Chat creates that temporary non-host runtime.
+Both host and non-host selectors start a persistent AgentServer and use
+`RemoteRunClient` through its API. Concurrent starters converge on that server;
+Chat waits for an existing startup and reports readiness failures.
+`--dev [PATH]` may provide a Toolang wheel, or a directory containing one, when
+Chat creates a new non-host runtime.
 Bare `--dev` searches the process working directory (`.`); omitting the option
 keeps the existing package selection. It cannot modify an attached server and
-does not apply to embedded host mode.
-On exit, Chat reports the stop and sandbox-release stages while it cleans up a
-temporary runtime. Attached AgentServers are left running and need no cleanup
-progress.
+does not apply to host mode. Closing Chat leaves the server running, including
+one it started. Use `too stop <agent>` to stop it explicitly.
 
 Remote acceptance records the root run id before the first event so cancel and
 steer remain addressable. If an accepted stream disconnects, the TUI keeps the
@@ -367,7 +365,7 @@ sandbox   docker:python:3.13-slim · 5741cca76066
 home      ~/.toolang/agents/eve
 ```
 
-Host execution, including embedded Chat, renders a plugin-supplied operating
+Host execution renders a plugin-supplied operating
 system identity such as `sandbox  host · macOS 27.0 arm64`. Remote
 endpoints are terminal hyperlinks. A remote executor version is omitted only
 when it exactly matches the known, clean TUI version; matching dirty versions

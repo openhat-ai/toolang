@@ -86,9 +86,8 @@ disconnected after construction and reject operations until `connect()`.
 current setup and state once for each run, validates the request's concrete
 runnable, model parameters, materialized policy, and authored input, and
 converts terminal and control records through the existing caller-facing
-schemas. Terminal Chat still owns its session defaults, watchers, store, thread
-manager, result inspection, and event-loop thread. Other local execution owners
-continue to use `RunExecutor` directly.
+schemas. Local library consumers can use this client; execution owners such as
+`AgentCore` continue to use `RunExecutor` directly.
 
 `RemoteRunClient` implements the same boundary over an agent runtime's absolute
 HTTP origin. It sends self-contained, materialized requests to
@@ -102,16 +101,17 @@ protocol has no replay cursor. Disconnecting the client detaches its readers and
 owned HTTP resources without canceling server runs or managing the server
 process.
 
-Terminal Chat first resolves a CLI-owned `ExecutionRuntime`. It attaches to a
-compatible running AgentServer for any materialized layout, uses embedded host
-execution when no server is active and `host` is selected, or starts a
-command-owned temporary AgentServer for a non-host sandbox. Remote execution is
-used only after endpoint health and profile checks. Non-run HTTP operations
-remain in the Chat client: runtime/model/runnable inspection, run-default
+Terminal Chat ensures a compatible AgentServer is ready for any materialized
+layout, starting a persistent host or guest runtime when needed. Concurrent
+starters reuse the same runtime. Chat uses its API after endpoint health and
+profile checks. Non-run HTTP operations remain in the Chat client:
+runtime/model/runnable inspection, run-default
 adoption, thread creation, and result reads. A stream failure after acceptance is
 recovered from durable run detail without retrying the run or synthesizing
-missing `RunEvent` values. Closing Chat never stops an attached server and
-stops and releases only a temporary server created by that command.
+missing `RunEvent` values. Closing Chat leaves the runtime running.
+Retry/rerun and steer/cancel/fork/rewind likewise ensure a hosted runtime and
+perform mutations through its API. Script lifecycle remains separate: an
+inactive host runs embedded, and a script-created guest stops on exit.
 
 The process-local executor remains the execution engine:
 

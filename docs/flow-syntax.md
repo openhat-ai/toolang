@@ -146,8 +146,9 @@ The shared native handle type is `_Awaitable`, with a separate result contract;
 names cannot begin with `_`. An authored struct named `Run` is ordinary data.
 
 The root survives its source finishing, failing, being canceled, or executing a
-handoff. Executor shutdown cancels it: script invocations stop their executor on
-exit, while local Chat and AgentCore keep theirs for the session/host lifetime.
+handoff. Executor shutdown cancels it: embedded scripts stop their executor on
+exit, while AgentCore keeps its executor for the host lifetime. Closing Chat
+leaves the agent runtime and its background roots running.
 There is no automatic restart or completion message. Use its ID with existing
 inspection and host control commands. See [execution records](run-step-records.md)
 for durable handles and retry behavior.

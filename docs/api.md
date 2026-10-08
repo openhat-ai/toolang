@@ -677,13 +677,14 @@ Docker sandbox control is supported from Linux and macOS hosts. Windows users
 must run Toolang through WSL2; native Windows host control is not supported.
 
 Chat uses the same explicit/configured/host selection when no AgentServer is
-active. `host` stays embedded in the CLI; another selector starts a temporary
-AgentServer that Chat stops on exit. If an AgentServer is already running, Chat
-attaches to it and rejects an explicit incompatible selector without executing
-or restarting the server. `chat --dev [PATH]` installs a local Toolang wheel in a
-new temporary non-host runtime; bare `--dev` searches the working directory. It
-is rejected for embedded host execution or when Chat attaches to an existing
-AgentServer.
+active and starts a persistent server for either host or guest execution.
+If an AgentServer is already running, Chat attaches to it and rejects an explicit
+incompatible selector without executing or restarting the server.
+`chat --dev [PATH]` installs a local Toolang wheel in a new non-host runtime;
+bare `--dev` searches the working directory. It is rejected for host execution
+or when Chat attaches to an existing
+AgentServer. Chat leaves the server running on exit; use `too stop <agent>` to
+stop it.
 
 Commands that start a new guest accept `--dev [PATH]`. This includes `serve`,
 `start`, `chat`, Script `run`, `retry`, and `rerun`. Omitting `--dev` keeps the
@@ -1201,18 +1202,18 @@ An explicitly empty thread value is invalid. Repeating the option uses the last
 occurrence. A following option, as in `--thread --sandbox host`, leaves thread
 selection bare. Positional thread IDs are no longer accepted.
 
-A stopped resident, roaming agent, or visiting agent uses embedded execution
-through `LocalRunClient`. A healthy
-running resident uses its recorded endpoint through `RemoteRunClient`; an
-unready or unhealthy resident fails without starting a competing embedded
-executor. Explicit Chat policy options become remotely validated session
+A resident, roaming, or visiting agent uses its recorded endpoint through
+`RemoteRunClient`. Chat starts the agent when needed; concurrent starters share
+one runtime, and an existing startup must become ready before Chat connects.
+Readiness failures are reported. Retry/rerun and steer/cancel/fork/rewind also
+ensure the agent is ready and mutate run/thread state through its API.
+Explicit Chat policy options become remotely validated session
 commands, while the server keeps ownership of setup, environment, providers,
 working directory, and sandbox.
 
 The banner always shows the TUI process version, executor, sandbox, and
-host-side agent home in that order. Embedded execution uses
-`executor  embedded`. Remote execution links the normalized endpoint and follows
-it with the server version when it is not a confirmed clean match, for example
+host-side agent home in that order. The executor links the normalized endpoint
+and follows it with the server version when it is not a confirmed clean match, for example
 `executor  http://localhost:7001 · v0.3.9`. Docker displays its complete selector
 and conventional twelve-character container ID, for example
 `sandbox  docker:python:3.13-slim · a1b2c3d4e5f6`. Host execution displays the

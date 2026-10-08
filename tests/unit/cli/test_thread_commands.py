@@ -33,6 +33,7 @@ def test_restart_uses_shared_terminal_surfaces(
     from io import StringIO
 
     from toolang.cli.common.terminal_surfaces import LIGHT_TERMINAL_SURFACES
+    from toolang.up.types import AgentServerRef
     from toolang.common.layout import AgentLayout
 
     class ReachedRun(Exception):
@@ -72,13 +73,14 @@ def test_restart_uses_shared_terminal_surfaces(
         asyncio.run(
             thread._execute_retry_or_rerun(
                 layout=AgentLayout.resident(tmp_path, "alice"),
-                server=None,
+                server=AgentServerRef(
+                    sandbox="host", endpoint="http://runtime.test:7001"
+                ),
                 kind=kind,
                 source="run_source",
                 anchor=None,
                 commands=(),
                 model_override=None,
                 show_progress=show_progress,
-                model_catalog=None,
             )
         )

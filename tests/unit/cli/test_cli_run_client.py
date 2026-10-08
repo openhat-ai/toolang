@@ -3,129 +3,18 @@
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
-from unittest.mock import AsyncMock, Mock
 
 import httpx
 import pytest
 
 from toolang.cli.common import run_client
-from toolang.common.layout import AgentLayout
 from toolang.execution.remote import RemoteRunClient
 from toolang.up.types import AgentServerRef
 
 
-@pytest.mark.parametrize("interrupted", [False, True])
-def test_acquire_run_client_uses_local_embedding_without_a_server(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    interrupted: bool,
-) -> None:
-    layout = AgentLayout.resident(tmp_path, "alice")
-    catalog = tmp_path / "models.json"
-    store = Mock()
-    setup = Mock(refresh=AsyncMock())
-    state = Mock(refresh=AsyncMock())
-    executor = Mock(stop=AsyncMock())
-    local_client = Mock(connect=AsyncMock(), disconnect=AsyncMock())
-    watching = asyncio.Event()
-    stopped = asyncio.Event()
-
-    async def watch(*, stop_signal: asyncio.Event) -> None:
-        watching.set()
-        await stop_signal.wait()
-        stopped.set()
-
-    state.run = AsyncMock(side_effect=watch)
-
-    def open_store(path: Path) -> Mock:
-        assert path == layout.run_store
-        return store
-
-    def open_setup(
-        selected: AgentLayout,
-        *,
-        sandbox: str,
-        model_catalog: Path | None,
-        allow_overrides: object,
-        default_overrides: object,
-        limit_overrides: object,
-        compact_override: object,
-    ) -> Mock:
-        assert selected == layout
-        assert sandbox == "host"
-        assert model_catalog == catalog
-        assert allow_overrides == {}
-        assert default_overrides == {}
-        assert limit_overrides == {}
-        assert compact_override is None
-        return setup
-
-    def open_state(selected: AgentLayout, *, allow_overrides: object) -> Mock:
-        assert selected == layout
-        assert allow_overrides == {}
-        return state
-
-    def open_executor(
-        selected_store: object,
-        _ids: object,
-        **_kwargs: object,
-    ) -> Mock:
-        assert selected_store is store
-        assert _kwargs["sync_state"] is state.sync
-        return executor
-
-    def open_client(selected: object) -> Mock:
-        assert selected is executor
-        return local_client
-
-    monkeypatch.setattr(run_client, "RunStore", open_store)
-    monkeypatch.setattr(run_client, "SetupWatcher", open_setup)
-    monkeypatch.setattr(run_client, "StateWatcher", open_state)
-    monkeypatch.setattr(run_client, "RunExecutor", open_executor)
-    monkeypatch.setattr(run_client, "LocalRunClient", open_client)
-    monkeypatch.setattr(
-        run_client,
-        "load_runtime_environ",
-        lambda *_args, **_kwargs: {},
-    )
-
-    async def scenario() -> None:
-        async with run_client.acquire_run_client(
-            layout,
-            None,
-            model_catalog=catalog,
-        ) as selected:
-            assert selected is local_client
-            store.close.assert_not_called()
-            executor.stop.assert_not_awaited()
-            await asyncio.wait_for(watching.wait(), 1)
-            assert not stopped.is_set()
-            if interrupted:
-                raise asyncio.CancelledError
-
-    if interrupted:
-        with pytest.raises(asyncio.CancelledError):
-            asyncio.run(scenario())
-    else:
-        asyncio.run(scenario())
-
-    assert stopped.is_set()
-    state.run.assert_awaited_once()
-    state.refresh.assert_awaited_once_with()
-    setup.refresh.assert_awaited_once_with()
-    executor.start.assert_called_once_with()
-    local_client.connect.assert_awaited_once_with()
-    local_client.disconnect.assert_awaited_once_with()
-    executor.stop.assert_awaited_once_with()
-    store.close.assert_called_once_with()
-
-
 def test_acquire_run_client_connects_to_an_agent_server(
-    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    layout = AgentLayout.resident(tmp_path, "alice")
     server = AgentServerRef(
         sandbox="docker:python:3.13-slim",
         endpoint="http://runtime.test:7001",
@@ -164,7 +53,7 @@ def test_acquire_run_client_connects_to_an_agent_server(
     monkeypatch.setattr(run_client.httpx, "AsyncClient", client_factory)
 
     async def scenario() -> None:
-        async with run_client.acquire_run_client(layout, server) as client:
+        async with run_client.acquire_run_client(server) as client:
             assert isinstance(client, RemoteRunClient)
             assert client.connected
         assert not client.connected

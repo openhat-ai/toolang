@@ -710,6 +710,7 @@ def _run(
             session_override = replace(session_override, workdir=workspaces.workdir)
         with acquire_agent_server(
             layout,
+            temporary=True,
             sandbox=sandbox,
             dev=dev,
             show_progress=not quiet,
