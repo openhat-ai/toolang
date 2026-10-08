@@ -1,18 +1,18 @@
 # Text agent header dividers
 
 Status: approved in chat on 2026-10-08 for an implementation PR and visual review,
-including follow-up requests for lighter rules below names and full-width left messages.
+including follow-up requests for lighter rules above names and full-width left messages.
 
 ## Goal and scope
 
 Make adjacent agent messages easier to distinguish in Interactive Text. Place a
-subtle horizontal rule between each agent's sender-name row and message body.
+subtle horizontal rule immediately above each agent's sender-name row.
 Let left-aligned messages use the full configured content width.
 
 ## Design
 
-- Put the light dashed glyph `┄` on a separate row immediately after the complete sender header,
-  including wrapped names. Start at the body's left inset and extend to the
+- Put the light dashed glyph `┄` on a separate row immediately before the sender
+  header, including wrapped names. Start at the body's left inset and extend to the
   message area's right edge, without trailing padding.
 - Use dim ANSI bright-black (gray) for a faint rule in light and dark themes. Preserve
   the name and marker's placement, shared stable ANSI color, and non-dim styling.
@@ -28,7 +28,7 @@ Let left-aligned messages use the full configured content width.
 ## Touchpoints and acceptance
 
 - `src/toolang/cli/toolang/commands/text/rendering.py`: construct message blocks.
-- Text rendering tests: verify rules below names, flush right edges, full-width
+- Text rendering tests: verify rules above names, flush right edges, full-width
   left bodies and human backgrounds, and unchanged right human bubbles.
 - Verify dim gray rules, preserved name/marker colors, full Unicode
   and wrapped names at narrow widths, body spacing, and configured width limits.

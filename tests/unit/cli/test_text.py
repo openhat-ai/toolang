@@ -333,10 +333,10 @@ def test_left_message_marker_has_aligned_header_and_wrapped_body(identity):
         )
     )
     lines = output.getvalue().splitlines()
-    assert lines[0].rstrip() == "• alice"
-    assert lines[1] == "  " + "┄" * 38
+    assert lines[0] == "  " + "┄" * 38
+    assert lines[1].rstrip() == "• alice"
     assert lines[2].startswith("  word")
-    assert all(line.startswith("  ") for line in lines[1:] if line.strip())
+    assert all(line.startswith("  ") for line in lines[2:] if line.strip())
     assert output.getvalue().count("•") == 1
     assert output.getvalue().split().count("word") == 20
     assert any(line.rstrip() == "  Last paragraph" for line in lines)
@@ -456,10 +456,12 @@ def test_message_marker_shares_name_row_and_name_aligns_with_body(identity, send
     console.print(block)
     lines = output.getvalue().splitlines()
     marker = "•" if agent else "▮"
-    header = lines[0]
-    body = next(line for line in lines[1:] if "first" in line)
+    header_index = 1 if agent else 0
+    header = lines[header_index]
+    body_lines = lines[header_index + 1 :]
+    body = next(line for line in body_lines if "first" in line)
     assert marker in header
-    assert all(marker not in line for line in lines[1:])
+    assert all(marker not in line for line in body_lines)
     if sender == identity:
         assert header.endswith(sender + " " + marker)
         assert header.index(sender) + len(sender) == 38
@@ -512,7 +514,8 @@ def test_interactive_messages_use_chat_width_after_resize(
             limit = min(columns, int(configured_width or "120"))
             assert all(len(line) <= limit for line in lines)
             assert output.getvalue().split().count("word") == 90
-            assert lines[0].index(sender) == (
+            header = lines[0 if sender == "bryan" else 1]
+            assert header.index(sender) == (
                 limit - len(sender) - 2 if sender == "bryan" else 2
             )
 

@@ -15,7 +15,7 @@ from toolang.teaming.schemas import Message
 @pytest.mark.parametrize("width", [24, 60, 120])
 @pytest.mark.parametrize("own_message", [False, True])
 @pytest.mark.parametrize("surfaces", [DARK_TERMINAL_SURFACES, LIGHT_TERMINAL_SURFACES])
-def test_agent_rule_is_below_name_and_flush_right_with_preserved_body_spacing(
+def test_agent_rule_is_above_name_and_flush_right_with_preserved_body_spacing(
     width, own_message, surfaces
 ):
     console = Console(width=width)
@@ -33,10 +33,10 @@ def test_agent_rule_is_below_name_and_flush_right_with_preserved_body_spacing(
     lines = "".join(segment.text for segment in segments).splitlines()
     gutter = min(8, width // 5) if own_message else 0
     if own_message:
-        assert lines[0] == " " * (width - len("alice •")) + "alice •"
+        assert lines[1] == " " * (width - len("alice •")) + "alice •"
     else:
-        assert lines[0] == "• alice" + " " * (width - len("• alice"))
-    assert lines[1] == " " * (gutter + 2) + "┄" * (width - gutter - 2)
+        assert lines[1] == "• alice" + " " * (width - len("• alice"))
+    assert lines[0] == " " * (gutter + 2) + "┄" * (width - gutter - 2)
     assert [line.strip() for line in lines[2:]] == ["First.", "", "Last.", ""]
     rules = [segment for segment in segments if "┄" in segment.text]
     assert rules
@@ -63,7 +63,7 @@ def test_agent_rule_is_below_name_and_flush_right_with_preserved_body_spacing(
         ("e\u0301cho", 12),
     ],
 )
-def test_rule_follows_full_wrapped_names_within_terminal_cell_width(
+def test_rule_precedes_full_wrapped_names_within_terminal_cell_width(
     own_message, name, width
 ):
     sender = f"agent:{name}"
@@ -77,12 +77,9 @@ def test_rule_follows_full_wrapped_names_within_terminal_cell_width(
     )
     lines = console.render_lines(block)
     text_lines = ["".join(segment.text for segment in line) for line in lines]
-    rule_index = next(i for i, line in enumerate(text_lines) if "┄" in line)
-    header = "".join(text_lines[:rule_index])
-    assert name == "".join(header.split()).replace("•", "")
-    assert text_lines[rule_index].strip(" ") == "┄" * text_lines[rule_index].count("┄")
-    assert text_lines[rule_index].endswith("┄")
-    assert "body" == "".join("".join(text_lines[rule_index + 1 :]).split())
+    assert text_lines[0].strip(" ") == "┄" * text_lines[0].count("┄")
+    assert text_lines[0].endswith("┄")
+    assert name + "body" == "".join("".join(text_lines[1:]).split()).replace("•", "")
     text = "".join(text_lines)
     assert "…" not in text
     assert all(sum(segment.cell_length for segment in line) <= width for line in lines)

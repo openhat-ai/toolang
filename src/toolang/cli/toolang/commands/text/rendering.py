@@ -91,8 +91,8 @@ def message_block(
         )
     rows = (
         Group(
-            header,
             Padding(Rule(characters="┄", style="bright_black dim"), (0, 0, 0, padding)),
+            header,
             content,
         )
         if agent

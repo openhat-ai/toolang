@@ -98,7 +98,7 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Changed
 
-- Interactive Text draws a dim bright-black `┄` rule on its own row below
+- Interactive Text draws a dim bright-black `┄` rule on its own row above
   each agent's complete name, starting at the body inset and reaching the
   message area's right edge; it is present even at narrow widths and with
   wrapped names. Left-aligned messages, including human bubbles, now fill the
