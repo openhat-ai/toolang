@@ -8,8 +8,10 @@ from unittest.mock import AsyncMock
 from fakeredis import FakeAsyncValkey, FakeServer
 import pytest
 from prompt_toolkit.application import create_app_session
+from prompt_toolkit.application.current import set_app
 from prompt_toolkit.data_structures import Size
 from prompt_toolkit.input import create_pipe_input
+from prompt_toolkit.layout.controls import BufferControl
 from prompt_toolkit.output import DummyOutput
 from rich.console import Console
 from rich.color import Color
@@ -88,6 +90,83 @@ def test_team_lists_groups_and_interactive_requires_tty(
     assert cli.main(["--root", str(tmp_path), "alice,", "hello"]) != 0
 
 
+def test_human_cannot_send_into_agent_dm(tmp_path, capsys, messaging_cli):
+    async def prepare():
+        async with messaging_cli() as client:
+            await client.register("bob", "bryan", "bob-token")
+
+    asyncio.run(prepare())
+    assert cli.main(["--root", str(tmp_path), "text", "dm_alice_bob", "join"]) == 1
+    assert "read-only" in capsys.readouterr().err.lower()
+
+    async def check():
+        async with messaging_cli() as client:
+            assert await client.history("dm_alice_bob") == []
+
+    asyncio.run(check())
+
+
+def test_human_observer_sees_both_agents_left_without_a_composer(
+    tmp_path, messaging_cli, monkeypatch
+):
+    async def prepare():
+        async with messaging_cli() as client:
+            await client.register("bob", "bryan", "bob-token")
+            for sender in ("alice", "bob"):
+                await client.send(
+                    "dm_alice_bob", sender=sender, agent=True, body="hello"
+                )
+            await client.redis.xadd(
+                group_key("dm_alice_bob", "msg"),
+                {"data": Message.create("bryan", "old human message").encode()},
+            )
+
+    asyncio.run(prepare())
+    monkeypatch.setattr(text.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(text.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(text, "resolve_launcher", lambda **kwargs: None)
+    monkeypatch.setenv("TOOLANG_COLOR_SCHEME", "dark")
+    output = StringIO()
+    monkeypatch.setattr(
+        tui,
+        "terminal_console",
+        lambda *, width: Console(file=output, width=width, color_system=None),
+    )
+
+    async def write_now(write):
+        write()
+
+    monkeypatch.setattr(tui, "run_in_terminal", write_now)
+
+    async def inspect_ui(ui):
+        ui.agents = {"alice", "bob"}
+        await ui.show(await ui.client.history(ui.group))
+        lines = output.getvalue().splitlines()
+        assert next(line for line in lines if line.strip() == "alice").startswith(
+            "alice"
+        )
+        assert next(line for line in lines if line.strip() == "bob").startswith("bob")
+        assert "old human message" in output.getvalue()
+        with set_app(ui.app):
+            ui.app.renderer.render(ui.app, ui.app.layout)
+            assert not any(
+                isinstance(control, BufferControl)
+                for control in ui.app.layout.find_all_controls()
+            )
+            assert "@alice ↔ @bob · Read-only" in str(ui.status_text())
+            assert "Enter send" not in str(ui.status_text())
+            await ui.send("accidental send")
+            assert len(await ui.client.history(ui.group)) == 3
+            await ui.app.cancel_and_wait_for_background_tasks()
+
+    monkeypatch.setattr(TextTui, "run", inspect_ui)
+    with (
+        create_pipe_input() as pipe,
+        create_app_session(input=pipe, output=DummyOutput()),
+    ):
+        assert cli.main(["--root", str(tmp_path), "text", "dm_alice_bob"]) == 0
+
+
 def test_team_directory_shows_existing_dms_presence_and_recent_previews(
     tmp_path, capsys, messaging_cli, monkeypatch
 ):
@@ -162,7 +241,14 @@ def test_failed_send_preserves_draft_and_success_does_not_erase_new_typing(
             create_app_session(input=pipe, output=DummyOutput()),
         ):
             client = AsyncMock()
-            ui = TextTui(client, "all", "bryan", tmp_path, DARK_TERMINAL_SURFACES)
+            ui = TextTui(
+                client,
+                "all",
+                "bryan",
+                tmp_path,
+                DARK_TERMINAL_SURFACES,
+                read_only=False,
+            )
             notice = AsyncMock()
             monkeypatch.setattr(ui, "print_notice", notice)
             ui.prompt.replace_input("original")
@@ -196,7 +282,7 @@ def test_narrow_rendering_and_terminal_escape_removal(width, sender):
     output = StringIO()
     console = Console(file=output, width=width, color_system=None)
     console.print(
-        message_block(message, "all", {"alice"}, width, DARK_TERMINAL_SURFACES)
+        message_block(message, "bryan", {"alice"}, width, DARK_TERMINAL_SURFACES)
     )
     rendered = output.getvalue()
     assert "secret" not in rendered and "\x1b" not in rendered
@@ -205,21 +291,21 @@ def test_narrow_rendering_and_terminal_escape_removal(width, sender):
     assert display_text("a\x08b\r\x00c") == "abc"
 
 
-@pytest.mark.parametrize("group", ["all", "dm_alice", "dm_alice_bob"])
-def test_left_message_marker_has_aligned_header_and_wrapped_body(group):
+@pytest.mark.parametrize("identity", ["bryan", "bob"])
+def test_left_message_marker_has_aligned_header_and_wrapped_body(identity):
     output = StringIO()
     console = Console(file=output, width=40, color_system=None)
     console.print(
         message_block(
             Message.create("alice", "word " * 20 + "\n\n**Last paragraph**"),
-            group,
+            identity,
             {"alice", "bob"},
             40,
             DARK_TERMINAL_SURFACES,
         )
     )
     lines = output.getvalue().splitlines()
-    assert lines[0].rstrip() == "  alice"
+    assert lines[0].rstrip() == "alice"
     assert lines[1].startswith("• word")
     assert all(line.startswith("  ") for line in lines[2:] if line.strip())
     assert output.getvalue().count("•") == 1
@@ -227,13 +313,12 @@ def test_left_message_marker_has_aligned_header_and_wrapped_body(group):
     assert any(line.rstrip() == "  Last paragraph" for line in lines)
 
 
-@pytest.mark.parametrize("group", ["all", "dm_alice"])
-def test_owner_name_is_above_padded_background_at_top_right(group):
+def test_owner_name_is_above_padded_background_at_top_right():
     output = StringIO()
     console = Console(file=output, width=40, color_system=None)
     block = message_block(
         Message.create("bryan", "x" * 28 + "\nshort"),
-        group,
+        "bryan",
         {"alice"},
         40,
         DARK_TERMINAL_SURFACES,
@@ -259,6 +344,36 @@ def test_owner_name_is_above_padded_background_at_top_right(group):
     assert accents[0].style is not None
     assert accents[0].style.color == Color.parse("bright_cyan")
     assert accents[0].style.dim is False
+
+
+@pytest.mark.parametrize("identity", ["alice", "bryan"])
+@pytest.mark.parametrize("sender", ["alice", "bob", "bryan", "visitor"])
+def test_message_side_follows_identity_and_name_aligns_with_marker(identity, sender):
+    output = StringIO()
+    console = Console(file=output, width=40, color_system=None)
+    agent = sender in {"alice", "bob"}
+    block = message_block(
+        Message.create(sender, "first\n\nlast"),
+        identity,
+        {"alice", "bob"},
+        40,
+        DARK_TERMINAL_SURFACES,
+    )
+    console.print(block)
+    lines = output.getvalue().splitlines()
+    marker = "•" if agent else "▮"
+    body = next(line for line in lines if marker in line)
+    if sender == identity:
+        assert lines[0].endswith(sender)
+        assert body.index(marker) == 39
+    else:
+        assert lines[0].startswith(sender)
+        assert body.startswith(marker + " first")
+    assert output.getvalue().count(marker) == 1
+    background = any(
+        segment.style and segment.style.bgcolor for segment in console.render(block)
+    )
+    assert background == (not agent)
 
 
 @pytest.mark.parametrize("configured_width", [None, "72"])
@@ -301,7 +416,7 @@ def test_interactive_messages_use_chat_width_after_resize(
             assert all(len(line) <= limit for line in lines)
             assert output.getvalue().split().count("word") == 90
             assert lines[0].index(sender) == (
-                limit - len(sender) if sender == "bryan" else 2
+                limit - len(sender) if sender == "bryan" else 0
             )
 
     monkeypatch.setattr(TextTui, "run", render_messages)
@@ -351,7 +466,14 @@ def test_follow_reconnects_from_last_displayed_id_without_replaying_history(
                 asyncio.CancelledError(),
             ]
             client.check_cursor.return_value = None
-            ui = TextTui(client, "all", "bryan", tmp_path, DARK_TERMINAL_SURFACES)
+            ui = TextTui(
+                client,
+                "all",
+                "bryan",
+                tmp_path,
+                DARK_TERMINAL_SURFACES,
+                read_only=False,
+            )
             shown = []
 
             async def show(entries):

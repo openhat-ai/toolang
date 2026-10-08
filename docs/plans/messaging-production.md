@@ -39,16 +39,17 @@ too team                 # List all existing conversations, including DMs.
 - Message: Stream field `data` contains `{id, sender, body, in_reply_to, origin}`. Only the shared core creates/validates envelopes and writes messages.
 - Registration prepares `all` and owner DMs; agent DMs materialize on first use. Discover through Valkey, including remote agents. Preserve offline membership; token-check presence renewal/removal and reject duplicate live identities.
 - Agent tools access joined groups; owners can inspect groups without joining. No access to other agents' threads.
+- DMs have exactly two sending participants. Humans may observe agent DMs but cannot send into them; use a custom group for a three-person conversation. Keep existing messages and drafts. Enforce the same rule in messaging core, one-shot CLI sends, and interactive Text.
 - Process bounded, serial batches with per-group prior context/results; skip own messages and record/skip failed handlers. Reply to the source group unless explicitly redirected; substantial work may spawn.
 - Reconnect reads; uncertain sends report "not confirmed" without automatic retry. Preserve drafts and send receipts. Bound retention; expose checkpoint/history gaps. No exactly-once or permanent-history guarantee.
 
 ## Text features
 
-- Human: control-bar style on the right. Agent: model-output style on the left. Opposite-side gutters; body text stays left-aligned.
-- Agent DM: model-output style on both sides; sorted participants have fixed left/right positions.
+- Align the current identity's messages right and every other sender left. Human messages have backgrounds; agent messages use model-output styling on either side. Body text stays left-aligned with two-cell horizontal padding, names above the outer edge, and a marker in the outer padding on the first body line.
+- Human observers see both agents on the left, a read-only footer, and no input box. Owner DMs are also read-only for humans outside their two participants. Text's CLI identity remains human; an agent-identity CLI option is outside this change.
 - Bottom live input; finalize into scrollback. Catch up retained history, then follow without duplicate or missing entries.
 - Input, footer, and messages share the configured maximum width. Keep one external separator row and batch scrollback writes. Names use normal foreground, with agent names bold. Preserve message padding and first-body-line markers.
-- Footer: friendly conversation name, connection state, transient `Sent` for two seconds, and keyboard hints. Reconnection stays in the footer; actionable errors retain their detailed notice and draft. Normal status omits message UUIDs.
+- Footer: `@alice`, `@alice ↔ @bob`, `#dev`, or `#all`, followed by `Read-only` when observing, connection state, transient `Sent` for two seconds, and applicable keyboard hints. Reconnection stays in the footer; actionable errors retain their detailed notice and draft. Normal status omits message UUIDs.
 - tmux: session per root/connection/human, window per group; reopen by identity. Keep drafts/history independent. Outside tmux, run in the current terminal. Copy mode handles history browsing. Preserve existing Chat behavior.
 
 ## Delivery checklist
@@ -59,5 +60,6 @@ too team                 # List all existing conversations, including DMs.
 - [x] Keep default tests offline; run isolated Valkey/tmux checks separately and complete [repository verification](../../AGENTS.md#verification).
 - [x] Update usage docs and generate the changelog through `too aide.too update_changelog`; leave the Textual prototype outside the production branch.
 - Follow-up acceptance: input backgrounds remain continuous through resize/clear; footer fits narrow terminals; reconnect does not add scrollback notices; directory includes existing DMs, sorts correctly, and tolerates malformed previews. Verify isolated terminal startup/history and repainting.
+- DM acceptance: a human observer cannot send through CLI, TUI, or messaging core; member agents can still exchange messages. Existing history/drafts survive. Verify both agent messages align left for observers, self messages align right for either identity type, and names align with markers in narrow and wide terminals.
 
 No events, `coord`, authentication, managed Valkey, or coordination guarantees. Experimental data is not retained or migrated. The previous prototype is reference material only; implementation starts from origin/main.

@@ -250,6 +250,10 @@ class MessagingClient:
             raise MessagingError("Human name conflicts with a registered agent")
         if agent and sender not in agents:
             raise MessagingError("Agent is not registered for messaging")
+        if not conversation(group).allows_sender(sender, agents):
+            raise MessagingError(
+                "This DM is read-only for nonparticipants; use a group conversation to join"
+            )
         try:
             sid = await self.redis.execute_command(
                 "EVAL",

@@ -250,6 +250,63 @@ def test_real_text_terminal_sends_reads_and_reuses_tmux(valkey, tmp_path):
                     thread_id="all", argv=[*argv[:-1], "all"], directory=str(tmp_path)
                 )
             assert len(session.windows) == 2
+
+            async def prepare_dm():
+                async with MessagingClient(valkey) as client:
+                    await client.register("bob", "owner", "bob-token")
+                    for sender in ("alice", "bob"):
+                        await client.send(
+                            "dm_alice_bob",
+                            sender=sender,
+                            agent=True,
+                            body="agent greeting",
+                        )
+
+            asyncio.run(prepare_dm())
+            with suppress(TmuxPlacementError):
+                launcher.place_chat(
+                    thread_id="dm_alice_bob",
+                    argv=[*argv[:-1], "dm_alice_bob"],
+                    directory=str(tmp_path),
+                )
+            observer = session.windows[-1].panes[0]
+
+            def observed_screen():
+                return "\n".join(observer.capture_pane(start=-200))
+
+            for _ in range(300):
+                if "Read-only · Connected" in observed_screen():
+                    break
+                time.sleep(0.02)
+            observed = observed_screen()
+            assert "@alice ↔ @bob · Read-only · Connected" in observed, observed
+            assert "Write a message" not in observed and "Enter send" not in observed
+            assert any(line.startswith("alice") for line in observed.splitlines())
+            assert any(line.startswith("bob") for line in observed.splitlines())
+            observer.send_keys("human cannot join this DM", enter=True)
+
+            async def agent_reply():
+                async with MessagingClient(valkey) as client:
+                    await client.send(
+                        "dm_alice_bob", sender="bob", agent=True, body="still receiving"
+                    )
+
+            asyncio.run(agent_reply())
+            for _ in range(300):
+                if "still receiving" in observed_screen():
+                    break
+                time.sleep(0.02)
+            assert "still receiving" in observed_screen(), observed_screen()
+
+            async def unchanged_participants():
+                async with MessagingClient(valkey) as client:
+                    entries = await client.history("dm_alice_bob")
+                    assert [
+                        Message.decode(fields["data"]).sender for _, fields in entries
+                    ] == ["alice", "bob", "bob"]
+
+            asyncio.run(unchanged_participants())
+            observer.send_keys("C-q", enter=False)
             target.send_keys("C-q", enter=False)
         finally:
             tmux.kill()

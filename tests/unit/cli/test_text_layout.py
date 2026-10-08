@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from io import StringIO
 from unittest.mock import AsyncMock
 
+import pytest
 from prompt_toolkit.application import create_app_session
 from prompt_toolkit.application.current import set_app
 from prompt_toolkit.data_structures import Size
@@ -27,11 +28,16 @@ class TerminalOutput(DummyOutput):
 
 
 @asynccontextmanager
-async def text_app(tmp_path):
+async def text_app(tmp_path, *, group="dm_alice", read_only=False):
     output = TerminalOutput()
     with create_app_session(input=DummyInput(), output=output):
         app = tui.TextTui(
-            AsyncMock(), "dm_alice", "bryan", tmp_path, LIGHT_TERMINAL_SURFACES
+            AsyncMock(),
+            group,
+            "bryan",
+            tmp_path,
+            LIGHT_TERMINAL_SURFACES,
+            read_only=read_only,
         )
         with set_app(app.app):
             try:
@@ -145,7 +151,7 @@ def test_footer_expires_sent_status_and_prioritizes_reconnection(tmp_path, monke
             def footer():
                 return fragment_list_to_text(ui.status_text())
 
-            assert "alice · Connected · Sent" in footer()
+            assert "@alice · Connected · Sent" in footer()
             assert "Enter send" in footer()
             monkeypatch.setattr(tui, "monotonic", lambda: 102.0)
             assert "Sent" not in footer()
@@ -157,5 +163,38 @@ def test_footer_expires_sent_status_and_prioritizes_reconnection(tmp_path, monke
                 assert len(footer()) <= width
                 if width >= 30:
                     assert "Ctrl+Q quit" in footer()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "group,label,read_only",
+    [
+        ("all", "#all", False),
+        ("gc_dev", "#dev", False),
+        ("dm_alice", "@alice", False),
+        ("dm_alice_bob", "@alice ↔ @bob", True),
+    ],
+)
+def test_footer_identifies_conversation_kind(tmp_path, group, label, read_only):
+    async def scenario():
+        async with text_app(tmp_path, group=group, read_only=read_only) as (ui, _):
+            footer = fragment_list_to_text(ui.status_text())
+            assert footer.startswith(label + " · ")
+            assert ("Read-only" in footer) == read_only
+            assert ("Enter send" in footer) == (not read_only)
+
+    asyncio.run(scenario())
+
+
+def test_read_only_view_preserves_previous_draft(tmp_path):
+    (tmp_path / "draft.txt").write_text("unsent message")
+
+    async def scenario():
+        async with text_app(tmp_path, group="dm_alice_bob", read_only=True) as (ui, _):
+            assert not ui.prompt.buffer.text
+            await ui.send("accidental send")
+            ui.save_draft()
+            assert (tmp_path / "draft.txt").read_text() == "unsent message"
 
     asyncio.run(scenario())

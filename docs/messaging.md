@@ -23,6 +23,7 @@ Set `[messaging].enabled = false` in root or agent configuration to opt out. Res
 too start alice
 too team                       # Existing conversations, including owner and agent DMs.
 too text alice                 # Owner DM; interactive input.
+too text dm_alice_bob          # Observe the two agents' DM (read-only).
 too text dev                   # Custom group gc_dev.
 too text all hello             # Send and exit after acknowledgment.
 too text alice -- hello -sdf    # Flags after the target are message text.
@@ -34,9 +35,11 @@ too text --group alice hello
 
 Interactive Text keeps a live input below ordinary scrollback. Enter sends; Ctrl+J inserts a newline; Ctrl+P/Ctrl+N browse sent input; Ctrl+Q exits. The footer shows the conversation name, connection state, and a brief `Sent` confirmation. Reconnection updates the footer; failed sends show details and preserve the draft. In tmux, each root/connection/human has a session and each conversation has a reusable window; switch windows to switch conversations. Use tmux copy mode for history. `TOOLANG_TMUX=0` keeps Text in the invoking pane.
 
+Text uses the configured human identity. DMs accept messages only from their two participants: other humans can observe them, with `Read-only` in the footer and no input box. One-shot sends enforce the same rule. Existing messages and drafts remain intact; use a shared custom group or `all` to join the discussion. Footer labels are `@alice`, `@alice ↔ @bob`, `#dev`, and `#all`.
+
 Messages, input, and footer align within Chat's maximum content width (120 columns by default, configurable with `TOOLANG_PROGRESS_MAX_WIDTH`), capped by the current terminal width.
 The input reserves an extra blank row above its background, in addition to the message separator; terminals shorter than five rows omit this gap to preserve editing space.
-Left-aligned names and body text start in column 3, with a `•` marker on the first body line. Owner names sit above the message background at the top right; the body has two cells of horizontal padding on each side and one row above and below. The first owner body line has Chat's cyan `▮` marker in the outermost right padding cell. Extremely narrow terminals reduce horizontal decoration to preserve content.
+The current identity's messages align right; all other senders align left, including both agents in an observed DM. Names sit above the outer edge, aligned with the first-body-line marker. Bodies have two cells of horizontal padding; the outer padding holds a `•` for agents or Chat's cyan `▮` for humans. Human messages also have a background and one row of internal padding above and below; agent messages use model-output styling on either side. Extremely narrow terminals reduce horizontal decoration to preserve content.
 
 ## Conversations and keys
 

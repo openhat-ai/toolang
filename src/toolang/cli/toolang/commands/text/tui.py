@@ -24,9 +24,9 @@ from toolang.cli.common.terminal_surfaces import TerminalSurfaces
 from toolang.common.files import atomic_write_text
 from toolang.messaging.client import MessagingClient
 from toolang.messaging.errors import MessagingError, SendUnconfirmed
-from toolang.messaging.schemas import Message, conversation
+from toolang.messaging.schemas import Message
 
-from .rendering import display_text, message_block
+from .rendering import conversation_label, display_text, message_block
 
 
 class TextTui:
@@ -38,10 +38,12 @@ class TextTui:
         state: Path,
         surfaces: TerminalSurfaces,
         *,
+        read_only: bool,
         max_width: int = DEFAULT_MAX_PROGRESS_WIDTH,
     ):
         self.client, self.group, self.human = client, group, human
         self.surfaces = surfaces
+        self.read_only = read_only
         self.max_width = max_width
         self.draft = state / "draft.txt"
         self.connection = "Connecting…"
@@ -60,10 +62,10 @@ class TextTui:
             ),
             get_width=self.content_width,
         )
-        if self.draft.exists():
+        if not read_only and self.draft.exists():
             self.prompt.replace_input(self.draft.read_text(encoding="utf-8"))
         keys = KeyBindings()
-        focus = has_focus(self.prompt.buffer)
+        focus = has_focus(self.prompt.buffer) & Condition(lambda: not self.read_only)
 
         @keys.add("enter", filter=focus)
         def send(_event: Any) -> None:
@@ -93,7 +95,10 @@ class TextTui:
 
         @keys.add("c-c")
         @keys.add("c-q")
-        @keys.add("c-d", filter=Condition(lambda: not self.prompt.has_input()))
+        @keys.add(
+            "c-d",
+            filter=Condition(lambda: self.read_only or not self.prompt.has_input()),
+        )
         def quit_app(_event: Any) -> None:
             self.app.exit()
 
@@ -101,26 +106,28 @@ class TextTui:
         def clear(_event: Any) -> None:
             self.app.renderer.clear()
 
+        footer = Window(
+            FormattedTextControl(self.status_text, focusable=True),
+            height=1,
+            wrap_lines=False,
+        )
+        controls = (
+            []
+            if read_only
+            else [Window(height=self._input_gap_rows), self.prompt.container()]
+        )
         self.app: Application[None] = Application(
             layout=Layout(
                 VSplit(
                     [
                         HSplit(
-                            [
-                                Window(height=self._input_gap_rows),
-                                self.prompt.container(),
-                                Window(
-                                    FormattedTextControl(self.status_text),
-                                    height=1,
-                                    wrap_lines=False,
-                                ),
-                            ],
+                            [*controls, footer],
                             width=self.content_width,
                         ),
                     ],
                     align=HorizontalAlign.LEFT,
                 ),
-                focused_element=self.prompt.buffer,
+                focused_element=footer if read_only else self.prompt.buffer,
             ),
             key_bindings=keys,
             full_screen=False,
@@ -163,10 +170,16 @@ class TextTui:
         ):
             status = ""
         state = self.connection + (f" · {status}" if status else "")
-        label = conversation(self.group).label
+        if self.read_only:
+            state = f"Read-only · {state}"
+        label = conversation_label(self.group)
         left = " ".join(display_text(f" {label} · {state}").split())
         width = self.content_width()
-        hint = "Enter send · Ctrl+J newline · Ctrl+Q quit"
+        hint = (
+            "Ctrl+Q quit"
+            if self.read_only
+            else "Enter send · Ctrl+J newline · Ctrl+Q quit"
+        )
         if display_width(left) + display_width(hint) + 2 > width:
             hint = "Ctrl+Q quit" if width >= 30 else ""
         left = truncate(left, max(1, width - display_width(hint) - (2 if hint else 0)))
@@ -183,6 +196,8 @@ class TextTui:
         ]
 
     def save_draft(self) -> None:
+        if self.read_only:
+            return
         try:
             atomic_write_text(self.draft, self.prompt.buffer.text)
         except OSError as exc:
@@ -190,6 +205,8 @@ class TextTui:
         self.invalidate()
 
     async def send(self, body: str) -> None:
+        if self.read_only:
+            return
         self.status = "Sending…"
         self.invalidate()
         try:
@@ -235,7 +252,7 @@ class TextTui:
                 else:
                     console.print(
                         message_block(
-                            message, self.group, self.agents, width, self.surfaces
+                            message, self.human, self.agents, width, self.surfaces
                         )
                     )
 

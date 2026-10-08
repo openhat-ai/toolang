@@ -19,6 +19,7 @@ from toolang.cli.common.messaging import settings
 from toolang.cli.common.tmux import resolve_launcher
 from toolang.messaging.client import MessagingClient
 from toolang.messaging.errors import MessagingError
+from toolang.messaging.schemas import conversation
 
 
 def text_identity(root: Path, connection: str, human: str) -> str:
@@ -107,8 +108,17 @@ def text_command(
 
         async def interactive() -> None:
             async with MessagingClient(config) as client:
+                agents = await client.agents()
+                if human in agents:
+                    raise MessagingError("Human name conflicts with a registered agent")
                 await TextTui(
-                    client, resolved, human, state, surfaces, max_width=max_width
+                    client,
+                    resolved,
+                    human,
+                    state,
+                    surfaces,
+                    read_only=not conversation(resolved).allows_sender(human, agents),
+                    max_width=max_width,
                 ).run()
 
         asyncio.run(interactive())

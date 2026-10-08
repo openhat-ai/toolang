@@ -31,53 +31,42 @@ def display_text(value: str) -> str:
 
 def message_block(
     message: Message,
-    group: str,
+    identity: str,
     agents: set[str],
     width: int,
     surfaces: TerminalSurfaces,
 ) -> RenderableType:
-    info = conversation(group)
     agent = message.sender in agents
-    right = message.sender == info.names[-1] if info.kind == "dm" else not agent
+    right = message.sender == identity
     width = max(1, width)
     gutter = min(8, width // 5)
     body_width = max(1, width - gutter)
     header = Text(
         display_text(message.sender),
         style="bold" if agent else "not dim",
-        justify="right" if right and not agent else "left",
+        justify="right" if right else "left",
     )
     body = display_text(message.body)
-    if agent:
-        content = Markdown(body, hyperlinks=False)
-    else:
-        padding = min(2, (body_width - 1) // 2)
-        content = Text(body)
-        if padding:
-            columns = Table.grid(padding=0, expand=True)
-            columns.add_column(ratio=1, overflow="fold")
-            columns.add_column(width=padding, no_wrap=True)
-            columns.add_row(
-                content,
-                Text(
-                    CONTROL_BAR_MARK,
-                    style=f"{RUN_CONTROL_ACCENT} not dim",
-                    justify="right",
-                ),
-            )
-            content = columns
+    content: RenderableType = Markdown(body, hyperlinks=False) if agent else Text(body)
+    padding = min(2, (body_width - 1) // 2)
+    if padding:
+        marker = Text(
+            "•" if agent else CONTROL_BAR_MARK,
+            style="dim" if agent else f"{RUN_CONTROL_ACCENT} not dim",
+            justify="right" if right else "left",
+        )
+        columns = Table.grid(padding=0, expand=True)
+        columns.add_column(width=padding, no_wrap=True)
+        columns.add_column(ratio=1, overflow="fold")
+        columns.add_column(width=padding, no_wrap=True)
+        columns.add_row("" if right else marker, content, marker if right else "")
+        content = columns
+    if not agent:
         content = Padding(
             content,
-            (1, 0, 1, padding),
+            (1, 0, 1, 0),
             style=f"not dim on {surfaces.input_background}",
         )
-    if not right and body_width > 2:
-        columns = Table.grid(padding=0, expand=True)
-        columns.add_column(width=2, no_wrap=True)
-        columns.add_column(ratio=1, overflow="fold")
-        columns.add_row(Text("•", style="dim"), content)
-        content = columns
-        header = Padding(header, (0, 0, 0, 2))
     return Padding(
         Align(
             Constrain(Group(header, content), body_width),
@@ -86,3 +75,10 @@ def message_block(
         ),
         (0, 0, 1, 0),
     )
+
+
+def conversation_label(group: str) -> str:
+    info = conversation(group)
+    if info.kind in {"public", "group"}:
+        return f"#{info.label}"
+    return " ↔ ".join(f"@{name}" for name in info.names)

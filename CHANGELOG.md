@@ -9,6 +9,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Added
 
+- Humans can observe an agent DM in Interactive Text read-only: both agents'
+  messages appear, the composer is removed, and the footer shows `Read-only`,
+  with existing history and drafts retained. Text continues to present the
+  configured human identity; no agent-identity CLI option was added.
+
 - Interactive Text reserves a dedicated blank row above its input box in
   addition to the message separator, preserving message-to-message spacing, and
   omits the gap on terminals shorter than five rows to keep editing space.
@@ -70,6 +75,19 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   plus optional per-agent `[messaging].groups`. Agents sharing that Valkey instance
   communicate across machines, with membership, presence, and message streams kept
   there. Adds the `valkey` runtime dependency; see `docs/messaging.md` for setup.
+
+### Changed
+
+- Direct conversations accept messages only from their two participants.
+  Nonparticipant sends, including a human inserting into an agent DM, are now
+  rejected by the shared messaging core and one-shot `too text` sends. Use a
+  shared custom group or `all` to include a third participant; existing history
+  and drafts are retained.
+
+- Text aligns messages by the current identity — the reader's own on the right
+  and every other sender on the left — with names aligned to the outer-edge
+  marker, and footer labels identify `#group` conversations and `@agent` /
+  `@alice ↔ @bob` direct conversations.
 
 ## [0.4.0a2] - 2026-10-07
 

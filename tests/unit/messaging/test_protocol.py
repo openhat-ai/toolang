@@ -64,6 +64,33 @@ def test_message_validation():
     assert stream_id("100-10") > stream_id("100-9")
 
 
+def test_direct_messages_allow_only_the_two_participants():
+    async def scenario():
+        redis = FakeAsyncValkey(decode_responses=True)
+        async with MessagingClient(
+            MessagingConfig("redis://test"), client=redis
+        ) as client:
+            await client.register("alice", "owner", "a")
+            await client.register("bob", "owner", "b")
+            for group, sender, agent in (
+                ("dm_alice_bob", "owner", False),
+                ("dm_alice", "visitor", False),
+            ):
+                with pytest.raises(MessagingError, match="read-only"):
+                    await client.send(group, sender=sender, agent=agent, body="join")
+                assert await client.history(group) == []
+            await client.send("dm_alice_bob", sender="alice", agent=True, body="hello")
+            await client.send("dm_alice_bob", sender="bob", agent=True, body="reply")
+            await client.send("dm_alice", sender="owner", body="owner message")
+            await client.send(
+                "dm_alice", sender="alice", agent=True, body="agent reply"
+            )
+            assert len(await client.history("dm_alice_bob")) == 2
+            assert len(await client.history("dm_alice")) == 2
+
+    asyncio.run(scenario())
+
+
 def test_registration_offline_dms_membership_and_leases():
     async def scenario():
         redis = FakeAsyncValkey(decode_responses=True)
@@ -113,7 +140,7 @@ def test_registration_offline_dms_membership_and_leases():
                 "alice",
                 "bob",
             }
-            with pytest.raises(ResponseError, match="not a member"):
+            with pytest.raises(MessagingError, match="read-only"):
                 await a.send("dm_bob", sender="alice", agent=True, body="private")
             assert {g["group"] for g in await a.contacts(agent="alice")} == {
                 "all",

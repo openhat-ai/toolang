@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 import json
 import re
@@ -47,6 +48,14 @@ class Conversation:
     @property
     def label(self) -> str:
         return "all" if self.kind == "public" else " ↔ ".join(self.names)
+
+    def allows_sender(self, sender: str, agents: Mapping[str, str]) -> bool:
+        """Direct conversations admit only their named participants."""
+        if self.kind == "dm":
+            return sender in self.names
+        if self.kind == "owner":
+            return sender in self.names or sender == agents.get(self.names[0])
+        return True
 
 
 def conversation(group: str) -> Conversation:
