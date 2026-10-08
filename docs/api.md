@@ -686,6 +686,10 @@ or when Chat attaches to an existing
 AgentServer. Chat leaves the server running on exit; use `too stop <agent>` to
 stop it.
 
+For execution commands, `--catalog` and `--compact-model` apply only when
+starting a runtime. Stop the existing agent before changing those startup
+settings; an attached command rejects them rather than ignoring them.
+
 Commands that start a new guest accept `--dev [PATH]`. This includes `serve`,
 `start`, `chat`, Script `run`, `retry`, and `rerun`. Omitting `--dev` keeps the
 existing package selection. Bare `--dev` uses `.` (the process working directory,

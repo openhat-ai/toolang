@@ -129,6 +129,7 @@ def chat_command(
                 # Startup options have been applied; the TUI now attaches.
                 dev = None
                 compact_model = None
+                model_catalog = None
             else:
                 with open_execution(ctx, required=True) as resources:
                     if (

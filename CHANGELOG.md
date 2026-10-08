@@ -94,6 +94,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Changed
 
+- Execution commands apply `--catalog` and `--compact-model` only when
+  starting an agent runtime, and now reject `--catalog` when attaching to
+  a running one instead of ignoring it; stop the agent before changing
+  those startup settings.
+
 - `too chat`, `too retry`, `too rerun`, `too steer`, `too cancel`, `too fork`,
   and `too rewind` now ensure a persistent agent runtime and use its API
   instead of embedded host execution. The runtime starts when needed, is
@@ -129,6 +134,10 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   direct conversation's `agent:alice ↔ agent:bob` participants. (#708)
 
 ### Fixed
+
+- `too retry` and `too rerun` keep an accepted run executing when observing
+  it fails and report the accepted run ID, instead of canceling it; only an
+  explicit interrupt or cancellation still cancels the accepted run.
 
 - The Hub now listens before backend access, reserving its endpoint so
   another process cannot claim the same port while startup is in

@@ -25,7 +25,7 @@ from toolang.cli.common.policy import (
 )
 from toolang.common.layout import AgentLayout
 from toolang.execution.client import RunClient, RunHandle
-from toolang.execution.remote import RemoteRunClient
+from toolang.execution.remote import RemoteRunClient, RemoteRunClientError
 from toolang.execution.inspection.history import RunHistory
 from toolang.execution.records import (
     RunControlPayload,
@@ -472,9 +472,15 @@ async def _execute_retry_or_rerun(
             )
             try:
                 return await handle.wait()
-            except BaseException:
+            except (asyncio.CancelledError, KeyboardInterrupt):
                 await _cancel_restart(client, handle, operation=kind)
                 raise
+            except RemoteRunClientError as exc:
+                raise RemoteRunClientError(
+                    f"{exc}; inspect accepted run {handle.run_id}",
+                    status_code=exc.status_code,
+                    detail=exc.detail,
+                ) from exc
     finally:
         if tracer is not None:
             tracer.close()

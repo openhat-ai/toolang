@@ -158,6 +158,10 @@ def _prepare_agent_server(
             raise AgentServerAcquisitionError(
                 "--compact-model only applies when starting a runtime; stop the agent first"
             )
+        if model_catalog is not None:
+            raise AgentServerAcquisitionError(
+                "--catalog only applies when starting a runtime; stop the agent first"
+            )
         if dev is not None:
             raise AgentServerAcquisitionError(
                 f"--dev only applies when starting a new guest; agent {layout.name} "

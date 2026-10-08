@@ -97,8 +97,15 @@ def _set_status(
     monkeypatch.setattr(agent_server.agents, "AgentProcess", Process)
 
 
-def test_compact_override_cannot_silently_change_an_existing_runtime(
-    tmp_path, monkeypatch
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"compact_override": ModelOverride(identity="test/compact")},
+        {"model_catalog": Path("alternate-catalog.json")},
+    ],
+)
+def test_startup_override_cannot_be_silently_ignored_by_an_existing_runtime(
+    tmp_path, monkeypatch, override
 ):
     layout = AgentLayout.resident(tmp_path, "alice")
     _set_status(
@@ -113,7 +120,7 @@ def test_compact_override_cannot_silently_change_an_existing_runtime(
             layout,
             sandbox=None,
             ui_base_url="https://ui.test",
-            compact_override=ModelOverride(identity="test/compact"),
+            **override,
         ):
             pytest.fail("existing runtime must not ignore startup overrides")
 

@@ -647,6 +647,7 @@ def test_cli_allocates_hosted_thread_before_launch_and_applies_startup_options_o
         assert captured["interactive"]["thread_id"] == "term_hosted"
         assert captured["interactive"]["dev"] is None
         assert captured["interactive"]["compact_model"] is None
+        assert captured["interactive"]["model_catalog"] is None
     else:
         assert "interactive" not in captured
     assert captured["argv"] == [
@@ -659,7 +660,6 @@ def test_cli_allocates_hosted_thread_before_launch_and_applies_startup_options_o
         "chat",
         "--thread",
         captured["thread_id"],
-        "--catalog=catalog.toml",
         "--sandbox=docker:cfg",
         "--allow=tools=a,b",
         "--default=runnable=agic:chat",

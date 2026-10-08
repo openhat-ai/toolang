@@ -110,7 +110,9 @@ adoption, thread creation, and result reads. A stream failure after acceptance i
 recovered from durable run detail without retrying the run or synthesizing
 missing `RunEvent` values. Closing Chat leaves the runtime running.
 Retry/rerun and steer/cancel/fork/rewind likewise ensure a hosted runtime and
-perform mutations through its API. Script lifecycle remains separate: an
+perform mutations through its API. A retry/rerun observation failure reports the
+accepted run ID without canceling execution; an explicit CLI interrupt requests
+cancellation. Script lifecycle remains separate: an
 inactive host runs embedded, and a script-created guest stops on exit.
 
 The process-local executor remains the execution engine:
