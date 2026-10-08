@@ -23,6 +23,7 @@ from toolang.cli.toolang.commands.chat.base import (
     RunDisconnected,
     RunRecovered,
 )
+from toolang.execution.events import RunObservation, RunSnapshot
 from toolang.execution.events import RunBegin, RunEnd, RunEvent, run_event_to_data
 from toolang.execution.schemas import (
     RunControlRefData,
@@ -785,7 +786,7 @@ def test_remote_chat_repeated_concrete_runs_do_not_list_models() -> None:
         expected_sandbox="host",
         transport=httpx.MockTransport(handler),
     )
-    events: list[RunEvent] = []
+    events: list[RunObservation] = []
     states: list[object] = []
     errors: list[str] = []
     try:
@@ -823,7 +824,7 @@ def test_remote_chat_repeated_concrete_runs_do_not_list_models() -> None:
     assert requests.count("/api/v1/runs/authored/stream") == 2
 
 
-def test_remote_chat_recovers_without_replaying_or_retrying(
+def test_remote_chat_falls_back_to_detail_without_resubmitting(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(remote, "_RECOVERY_DELAYS", (0.0, 0.0, 0.0))
@@ -852,6 +853,8 @@ def test_remote_chat_recovers_without_replaying_or_retrying(
         if request.url.path == "/api/v1/runs/authored/stream":
             submissions += 1
             return _stream(_begin())
+        if request.url.path == "/api/v1/runs/run_remote/stream":
+            return httpx.Response(503, json={"detail": "temporarily unavailable"})
         if request.url.path == "/api/v1/runs/run_remote":
             return httpx.Response(200, json=_json(next(details)))
         raise AssertionError(f"unexpected request: {request.method} {request.url}")
@@ -861,7 +864,7 @@ def test_remote_chat_recovers_without_replaying_or_retrying(
         expected_sandbox="host",
         transport=httpx.MockTransport(handler),
     )
-    events: list[RunEvent] = []
+    events: list[RunObservation] = []
     states: list[object] = []
     errors: list[str] = []
     try:
@@ -881,7 +884,7 @@ def test_remote_chat_recovers_without_replaying_or_retrying(
         session.close()
 
     assert submissions == 1
-    assert [type(item) for item in events] == [RunBegin]
+    assert [type(item) for item in events] == [RunBegin, RunSnapshot]
     assert [type(item) for item in states] == [
         RunAccepted,
         RunDisconnected,

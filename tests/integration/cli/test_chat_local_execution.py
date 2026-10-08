@@ -25,7 +25,7 @@ from toolang.base.types.policy import AgentCeiling, RunDefaults, RunPolicy
 from toolang.base.types.run import ModelCallResult
 from toolang.cli.toolang.commands.chat import local
 from toolang.cli.toolang.commands.chat.base import ChatExecutorMetadata
-from toolang.execution.events import RunEvent
+from toolang.execution.events import RunObservation
 from toolang.execution.inspection.history import RunHistory
 from toolang.execution.records import RunControlPayload, SteerControlPayload
 from toolang.execution.schemas import ControlInfo, RunRequest, RunnableRequest
@@ -472,11 +472,11 @@ agic chat(_: Part[]) -> Part[]:
         harness.setup.layout,
     )
     assert session.executor._sync_state == session.state_watcher.sync
-    events: list[RunEvent] = []
+    events: list[RunObservation] = []
     event_threads: list[int] = []
     errors: list[str] = []
 
-    def on_event(event: RunEvent) -> None:
+    def on_event(event: RunObservation) -> None:
         events.append(event)
         event_threads.append(threading.get_ident())
 

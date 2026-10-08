@@ -2,10 +2,9 @@
 
 Agreed architecture for stage 4 of [teaming](teaming.md), replacing the earlier
 live-only proposal. Stages 1–3 merged as #709, #708, and #710; this design merged
-as #711. Hosted CLI ownership merged as #712. The next implementation provides
-canonical cursor persistence, a bounded shared cache, and independent tracers; existing SSE
-reads this source with its live-only contract. Normalization/HTTP resume and
-teaming export follow. Resolve remaining choices before implementing their scope.
+as #711. Hosted CLI ownership merged as #712; canonical cursor persistence,
+the bounded cache, and independent tracers merged as #713. Local normalization,
+HTTP resume, and client adaptation are delivered together. Teaming export follows.
 
 ## Goal and ownership
 
@@ -236,6 +235,14 @@ shutdown wakes subscriptions before the server waits for streams; API cleanup
 only detaches observers. The runtime closes the canonical source after final
 executor persistence, with bounded observer/exporter drain. Cleanup is idempotent.
 
+Snapshot recovery is limited to 10,000 records, 16 MiB of raw rows and structural
+payloads, and five seconds of reconstruction. Its private SQLite connection closes
+before prefix delivery. Open normalization state is capped at 4,096 entities;
+transport holds only the bounded prefix and one canonical batch. Budget exhaustion
+fails the subscription without a checkpoint or a recovery restart loop.
+Control payloads and context markers are defined once in the
+[HTTP protocol](../api.md#run-and-thread-endpoints).
+
 ## Delivery, verification, and remaining choices
 
 Implement in order: resident CLI ownership/lifecycle, canonical cursor persistence
@@ -265,8 +272,7 @@ tests. Runtime PRs update the changelog through the existing runnable and run th
 [default checks](../../AGENTS.md#verification).
 
 Remaining choices: script lifecycle; stop-on-exit option/environment/config names
-and scope; snapshot budgets and transport buffering; exact prefill/checkpoint/error
-payload schemas, and request-ID reconciliation. Cache/batch budgets and cursor
+and scope; and request-ID reconciliation. Cache/batch budgets and cursor
 encoding are fixed above. The checkpoint commit rules and retry mutation semantics above are fixed. Hub
 storage/versioning/retention details are settled in stage 5. These are explicit
 follow-ups, not guarantees already provided by the current runtime.

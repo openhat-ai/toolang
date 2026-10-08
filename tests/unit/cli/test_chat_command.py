@@ -590,12 +590,16 @@ def test_scripted_chat_reports_a_failed_run(
     assert "provider failed" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize("snapshot", [False, True])
 def test_scripted_renderer_uses_model_step_output_without_deltas(
     capsys: pytest.CaptureFixture[str],
+    snapshot: bool,
 ) -> None:
+    from toolang.execution.events import RunSnapshot
+
     renderer = chat._ScriptedRunRenderer()
 
-    renderer.render(
+    observations = (
         StepEnd(
             step=StepRef.parse("run_success.1"),
             kind="model",
@@ -603,11 +607,25 @@ def test_scripted_renderer_uses_model_step_output_without_deltas(
             output=Output(
                 value_for_type("Part[]", (TextPart("complete answer"),)), "_"
             ),
-        )
+        ),
+        RunEnd(run="run_success", status="succeeded"),
     )
-    renderer.render(RunEnd(run="run_success", status="succeeded"))
+    if snapshot:
+        renderer.render(RunSnapshot(observations))
+    else:
+        for event in observations:
+            renderer.render(event)
 
     assert capsys.readouterr().out == "assistant: complete answer\n"
+    assert renderer.failure is None
+
+
+def test_scripted_snapshot_discards_an_invalidated_terminal_result() -> None:
+    from toolang.execution.events import RunSnapshot
+
+    renderer = chat._ScriptedRunRenderer()
+    renderer.render(RunEnd(run="run_retry", status="failed"))
+    renderer.render(RunSnapshot(()))
     assert renderer.failure is None
 
 

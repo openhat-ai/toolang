@@ -1146,3 +1146,22 @@ def test_script_context_separates_first_non_tty_compact_activity(prior_output) -
         expected.append("• Earlier output.")
     expected.append("✧ Compacting thread history")
     assert lines[1:] == expected
+
+
+def test_repeated_terminal_snapshot_does_not_print_output_or_footer_twice():
+    stream = StringIO()
+    presenter = ScriptRunPresenter(run_id="run_one", stream=stream)
+    events = (
+        _root_begin(),
+        RunEnd("run_one", "succeeded", finished_at="2026-01-01T00:00:02Z"),
+    )
+
+    async def scenario():
+        for event in events:
+            await presenter.on_event(event)
+        rendered = stream.getvalue()
+        await presenter.on_snapshot(events)
+        assert stream.getvalue() == rendered
+        presenter.close()
+
+    asyncio.run(scenario())

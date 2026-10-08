@@ -9,6 +9,20 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Added
 
+- Execution streams resume from a durable cursor: the run and retry/rerun POST
+  streams, `GET /api/v1/runs/{run_id}/stream`,
+  `GET /api/v1/threads/{thread_id}/stream`, and the new agent-scoped
+  `GET /api/v1/stream` accept `after=CURSOR` and emit SSE `id`s, so a client
+  can reconnect and continue after its last committed event instead of
+  repeating POST. Invalid or future cursors return `422` before admission.
+  Recovery replays retained events or rebuilds structure from records, bounded
+  to 10,000 records, 16 MiB, and five seconds, and otherwise ends the
+  subscription with `stream_error` code `snapshot_limit`.
+
+- Chat and the TUI recover an interrupted run stream with up to three `GET`
+  reconnections from the last committed cursor before falling back to durable
+  run detail, and clear partial rendering when structure is replaced.
+
 - Interactive Text renders each agent's name and its `•` message marker in the
   same non-dim ANSI color derived from the name, kept stable across restarts
   and conversations.
@@ -105,6 +119,16 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   available configured content width, while own right-aligned messages keep
   their gutter. Sender name and marker colors and non-dim styling are
   unchanged.
+
+- **Breaking (streaming API):** execution SSE is no longer live-only. Source
+  events carry `cursor` in `data` and an SSE `id`, while structural context
+  events carry `context: true` and no new `id`; new `stream_prefill` and
+  `stream_checkpoint` controls delimit a bounded structural replacement that
+  commits one cursor, and retry streams begin with `run_retried` and their
+  retained prefix. Consumers that read id-less live events or assumed no
+  replay must commit cursors and reconnect with `after`; `Last-Event-ID` alone
+  selects no cursor, and a POST must never be repeated. Each stream write,
+  including headers, has a five-second deadline; idle waits have none.
 
 - Interactive Text moves the message marker (`•` for agents, `▮`
   for humans) onto the sender-name row and insets names by the same

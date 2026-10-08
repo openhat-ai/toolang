@@ -44,6 +44,8 @@ class ScriptRunPresenter(RunTracer):
         )
         self._projector = ProgressProjector()
         self._root: RunBlock | None = None
+        self._root_identity: tuple[str, str] | None = None
+        self._completed: tuple[str, str] | None = None
         self._refresh_task: asyncio.Task[None] | None = None
 
     async def on_event(self, event: RunEvent) -> None:
@@ -66,14 +68,30 @@ class ScriptRunPresenter(RunTracer):
                 ),
             )
         self._apply_progress(update)
+        self._sync_refresh()
+
+        if isinstance(event, RunEnd) and event.run == self.run_id:
+            self._end_root(event)
+
+    async def on_snapshot(self, events: tuple[RunEvent, ...]) -> None:
+        for event in events:
+            if isinstance(event, RunBegin) and event.parent is None:
+                if (event.run, str(event.control)) == self._completed:
+                    return
+                self.run_id = event.run
+                self._begin_root(event)
+        self._apply_progress(self._projector.restore(events))
+        self._sync_refresh()
+        for event in events:
+            if isinstance(event, RunEnd) and event.run == self.run_id:
+                self._end_root(event)
+
+    def _sync_refresh(self) -> None:
         if self.console.tty and self._projector.has_timed_activity:
             if self._refresh_task is None:
                 self._refresh_task = asyncio.create_task(self._refresh())
         else:
             self._stop_refresh()
-
-        if isinstance(event, RunEnd) and event.run == self.run_id:
-            self._end_root(event)
 
     def _apply_progress(self, update: ProgressUpdate) -> None:
         """Apply progress with one header gap before the first committed output."""
@@ -111,7 +129,9 @@ class ScriptRunPresenter(RunTracer):
             self._apply_progress(self._projector.refresh())
 
     def _begin_root(self, event: RunBegin) -> None:
+        self._root_identity = (event.run, str(event.control))
         if self._root is not None:
+            self._root.started_at = event.started_at
             return
         root = RunBlock.from_event(event, operation=self.operation)
         self._root = root
@@ -125,6 +145,9 @@ class ScriptRunPresenter(RunTracer):
             self._context_gap_pending = True
 
     def _end_root(self, event: RunEnd) -> None:
+        if self._root_identity == self._completed:
+            return
+        self._completed = self._root_identity
         root = self._root
         if root is None:
             return

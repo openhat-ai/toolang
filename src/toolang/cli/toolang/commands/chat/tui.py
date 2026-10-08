@@ -31,13 +31,13 @@ from typer._click.exceptions import ClickException
 from toolang.base.types.message import ToolResultPart
 from toolang.base.utils.workspace_paths import parse_cwd
 from toolang.cli.common.execution_progress.operations import runtime_operation_name
+from toolang.execution.events import RunObservation, RunSnapshot
 from toolang.execution.events import (
     PartBegin,
     PartDelta,
     PartEnd,
     RunBegin,
     RunEnd,
-    RunEvent,
     StepBegin,
     StepEnd,
 )
@@ -93,6 +93,7 @@ from .presenter import ChatRunPresenter
 from .title import ChatTitle
 
 _RUN_EVENT_TYPES = (
+    RunSnapshot,
     RunBegin,
     StepBegin,
     PartBegin,
@@ -1135,9 +1136,23 @@ class ChatTuiApp:
         threading.Thread(target=consume, daemon=True).start()
         return True
 
-    def handle_run_event(self, event: RunEvent) -> None:
-        if isinstance(event, RunBegin) and event.parent is None:
-            self._status_run_id = event.run
+    def handle_run_event(self, event: RunObservation) -> None:
+        observations = event.events if isinstance(event, RunSnapshot) else (event,)
+        root = next(
+            (
+                item
+                for item in observations
+                if isinstance(item, RunBegin) and item.parent is None
+            ),
+            None,
+        )
+        if root is not None:
+            if isinstance(event, RunSnapshot) and self.active_run_id not in {
+                None,
+                root.run,
+            }:
+                return
+            self._status_run_id = root.run
         if (
             isinstance(event, PartEnd)
             and event.step.run_id == self._status_run_id
@@ -1150,7 +1165,7 @@ class ChatTuiApp:
                 self.status_bar.set_run_workspace(_workspace_label(cwd))
                 self._invalidate_ui()
         events.handle_run_event(event, self.app_context)
-        if isinstance(event, RunEnd):
+        if any(isinstance(item, RunEnd) for item in observations):
             self.title.refresh()
 
     def _apply_run_workdir(self, run_id: str, workdir: str | None) -> None:
@@ -1252,7 +1267,7 @@ class ChatTuiApp:
         threading.Thread(target=consume, daemon=True).start()
 
 
-def _is_run_event(value: object) -> TypeGuard[RunEvent]:
+def _is_run_event(value: object) -> TypeGuard[RunObservation]:
     return isinstance(value, _RUN_EVENT_TYPES)
 
 

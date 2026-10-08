@@ -9,7 +9,7 @@ import json
 from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, cast
 
 from toolang.base.types.message import Part
-from toolang.execution.events import RunEvent
+from toolang.execution.events import RunObservation
 from toolang.execution.records import (
     ChdirControlPayload,
     RunControlPayload,
@@ -217,7 +217,7 @@ class ChatClient(Protocol):
     def run(
         self,
         request: RunRequest,
-        on_event: Callable[[RunEvent], None],
+        on_event: Callable[[RunObservation], None],
         on_error: Callable[[str], None],
         on_state: Callable[[ChatRunState], None] | None = None,
     ) -> None: ...

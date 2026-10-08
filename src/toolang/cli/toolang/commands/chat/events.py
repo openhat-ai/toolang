@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-from toolang.execution.events import RunEvent
+from toolang.execution.events import RunObservation
 
 from .base import (
     AppContext,
@@ -40,11 +40,17 @@ class ChatUIEvent:
 
     type: ChatUIEventType
     value: (
-        str | RunEvent | ChatRunState | SteerReceipt | SteerError | ThreadTitle | None
+        str
+        | RunObservation
+        | ChatRunState
+        | SteerReceipt
+        | SteerError
+        | ThreadTitle
+        | None
     ) = None
 
 
-def handle_run_event(event: RunEvent, app: AppContext) -> None:
+def handle_run_event(event: RunObservation, app: AppContext) -> None:
     """Apply one ordered native event through the chat presenter."""
 
     app.get_presenter().handle(event, app)

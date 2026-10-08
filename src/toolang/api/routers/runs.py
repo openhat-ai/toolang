@@ -8,8 +8,9 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 
-from toolang.api.app import AgentCoreDep, LiveEventRelayDep
-from toolang.api.common import RUN_ID_HEADER, EventSubscription, sse_stream
+from toolang.api.app import AgentCoreDep
+from toolang.api.common import RUN_ID_HEADER, StreamAttachmentDep, sse_stream
+from toolang.execution.subscriptions import EventSubscription, StreamScope
 from toolang.api.conversion import (
     parse_authored_rerun,
     parse_authored_run,
@@ -82,8 +83,9 @@ async def _reject_duplicate_input_keys(request: Request) -> None:
 
 async def _run_stream(
     core: AgentCoreDep,
-    live: LiveEventRelayDep,
+    attachment: StreamAttachmentDep,
     payload: RunCreateRequest,
+    response: Response,
 ) -> AsyncIterator[_AcceptedRunStream]:
     thread_id = _run_thread(core, payload.thread_id)
     setup = core.setup.current()
@@ -121,7 +123,8 @@ async def _run_stream(
         )
     except (ToolangError, TypeError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    subscription = live.subscribe_run(handle.run_id)
+    subscription = attachment.attach(StreamScope(root=handle.run_id), start="new")
+    response.headers[RUN_ID_HEADER] = handle.run_id
     try:
         yield handle, subscription
     finally:
@@ -130,7 +133,7 @@ async def _run_stream(
 
 async def _run_authored_stream(
     core: AgentCoreDep,
-    live: LiveEventRelayDep,
+    attachment: StreamAttachmentDep,
     response: Response,
     payload: AuthoredRunRequest,
 ) -> AsyncIterator[_AcceptedRunStream]:
@@ -142,7 +145,8 @@ async def _run_authored_stream(
         handle = core.executor.run(run_request)
     except (OSError, ToolangError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    subscription = _subscribe_accepted_run(live, response, handle)
+    subscription = attachment.attach(StreamScope(root=handle.run_id), start="new")
+    response.headers[RUN_ID_HEADER] = handle.run_id
     try:
         yield handle, subscription
     finally:
@@ -151,7 +155,7 @@ async def _run_authored_stream(
 
 async def _retry_authored_stream(
     core: AgentCoreDep,
-    live: LiveEventRelayDep,
+    attachment: StreamAttachmentDep,
     response: Response,
     run_id: str,
     payload: AuthoredRetryRequest,
@@ -162,7 +166,8 @@ async def _retry_authored_stream(
         handle = core.executor.retry(request)
     except (ToolangError, TypeError, ValueError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    subscription = _subscribe_accepted_run(live, response, handle)
+    subscription = attachment.attach(StreamScope(root=handle.run_id), start="retry")
+    response.headers[RUN_ID_HEADER] = handle.run_id
     try:
         yield handle, subscription
     finally:
@@ -171,7 +176,7 @@ async def _retry_authored_stream(
 
 async def _rerun_authored_stream(
     core: AgentCoreDep,
-    live: LiveEventRelayDep,
+    attachment: StreamAttachmentDep,
     response: Response,
     run_id: str,
     payload: AuthoredRerunRequest,
@@ -182,28 +187,17 @@ async def _rerun_authored_stream(
         handle = core.executor.rerun(request)
     except (ToolangError, TypeError, ValueError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    subscription = _subscribe_accepted_run(live, response, handle)
+    subscription = attachment.attach(StreamScope(root=handle.run_id), start="new")
+    response.headers[RUN_ID_HEADER] = handle.run_id
     try:
         yield handle, subscription
     finally:
         subscription.close()
 
 
-def _subscribe_accepted_run(
-    live: LiveEventRelayDep,
-    response: Response,
-    handle: LocalRunHandle,
-) -> EventSubscription:
-    """Register one accepted root before the dependency yields its event loop."""
-
-    subscription = live.subscribe_run(handle.run_id)
-    response.headers[RUN_ID_HEADER] = handle.run_id
-    return subscription
-
-
 async def _subscribe_root_run(
     core: AgentCoreDep,
-    live: LiveEventRelayDep,
+    attachment: StreamAttachmentDep,
     run_id: str,
 ) -> AsyncIterator[EventSubscription]:
     run = _run_or_404(core, run_id)
@@ -215,7 +209,7 @@ async def _subscribe_root_run(
                 f"subscribe to {core.store.root_run_id(run_id=run_id)}"
             ),
         )
-    subscription = live.subscribe_run(run_id)
+    subscription = attachment.attach(StreamScope(root=run_id))
     try:
         yield subscription
     finally:
@@ -247,12 +241,10 @@ async def execute_run_stream(
     request: Request,
     accepted: Annotated[_AcceptedRunStream, Depends(_run_stream)],
 ) -> AsyncIterator[ServerSentEvent]:
-    handle, subscription = accepted
+    _handle, subscription = accepted
     async for event in sse_stream(
         request,
         subscription,
-        terminal_run_id=handle.run_id,
-        stopped=lambda: _run_terminal(core, handle.run_id),
     ):
         yield event
 
@@ -268,12 +260,10 @@ async def execute_authored_run_stream(
     request: Request,
     accepted: Annotated[_AcceptedRunStream, Depends(_run_authored_stream)],
 ) -> AsyncIterator[ServerSentEvent]:
-    handle, subscription = accepted
+    _handle, subscription = accepted
     async for event in sse_stream(
         request,
         subscription,
-        terminal_run_id=handle.run_id,
-        stopped=lambda: _run_terminal(core, handle.run_id),
     ):
         yield event
 
@@ -288,12 +278,10 @@ async def retry_authored_run_stream(
     request: Request,
     accepted: Annotated[_AcceptedRunStream, Depends(_retry_authored_stream)],
 ) -> AsyncIterator[ServerSentEvent]:
-    handle, subscription = accepted
+    _handle, subscription = accepted
     async for event in sse_stream(
         request,
         subscription,
-        terminal_run_id=handle.run_id,
-        stopped=lambda: _run_terminal(core, handle.run_id),
     ):
         yield event
 
@@ -308,12 +296,10 @@ async def rerun_authored_run_stream(
     request: Request,
     accepted: Annotated[_AcceptedRunStream, Depends(_rerun_authored_stream)],
 ) -> AsyncIterator[ServerSentEvent]:
-    handle, subscription = accepted
+    _handle, subscription = accepted
     async for event in sse_stream(
         request,
         subscription,
-        terminal_run_id=handle.run_id,
-        stopped=lambda: _run_terminal(core, handle.run_id),
     ):
         yield event
 
@@ -426,8 +412,6 @@ async def run_stream(
     async for event in sse_stream(
         request,
         subscription,
-        terminal_run_id=run_id,
-        stopped=lambda: _run_terminal(core, run_id),
     ):
         yield event
 
@@ -604,8 +588,3 @@ def _run_thread(core: AgentCore, thread_id: str) -> str:
             detail=f"thread not found: {thread_id}",
         )
     return thread_id
-
-
-def _run_terminal(core: AgentCore, run_id: str) -> bool:
-    run = core.store.get_run(run_id=run_id)
-    return run is None or run.status not in {"pending", "running"}
