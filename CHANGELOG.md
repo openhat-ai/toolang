@@ -94,6 +94,10 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Changed
 
+- Root help groups `hub` and `text` under a new `Teaming Commands` panel
+  instead of `Work Commands`; command names, options, and routing are
+  unchanged.
+
 - Live run and thread subscriptions and caller run tracers now share one
   bounded canonical event stream, so observation no longer blocks execution.
   A subscription that falls behind receives a `stream_error` with code
