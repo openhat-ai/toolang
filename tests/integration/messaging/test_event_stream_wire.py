@@ -3,6 +3,7 @@
 import asyncio
 import json
 import os
+import signal
 import socket
 import subprocess
 import sys
@@ -202,7 +203,10 @@ def test_hub_event_fanout_recovery_and_top_once(
     asyncio.run(scenario())
 
 
-def test_resident_shutdown_publishes_final_structure(valkey, running_hub, tmp_path):
+@pytest.mark.parametrize("backend_outage", [False, True])
+def test_resident_shutdown_drains_or_bounds_backend_outage(
+    valkey, running_hub, tmp_path, backend_outage
+):
     home = tmp_path / "agents" / "alice"
     home.mkdir(parents=True)
     (home / "config.toml").write_text("[teaming]\nenabled = true\n")
@@ -263,8 +267,21 @@ def test_resident_shutdown_publishes_final_structure(valkey, running_hub, tmp_pa
                         if event.event == "step_begin":
                             break
                 assert root is not None
-                stopped = await asyncio.to_thread(cli, "stop", "alice")
+                pid = (
+                    (await driver._call("INFO", "server"))["process_id"]
+                    if backend_outage
+                    else None
+                )
+                if pid is not None:
+                    os.kill(pid, signal.SIGSTOP)
+                try:
+                    stopped = await asyncio.to_thread(cli, "stop", "alice")
+                finally:
+                    if pid is not None:
+                        os.kill(pid, signal.SIGCONT)
                 assert stopped.returncode == 0, stopped.stderr
+                if backend_outage:
+                    return
                 state = HubStreamState(HubScope("agent:alice", run=root))
                 async with aconnect_sse(
                     http,

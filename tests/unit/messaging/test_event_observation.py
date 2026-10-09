@@ -735,6 +735,57 @@ def test_teaming_keeps_lease_through_final_export_drain(tmp_path, monkeypatch, b
     asyncio.run(scenario())
 
 
+def test_teaming_close_bounds_unresponsive_lease_release(tmp_path, monkeypatch):
+    from toolang.teaming.messaging import MessagingClient
+    from toolang.work.messaging import MessagingLoop
+    from toolang.work.teaming import TeamingLoop
+
+    harness = ExecutionHarness.create(
+        tmp_path, source="flow example:\n  let result = Done\n", responses=[]
+    )
+
+    async def scenario():
+        driver = backend(FakeServer(server_type="valkey"))
+        async with harness:
+            client = MessagingClient(
+                BackendConfig("redis://test"), actor="agent:alice", backend=driver
+            )
+            lifecycle = TeamingLoop(
+                MessagingLoop(
+                    layout=harness.setup.layout,
+                    owner="human:owner",
+                    config=client.config,
+                    executor=harness.executor,
+                    threads=harness.threads,
+                    get_agent_setup=lambda: harness.setup,
+                    get_agent_state=lambda: harness.state,
+                    client=client,
+                )
+            )
+            closed = False
+            close = client.close
+
+            async def unresponsive():
+                await asyncio.Event().wait()
+
+            async def closing():
+                nonlocal closed
+                await close()
+                closed = True
+
+            monkeypatch.setattr(client, "unregister", unresponsive)
+            monkeypatch.setattr(client, "close", closing)
+            try:
+                await asyncio.wait_for(lifecycle.close(), 2)
+                assert closed
+                assert not harness.executor.stream._readers
+            finally:
+                lifecycle.exporter.close()
+                await driver.close()
+
+    asyncio.run(scenario())
+
+
 def test_projection_omits_optional_history_before_failing_active_budget(
     tmp_path, monkeypatch
 ):

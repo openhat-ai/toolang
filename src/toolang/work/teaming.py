@@ -107,5 +107,8 @@ class TeamingLoop:
                     await self._task
             self.exporter.close()
             with suppress(Exception):
-                await self.messaging.client.unregister()
+                # Lease expiry handles an unavailable backend. Do not add its
+                # full socket timeout after the final-event drain budget.
+                async with asyncio.timeout(1):
+                    await self.messaging.client.unregister()
             await self.messaging.client.close()
