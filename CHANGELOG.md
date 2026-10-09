@@ -229,6 +229,12 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Fixed
 
+- Hub send responses are now validated before a message is treated as
+  delivered: a 2xx response with a missing or malformed receipt, a
+  different message ID or sender, or an invalid group or empty cursor is
+  rejected, and the send is reported as unconfirmed with its message UUID
+  and never resent automatically.
+
 - `msg` calls made while handling a received batch now stay on the Hub
   connection that delivered it: a Hub or backend identity change rejects
   the tool request instead of mixing conversations across backends, and other
