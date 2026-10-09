@@ -5,11 +5,18 @@ import multiprocessing
 from pathlib import Path
 
 import frontmatter
+import pytest
 
 from toolang.catalog.cap import AuthoredCaps, CapFile
 from toolang.catalog.config import CapRef, ConfiguredCaps
 from toolang.catalog.errors import CatalogConflictError
 from toolang.catalog.job import AuthoredJobs, JobFile, JobKind
+from toolang.common.ids import (
+    AllocatorSnapshot,
+    AllocatorState,
+    LOCAL_ID_FAMILY,
+    decode_id,
+)
 from toolang.common.layout import AgentLayout
 from toolang.work.authoring import (
     allocate_authored_job_id,
@@ -63,6 +70,21 @@ def _allocate_and_create_job(root: str) -> None:
             body="Run it.",
         )
     )
+
+
+@pytest.mark.parametrize("agent_name", ["alice", "Alice", "bob"])
+def test_authored_job_ids_use_the_layout_agent_name(
+    tmp_path: Path, agent_name: str
+) -> None:
+    layout = AgentLayout.resident(tmp_path, agent_name)
+    # Pin the saved tick beyond wall time so all agents allocate the same pair.
+    tick = LOCAL_ID_FAMILY.tick_modulus - 1
+    AllocatorSnapshot(families={"local": AllocatorState(tick, 6)}).save(layout.id_state)
+
+    job_id = allocate_authored_job_id(layout)
+
+    decoded = decode_id(job_id, family=LOCAL_ID_FAMILY, agent_name=agent_name)
+    assert (decoded.tick, decoded.seq) == (tick, 7)
 
 
 def test_configured_caps_preserves_all_concurrent_writes(tmp_path: Path) -> None:

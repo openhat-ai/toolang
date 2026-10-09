@@ -11,6 +11,7 @@ from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+import hashlib
 import importlib
 import json
 import os
@@ -310,8 +311,8 @@ RUN_ID_FAMILY = IdFamily(
 )
 
 
-def encode_id(*, family: IdFamily, tick: int, seq: int) -> str:
-    """Encode one raw tick/seq pair into one fixed-width id."""
+def encode_id(*, family: IdFamily, agent_name: str, tick: int, seq: int) -> str:
+    """Encode one raw tick/seq pair using its canonical agent name."""
 
     _check_range("tick", tick, family.tick_modulus)
     _check_range("seq", seq, family.seq_modulus)
@@ -332,18 +333,23 @@ def encode_id(*, family: IdFamily, tick: int, seq: int) -> str:
     wire_code = _permute_wire_code(
         raw_code,
         family=family,
+        agent_key=_agent_id_key(family=family, agent_name=agent_name),
     )
     return _encode_fixed_width(wire_code, width=family.width)
 
 
-def decode_id(value: str, *, family: IdFamily) -> DecodedId:
-    """Decode one fixed-width id back into raw tick/seq values."""
+def decode_id(value: str, *, family: IdFamily, agent_name: str) -> DecodedId:
+    """Decode an id with the canonical agent name used to encode it."""
 
     text = value.strip().lower()
     if len(text) != family.width:
         raise ValueError(f"invalid {family.name} id width: {value!r}")
     wire_code = _decode_fixed_width(text, width=family.width)
-    raw_code = _unpermute_wire_code(wire_code, family=family)
+    raw_code = _unpermute_wire_code(
+        wire_code,
+        family=family,
+        agent_key=_agent_id_key(family=family, agent_name=agent_name),
+    )
     tick_code = raw_code >> family.seq_bits
     seq_code = raw_code & (family.seq_modulus - 1)
     tick = _affine_decode(
@@ -384,6 +390,7 @@ def reserve_next_id(
     state: AllocatorState,
     *,
     family: IdFamily,
+    agent_name: str,
     now: datetime | None = None,
     exists: Callable[[str], bool] | None = None,
     max_attempts: int = 128,
@@ -401,7 +408,7 @@ def reserve_next_id(
     for _attempt in range(max_attempts):
         if next_seq >= family.seq_modulus:
             raise OverflowError(f"{family.name} id allocator exhausted for tick {tick}")
-        value = encode_id(family=family, tick=tick, seq=next_seq)
+        value = encode_id(family=family, agent_name=agent_name, tick=tick, seq=next_seq)
         if exists is None or not exists(value):
             allocation = AllocatedId(
                 value=value,
@@ -421,6 +428,7 @@ def allocate_id(
     state_path: Path,
     *,
     family: IdFamily,
+    agent_name: str,
     now: datetime | None = None,
     exists: Callable[[str], bool] | None = None,
     max_attempts: int = 128,
@@ -432,6 +440,7 @@ def allocate_id(
         allocation, next_state = reserve_next_id(
             snapshot.state_for(family),
             family=family,
+            agent_name=agent_name,
             now=now,
             exists=exists,
             max_attempts=max_attempts,
@@ -445,11 +454,14 @@ class IdIssuer:
     """Issue process-safe Toolang ids from one durable allocator state."""
 
     state_path: Path
+    agent_name: str
 
     def issue_run(self) -> str:
         """Issue one run id."""
 
-        value = allocate_id(self.state_path, family=RUN_ID_FAMILY).value
+        value = allocate_id(
+            self.state_path, family=RUN_ID_FAMILY, agent_name=self.agent_name
+        ).value
         return f"run_{value}"
 
     def issue_thread(self, prefix: str) -> str:
@@ -458,17 +470,30 @@ class IdIssuer:
         normalized = prefix.strip().lower()
         if normalized != prefix or not normalized or not normalized.isalnum():
             raise ValueError(f"invalid thread prefix: {prefix}")
-        value = allocate_id(self.state_path, family=LOCAL_ID_FAMILY).value
+        value = allocate_id(
+            self.state_path, family=LOCAL_ID_FAMILY, agent_name=self.agent_name
+        ).value
         return f"{prefix}_{value}"
 
 
-def archive_prefix(value: str, *, family: IdFamily) -> str:
+def archive_prefix(value: str, *, family: IdFamily, agent_name: str) -> str:
     """Return the stable archive prefix for one id."""
 
-    return decode_id(value, family=family).archive_prefix
+    return decode_id(value, family=family, agent_name=agent_name).archive_prefix
 
 
-def _permute_wire_code(value: int, *, family: IdFamily) -> int:
+def _agent_id_key(*, family: IdFamily, agent_name: str) -> bytes:
+    """Derive a stable key without changing the canonical name's case."""
+
+    if not agent_name or agent_name != agent_name.strip():
+        raise ValueError("agent name must be nonempty and canonical")
+    material = json.dumps(
+        [family.name, agent_name], ensure_ascii=False, separators=(",", ":")
+    ).encode("utf-8")
+    return hashlib.blake2s(material).digest()
+
+
+def _permute_wire_code(value: int, *, family: IdFamily, agent_key: bytes) -> int:
     wire_bits = family.width * 5
     wire_modulus = 1 << wire_bits
     _check_range("wire_code", value, wire_modulus)
@@ -484,7 +509,7 @@ def _permute_wire_code(value: int, *, family: IdFamily) -> int:
             left
             ^ _wire_round_function(
                 right,
-                family=family,
+                agent_key=agent_key,
                 round_index=round_index,
                 mask=half_mask,
             ),
@@ -492,7 +517,7 @@ def _permute_wire_code(value: int, *, family: IdFamily) -> int:
     return ((left & half_mask) << half_bits) | (right & half_mask)
 
 
-def _unpermute_wire_code(value: int, *, family: IdFamily) -> int:
+def _unpermute_wire_code(value: int, *, family: IdFamily, agent_key: bytes) -> int:
     wire_bits = family.width * 5
     wire_modulus = 1 << wire_bits
     _check_range("wire_code", value, wire_modulus)
@@ -507,7 +532,7 @@ def _unpermute_wire_code(value: int, *, family: IdFamily) -> int:
             right
             ^ _wire_round_function(
                 left,
-                family=family,
+                agent_key=agent_key,
                 round_index=round_index,
                 mask=half_mask,
             ),
@@ -519,32 +544,14 @@ def _unpermute_wire_code(value: int, *, family: IdFamily) -> int:
 def _wire_round_function(
     value: int,
     *,
-    family: IdFamily,
+    agent_key: bytes,
     round_index: int,
     mask: int,
 ) -> int:
-    key = _wire_round_key(family=family, round_index=round_index, mask=mask)
-    multiplier = ((key << 1) | 1) & mask
-    if multiplier == 0:
-        multiplier = 1
-    mixed = (value + key) & mask
-    mixed ^= mixed >> 3
-    mixed ^= (mixed << 5) & mask
-    mixed = (mixed * multiplier) & mask
-    mixed ^= mixed >> 4
-    return mixed & mask
-
-
-def _wire_round_key(*, family: IdFamily, round_index: int, mask: int) -> int:
-    key = (
-        family.tick_multiplier
-        ^ family.seq_multiplier
-        ^ (family.tick_offset << (round_index + 1))
-        ^ (family.seq_offset << (round_index + 2))
-        ^ (family.mask_seed * (round_index + 1))
-        ^ (0x9E37 * (round_index + 1))
-    )
-    return key & mask
+    value_width = max(1, (mask.bit_length() + 7) // 8)
+    payload = bytes((round_index,)) + value.to_bytes(value_width, "big")
+    digest = hashlib.blake2s(payload, key=agent_key).digest()
+    return int.from_bytes(digest, "big") & mask
 
 
 def _affine_encode(value: int, *, modulus: int, multiplier: int, offset: int) -> int:

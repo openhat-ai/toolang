@@ -22,6 +22,7 @@ def allocate_authored_job_id(
         return allocate_id(
             layout.id_state,
             family=LOCAL_ID_FAMILY,
+            agent_name=layout.name,
             exists=effective_catalog.contains_id,
         ).value
 

@@ -722,7 +722,7 @@ def _run(
         ) as server:
             if server is None:
                 store = RunStore(layout.run_store)
-                ids = IdIssuer(layout.id_state)
+                ids = IdIssuer(layout.id_state, agent_name=layout.name)
                 run_id = ids.issue_run()
                 log_plan = resolve_agent_logging(
                     mode="script",

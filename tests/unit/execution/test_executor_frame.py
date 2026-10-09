@@ -633,7 +633,9 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
     )
     store = RunStore(home / ".runtime" / "runs.db")
     store.create_thread(thread_id="term_1")
-    executor = RunExecutor(store, IdIssuer(home / ".runtime" / "ids.json"))
+    executor = RunExecutor(
+        store, IdIssuer(home / ".runtime" / "ids.json", agent_name="alice")
+    )
     tracer = _Tracer()
     image = ImagePart(
         image_url="https://example.com/diagram.png",

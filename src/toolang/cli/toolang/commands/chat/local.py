@@ -106,7 +106,7 @@ class LocalChatSession:
         )
         self.store = RunStore(layout.run_store)
         self.history = RunHistory(self.store)
-        self.ids = IdIssuer(layout.id_state)
+        self.ids = IdIssuer(layout.id_state, agent_name=layout.name)
         self.threads = ThreadManager(self.store, self.ids)
         allow_overrides = dict(ceiling_overrides or {})
         self.setup_watcher = SetupWatcher(

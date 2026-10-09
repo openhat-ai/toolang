@@ -110,7 +110,9 @@ class _RecordingThreadListener(ThreadListener):
 def _executor(tmp_path: Path) -> RunExecutor:
     store = RunStore(tmp_path / ".runtime" / "runs.db")
     store.create_thread(thread_id="term_test")
-    return RunExecutor(store, IdIssuer(tmp_path / ".runtime" / "ids.json"))
+    return RunExecutor(
+        store, IdIssuer(tmp_path / ".runtime" / "ids.json", agent_name="alice")
+    )
 
 
 def _name(runnable: AgicDecl | FlowDecl) -> str:
@@ -1496,7 +1498,7 @@ def _accept_same_start(db_path: str) -> bool:
 
 
 def _allocate_execution_ids(state_path: str, count: int) -> tuple[list[str], list[str]]:
-    ids = IdIssuer(Path(state_path))
+    ids = IdIssuer(Path(state_path), agent_name="alice")
     return (
         [ids.issue_run() for _ in range(count)],
         [ids.issue_thread(ThreadPrefix.TERM.value) for _ in range(count)],
