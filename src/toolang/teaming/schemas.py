@@ -5,11 +5,11 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 import json
 import re
-from typing import Any, Literal, cast
+from typing import Annotated, Any, Literal, cast
 import unicodedata
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from .errors import MessagingError
 
@@ -169,6 +169,70 @@ class SendRequest(HubRequest):
     target: str
     body: str
     in_reply_to: str | None = None
+
+
+class AgentSendRequest(SendRequest):
+    thread: str | None = None
+    run: str | None = None
+
+
+class AgentRegistration(HubRequest):
+    endpoint: str = Field(default="", max_length=2048)
+
+
+Generation = Annotated[str, Field(pattern=r"^[0-9a-f]{32}$")]
+
+
+class PublicationRequest(HubRequest):
+    v: Literal[1]
+    epoch: Generation
+    generation: Generation
+
+
+class IncompleteRequest(PublicationRequest):
+    kind: Literal["incomplete"]
+    id: str
+    recovery: Generation
+    reason: str = Field(min_length=1, max_length=256)
+
+
+class RecoveryRequest(PublicationRequest):
+    kind: Literal["recover"]
+    id: str
+    recovery: Generation
+    source: str
+    source_epoch: Generation
+    snapshot_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    old_generation: Generation
+
+
+class EventRequest(PublicationRequest):
+    kind: Literal["event"]
+    id: str
+    source: str
+    source_epoch: Generation
+    prior: str
+    data: str
+    updates: dict[str, str]
+    removed: list[str]
+    structural: bool
+    evicted: bool
+    count: int = Field(ge=0)
+    bytes: int = Field(ge=0)
+
+
+CommitRequest = Annotated[
+    IncompleteRequest | RecoveryRequest | EventRequest, Field(discriminator="kind")
+]
+
+
+class StagingRequest(HubRequest):
+    v: Literal[1]
+    epoch: Generation
+    recovery: Generation
+    source: str
+    entities: dict[str, str]
+    digest: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
 class HistoryEntry(BaseModel):

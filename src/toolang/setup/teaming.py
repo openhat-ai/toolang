@@ -20,8 +20,8 @@ class TeamingSetup:
     root: TeamingRootConfig
     home: TeamingHomeConfig
 
-    def toolset_config(self) -> dict[str, object]:
-        return {"url": self.root.backend.url} if self.home.enabled else {}
+    def toolset_config(self, *, root: Path) -> dict[str, object]:
+        return {"root": str(root)} if self.home.enabled else {}
 
 
 def resolve_teaming_setup(

@@ -1,33 +1,64 @@
-"""Hub transport used by human clients, without backend-driver dependencies."""
+"""Shared Hub HTTP messaging transport; no backend-driver dependencies."""
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
+from typing import Any, Self
 from urllib.parse import quote
 
 import httpx
 
-from .errors import BackendUnavailable, MessagingError, SendUnconfirmed
+from toolang.execution.errors import SnapshotLimitError
+from .errors import (
+    BackendUnavailable,
+    MessagingError,
+    SendUnconfirmed,
+    EventProtocolError,
+    EventRecoveryRequired,
+)
 from .schemas import Conversation, HubConnection, Message
 
 
 class HubClient:
     def __init__(
         self,
-        config: HubConnection,
+        config: HubConnection | Callable[[], HubConnection],
         *,
         transport: httpx.AsyncBaseTransport | None = None,
+        actor: str | None = None,
+        prefix: str = "",
+        lease: str | None = None,
     ) -> None:
-        self.config, self.actor = config, config.human
+        self._resolve: Callable[[], HubConnection] = (
+            (lambda: config) if isinstance(config, HubConnection) else config
+        )
+        self._session: ContextVar[HubConnection | None] = ContextVar(
+            "hub_session", default=None
+        )
+        self.actor = actor if actor is not None else self.config.human
+        self._prefix, self._lease = prefix, lease
         self._http = httpx.AsyncClient(
-            base_url=config.endpoint,
-            headers={"Authorization": f"Bearer {config.token}"},
             timeout=15,
             trust_env=False,
             transport=transport,
         )
 
-    async def __aenter__(self) -> HubClient:
+    @property
+    def config(self) -> HubConnection:
+        return self._session.get() or self._resolve()
+
+    @contextmanager
+    def session(self) -> Iterator[str]:
+        connection = self.config
+        token = self._session.set(connection)
+        try:
+            yield connection.identity
+        finally:
+            self._session.reset(token)
+
+    async def __aenter__(self) -> Self:
         return self
 
     async def __aexit__(self, *args: object) -> None:
@@ -39,8 +70,17 @@ class HubClient:
     async def _request(
         self, method: str, path: str, *, message_id: str | None = None, **kwargs: Any
     ) -> Any:
+        connection = self.config
+        headers = {"Authorization": f"Bearer {connection.token}"}
+        if self._lease is not None:
+            headers["X-Toolang-Agent-Lease"] = self._lease
         try:
-            response = await self._http.request(method, path, **kwargs)
+            response = await self._http.request(
+                method,
+                connection.endpoint + self._prefix + path,
+                headers=headers,
+                **kwargs,
+            )
         except httpx.HTTPError as exc:
             if message_id is not None:
                 raise SendUnconfirmed(
@@ -63,6 +103,12 @@ class HubClient:
             else "Hub request failed"
         )
         code = data.get("code") if isinstance(data, dict) else None
+        if code == "recovery_required":
+            raise EventRecoveryRequired(str(detail))
+        if code == "protocol_error":
+            raise EventProtocolError(str(detail))
+        if response.status_code == 413:
+            raise SnapshotLimitError(str(detail))
         if code == "send_unconfirmed":
             raise SendUnconfirmed(f"Send unconfirmed for {message_id}: {detail}")
         if code == "backend_unavailable":
@@ -70,6 +116,8 @@ class HubClient:
         if message_id and response.status_code >= 500:
             raise SendUnconfirmed(f"Send unconfirmed for {message_id}: {detail}")
         if response.status_code == 401:
+            if self._lease is not None:
+                raise BackendUnavailable("Hub identity changed; reconnecting")
             raise MessagingError("Hub identity changed; reopen Text")
         raise MessagingError(str(detail))
 

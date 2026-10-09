@@ -29,7 +29,7 @@ def test_defaults_enable_agent_teaming(home):
     assert setup.root.human == "human:owner"
     assert setup.root.hub_port == 7000
     assert setup.home.enabled
-    assert setup.toolset_config() == {"url": setup.root.backend.url}
+    assert setup.toolset_config(root=ROOT.parent) == {"root": str(ROOT.parent)}
 
 
 def test_scopes_resolve_without_merging():
@@ -42,8 +42,11 @@ def test_scopes_resolve_without_merging():
     }
     enabled = resolve(root, {"teaming": {"enabled": True}})
     assert enabled.root.human == "human:brice" and enabled.root.hub_port == 8000
-    assert enabled.toolset_config() == {"url": "redis://shared"}
-    assert resolve(root, {"teaming": {"enabled": False}}).toolset_config() == {}
+    assert enabled.toolset_config(root=ROOT.parent) == {"root": str(ROOT.parent)}
+    assert (
+        resolve(root, {"teaming": {"enabled": False}}).toolset_config(root=ROOT.parent)
+        == {}
+    )
 
 
 @pytest.mark.parametrize(

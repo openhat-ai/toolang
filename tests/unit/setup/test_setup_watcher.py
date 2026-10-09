@@ -412,12 +412,12 @@ def test_teaming_config_is_shared_and_frozen_until_restart(tmp_path, monkeypatch
     assert first.teaming is not None
     initial = first.teaming.root.backend
     assert initial.url == "redis://first"
-    assert captured[-1]["msg"] == {"url": initial.url}
+    assert captured[-1]["msg"] == {"root": str(tmp_path)}
     config.write_text('[teaming.backend]\nurl = "redis://second"\n')
     second = asyncio.run(watcher.refresh())
     second.toolsets()
     assert second.teaming is first.teaming
-    assert captured[-1]["msg"]["url"] == initial.url
+    assert captured[-1]["msg"] == {"root": str(tmp_path)}
     restarted, _ = _watcher(monkeypatch, tmp_path)
     restarted = SetupWatcher(
         restarted.layout,
@@ -458,7 +458,7 @@ def test_teaming_consumers_share_scoped_configuration(tmp_path, monkeypatch, ena
     msg = setup.toolsets()["msg"]
     assert isinstance(msg, MsgToolset)
     assert setup.teaming.home.enabled is (enabled is not False)
-    assert msg.config == (setup.teaming.root.backend if enabled is not False else None)
+    assert msg.root == (tmp_path if enabled is not False else None)
     resolved = load_teaming_root(tmp_path)
     assert (
         resolved.backend

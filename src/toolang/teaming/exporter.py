@@ -26,7 +26,7 @@ from toolang.execution.stream import CanonicalStream, CanonicalEvent, StreamRead
 from toolang.execution.subscriptions import RecordSnapshot, record_controls
 from toolang.execution.types import EventCursor
 from .errors import BackendUnavailable, EventProtocolError, EventRecoveryRequired
-from .event_backend import EventBackend, generation_key
+from .types import EventPublisher
 from .events import MAX_EVENT_BYTES, PARTS, encode
 from .records import MAX_BYTES, MAX_RECENT, EventProjection, field
 
@@ -123,7 +123,7 @@ class EventExporter:
         self,
         source: CanonicalStream,
         path: Path,
-        backend: EventBackend,
+        backend: EventPublisher,
         *,
         agent: str,
         token: str,
@@ -253,9 +253,7 @@ class EventExporter:
                     "source": str(boundary),
                     "source_epoch": boundary.epoch,
                     "snapshot_digest": digest,
-                    "old_key": generation_key(self.agent, old["generation"])
-                    if old.get("generation")
-                    else generation_key(self.agent, generation),
+                    "old_generation": old.get("generation", generation),
                 },
             )
             reader.check()

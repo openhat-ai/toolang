@@ -7,6 +7,7 @@ import signal
 import socket
 import subprocess
 import sys
+from uuid import uuid4
 
 import httpx
 from httpx_sse import aconnect_sse
@@ -22,13 +23,146 @@ from toolang.base.types.message import TextPart
 from toolang.execution.schemas import StreamFrame
 from toolang.execution.types import ThreadPrefix
 from toolang.teaming.backend import Backend
+from toolang.teaming.agent_client import AgentClient
+from toolang.teaming.client import HubClient
+from toolang.teaming.errors import BackendUnavailable
 from toolang.teaming.event_backend import EventBackend
 from toolang.teaming.errors import EventRecoveryRequired
 from toolang.teaming.events import HubScope
 from toolang.teaming.exporter import EventExporter
 from toolang.teaming.stream_client import HubStreamState
+from toolang.up.hub import HubProcess
 
 pytestmark = pytest.mark.live_valkey
+
+
+def test_agents_reconnect_through_hub_without_direct_backend_access(valkey, tmp_path):
+    (tmp_path / "config.toml").write_text(
+        f'[teaming]\nhuman = "owner"\n[teaming.backend]\nurl = "{valkey.url}"\n'
+    )
+    command = [
+        sys.executable,
+        "-m",
+        "toolang.cli.toolang.main",
+        "--root",
+        str(tmp_path),
+    ]
+
+    def cli(*args):
+        result = subprocess.run(
+            [*command, *args], capture_output=True, text=True, timeout=40
+        )
+        assert result.returncode == 0, result.stderr
+        return result
+
+    def port():
+        with socket.socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            return listener.getsockname()[1]
+
+    agents = {name: port() for name in ("alice", "bob")}
+    hub_port = port()
+    hub = HubProcess(tmp_path)
+    for name in agents:
+        home = tmp_path / "agents" / name
+        home.mkdir(parents=True)
+        (home / "agent.too").write_text("flow example(_: Text):\n  let result = Done\n")
+
+    async def scenario():
+        driver = Backend(valkey)
+        service = EventBackend(driver)
+        async with httpx.AsyncClient(timeout=15, trust_env=False) as http:
+
+            async def local_run(name):
+                endpoint = f"http://127.0.0.1:{agents[name]}"
+                response = await http.post(
+                    endpoint + "/api/v1/threads", json={"client": "script"}
+                )
+                response.raise_for_status()
+                async with aconnect_sse(
+                    http,
+                    "POST",
+                    endpoint + "/api/v1/runs/authored/stream",
+                    json={
+                        "thread_id": response.json()["thread"]["id"],
+                        "request_id": str(uuid4()),
+                        "runnable": {"ref": "flow:example", "input": {"_": name}},
+                        "model": None,
+                        "policy": {"allow": [], "limits": {}},
+                    },
+                ) as stream:
+                    stream.response.raise_for_status()
+                    ends = [
+                        json.loads(event.data)
+                        async for event in stream.aiter_sse()
+                        if event.event == "run_end"
+                    ]
+                    assert len(ends) == 1 and ends[0]["status"] == "succeeded"
+                    return ends[0]["run"]
+
+            async def wait_exported(name, run):
+                actor = f"agent:{name}"
+                async with asyncio.timeout(25):
+                    while True:
+                        await service.initialize()
+                        _, origins, _ = await service.capture(actor)
+                        origin = origins.get(actor, {})
+                        if origin.get("status") == "complete":
+                            projection = await service.projection(
+                                actor, origin["generation"]
+                            )
+                            if any(
+                                value.get("end", {}).get("run") == run
+                                for value in projection.values()
+                                if value.get("end")
+                            ):
+                                return
+                        await asyncio.sleep(0.05)
+
+            try:
+                # Redis/Valkey is live, but no Hub exists. Neither agent registers
+                # or publishes directly; both still execute and stream over HTTP.
+                runs = {name: await local_run(name) for name in agents}
+                assert await driver.participants() == {}
+                async with AgentClient(tmp_path, actor="agent:alice") as remote:
+                    with pytest.raises(BackendUnavailable):
+                        await remote.targets()
+                await asyncio.to_thread(cli, "hub", "start", "--port", str(hub_port))
+                original = hub.connection()
+                for name, run in runs.items():
+                    await wait_exported(name, run)
+                    # Exercise the resident's active lease through the same API
+                    # used by its msg tools, without invoking a model provider.
+                    lease = await service.online_token(f"agent:{name}")
+                    async with AgentClient(
+                        tmp_path, actor=f"agent:{name}", token=lease
+                    ) as remote:
+                        receipt = await remote.send("human:owner", body=name, run=run)
+                        async with HubClient(hub.connection()) as human:
+                            assert (await human.history(receipt["group"]))[0][
+                                0
+                            ] == receipt["stream_id"]
+                await asyncio.to_thread(cli, "hub", "stop")
+                tail = (await service.capture())[0]["tail"]
+                runs = {name: await local_run(name) for name in agents}
+                assert (await service.capture())[0]["tail"] == tail
+                await asyncio.to_thread(cli, "hub", "start", "--port", str(hub_port))
+                assert hub.connection().token != original.token
+                for name, run in runs.items():
+                    await wait_exported(name, run)
+            finally:
+                await driver.close()
+
+    try:
+        for name, listen_port in agents.items():
+            cli("start", name, "--sandbox", "host", "--port", str(listen_port))
+        asyncio.run(scenario())
+    finally:
+        for name in agents:
+            subprocess.run(
+                [*command, "stop", name, "--force"], capture_output=True, timeout=40
+            )
+        hub.stop(force=True)
 
 
 def test_hub_event_fanout_recovery_and_top_once(

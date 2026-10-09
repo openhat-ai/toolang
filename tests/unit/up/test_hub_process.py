@@ -170,9 +170,7 @@ from pathlib import Path
 import toolang.up.hub as module
 from toolang.teaming.config import BackendConfig, TeamingRootConfig
 root, port = Path(sys.argv[1]), int(sys.argv[2])
-class SlowClient:
-    actor = "human:owner"
-    def __init__(self, *args, **kwargs): pass
+class SlowClient(module.MessagingClient):
     async def __aenter__(self):
         (root / "starting").touch()
         await asyncio.sleep(60)

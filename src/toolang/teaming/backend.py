@@ -12,7 +12,13 @@ from valkey.backoff import NoBackoff
 from valkey.exceptions import ConnectionError, TimeoutError, ValkeyError
 
 from .config import BackendConfig
-from .errors import BackendUnavailable, MessagingError, SendUnconfirmed, TeamingError
+from .errors import (
+    BackendUnavailable,
+    LeaseLost,
+    MessagingError,
+    SendUnconfirmed,
+    TeamingError,
+)
 from .schemas import direct_pair, target
 
 PREFIX = "too:teaming:v1"
@@ -20,7 +26,6 @@ PARTICIPANTS = f"{PREFIX}:participants"
 GROUPS = f"{PREFIX}:msg:groups"
 DIRECT = f"{PREFIX}:msg:direct"
 LEASE_SECONDS = 30
-RENEW_SECONDS = 10
 RETENTION = 10000
 
 
@@ -165,6 +170,8 @@ class Backend:
         except (ConnectionError, TimeoutError) as exc:
             raise BackendUnavailable("Teaming backend is unavailable") from exc
         except ValkeyError as exc:
+            if str(exc) == "Agent lease lost":
+                raise LeaseLost(str(exc)) from exc
             raise MessagingError(str(exc)) from exc
 
     async def _eval(self, script: str, keys: list[str], args: list[object]) -> Any:

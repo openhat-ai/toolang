@@ -3,6 +3,10 @@
 Approved architecture; implement in the delivery order below. Earlier messaging
 was experimental: no data migration or compatibility aliases are required.
 
+The approved [agent Hub transport amendment](agent-hub-transport.md) replaces
+direct agent-to-backend access: messaging, presence, and export use Hub HTTP APIs.
+Only Hub connects to Redis/Valkey; local execution remains independent.
+
 ## Goal and delivery
 
 Single-agent execution and multi-client subscriptions work without Redis/Valkey.
@@ -273,7 +277,7 @@ machine into teaming or HTTP. Backend positions order delivery; source cursors
 identify record incarnations.
 
 ```text
-agent canonical stream -> teaming exporter -> backend Stream -> Hub clients
+agent canonical stream -> teaming exporter -> Hub API -> backend Stream -> Hub clients
 ```
 
 `teaming/events.py` owns the asynchronous exporter, registered before agent work

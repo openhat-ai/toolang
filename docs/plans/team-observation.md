@@ -218,6 +218,10 @@ Disconnect never cancels execution.
 
 ## Lifecycle and activity
 
+The [agent Hub transport amendment](agent-hub-transport.md) owns the HTTP
+publication port, discovery, and reconnection. Backend transactions below it
+remain Hub-owned; agents never connect directly to Redis/Valkey.
+
 One teaming lifecycle owns registration, lease renewal, messaging consumption,
 and export. Install the raw canonical reader before scheduler/channel/message
 work starts. Backend access stays asynchronous and optional; registration or

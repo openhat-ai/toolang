@@ -123,7 +123,7 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   list registered participants and accessible conversations with their canonical
   targets, `msg/send` (wire name `msg__send`) to send a message immediately, and
   `msg/create_group`, `msg/join_group`, and `msg/leave_group` to create and manage
-  custom groups. Enabled hosted agents poll an external Redis or Valkey server and
+  custom groups. Enabled hosted agents poll the Hub and
   handle incoming batches through `agic:msg`, or the default agic, replying in the
   source group; own messages do not re-trigger handling and failed or malformed
   batches are logged and skipped. (#708)
@@ -136,6 +136,14 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   see `docs/messaging.md` for setup. (#708)
 
 ### Changed
+
+- **Breaking (teaming transport):** agents now reach messaging, presence, and
+  event export through the Hub HTTP API instead of connecting to Redis/Valkey
+  directly, so only Hub talks to the backend. Start the Hub with `too hub
+  start` before using agent `msg` tools or exporting agent events; stopping it
+  leaves agents running, and they refresh credentials and resume without a
+  restart, while an uncertain send is never retried automatically. Isolated
+  guests without access to the local Hub report unavailability. (#721)
 
 - Interactive Text draws a dim bright-black `┄` rule on its own row above
   each agent's complete name, starting at the body inset and reaching the
@@ -190,8 +198,7 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 - `too text` and Interactive Text now reach messaging through the Hub HTTP
   API instead of connecting to Redis/Valkey directly, so run `too hub start`
   before using Text and reopen Text after restarting the Hub. Agents and
-  their `msg` tools still communicate directly with the backend and remain
-  independent of the Hub.
+  their `msg` tools use the same Hub API.
 
 - **Breaking:** the experimental `coop` toolset (wire names `coop__contacts` and
   `coop__send`), the public `CoopToolContext` type, the `too team` command,

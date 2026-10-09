@@ -1,7 +1,7 @@
 # Agent teaming through Hub
 
-Proposed amendment to [teaming](teaming.md) and [team observation](team-observation.md).
-The agent-to-Hub direction is requested; this transport contract awaits approval.
+Approved amendment to [teaming](teaming.md) and [team observation](team-observation.md).
+Approved in chat on 2026-10-09; implement in PR #721.
 
 ## Goal and scope
 

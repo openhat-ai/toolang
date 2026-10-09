@@ -18,8 +18,7 @@ from toolang.execution.runnables import resolve_runnable_reference, runnable_fal
 from toolang.execution.threads import ThreadManager
 from toolang.execution.types import ThreadPrefix
 from toolang.lang.input import resolve_runnable_input
-from toolang.teaming.messaging import MessagingClient
-from toolang.teaming.config import BackendConfig
+from toolang.teaming.types import MessageReceiver
 from toolang.teaming.errors import MessagingError
 from toolang.teaming.schemas import Message, stream_id
 from toolang.setup import AgentSetup
@@ -49,38 +48,41 @@ class MessagingLoop:
         *,
         layout: AgentLayout,
         owner: str,
-        config: BackendConfig,
         executor: RunExecutor,
         threads: ThreadManager,
         get_agent_setup: Callable[[], AgentSetup],
         get_agent_state: Callable[[], AgentState],
-        client: MessagingClient | None = None,
+        client: MessageReceiver,
         endpoint: str = "",
     ):
         self.agent, self.owner = f"agent:{layout.name}", owner
-        self.client = client or MessagingClient(config, actor=self.agent)
+        self.client = client
         self.endpoint = endpoint
         self.executor, self.threads = executor, threads
         self.get_setup, self.get_state = get_agent_setup, get_agent_state
-        self.path = layout.channel_room("messaging") / f"v1-{config.identity}.json"
+        self.room = layout.channel_room("messaging")
+        self.path = self.room / "unselected.json"
         self.saved: dict[str, Any] = {}
         self.last_group = ""
         self.gaps: dict[str, str | None] = {}
 
     def load(self) -> None:
-        if not self.path.exists():
-            return
+        with self.client.session() as identity:
+            path = self.room / f"v1-{identity}.json"
+        saved = {}
         try:
-            saved = json.loads(self.path.read_text())
-            if not isinstance(saved, dict):
-                raise ValueError("expected object")
-            for value in saved.values():
-                stream_id(value["cursor"])
-                if not isinstance(value["messages"], list):
-                    raise ValueError("expected message context")
-            self.saved = saved
+            if path.exists():
+                saved = json.loads(path.read_text())
+                if not isinstance(saved, dict):
+                    raise ValueError("expected object")
+                for value in saved.values():
+                    stream_id(value["cursor"])
+                    if not isinstance(value["messages"], list):
+                        raise ValueError("expected message context")
         except (OSError, ValueError, KeyError, TypeError, MessagingError) as exc:
-            raise MessagingError(f"Invalid messaging checkpoint: {self.path}") from exc
+            raise MessagingError(f"Invalid messaging checkpoint: {path}") from exc
+        self.path, self.saved = path, saved
+        self.gaps, self.last_group = {}, ""
 
     async def consume(self, stop: asyncio.Event) -> None:
         while not stop.is_set():
@@ -93,6 +95,15 @@ class MessagingLoop:
             await asyncio.wait_for(stop.wait(), seconds)
 
     async def poll(self) -> None:
+        # Pin discovery for the whole batch. A Hub/backend switch fails this
+        # attempt instead of mixing data or credentials across checkpoints.
+        with self.client.session() as identity:
+            path = self.room / f"v1-{identity}.json"
+            if path != self.path:
+                self.load()
+            await self._poll()
+
+    async def _poll(self) -> None:
         groups = await self.client.contacts()
         # Round-robin independently of membership changes.
         groups.sort(key=lambda g: (g["group"] <= self.last_group, g["group"]))

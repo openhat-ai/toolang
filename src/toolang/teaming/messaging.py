@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
-from functools import lru_cache
-import os
+from contextlib import contextmanager
 from typing import Any
 from uuid import uuid4
 
-from .backend import Backend, LEASE_SECONDS, RENEW_SECONDS
+from .backend import Backend, LEASE_SECONDS
+from .discovery import host_token as host_token
+from .types import RENEW_SECONDS as RENEW_SECONDS
 from .config import BackendConfig
-from .errors import MessagingError
+from .errors import LeaseLost, MessagingError
 from .schemas import (
     Conversation,
     Message,
@@ -21,16 +22,6 @@ from .schemas import (
 )
 
 __all__ = ["MessagingClient", "RENEW_SECONDS", "host_token"]
-
-
-@lru_cache
-def _process_token(pid: int) -> str:
-    return str(uuid4())
-
-
-def host_token() -> str:
-    """Share one lease identity across this process's loop and tool clients."""
-    return _process_token(os.getpid())
 
 
 class MessagingClient:
@@ -48,6 +39,10 @@ class MessagingClient:
         if who.kind == "agent" and (not isinstance(self.token, str) or not self.token):
             raise MessagingError("Agent lease token must be nonempty text")
         self._backend = backend or Backend(config)
+
+    @contextmanager
+    def session(self):
+        yield self.config.identity
 
     async def __aenter__(self) -> MessagingClient:
         if target(self.actor).kind == "human":
@@ -85,7 +80,7 @@ class MessagingClient:
 
     async def renew(self) -> None:
         if not await self._backend.lease(self.actor, self.token, LEASE_SECONDS):
-            raise MessagingError(f"Agent lease lost for {self.actor}")
+            raise LeaseLost(f"Agent lease lost for {self.actor}")
 
     async def unregister(self) -> None:
         await self._backend.lease(self.actor, self.token, 0)

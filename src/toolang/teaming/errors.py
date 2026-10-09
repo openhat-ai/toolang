@@ -15,6 +15,10 @@ class BackendUnavailable(MessagingError):
     """The backend connection failed; reads may reconnect."""
 
 
+class LeaseLost(MessagingError):
+    """The agent no longer owns the lease for this operation."""
+
+
 class SendUnconfirmed(MessagingError):
     """The server may have accepted the message; do not retransmit automatically."""
 

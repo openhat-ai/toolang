@@ -6,21 +6,20 @@ import asyncio
 from contextlib import suppress
 import logging
 
-from toolang.teaming.event_backend import EventBackend
 from toolang.teaming.exporter import EventExporter
-from toolang.teaming.messaging import RENEW_SECONDS
+from toolang.teaming.types import EventPublisher, RENEW_SECONDS
 from .messaging import MessagingLoop
 
 logger = logging.getLogger(__name__)
 
 
 class TeamingLoop:
-    def __init__(self, messaging: MessagingLoop) -> None:
+    def __init__(self, messaging: MessagingLoop, publisher: EventPublisher) -> None:
         self.messaging = messaging
         self.exporter = EventExporter(
             messaging.executor.stream,
             messaging.executor.store.db_path,
-            EventBackend(messaging.client._backend),
+            publisher,
             agent=messaging.agent,
             token=messaging.client.token,
         )
@@ -34,11 +33,6 @@ class TeamingLoop:
         self._task = asyncio.create_task(self._run())
 
     async def _consume(self) -> None:
-        try:
-            self.messaging.load()
-        except Exception:
-            logger.exception("Messaging checkpoint is invalid")
-            return
         while not self._messages.is_set():
             try:
                 await self.messaging.consume(self._messages)
@@ -59,30 +53,32 @@ class TeamingLoop:
                 logger.exception("Event exporter failed; recovering independently")
                 await self.messaging._wait(self._stop, 1)
 
-    async def _heartbeat(self) -> None:
-        while not self._stop.is_set():
-            await self.messaging._wait(self._stop, RENEW_SECONDS)
-            if not self._stop.is_set():
-                await self.messaging.client.renew()
-
     async def _run(self) -> None:
         delay = 0.5
-        while not self._stop.is_set():
-            try:
-                await self.messaging.client.register(
-                    self.messaging.owner, endpoint=self.messaging.endpoint
-                )
-                async with asyncio.TaskGroup() as tasks:
-                    tasks.create_task(self._heartbeat())
-                    self._consumer = tasks.create_task(self._consume())
-                    self._export = tasks.create_task(self._export_events())
-                return
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                logger.exception("Teaming lease unavailable; reconnecting")
-                await self.messaging._wait(self._stop, delay)
-                delay = min(5, delay * 2)
+        registered = False
+        async with asyncio.TaskGroup() as tasks:
+            while not self._stop.is_set():
+                try:
+                    if registered:
+                        await self.messaging.client.renew()
+                    else:
+                        await self.messaging.client.register(
+                            self.messaging.owner, endpoint=self.messaging.endpoint
+                        )
+                        registered = True
+                        if self._consumer is None:
+                            self._consumer = tasks.create_task(self._consume())
+                            self._export = tasks.create_task(self._export_events())
+                    delay = 0.5
+                    await self.messaging._wait(self._stop, RENEW_SECONDS)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    # Communication failures never cancel an in-flight handler.
+                    registered = False
+                    logger.warning("Teaming Hub unavailable; reconnecting")
+                    await self.messaging._wait(self._stop, delay)
+                    delay = min(5, delay * 2)
 
     async def stop_messages(self) -> None:
         self._messages.set()

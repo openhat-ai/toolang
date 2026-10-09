@@ -48,6 +48,7 @@ from toolang.up.logging import (
 from toolang.work.scheduler import JobScheduler
 from toolang.work.messaging import MessagingLoop
 from toolang.work.teaming import TeamingLoop
+from toolang.teaming.agent_client import AgentClient, AgentEventClient
 
 DEFAULT_WATCH_DEBOUNCE_MS = state_watcher.DEFAULT_DEBOUNCE_MS
 RUNTIME_SHUTDOWN_TASK_TIMEOUT_SEC = 1.0
@@ -282,17 +283,20 @@ def serve(
             )
             messaging_setup = current_setup().teaming
             if messaging_setup is not None and messaging_setup.home.enabled:
+                hub_client = AgentClient(
+                    spec.layout.root, actor=f"agent:{spec.layout.name}"
+                )
                 messaging = MessagingLoop(
                     layout=spec.layout,
                     owner=messaging_setup.root.human,
-                    config=messaging_setup.root.backend,
+                    client=hub_client,
                     endpoint=spec.endpoint,
                     executor=core.executor,
                     threads=core.threads,
                     get_agent_setup=current_setup,
                     get_agent_state=current_state,
                 )
-                teaming = TeamingLoop(messaging)
+                teaming = TeamingLoop(messaging, AgentEventClient(hub_client))
                 teaming.start()
             await scheduler.start()
             app.state.job_scheduler = scheduler

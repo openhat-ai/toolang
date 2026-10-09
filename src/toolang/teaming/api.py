@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 import secrets
 from typing import Annotated, Any, cast
 
-from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.sse import EventSourceResponse, ServerSentEvent
@@ -20,6 +20,7 @@ from .subscriptions import HubSubscription
 
 from .errors import (
     BackendUnavailable,
+    LeaseLost,
     MessagingError,
     SendUnconfirmed,
     EventProtocolError,
@@ -27,14 +28,9 @@ from .errors import (
     ScopeUnavailable,
 )
 from .messaging import MessagingClient
-from .schemas import (
-    Conversation,
-    CreateGroupRequest,
-    HistoryEntry,
-    ResolveRequest,
-    SendRequest,
-    target,
-)
+from .schemas import target
+from .messaging_api import messaging_router
+from .agent_api import agent_router
 
 
 def create_app(
@@ -79,13 +75,35 @@ def create_app(
 
     @app.exception_handler(MessagingError)
     async def messaging_error(request: Request, exc: MessagingError) -> JSONResponse:
-        if isinstance(exc, SendUnconfirmed):
+        if isinstance(exc, LeaseLost):
+            status, code = 409, "recovery_required"
+        elif isinstance(exc, SendUnconfirmed):
             status, code = 502, "send_unconfirmed"
         elif isinstance(exc, BackendUnavailable):
             status, code = 503, "backend_unavailable"
         else:
             status, code = 400, "messaging_error"
         return JSONResponse({"code": code, "detail": str(exc)}, status_code=status)
+
+    @app.exception_handler(EventRecoveryRequired)
+    async def recovery_error(
+        request: Request, exc: EventRecoveryRequired
+    ) -> JSONResponse:
+        return JSONResponse(
+            {"code": "recovery_required", "detail": str(exc)}, status_code=409
+        )
+
+    @app.exception_handler(EventProtocolError)
+    async def protocol_error(request: Request, exc: EventProtocolError) -> JSONResponse:
+        return JSONResponse(
+            {"code": "protocol_error", "detail": str(exc)}, status_code=400
+        )
+
+    @app.exception_handler(SnapshotLimitError)
+    async def upload_limit(request: Request, exc: SnapshotLimitError) -> JSONResponse:
+        return JSONResponse(
+            {"code": "snapshot_limit", "detail": str(exc)}, status_code=413
+        )
 
     @app.exception_handler(HTTPException)
     async def http_error(request: Request, exc: HTTPException) -> JSONResponse:
@@ -106,73 +124,6 @@ def create_app(
     async def health() -> dict[str, bool]:
         await client.check_backend()
         return {"ok": True}
-
-    router = APIRouter(prefix="/msg", tags=["messaging"])
-
-    @router.get("/targets")
-    async def targets() -> dict[str, Any]:
-        return await client.targets()
-
-    @router.get("/agents")
-    async def agents() -> dict[str, str]:
-        return await client.agents()
-
-    @router.get("/groups")
-    async def groups(
-        include_preview: Annotated[bool, Query()] = False,
-    ) -> list[dict[str, Any]]:
-        return await client.contacts(include_preview=include_preview)
-
-    @router.post("/resolve")
-    async def resolve(body: ResolveRequest) -> dict[str, str]:
-        return {"group": await client.resolve(body.target, kind=body.kind)}
-
-    @router.get("/groups/{group}")
-    async def conversation(group: str) -> Conversation:
-        return await client.conversation(group)
-
-    @router.post("/groups", status_code=201)
-    async def create_group(body: CreateGroupRequest) -> dict[str, Any]:
-        return await client.create_group(body.name)
-
-    @router.put("/groups/{group}/membership")
-    async def join_group(group: str) -> dict[str, Any]:
-        return await client.join_group(group)
-
-    @router.delete("/groups/{group}/membership")
-    async def leave_group(group: str) -> dict[str, Any]:
-        return await client.leave_group(group)
-
-    @router.get("/groups/{group}/messages")
-    async def messages(
-        group: str,
-        after: Annotated[str | None, Query()] = None,
-        count: Annotated[int, Query(ge=1, le=1000)] = 200,
-    ) -> list[HistoryEntry]:
-        rows = (
-            await client.history(group, count=count)
-            if after is None
-            else await client.read(group, after=after, count=count)
-        )
-        return [
-            HistoryEntry(stream_id=sid, data=data.get("data")) for sid, data in rows
-        ]
-
-    @router.get("/groups/{group}/cursor")
-    async def cursor(
-        group: str, after: Annotated[str, Query()]
-    ) -> dict[str, str | None]:
-        return {"notice": await client.check_cursor(group, after)}
-
-    @router.post("/messages", status_code=201)
-    async def send(body: SendRequest) -> dict[str, Any]:
-        target(body.target)
-        return await client.send(
-            body.target,
-            body=body.body,
-            in_reply_to=body.in_reply_to,
-            message_id=body.id,
-        )
 
     async def event_subscription(
         agent: Annotated[str | None, Query()] = None,
@@ -251,5 +202,6 @@ def create_app(
         finally:
             subscription.close()
 
-    app.include_router(router)
+    app.include_router(messaging_router(lambda: client, prefix="/msg"))
+    app.include_router(agent_router(client))
     return app

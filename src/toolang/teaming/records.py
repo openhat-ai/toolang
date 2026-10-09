@@ -3,7 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import Any
+from pathlib import Path
+from typing import Any, Literal
+
+from pydantic import BaseModel, ConfigDict, Field
+
+from toolang.common.files import atomic_write_text
+from .schemas import HubConnection
 
 from toolang.execution.errors import SnapshotLimitError
 from toolang.execution.events import (
@@ -20,6 +26,40 @@ from toolang.execution.stream import CanonicalEvent
 from toolang.execution.types import StepRef
 from .errors import EventProtocolError, EventRecoveryRequired
 from .events import PARTS, encode
+
+
+class HubRecord(BaseModel):
+    """Private discovery and process identity for a root's local Hub."""
+
+    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
+    pid: int = Field(gt=0)
+    created: float = Field(gt=0)
+    port: int = Field(ge=1, le=65535)
+    token: str = Field(min_length=32)
+    human: str
+    identity: str
+    status: Literal["starting", "running"] = "running"
+
+    @property
+    def connection(self) -> HubConnection:
+        return HubConnection(
+            f"http://127.0.0.1:{self.port}", self.token, self.human, self.identity
+        )
+
+    def save(self, path: Path) -> None:
+        if path.exists():
+            path.chmod(0o600)
+        atomic_write_text(path, self.model_dump_json() + "\n")
+
+    @classmethod
+    def load(cls, path: Path) -> HubRecord | None:
+        try:
+            return cls.model_validate_json(path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return None
+        except (OSError, ValueError) as exc:
+            raise ValueError(f"Invalid Hub record: {path}") from exc
+
 
 MAX_ENTITIES = 10000
 MAX_BYTES = 16 * 1024 * 1024
