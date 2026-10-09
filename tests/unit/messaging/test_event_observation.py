@@ -827,6 +827,297 @@ def test_projection_omits_optional_history_before_failing_active_budget(
         projection.trim()
 
 
+@pytest.mark.parametrize("scope", ["agent", "thread", "run"])
+def test_active_records_do_not_rescan_history_for_every_root(tmp_path, scope):
+    from tests.support.execution_harness import AsyncGate, ScriptedModelTurn
+    from toolang.base.types.run import ModelCallResult
+    from toolang.execution.store import RunStore
+    from toolang.execution.subscriptions import RecordSnapshot
+    from toolang.teaming.records import MAX_BYTES
+
+    gate = AsyncGate()
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=(
+            "flow example:\n  let result = Done\n"
+            "flow parent:\n  run example\n  run slow\n"
+            "agic slow:\n  Wait.\n"
+        ),
+        responses=[ScriptedModelTurn(ModelCallResult(), gate=gate)],
+    )
+
+    async def scenario():
+        async with harness:
+            old = await run(harness)
+            # Bulk-copy completed records so the fixture stays fast. All roots
+            # share a thread, exercising both global and thread subscriptions.
+            harness.store._conn.execute(
+                """WITH RECURSIVE n(x) AS (
+                VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<10000
+                ) INSERT INTO runs (
+                    id, thread, control, state, status, created_at, finished_at
+                ) SELECT 'run_history_' || x, thread, control, state, status,
+                    created_at, finished_at FROM runs, n WHERE id=?""",
+                (old.id,),
+            )
+            harness.store._conn.commit()
+            active = harness.executor.run(
+                harness.run_spec(
+                    thread=str(old.thread),
+                    runnable="parent",
+                    primary=(TextPart("input"),),
+                )
+            )
+            await asyncio.wait_for(gate.wait_until_entered(), 2)
+            store = RunStore(harness.store.db_path, read_only=True)
+            try:
+                store.pin_stream_snapshot(seconds=5, max_bytes=MAX_BYTES)
+                operations = 0
+
+                def bounded_work():
+                    nonlocal operations
+                    operations += 1000
+                    # Bound database work rather than wall time: repeated full
+                    # scans must fail independently of machine speed/load.
+                    return operations > 2_000_000
+
+                store._conn.set_progress_handler(bounded_work, 1000)
+                runs, steps = store.stream_records(
+                    root=active.run_id if scope == "run" else None,
+                    thread=str(old.thread) if scope == "thread" else None,
+                    after=None,
+                    complete=False,
+                )
+                assert len(runs) == 3  # Root, completed sibling, active child.
+                assert runs[0].id == active.run_id
+                assert [run.status for run in runs] == [
+                    "running",
+                    "succeeded",
+                    "running",
+                ]
+                frames = list(RecordSnapshot(store, runs, steps).structural())
+                assert {
+                    frame.data["run"] for frame in frames if frame.event == "run_begin"
+                } == {run.id for run in runs}
+            finally:
+                store.close()
+                gate.release()
+                await active
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("phase", ["serialization", "application"])
+def test_recovery_bounds_optional_history_without_losing_active_tree(
+    tmp_path, monkeypatch, phase
+):
+    from types import SimpleNamespace
+
+    from tests.support.execution_harness import AsyncGate, ScriptedModelTurn
+    from toolang.base.types.run import ModelCallResult
+    from toolang.execution import observation, store as stores, subscriptions
+    from toolang.execution.events import RunBegin
+    from toolang.execution.store import RunStore
+    from toolang.teaming import exporter
+    from toolang.teaming.records import EventProjection, MAX_BYTES, field
+
+    gate = AsyncGate()
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="flow example:\n  let result = Done\nagic slow:\n  Wait.\n",
+        responses=[ScriptedModelTurn(ModelCallResult(), gate=gate)],
+    )
+
+    async def scenario():
+        async with harness:
+            old = await run(harness)
+            recent = await run(harness)
+            active = harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    runnable="slow",
+                    primary=(TextPart("input"),),
+                )
+            )
+            await asyncio.wait_for(gate.wait_until_entered(), 2)
+            store = RunStore(harness.store.db_path, read_only=True)
+            try:
+                clock = [100.0]
+                timer = SimpleNamespace(monotonic=lambda: clock[0])
+                serialize = subscriptions.event_to_data
+                apply = EventProjection.apply
+
+                def slow_history(event):
+                    if (
+                        phase == "serialization"
+                        and isinstance(event, RunBegin)
+                        and event.run == old.id
+                    ):
+                        # One optional tree consumes most of the overall budget.
+                        clock[0] += exporter.SNAPSHOT_SECONDS * 0.6
+                    return serialize(event)
+
+                def slow_application(projection, frame):
+                    result = apply(projection, frame)
+                    if (
+                        phase == "application"
+                        and isinstance(frame.event, RunBegin)
+                        and frame.event.run == old.id
+                    ):
+                        clock[0] += exporter.SNAPSHOT_SECONDS * 0.6
+                    return result
+
+                with monkeypatch.context() as patch:
+                    for module in (stores, exporter, subscriptions, observation):
+                        patch.setattr(module, "time", timer, raising=False)
+                    store.pin_stream_snapshot(seconds=5, max_bytes=MAX_BYTES)
+                    patch.setattr(subscriptions, "event_to_data", slow_history)
+                    patch.setattr(EventProjection, "apply", slow_application)
+                    patch.setattr(
+                        store, "stream_recent_roots", lambda limit: (recent.id, old.id)
+                    )
+                    projection = exporter._read_projection(
+                        store, harness.executor.stream.tail, deadline=105
+                    )
+                assert field("run", active.run_id) in projection.entities
+                assert field("run", recent.id) in projection.entities
+                assert field("run", old.id) not in projection.entities
+                projection.snapshot(observation.StreamScope())
+            finally:
+                store.close()
+                gate.release()
+                await active
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "phase", ["controls", "roots", "tree", "decode", "late_active", "active"]
+)
+def test_recovery_bounds_records_work_before_it_consumes_the_snapshot_budget(
+    tmp_path, monkeypatch, phase
+):
+    from types import SimpleNamespace
+
+    from tests.support.execution_harness import AsyncGate, ScriptedModelTurn
+    from toolang.base.types.run import ModelCallResult
+    from toolang.execution import observation, store as stores, subscriptions
+    from toolang.execution.store import RunStore
+    from toolang.teaming import exporter
+    from toolang.teaming.records import MAX_BYTES, field
+
+    gate = AsyncGate()
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=(
+            "flow example:\n  let result = Done\n"
+            "flow history:\n  repeat 3 times:\n    run example\n"
+            "agic slow:\n  Wait.\n"
+        ),
+        responses=[ScriptedModelTurn(ModelCallResult(), gate=gate)],
+    )
+
+    async def scenario():
+        async with harness:
+            old = await harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    runnable="history",
+                    primary=(TextPart("input"),),
+                )
+            )
+            recent = await run(harness)
+            active = harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    runnable="slow",
+                    primary=(TextPart("input"),),
+                )
+            )
+            await asyncio.wait_for(gate.wait_until_entered(), 2)
+            store = RunStore(harness.store.db_path, read_only=True)
+            clock = [100.0]
+            timer = SimpleNamespace(monotonic=lambda: clock[0])
+
+            def tick(value):
+                clock[0] += 0.01
+                return value
+
+            def slow_query():
+                # SQLite must interrupt this work before a row is returned;
+                # checking a deadline only after fetchall() is too late.
+                store._conn.execute(
+                    """WITH RECURSIVE n(x) AS (
+                    VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<1000
+                    ) SELECT sum(tick(x)) FROM n"""
+                ).fetchone()
+
+            controls = store.stream_thread_controls
+            records = store.stream_records
+            decode = stores._run_from_row
+
+            def decode_run(row):
+                if phase == "decode" and row["thread"] == str(old.thread):
+                    clock[0] += 1.4
+                return decode(row)
+
+            def read_controls(**kwargs):
+                assert phase != "late_active", "No time remains for optional history"
+                if phase == "controls":
+                    slow_query()
+                return controls(**kwargs)
+
+            def read_roots(limit):
+                if phase == "roots":
+                    slow_query()
+                return recent.id, old.id
+
+            def read_records(**kwargs):
+                if phase == "late_active" and kwargs["root"] is None:
+                    clock[0] += 3
+                if (phase == "tree" and kwargs["root"] == old.id) or (
+                    phase == "active" and kwargs["root"] is None
+                ):
+                    slow_query()
+                return records(**kwargs)
+
+            try:
+                store._conn.create_function("tick", 1, tick)
+                with monkeypatch.context() as patch:
+                    for module in (stores, exporter, subscriptions, observation):
+                        patch.setattr(module, "time", timer, raising=False)
+                    patch.setattr(store, "stream_thread_controls", read_controls)
+                    patch.setattr(store, "stream_recent_roots", read_roots)
+                    patch.setattr(store, "stream_records", read_records)
+                    patch.setattr(stores, "_run_from_row", decode_run)
+                    store.pin_stream_snapshot(seconds=5, max_bytes=MAX_BYTES)
+                    if phase == "active":
+                        import sqlite3
+
+                        with pytest.raises(sqlite3.OperationalError, match="interrupt"):
+                            exporter._read_projection(
+                                store, harness.executor.stream.tail, deadline=105
+                            )
+                        return
+                    projection = exporter._read_projection(
+                        store, harness.executor.stream.tail, deadline=105
+                    )
+                assert clock[0] < 105, (
+                    "Optional records work consumed the entire recovery budget"
+                )
+                assert field("run", active.run_id) in projection.entities
+                assert field("run", old.id) not in projection.entities
+                if phase in {"tree", "decode"}:
+                    assert field("run", recent.id) in projection.entities
+                projection.snapshot(observation.StreamScope())
+            finally:
+                store.close()
+                gate.release()
+                await active
+
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize(
     "stored",
     [

@@ -261,6 +261,19 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Fixed
 
+- Active-tree selection no longer rescans all runs for every root: parent run
+  IDs are materialized once so recursive lookups are indexed, keeping a large
+  completed history from exhausting the five-second snapshot budget before
+  optional history is read, with existing tree selection and cursor semantics
+  unchanged. (#723)
+
+- Team event observation keeps a large recovery history from stalling or
+  replacing the active snapshot: optional SQL reads and structural
+  reconstruction now share one deadline of half the five-second snapshot
+  budget instead of five seconds each, so a slow optional tree cannot delay or
+  evict the active run's snapshot, while the active tree and fully
+  reconstructed history are preserved.
+
 - Hub send responses are now validated before a message is treated as
   delivered: a 2xx response with a missing or malformed receipt, a
   different message ID or sender, or an invalid group or empty cursor is
