@@ -22,7 +22,12 @@ from toolang.execution.observation import (
 from toolang.execution.schemas import StreamFrame
 from toolang.execution.stream import CanonicalEvent
 from toolang.execution.types import EventCursor
-from .errors import EventProtocolError, EventRecoveryRequired, ScopeUnavailable
+from .errors import (
+    EventProtocolError,
+    EventRecoveryRequired,
+    MessagingError,
+    ScopeUnavailable,
+)
 from .event_backend import EventBackend, MANIFEST
 from .events import (
     HubCursor,
@@ -213,16 +218,28 @@ class HubSubscription:
                     and stream_id(check["floor"]) > self.after.position
                 ):
                     continue
-                self._build(
-                    projections,
-                    baselines,
-                    status,
-                    rows,
-                    boundary,
-                    cached,
-                    resets,
-                    deadline,
-                )
+                try:
+                    self._build(
+                        projections,
+                        baselines,
+                        status,
+                        rows,
+                        boundary,
+                        cached,
+                        resets,
+                        deadline,
+                    )
+                except ScopeUnavailable:
+                    raise
+                except (
+                    ValueError,
+                    KeyError,
+                    TypeError,
+                    AttributeError,
+                    StreamGapError,
+                    MessagingError,
+                ) as exc:
+                    raise EventProtocolError("Invalid structural projection") from exc
                 self._status = status
                 self.cursor = boundary
                 self._last_presence = time.monotonic()
@@ -294,10 +311,7 @@ class HubSubscription:
                 if frame.root_run_id is not None
             )
             selected_roots[agent] = roots
-            try:
-                snapshot = projection.snapshot(scope, roots)
-            except (ValueError, KeyError, TypeError) as exc:
-                raise EventProtocolError("Invalid structural projection") from exc
+            snapshot = projection.snapshot(scope, roots)
             snapshots[agent] = snapshot
             normal = StreamNormalizer()
             normal.seed(snapshot)

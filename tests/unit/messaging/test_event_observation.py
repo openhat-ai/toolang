@@ -444,7 +444,25 @@ def test_hub_filters_and_cursor_errors_have_flat_http_contract(tmp_path):
                 response.status_code == 404
                 and response.json()["code"] == "scope_unavailable"
             )
-            await EventBackend(driver).initialize()
+            meta = await EventBackend(driver).initialize()
+            response = await http.get(
+                "/events/stream",
+                params={"after": str(HubCursor(meta["epoch"], (1, 0)))},
+            )
+            assert response.status_code == 400
+            assert response.json()["code"] == "invalid_request"
+            await driver._call(
+                "HSET",
+                AGENTS,
+                "agent:alice",
+                json.dumps({"v": 1, "status": "complete"}),
+            )
+            for scope in ("run", "thread"):
+                response = await http.get(
+                    "/events/stream", params={"agent": "agent:alice", scope: "missing"}
+                )
+                assert response.status_code == 404
+                assert response.json()["code"] == "scope_unavailable"
             await driver._call("HSET", META, "pending", "broken")
             response = await http.get("/events/stream")
             assert (
@@ -887,5 +905,151 @@ def test_stale_exporter_cannot_remove_the_new_owners_staging(tmp_path, monkeypat
                 old.close()
                 new.close()
                 await driver.close()
+
+    asyncio.run(scenario())
+
+
+def test_projection_preserves_nested_background_run_structure():
+    from toolang.execution.events import (
+        RunBegin,
+        RunEnd,
+        StepBegin,
+        StepEnd,
+        event_from_data,
+    )
+    from toolang.execution.stream import CanonicalEvent
+    from toolang.execution.subscriptions import StreamScope
+    from toolang.execution.types import ControlRef, EventCursor, StepRef
+    from toolang.lang.ast import RunStmt, Span
+    from toolang.teaming.events import Projection
+
+    root = RunBegin("run_root", ControlRef.for_run("run_root", 0))
+    step = StepBegin(
+        StepRef.parse("run_root.0"),
+        "run",
+        RunStmt(span=Span(line=1), runnable="child", asynchronous=True),
+    )
+    child = RunBegin("run_child", ControlRef.for_run("run_child", 0), parent=step.step)
+    step_end = StepEnd(step.step, "run", "succeeded")
+    root_end = RunEnd(root.run, "succeeded")
+    child_end = RunEnd(child.run, "succeeded")
+    projection = Projection()
+    for seq, event in enumerate((root, step, child, step_end, root_end, child_end), 1):
+        projection.apply(
+            CanonicalEvent(EventCursor("a" * 32, seq), event, "term_one", root.run, 0)
+        )
+    snapshot = projection.snapshot(StreamScope(root=root.run))
+    assert [event_from_data(frame.data) for frame in snapshot.structural()] == [
+        root,
+        step,
+        child,
+        child_end,
+        step_end,
+        root_end,
+    ]
+
+
+@pytest.mark.parametrize("damage", ["orphan", "cycle", "duplicate", "wrong_end"])
+def test_projection_rejects_invalid_tree_structure(damage):
+    from toolang.execution.events import RunBegin, RunEnd, event_to_data
+    from toolang.execution.stream import CanonicalEvent
+    from toolang.execution.subscriptions import StreamScope
+    from toolang.execution.types import ControlRef, EventCursor, StepRef
+    from toolang.teaming.events import Projection, field
+
+    projection = Projection()
+    name = "run_one"
+    projection.apply(
+        CanonicalEvent(
+            EventCursor("a" * 32, 1),
+            RunBegin(name, ControlRef.for_run(name, 0), thread_id="term_one"),
+            "term_one",
+            name,
+            0,
+        )
+    )
+    entity = projection.entities[field("run", name)]
+    if damage in {"orphan", "cycle"}:
+        parent = StepRef.parse(f"{name if damage == 'cycle' else 'run_missing'}.0")
+        entity["begin"]["parent"] = str(parent)
+    elif damage == "duplicate":
+        projection.entities[field("run", "run_duplicate")] = dict(entity)
+    else:
+        entity["end"] = event_to_data(RunEnd("run_other", "succeeded"))
+        entity["end_source"] = str(EventCursor("a" * 32, 2))
+    with pytest.raises(EventProtocolError):
+        projection.snapshot(StreamScope())
+
+
+@pytest.mark.parametrize("damage", ["root", "control", "manifest", "floor"])
+def test_invalid_recovery_metadata_is_a_backend_error(damage):
+    import httpx
+    from toolang.teaming.api import create_app
+    from toolang.teaming.event_backend import AGENTS, MANIFEST, generation_key
+    from toolang.teaming.events import field
+    from toolang.teaming.messaging import MessagingClient
+
+    async def scenario():
+        driver = backend(FakeServer(server_type="valkey"))
+        client = MessagingClient(
+            BackendConfig("redis://test"), actor="human:owner", backend=driver
+        )
+        app = create_app(client, token="secret")
+        async with (
+            app.router.lifespan_context(app),
+            httpx.AsyncClient(
+                transport=httpx.ASGITransport(app, raise_app_exceptions=False),
+                base_url="http://hub",
+                headers={"Authorization": "Bearer secret"},
+            ) as http,
+        ):
+            await EventBackend(driver).initialize()
+            origin = {"v": 1, "generation": "g"}
+            manifest = {"v": 1, "count": 0, "baseline": "0-0"}
+            entities = {}
+            if damage == "floor":
+                origin["floor"] = "bad"
+            elif damage == "manifest":
+                del manifest["baseline"]
+            elif damage == "root":
+                entities[field("root", "run_one")] = {
+                    "v": 1,
+                    "root": "run_one",
+                    "thread": "term_one",
+                }
+            else:
+                entities[field("control", "term_one#0")] = {
+                    "v": 1,
+                    "thread": "term_one",
+                    "root": None,
+                    "source": None,
+                    "event": {"type": "invalid"},
+                }
+            manifest["count"] = len(entities)
+            await driver._call("HSET", AGENTS, "agent:alice", json.dumps(origin))
+            await driver._call(
+                "HSET",
+                generation_key("agent:alice", "g"),
+                MANIFEST,
+                json.dumps(manifest),
+            )
+            for key, entity in entities.items():
+                await driver._call(
+                    "HSET", generation_key("agent:alice", "g"), key, json.dumps(entity)
+                )
+            response = await http.get(
+                "/events/stream",
+                params={
+                    "after": str(
+                        HubCursor(
+                            (await EventBackend(driver).initialize())["epoch"], (0, 0)
+                        )
+                    )
+                }
+                if damage == "floor"
+                else {},
+            )
+            assert response.status_code == 503
+            assert response.json()["code"] == "protocol_error"
 
     asyncio.run(scenario())

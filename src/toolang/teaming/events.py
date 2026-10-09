@@ -260,13 +260,25 @@ class Projection:
                 parent = begin.step.parent or begin.step.run_id
             else:
                 raise EventProtocolError("Invalid projection Begin")
+            if key != field(
+                "run" if isinstance(begin, RunBegin) else "step", str(identity)
+            ):
+                raise EventProtocolError("Projection identity does not match its key")
             snapshot.begins[identity] = (begin, value["begin_source"])
             snapshot.children[parent].append(identity)
             if value.get("end") is not None:
-                snapshot.ends[identity] = (
-                    event_from_data(value["end"]),
-                    value["end_source"],
-                )
+                end = event_from_data(value["end"])
+                if not (
+                    isinstance(begin, RunBegin)
+                    and isinstance(end, RunEnd)
+                    and begin.run == end.run
+                    or isinstance(begin, StepBegin)
+                    and isinstance(end, StepEnd)
+                    and begin.step == end.step
+                    and begin.kind == end.kind
+                ):
+                    raise EventProtocolError("Projection End does not match its Begin")
+                snapshot.ends[identity] = (end, value["end_source"])
         for children in snapshot.children.values():
             children.sort(
                 key=lambda key: (
@@ -274,11 +286,18 @@ class Projection:
                     str(key),
                 )
             )
-        for key in snapshot.begins:
-            begin = snapshot.begins[key][0]
-            for ancestor in snapshot.ancestors(begin):
-                if ancestor not in snapshot.begins:
-                    raise EventProtocolError("Projection ancestor is missing")
+        # Validate the forest once. Walking every entity's ancestors is quadratic
+        # for deep trees and never terminates when stored parent links form a cycle.
+        pending = list(snapshot.children[None])
+        seen: set[str | StepRef] = set()
+        while pending:
+            key = pending.pop()
+            if key in seen:
+                raise EventProtocolError("Projection contains a repeated entity")
+            seen.add(key)
+            pending.extend(snapshot.children.get(key, ()))
+        if seen != snapshot.begins.keys():
+            raise EventProtocolError("Projection contains orphaned or cyclic ancestry")
         return snapshot
 
     def controls(self, scope: StreamScope) -> list[dict[str, Any]]:

@@ -54,11 +54,7 @@ class HubStreamState:
         }:
             frame = StreamFrame(frame.event, frame.data)
         if frame.event == "stream_prefill":
-            if (
-                self._prefix is not None
-                or frame.data.get("scope") != self.scope.data()
-                or frame.id is not None
-            ):
+            if self._prefix is not None or frame.data.get("scope") != self.scope.data():
                 raise ValueError("Invalid Hub prefill scope")
             HubCursor.parse(frame.data["cursor"])
             replacement = frame.data.get("replace")

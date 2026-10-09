@@ -149,7 +149,6 @@ class EventExporter:
         self.generation = ""
         self.highwater = self.reader.cursor
         self._stopping = False
-        self._broken = False
 
     async def _retry(self, call, *args):
         delay = 0.5
@@ -357,7 +356,6 @@ class EventExporter:
             except StopAsyncIteration:
                 return
             except EventProtocolError:
-                self._broken = True
                 logger.exception("Event dataset requires repair; export stopped")
                 return
             except asyncio.CancelledError:

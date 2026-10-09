@@ -17,7 +17,7 @@ from .events import (
     MAX_ENTITIES,
     encode,
 )
-from .schemas import target
+from .schemas import stream_id, target
 
 EVENTS = f"{PREFIX}:events"
 META, STREAM, AGENTS = f"{EVENTS}:meta", f"{EVENTS}:stream", f"{EVENTS}:agents"
@@ -286,10 +286,12 @@ class EventBackend:
         )
         try:
             origins = {key: json.loads(value) for key, value in _hash(agents).items()}
-            if any(value.get("v") != 1 for value in origins.values()):
-                raise ValueError("Origin schema version")
+            for value in origins.values():
+                if value.get("v") != 1:
+                    raise ValueError("Origin schema version")
+                stream_id(value.get("floor", "0-0"))
             return _hash(meta), origins, _hash(participants)
-        except (ValueError, TypeError, AttributeError) as exc:
+        except (ValueError, TypeError, AttributeError, MessagingError) as exc:
             raise EventProtocolError("Invalid origin metadata") from exc
 
     async def projection(
@@ -315,7 +317,9 @@ class EventBackend:
                         if not isinstance(entity, dict) or entity.get("v") != 1:
                             raise ValueError("Unsupported event entity version")
                         data = {**entity, "delivery": data["delivery"]}
-                except (ValueError, TypeError, KeyError) as exc:
+                    if name == MANIFEST:
+                        stream_id(data["baseline"])
+                except (ValueError, TypeError, KeyError, MessagingError) as exc:
                     raise EventProtocolError("Invalid stored event entity") from exc
                 result[name] = data
             if int(cursor) == 0:
