@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import signal
 import stat
 import subprocess
 import sys
@@ -286,6 +287,50 @@ def test_host_launch_identity_failure_stops_created_process(
         if process.poll() is None:
             process.kill()
         process.wait(timeout=5)
+
+
+@pytest.mark.parametrize("owned", [False, True])
+@pytest.mark.parametrize("force", [False, True])
+def test_host_stop_allows_final_drain_without_delaying_force(monkeypatch, owned, force):
+    elapsed = 0.0
+    signals = []
+
+    def poll():
+        return 0 if elapsed >= 5 or signal.SIGKILL in signals else None
+
+    def advance(seconds):
+        nonlocal elapsed
+        elapsed += seconds
+
+    def wait(*, timeout):
+        nonlocal elapsed
+        if poll() is not None:
+            return 0
+        if elapsed + timeout < 5:
+            advance(timeout)
+            raise subprocess.TimeoutExpired("agent", timeout)
+        elapsed = 5
+        return 0
+
+    monkeypatch.setattr(host_sandbox.os, "killpg", lambda pid, sig: signals.append(sig))
+    monkeypatch.setattr(host_sandbox.os, "getpgid", lambda pid: pid)
+    monkeypatch.setattr(
+        host_sandbox,
+        "time",
+        SimpleNamespace(monotonic=lambda: elapsed, sleep=advance),
+    )
+    monkeypatch.setattr(
+        host_sandbox, "_ref_process_running", lambda ref, pid: poll() is None
+    )
+    if owned:
+        process = SimpleNamespace(pid=123, poll=poll, wait=wait)
+        stopped = host_sandbox._stop_process(cast(Any, process), force=force)
+    else:
+        ref = SandboxRef("123", "http://localhost:1", runtime_kind="process")
+        stopped = host_sandbox._stop_ref(ref, force=force)
+    assert stopped
+    assert signals == [signal.SIGTERM, *([signal.SIGKILL] if force else [])]
+    assert elapsed < 3 if force else 5 <= elapsed <= 10
 
 
 @pytest.mark.parametrize("operation", ["running", "stop", "release"])

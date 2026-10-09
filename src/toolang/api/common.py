@@ -8,7 +8,10 @@ from typing import Annotated, cast
 
 from fastapi import Depends, HTTPException, Query, Request
 from fastapi.sse import ServerSentEvent
-from starlette.types import ASGIApp, Message, Receive, Scope, Send
+from toolang.common.sse import (
+    SSESendDeadline as SSESendDeadline,
+    SEND_TIMEOUT_SEC as SEND_TIMEOUT_SEC,
+)
 
 from toolang.execution.errors import StreamOverflowError
 from toolang.execution.subscriptions import (
@@ -20,7 +23,6 @@ from toolang.execution.subscriptions import (
 
 RUN_ID_HEADER = "X-Toolang-Run-ID"
 KEEP_ALIVE_SEC = 15.0
-SEND_TIMEOUT_SEC = 5.0
 
 
 async def reserve_stream(
@@ -70,29 +72,3 @@ async def sse_stream(
             )
     finally:
         subscription.close()
-
-
-class SSESendDeadline:
-    """Bound each SSE ASGI send, including headers; idle reads have no deadline."""
-
-    def __init__(self, app: ASGIApp) -> None:
-        self.app = app
-
-    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        streaming = False
-
-        async def bounded_send(message: Message) -> None:
-            nonlocal streaming
-            if message["type"] == "http.response.start":
-                streaming = any(
-                    name.lower() == b"content-type"
-                    and value.startswith(b"text/event-stream")
-                    for name, value in message.get("headers", ())
-                )
-            if streaming:
-                async with asyncio.timeout(SEND_TIMEOUT_SEC):
-                    await send(message)
-            else:
-                await send(message)
-
-        await self.app(scope, receive, bounded_send)

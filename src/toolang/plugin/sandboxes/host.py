@@ -34,6 +34,8 @@ HOST_LAUNCH_ENV = "TOOLANG_HOST_LAUNCH"
 HOST_SANDBOX_DESCRIPTION_ENV = "TOOLANG_SANDBOX_DESCRIPTION"
 _OUTPUT_POLL_SECONDS = 0.02
 _OUTPUT_CHUNK_BYTES = 64 * 1024
+# Allow HTTP shutdown and the bounded final-event drain to finish before failure.
+_STOP_GRACE_SECONDS = 10.0
 
 
 @dataclass(slots=True)
@@ -438,7 +440,7 @@ def _stop_ref(ref: SandboxRef, *, force: bool) -> bool:
             return True
         except PermissionError as exc:
             raise ValueError(f"permission denied while stopping pid {pid}") from exc
-        deadline = time.monotonic() + 2.0
+        deadline = time.monotonic() + (2.0 if force else _STOP_GRACE_SECONDS)
         while time.monotonic() < deadline:
             if not _ref_process_running(ref, pid):
                 return True
@@ -455,7 +457,7 @@ def _stop_process(
         return True
     try:
         os.killpg(process.pid, signal.SIGTERM)
-        process.wait(timeout=2)
+        process.wait(timeout=2 if force else _STOP_GRACE_SECONDS)
         return True
     except ProcessLookupError:
         return True

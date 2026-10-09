@@ -215,7 +215,7 @@ def test_arrivals_during_handling_and_cancellation_save_delivered_receipts(tmp_p
 
 
 def test_heartbeat_continues_during_slow_batch_and_reconnects(tmp_path, monkeypatch):
-    from toolang.work import messaging
+    from toolang.work import teaming
     from toolang.teaming.errors import BackendUnavailable
 
     async def scenario():
@@ -234,17 +234,22 @@ def test_heartbeat_continues_during_slow_batch_and_reconnects(tmp_path, monkeypa
             await asyncio.Event().wait()
 
         monkeypatch.setattr(loop, "poll", slow_poll)
-        monkeypatch.setattr(messaging, "RENEW_SECONDS", 0.01)
-        task = asyncio.create_task(loop.run(asyncio.Event()))
+        monkeypatch.setattr(teaming, "RENEW_SECONDS", 0.01)
+        drained = asyncio.Event()
+        exporter = MagicMock()
+        exporter.run = drained.wait
+        exporter.finish = drained.set
+        monkeypatch.setattr(teaming, "EventExporter", lambda *args, **kwargs: exporter)
+        lifecycle = teaming.TeamingLoop(loop)
+        lifecycle.start()
         await asyncio.wait_for(entered.wait(), 2)
         for _ in range(100):
             if client.renew.await_count >= 2:
                 break
             await asyncio.sleep(0.005)
         assert client.renew.await_count >= 2
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await task
+        await lifecycle.stop_messages()
+        await lifecycle.close()
         assert client.register.await_count == 2
         client.unregister.assert_awaited_once_with()
         client.close.assert_awaited_once()
@@ -276,14 +281,24 @@ def test_hosted_lifespan_starts_and_stops_messaging(tmp_path, monkeypatch, enabl
     )
     entered, stopped = asyncio.Event(), asyncio.Event()
 
-    async def run_messaging(stop):
-        entered.set()
-        await stop.wait()
-        stopped.set()
-
     def message_loop(**kwargs):
         assert kwargs["config"] == CONFIG and kwargs["executor"] is core.executor
-        return SimpleNamespace(run=run_messaging)
+        return object()
+
+    class Lifecycle:
+        def __init__(self, messaging):
+            pass
+
+        def start(self):
+            assert scheduler.start.await_count == 0
+            entered.set()
+
+        async def stop_messages(self):
+            assert core.close.await_count == 0
+            stopped.set()
+
+        async def close(self):
+            core.close.assert_awaited_once()
 
     def create_app(*args, lifespan, **kwargs):
         return SimpleNamespace(state=SimpleNamespace(), lifespan=lifespan)
@@ -310,6 +325,7 @@ def test_hosted_lifespan_starts_and_stops_messaging(tmp_path, monkeypatch, enabl
     monkeypatch.setattr(server.agents, "write_runtime_state", MagicMock())
     monkeypatch.setattr(server.agents, "stop_runtime_state", MagicMock())
     monkeypatch.setattr(server, "MessagingLoop", message_loop)
+    monkeypatch.setattr(server, "TeamingLoop", Lifecycle)
     monkeypatch.setattr(server, "create_app", create_app)
     monkeypatch.setattr(server, "_run_uvicorn_app", run_server)
     assert (

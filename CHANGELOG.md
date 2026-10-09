@@ -9,6 +9,30 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Added
 
+- `too top` observes a running team or agent without starting execution: `too top`
+  follows the running Hub for the whole team, while `too AGENT top` follows the
+  selected running agent through existing target and endpoint discovery. `--once`
+  prints one snapshot and exits, as does redirected output; interactive views
+  refresh at most twice per second, reconnect from their committed cursor with
+  backoff, and exit on `q` or Ctrl-C. Rows show agent summaries and active root
+  trees and retain up to 20 roots completed in the last 30 seconds, label
+  offline, incomplete, and reconnecting origins explicitly, and omit content
+  bodies.
+
+- Enabled agents export their canonical event stream to the teaming backend
+  independently of execution and messaging, including retained finals from
+  offline origins, and the authenticated Hub serves it at `GET /events/stream`.
+  Optional `agent=agent:alice` selects one origin, and `thread=ID` or `run=ID`
+  selects a thread or root tree under it; no filter observes the whole team.
+  Execution frames keep their event name and payload and add `agent`,
+  `source_cursor`, and the Hub `cursor` as the SSE `id`; structural context
+  carries `context: true` and no `id`, `stream_prefill` stages replacements that
+  `stream_checkpoint` commits, and `stream_status` reports `{agent, online,
+  complete, reason}`. Invalid filters and cursors return `400`, unknown or
+  unretained scopes `404`, and an unavailable backend `503`, while a live
+  subscription reports `overflow`, `snapshot_limit`, `backend_unavailable`,
+  `scope_unavailable`, or `protocol_error` before closing.
+
 - Execution streams resume from a durable cursor: the run and retry/rerun POST
   streams, `GET /api/v1/runs/{run_id}/stream`,
   `GET /api/v1/threads/{thread_id}/stream`, and the new agent-scoped

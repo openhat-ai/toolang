@@ -22,6 +22,9 @@ Top-level commands are:
 - `clone`
 - `remove`
 - `list`
+- `hub`
+- `text`
+- `top`
 - `info`
 - `serve`
 - `start`
@@ -181,6 +184,40 @@ the oversized call. See [model configuration](models.md#automatic-compaction-con
 `compact.model`, `summary`, `recent`, `trigger`, and runtime `--compact-model`
 settings.
 
+
+## Team activity
+
+`too top` observes the running Hub; `too AGENT top` observes the selected running
+agent directly. Neither starts execution. Use `--once` for one snapshot; redirected
+output also exits after the first checkpoint. Interactive views refresh at most
+twice per second, reconnect from their committed cursor, and exit with `q` or
+Ctrl-C. Rows show active root trees and up to 20 recently completed roots for
+30 seconds. Offline, incomplete, and reconnecting states are explicit; message
+and result bodies are omitted.
+
+An enabled agent exports its canonical stream independently of execution and
+messaging. The authenticated Hub endpoint is `GET /events/stream`, with optional
+`agent=agent:alice`, and either `thread=ID` or `run=ID` when an agent is selected.
+No filter observes the team. `after` accepts only a Hub cursor
+(`h1.<epoch>.<stream-id>`); local agent cursors are separate. Root subscriptions
+close after the complete tree and queued retries; other scopes stay open.
+
+Execution frames preserve their event name/data and add `agent`, `source_cursor`,
+and Hub `cursor`. SSE IDs acknowledge Hub positions. Structural context has
+`context: true` and no SSE ID. Ignore inherited SSE IDs on context,
+`stream_prefill`, and `stream_status` frames. `stream_prefill` carries `{cursor, scope, replace}`:
+`replace: null` resets the selected view; otherwise each `{agent, roots}` replaces
+that agent's selected view (`roots: null`) or named trees. Stage the entire prefix
+and atomically commit it at `stream_checkpoint`. `stream_status` supplies
+`{agent, online, complete, reason}`; incomplete origins must not be treated as
+completed executions. A failed or interrupted prefix advances no checkpoint.
+
+Invalid filters/cursors return `400`, unknown or unretained scopes `404`, and
+backend/schema failures `503`, with `code`/`detail` JSON. Once streaming starts,
+`stream_error` reports `overflow`, `snapshot_limit`, `backend_unavailable`,
+`scope_unavailable`, or `protocol_error`, then closes. Backend outages never
+cancel local runs. Event retention and repair boundaries are specified in the
+[team observation contract](plans/team-observation.md).
 
 ## Agent Selectors
 

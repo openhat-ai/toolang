@@ -15,7 +15,7 @@ services. `coord` is reserved; its operations are outside this delivery.
 | 2. [#708](https://github.com/openhat-ai/toolang/pull/708), revised | Deliver `teaming` messaging, typed targets, scoped setup, backend membership, `msg`, and Text. Replace `team` with bare `text`. | Design. |
 | 3. Hub | Add Hub API/client, `hub start/serve/stop/status`, port overrides, and route Text through Hub. | Revised #708. |
 | 4. [Canonical subscriptions](local-subscriptions.md) | Unify resident CLI runtime ownership; persist canonical cursors; add shared caching and agent/thread/root-run catchup. | Design and remaining local protocol decisions. |
-| 5. Team observation | Bridge agent events through the backend; add global subscriptions and `top`/agent `top`. | Hub and local subscriptions. |
+| 5. [Team observation](team-observation.md) | Bridge agent events through the backend; add global subscriptions and `top`/agent `top`. | Hub and local subscriptions. |
 
 PR #708 is reused, not replaced by a parallel messaging implementation. Its Text
 commands may call the shared messaging service until the Hub PR replaces that
@@ -318,11 +318,10 @@ structure/final results must be repaired before claiming continuous observation.
 Recovery markers are transport control, not invented source execution events;
 Hub marks stale/incomplete views until recovery establishes a new boundary.
 
-Before stage 5 implementation, define backend key/value schemas, projection
-versioning, retention, deduplication/recovery transactions, exact Hub routes and
-wire envelopes, and activity presentation. Backend retention is separate from
-the local readers' cache watermark and from messaging retention. Do not expand
-coordination in these PRs.
+The approved [stage 5 contract](team-observation.md) defines backend schemas,
+projection versioning, retention, recovery transactions, Hub routes/envelopes,
+and activity presentation. Backend retention is separate
+from the local cache and messaging retention; coordination remains outside scope.
 
 ## Acceptance and touchpoints
 

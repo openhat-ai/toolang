@@ -79,7 +79,7 @@ _INSPECTION_PANEL_COMMAND_ORDER = (
     "inspect",
 )
 _SCRIPT_PANEL_COMMAND_ORDER = ("init", "run")
-_TEAMING_PANEL_COMMAND_ORDER = ("hub", "text")
+_TEAMING_PANEL_COMMAND_ORDER = ("hub", "text", "top")
 # Root-hidden run and thread commands stay discoverable in target help.
 _TARGET_HELP_COMMANDS = frozenset(
     (*_RUN_PANEL_COMMAND_ORDER, *_THREAD_PANEL_COMMAND_ORDER)
@@ -405,6 +405,13 @@ _registered_command(
     "toolang.cli.toolang.commands.text:text_command",
     help="Text agents or groups",
     context_settings={"allow_interspersed_args": False},
+    rich_help_panel=TEAMING_COMMAND_PANEL,
+)
+
+_registered_command(
+    "top",
+    "toolang.cli.toolang.commands.top:top_command",
+    help="Show team or agent activity",
     rich_help_panel=TEAMING_COMMAND_PANEL,
 )
 

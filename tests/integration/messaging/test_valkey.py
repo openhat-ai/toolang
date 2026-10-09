@@ -416,8 +416,8 @@ def test_real_text_terminal_sends_reads_and_reuses_tmux(valkey, tmp_path, runnin
                 observed
             )
             assert "Write a message" not in observed and "Enter send" not in observed
-            assert any(line.startswith("alice") for line in observed.splitlines())
-            assert any(line.startswith("bob") for line in observed.splitlines())
+            headers = {line.rstrip() for line in observed.splitlines()}
+            assert {"• alice", "• bob"} <= headers, observed
             observer.send_keys("human cannot join this DM", enter=True)
 
             async def agent_reply():

@@ -105,6 +105,7 @@ COMMAND_SPECS: Mapping[str, CommandSpec] = {
         _command("chore", "before", placements=_RESIDENT, prepare="program"),
         _command("text", "none"),
         _command("hub", "none"),
+        _command("top", "none", "before", placements=_ALL_PLACEMENTS, prepare="layout"),
         _command("chat", "before", placements=_ALL_PLACEMENTS, prepare="program"),
         _command("inspect", "before", placements=_ALL_PLACEMENTS, prepare="layout"),
         _command("steer", "before", placements=_ALL_PLACEMENTS, prepare="layout"),

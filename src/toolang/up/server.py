@@ -47,6 +47,7 @@ from toolang.up.logging import (
 )
 from toolang.work.scheduler import JobScheduler
 from toolang.work.messaging import MessagingLoop
+from toolang.work.teaming import TeamingLoop
 
 DEFAULT_WATCH_DEBOUNCE_MS = state_watcher.DEFAULT_DEBOUNCE_MS
 RUNTIME_SHUTDOWN_TASK_TIMEOUT_SEC = 1.0
@@ -256,6 +257,7 @@ def serve(
         stop_signal = asyncio.Event()
         tasks: list[asyncio.Task[None]] = []
         scheduler: JobScheduler | None = None
+        teaming: TeamingLoop | None = None
         try:
             agents.write_runtime_state(
                 spec.layout,
@@ -278,7 +280,6 @@ def serve(
                 get_agent_setup=current_setup,
                 get_agent_state=current_state,
             )
-            await scheduler.start()
             messaging_setup = current_setup().teaming
             if messaging_setup is not None and messaging_setup.home.enabled:
                 messaging = MessagingLoop(
@@ -291,7 +292,9 @@ def serve(
                     get_agent_setup=current_setup,
                     get_agent_state=current_state,
                 )
-                tasks.append(asyncio.create_task(messaging.run(stop_signal)))
+                teaming = TeamingLoop(messaging)
+                teaming.start()
+            await scheduler.start()
             app.state.job_scheduler = scheduler
             tasks.extend(
                 [
@@ -316,7 +319,13 @@ def serve(
             if scheduler is not None:
                 await scheduler.pause()
             await _finish_runtime_tasks(tasks)
-            await core.close()
+            if teaming is not None:
+                await teaming.stop_messages()
+            try:
+                await core.close()
+            finally:
+                if teaming is not None:
+                    await teaming.close()
             if scheduler is not None:
                 await scheduler.stop()
 
