@@ -12,6 +12,7 @@ import pytest
 
 from tests.unit.messaging.test_protocol import CONFIG, client
 from toolang.teaming.api import create_app
+from toolang.teaming.agent_client import AgentClient
 from toolang.teaming.backend import group_key
 from toolang.teaming.client import HubClient
 from toolang.teaming.errors import BackendUnavailable, MessagingError, SendUnconfirmed
@@ -243,8 +244,24 @@ def test_history_preserves_corrupt_records_and_full_cursors():
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("failure", ["timeout", "invalid_json", "server_error"])
-def test_lost_send_response_reports_preallocated_id_without_retry(failure):
+@pytest.mark.parametrize("actor", ["human:owner", "agent:alice"])
+@pytest.mark.parametrize(
+    "failure",
+    [
+        "timeout",
+        "invalid_json",
+        "server_error",
+        "missing_receipt",
+        "wrong_message",
+        "wrong_sender",
+        "invalid_group",
+        "invalid_cursor",
+        "empty_cursor",
+    ],
+)
+def test_lost_send_response_reports_preallocated_id_without_retry(
+    tmp_path, failure, actor
+):
     calls = []
 
     def transport(request):
@@ -253,12 +270,35 @@ def test_lost_send_response_reports_preallocated_id_without_retry(failure):
             raise httpx.ReadTimeout("lost ack", request=request)
         if failure == "invalid_json":
             return httpx.Response(200, text="bad")
-        return httpx.Response(500, json={"detail": "failure"})
+        if failure == "server_error":
+            return httpx.Response(500, json={"detail": "failure"})
+        if failure == "missing_receipt":
+            return httpx.Response(200, json={"ok": True})
+        receipt = {
+            "group": "group:all",
+            "stream_id": "1-0",
+            "message": Message(calls[-1]["id"], actor, "once").data(),
+        }
+        if failure == "wrong_message":
+            receipt["message"]["id"] = str(uuid4())
+        elif failure == "wrong_sender":
+            receipt["message"]["sender"] = "human:another"
+        elif failure == "invalid_group":
+            receipt["group"] = "agent:alice"
+        else:
+            receipt["stream_id"] = "bad" if failure == "invalid_cursor" else "0-0"
+        return httpx.Response(201, json=receipt)
 
     async def scenario():
-        async with HubClient(
-            CONNECTION, transport=httpx.MockTransport(transport)
-        ) as hub:
+        http = httpx.MockTransport(transport)
+        hub = (
+            HubClient(CONNECTION, transport=http)
+            if actor == CONNECTION.human
+            else AgentClient(
+                tmp_path, actor=actor, connection=lambda: CONNECTION, transport=http
+            )
+        )
+        async with hub:
             with pytest.raises(SendUnconfirmed) as error:
                 await hub.send("group:all", body="once")
             assert len(calls) == 1

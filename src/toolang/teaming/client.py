@@ -16,7 +16,7 @@ from .errors import (
     EventProtocolError,
     EventRecoveryRequired,
 )
-from .schemas import Conversation, HubConnection, Message
+from .schemas import Conversation, HubConnection, Message, stream_id, target
 
 
 class HubClient:
@@ -85,6 +85,20 @@ class HubClient:
                 raise SendUnconfirmed(f"Send unconfirmed for {message_id}") from exc
             raise MessagingError("Invalid Hub response") from exc
         if response.is_success:
+            if message_id is not None:
+                try:
+                    receipt = Message(**data["message"])
+                    target(data["group"], kind="group")
+                    if (
+                        receipt.id != message_id
+                        or receipt.sender != self.actor
+                        or stream_id(data["stream_id"]) == (0, 0)
+                    ):
+                        raise ValueError("Mismatched send receipt")
+                except (KeyError, TypeError, ValueError, MessagingError) as exc:
+                    raise SendUnconfirmed(
+                        f"Send unconfirmed for {message_id}; invalid Hub receipt"
+                    ) from exc
             return data
         detail = (
             data.get("detail", "Hub request failed")
