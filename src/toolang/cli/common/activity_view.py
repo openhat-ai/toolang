@@ -9,7 +9,7 @@ import time
 from typing import Literal, cast
 
 from prompt_toolkit.keys import Keys
-from rich.console import Group
+from rich.console import Console, Group
 from rich.cells import cell_len
 from rich.text import Text
 
@@ -136,6 +136,8 @@ class Activity:
         self.recent_label = recent_label
         self.display_query = self.query
         self.display_recent = recent_label
+        self.attached_query = self.query
+        self.attached_recent = recent_label
         self.selection_ancestors: list[tuple[str, str]] = []
         self.open_matches = False
         self.snapshots: dict[str, ActivitySnapshot] = {}
@@ -152,12 +154,14 @@ class Activity:
         self.editor: str | None = None
         self.buffer = ""
         self.error = ""
-        self.height = 24
+        self.page_size = 15
         self.width = 140
         self.dirty = False
 
     def attach(self) -> None:
         self.pending.clear()
+        self.attached_query = self.query
+        self.attached_recent = self.recent_label
 
     def feed(self, event: str, data: dict) -> bool:
         if event == "activity_page":
@@ -178,6 +182,9 @@ class Activity:
             else:
                 raise ValueError("Activity pagination changed; reconnect required")
         elif event == "activity_checkpoint":
+            if self.attached_query != self.query:
+                self.pending.clear()
+                return False
             agents = data["agents"]
             if set(agents) != set(self.pending) or any(
                 page.next_offset is not None for page in self.pending.values()
@@ -190,8 +197,8 @@ class Activity:
                 self.selection_ancestors.append(ancestor)
             self.snapshots, self.pending = self.pending, {}
             self.ready = True
-            self.display_query = self.query
-            self.display_recent = self.recent_label
+            self.display_query = self.attached_query
+            self.display_recent = self.attached_recent
             if self.open_matches:
                 self.rows()
                 for agent, snapshot in self.snapshots.items():
@@ -412,7 +419,7 @@ class Activity:
         if self.selected:
             index = next(i for i, row in enumerate(rows) if row.key == self.selected)
             self.offset = min(self.offset, index)
-            self.offset = max(self.offset, index - max(1, self.height - 9) + 1)
+            self.offset = max(self.offset, index - self.page_size + 1)
 
     def _view(self, view: View) -> None:
         rows = self.rows()
@@ -533,9 +540,9 @@ class Activity:
                     if key == Keys.Up
                     else 1
                     if key == Keys.Down
-                    else -(self.height - 9)
+                    else -self.page_size
                     if key == Keys.PageUp
-                    else self.height - 9
+                    else self.page_size
                 )
                 self.selected = rows[max(0, min(len(rows) - 1, index + change))].key
             elif rows and key == Keys.Left:
@@ -552,7 +559,7 @@ class Activity:
     def render(
         self, *, width: int = 140, height: int = 30, once: bool = False
     ) -> Group:
-        self.width, self.height = width, height
+        self.width = width
         if not self.ready:
             return Group(
                 Text("too top · Connecting to activity service"),
@@ -592,19 +599,25 @@ class Activity:
         else:
             known = [snapshot.stats for snapshot in snapshots]
             total = ActivityMetrics(
-                model=sum(item.model or 0 for item in known),
-                tool=sum(item.tool or 0 for item in known),
+                model=sum(item.model or 0 for item in known)
+                if any(item.model is not None for item in known)
+                else None,
+                tool=sum(item.tool or 0 for item in known)
+                if any(item.tool is not None for item in known)
+                else None,
                 cost=sum(item.cost or 0 for item in known)
                 if any(item.cost is not None for item in known)
                 else None,
-                time=sum(item.time or 0 for item in known),
+                time=sum(item.time or 0 for item in known)
+                if any(item.time is not None for item in known)
+                else None,
                 estimated=any(item.estimated for item in known),
                 partial=any(item.cost is None or item.partial for item in known),
                 complete=all(item.complete for item in known),
             )
             values.append(
                 Text(
-                    f"Agents {sum(s.presence == 'online' for s in snapshots) if not self.reconnecting else '?'} online / {len(snapshots)}  Agent Stats: MODEL {total.model}  TOOL {total.tool}  COST {cost(total)}  {time_label} {elapsed(total.time)}"
+                    f"Agents {sum(s.presence == 'online' for s in snapshots) if not self.reconnecting else '?'} online / {len(snapshots)}  Agent Stats: MODEL {total.model if total.model is not None else '-'}  TOOL {total.tool if total.tool is not None else '-'}  COST {cost(total)}  {time_label} {elapsed(total.time)}"
                 )
             )
         values.append(
@@ -669,7 +682,8 @@ class Activity:
             columns.append(("THREAD", column_width("thread")))
         if self.view == "execution":
             columns += [("RUN", column_width("root")), ("STEP", column_width("id"))]
-        if not (self.agent and self.view == "agent"):
+        show_table = not (self.agent and self.view == "agent")
+        if show_table:
             heading = (
                 " ".join(label.ljust(size) for label, size in columns) + " ACTIVITY"
             )
@@ -679,51 +693,47 @@ class Activity:
                     style="bold reverse",
                 )
             )
-            visible = (
-                rows
-                if once
-                else rows[self.offset : self.offset + max(1, height - len(values) - 3)]
+
+        def render_row(row: Row) -> Text:
+            fields = {
+                "AGENT": row.agent.removeprefix("agent:"),
+                "MODEL": str(row.stats.model) if row.stats.model is not None else "-",
+                "TOOL": str(row.stats.tool) if row.stats.tool is not None else "-",
+                "COST": cost(row.stats),
+                "TIME": elapsed(row.stats.time),
+                "TIME*": elapsed(row.stats.time),
+                "THREAD": row.thread or "-",
+                "RUN": row.root or "-",
+                "STEP": row.id if row.root else "-",
+            }
+            line = (
+                " ".join(
+                    (
+                        " " * max(0, size - cell_len(fields[label])) + fields[label]
+                        if label in {"MODEL", "TOOL", "COST", "TIME", "TIME*"}
+                        else fields[label]
+                        + " " * max(0, size - cell_len(fields[label]))
+                    )
+                    for label, size in columns
+                )
+                + " "
+                + row.activity
             )
-            for row in visible:
-                fields = {
-                    "AGENT": row.agent.removeprefix("agent:"),
-                    "MODEL": str(row.stats.model)
-                    if row.stats.model is not None
-                    else "-",
-                    "TOOL": str(row.stats.tool) if row.stats.tool is not None else "-",
-                    "COST": cost(row.stats),
-                    "TIME": elapsed(row.stats.time),
-                    "TIME*": elapsed(row.stats.time),
-                    "THREAD": row.thread or "-",
-                    "RUN": row.root or "-",
-                    "STEP": row.id if row.root else "-",
-                }
-                line = (
-                    " ".join(
-                        (
-                            " " * max(0, size - cell_len(fields[label])) + fields[label]
-                            if label in {"MODEL", "TOOL", "COST", "TIME", "TIME*"}
-                            else fields[label]
-                            + " " * max(0, size - cell_len(fields[label]))
-                        )
-                        for label, size in columns
-                    )
-                    + " "
-                    + row.activity
+            rendered = Text(
+                clean(line)[self.horizontal : self.horizontal + width],
+                style="reverse" if not once and row.key == self.selected else "",
+                no_wrap=True,
+                overflow="crop",
+            )
+            if self.display_query.text:
+                rendered.highlight_words(
+                    [self.display_query.text],
+                    style="bold yellow",
+                    case_sensitive=False,
                 )
-                rendered = Text(
-                    clean(line)[self.horizontal : self.horizontal + width],
-                    style="reverse" if not once and row.key == self.selected else "",
-                )
-                if self.display_query.text:
-                    rendered.highlight_words(
-                        [self.display_query.text],
-                        style="bold yellow",
-                        case_sensitive=False,
-                    )
-                values.append(rendered)
-            if not rows:
-                values.append(Text("No matching activity", style="dim"))
+            return rendered
+
+        footer: list[Text] = []
         current = next((row for row in rows if row.key == self.selected), None)
         if current and (self.details or once is False):
             command = (
@@ -731,7 +741,7 @@ class Activity:
                 if current.node and current.node.kind != "thread"
                 else ""
             )
-            values.append(
+            footer.append(
                 Text(
                     f"Selected: {current.agent} / {current.thread or '-'} / root {current.root or '-'} / {current.id}"
                     + (f"  Inspect: {command}" if command else ""),
@@ -739,21 +749,21 @@ class Activity:
                 )
             )
             if self.details:
-                values.append(Text(clean(current.activity), overflow="fold"))
-                values.append(
+                footer.append(Text(clean(current.activity), overflow="fold"))
+                footer.append(
                     Text(
                         f"Stats: MODEL {current.stats.model} TOOL {current.stats.tool} COST {cost(current.stats)} TIME {elapsed(current.stats.time)}"
                     )
                 )
                 if current.node:
                     total = current.node.total
-                    values.append(
+                    footer.append(
                         Text(
                             f"Total: MODEL {total.model} TOOL {total.tool} COST {cost(total)} TIME {elapsed(total.time)}"
                         )
                     )
                     if current.node.matches:
-                        values.append(
+                        footer.append(
                             Text(
                                 "Matched IDs: " + ", ".join(current.node.matches),
                                 overflow="fold",
@@ -761,19 +771,52 @@ class Activity:
                         )
         if not once:
             if self.editor:
-                values.append(
+                footer.append(
                     Text(
                         f"{self.editor.title()}: {self.buffer}█  Enter apply · Esc cancel · Ctrl-U clear · Tab presets · Ctrl-A active={self.display_query.active}",
                         style="bold",
                     )
                 )
                 if self.error:
-                    values.append(Text(self.error, style="red"))
+                    footer.append(Text(self.error, style="red"))
             else:
-                values.append(
+                footer.append(
                     Text(
                         "a Agent  t Thread  e Execution  F4 Filter  F5 Layout  F6 Sort  F7 Recent  F8 Stats  Enter Details  <> Scroll  q Quit",
                         style="dim",
                     )
                 )
-        return Group(*values)
+        if once:
+            body = [render_row(row) for row in rows] if show_table else []
+            if show_table and not rows:
+                body.append(Text("No matching activity", style="dim"))
+            return Group(*values, *body, *footer)
+
+        console = Console(width=width)
+        header_lines = [line for value in values for line in value.wrap(console, width)]
+        footer_lines = [line for value in footer for line in value.wrap(console, width)]
+        # Reserve space for the selected row and controls even with long IDs,
+        # details, coverage warnings, or a narrow terminal.
+        footer_limit = max(1, height // 2)
+        if len(footer_lines) > footer_limit:
+            footer_lines = [*footer_lines[: footer_limit - 1], footer_lines[-1]]
+        header_limit = max(0, height - len(footer_lines) - int(show_table))
+        if len(header_lines) > header_limit:
+            header_lines = (
+                [*header_lines[: header_limit - 1], header_lines[-1]]
+                if header_limit
+                else []
+            )
+        self.page_size = max(1, height - len(header_lines) - len(footer_lines))
+        self._selection(rows)
+        body = (
+            [
+                render_row(row)
+                for row in rows[self.offset : self.offset + self.page_size]
+            ]
+            if show_table
+            else []
+        )
+        if show_table and not rows:
+            body.append(Text("No matching activity", style="dim"))
+        return Group(*header_lines, *body, *footer_lines)

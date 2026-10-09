@@ -324,6 +324,22 @@ def _buckets(
                     )
 
 
+def _interrupt(conn: sqlite3.Connection, attempt: sqlite3.Row, at: float) -> None:
+    """Freeze an unfinished attempt without losing its consumed calls or ownership."""
+    _buckets(conn, attempt, -1)
+    conn.execute(
+        "UPDATE activity_attempts SET finished=MAX(started,?),complete=0,interrupted=1 WHERE id=?",
+        (at, attempt["id"]),
+    )
+    _buckets(
+        conn,
+        conn.execute(
+            "SELECT * FROM activity_attempts WHERE id=?", (attempt["id"],)
+        ).fetchone(),
+        1,
+    )
+
+
 def flush(store: RunStore, *, limit: int | None = None) -> None:
     conn = store._conn
     queued = conn.execute(
@@ -342,6 +358,16 @@ def flush(store: RunStore, *, limit: int | None = None) -> None:
         table = {"thread": "threads", "run": "runs", "step": "steps"}[kind]
         row = conn.execute(f"SELECT * FROM {table} WHERE id=?", (ref,)).fetchone()
         old = conn.execute("SELECT * FROM activity_nodes WHERE id=?", (ref,)).fetchone()
+        start = stamp(row["started_at"]) if row and kind != "thread" else None
+        if old and (row is None or old["started"] != start):
+            abandoned = conn.execute(
+                """SELECT a.*,s.checkpoint FROM activity_attempts a
+                JOIN activity_sessions s ON s.id=a.session
+                WHERE a.id=? AND a.finished IS NULL""",
+                (old["attempt"],),
+            ).fetchone()
+            if abandoned:
+                _interrupt(conn, abandoned, abandoned["checkpoint"])
         if row is None:
             conn.execute(
                 "UPDATE activity_nodes SET current=0,revision=? WHERE id=?",
@@ -352,7 +378,6 @@ def flush(store: RunStore, *, limit: int | None = None) -> None:
             )
             continue
         thread, root, parent, scopes = _ownership(conn, kind, ref, row)
-        start = stamp(row["started_at"]) if kind != "thread" else None
         finish = stamp(row["finished_at"]) if kind != "thread" else None
         changed = max(
             filter(
@@ -524,18 +549,7 @@ def start_session(store: RunStore, session: str, at: str) -> None:
                 "SELECT * FROM activity_attempts WHERE session=? AND finished IS NULL",
                 (previous["id"],),
             ).fetchall():
-                _buckets(conn, attempt, -1)
-                conn.execute(
-                    "UPDATE activity_attempts SET finished=MAX(started,?),complete=0,interrupted=1 WHERE id=?",
-                    (previous["checkpoint"], attempt["id"]),
-                )
-                _buckets(
-                    conn,
-                    conn.execute(
-                        "SELECT * FROM activity_attempts WHERE id=?", (attempt["id"],)
-                    ).fetchone(),
-                    1,
-                )
+                _interrupt(conn, attempt, previous["checkpoint"])
             conn.execute(
                 "UPDATE activity_sessions SET ended=checkpoint,complete=0 WHERE id=?",
                 (previous["id"],),
@@ -557,4 +571,9 @@ def checkpoint(store: RunStore, session: str, at: str, *, end: bool = False) -> 
             (stamp(at), end, stamp(at), session),
         )
         if end:
+            for attempt in store._conn.execute(
+                "SELECT * FROM activity_attempts WHERE session=? AND finished IS NULL",
+                (session,),
+            ).fetchall():
+                _interrupt(store._conn, attempt, stamp(at) or attempt["started"])
             store._conn.execute("UPDATE activity_meta SET revision=revision+1")

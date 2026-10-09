@@ -356,3 +356,57 @@ def test_model_preview_uses_only_bounded_existing_content(store):
     page = snapshot(store)
     assert page.paths[0].summary.startswith("preview: Analyze configuration")
     assert len(page.paths[0].summary) <= 240
+
+
+def test_retry_freezes_removed_unfinished_attempt_before_reusing_ref(store):
+    root(store)
+    model(store, status="running")
+    project_run_end(store, run_id="run_root", status="failed", finished_at=at(80))
+    statistics.checkpoint(store, "one", at(80))
+    control = store.get_run_control(run_id="run_root", index=0)
+    assert control and isinstance(control.payload, RunControlPayload)
+    payload = control.payload
+    _, retry, _ = store.accept_retry(
+        run_id="run_root",
+        anchor=None,
+        resources=payload.resources,
+        limits=payload.limits,
+        state=payload.state,
+        sandbox="host",
+        created_at=at(90),
+        request_id=None,
+    )
+    store.begin_run(run_id="run_root", started_at=at(100), control=retry.ref)
+    model(store, start=101, status="running")
+    step = next(
+        node for node in snapshot(store, now=120).paths if node.id == "run_root.0"
+    )
+    assert step.stats.time == 89  # 70 interrupted seconds + 19 on the retry.
+    assert step.stats.model == 2
+    assert not step.stats.complete
+    assert snapshot(store, now=130).paths[0].stats.time == 99
+
+
+def test_session_end_freezes_unfinished_intervals_before_restart(store):
+    root(store)
+    model(store, status="running")
+    statistics.checkpoint(store, "one", at(20), end=True)
+    assert snapshot(store, now=90).total.time == 20
+    statistics.start_session(store, "two", at(100))
+    page = snapshot(store, now=120)
+    assert page.total.time == 20
+    assert not page.total.complete
+    assert page.stats.time == 0
+
+
+def test_thread_limit_applies_after_recent_selection(store, monkeypatch):
+    monkeypatch.setattr("toolang.execution.activity.THREAD_LIMIT", 2)
+    for index in range(3):
+        store.create_thread(
+            thread_id=f"term_old{index}", origin="chat", created_at=at(0)
+        )
+    root(store, start=100)
+    page = snapshot(store, recent=30, now=120)
+    assert [node.id for node in page.threads] == ["term_test"]
+    assert page.thread_count == 4
+    assert page.complete

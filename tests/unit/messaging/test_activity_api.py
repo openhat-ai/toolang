@@ -141,3 +141,35 @@ def test_agent_stream_stages_pages_then_checkpoint_without_token_payloads(tmp_pa
                 await iterator.aclose()
 
     asyncio.run(scenario())
+
+
+def test_offline_filtered_snapshot_keeps_historical_matches_and_scope_counts(tmp_path):
+    async def scenario():
+        with closing(RunStore(tmp_path / "runs.db")) as store:
+            statistics.start_session(store, "one", at(0))
+            root(store)
+            model(store)
+            root(store, "run_other")
+            query = ActivityQuery("all", None, "run_root.0")
+            pages = ActivityReader(store.db_path, "agent:alice").pages(
+                query, now=clock(100)
+            )
+            assert pages[0].active == 2 and pages[0].eligible == 2
+            assert len(pages[0].roots) == 1
+            server = FakeServer(server_type="valkey")
+            async with (
+                client(server, "human:owner") as human,
+                client(server, "agent:alice") as alice,
+            ):
+                await alice.register("human:owner")
+                backend = ActivityBackend(human._backend)
+                await backend.save(alice.actor, alice.token, pages)
+                await alice.unregister()
+                cached = (await HubActivity(human._backend).read(query))[0]
+                assert [node.id for node in cached.roots] == ["run_root"]
+                assert cached.roots[0].matches == ["run_root.0"]
+                assert cached.active == 2 and cached.eligible == 2
+                assert cached.threads[0].active == 2
+                assert cached.observed == clock(100)
+
+    asyncio.run(scenario())

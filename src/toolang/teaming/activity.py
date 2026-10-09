@@ -127,6 +127,7 @@ class ActivityBackend:
             if slot == "default":
                 fallback = pages
         if fallback:
+            fallback = cached_selection(fallback, query)
             for page in fallback:
                 page.complete = False
                 page.coverage = (
@@ -140,6 +141,8 @@ class ActivityBackend:
                         node.stats = page.stats
                 page.since = query.since
                 page.recent = query.recent
+                page.filter = query.text
+                page.active_only = query.active
             return fallback
         return [
             ActivitySnapshot(
@@ -148,6 +151,8 @@ class ActivityBackend:
                 observed=time.time(),
                 since=query.since,
                 recent=query.recent,
+                filter=query.text,
+                active_only=query.active,
                 complete=False,
                 coverage="Waiting for source activity",
                 stats=ActivityMetrics(
@@ -268,9 +273,9 @@ class HubActivity:
                             except (httpx.HTTPError, ValueError):
                                 pass
                         if not fresh:
-                            pages = cached_selection(
-                                await self.backend.cached(agent, query), query
-                            )
+                            # Exact cached queries retain their observation boundary,
+                            # including historical matches and pre-filter counts.
+                            pages = await self.backend.cached(agent, query)
                         for page in pages:
                             page.presence = "online" if lease else "offline"
                             page.stale = not fresh

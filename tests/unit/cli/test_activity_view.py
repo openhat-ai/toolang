@@ -2,6 +2,7 @@
 
 import io
 
+import pytest
 from prompt_toolkit.keys import Keys
 from rich.console import Console
 
@@ -160,3 +161,62 @@ def test_duration_start_is_fixed_and_explicit_stats_does_not_change_recent():
     state.key(Keys.ControlM)
     assert state.query.since == "all"
     assert state.query.recent == 1800
+
+
+def test_query_edit_cannot_relabel_frames_from_previous_subscription():
+    state = Activity(None)
+    feed(state, page())
+    state.attach()
+    state.feed("activity_page", page().model_dump())
+    state.key(Keys.F8)
+    state.key(Keys.ControlU)
+    for key in "all":
+        state.key(key)
+    state.key(Keys.ControlM)
+    state.feed("activity_checkpoint", {"agents": ["agent:alice"]})
+    assert state.display_query.since == "session"
+    state.attach()
+    replacement = page()
+    replacement.since = "all"
+    replacement.stats.cost = 9
+    feed(state, replacement)
+    assert state.display_query.since == "all"
+    assert state.snapshots[replacement.agent].stats.cost == 9
+
+
+@pytest.mark.parametrize("details", [False, True])
+def test_narrow_terminal_keeps_selected_row_and_footer_visible(details):
+    snapshot = page()
+    snapshot.session_start = 1791540000
+    snapshot.observed = 1791540100
+    snapshot.roots = [
+        node(f"run_{index:08}", root=f"run_{index:08}", thread="script_ab123456")
+        for index in range(40)
+    ]
+    state = Activity("agent:alice", view="execution")
+    feed(state, snapshot)
+    state.selected = (snapshot.agent, snapshot.roots[-1].id)
+    state.details = details
+    output = io.StringIO()
+    console = Console(file=output, width=80, height=24, color_system=None)
+    console.print(state.render(width=80, height=24))
+    lines = output.getvalue().splitlines()
+    assert len(lines) <= 24
+    assert any(
+        line.startswith("     $0.50") and "run_00000039" in line for line in lines
+    )
+    assert "Inspect: too alice inspect run_00000039" in output.getvalue()
+    assert "q Quit" in lines[-1]
+
+
+def test_header_keeps_unavailable_statistics_unknown():
+    snapshot = page()
+    snapshot.stats = ActivityMetrics(
+        model=None, tool=None, cost=None, time=None, complete=False
+    )
+    snapshot.complete = False
+    state = Activity(None)
+    feed(state, snapshot)
+    output = io.StringIO()
+    Console(file=output, width=160).print(state.render(width=160, once=True))
+    assert "Agent Stats: MODEL -  TOOL -  COST -  TIME -" in output.getvalue()

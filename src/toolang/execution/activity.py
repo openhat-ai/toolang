@@ -356,14 +356,20 @@ def _read(
                 ).fetchone()[0]
             if current is not root:
                 paths.append(current)
+    thread_count = conn.execute(
+        "SELECT COUNT(*) FROM activity_nodes WHERE kind='thread' AND current=1"
+    ).fetchone()[0]
     thread_rows = conn.execute(
-        "SELECT * FROM activity_nodes WHERE kind='thread' AND current=1 ORDER BY created,id LIMIT ?",
-        (THREAD_LIMIT + 1,),
-    ).fetchall()
-    complete &= len(thread_rows) <= THREAD_LIMIT
+        """WITH active_threads AS (SELECT DISTINCT thread FROM activity_nodes
+        WHERE kind='run' AND parent IS NULL AND current=1 AND status IN ('pending','running'))
+        SELECT t.*,a.thread IS NOT NULL AS active_thread FROM activity_nodes t
+        LEFT JOIN active_threads a ON a.thread=t.id WHERE t.kind='thread' AND t.current=1
+        AND (t.changed>=? OR active_thread) ORDER BY active_thread DESC,t.changed DESC,t.id""",
+        (recent,),
+    )
     threads = []
     matched_threads = {row["thread"] for row in selected}
-    for row in thread_rows[:THREAD_LIMIT]:
+    for row in thread_rows:
         active, failed = counts.get(row["id"], (0, 0))
         if not active and row["changed"] < recent:
             continue
@@ -376,6 +382,9 @@ def _read(
             and row["id"] not in matched_threads
         ):
             continue
+        if len(threads) == THREAD_LIMIT:
+            complete = False
+            break
         item = node(row)
         item.active, item.failed = active, failed
         threads.append(item)
@@ -401,7 +410,7 @@ def _read(
         paths=paths,
         active=sum(value[0] for value in counts.values()),
         failed=sum(value[1] for value in counts.values()),
-        thread_count=len(thread_rows),
+        thread_count=thread_count,
         eligible=len(eligible),
         matched=len(selected),
         available=len(selected),
