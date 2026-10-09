@@ -12,7 +12,7 @@ Toolang-owned ids should be:
 
 - generated automatically
 - short enough to copy and quote by hand
-- stable across rename, move, archive, and restore operations
+- stable across authored-file rename, move, archive, and restore operations
 - monotonic at allocation time without exposing raw time buckets directly
 - reversible for local tooling and archive bucketing
 - safe to allocate from both CLI and runtime processes
@@ -103,8 +103,9 @@ Where:
 - `A` and `C` are odd so the affine maps are invertible modulo `2^n`
 - `mask(tick)` is one deterministic tick-derived bit mask trimmed to the seq
   width
-- `feistel(...)` is one fixed-round reversible whole-id permutation seeded by
-  family constants
+- `feistel(...)` is a four-round reversible whole-id permutation using keyed
+  BLAKE2s round functions; its key is BLAKE2s of the compact UTF-8 JSON array
+  `[family.name, agent_name]`
 - encoded ids are `encode_base32_fixed(wire_code)`
 
 This gives Toolang-owned ids these properties:
@@ -116,6 +117,19 @@ This gives Toolang-owned ids these properties:
 
 This mechanism is not meant to be cryptographic secrecy. It is only a compact,
 reversible local obfuscation layer.
+
+Encoding and decoding require the same canonical, case-sensitive agent name.
+Callers pass `layout.name`; paths, sandbox names, and process IDs do not affect
+the codec. An empty or whitespace-padded name is rejected. Different agent
+names diversify equal tick/sequence pairs, but their permutations share the
+same 40-bit space: residual cross-agent collisions remain possible. Team
+references must still include the agent identity. Within one agent/family,
+distinct tick/sequence pairs remain distinct IDs.
+
+This codec does not decode historical unkeyed IDs. Existing records keep their
+IDs, and the `ids.json` format is unchanged. New allocations continue from its
+saved counters. Code integrations must supply `agent_name` to ID helpers and
+`IdIssuer`; manual decoding requires the original agent name and codec.
 
 
 ## Allocation
@@ -151,8 +165,17 @@ Allocation steps:
 
 The allocator uses one POSIX file lock around the snapshot update so multiple
 CLI and runtime processes can share one allocator safely.
+Host and sandbox writers must share that same file and a supported locking
+domain. Independent copies of an agent's allocator file are not coordinated.
 Malformed snapshots are rejected instead of being treated as empty allocator
 state, which prevents silent sequence reuse after state corruption.
+
+State-loss recovery remains manual. Stop writers before reconstructing the
+snapshot. Decoding retained IDs and taking the maximum `(tick, seq)` per family
+can recover a persisted high-water mark; timestamp or insertion order does not
+necessarily match allocation order. `runs.db` is not a complete allocation log:
+jobs and scheduler claims have other stores, and deleted or unpersisted IDs
+cannot be reconstructed from it. No automatic scan or repair is performed.
 
 
 ## Collision Handling
@@ -189,12 +212,14 @@ keeping the directory compact.
 - `RUN_ID_FAMILY`
 - `AllocatorState`
 - `AllocatorSnapshot`
+- `IdIssuer(state_path, agent_name=...)`
 - `encode_id(...)`
 - `decode_id(...)`
 - `reserve_next_id(...)`
 - `allocate_id(...)`
-- `allocate_run_id(...)`
-- `allocate_thread_id(...)`
 - `archive_prefix(...)`
 
+The encode, decode, reserve, allocate, and archive-prefix helpers require
+`agent_name`. `IdIssuer.issue_run()` and `IdIssuer.issue_thread(prefix)` retain
+their existing signatures and prepend the full-ID prefix after allocation.
 These helpers are used by local task, chore, thread, and run creation.

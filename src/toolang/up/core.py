@@ -43,7 +43,7 @@ class AgentCore:
     ) -> None:
         self.layout = layout
         self.store = RunStore(layout.run_store)
-        self.ids = IdIssuer(layout.id_state)
+        self.ids = IdIssuer(layout.id_state, agent_name=layout.name)
         self.history = RunHistory(self.store)
         allow_overrides = dict(ceiling_overrides or {})
         self.setup = SetupWatcher(

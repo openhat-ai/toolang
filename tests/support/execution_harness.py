@@ -403,7 +403,7 @@ class ExecutionHarness:
             defaults=RunDefaults(model=ModelRequest(TEST_MODEL_REF)),
         )
         store = RunStore(runtime / "runs.db")
-        ids = IdIssuer(runtime / "ids.json")
+        ids = IdIssuer(runtime / "ids.json", agent_name=layout.name)
         harness = cls(
             setup=setup,
             state=state,

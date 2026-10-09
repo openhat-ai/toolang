@@ -66,7 +66,7 @@ def _cancel_remote_control(
 ) -> None:
     store = RunStore(Path(db_path))
     try:
-        executor = RunExecutor(store, IdIssuer(Path(id_path)))
+        executor = RunExecutor(store, IdIssuer(Path(id_path), agent_name="alice"))
         executor.cancel_control(run_id=run_id, index=index)
     finally:
         store.close()
@@ -107,7 +107,7 @@ def _fork_thread(
 ) -> str:
     store = RunStore(Path(db_path))
     try:
-        manager = ThreadManager(store, IdIssuer(Path(id_path)))
+        manager = ThreadManager(store, IdIssuer(Path(id_path), agent_name="alice"))
         return manager.fork(
             thread_id=source_thread,
             run_id=anchor_run,

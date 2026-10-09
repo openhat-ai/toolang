@@ -137,6 +137,16 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Changed
 
+- **Breaking:** reversible short IDs for runs, threads, tasks, and chores are
+  now keyed by the canonical agent name, so equal tick/sequence pairs from
+  independent agents usually encode differently and collide less often while
+  the permutations still share one 40-bit space, so cross-agent collisions
+  remain possible; the suffix length, alphabet, `ids.json` format, and
+  existing stored IDs are unchanged. Pass the agent name to `encode_id`,
+  `decode_id`, `reserve_next_id`, `allocate_id`, `archive_prefix`, and
+  `IdIssuer`, and decode historical unkeyed IDs with the previous unkeyed
+  codec, since supplying an agent name to the new codec does not recover them.
+
 - The Hub HTTP API no longer requires bearer-token authentication: requests may
   identify the backend and human with optional `X-Toolang-Backend` and
   `X-Toolang-Human` headers, and a mismatch fails with `409` code `hub_changed`.

@@ -68,7 +68,7 @@ def test_run_history_projects_fork_and_rewind_from_one_snapshot(
     tmp_path: Path,
 ) -> None:
     store = RunStore(tmp_path / "runs.db")
-    ids = IdIssuer(tmp_path / "ids.json")
+    ids = IdIssuer(tmp_path / "ids.json", agent_name="alice")
     manager = ThreadManager(store, ids)
     try:
         source = manager.create(prefix=ThreadPrefix.TERM)

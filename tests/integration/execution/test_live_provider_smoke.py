@@ -61,7 +61,7 @@ class _LiveExecution:
         setup, state = await create_live_agent(root, model=model, source=source)
         runtime = setup.layout.runtime
         store = RunStore(runtime / "runs.db")
-        ids = IdIssuer(runtime / "ids.json")
+        ids = IdIssuer(runtime / "ids.json", agent_name=setup.layout.name)
 
         def load_state(revision: str) -> AgentState:
             assert revision == state.revision

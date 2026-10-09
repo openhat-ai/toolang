@@ -47,7 +47,9 @@ def open_execution(
             run_store_schema_error(exc, path=layout.run_store)
         ) from exc
     try:
-        yield ExecutionResources(store=store, ids=IdIssuer(layout.id_state))
+        yield ExecutionResources(
+            store=store, ids=IdIssuer(layout.id_state, agent_name=layout.name)
+        )
     finally:
         store.close()
 
