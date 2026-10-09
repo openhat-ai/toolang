@@ -1,6 +1,7 @@
 """Live input and retained/live messages on the terminal's normal screen."""
 
 import asyncio
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -30,7 +31,7 @@ from toolang.teaming.errors import (
 from toolang.teaming.schemas import Conversation, Message, target
 
 from .rendering import display_text, message_block
-from .status import conversation_name, status_line
+from .status import conversation_status, status_line
 
 
 class TextTui:
@@ -48,9 +49,8 @@ class TextTui:
         self.client, self.group, self.human = client, conversation.id, human
         self.surfaces = surfaces
         self.read_only = read_only
-        self.label = conversation_name(conversation, human)
-        self.members = conversation.members
-        self.online_count: int | None = None
+        self.conversation = conversation
+        self.online_members: set[str] | None = None
         self.max_width = max_width
         self.draft = state / "draft.txt"
         self.connection = "Connecting…"
@@ -145,7 +145,8 @@ class TextTui:
                     "input": f"bg:{surfaces.input_background}",
                     "input.placeholder": "dim",
                     "control.run": "bg:ansibrightcyan",
-                    "status": "dim",
+                    "status": "nodim",
+                    "status.online": "ansigreen",
                     "status.warning": "ansiyellow",
                 }
             ),
@@ -173,21 +174,16 @@ class TextTui:
         connected = self.connection == "Connected"
         warning = False
         if not connected:
-            left = self.connection
+            right = self.connection
             warning = self.connection != "Connecting…"
         elif self.status not in {"", "Sending…", "Sent"}:
-            left, warning = self.status, True
+            right, warning = self.status, True
         else:
-            left = f"from {target(self.human).name}"
-            if self.read_only:
-                left += " · read-only"
-        online = (
-            self.online_count if connected and self.online_count is not None else "?"
-        )
+            right = target(self.human).name
+        online = self.online_members if connected else None
         return status_line(
-            left,
-            self.label,
-            f"{online}/{len(self.members)}",
+            conversation_status(self.conversation, self.human, online),
+            right,
             width=self.content_width(),
             warning=warning,
         )
@@ -199,8 +195,10 @@ class TextTui:
         if info is None:
             raise MessagingError(f"Unknown group: {self.group}")
         self.agents = agents
-        self.members = tuple(info["members"])
-        self.online_count = len(agents.intersection(info["online"], self.members))
+        self.conversation = replace(self.conversation, members=tuple(info["members"]))
+        self.online_members = set(info["online"]).intersection(
+            self.conversation.members
+        )
         self.invalidate()
 
     def save_draft(self) -> None:

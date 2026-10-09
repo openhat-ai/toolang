@@ -16,6 +16,7 @@ import pytest
 from prompt_toolkit.application import create_app_session
 from prompt_toolkit.application.current import set_app
 from prompt_toolkit.data_structures import Size
+from prompt_toolkit.formatted_text import fragment_list_to_text
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.layout.controls import BufferControl
 from prompt_toolkit.output import DummyOutput
@@ -182,8 +183,9 @@ def test_human_observer_sees_both_agents_left_without_a_composer(
                 for control in ui.app.layout.find_all_controls()
             )
             ui.connection = "Connected"
-            assert "from bryan · read-only" in str(ui.status_text())
-            assert "dm_alice_bob" in str(ui.status_text())
+            footer = fragment_list_to_text(ui.status_text())
+            assert footer.startswith("  alice,bob") and footer.endswith("bryan  ")
+            assert "from " not in footer and "read-only" not in footer
             assert "Enter send" not in str(ui.status_text())
             await ui.send("accidental send")
             assert len(await ui.client.history(ui.group)) == 2
@@ -656,25 +658,36 @@ def test_footer_refresh_uses_hub_membership_and_agent_presence(
         ):
             await bob.register("human:visitor")
             await alice.join_group("group:dev")
-            assert ui.online_count is None
+            assert ui.online_members is None
             await ui.refresh_directory()
             ui.connection = "Connected"
-            assert len(ui.members) == 2 and ui.online_count == 1
-            assert "1/2" in str(ui.status_text())
+            assert (
+                len(ui.conversation.members) == 2 and len(ui.online_members or ()) == 1
+            )
+            assert "#dev(1/2)" in fragment_list_to_text(ui.status_text())
             await visitor.join_group("group:dev")
             await ui.refresh_directory()
-            assert len(ui.members) == 3 and ui.online_count == 1
+            assert (
+                len(ui.conversation.members) == 3 and len(ui.online_members or ()) == 1
+            )
             await bob.join_group("group:dev")
             await ui.refresh_directory()
-            assert len(ui.members) == 4 and ui.online_count == 2
-            assert "2/4" in str(ui.status_text())
+            assert (
+                len(ui.conversation.members) == 4 and len(ui.online_members or ()) == 2
+            )
+            assert "#dev(2/4)" in fragment_list_to_text(ui.status_text())
             await bob.unregister()
             await ui.refresh_directory()
-            assert len(ui.members) == 4 and ui.online_count == 1
+            assert (
+                len(ui.conversation.members) == 4 and len(ui.online_members or ()) == 1
+            )
             async with messaging_cli(actor="human:newcomer"):
                 await ui.refresh_directory()
-                assert len(ui.members) == 4 and ui.online_count == 1
-                assert "1/4" in str(ui.status_text())
+                assert (
+                    len(ui.conversation.members) == 4
+                    and len(ui.online_members or ()) == 1
+                )
+                assert "#dev(1/4)" in fragment_list_to_text(ui.status_text())
 
     monkeypatch.setattr(TextTui, "run", inspect_ui)
     with (
