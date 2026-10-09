@@ -21,7 +21,7 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 - Enabled agents export their canonical event stream to the teaming backend
   independently of execution and messaging, including retained finals from
-  offline origins, and the authenticated Hub serves it at `GET /events/stream`.
+  offline origins, and the Hub serves it at `GET /events/stream`.
   Optional `agent=agent:alice` selects one origin, and `thread=ID` or `run=ID`
   selects a thread or root tree under it; no filter observes the whole team.
   Execution frames keep their event name and payload and add `agent`,
@@ -56,7 +56,7 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   backend readiness, `serve` runs it in the foreground, `stop` leaves agents
   and Redis/Valkey running, and `status` reports the endpoint and current
   backend readiness. Hub binds `127.0.0.1` and records its actual endpoint,
-  human, backend identity, and generated bearer token in the root's private
+  human, and backend identity in the root's private
   `.runtime/hub.json`.
 
 - Hub `start`/`serve` ports resolve as `--port` > `TOOLANG_HUB_PORT` >
@@ -137,11 +137,18 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Changed
 
+- The Hub HTTP API no longer requires bearer-token authentication: requests may
+  identify the backend and human with optional `X-Toolang-Backend` and
+  `X-Toolang-Human` headers, and a mismatch fails with `409` code `hub_changed`.
+  The private `.runtime/hub.json` no longer records a token, though records that
+  still carry one load normally, and Text reconnects across a Hub restart,
+  needing a reopen only when the Hub's endpoint, backend, or human changes.
+
 - **Breaking (teaming transport):** agents now reach messaging, presence, and
   event export through the Hub HTTP API instead of connecting to Redis/Valkey
   directly, so only Hub talks to the backend. Start the Hub with `too hub
   start` before using agent `msg` tools or exporting agent events; stopping it
-  leaves agents running, and they refresh credentials and resume without a
+  leaves agents running, and they resume without a
   restart, while an uncertain send is never retried automatically. Isolated
   guests without access to the local Hub report unavailability. (#721)
 
@@ -197,7 +204,8 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 - `too text` and Interactive Text now reach messaging through the Hub HTTP
   API instead of connecting to Redis/Valkey directly, so run `too hub start`
-  before using Text and reopen Text after restarting the Hub. Agents and
+  before using Text and reopen Text if the Hub's endpoint, backend, or human
+  changes. Agents and
   their `msg` tools use the same Hub API.
 
 - **Breaking:** the experimental `coop` toolset (wire names `coop__contacts` and
@@ -234,7 +242,7 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   another process cannot claim the same port while startup is in
   progress. (#710)
 
-- Authenticated Hub API requests restore the human's registration and the
+- Hub API requests restore the human's registration and the
   system membership when the backend restarted empty, without retrying the
   failed message append. (#710)
 
