@@ -606,9 +606,7 @@ def test_talk_tmux_session_reuses_canonical_window(
     assert session.options["@toolang_talk"] == "talk"
     assert len(session.windows) == 1
     window = session.windows[0]
-    assert window.options[MARK_CONTEXT] == talk.talk_identity(
-        tmp_path, BackendConfig("redis://test").identity, "human:bryan"
-    )
+    assert window.options[MARK_CONTEXT]
     assert window.window_name == window.options["@toolang_convo"] == "group:dev"
     assert window.panes[0].options[MARK_PAD] == "talk"
     window.rename_window("my conversation")
@@ -618,6 +616,35 @@ def test_talk_tmux_session_reuses_canonical_window(
     assert cli.main(["--root", str(tmp_path), "talk", "all"]) == 0
     assert len(server.created) == 1 and len(session.windows) == 2
     assert session.windows[1].options["@toolang_convo"] == "group:all"
+
+
+def test_talk_reopening_after_hub_port_change_uses_a_fresh_window(
+    tmp_path, messaging_cli, monkeypatch
+):
+    from dataclasses import replace
+
+    from tests.unit.cli.test_tmux_launcher import FakePane, FakeServer, _launcher
+    from toolang.cli.common.tmux import MARK_CONTEXT
+
+    server, pane = FakeServer(), FakePane(session_id="$shell")
+    connection, human = talk.settings(tmp_path)
+    monkeypatch.setattr(talk.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(talk.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(
+        talk, "resolve_launcher", lambda *, agent: _launcher(server, pane, agent)
+    )
+    monkeypatch.setattr(talk, "settings", lambda _root: (connection, human))
+    assert cli.main(["--root", str(tmp_path), "talk", "dev"]) == 0
+    session = server.sessions[0]
+    first = session.windows[0]
+
+    connection = replace(connection, endpoint="http://hub:7001")
+    for _ in range(2):
+        assert cli.main(["--root", str(tmp_path), "talk", "dev"]) == 0
+    assert len(server.created) == 1 and len(session.windows) == 2
+    second = session.windows[1]
+    assert first.options["@toolang_convo"] == second.options["@toolang_convo"]
+    assert first.options[MARK_CONTEXT] != second.options[MARK_CONTEXT]
 
 
 def test_follow_reconnects_from_last_displayed_id_without_replaying_history(

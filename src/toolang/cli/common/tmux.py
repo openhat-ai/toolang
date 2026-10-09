@@ -360,12 +360,17 @@ class Launcher:
                 if pad is not None and self.is_current_pane(pad.pane_id):
                     return True
                 if pad is None:
-                    # The exact thread window can use the invoking shell pane.
+                    # Chat publishes and clears its own inline pane marks.
+                    # Shared-session views need a launcher-managed child pane.
                     current = next(
                         (p for p in window.panes if self.is_current_pane(p.pane_id)),
                         None,
                     )
-                    if current is not None and not _identity_option(current, MARK_PAD):
+                    if (
+                        self.shared_session is None
+                        and current is not None
+                        and not _identity_option(current, MARK_PAD)
+                    ):
                         return True
                     pad = self.chat_pad(window, dead=True)
                     if pad is not None:

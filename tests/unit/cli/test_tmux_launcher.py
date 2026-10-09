@@ -892,3 +892,36 @@ def test_chat_does_not_adopt_a_talk_session_with_the_same_display_name():
     launcher = _launcher(FakeServer([session]), FakePane(session_id="$9"), "talk")
     assert launcher.agent_session() is None
     assert tmux.SESSION_AGENT not in session.options
+
+
+def test_talk_started_from_shell_in_conversation_window_stays_reusable():
+    from dataclasses import replace
+
+    session = FakeSession("$0", "talk")
+    window = session.add_window(FakeWindow("@conversation"))
+    window.options.update(
+        {"@toolang_convo": "group:dev", tmux.MARK_CONTEXT: "root-backend-human"}
+    )
+    shell = window.panes[0]
+    server = FakeServer([session])
+    launcher = replace(
+        _launcher(
+            server,
+            FakePane(session_id=session.session_id, pane_id=shell.pane_id),
+            "root-backend-human",
+        ),
+        session_mark="@toolang_talk",
+        window_mark="@toolang_convo",
+        pad_kind="talk",
+        shared_session="talk",
+    )
+    arguments: dict[str, Any] = dict(
+        thread_id="group:dev", argv=["too", "talk", "group:dev"], directory="/tmp"
+    )
+    assert launcher.place_chat(**arguments) is False
+    assert len(window.panes) == 2
+    assert window.panes[-1].options[tmux.MARK_PAD] == "talk"
+    assert shell.options == {}
+    assert launcher.place_chat(**arguments) is False
+    assert len(window.panes) == 2
+    assert len(session.windows) == 1 and not server.created

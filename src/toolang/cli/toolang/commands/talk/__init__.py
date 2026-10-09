@@ -75,7 +75,11 @@ def talk_command(
                 "Interactive Talk requires a TTY; provide a message to send and exit"
             )
         identity = talk_identity(root, config.identity, human)
-        launcher = resolve_launcher(agent=identity)
+        # A running window pins its Hub endpoint; drafts belong to the dataset.
+        window_context = sha256(f"{identity}\0{config.endpoint}".encode()).hexdigest()[
+            :20
+        ]
+        launcher = resolve_launcher(agent=window_context)
         if launcher is not None:
             launcher = replace(
                 launcher,

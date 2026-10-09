@@ -53,9 +53,9 @@ the input placeholder and preserving existing key bindings.
   replacing its windows; never create suffixed sessions. Mark it with
   `@toolang_talk=talk`; panes use `@toolang_pad=talk`. New window names and
   `@toolang_convo` contain the canonical conversation ID. Window lookup uses that
-  mark plus `@toolang_context` (root/backend/login identity), even after a user
-  renames the window. Different contexts stay in separate windows of the same
-  session. Do not read or migrate the old Text/Group tmux marks.
+  mark plus `@toolang_context` (root/backend/login identity and Hub endpoint), even
+  after a user renames the window. Different contexts stay in separate windows
+  of the same session. Do not read or migrate the old Text/Group tmux marks.
 - Message dividers, input editing, receive retries, and persisted messages remain
   outside this change. Existing standalone directory output is unchanged.
 
@@ -70,7 +70,8 @@ the input placeholder and preserving existing key bindings.
   and connection/send/draft errors.
 - Verify OSC 0 publication/cleanup, non-TTY behavior, safe terminal text, and tmux
   shared session placement across conversations and contexts, canonical marks,
-  reuse after manual window renaming, and preservation of unrelated windows.
+  reuse after manual window renaming, reopening after Hub port changes, and
+  preservation of unrelated windows and shells.
 - Verify that history and live reads never request the full directories, including
   after reconnection, and that retained history is not replayed.
 - Preserve Hub identity validation and draft preservation tests. Run default checks.

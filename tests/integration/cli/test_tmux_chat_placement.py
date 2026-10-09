@@ -185,6 +185,53 @@ def test_talk_conversations_and_contexts_share_one_named_session(
         assert {s.session_name for s in server.sessions} == {"origin", "talk"}
 
 
+def test_talk_reopens_from_a_shell_left_in_its_conversation_window(
+    server: libtmux.Server,
+    tmp_path: Path,
+):
+    session = server.new_session(
+        session_name="talk", attach=False, window_command="sleep 60"
+    )
+    window = session.active_window
+    shell = window.panes[0]
+    window.set_option("@toolang_convo", "group:dev")
+    window.set_option(MARK_CONTEXT, "root-backend-human")
+    launcher = Launcher(
+        agent="root-backend-human",
+        _server=cast(Any, server),
+        _pane=cast(Any, shell),
+        shared_session="talk",
+        session_mark="@toolang_talk",
+        window_mark="@toolang_convo",
+        pad_kind="talk",
+    )
+    marker = tmp_path / "exit"
+    arguments: dict[str, Any] = dict(
+        thread_id="group:dev",
+        directory=str(tmp_path),
+        argv=[
+            sys.executable,
+            "-c",
+            f"import pathlib,time; p=pathlib.Path({str(marker)!r});\nwhile not p.exists(): time.sleep(.02)",
+        ],
+    )
+    with control_client(server, session):
+        for _ in range(2):
+            assert not launcher.place_chat(**arguments)
+            assert len(window.panes) == 2
+            pad = next(p for p in window.panes if p.pane_id != shell.pane_id)
+            assert pad.show_option(MARK_PAD) == "talk"
+            assert not launcher.place_chat(**arguments)
+            assert len(window.panes) == 2
+            marker.touch()
+            deadline = time.monotonic() + 5
+            while len(window.panes) != 1 and time.monotonic() < deadline:
+                time.sleep(0.02)
+            assert [p.pane_id for p in window.panes] == [shell.pane_id]
+            marker.unlink()
+        assert len(session.windows) == 1
+
+
 def test_same_session_selection_uses_session_id_for_a_linked_window(
     server: libtmux.Server,
 ) -> None:
