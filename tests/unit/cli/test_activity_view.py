@@ -225,15 +225,17 @@ def test_narrow_terminal_keeps_selected_row_and_footer_visible(details):
     feed(state, snapshot)
     state.selected = (snapshot.agent, snapshot.roots[-1].id)
     state.details = details
+    state.horizontal = 32
     output = io.StringIO()
     console = Console(file=output, width=80, height=24, color_system=None)
     console.print(state.render(width=80, height=24))
     lines = output.getvalue().splitlines()
     assert len(lines) <= 24
     assert any(
-        line.startswith("     $0.50") and "run_00000039" in line for line in lines
+        "run_00000039" in line and "Selected:" not in line and "Inspect:" not in line
+        for line in lines
     )
-    assert "Inspect: too alice inspect run_00000039" in output.getvalue()
+    assert ("Inspect: too alice inspect run_00000039" in output.getvalue()) == details
     assert "q Quit" in lines[-1]
 
 
@@ -247,7 +249,10 @@ def test_header_keeps_unavailable_statistics_unknown():
     feed(state, snapshot)
     output = io.StringIO()
     Console(file=output, width=160).print(state.render(width=160, once=True))
-    assert "Agent Stats: MODEL -  TOOL -  COST -  TIME -" in output.getvalue()
+    assert (
+        "Team Stats: MODEL -  TOOL -  IN -  CACHED -  OUT -  SPEND -  TIME -"
+        in output.getvalue()
+    )
 
 
 def test_list_summary_follows_tree_execution_order():
@@ -269,7 +274,7 @@ def test_list_summary_follows_tree_execution_order():
     ]
 
 
-def test_header_counts_follow_the_view_without_counting_tree_rows():
+def test_header_scope_totals_do_not_change_with_views_or_tree_rows():
     snapshot = page()
     snapshot.thread_count = 7
     snapshot.thread_eligible = 4
@@ -282,10 +287,10 @@ def test_header_counts_follow_the_view_without_counting_tree_rows():
         Console(file=output, width=240).print(state.render(width=240, once=True))
         return output.getvalue()
 
-    assert "Threads 1/4 matched/eligible" in rendered()
-    state.key("a")
-    assert "Agents 1/1 matched/eligible" in rendered()
-    state.key("e")
-    state.key(Keys.F5)
-    assert "Root runs 2/2 matched/eligible" in rendered()
-    assert "Loaded 2/2" in rendered()
+    initial = rendered().splitlines()[:2]
+    assert "Threads 7" in initial[0]
+    assert "SPEND $1.28" in initial[1]
+    for key in ("a", "e", Keys.F5):
+        state.key(key)
+        assert rendered().splitlines()[:2] == initial
+        assert "matched/eligible" not in rendered()

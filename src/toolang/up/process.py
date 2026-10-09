@@ -332,12 +332,11 @@ class AgentProcess:
 
     @classmethod
     def list(cls, root: Path, *, ui_base_url: str) -> tuple[AgentStatus, ...]:
-        agents_dir = root / "agents"
-        if not agents_dir.is_dir():
-            return ()
+        from .discovery import agent_layouts
+
         statuses = (
-            cls(AgentLayout.resident(root, home.name)).status(ui_base_url=ui_base_url)
-            for home in sorted(item for item in agents_dir.iterdir() if item.is_dir())
+            cls(layout).status(ui_base_url=ui_base_url)
+            for layout in agent_layouts(root)
         )
         return tuple(status for status in statuses if status is not None)
 

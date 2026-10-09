@@ -50,7 +50,7 @@ def test_top_pastes_filter_and_handles_invalid_stats(tmp_path):
         session.send(b"\x1b[19~\x15" + b"9" * 24 + b"w\r")  # F8, clear, invalid range
         session.wait_for("Stats start is outside the supported date range")
         session.send(b"\x15all\r")
-        session.wait_for("Stats all available history", "TIME*")
+        session.wait_for("Stats all", "TIME*")
         session.send(b"q")
         assert session.wait_for_exit() == 0
     finally:
@@ -99,10 +99,10 @@ def test_top_live_tree_views_ranges_and_completion(tmp_path, columns):
                     assert page["stats"]["model"] == 0
                     assert page["stats"]["cost"] == 0
 
-            session.send(b"e")
-            session.wait_for("View Execution", "Layout List", root["id"])
+            session.send(b"e" + (b">>" if columns == 80 else b""))
+            session.wait_for("View Execution", "/ List", root["id"])
             session.send(b"\x1b[15~")
-            session.wait_for("Layout Tree", current_tool["id"], "└─")
+            session.wait_for("/ Tree", current_tool["id"], "└─")
             session.send(b"\x1b[D")
             session.wait_for("[+]")
             session.send(b"\x1b[C\x1b[B\x1b[B\x1b[B\r")
@@ -115,13 +115,13 @@ def test_top_live_tree_views_ranges_and_completion(tmp_path, columns):
             session.data.clear()
             session.wait_for("View Thread")
             session.send(b"e\x1b[17~")
-            session.wait_for("Sort cost")
+            session.wait_for("Sort spend")
             session.send(b"\x1b[17~")
             session.wait_for("Sort time")
             session.send(b"\x1b[18~\x15all\r")
             session.wait_for("Recent all")
             session.send(b"\x1b[19~\x15all\r")
-            session.wait_for("Stats all available history", "TIME*")
+            session.wait_for("Stats all", "TIME*")
 
             (tmp_path / "release-tool").touch()
             deadline = time.monotonic() + 10
@@ -149,6 +149,31 @@ def test_top_live_tree_views_ranges_and_completion(tmp_path, columns):
             assert final["stats"]["tool"] == 1
             assert final["stats"]["cost"] == 0.25
             assert all(n["status"] == "succeeded" for n in final["roots"])
+        session.send(b"q")
+        assert session.wait_for_exit() == 0
+    finally:
+        session.close()
+
+
+def test_keys_repaint_without_waiting_for_long_refresh(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOOLANG_TEST_REFRESH", "5")
+    session = ChatTuiPtySession.start(
+        "tests.support.top_tui_e2e", tmp_path, columns=180
+    )
+    try:
+        session.wait_for("View Thread", "1 active", timeout=15)
+        # Begin just after a full frame; a scheduled-only key update would take 5s.
+        session.data.clear()
+        start = time.monotonic()
+        session.send(b"e")
+        session.wait_for("View Execution", timeout=1)
+        assert time.monotonic() - start < 1
+        session.data.clear()
+        session.send(b"\x1b[14~")
+        session.wait_for("Filter:", timeout=1)
+        session.send(b"\x1b")
+        session.data.clear()
+        session.wait_for("F4 Filter", timeout=1)
         session.send(b"q")
         assert session.wait_for_exit() == 0
     finally:

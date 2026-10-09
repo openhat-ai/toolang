@@ -13,12 +13,13 @@ from typing import TYPE_CHECKING, Any, cast
 
 from toolang.common.time import utc_now
 from toolang.lang.types import Array
-from .accounting import selected_usd_cost
+from .accounting import selected_usd_cost, token_meter_quantity
 from .inspection.types import step_operation
 from .records import RunControlPayload, StoredModelStepGiven, output_from_data
 from .types import (
     ContentRef,
     ModelStepNoted,
+    ModelAccounting,
     StepRef,
     ToolStepGiven,
     ToolStepNoted,
@@ -26,6 +27,22 @@ from .types import (
 
 if TYPE_CHECKING:
     from .store import RunStore
+
+TOKEN_FIELDS = ("input_tokens", "cached_tokens", "output_tokens")
+BUCKET_FIELDS = (
+    "model",
+    "tool",
+    "cost",
+    "known",
+    "unknown",
+    "estimated",
+    "partial",
+    *(
+        name
+        for field in TOKEN_FIELDS
+        for name in (field, field + "_known", field + "_unknown")
+    ),
+)
 
 
 DDL = (
@@ -94,6 +111,21 @@ def initialize(conn: sqlite3.Connection) -> None:
     """Install a resumable queue once; triggers capture concurrent live mutations."""
     for sql in DDL:
         conn.execute(sql)
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(activity_attempts)")}
+    if "tokens_migrated" not in columns:
+        for field in TOKEN_FIELDS:
+            conn.execute(f"ALTER TABLE activity_attempts ADD COLUMN {field} INTEGER")
+            for name in (field, field + "_known", field + "_unknown"):
+                conn.execute(
+                    f"ALTER TABLE activity_buckets ADD COLUMN {name} INTEGER NOT NULL DEFAULT 0"
+                )
+        conn.execute(
+            "ALTER TABLE activity_attempts ADD COLUMN tokens_migrated INTEGER NOT NULL DEFAULT 0"
+        )
+        conn.execute(
+            "CREATE INDEX activity_token_migration ON activity_attempts(tokens_migrated,id)"
+        )
+        conn.execute("UPDATE activity_meta SET migrated=0")
     if conn.execute("SELECT 1 FROM activity_meta").fetchone() is None:
         legacy = bool(conn.execute("SELECT 1 FROM runs LIMIT 1").fetchone())
         conn.execute("INSERT INTO activity_meta VALUES (1,0,NULL,?,0)", (legacy,))
@@ -132,8 +164,52 @@ def backfill(store: RunStore) -> None:
             except BaseException:
                 conn.rollback()
                 raise
+    while True:
+        with store.write_transaction():
+            attempts = conn.execute(
+                "SELECT * FROM activity_attempts WHERE tokens_migrated=0 LIMIT 256"
+            ).fetchall()
+            if not attempts:
+                break
+            for attempt in attempts:
+                _buckets(conn, attempt, -1)
+                accounting = None
+                if attempt["kind"] == "model":
+                    step = store.get_step(ref=StepRef.parse(attempt["ref"]))
+                    if (
+                        step
+                        and stamp(step.started_at) == attempt["started"]
+                        and isinstance(step.noted, ModelStepNoted)
+                    ):
+                        accounting = step.noted.accounting
+                conn.execute(
+                    "UPDATE activity_attempts SET input_tokens=?,cached_tokens=?,output_tokens=?,tokens_migrated=1 WHERE id=?",
+                    (*_tokens(accounting), attempt["id"]),
+                )
+                _buckets(
+                    conn,
+                    conn.execute(
+                        "SELECT * FROM activity_attempts WHERE id=?", (attempt["id"],)
+                    ).fetchone(),
+                    1,
+                )
+            conn.execute("UPDATE activity_meta SET revision=revision+1")
     with store.write_transaction():
         conn.execute("UPDATE activity_meta SET migrated=1")
+
+
+def _tokens(
+    accounting: ModelAccounting | None,
+) -> tuple[int | None, int | None, int | None]:
+    return (
+        (
+            accounting.input_tokens,
+            token_meter_quantity(accounting, "input.cache_read"),
+            accounting.output_tokens,
+        )
+        if accounting is not None
+        else (None, None, None)
+    )
 
 
 def _preview(value: object) -> str:
@@ -241,7 +317,14 @@ def _contributions(
 ) -> list[tuple[float, tuple[float, ...]]]:
     kind, end = attempt["kind"], attempt["finished"]
     result: list[tuple[float, tuple[float, ...]]] = [
-        (attempt["started"], (int(kind == "model"), int(kind == "tool"), 0, 0, 0, 0, 0))
+        (
+            attempt["started"],
+            (
+                int(kind == "model"),
+                int(kind == "tool"),
+                *([0] * (len(BUCKET_FIELDS) - 2)),
+            ),
+        )
     ]
     if kind == "model" and end is not None:
         cost = attempt["cost"]
@@ -256,6 +339,19 @@ def _contributions(
                     int(cost is None),
                     attempt["estimated"],
                     attempt["partial"],
+                    *(
+                        tuple(
+                            value
+                            for field in TOKEN_FIELDS
+                            for value in (
+                                attempt[field] or 0,
+                                int(attempt[field] is not None),
+                                int(attempt[field] is None),
+                            )
+                        )
+                        if attempt["tokens_migrated"]
+                        else (0,) * 9
+                    ),
                 ),
             )
         )
@@ -310,11 +406,12 @@ def _buckets(
             for session in (attempt["session"], "*"):
                 for minute in (-1, int(at // 60)):
                     conn.execute(
-                        """INSERT INTO activity_buckets VALUES (?,?,?,?,?,?,?,?,?,?)
-                        ON CONFLICT(scope,session,minute) DO UPDATE SET
-                        model=model+excluded.model, tool=tool+excluded.tool, cost=cost+excluded.cost,
-                        known=known+excluded.known, unknown=unknown+excluded.unknown,
-                        estimated=estimated+excluded.estimated, partial=partial+excluded.partial""",
+                        f"INSERT INTO activity_buckets VALUES ({','.join('?' for _ in range(3 + len(BUCKET_FIELDS)))}) "
+                        "ON CONFLICT(scope,session,minute) DO UPDATE SET "
+                        + ",".join(
+                            f"{field}={field}+excluded.{field}"
+                            for field in BUCKET_FIELDS
+                        ),
                         (
                             scope["scope"],
                             session,
@@ -418,7 +515,7 @@ def flush(store: RunStore, *, limit: int | None = None) -> None:
             call_kind = row["kind"] if kind == "step" else "run"
             if attempt is None:
                 cursor = conn.execute(
-                    "INSERT INTO activity_attempts(ref,session,kind,started,complete) VALUES (?,?,?,?,?)",
+                    "INSERT INTO activity_attempts(ref,session,kind,started,complete,tokens_migrated) VALUES (?,?,?,?,?,1)",
                     (
                         ref,
                         attempt_session,
@@ -439,6 +536,7 @@ def flush(store: RunStore, *, limit: int | None = None) -> None:
             else:
                 _buckets(conn, attempt, -1)
             cost, estimated, partial = None, False, False
+            accounting = None
             if call_kind == "model" and finish is not None:
                 step = store.get_step(ref=StepRef.parse(ref))
                 accounting = (
@@ -457,12 +555,13 @@ def flush(store: RunStore, *, limit: int | None = None) -> None:
                 )
                 partial = bool(selected and not selected.complete)
             conn.execute(
-                "UPDATE activity_attempts SET finished=CASE WHEN interrupted=0 THEN ? ELSE finished END,cost=?,estimated=?,partial=? WHERE id=?",
+                "UPDATE activity_attempts SET finished=CASE WHEN interrupted=0 THEN ? ELSE finished END,cost=?,estimated=?,partial=?,input_tokens=?,cached_tokens=?,output_tokens=?,tokens_migrated=1 WHERE id=?",
                 (
                     start if legacy and finish is None else finish,
                     cost,
                     estimated,
                     partial,
+                    *_tokens(accounting),
                     attempt_id,
                 ),
             )

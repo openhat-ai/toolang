@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections import OrderedDict
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass
-from contextlib import closing
+from contextlib import closing, suppress
 from datetime import datetime
 import json
 import math
@@ -14,8 +16,11 @@ import threading
 import time
 
 from .schemas import ActivityMetrics, ActivityNode, ActivitySnapshot
-from .statistics import _contributions
+from .statistics import BUCKET_FIELDS, TOKEN_FIELDS, _contributions
 from .store import RunStore
+from .types import RunRef, StepRef
+from .values import parts_from_value
+from toolang.base.types.message import TextPart
 
 PAGE_SIZE = 200
 PATH_LIMIT = 4000
@@ -51,6 +56,91 @@ class ActivityReader:
         self._cache: OrderedDict[
             ActivityQuery, tuple[float, list[ActivitySnapshot]]
         ] = OrderedDict()
+        self._listeners: dict[
+            ActivityQuery, set[asyncio.Queue[list[ActivitySnapshot] | Exception]]
+        ] = {}
+        self._publishers: dict[ActivityQuery, asyncio.Task[None]] = {}
+
+    def result(self, ref: str) -> str:
+        """Resolve result text only when Details is opened, outside the live feed."""
+        with (
+            closing(RunStore(self.path, read_only=True)) as store,
+            store.read_transaction(),
+        ):
+            record = (
+                store.get_step(ref=StepRef.parse(ref))
+                if "." in ref
+                else store.get_run(run_id=str(RunRef.parse(ref)))
+            )
+            if record is None:
+                raise KeyError(ref)
+            if record.output is None:
+                return ""
+            output = store.resolve_output(record.output)
+            return "\n".join(
+                part.text
+                if isinstance(part, TextPart)
+                else json.dumps(part.to_data(), ensure_ascii=False)
+                for part in parts_from_value(output.value, content_only=True)
+            )
+
+    async def updates(
+        self, query: ActivityQuery
+    ) -> AsyncGenerator[list[ActivitySnapshot]]:
+        """Share atomic absolute updates; a slow viewer needs only the latest one."""
+        queue: asyncio.Queue[list[ActivitySnapshot] | Exception] = asyncio.Queue(1)
+        listeners = self._listeners.setdefault(query, set())
+        listeners.add(queue)
+        try:
+            if query not in self._publishers or self._publishers[query].done():
+                self._publishers[query] = asyncio.create_task(self._publish(query))
+            else:
+                pages = await asyncio.to_thread(self.pages, query)
+                if queue.empty():
+                    queue.put_nowait(pages)
+            while True:
+                value = await queue.get()
+                if isinstance(value, Exception):
+                    raise value
+                yield value
+        finally:
+            listeners.discard(queue)
+            if not listeners:
+                task = self._publishers.pop(query)
+                self._listeners.pop(query)
+                task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await task
+
+    async def _publish(self, query: ActivityQuery) -> None:
+        boundary = None
+        deadline = 0.0
+        try:
+            while True:
+                current = await asyncio.to_thread(self._revision)
+                if current != boundary or time.monotonic() >= deadline:
+                    pages = await asyncio.to_thread(self.pages, query)
+                    for queue in self._listeners[query]:
+                        if queue.full():
+                            queue.get_nowait()
+                        queue.put_nowait(pages)
+                    boundary = (pages[0].session, pages[0].revision)
+                    deadline = time.monotonic() + 1
+                await asyncio.sleep(0.1)
+        except Exception as exc:
+            for queue in self._listeners[query]:
+                if queue.full():
+                    queue.get_nowait()
+                queue.put_nowait(exc)
+
+    def _revision(self) -> tuple[str | None, int]:
+        # Poll only the committed marker; copying the full projection belongs to
+        # an actual publication or a clock tick, not every 100 ms probe.
+        with closing(RunStore(self.path, read_only=True)) as store:
+            row = store._conn.execute(
+                "SELECT session,revision FROM activity_meta"
+            ).fetchone()
+            return row["session"], row["revision"]
 
     def read(
         self, query: ActivityQuery, offset: int = 0, *, now: float | None = None
@@ -85,6 +175,7 @@ class ActivityReader:
             ):
                 pages = [page.model_copy(deep=True) for page in cached[1]]
                 for page in pages:
+                    assert page.observed is not None
                     advance = (
                         max(0, clock - page.observed)
                         if page.presence == "online"
@@ -141,10 +232,10 @@ def _metrics(
         if since in {"all", "session"}
         else datetime.fromisoformat(since.replace("Z", "+00:00")).timestamp()
     )
-    values = [0.0] * 7
+    values = [0.0] * len(BUCKET_FIELDS)
     if start is None:
         bucket = conn.execute(
-            "SELECT model,tool,cost,known,unknown,estimated,partial FROM activity_buckets WHERE scope=? AND session=? AND minute=-1",
+            f"SELECT {','.join(BUCKET_FIELDS)} FROM activity_buckets WHERE scope=? AND session=? AND minute=-1",
             (scope, session),
         ).fetchone()
         if bucket:
@@ -152,7 +243,7 @@ def _metrics(
     else:
         boundary = (int(start // 60) + 1) * 60
         bucket = conn.execute(
-            "SELECT SUM(model),SUM(tool),SUM(cost),SUM(known),SUM(unknown),SUM(estimated),SUM(partial) FROM activity_buckets WHERE scope=? AND session='*' AND minute>=?",
+            f"SELECT {','.join(f'SUM({field})' for field in BUCKET_FIELDS)} FROM activity_buckets WHERE scope=? AND session='*' AND minute>=?",
             (scope, int(boundary // 60)),
         ).fetchone()
         values = [value or 0 for value in bucket]
@@ -206,8 +297,15 @@ def _metrics(
         or since == "session"
         or (start is not None and first is not None and start >= first)
     )
-    model, tool, cost, known, unknown, estimated, partial = values
+    model, tool, cost, known, unknown, estimated, partial = values[:7]
     unknown += open_cost
+    tokens: dict[str, int | None] = {}
+    tokens_complete = complete
+    for index, field in enumerate(TOKEN_FIELDS):
+        quantity, known_tokens, missing_tokens = values[7 + index * 3 : 10 + index * 3]
+        missing_tokens += open_cost
+        tokens[field] = int(quantity) if known_tokens or not missing_tokens else None
+        tokens_complete &= not bool(missing_tokens)
     return ActivityMetrics(
         model=int(model),
         tool=int(tool),
@@ -217,6 +315,10 @@ def _metrics(
         estimated=bool(estimated),
         partial=bool(unknown or partial),
         complete=complete,
+        input_tokens=tokens["input_tokens"],
+        cached_tokens=tokens["cached_tokens"],
+        output_tokens=tokens["output_tokens"],
+        tokens_complete=tokens_complete,
     )
 
 

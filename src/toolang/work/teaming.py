@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import suppress
+from contextlib import aclosing, suppress
 from collections.abc import Awaitable, Callable
 from toolang.execution.schemas import ActivitySnapshot
 import logging
@@ -72,13 +72,16 @@ class TeamingLoop:
         assert self.activity is not None and self.publish_activity is not None
         while not self._stop.is_set():
             try:
-                pages = await asyncio.to_thread(self.activity.pages, ActivityQuery())
-                await self.publish_activity(pages)
+                async with aclosing(self.activity.updates(ActivityQuery())) as updates:
+                    async for pages in updates:
+                        if self._stop.is_set():
+                            return
+                        await self.publish_activity(pages)
             except asyncio.CancelledError:
                 raise
             except Exception:
                 logger.debug("Activity publication unavailable", exc_info=True)
-            await self.messaging._wait(self._stop, 5)
+                await self.messaging._wait(self._stop, 1)
 
     async def _run(self) -> None:
         delay = 0.5

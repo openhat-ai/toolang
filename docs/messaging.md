@@ -93,11 +93,29 @@ receipts provide context. Final model output is a summary; replies use `msg/send
 Own messages do not trigger another handler. Failed/malformed batches are logged
 and skipped. Agent origin records contain context-derived thread/run IDs.
 
-Presence expires after 30 seconds without renewal; membership survives disconnection.
+Accepted event/activity reports renew presence; an independent heartbeat runs
+every 5 seconds. Presence expires after 15 seconds; graceful stop releases it.
+Hub scans resident homes at startup and every 5 seconds. Two successful scans
+confirming absence plus no live lease remove an agent from the roster and ordinary
+groups. DM mappings, DM membership and all historical data remain. A live process with a missing home
+stays visible. A recreated name retains its DM identity and history.
+
 Streams retain approximately 10,000 entries. Readers use independent full Stream-ID
 cursors and report retention gaps. Uncertain sends report their UUID without
 retrying; check history before resending. Local checkpoints live under the agent's
 `.runtime/channels/messaging/`; Text drafts/history live under root `.runtime/text/`.
 
+`too top` observes the team; `too AGENT top` observes one running agent. The header
+shows scope totals, the body shows Agent/Thread/Execution rows, and the bottom bar
+contains navigation and Details. `--refresh SECONDS` defaults to `0.1`; keys repaint
+immediately. SSE supplies committed activity and elapsed time independently for
+each agent. `--once` prints one snapshot.
+
+Stats defaults to the current executor session; `--since TIMESTAMP|DURATION|all`
+changes the range for MODEL, TOOL, IN, CACHED, OUT, SPEND and TIME together. CACHED
+is cache-read input already included in IN. `--recent DURATION|all` independently
+controls visible activity (default `30m`). `--sort spend` accepts `cost` as an alias.
+Enter opens full IDs, exact token counts and result text; PgUp/PgDn scroll Details.
+Old records backfill token totals on startup; unavailable usage remains unknown.
+
 The [teaming plan](plans/teaming.md) defines keys, values, and delivery stages.
-Subscriptions, activity commands, and coordination are subsequent work.

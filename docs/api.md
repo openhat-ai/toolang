@@ -189,32 +189,38 @@ settings.
 
 `too top` observes the running Hub; `too AGENT top` connects directly to an
 existing agent. Neither starts execution. `--once` (also implied for redirected
-output) prints a snapshot. Interactive updates are limited to twice per second.
+output) prints a snapshot. The terminal has a scope summary, an aligned table and
+a fixed bottom key bar. SSE updates data asynchronously; `--refresh SECONDS`
+(default `0.1`) schedules rendering, and local interactions repaint immediately.
 
 ```sh
 too top --view agent
 too alice top --view execution --tree
-too top --since 1d --recent 1h --sort cost
+too top --since 1d --recent 1h --sort spend
 too top --filter fs.read --active --once
 ```
 
 Use `a/t/e` for Agent/Thread/Execution, F5 for List/Tree, F4 for filters, F6 for
-sort, F7 for Recent, F8 for Stats, arrows to select/fold, Enter for details, and
+sort, F7 for Recent, F8 for Stats, arrows to select/fold, Enter for Details, and
 `q` or Ctrl-C to exit. Editors accept Enter/Esc, Ctrl-U to clear, Tab for range
 presets, and Ctrl-A to toggle Active in the filter editor. `<`/`>` scroll wide
 rows. RUN always identifies the root; STEP holds the row's complete run or step
 reference. Only running paths expand, including required completed ancestors.
 Agent/Thread rows summarize active and failed root counts, without task titles.
 Matched/eligible and loaded counts follow the view; Execution counts root runs,
-including in Tree layout.
+including in Tree layout. PgUp/PgDn scrolls Details when open, otherwise rows.
+Details contains exact usage, full IDs, inspect commands and on-demand result text.
 
 Stats defaults to the owning executor session; `--since` accepts `session`,
-`all`, a duration resolved once, or a timestamp with timezone. Calls and cost
-include descendants; TIME measures the row's own execution, or sums root durations
-for Agent/Thread. Retries retain consumption. `TIME*` marks a custom Stats range.
+`all`, a duration resolved once, or a timestamp with timezone. Columns use
+`MODEL TOOL IN CACHED OUT SPEND TIME`; CACHED is cache-read input already included
+in IN. Calls, tokens and spend include descendants; TIME measures the row's own
+execution, or sums root durations for Agent/Thread. Retries retain consumption.
+`TIME*` marks a custom Stats range.
 Recent independently retains unfinished work and recently changed objects
-(default `30m`). Unknown cost is `-`, estimates use `~`, partial cost uses `+`.
-Legacy history and interrupted sessions carry explicit coverage information.
+(default `30m`). SPEND shows plain amounts; unknown values show `-`. Estimated
+accounting and incomplete coverage are explained in Details, with incomplete
+coverage also flagged in the header. `--sort cost` remains an alias for `spend`.
 
 | Compact activity endpoint | Response |
 | --- | --- |
@@ -222,21 +228,39 @@ Legacy history and interrupted sessions carry explicit coverage information.
 | Agent `GET /api/v1/activity/batch` | Pages from one database snapshot. |
 | Hub `GET /activity` | Agent pages, with presence and cached coverage. |
 | Agent `GET /api/v1/activity/stream`, Hub `GET /activity/stream` | Absolute `activity_page` frames, committed together by `activity_checkpoint`. |
+| Agent `GET /api/v1/activity/result?ref=RUN_OR_STEP` | Full result as `{text}` from the execution records. |
+| Hub `GET /activity/result?agent=agent:alice&ref=RUN_OR_STEP` | Fetch the result from the online source agent; offline returns `503`. |
 
 Queries accept `since`, `recent` (seconds), `all_recent=true`, `filter`, and
 `active`. Pages include session/revision, observation time, Stats/Total,
 coverage, root/thread counts and `next_offset`; only the first page carries the
 thread rows. Individual page requests must agree on session/revision; otherwise
-restart pagination. SSE connections always begin
-with a fresh atomic snapshot. They do not replay token deltas or full outputs.
-The agent reader shares committed aggregates and open duration anchors; Hub
-queries agent HTTP and caches absolute values. Offline data freezes at its last
-observation; unavailable ranges are labeled. Layout and sort changes stay local.
+restart pagination. SSE stages pages until their checkpoint:
+
+| Frame | Client action |
+| --- | --- |
+| `activity_page` | Stage a page under its agent; do not expose an incomplete batch. |
+| `activity_checkpoint {agents}` | Atomically replace the complete view with these agents' staged pages. Each connection starts with this baseline. |
+| `activity_checkpoint {agents: [agent], replace: false}` | Replace only that agent's complete pages; other agents remain unchanged. |
+| `activity_roster {agents}` | Remove agents absent from this explicit roster; additions receive their pages and checkpoint. |
+
+Agent streams publish complete snapshots; Hub streams follow the baseline with
+independent per-agent updates and roster changes. Slow readers receive the latest
+complete state. Reconnect starts a new baseline; activity checkpoint IDs are not
+canonical execution cursors. Compact streams exclude token deltas and full outputs.
+
+The shared agent reader checks committed revisions every 0.1 seconds and emits
+one-second clock updates from persisted aggregates and open duration anchors.
+Enabled agents publish the default query even without observers. Hub subscribes
+to source HTTP and keeps the default plus last-requested query in its backend.
+Offline execution time freezes at its last observation; unavailable ranges are
+labeled. Layout and sort changes stay local. Query changes keep the previous view
+until the replacement baseline is complete.
 
 The existing canonical event subscription API remains separate:
 
 An enabled agent exports its canonical stream independently of execution and
-messaging. The authenticated Hub endpoint is `GET /events/stream`, with optional
+messaging. The Hub endpoint is `GET /events/stream`, with optional
 `agent=agent:alice`, and either `thread=ID` or `run=ID` when an agent is selected.
 No filter observes the team. `after` accepts only a Hub cursor
 (`h1.<epoch>.<stream-id>`); local agent cursors are separate. Root subscriptions

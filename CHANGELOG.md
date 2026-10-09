@@ -9,16 +9,30 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Added
 
+- Hub scans its root every 5 seconds with `too list` discovery: new homes are
+  offline with unavailable activity and vanished online homes show `home
+  missing`; after two absent scans with no live lease, only the
+  roster/participant entry and ordinary group memberships are removed,
+  preserving DM mappings and membership, messages, event history, activity
+  caches, and last-seen. A 5-second heartbeat under a 15-second lease marks
+  agents offline within 15 seconds of a crash or graceful stop.
+
+- `too top` adds IN, CACHED, and OUT token columns (CACHED is cache-read input
+  included in IN; OUT is normalized output) in compact k/M/G units, with exact
+  values in Details and `-` for unknown; SPEND replaces COST and `--sort spend`
+  aliases `--sort cost`.
+
 - `too top` adds activity views, filters, sorting, and consumption statistics:
   `--view agent|thread|execution` selects the row object, `--tree` (with
-  `--view execution`) follows confirmed running paths, `--sort activity|cost|time`
+  `--view execution`) follows confirmed running paths, `--sort activity|spend|time`
   orders whole objects by displayed values, `--filter TEXT` matches IDs, names,
   statuses, and summaries literally and case-insensitively, `--active` keeps
   unfinished work only, and `--recent DURATION|all` (default `30m`) and
   `--since session|TIMESTAMP|DURATION|all` (default `session`) select visible
-  recent work and the stats start shared by MODEL, TOOL, COST, and TIME. Each
-  row's metrics cover only its own and transitive calls, `TIME*` marks a
-  non-session range, and incomplete coverage is labeled instead of shown as idle.
+  recent work and the stats start shared by MODEL, TOOL, IN, CACHED, OUT, SPEND,
+  and TIME. Each row's metrics cover only its own and transitive calls, `TIME*`
+  marks a non-session range, and incomplete coverage is labeled instead of shown
+  as idle.
 
 - Agents expose activity over HTTP at `GET /api/v1/activity`,
   `/api/v1/activity/batch`, and the SSE `/api/v1/activity/stream`, and enabled
@@ -29,11 +43,12 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   follows the running Hub for the whole team, while `too AGENT top` follows the
   selected running agent through existing target and endpoint discovery. `--once`
   prints one snapshot and exits, as does redirected output; interactive views
-  refresh at most twice per second, reconnect from their committed cursor with
-  backoff, and exit on `q` or Ctrl-C. Rows show agent summaries and active root
-  trees and retain up to 20 roots completed in the last 30 seconds, label
-  offline, incomplete, and reconnecting origins explicitly, and omit content
-  bodies.
+  apply asynchronous updates and render on the `--refresh` interval (default
+  `0.1` seconds), reconnect from a fresh baseline with backoff, and exit on `q`
+  or Ctrl-C. Rows show agent summaries and active root trees, retain work in the
+  rolling Recent range (default `30m`) with running paths visible regardless of
+  age, label offline, incomplete, and reconnecting origins explicitly, and omit
+  content bodies.
 
 - Enabled agents export their canonical event stream to the teaming backend
   independently of execution and messaging, including retained finals from
@@ -153,11 +168,26 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Changed
 
-- `too top` retention follows `--recent` instead of a fixed cap: completed root
-  runs and threads stay while the rolling range covers them, running paths remain
-  visible regardless of age, and larger results load through pagination with
-  loaded and available counts instead of dropping completed rows beyond 20 in 30
-  seconds.
+- `too top` uses one responsive three-region layout: header totals and a context
+  line, a full-width one-line-per-row body, and a fixed bottom key bar, with
+  shared column widths, right-aligned numerics, and MODEL/TOOL hidden below 110
+  columns. `--refresh SECONDS` (default 0.1) replaces the fixed redraw, while
+  keys, filters, view changes, and resize repaint immediately from cached state.
+
+- Hub activity streaming updates agents independently with shared per-query
+  projections, so one slow or offline agent no longer stalls the others; roster
+  changes and each agent's replacement are atomic, omitted agents are never
+  treated as removed, and reconnects baseline first.
+
+- Schema 54 upgrades automatically to 55, adding per-attempt input, cached, and
+  output token facts with a resumable backfill that settles tokens at the same
+  accounting boundary as spend; historical attempts without durable accounting
+  stay explicitly unknown.
+
+- `too top` retention follows `--recent`: completed root runs and threads stay
+  while the rolling range covers them, running paths remain visible regardless
+  of age, and larger results load through pagination with loaded and available
+  counts.
 
 - **Breaking:** reversible short IDs for runs, threads, tasks, and chores are
   now keyed by the canonical agent name, so equal tick/sequence pairs from

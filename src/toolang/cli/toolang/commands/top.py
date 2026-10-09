@@ -1,6 +1,7 @@
 """Observe existing agent or Hub services without acquiring an executor."""
 
 import asyncio
+import math
 from typing import Annotated, Literal
 
 from rich.console import Console
@@ -33,7 +34,7 @@ def top_command(
         bool, typer.Option(help="Show running paths; requires --view execution")
     ] = False,
     sort: Annotated[
-        Literal["activity", "cost", "time"],
+        Literal["activity", "spend", "cost", "time"],
         typer.Option(help="Sort whole objects by displayed values"),
     ] = "activity",
     recent: Annotated[
@@ -49,10 +50,15 @@ def top_command(
         str, typer.Option(help="Literal case-insensitive activity filter")
     ] = "",
     active: Annotated[bool, typer.Option(help="Show unfinished work only")] = False,
+    refresh: Annotated[
+        float, typer.Option(help="Screen refresh interval in seconds")
+    ] = 0.1,
 ) -> None:
     """Show team or selected agent activity"""
     if tree and view != "execution":
         raise ClickException("--tree requires --view execution")
+    if not math.isfinite(refresh) or refresh <= 0:
+        raise ClickException("Refresh must be a finite positive number of seconds")
     try:
         query = ActivityQuery(stats_since(since), duration(recent), filter, active)
     except ValueError as exc:
@@ -88,6 +94,7 @@ def top_command(
                 sort=sort,
                 query=query,
                 recent_label=recent,
+                refresh=refresh,
             )
         )
     except ValueError as exc:

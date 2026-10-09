@@ -178,6 +178,7 @@ class AgentSendRequest(SendRequest):
 
 class AgentRegistration(HubRequest):
     endpoint: str = Field(default="", max_length=2048)
+    managed: bool = True
 
 
 Generation = Annotated[str, Field(pattern=r"^[0-9a-f]{32}$")]

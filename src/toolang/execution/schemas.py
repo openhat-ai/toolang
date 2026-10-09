@@ -933,6 +933,10 @@ class ActivityMetrics(BaseModel):
     model: int | None = 0
     tool: int | None = 0
     cost: float | None = 0
+    input_tokens: int | None = None
+    cached_tokens: int | None = None
+    output_tokens: int | None = None
+    tokens_complete: bool = False
     time: float | None = 0
     estimated: bool = False
     partial: bool = False
@@ -970,7 +974,9 @@ class ActivitySnapshot(BaseModel):
     revision: int
     session: str | None = None
     session_start: float | None = None
-    observed: float
+    observed: float | None
+    last_seen: float | None = None
+    home_missing: bool = False
     since: str
     recent: float | None
     filter: str = ""

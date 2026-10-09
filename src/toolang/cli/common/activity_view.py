@@ -18,7 +18,7 @@ from toolang.execution.activity import ActivityQuery
 from toolang.execution.schemas import ActivityMetrics, ActivityNode, ActivitySnapshot
 
 View = Literal["agent", "thread", "execution"]
-Sort = Literal["activity", "cost", "time"]
+Sort = Literal["activity", "spend", "cost", "time"]
 RECENT = ("5m", "30m", "1h", "1d", "1w", "all")
 SINCE = ("session", "1h", "1d", "1w", "all")
 
@@ -72,10 +72,28 @@ def elapsed(value: float | None) -> str:
 def cost(metrics: ActivityMetrics) -> str:
     if metrics.cost is None:
         return "-"
+    return f"${metrics.cost:.2f}"
+
+
+def tokens(value: int | None) -> str:
+    if value is None:
+        return "-"
+    for size, suffix in ((1_000_000_000, "G"), (1_000_000, "M"), (1000, "k")):
+        if value >= size:
+            return f"{value / size:.1f}{suffix}"
+    return str(value)
+
+
+def metrics_text(
+    metrics: ActivityMetrics, time_label: str = "TIME", *, exact: bool = False
+) -> str:
+    number = (
+        (lambda value: str(value) if value is not None else "-") if exact else tokens
+    )
     return (
-        ("~" if metrics.estimated else "")
-        + f"${metrics.cost:.2f}"
-        + ("+" if metrics.partial or not metrics.complete else "")
+        f"MODEL {metrics.model if metrics.model is not None else '-'}  TOOL {metrics.tool if metrics.tool is not None else '-'}"
+        f"  IN {number(metrics.input_tokens)}  CACHED {number(metrics.cached_tokens)}  OUT {number(metrics.output_tokens)}"
+        f"  SPEND {cost(metrics)}  {time_label} {elapsed(metrics.time)}"
     )
 
 
@@ -93,11 +111,16 @@ def clean(value: str) -> str:
 
 
 def node_summary(node: ActivityNode) -> str:
-    label = node.title + (f" · {node.summary}" if node.summary else "")
+    summary = node.summary
+    if node.kind == "run" and (
+        len(summary) > 160 or re.search(r"[\n\r]|\*\*|^\s*#|`", summary)
+    ):
+        summary = ""
+    label = node.title + (f" · {summary}" if summary else "")
     if node.stale:
         return f"stale · {label}"
     if node.status not in {"running", "idle"}:
-        return f"{node.status} · {node.summary or node.title}"
+        return f"{node.status} · {summary or node.title}"
     if node.kind == "step" and node.children:
         label += f" · {node.completed}/{node.children} completed"
     elif node.pending:
@@ -134,11 +157,16 @@ class Activity:
         sort: Sort = "activity",
         query: ActivityQuery | None = None,
         recent_label: str = "30m",
+        refresh: float = 0.1,
     ) -> None:
         self.agent = agent
         self.view: View = view or ("thread" if agent else "agent")
         self.tree = tree
-        self.sort = sort
+        self.sort = "spend" if sort == "cost" else sort
+        self.refresh = refresh
+        self.column_widths: dict[str, int] = {}
+        self.received: float | None = None
+        self.help = False
         self.query = query or ActivityQuery()
         self.recent_label = recent_label
         self.display_query = self.query
@@ -158,6 +186,11 @@ class Activity:
         self.offset = 0
         self.horizontal = 0
         self.details = False
+        self.result_key: tuple[str, str, str] | None = None
+        self.result_text = ""
+        self.details_offset = 0
+        self.details_page_size = 3
+        self.details_selection: tuple[str, str] | None = None
         self.editor: str | None = None
         self.filter_active = self.query.active
         self.buffer = ""
@@ -172,6 +205,19 @@ class Activity:
         self.attached_recent = self.recent_label
 
     def feed(self, event: str, data: dict) -> bool:
+        if event == "activity_roster":
+            if self.attached_query != self.query:
+                return False
+            agents = set(data["agents"])
+            self.snapshots = {
+                agent: page for agent, page in self.snapshots.items() if agent in agents
+            }
+            self.pending = {
+                agent: page for agent, page in self.pending.items() if agent in agents
+            }
+            self.received = time.time()
+            self._selection(self.rows())
+            return True
         if event == "activity_page":
             page = ActivitySnapshot.model_validate(data)
             previous = self.pending.get(page.agent)
@@ -203,7 +249,12 @@ class Activity:
             while ancestor and ancestor in self.parents:
                 ancestor = self.parents[ancestor]
                 self.selection_ancestors.append(ancestor)
-            self.snapshots, self.pending = self.pending, {}
+            if data.get("replace", True):
+                self.snapshots = self.pending
+            else:
+                self.snapshots.update(self.pending)
+            self.pending = {}
+            self.received = time.time()
             self.ready = True
             self.display_query = self.attached_query
             self.display_recent = self.attached_recent
@@ -228,8 +279,8 @@ class Activity:
     def _sort(self, row: Row) -> tuple:
         if row.placeholder:
             return (2, 0, 0, row.key)
-        if self.sort in {"cost", "time"}:
-            value = getattr(row.stats, self.sort)
+        if self.sort in {"spend", "cost", "time"}:
+            value = getattr(row.stats, "cost" if self.sort == "spend" else self.sort)
             return (value is None, -(value or 0), 0, row.key)
         active = (
             row.node.status in {"pending", "running"}
@@ -261,13 +312,28 @@ class Activity:
             marker = ""
             presence = "unknown" if self.reconnecting else snapshot.presence
             if presence != "online":
-                marker = f"{presence} · last seen {elapsed(time.time() - snapshot.observed)} ago · "
+                marker = f"{presence} · "
+                seen = (
+                    snapshot.last_seen
+                    if snapshot.last_seen is not None
+                    else snapshot.observed
+                )
+                if seen is not None:
+                    marker += f"last seen {elapsed(time.time() - seen)} ago · "
+            if snapshot.home_missing:
+                marker += "home missing · "
             if snapshot.stale and snapshot.presence == "online":
                 marker += "stale · "
-            if not snapshot.complete:
+            if (
+                not snapshot.complete
+                and presence == "online"
+                and snapshot.observed is not None
+            ):
                 marker += "syncing · "
-            summary = marker + counts(
-                snapshot.active, snapshot.failed, snapshot.complete
+            summary = marker + (
+                "activity unavailable"
+                if snapshot.observed is None
+                else counts(snapshot.active, snapshot.failed, snapshot.complete)
             )
             agent_match = (
                 not self.display_query.text
@@ -507,7 +573,9 @@ class Activity:
             return False
         if key == "q":
             return True
-        if key in {"a", "t", "e"}:
+        if key == Keys.F1:
+            self.help = not self.help
+        elif key in {"a", "t", "e"}:
             self._view(cast(View, {"a": "agent", "t": "thread", "e": "execution"}[key]))
         elif key == Keys.F5 and self.view == "execution":
             current = next(
@@ -520,7 +588,7 @@ class Activity:
             elif self.tree_selected:
                 self.selected = self.tree_selected
         elif key == Keys.F6:
-            self.sort = {"activity": "cost", "cost": "time", "time": "activity"}[
+            self.sort = {"activity": "spend", "spend": "time", "time": "activity"}[
                 self.sort
             ]
         elif key in {Keys.F4, Keys.F7, Keys.F8}:
@@ -537,8 +605,17 @@ class Activity:
             self.filter_active = self.query.active
         elif key == Keys.ControlM:
             self.details = not self.details
+            self.details_offset = 0
+        elif self.details and key in {Keys.PageUp, Keys.PageDown}:
+            self.details_offset = max(
+                0,
+                self.details_offset
+                + max(1, self.details_page_size - 1)
+                * (1 if key == Keys.PageDown else -1),
+            )
         elif key == Keys.Escape:
             self.details = False
+            self.help = False
         elif key in {"<", ">"}:
             self.horizontal = max(0, self.horizontal + (16 if key == ">" else -16))
         else:
@@ -573,232 +650,257 @@ class Activity:
         self, *, width: int = 140, height: int = 30, once: bool = False
     ) -> Group:
         self.width = width
-        if not self.ready:
-            return Group(
-                Text("too top · Connecting to activity service"),
-                Text("q Quit", style="dim"),
-            )
         time_label = "TIME" if self.display_query.since == "session" else "TIME*"
         rows = self.rows()
         self._selection(rows)
-        values: list[Text] = []
-        stats_label = (
-            self.display_query.since
-            if self.display_query.since != "all"
-            else "all available history"
+        snapshots = list(self.snapshots.values())
+        known = [snapshot.stats for snapshot in snapshots]
+        total = ActivityMetrics.model_validate(
+            {
+                **{
+                    field: sum(getattr(item, field) or 0 for item in known)
+                    if any(getattr(item, field) is not None for item in known)
+                    else None
+                    for field in (
+                        "model",
+                        "tool",
+                        "input_tokens",
+                        "cached_tokens",
+                        "output_tokens",
+                        "cost",
+                        "time",
+                    )
+                },
+                "estimated": any(item.estimated for item in known),
+                "partial": any(item.partial or item.cost is None for item in known),
+                "complete": bool(known) and all(item.complete for item in known),
+                "tokens_complete": bool(known)
+                and all(item.tokens_complete for item in known),
+            }
         )
-        values.append(
+        scope = f"Agent {self.agent.removeprefix('agent:')}" if self.agent else "Team"
+        presence = (
+            (
+                "unknown"
+                if self.reconnecting
+                else snapshots[0].presence
+                if snapshots
+                else "unknown"
+            )
+            if self.agent
+            else f"{sum(s.presence == 'online' for s in snapshots) if not self.reconnecting else '?'} online / {len(snapshots)} agents"
+        )
+        seen = (
+            datetime.fromtimestamp(self.received).strftime("%H:%M:%S")
+            if self.received is not None
+            else "-"
+        )
+        values = [
             Text(
-                f"too top  View {self.view.title()}"
+                f"{scope} · {presence}   Root runs {sum(s.active for s in snapshots)} active · {sum(s.failed for s in snapshots)} failed   Threads {sum(s.thread_count for s in snapshots)}   Updated {seen}"
+            ),
+            Text(
+                f"{'Agent' if self.agent else 'Team'} Stats: {metrics_text(total, time_label)}"
+            ),
+            Text(
+                f"View {self.view.title()}"
                 + (
-                    f"  Layout {'Tree' if self.tree else 'List'}"
+                    f" / {'Tree' if self.tree else 'List'}"
                     if self.view == "execution"
                     else ""
                 )
-                + f"  Stats {stats_label}  Recent {self.display_recent}  Sort {self.sort}",
-                style="bold",
-            )
+                + f"   Stats {self.display_query.since}   Recent {self.display_recent}   Sort {self.sort}   Refresh {self.refresh:g}s",
+                style="dim",
+            ),
+        ]
+        if not self.ready:
+            values.append(Text("Connecting to activity service", style="yellow"))
+        elif self.reconnecting:
+            values.append(Text("Reconnecting · presence unknown", style="yellow"))
+        incomplete = sum(
+            bool(s.coverage)
+            or not s.stats.complete
+            or not s.stats.tokens_complete
+            or s.stats.partial
+            for s in snapshots
         )
-        snapshots = list(self.snapshots.values())
-        if self.agent:
-            snapshot = self.snapshots.get(self.agent)
-            if snapshot:
-                presence = "unknown" if self.reconnecting else snapshot.presence
-                values.append(
-                    Text(
-                        f"{self.agent} · {presence}  Agent Stats: MODEL {snapshot.stats.model if snapshot.stats.model is not None else '-'}  TOOL {snapshot.stats.tool if snapshot.stats.tool is not None else '-'}  COST {cost(snapshot.stats)}  {time_label} {elapsed(snapshot.stats.time)}  {snapshot.thread_count} threads"
-                    )
-                )
-        else:
-            known = [snapshot.stats for snapshot in snapshots]
-            total = ActivityMetrics(
-                model=sum(item.model or 0 for item in known)
-                if any(item.model is not None for item in known)
-                else None,
-                tool=sum(item.tool or 0 for item in known)
-                if any(item.tool is not None for item in known)
-                else None,
-                cost=sum(item.cost or 0 for item in known)
-                if any(item.cost is not None for item in known)
-                else None,
-                time=sum(item.time or 0 for item in known)
-                if any(item.time is not None for item in known)
-                else None,
-                estimated=any(item.estimated for item in known),
-                partial=any(item.cost is None or item.partial for item in known),
-                complete=all(item.complete for item in known),
-            )
+        if incomplete:
             values.append(
                 Text(
-                    f"Agents {sum(s.presence == 'online' for s in snapshots) if not self.reconnecting else '?'} online / {len(snapshots)}  Agent Stats: MODEL {total.model if total.model is not None else '-'}  TOOL {total.tool if total.tool is not None else '-'}  COST {cost(total)}  {time_label} {elapsed(total.time)}"
+                    f"Coverage incomplete: {incomplete} agent(s) · Enter Details",
+                    style="yellow",
                 )
             )
         if self.view == "agent":
-            label = "Agents"
-            matched = sum(self._matches_agent(s) for s in snapshots)
-            eligible = len(snapshots)
-            loaded = matched
+            label, matched, eligible, loaded = (
+                "Agents",
+                sum(self._matches_agent(s) for s in snapshots),
+                len(snapshots),
+                len(rows),
+            )
         elif self.view == "thread":
-            label = "Threads"
-            matched = sum(s.thread_matched for s in snapshots)
-            eligible = sum(s.thread_eligible for s in snapshots)
-            loaded = sum(len(s.threads) for s in snapshots)
-        else:
-            label = "Root runs"
-            matched = sum(s.matched for s in snapshots)
-            eligible = sum(s.eligible for s in snapshots)
-            loaded = sum(len(s.roots) for s in snapshots)
-        values.append(
-            Text(
-                f"{label} {matched}/{eligible} matched/eligible  Loaded {loaded}/{matched}"
-                + f"  Root runs {sum(s.active for s in snapshots)} active · {sum(s.failed for s in snapshots)} failed"
-                + f"  Total threads {sum(s.thread_count for s in snapshots)}"
-                + ("  Reconnecting · presence unknown" if self.reconnecting else "")
+            label, matched, eligible, loaded = (
+                "Threads",
+                sum(s.thread_matched for s in snapshots),
+                sum(s.thread_eligible for s in snapshots),
+                sum(len(s.threads) for s in snapshots),
             )
-        )
-        if self.display_query.since == "session":
-            starts = [
-                datetime.fromtimestamp(s.session_start, timezone.utc).isoformat(
-                    timespec="seconds"
-                )
-                for s in snapshots
-                if s.session_start
-            ]
-            uptime = ""
-            if len(snapshots) == 1 and snapshots[0].session_start is not None:
-                uptime = f" · Uptime {elapsed(snapshots[0].observed - snapshots[0].session_start)}"
+        else:
+            label, matched, eligible, loaded = (
+                "Root runs",
+                sum(s.matched for s in snapshots),
+                sum(s.eligible for s in snapshots),
+                sum(len(s.roots) for s in snapshots),
+            )
+        if self.display_query.text or self.display_query.active or loaded < matched:
             values.append(
                 Text(
-                    "Stats: each executor session"
-                    + (f" from {starts[0]}" if len(starts) == 1 else "")
-                    + uptime
-                    + " · TIME sums root duration",
+                    f"{label} {matched}/{eligible} matched/eligible  Loaded {loaded}/{matched}",
                     style="dim",
                 )
             )
-        else:
-            values.append(
-                Text(
-                    "TIME*: MODEL, TOOL, COST and TIME use the same selected Stats range",
-                    style="dim",
-                )
-            )
-        for snapshot in snapshots:
-            if snapshot.coverage or not snapshot.stats.complete:
-                values.append(
-                    Text(
-                        f"{snapshot.agent}: {snapshot.coverage or 'Stats coverage incomplete'}",
-                        style="yellow",
-                    )
-                )
 
-        def column_width(field: str) -> int:
-            return max(
-                8,
-                max(
-                    (
-                        cell_len(clean(str(getattr(row, field)).removeprefix("agent:")))
-                        for row in rows
-                    ),
-                    default=0,
-                ),
-            )
-
-        columns = [] if self.agent else [("AGENT", column_width("agent"))]
-        if width >= 110:
-            columns += [("MODEL", 5), ("TOOL", 5)]
-        columns += [("COST", 10), (time_label, 8)]
-        if self.view != "agent":
-            columns.append(("THREAD", column_width("thread")))
-        if self.view == "execution":
-            columns += [("RUN", column_width("root")), ("STEP", column_width("id"))]
-        show_table = not (self.agent and self.view == "agent")
-        if show_table:
-            heading = (
-                " ".join(label.ljust(size) for label, size in columns) + " ACTIVITY"
-            )
-            values.append(
-                Text(
-                    heading[self.horizontal : self.horizontal + width],
-                    style="bold reverse",
-                )
-            )
-
-        def render_row(row: Row) -> Text:
-            fields = {
+        def fields(row: Row) -> dict[str, str]:
+            return {
                 "AGENT": row.agent.removeprefix("agent:"),
                 "MODEL": str(row.stats.model) if row.stats.model is not None else "-",
                 "TOOL": str(row.stats.tool) if row.stats.tool is not None else "-",
-                "COST": cost(row.stats),
-                "TIME": elapsed(row.stats.time),
-                "TIME*": elapsed(row.stats.time),
+                "IN": tokens(row.stats.input_tokens),
+                "CACHED": tokens(row.stats.cached_tokens),
+                "OUT": tokens(row.stats.output_tokens),
+                "SPEND": cost(row.stats),
+                time_label: elapsed(row.stats.time),
                 "THREAD": row.thread or "-",
                 "RUN": row.root or "-",
                 "STEP": row.id if row.root else "-",
             }
-            line = (
-                " ".join(
-                    (
-                        " " * max(0, size - cell_len(fields[label])) + fields[label]
-                        if label in {"MODEL", "TOOL", "COST", "TIME", "TIME*"}
-                        else fields[label]
-                        + " " * max(0, size - cell_len(fields[label]))
-                    )
-                    for label, size in columns
-                )
-                + " "
-                + row.activity
+
+        numeric = {"MODEL", "TOOL", "IN", "CACHED", "OUT", "SPEND", "TIME", "TIME*"}
+        labels = [] if self.agent else ["AGENT"]
+        if width >= 110:
+            labels += ["MODEL", "TOOL"]
+        labels += ["IN", "CACHED", "OUT", "SPEND", time_label]
+        if self.view != "agent":
+            labels += ["THREAD"]
+        if self.view == "execution":
+            labels += ["RUN", "STEP"]
+        data = {row.key: fields(row) for row in rows}
+        for label in labels:
+            minimum = 7 if label in numeric else cell_len(label)
+            self.column_widths[label] = max(
+                self.column_widths.get(label, 0),
+                minimum,
+                max(
+                    (cell_len(clean(item[label])) for item in data.values()), default=0
+                ),
             )
+
+        def line(items: dict[str, str], activity: str, style: str = "") -> Text:
+            cells = []
+            for label in labels:
+                value = clean(items[label])
+                padding = " " * max(0, self.column_widths[label] - cell_len(value))
+                cells.append(padding + value if label in numeric else value + padding)
+            value = " ".join(cells) + " " + clean(activity)
+            # Scroll by terminal cells, never split a wide glyph into another column.
+            skipped = 0
+            index = 0
+            while index < len(value) and skipped < self.horizontal:
+                skipped += cell_len(value[index])
+                index += 1
             rendered = Text(
-                clean(line)[self.horizontal : self.horizontal + width],
-                style="reverse" if not once and row.key == self.selected else "",
+                " " * max(0, skipped - self.horizontal) + value[index:],
+                style=style,
                 no_wrap=True,
-                overflow="crop",
             )
+            rendered.truncate(width, overflow="ellipsis", pad=True)
+            return rendered
+
+        show_table = self.ready and not (self.agent and self.view == "agent")
+        if show_table:
+            values.append(
+                line({label: label for label in labels}, "ACTIVITY", "black on green")
+            )
+
+        def render_row(row: Row) -> Text:
+            style = (
+                "black on cyan"
+                if not once and row.key == self.selected
+                else "red"
+                if row.node and row.node.status == "failed"
+                else "dim"
+                if row.placeholder or self.snapshots[row.agent].presence != "online"
+                else ""
+            )
+            rendered = line(data[row.key], row.activity, style)
             if self.display_query.text:
                 rendered.highlight_words(
-                    [self.display_query.text],
-                    style="bold yellow",
-                    case_sensitive=False,
+                    [self.display_query.text], style="bold yellow", case_sensitive=False
                 )
             return rendered
 
-        footer: list[Text] = []
+        detail: list[Text] = []
         current = next((row for row in rows if row.key == self.selected), None)
-        if current and (self.details or once is False):
+        if current and self.details:
             command = (
                 f"too {current.agent.removeprefix('agent:')} inspect {current.id}"
                 if current.node and current.node.kind != "thread"
                 else ""
             )
-            footer.append(
+            detail.append(
                 Text(
                     f"Selected: {current.agent} / {current.thread or '-'} / root {current.root or '-'} / {current.id}"
-                    + (f"  Inspect: {command}" if command else ""),
-                    overflow="fold",
                 )
             )
-            if self.details:
-                footer.append(Text(clean(current.activity), overflow="fold"))
-                footer.append(
+            if command:
+                detail.append(Text(f"Inspect: {command}"))
+            detail.append(Text(clean(current.activity)))
+            detail.append(
+                Text("Stats: " + metrics_text(current.stats, time_label, exact=True))
+            )
+            if current.node:
+                detail.append(
+                    Text("Total: " + metrics_text(current.node.total, exact=True))
+                )
+                if current.node.matches:
+                    detail.append(
+                        Text("Matched IDs: " + ", ".join(current.node.matches))
+                    )
+            coverage = self.snapshots[current.agent].coverage
+            detail.append(
+                Text(
+                    (
+                        "Spend source: estimated"
+                        if current.stats.estimated
+                        else "Spend source: reported or unavailable"
+                    )
+                    + (" · Spend incomplete" if current.stats.partial else "")
+                    + (
+                        " · Token coverage incomplete"
+                        if not current.stats.tokens_complete
+                        else ""
+                    )
+                    + (f" · {coverage}" if coverage else ""),
+                    style="dim",
+                )
+            )
+            if self.result_key and self.result_key[:2] == current.key:
+                detail.append(Text("Result", style="dim"))
+                detail.append(
                     Text(
-                        f"Stats: MODEL {current.stats.model} TOOL {current.stats.tool} COST {cost(current.stats)} TIME {elapsed(current.stats.time)}"
+                        "\n".join(clean(line) for line in self.result_text.splitlines())
                     )
                 )
-                if current.node:
-                    total = current.node.total
-                    footer.append(
-                        Text(
-                            f"Total: MODEL {total.model} TOOL {total.tool} COST {cost(total)} TIME {elapsed(total.time)}"
-                        )
-                    )
-                    if current.node.matches:
-                        footer.append(
-                            Text(
-                                "Matched IDs: " + ", ".join(current.node.matches),
-                                overflow="fold",
-                            )
-                        )
+        if self.details_selection != self.selected:
+            self.details_selection = self.selected
+            self.details_offset = 0
+        footer: list[Text] = []
+        if self.help:
+            footer.append(
+                Text(
+                    "Stats applies to all metrics; CACHED is included in IN. Recent controls visibility. TIME is this object's duration; agent/thread totals sum root durations."
+                )
+            )
         if not once:
             if self.editor:
                 footer.append(
@@ -814,27 +916,52 @@ class Activity:
                 )
                 if self.error:
                     footer.append(Text(self.error, style="red"))
-            else:
-                footer.append(
-                    Text(
-                        "a Agent  t Thread  e Execution  F4 Filter  F5 Layout  F6 Sort  F7 Recent  F8 Stats  Enter Details  <> Scroll  q Quit",
-                        style="dim",
-                    )
+            footer.append(
+                Text(
+                    "F1 Help  a Agent  t Thread  e Execution  F4 Filter  F5 Tree  F6 Sort  F7 Recent  F8 Stats  Enter Details  <> Scroll  q Quit",
+                    style="black on cyan",
                 )
+            )
         if once:
-            body = [render_row(row) for row in rows] if show_table else []
-            if show_table and not rows:
-                body.append(Text("No matching activity", style="dim"))
-            return Group(*values, *body, *footer)
+            return Group(
+                *values,
+                *(render_row(row) for row in rows if show_table),
+                *(
+                    [Text("No matching activity", style="dim")]
+                    if show_table and not rows
+                    else []
+                ),
+                *detail,
+                *footer,
+            )
 
         console = Console(width=width)
-        header_lines = [line for value in values for line in value.wrap(console, width)]
-        footer_lines = [line for value in footer for line in value.wrap(console, width)]
-        # Reserve space for the selected row and controls even with long IDs,
-        # details, coverage warnings, or a narrow terminal.
+        header_lines = [part for value in values for part in value.wrap(console, width)]
+        detail_lines = [part for value in detail for part in value.wrap(console, width)]
+        key_lines = list(footer[-1].wrap(console, width))
+        extra_lines = [
+            part for value in footer[:-1] for part in value.wrap(console, width)
+        ]
         footer_limit = max(1, height // 2)
-        if len(footer_lines) > footer_limit:
-            footer_lines = [*footer_lines[: footer_limit - 1], footer_lines[-1]]
+        extra_limit = max(0, footer_limit - len(key_lines) - (2 if detail_lines else 0))
+        footer_lines = [*extra_lines[:extra_limit], *key_lines]
+        if detail_lines:
+            self.details_page_size = max(1, footer_limit - len(footer_lines) - 1)
+            self.details_offset = min(
+                self.details_offset, max(0, len(detail_lines) - self.details_page_size)
+            )
+            end = min(len(detail_lines), self.details_offset + self.details_page_size)
+            indicator = Text(
+                f"Details {self.details_offset + 1}-{end}/{len(detail_lines)} · PgUp/PgDn",
+                style="dim",
+                no_wrap=True,
+            )
+            indicator.truncate(width)
+            footer_lines = [
+                indicator,
+                *detail_lines[self.details_offset : end],
+                *footer_lines,
+            ]
         header_limit = max(0, height - len(footer_lines) - int(show_table))
         if len(header_lines) > header_limit:
             header_lines = (
@@ -854,4 +981,9 @@ class Activity:
         )
         if show_table and not rows:
             body.append(Text("No matching activity", style="dim"))
-        return Group(*header_lines, *body, *footer_lines)
+        blank = [Text("")] * max(
+            0, height - len(header_lines) - len(body) - len(footer_lines)
+        )
+        for part in footer_lines[-1:]:
+            part.truncate(width, pad=True)
+        return Group(*header_lines, *body, *blank, *footer_lines)

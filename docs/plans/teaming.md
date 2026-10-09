@@ -169,11 +169,19 @@ validated agent/group IDs. All non-lease records have no application TTL.
 | Key | Type | Field/value |
 | --- | --- | --- |
 | `P:participants` | Hash | Full participant target → participant JSON. |
-| `P:agent:A:online` | Hash | `token`, `endpoint`; whole-key TTL 30s, renewed every 10s. |
+| `P:agent:A:online` | Hash | Process `token`, `endpoint`; whole-key TTL 15s, renewed by accepted reports and a 5s heartbeat. |
+| `P:roster` | Hash | Full agent target → `{root, managed, missing}`; `missing` counts successful absent scans. |
+| `P:last_seen` | Hash | Full agent target → Hub receipt time in Unix seconds. |
+| `P:activity:agent:A` | Hash | `default` and `query` slots → `{query, pages}`; query is a hash of the Stats/Recent/filter parameters, pages are absolute snapshots. |
 | `P:msg:groups` | Hash | Full group target → group JSON. |
 | `P:msg:group:G:members` | Set | Full participant targets; sole authoritative membership. |
 | `P:msg:group:G:messages` | Stream | Server Stream ID; `data` field contains message JSON. |
 | `P:msg:direct` | Hash | Canonical participant-pair JSON → full group target. |
+
+Hub scans resident homes at startup and every 5s. Two successful absent scans and
+no live lease remove this root's managed roster/participant entry and ordinary
+group memberships. DMs and history remain; offline alone does not remove an
+agent. See [presence and roster](top-live-layout.md#presence-and-roster).
 
 Participant JSON (`owner` is null for humans):
 

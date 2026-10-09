@@ -129,8 +129,8 @@ from .schemas import Record, RecordSelection, select_record
 from .values import parts_from_value
 from . import statistics
 
-_SCHEMA_VERSION = 54
-_SUPPORTED_SCHEMA_VERSIONS = (52, 53, _SCHEMA_VERSION)
+_SCHEMA_VERSION = 55
+_SUPPORTED_SCHEMA_VERSIONS = (52, 53, 54, _SCHEMA_VERSION)
 
 
 class RunStore:
