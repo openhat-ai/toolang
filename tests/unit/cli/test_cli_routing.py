@@ -357,7 +357,7 @@ def test_cli_visible_commands_follow_the_public_panel_order(arguments, capsys) -
         "Work Commands": ("chat", "chore", "task", "workspace"),
         "Inspection Commands": ("caps", "tools", "models", "providers", "inspect"),
         "Script Commands": ("init", "run"),
-        "Teaming Commands": ("hub", "text", "top"),
+        "Teaming Commands": ("hub", "talk", "top"),
     }
 
     assert isinstance(group, TyperGroup)
@@ -367,6 +367,7 @@ def test_cli_visible_commands_follow_the_public_panel_order(arguments, capsys) -
     )
 
     assert visible == tuple(name for names in expected.values() for name in names)
+    assert "text" not in group.commands
     for panel, names in expected.items():
         assert {
             getattr(group.commands[name], "rich_help_panel", None) for name in names

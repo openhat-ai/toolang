@@ -8,7 +8,7 @@ from toolang.cli.common.terminal_surfaces import (
     DARK_TERMINAL_SURFACES,
     LIGHT_TERMINAL_SURFACES,
 )
-from toolang.cli.toolang.commands.text.rendering import message_block
+from toolang.cli.toolang.commands.talk.rendering import message_block
 from toolang.teaming.schemas import Message
 
 

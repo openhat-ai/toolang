@@ -204,10 +204,10 @@ def test_hub_cli_lifecycle_and_backend_independence(valkey, tmp_path):
         result = run("hub", "status")
         assert result.returncode == 0 and "Hub running" in result.stdout
         assert run("hub", "start", "--port", str(port)).returncode != 0
-        assert run("text", "all", "via Hub").returncode == 0
+        assert run("talk", "all", "via Hub").returncode == 0
         assert run("hub", "stop").returncode == 0
         assert "Hub stopped" in run("hub", "status").stdout
-        assert run("text", "all", "requires Hub").returncode != 0
+        assert run("talk", "all", "requires Hub").returncode != 0
 
         async def verify():
             async with MessagingClient(valkey, actor="agent:alice") as agent:
@@ -223,7 +223,7 @@ def test_hub_cli_lifecycle_and_backend_independence(valkey, tmp_path):
         hub.stop(force=True)
 
 
-def test_real_text_terminal_sends_reads_and_reuses_tmux(valkey, tmp_path, running_hub):
+def test_real_talk_terminal_sends_reads_and_reuses_tmux(valkey, tmp_path, running_hub):
     if not shutil.which("tmux"):
         pytest.skip("tmux is not installed")
 
@@ -278,7 +278,7 @@ def test_real_text_terminal_sends_reads_and_reuses_tmux(valkey, tmp_path, runnin
                 "toolang.cli.toolang.main",
                 "--root",
                 str(tmp_path),
-                "text",
+                "talk",
                 "group:dev",
             ]
             from toolang.cli.common.errors import TmuxPlacementError

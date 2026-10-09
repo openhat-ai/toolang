@@ -1,4 +1,4 @@
-"""Conversation presence and the bounded two-sided Text footer."""
+"""Conversation presence and the bounded two-sided Talk footer."""
 
 from prompt_toolkit.formatted_text import StyleAndTextTuples, fragment_list_to_text
 

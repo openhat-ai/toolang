@@ -1,4 +1,4 @@
-"""Text's bounded input, footer, and scrollback rendering."""
+"""Talk's bounded input, footer, and scrollback rendering."""
 
 import asyncio
 from contextlib import asynccontextmanager
@@ -15,7 +15,7 @@ from prompt_toolkit.output import DummyOutput
 from rich.console import Console
 
 from toolang.cli.common.terminal_surfaces import LIGHT_TERMINAL_SURFACES
-from toolang.cli.toolang.commands.text import tui
+from toolang.cli.toolang.commands.talk import tui
 from toolang.teaming.schemas import Conversation, Message
 
 
@@ -28,7 +28,7 @@ class TerminalOutput(DummyOutput):
 
 
 @asynccontextmanager
-async def text_app(
+async def talk_app(
     tmp_path, *, conversation=None, human="human:bryan", read_only=False
 ):
     output = TerminalOutput()
@@ -36,7 +36,7 @@ async def text_app(
         "group:gc_dev", "group", (human, "agent:alice", "agent:bob")
     )
     with create_app_session(input=DummyInput(), output=output):
-        app = tui.TextTui(
+        app = tui.TalkTui(
             AsyncMock(),
             conversation,
             human,
@@ -55,7 +55,7 @@ async def text_app(
 
 def test_input_and_footer_share_message_width_after_resize_and_clear(tmp_path):
     async def scenario():
-        async with text_app(tmp_path) as (ui, output):
+        async with talk_app(tmp_path) as (ui, output):
             for columns in (200, 60, 180):
                 output.columns = columns
                 width = min(columns, 120)
@@ -95,7 +95,7 @@ def test_input_and_footer_share_message_width_after_resize_and_clear(tmp_path):
 
 def test_input_spacing_preserves_multiline_editing_in_short_terminals(tmp_path):
     async def scenario():
-        async with text_app(tmp_path) as (ui, output):
+        async with talk_app(tmp_path) as (ui, output):
             draft = "one\ntwo\nthree\nfour\nfive\nsix"
             ui.prompt.replace_input(draft)
             for rows in (30, 8, 5, 4, 30):
@@ -125,7 +125,7 @@ def test_input_spacing_preserves_multiline_editing_in_short_terminals(tmp_path):
 
 def test_history_batch_uses_one_scrollback_write(tmp_path, monkeypatch):
     async def scenario():
-        async with text_app(tmp_path) as (ui, _output):
+        async with talk_app(tmp_path) as (ui, _output):
             output = StringIO()
             monkeypatch.setattr(
                 tui,
@@ -151,7 +151,7 @@ def test_history_batch_uses_one_scrollback_write(tmp_path, monkeypatch):
 
 def test_footer_keeps_identity_after_send_and_prioritizes_reconnection(tmp_path):
     async def scenario():
-        async with text_app(tmp_path) as (ui, output):
+        async with talk_app(tmp_path) as (ui, output):
             ui.prompt.replace_input("hello")
             await ui.send("hello")
 
@@ -196,7 +196,7 @@ def test_footer_keeps_identity_after_send_and_prioritizes_reconnection(tmp_path)
 )
 def test_footer_identifies_conversation_kind(tmp_path, conversation, read_only, label):
     async def scenario():
-        async with text_app(
+        async with talk_app(
             tmp_path, conversation=conversation, read_only=read_only
         ) as (ui, _):
             footer = fragment_list_to_text(ui.status_text())
@@ -212,7 +212,7 @@ def test_read_only_view_preserves_previous_draft(tmp_path):
     (tmp_path / "draft.txt").write_text("unsent message")
 
     async def scenario():
-        async with text_app(tmp_path, read_only=True) as (ui, _):
+        async with talk_app(tmp_path, read_only=True) as (ui, _):
             assert not ui.prompt.buffer.text
             await ui.send("accidental send")
             ui.save_draft()

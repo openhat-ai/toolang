@@ -842,7 +842,7 @@ def test_chat_reentry_preserves_placement_and_config_rules(
     assert ("TEST_REENTRY_DOTENV" in observed["env"]) == (placement != "roaming")
 
 
-def test_text_placement_reuses_group_and_never_adopts_chat_session():
+def test_talk_placement_reuses_group_and_never_adopts_chat_session():
     from dataclasses import replace
 
     chat_session = FakeSession("$0", "text-owner")
@@ -856,7 +856,7 @@ def test_text_placement_reuses_group_and_never_adopts_chat_session():
         session_name="text-owner",
     )
     arguments: dict[str, Any] = dict(
-        thread_id="gc_dev", argv=["too", "text", "gc_dev"], directory="/tmp"
+        thread_id="gc_dev", argv=["too", "talk", "gc_dev"], directory="/tmp"
     )
     assert launcher.place_chat(**arguments) is False
     assert len(server.created) == 1

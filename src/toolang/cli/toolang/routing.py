@@ -43,7 +43,7 @@ _RESIDENT = frozenset[AgentPlacement]({"resident"})
 
 
 def _extract_global_args(argv: list[str]) -> tuple[list[str], list[str]]:
-    return extract_root_args(argv, literal_commands={"text"})
+    return extract_root_args(argv, literal_commands={"talk"})
 
 
 def _command(
@@ -103,7 +103,7 @@ COMMAND_SPECS: Mapping[str, CommandSpec] = {
         _command("workspace", "before", placements=_ALL_PLACEMENTS, prepare="program"),
         _command("task", "before", placements=_RESIDENT, prepare="program"),
         _command("chore", "before", placements=_RESIDENT, prepare="program"),
-        _command("text", "none"),
+        _command("talk", "none"),
         _command("hub", "none"),
         _command("top", "none", "before", placements=_ALL_PLACEMENTS, prepare="layout"),
         _command("chat", "before", placements=_ALL_PLACEMENTS, prepare="program"),

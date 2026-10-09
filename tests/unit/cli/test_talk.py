@@ -1,8 +1,9 @@
-"""Text CLI literals, drafts, scrollback presentation, and tmux identities."""
+"""Talk CLI literals, drafts, scrollback presentation, and tmux identities."""
 
 import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from hashlib import sha256
 from io import StringIO
 import json
 import os
@@ -24,15 +25,16 @@ from rich.console import Console
 from rich.color import Color, ColorType
 
 from toolang.cli.toolang import main as cli
-from toolang.cli.toolang.commands import text
-from toolang.cli.toolang.commands.text import directory
-from toolang.cli.toolang.commands.text.tui import TextTui
-from toolang.cli.toolang.commands.text import tui
-from toolang.cli.toolang.commands.text.rendering import message_block, display_text
+from toolang.cli.toolang.commands import talk
+from toolang.cli.toolang.commands.talk import directory
+from toolang.cli.toolang.commands.talk.tui import TalkTui
+from toolang.cli.toolang.commands.talk import tui
+from toolang.cli.toolang.commands.talk.rendering import message_block, display_text
 from toolang.cli.common.terminal_surfaces import (
     DARK_TERMINAL_SURFACES,
     LIGHT_TERMINAL_SURFACES,
 )
+from toolang.cli.common.input_history import InputHistoryStore
 from toolang.teaming.messaging import MessagingClient
 from toolang.teaming.backend import Backend, group_key
 from toolang.teaming.config import BackendConfig
@@ -53,7 +55,7 @@ def install_hub(monkeypatch, client, *, human="human:bryan", identity="test"):
             async with HubClient(config, transport=httpx.ASGITransport(app)) as remote:
                 yield remote
 
-    for module in (text, directory):
+    for module in (talk, directory):
         monkeypatch.setattr(module, "HubClient", hub)
         monkeypatch.setattr(module, "settings", lambda root: (connection, human))
 
@@ -103,7 +105,7 @@ def messaging_cli(tmp_path, monkeypatch):
 def test_send_body_is_literal_and_exits_on_ack(
     tmp_path, capsys, messaging_cli, words, expected
 ):
-    result = cli.main(["--root", str(tmp_path), "text", "alice", *words])
+    result = cli.main(["--root", str(tmp_path), "talk", "alice", *words])
     assert result == 0
     assert "Sent " in capsys.readouterr().out
 
@@ -120,13 +122,51 @@ def test_send_body_is_literal_and_exits_on_ack(
 def test_directory_lists_groups_and_interactive_requires_tty(
     tmp_path, capsys, messaging_cli
 ):
-    assert cli.main(["--root", str(tmp_path), "text"]) == 0
+    assert cli.main(["--root", str(tmp_path), "talk"]) == 0
     output = capsys.readouterr().out
     assert "group:dev" in output and "alice" in output and "group:all" in output
-    assert cli.main(["--root", str(tmp_path), "text", "alice"]) == 1
+    assert cli.main(["--root", str(tmp_path), "talk", "alice"]) == 1
     assert "TTY" in capsys.readouterr().err
     assert cli.main(["--root", str(tmp_path), "team"]) != 0
     assert cli.main(["--root", str(tmp_path), "alice,", "hello"]) != 0
+
+
+def test_talk_restores_drafts_and_history_from_existing_text_storage(
+    tmp_path, messaging_cli, monkeypatch
+):
+    human = "human:bryan"
+    identity = sha256(
+        f"{tmp_path.resolve()}\0{BackendConfig('redis://test').identity}\0{human}".encode()
+    ).hexdigest()[:20]
+    state = (
+        tmp_path
+        / ".runtime"
+        / "text"
+        / identity
+        / sha256(b"group:dev").hexdigest()[:20]
+    )
+    state.mkdir(parents=True)
+    (state / "draft.txt").write_text("unfinished message", encoding="utf-8")
+    InputHistoryStore(state / "input.jsonl").append("previous message")
+    monkeypatch.setattr(talk.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(talk.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(talk, "resolve_launcher", lambda **kwargs: None)
+    restored = []
+
+    async def inspect_ui(ui):
+        restored.append(ui.prompt.buffer.text)
+        assert ui.prompt.history.get_strings() == ["previous message"]
+        assert ui.prompt.placeholder == "write a message"
+        ui.prompt.replace_input("continued message")
+        assert (state / "draft.txt").read_text() == "continued message"
+
+    monkeypatch.setattr(TalkTui, "run", inspect_ui)
+    with (
+        create_pipe_input() as pipe,
+        create_app_session(input=pipe, output=DummyOutput()),
+    ):
+        assert cli.main(["--root", str(tmp_path), "talk", "dev"]) == 0
+    assert restored == ["unfinished message"]
 
 
 async def agent_pair(factory, *, messages=False):
@@ -141,7 +181,7 @@ async def agent_pair(factory, *, messages=False):
 
 def test_human_cannot_send_into_agent_dm(tmp_path, capsys, messaging_cli):
     group = asyncio.run(agent_pair(messaging_cli))
-    assert cli.main(["--root", str(tmp_path), "text", group, "join"]) == 1
+    assert cli.main(["--root", str(tmp_path), "talk", group, "join"]) == 1
     assert "read-only" in capsys.readouterr().err.lower()
 
     async def check():
@@ -155,9 +195,9 @@ def test_human_observer_sees_both_agents_left_without_a_composer(
     tmp_path, messaging_cli, monkeypatch
 ):
     group = asyncio.run(agent_pair(messaging_cli, messages=True))
-    monkeypatch.setattr(text.sys.stdin, "isatty", lambda: True)
-    monkeypatch.setattr(text.sys.stdout, "isatty", lambda: True)
-    monkeypatch.setattr(text, "resolve_launcher", lambda **kwargs: None)
+    monkeypatch.setattr(talk.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(talk.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(talk, "resolve_launcher", lambda **kwargs: None)
     monkeypatch.setenv("TOOLANG_COLOR_SCHEME", "dark")
     output = StringIO()
     monkeypatch.setattr(
@@ -191,12 +231,12 @@ def test_human_observer_sees_both_agents_left_without_a_composer(
             assert len(await ui.client.history(ui.group)) == 2
             await ui.app.cancel_and_wait_for_background_tasks()
 
-    monkeypatch.setattr(TextTui, "run", inspect_ui)
+    monkeypatch.setattr(TalkTui, "run", inspect_ui)
     with (
         create_pipe_input() as pipe,
         create_app_session(input=pipe, output=DummyOutput()),
     ):
-        assert cli.main(["--root", str(tmp_path), "text", group]) == 0
+        assert cli.main(["--root", str(tmp_path), "talk", group]) == 0
 
 
 def test_directory_shows_presence_previews_and_does_not_create_conversations(
@@ -232,14 +272,14 @@ def test_directory_shows_presence_previews_and_does_not_create_conversations(
             return pair, own, {g["group"] for g in await human.contacts()}
 
     pair, own, before = asyncio.run(prepare())
-    assert cli.main(["--root", str(tmp_path), "text"]) == 0
+    assert cli.main(["--root", str(tmp_path), "talk"]) == 0
     output = capsys.readouterr().out
     rows = [row.split() for row in output.splitlines() if row.strip()]
     assert [row[0] for row in rows[1:-1]] == ["group:all", pair, own, "group:dev"]
     assert "○agent:alice ↔ ●agent:bob" in output
     assert "●human:bryan" not in output and "○human:bryan" not in output
     assert "bob: hello world" in output and "\x1b" not in output
-    assert "Message unavailable" in output and "too text <target>" in output
+    assert "Message unavailable" in output and "too talk <target>" in output
 
     async def unchanged():
         async with messaging_cli() as client:
@@ -271,7 +311,7 @@ def test_failed_send_preserves_draft_and_success_does_not_erase_new_typing(
             create_app_session(input=pipe, output=DummyOutput()),
         ):
             client = AsyncMock()
-            ui = TextTui(
+            ui = TalkTui(
                 client,
                 Conversation("group:all", "group", ("human:bryan", "agent:alice")),
                 "human:bryan",
@@ -417,7 +457,7 @@ import json
 import sys
 from rich.console import Console
 from toolang.cli.common.terminal_surfaces import DARK_TERMINAL_SURFACES
-from toolang.cli.toolang.commands.text.rendering import message_block
+from toolang.cli.toolang.commands.talk.rendering import message_block
 from toolang.teaming.schemas import Message
 
 console = Console(width=60)
@@ -489,9 +529,9 @@ def test_interactive_messages_use_chat_width_after_resize(
     else:
         monkeypatch.setenv("TOOLANG_PROGRESS_MAX_WIDTH", configured_width)
     monkeypatch.setenv("TOOLANG_COLOR_SCHEME", "dark")
-    monkeypatch.setattr(text.sys.stdin, "isatty", lambda: True)
-    monkeypatch.setattr(text.sys.stdout, "isatty", lambda: True)
-    monkeypatch.setattr(text, "resolve_launcher", lambda **kwargs: None)
+    monkeypatch.setattr(talk.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(talk.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(talk, "resolve_launcher", lambda **kwargs: None)
     output = StringIO()
     monkeypatch.setattr(
         tui,
@@ -523,23 +563,23 @@ def test_interactive_messages_use_chat_width_after_resize(
                 limit - len(sender) - 2 if sender == "bryan" else 2
             )
 
-    monkeypatch.setattr(TextTui, "run", render_messages)
+    monkeypatch.setattr(TalkTui, "run", render_messages)
     with (
         create_pipe_input() as pipe,
         create_app_session(input=pipe, output=DummyOutput()),
     ):
-        assert cli.main(["--root", str(tmp_path), "text", "all"]) == 0
+        assert cli.main(["--root", str(tmp_path), "talk", "all"]) == 0
 
 
-def test_text_tmux_identity_separates_root_connection_and_human(tmp_path):
-    base = text.text_identity(tmp_path, "one", "bryan")
+def test_talk_tmux_identity_separates_root_connection_and_human(tmp_path):
+    base = talk.talk_identity(tmp_path, "one", "bryan")
     assert (
         len(
             {
                 base,
-                text.text_identity(tmp_path / "other", "one", "bryan"),
-                text.text_identity(tmp_path, "two", "bryan"),
-                text.text_identity(tmp_path, "one", "other"),
+                talk.talk_identity(tmp_path / "other", "one", "bryan"),
+                talk.talk_identity(tmp_path, "two", "bryan"),
+                talk.talk_identity(tmp_path, "one", "other"),
             }
         )
         == 4
@@ -580,7 +620,7 @@ def test_follow_reconnects_from_last_displayed_id_without_replaying_history(
                 asyncio.CancelledError(),
             ]
             client.check_cursor.return_value = None
-            ui = TextTui(
+            ui = TalkTui(
                 client,
                 Conversation("group:all", "group", ("human:bryan", "agent:alice")),
                 "human:bryan",
@@ -619,7 +659,7 @@ def test_follow_reconnects_from_last_displayed_id_without_replaying_history(
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("arguments", [["text"], ["text", "all", "hello"]])
+@pytest.mark.parametrize("arguments", [["talk"], ["talk", "all", "hello"]])
 def test_messaging_commands_work_without_config_file(
     tmp_path, monkeypatch, capsys, arguments
 ):
@@ -645,9 +685,9 @@ def test_messaging_commands_work_without_config_file(
 def test_footer_refresh_uses_hub_membership_and_agent_presence(
     tmp_path, messaging_cli, monkeypatch
 ):
-    monkeypatch.setattr(text.sys.stdin, "isatty", lambda: True)
-    monkeypatch.setattr(text.sys.stdout, "isatty", lambda: True)
-    monkeypatch.setattr(text, "resolve_launcher", lambda **kwargs: None)
+    monkeypatch.setattr(talk.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(talk.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(talk, "resolve_launcher", lambda **kwargs: None)
     monkeypatch.setenv("TOOLANG_COLOR_SCHEME", "dark")
 
     async def inspect_ui(ui):
@@ -689,9 +729,9 @@ def test_footer_refresh_uses_hub_membership_and_agent_presence(
                 )
                 assert "#dev(1/4)" in fragment_list_to_text(ui.status_text())
 
-    monkeypatch.setattr(TextTui, "run", inspect_ui)
+    monkeypatch.setattr(TalkTui, "run", inspect_ui)
     with (
         create_pipe_input() as pipe,
         create_app_session(input=pipe, output=DummyOutput()),
     ):
-        assert cli.main(["--root", str(tmp_path), "text", "dev"]) == 0
+        assert cli.main(["--root", str(tmp_path), "talk", "dev"]) == 0

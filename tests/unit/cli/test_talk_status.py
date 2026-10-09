@@ -1,4 +1,4 @@
-"""Text footer geometry, viewer identity, and connection-state transitions."""
+"""Talk footer geometry, viewer identity, and connection-state transitions."""
 
 import asyncio
 from unittest.mock import AsyncMock
@@ -7,9 +7,9 @@ import httpx
 import pytest
 from prompt_toolkit.formatted_text import fragment_list_to_text
 
-from tests.unit.cli.test_text_layout import text_app
+from tests.unit.cli.test_talk_layout import talk_app
 from toolang.cli.common.execution_progress.formatting import display_width
-from toolang.cli.toolang.commands.text.status import conversation_status, status_line
+from toolang.cli.toolang.commands.talk.status import conversation_status, status_line
 from toolang.teaming.client import HubClient
 from toolang.teaming.errors import HubIdentityChanged, MessagingError
 from toolang.teaming.schemas import Conversation, HubConnection
@@ -133,7 +133,7 @@ def test_conversation_formats_color_only_online_names_or_positive_count(
     tmp_path, conversation, online, expected, green
 ):
     async def scenario():
-        async with text_app(tmp_path, conversation=conversation) as (ui, _):
+        async with talk_app(tmp_path, conversation=conversation) as (ui, _):
             fragments = conversation_status(conversation, "human:bryan", online)
             assert fragment_list_to_text(fragments) == expected
             colored = []
@@ -151,7 +151,7 @@ def test_conversation_formats_color_only_online_names_or_positive_count(
 @pytest.mark.parametrize("human", ["human:alice", "human:bryan"])
 def test_footer_uses_viewer_identity_and_survives_configured_width(tmp_path, human):
     async def scenario():
-        async with text_app(tmp_path, human=human) as (ui, output):
+        async with talk_app(tmp_path, human=human) as (ui, output):
             ui.max_width = 72
             for columns in (200, 60, 180):
                 output.columns = columns
@@ -166,13 +166,13 @@ def test_footer_uses_viewer_identity_and_survives_configured_width(tmp_path, hum
 
 
 @pytest.mark.parametrize(
-    "connection", ["Connecting…", "Reconnecting…", "Stopped", "Reopen Text"]
+    "connection", ["Connecting…", "Reconnecting…", "Stopped", "Reopen Talk"]
 )
 def test_connection_state_replaces_identity_and_hides_stale_presence(
     tmp_path, connection
 ):
     async def scenario():
-        async with text_app(tmp_path) as (ui, _):
+        async with talk_app(tmp_path) as (ui, _):
             ui.connection = connection
             text = fragment_list_to_text(ui.status_text())
             assert text.endswith(connection + "  ")
@@ -192,14 +192,14 @@ def test_changed_hub_identity_requests_reopen_and_preserves_draft(
     tmp_path, monkeypatch, operation
 ):
     async def scenario():
-        config = HubConnection("http://hub", "old-token", "human:bryan", "test")
+        config = HubConnection("http://hub", "human:bryan", "test")
         transport = httpx.MockTransport(
             lambda request: httpx.Response(
-                401, json={"detail": "Hub authentication required"}
+                409, json={"code": "hub_changed", "detail": "Hub identity changed"}
             )
         )
         async with (
-            text_app(tmp_path) as (ui, _),
+            talk_app(tmp_path) as (ui, _),
             HubClient(config, transport=transport) as client,
         ):
             ui.client = client
@@ -211,10 +211,10 @@ def test_changed_hub_identity_requests_reopen_and_preserves_draft(
             else:
                 await ui.send("keep this draft")
             footer = fragment_list_to_text(ui.status_text())
-            assert footer.endswith("Reopen Text  ") and "bryan" not in footer
+            assert footer.endswith("Reopen Talk  ") and "bryan" not in footer
             assert footer.startswith("  #dev(?/3)")
             assert ui.prompt.buffer.text == ui.draft.read_text() == "keep this draft"
-            notice.assert_awaited_once_with("Hub identity changed; reopen Text")
+            notice.assert_awaited_once_with("Hub identity changed; reopen Talk")
             with pytest.raises(HubIdentityChanged):
                 await client.agents()
 
@@ -223,7 +223,7 @@ def test_changed_hub_identity_requests_reopen_and_preserves_draft(
 
 def test_other_terminal_errors_stop_following_and_show_notice(tmp_path, monkeypatch):
     async def scenario():
-        async with text_app(tmp_path) as (ui, _):
+        async with talk_app(tmp_path) as (ui, _):
             ui.client.agents.side_effect = MessagingError("Group is unavailable")
             notice = AsyncMock()
             monkeypatch.setattr(ui, "print_notice", notice)
@@ -239,9 +239,9 @@ def test_draft_failure_remains_visible_when_connected(tmp_path, monkeypatch):
         raise OSError("disk full")
 
     async def scenario():
-        async with text_app(tmp_path) as (ui, _):
+        async with talk_app(tmp_path) as (ui, _):
             monkeypatch.setattr(
-                "toolang.cli.toolang.commands.text.tui.atomic_write_text",
+                "toolang.cli.toolang.commands.talk.tui.atomic_write_text",
                 fail_write,
             )
             ui.prompt.replace_input("draft")

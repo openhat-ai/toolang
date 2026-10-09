@@ -34,7 +34,7 @@ from .rendering import display_text, message_block
 from .status import conversation_status, status_line
 
 
-class TextTui:
+class TalkTui:
     def __init__(
         self,
         client: HubClient,
@@ -60,6 +60,7 @@ class TextTui:
         self.agents: set[str] = set()
         self.prompt = InputBox(
             self.invalidate,
+            placeholder="write a message",
             history_store=InputHistoryStore(state / "input.jsonl"),
             on_input=self.save_draft,
             normalize=lambda text: text,
@@ -219,7 +220,7 @@ class TextTui:
             await self.client.send(self.group, body=body)
         except MessagingError as exc:
             if isinstance(exc, HubIdentityChanged):
-                self.connection = "Reopen Text"
+                self.connection = "Reopen Talk"
             self.status = (
                 "Send not confirmed"
                 if isinstance(exc, SendUnconfirmed)
@@ -308,7 +309,7 @@ class TextTui:
                 delay = min(delay * 2, 5)
             except MessagingError as exc:
                 self.connection = (
-                    "Reopen Text" if isinstance(exc, HubIdentityChanged) else "Stopped"
+                    "Reopen Talk" if isinstance(exc, HubIdentityChanged) else "Stopped"
                 )
                 self.status = str(exc)
                 self.invalidate()

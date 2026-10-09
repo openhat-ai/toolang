@@ -16,12 +16,12 @@ services. `coord` is reserved; its operations are outside this delivery.
 | PR | Outcome | Dependencies |
 | --- | --- | --- |
 | 1. Design | Record these contracts and the acceptance criteria. | None. |
-| 2. [#708](https://github.com/openhat-ai/toolang/pull/708), revised | Deliver `teaming` messaging, typed targets, scoped setup, backend membership, `msg`, and Text. Replace `team` with bare `text`. | Design. |
-| 3. Hub | Add Hub API/client, `hub start/serve/stop/status`, port overrides, and route Text through Hub. | Revised #708. |
+| 2. [#708](https://github.com/openhat-ai/toolang/pull/708), revised | Deliver `teaming` messaging, typed targets, scoped setup, backend membership, `msg`, and Talk. Replace `team` with bare `talk`. | Design. |
+| 3. Hub | Add Hub API/client, `hub start/serve/stop/status`, port overrides, and route Talk through Hub. | Revised #708. |
 | 4. [Canonical subscriptions](local-subscriptions.md) | Unify resident CLI runtime ownership; persist canonical cursors; add shared caching and agent/thread/root-run catchup. | Design and remaining local protocol decisions. |
 | 5. [Team observation](team-observation.md) | Bridge agent events through the backend; add global subscriptions and `top`/agent `top`. | Hub and local subscriptions. |
 
-PR #708 is reused, not replaced by a parallel messaging implementation. Its Text
+PR #708 is reused, not replaced by a parallel messaging implementation. Its Talk
 commands may call the shared messaging service until the Hub PR replaces that
 adapter. Each implementation PR updates documentation and its acceptance tests;
 subsequent PRs define their remaining protocol details before implementation.
@@ -93,7 +93,7 @@ ports are `1..65535`. Temporary agent port selection is unchanged.
 
 One Hub per root binds `127.0.0.1`. Remote access/authentication is outside this
 delivery. Its private `.runtime/hub.json` records PID/creation time, endpoint,
-human, backend identity, and status. Text discovers this
+human, backend identity, and status. Talk discovers this
 record; it never guesses a port or starts Hub implicitly. Configuration changes
 require restart. Lifecycle commands verify process identity and never manage
 agents or Redis/Valkey. A process lock prevents concurrent Hubs for the same root.
@@ -110,7 +110,7 @@ or agent origin. No agent execution routes are mounted.
 | Method/path | Result |
 | --- | --- |
 | `GET /msg/targets`, `/msg/agents`, `/msg/groups` | Targets, ownership, conversation directory. |
-| `POST /msg/resolve` | Resolve Text shorthand to a canonical conversation. |
+| `POST /msg/resolve` | Resolve Talk shorthand to a canonical conversation. |
 | `GET /msg/groups/{group}` | Conversation metadata and members. |
 | `POST /msg/groups` | Create a custom group. |
 | `PUT/DELETE /msg/groups/{group}/membership` | Join/leave as the configured human. |
@@ -130,7 +130,7 @@ and uncertainty), actor isolation, empty-backend recovery, unavailable-backend
 startup, stop during startup, concurrent start, stale PID safety, stop isolation,
 actual-port discovery, and CLI/environment/config precedence. Tests use an
 in-memory backend by default and isolated optional
-Redis/Valkey processes for lifecycle/Text smoke tests.
+Redis/Valkey processes for lifecycle/Talk smoke tests.
 
 ## Targets and conversations
 
@@ -231,7 +231,7 @@ Backend-owned atomic operations enforce these invariants:
 
 Readers have independent cursors ([XREAD](https://valkey.io/commands/xread/) or
 exclusive `XRANGE`), not a competing consumer group; report retention gaps.
-Agent processing context/checkpoints stay in local runtime files; Text owns its
+Agent processing context/checkpoints stay in local runtime files; Talk owns its
 local drafts/cursors. Derive previews/presence from Streams/leases; add no reverse
 membership, latest-message, or message-UUID indexes initially. Backend persistence
 controls survival across server restarts. Reserve `P:coord:*` and `P:events:*`;
@@ -254,13 +254,13 @@ neither enables/stops agents nor manages Redis/Valkey.
 | `too hub start/serve` | Background/foreground Hub. |
 | `too hub stop/status` | Stop/report Hub only. |
 | `too list` | Existing local agent listing; no `--team`. |
-| `too text` | Conversation directory, members, presence, latest preview. |
-| `too text TARGET [MESSAGE...]` | Interactive conversation or confirmed send-and-exit. |
+| `too talk` | Conversation directory, members, presence, latest preview. |
+| `too talk TARGET [MESSAGE...]` | Interactive conversation or confirmed send-and-exit. |
 | `too top` | Global activity through Hub. |
 | `too AGENT top` | Agent activity through its own API. |
 
 Remove `too team`. Global commands resolve root configuration; agent API exposes
-only its own data. Preserve Text literal bodies, drafts, input, tmux, and rendering.
+only its own data. Preserve Talk literal bodies, drafts, input, tmux, and rendering.
 
 | Tool | Contract |
 | --- | --- |
@@ -341,12 +341,12 @@ from the local cache and messaging retention; coordination remains outside scope
 | --- | --- |
 | Messaging (#708) | Scope errors; disabled agent makes no backend calls; readable typed identities; ambiguous targets; direct-pair uniqueness; participant permissions; context-derived sender. |
 | Storage (#708) | Concurrent creation; stale lease rejection; persistent membership; independent readers; full cursor order/gaps; uncertain writes; no vendor imports outside backend. |
-| CLI/tools (#708) | Bare Text directory, no `team`, preserved interactive Text behavior, five `msg` tools, no `coop`. |
-| Hub | Readiness failure, lifecycle isolation, port precedence/conflicts/discovery, Text HTTP parity. |
+| CLI/tools (#708) | Bare Talk directory, no `team`, preserved interactive Talk behavior, five `msg` tools, no `coop`. |
+| Hub | Readiness failure, lifecycle isolation, port precedence/conflicts/discovery, Talk HTTP parity. |
 | Local subscriptions | Canonical cursor/prefill/cache acceptance in the linked plan; no backend required. |
 | Team observation | Run the shared normalization scenarios against the backend reader; verify multiple clients, source order, lease fencing, duplicate rejection, outage recovery, no forwarding loops, local/global `top`. |
 
 Likely files: new `teaming/`, existing `api/common.py`, setup watcher/types,
-`up/server.py`, `work/messaging.py`, toolset factory/context, CLI routing/Text,
+`up/server.py`, `work/messaging.py`, toolset factory/context, CLI routing/Talk,
 and corresponding tests. Keep default tests offline; run the same backend contract
 against Redis and Valkey separately. Follow [repository verification](../../AGENTS.md#verification).

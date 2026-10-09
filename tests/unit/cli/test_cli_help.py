@@ -108,7 +108,7 @@ def test_lazy_command_exposes_short_help_without_loading():
     ("command", "description"),
     [
         ("hub", "Manage the agent teaming service"),
-        ("text", "Text agents or groups"),
+        ("talk", "Talk to agents or groups"),
     ],
 )
 def test_teaming_descriptions_match_root_and_command_help(

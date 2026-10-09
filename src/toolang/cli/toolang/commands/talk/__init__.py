@@ -20,11 +20,11 @@ from toolang.teaming.client import HubClient
 from toolang.teaming.errors import TeamingError
 
 
-def text_identity(root: Path, connection: str, human: str) -> str:
+def talk_identity(root: Path, connection: str, human: str) -> str:
     return sha256(f"{root.resolve()}\0{connection}\0{human}".encode()).hexdigest()[:20]
 
 
-def text_command(
+def talk_command(
     ctx: typer.Context,
     target: Annotated[
         str | None,
@@ -72,17 +72,18 @@ def text_command(
             return
         if not sys.stdin.isatty() or not sys.stdout.isatty():
             raise ClickException(
-                "Interactive text requires a TTY; provide a message to send and exit"
+                "Interactive Talk requires a TTY; provide a message to send and exit"
             )
-        identity = text_identity(root, config.identity, human)
+        identity = talk_identity(root, config.identity, human)
         launcher = resolve_launcher(agent=identity)
         if launcher is not None:
             launcher = replace(
                 launcher,
+                # Existing tmux marks retain conversation-window reuse.
                 session_mark="@toolang_text",
                 window_mark="@toolang_group",
                 pad_kind="text",
-                session_name=f"text-{human}",
+                session_name=f"talk-{human}",
             )
             argv = [
                 sys.executable,
@@ -90,16 +91,17 @@ def text_command(
                 "toolang.cli.toolang.main",
                 "--root",
                 str(root),
-                "text",
+                "talk",
                 resolved,
             ]
             if not launcher.place_chat(
                 thread_id=resolved, argv=argv, directory=str(Path.cwd())
             ):
                 return
-        from .tui import TextTui
+        from .tui import TalkTui
         from toolang.cli.common.terminal_surfaces import resolve_terminal_surfaces
 
+        # Keep the existing storage namespace so drafts and history survive the rename.
         state = (
             root
             / ".runtime"
@@ -113,7 +115,7 @@ def text_command(
         async def interactive() -> None:
             async with HubClient(config) as client:
                 info = await client.conversation(resolved)
-                await TextTui(
+                await TalkTui(
                     client,
                     info,
                     human,

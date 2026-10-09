@@ -1,4 +1,4 @@
-# Text status bar
+# Talk status bar
 
 Status: implementation requested on 2026-10-08 and revised in chat on 2026-10-09.
 Online counts include agents only; the denominator includes all members, as confirmed.
@@ -7,10 +7,15 @@ Online counts include agents only; the denominator includes all members, as conf
 
 Show conversation and presence on the left, and the viewer's login name or current
 connection warning on the right. Inset both ends by two terminal cells, aligned
-with the input text. Keep the existing placeholder and key bindings.
+with the input text. Rename the messaging command from `text` to `talk`, with
+`write a message` as the input placeholder. Keep existing key bindings.
 
 ## Design
 
+- Expose `too talk [TARGET] [MESSAGE...]` with the existing flags, literal-message
+  parsing, and human identity. Remove `too text` without an alias; do not add
+  prefix-agent syntax. Rename the command package and UI notices to Talk, retaining
+  `.runtime/text/` and tmux identity marks so drafts, history, and windows survive.
 - A direct conversation with the viewer shows the other participant as `@alice`.
   An observer sees both participant names in stable order, such as `alice,bob`.
   Custom/system groups show `#name(online/total)`, for example `#dev(2/3)` for
@@ -22,9 +27,10 @@ with the input text. Keep the existing placeholder and key bindings.
   Footer text is not dimmed.
 - The right side shows the login name only, including for read-only observers;
   omit `from`, role prefixes, and read-only suffixes. Replace it with `Connecting…`,
-  `Reconnecting…`, `Stopped`, or `Reopen Text` while that state applies. A Hub
-  HTTP 401 means the existing identity/token is no longer accepted; Text cannot
-  switch identity in place. Preserve the explanatory notice and draft.
+  `Reconnecting…`, `Stopped`, or `Reopen Talk` while that state applies. A Hub
+  HTTP 409 with code `hub_changed` means the backend or human identity no longer
+  matches; Talk cannot switch identity in place. Preserve the explanatory notice
+  and draft.
 - Sending/sent acknowledgments do not replace the login name. Preserve actionable
   send/draft errors on the right and existing notices. Omit `Connected` and key hints.
 - Refresh membership and online-agent identities through existing Hub directory
@@ -39,12 +45,14 @@ with the input text. Keep the existing placeholder and key bindings.
 
 ## Touchpoints and acceptance
 
-- Text CLI passes resolved conversation metadata into its TUI. A Text-owned status
+- Talk CLI passes resolved conversation metadata into its TUI. A Talk-owned status
   renderer owns labels and row geometry; the TUI caches directory data off-render.
-- Hub client and teaming errors distinguish identity expiration from other errors.
+- Hub client and teaming errors distinguish identity changes from other errors.
+- Verify Talk directory/send/interactive routing, literal flags in messages, the
+  absence of a Text alias, and restored drafts/history from the existing namespace.
 - Verify exact margins, all three conversation formats, independent ANSI-green
   participant styles, zero/unknown counts, configured widths, Unicode truncation,
-  membership/presence updates, reconnection, HTTP 401 on reads and sends, draft
+  membership/presence updates, reconnection, `hub_changed` on reads and sends, draft
   preservation, and absence of connected/shortcut/from/read-only text in the footer.
 - Update Unreleased through `too aide.too update_changelog`; run default checks.
 

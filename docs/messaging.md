@@ -34,20 +34,23 @@ aliases or data migration.
 ```sh
 too hub start                       # Background Hub; requires Redis/Valkey.
 too hub status                      # Endpoint and backend readiness.
-too text                            # Conversations, membership, presence, previews.
-too text alice                      # Private conversation with a unique target.
-too text agent:alice hello          # Send and exit after acknowledgment.
-too text human:alex hello
-too text group:dev                   # Existing custom group.
-too text all hello                   # Public group:all.
-too text alice -- hello -sdf         # Flags after target are literal message text.
+too talk                            # Conversations, membership, presence, previews.
+too talk alice                      # Private conversation with a unique target.
+too talk agent:alice hello          # Send and exit after acknowledgment.
+too talk human:alex hello
+too talk group:dev                   # Existing custom group.
+too talk all hello                   # Public group:all.
+too talk alice -- hello -sdf         # Flags after target are literal message text.
 too hub stop                        # Leaves agents and Redis/Valkey running.
 ```
+
+`too talk` replaces `too text` without a compatibility alias. Update command
+invocations; targets, flags, conversation IDs, drafts, and input history are unchanged.
 
 `too hub serve` runs in the foreground. Hub binds `127.0.0.1`; clients discover its
 actual endpoint and backend identity from the private root `.runtime/hub.json`
 file. Calls assume trusted local clients; security authentication is deferred.
-Start Hub before using Text or `msg` tools. Agents use it for messages, presence,
+Start Hub before using Talk or `msg` tools. Agents use it for messages, presence,
 and event export. Stopping Hub leaves agents running; communication fails until
 Hub returns. Background communication resumes without an agent restart; uncertain
 message sends are never automatically repeated.
@@ -62,7 +65,7 @@ Hub `start`/`serve` ports resolve as `--port` > `TOOLANG_HUB_PORT` >
 `teaming.hub.port` > `7000`. Resident agent `start`/`serve` uses `--port` >
 `TOOLANG_AGENT_PORT` > home `[api] port` > recorded/available `7001`–`7999`.
 Explicit ports must be `1..65535`; an occupied explicit port fails. Overrides do
-not change configuration. Restart to apply configuration changes; reopen Text
+not change configuration. Restart to apply configuration changes; reopen Talk
 if its endpoint, backend, or human changes. Temporary agents keep their existing
 port selection.
 
@@ -72,9 +75,10 @@ letter/number. Bare names require a unique match; use a prefix to disambiguate.
 Same-name agents and humans are distinct. Participant targets create one private
 conversation per unordered pair; its stable `group:` ID appears in the directory.
 
-Interactive Text requires a TTY: Enter sends, Ctrl+J inserts a newline,
+Interactive Talk shows `write a message` in its empty input box and requires a
+TTY: Enter sends, Ctrl+J inserts a newline,
 Ctrl+P/Ctrl+N browse sent input, and Ctrl+Q exits. Messages use terminal scrollback;
-in tmux, each conversation has a reusable window. `TOOLANG_TMUX=0` keeps Text in
+in tmux, each conversation has a reusable window. `TOOLANG_TMUX=0` keeps Talk in
 the current pane. Drafts survive failed sends. Human observers can read private
 conversations but cannot send unless they are one of the two participants.
 Custom-group sends also require membership. Use `group:all` for a shared discussion.
@@ -103,7 +107,7 @@ stays visible. A recreated name retains its DM identity and history.
 Streams retain approximately 10,000 entries. Readers use independent full Stream-ID
 cursors and report retention gaps. Uncertain sends report their UUID without
 retrying; check history before resending. Local checkpoints live under the agent's
-`.runtime/channels/messaging/`; Text drafts/history live under root `.runtime/text/`.
+`.runtime/channels/messaging/`; Talk drafts/history live under root `.runtime/text/`.
 
 `too top` observes the team; `too AGENT top` observes one running agent. The header
 shows scope totals, the body shows Agent/Thread/Execution rows, and the bottom bar

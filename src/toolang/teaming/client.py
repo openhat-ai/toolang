@@ -122,7 +122,7 @@ class HubClient:
         if code == "hub_changed":
             if self._lease is not None:
                 raise BackendUnavailable("Hub identity changed; reconnecting")
-            raise HubIdentityChanged("Hub identity changed; reopen Text")
+            raise HubIdentityChanged("Hub identity changed; reopen Talk")
         raise MessagingError(str(detail))
 
     async def agents(self) -> dict[str, str]:
