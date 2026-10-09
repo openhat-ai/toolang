@@ -95,10 +95,10 @@ and skipped. Agent origin records contain context-derived thread/run IDs.
 
 Accepted event/activity reports renew presence; an independent heartbeat runs
 every 5 seconds. Presence expires after 15 seconds; graceful stop releases it.
-Hub scans resident homes every 5 seconds. Two scans confirming absence plus an
-expired lease remove an agent from the roster and ordinary groups. DM mappings,
-DM membership and all historical data remain. A live process with a missing home
-stays visible. Agents are identified by name; directory incarnations are not tracked.
+Hub scans resident homes at startup and every 5 seconds. Two successful scans
+confirming absence plus no live lease remove an agent from the roster and ordinary
+groups. DM mappings, DM membership and all historical data remain. A live process with a missing home
+stays visible. A recreated name retains its DM identity and history.
 
 Streams retain approximately 10,000 entries. Readers use independent full Stream-ID
 cursors and report retention gaps. Uncertain sends report their UUID without

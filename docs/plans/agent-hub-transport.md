@@ -1,7 +1,6 @@
 # Agent teaming through Hub
 
 Approved amendment to [teaming](teaming.md) and [team observation](team-observation.md).
-Approved in chat on 2026-10-09; implement in PR #721.
 
 ## Goal and scope
 
@@ -23,10 +22,9 @@ connections. Coordination and remote Hub deployment remain outside this change.
 - Keep process validation in `up/hub.py`; share record decoding and connection
   discovery under `teaming`. Setup passes root/discovery configuration to `msg`
   and the lifecycle, never backend credentials or a backend client.
-- Assume trusted local callers and retain the loopback listener. Defer security
-  authentication; remove Hub bearer tokens and credential refresh. This adds
-  no remote binding or sandbox networking configuration. An agent that cannot
-  reach this Hub reports unavailability without a bypass.
+- Assume trusted local callers on the loopback listener. An agent that cannot
+  reach this Hub reports unavailability. Remote binding, security authentication
+  and sandbox networking configuration are outside scope.
 - Derive the owner from Hub configuration and the actor from the agent route.
   Use the resident process's existing lease token for fenced writes; never accept
   an arbitrary actor/owner

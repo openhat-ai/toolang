@@ -236,20 +236,12 @@ and endpoint discovery rules, without a resident-only restriction. Both observe
 already running services. Use layout-only preparation, existing command factories,
 and terminal libraries. Add `--once`; non-TTY also takes one snapshot and exits.
 
-Both commands share activity reduction/presentation: agent summaries and active
-root rows (agent, thread, run, runnable, status, current step/active-step count,
-elapsed time). Track descendants under their root. Initially show active work;
-retain at most 20 session-completed roots for 30 seconds. Label offline,
-incomplete, and reconnecting states; lease loss never invents a canceled result.
-Omit content bodies and resource metrics. Refresh TTY at most twice per second;
-`q`/Ctrl-C exits. Reconnect GET using the committed cursor with 0.5–5-second
-backoff; configuration/schema/budget errors require user action. `--once` stops
-at the initial checkpoint with incomplete labels or fails on transport/protocol
-error, never presenting an error as an empty successful snapshot.
-Expire completed trees from client structural state as well as rendered rows.
-If a later retry references a forgotten tree, retain the previous cursor and
-reattach through the normal recovery path before consuming that mutation; do not
-accumulate hidden history until a long-running `top` exceeds the reducer limit.
+Both commands use compact activity snapshots from the committed statistics reader.
+[Top activity](top-activity.md) defines views, Stats/Recent, filtering and selection;
+[live updates and layout](top-live-layout.md) defines roster discovery, SSE updates
+and rendering. Activity reconnects obtain a complete baseline before per-agent
+updates; the canonical event recovery protocol above remains independently
+available to execution subscribers.
 
 ## Acceptance and implementation touchpoints
 
@@ -262,7 +254,7 @@ accumulate hidden history until a long-running `top` exceeds the reducer limit.
 | Recovery | Outage/overflow, source restart, idle empty-backend reset, interrupted upload, and trimmed controls recover available finals or expose missing data. Old-epoch IDs above the new tail reset successfully. |
 | Bounds | Repeated failures keep two generations without prefill churn. Large optional history cannot block active-tree recovery; oversized active structure stays incomplete. Activation work is independent of entity count. |
 | Lifecycle | Export starts before work, is absent when disabled, and retains the single lease through final drain. Upload holds no records snapshot; idle/filtered streams remain cancellable without timeout loops or forwarding loops. |
-| HTTP/CLI | Terminal roots close under unrelated traffic but drain queued retries. Scope/target routing, both `top` modes, and once/non-TTY work over sockets/PTYs. Long sessions release old trees and recover later retries. |
+| HTTP/CLI | Terminal roots close under unrelated traffic but drain queued retries. Scope/target routing, both `top` modes, and once/non-TTY work over HTTP/PTYs; compact activity snapshots replace rows atomically. |
 
 Likely files: `execution/{subscriptions,stream_client,schemas}.py` and the existing
 records snapshot helpers; `teaming/{backend,events,schemas,errors,api,client}.py`;
@@ -271,5 +263,5 @@ the teaming lifecycle in `work/` and `up/server.py`; CLI routing/registration,
 documentation. Preserve the SQLite schema and source publication contract.
 
 Keep default tests offline and deterministic. Run the same backend contract with
-isolated Redis and Valkey processes, then real TCP tests against both agent and
+isolated Redis and Valkey processes, then real HTTP/SSE tests against both agent and
 Hub APIs plus terminal smoke tests. Follow [repository verification](../../AGENTS.md#verification).
