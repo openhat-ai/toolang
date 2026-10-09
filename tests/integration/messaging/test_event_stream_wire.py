@@ -209,7 +209,6 @@ def test_resident_shutdown_drains_or_bounds_backend_outage(
 ):
     home = tmp_path / "agents" / "alice"
     home.mkdir(parents=True)
-    (home / "config.toml").write_text("[teaming]\nenabled = true\n")
     (home / "agent.too").write_text(
         "flow busy(_: Text):\n  repeat 5000 times:\n    let result = Done\n"
     )

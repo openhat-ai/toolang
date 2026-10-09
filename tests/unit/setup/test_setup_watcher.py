@@ -430,7 +430,7 @@ def test_teaming_config_is_shared_and_frozen_until_restart(tmp_path, monkeypatch
     assert restarted_teaming.root.backend.url == "redis://second"
 
 
-@pytest.mark.parametrize("enabled", [False, True])
+@pytest.mark.parametrize("enabled", [None, False, True])
 def test_teaming_consumers_share_scoped_configuration(tmp_path, monkeypatch, enabled):
     from toolang.setup.teaming import load_teaming_root
     from toolang.teaming.config import BackendConfig
@@ -442,7 +442,10 @@ def test_teaming_consumers_share_scoped_configuration(tmp_path, monkeypatch, ena
         watcher.layout, model_catalog=tmp_path / "catalog.json", validate_defaults=False
     )
     watcher.layout.home.mkdir(parents=True, exist_ok=True)
-    watcher.layout.config.write_text(f"[teaming]\nenabled = {str(enabled).lower()}\n")
+    if enabled is not None:
+        watcher.layout.config.write_text(
+            f"[teaming]\nenabled = {str(enabled).lower()}\n"
+        )
 
     def load_toolsets(*, config):
         return {
@@ -454,7 +457,8 @@ def test_teaming_consumers_share_scoped_configuration(tmp_path, monkeypatch, ena
     assert setup.teaming is not None
     msg = setup.toolsets()["msg"]
     assert isinstance(msg, MsgToolset)
-    assert msg.config == (setup.teaming.root.backend if enabled else None)
+    assert setup.teaming.home.enabled is (enabled is not False)
+    assert msg.config == (setup.teaming.root.backend if enabled is not False else None)
     resolved = load_teaming_root(tmp_path)
     assert (
         resolved.backend

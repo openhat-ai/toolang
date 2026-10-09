@@ -70,7 +70,7 @@ enabled = true
 | `teaming.human` | Root | OS username, resolved by setup. |
 | `teaming.backend.url` | Root | `redis://localhost:6379/0`. |
 | `teaming.hub.port` | Root | `7000`, a visual mnemonic for `too0`. |
-| `teaming.enabled` | Home | `false`. |
+| `teaming.enabled` | Home | `true`; set `false` to disable backend participation. |
 | `api.port` | Home; hosting-owned | Recorded agent port, otherwise next available `7001`–`7999`. |
 
 No root enable switch or configured group/member lists. Parse scopes separately,

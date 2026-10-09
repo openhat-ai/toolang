@@ -104,10 +104,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   columns by default, configurable with `TOOLANG_PROGRESS_MAX_WIDTH`), capped by
   the current terminal width.
 
-- Teaming is opt-in: an agent participates only after its `config.toml` sets
-  `[teaming].enabled = true` (default `false`), and a disabled agent makes no
-  backend connections. The backend URL defaults to `redis://localhost:6379/0`,
-  so a local Redis or Valkey server needs no URL. (#708)
+- Teaming is enabled by default: an agent participates unless its `config.toml`
+  sets `[teaming].enabled = false`, and a disabled agent makes no backend
+  connections. The backend URL defaults to `redis://localhost:6379/0`, so a
+  local Redis or Valkey server needs no URL, and local execution works while
+  the backend is unavailable. (#708)
 
 - `too text TARGET [MESSAGE...]` opens a conversation or sends a message and exits.
   It resolves a bare name that matches exactly one participant or conversation, plus

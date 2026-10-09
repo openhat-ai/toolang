@@ -16,11 +16,13 @@ url = "redis://localhost:6379/0"
 port = 7000
 ```
 
-Enable each participating agent in `<agent-home>/config.toml`, then restart it:
+Teaming is enabled by default. Agents reconnect when Redis/Valkey becomes available;
+local execution and subscriptions work without it. To opt out, set
+`<agent-home>/config.toml` and restart the agent:
 
 ```toml
 [teaming]
-enabled = true # Defaults to false.
+enabled = false
 ```
 
 Root settings cannot appear in home configuration; `enabled` is home-only.

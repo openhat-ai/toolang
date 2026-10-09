@@ -107,7 +107,7 @@ def root_config(
 def home_config(config: Mapping[str, object], *, source: Path) -> TeamingHomeConfig:
     raw = _table(config.get("teaming", {}), "teaming", source)
     _fields(raw, {"enabled"}, "teaming", source, "home")
-    enabled = raw.get("enabled", False)
+    enabled = raw.get("enabled", True)
     if not isinstance(enabled, bool):
         raise TeamingError(f"{source}: teaming.enabled must be a boolean")
     return TeamingHomeConfig(enabled)
