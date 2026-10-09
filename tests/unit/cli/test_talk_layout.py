@@ -45,7 +45,6 @@ async def talk_app(
             read_only=read_only,
         )
         app.connection = "Connected"
-        app.online_members = {"agent:alice"}
         with set_app(app.app):
             try:
                 yield app, output
@@ -86,7 +85,7 @@ def test_input_and_footer_share_message_width_after_resize_and_clear(tmp_path):
                         for column in range(columns)
                     ).rstrip()
                     assert len(footer) <= width
-                    assert footer.startswith("  #dev(1/3)")
+                    assert footer.startswith("  #dev(3)")
                     assert footer.endswith("bryan")
                     assert len(footer) == width - 2
 
@@ -165,7 +164,7 @@ def test_footer_keeps_identity_after_send_and_prioritizes_reconnection(tmp_path)
             ui.connection = "Reconnecting…"
             assert footer().endswith("Reconnecting…  ")
             assert "bryan" not in footer() and "Sent" not in footer()
-            assert footer().startswith("  #dev(?/3)")
+            assert footer().startswith("  #dev(3)")
             for width in (1, 12, 29, 30, 60):
                 output.columns = width
                 assert len(footer()) <= width
@@ -176,11 +175,11 @@ def test_footer_keeps_identity_after_send_and_prioritizes_reconnection(tmp_path)
 @pytest.mark.parametrize(
     "conversation,read_only,label",
     [
-        (Conversation("group:all", "group", ("human:bryan",)), False, "#all(0/1)"),
+        (Conversation("group:all", "group", ("human:bryan",)), False, "#all(1)"),
         (
             Conversation("group:gc_abc123", "group", ("human:bryan",)),
             False,
-            "#abc123(0/1)",
+            "#abc123(1)",
         ),
         (
             Conversation("group:one", "direct", ("agent:alice", "human:bryan")),
@@ -190,7 +189,7 @@ def test_footer_keeps_identity_after_send_and_prioritizes_reconnection(tmp_path)
         (
             Conversation("group:two", "direct", ("agent:bob", "agent:alice")),
             True,
-            "alice,bob",
+            "@alice,bob",
         ),
     ],
 )

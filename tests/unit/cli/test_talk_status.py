@@ -19,7 +19,7 @@ from toolang.teaming.schemas import Conversation, HubConnection
 @pytest.mark.parametrize("right", ["bryan", "爱丽丝", "Reconnecting…"])
 def test_status_sides_fit_cells_and_preserve_margins(width, right):
     fragments = status_line(
-        [("class:status.online", "@中文e\u0301")], right, width=width, warning=False
+        [("class:status", "@中文e\u0301")], right, width=width, warning=False
     )
     rendered = fragment_list_to_text(fragments)
     assert display_width(rendered) == width
@@ -34,7 +34,7 @@ def test_status_sides_fit_cells_and_preserve_margins(width, right):
 
 def test_status_sides_sanitize_controls_and_keep_warning_local():
     fragments = status_line(
-        [("class:status", "#\x1b]52;c;secret\x07dev(1/2)")],
+        [("class:status", "#\x1b]52;c;secret\x07dev(2)")],
         "Reconnect\x1b[2J\nnow",
         width=80,
         warning=True,
@@ -42,110 +42,106 @@ def test_status_sides_sanitize_controls_and_keep_warning_local():
     text = fragment_list_to_text(fragments)
     assert "\x1b" not in text and "secret" not in text and "\n" not in text
     assert ("class:status.warning", "Reconnect now") in fragments
-    assert ("class:status", "#dev(1/2)") in fragments
+    assert ("class:status", "#dev(2)") in fragments
     assert text.endswith("Reconnect now  ")
 
 
-def test_clipping_preserves_online_name_style_and_prioritizes_login():
+def test_clipping_preserves_name_style_and_prioritizes_login():
     fragments = status_line(
-        [("class:status.online", "@alice"), ("class:status", ",bob")],
+        [("class:status", "@alice"), ("class:status", ",bob")],
         "bryan",
         width=14,
         warning=False,
     )
     assert fragment_list_to_text(fragments) == "  @al… bryan  "
-    assert ("class:status.online", "@al") in fragments
+    assert ("class:status", "@al") in fragments
     assert ("class:status", "…") in fragments
 
 
 @pytest.mark.parametrize(
-    "conversation,online,expected,green",
+    "conversation,expected",
     [
         (
             Conversation("group:dm_alice", "direct", ("human:bryan", "agent:alice")),
-            {"agent:alice"},
             "@alice",
-            ["@alice"],
-        ),
-        (
-            Conversation("group:dm_alice", "direct", ("human:bryan", "agent:alice")),
-            set(),
-            "@alice",
-            [],
-        ),
-        (
-            Conversation("group:dm_alice", "direct", ("human:bryan", "agent:alice")),
-            None,
-            "@alice",
-            [],
         ),
         (
             Conversation("group:dm_pair", "direct", ("agent:bob", "agent:alice")),
-            {"agent:alice"},
-            "alice,bob",
-            ["alice"],
-        ),
-        (
-            Conversation("group:dm_pair", "direct", ("agent:bob", "agent:alice")),
-            {"agent:bob"},
-            "alice,bob",
-            ["bob"],
-        ),
-        (
-            Conversation("group:dm_pair", "direct", ("agent:bob", "agent:alice")),
-            {"agent:alice", "agent:bob"},
-            "alice,bob",
-            ["alice", "bob"],
-        ),
-        (
-            Conversation("group:dm_pair", "direct", ("agent:bob", "agent:alice")),
-            None,
-            "alice,bob",
-            [],
+            "@alice,bob",
         ),
         (
             Conversation(
                 "group:gc_dev", "group", ("human:bryan", "agent:alice", "agent:bob")
             ),
-            {"agent:alice", "agent:bob", "agent:outsider"},
-            "#dev(2/3)",
-            ["2"],
+            "#dev(3)",
         ),
         (
-            Conversation(
-                "group:dev", "group", ("human:bryan", "agent:alice", "agent:bob")
-            ),
-            set(),
-            "#dev(0/3)",
-            [],
+            Conversation("group:dev", "group", ("human:bryan", "agent:alice")),
+            "#dev(2)",
         ),
+        (Conversation("group:empty", "group", ()), "#empty(0)"),
         (
-            Conversation(
-                "group:gc_dev", "group", ("human:bryan", "agent:alice", "agent:bob")
-            ),
-            None,
-            "#dev(?/3)",
-            [],
+            Conversation("group:observed", "group", ("agent:alice",)),
+            "#observed(1)",
         ),
     ],
 )
-def test_conversation_formats_color_only_online_names_or_positive_count(
-    tmp_path, conversation, online, expected, green
+def test_conversation_formats_dim_only_read_only_markers_without_presence(
+    tmp_path, conversation, expected
 ):
     async def scenario():
         async with talk_app(tmp_path, conversation=conversation) as (ui, _):
-            fragments = conversation_status(conversation, "human:bryan", online)
+            fragments = conversation_status(conversation, "human:bryan")
             assert fragment_list_to_text(fragments) == expected
-            colored = []
             for style, value, *_ in fragments:
                 attrs = ui.app.style.get_attrs_for_style_str(style)
-                assert not attrs.dim
-                if attrs.color:
-                    assert attrs.color == "ansigreen"
-                    colored.append(value)
-            assert colored == green
+                assert attrs.dim == (
+                    value in {"@", "#"}
+                    and not conversation.allows_sender("human:bryan")
+                )
+                assert not attrs.color
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("width", [60, 80, 120])
+@pytest.mark.parametrize("canonical", ["group:gc_dev", "group:开发e\u0301"])
+def test_full_canonical_id_is_centered_by_terminal_cells(width, canonical):
+    fragments = status_line(
+        [("class:status", "#dev(3)")],
+        "bryan",
+        center=canonical,
+        width=width,
+        warning=False,
+    )
+    text = fragment_list_to_text(fragments)
+    assert text.startswith("  #dev(3)") and text.endswith("bryan  ")
+    assert display_width(text) == width
+    assert (
+        display_width(text[: text.index(canonical)])
+        == (width - display_width(canonical)) // 2
+    )
+
+
+@pytest.mark.parametrize("width", [1, 12, 25, 40, 60, 80, 120])
+def test_long_ids_are_shown_whole_or_hidden_without_overlapping_errors(width):
+    canonical = "group:12345678-1234-1234-1234-123456789012"
+    fragments = status_line(
+        [("class:status dim", "@"), ("class:status", "alice,bob" * 10)],
+        "Send failed",
+        center=canonical,
+        width=width,
+        warning=True,
+    )
+    text = fragment_list_to_text(fragments)
+    assert display_width(text) == width
+    if width >= 16:
+        assert text.endswith("Send failed  ")
+    if "group:" in text:
+        assert canonical in text
+        assert ("class:status", canonical) in fragments
+    if width >= 80:
+        assert canonical in text
 
 
 @pytest.mark.parametrize("human", ["human:alice", "human:bryan"])
@@ -157,7 +153,7 @@ def test_footer_uses_viewer_identity_and_survives_configured_width(tmp_path, hum
                 output.columns = columns
                 footer = fragment_list_to_text(ui.status_text())
                 width = min(columns, 72)
-                assert footer.startswith("  #dev(1/3)")
+                assert footer.startswith("  #dev(3)")
                 assert footer.endswith(human.split(":")[1] + "  ")
                 assert "from " not in footer
                 assert display_width(footer) == width
@@ -168,7 +164,7 @@ def test_footer_uses_viewer_identity_and_survives_configured_width(tmp_path, hum
 @pytest.mark.parametrize(
     "connection", ["Connecting…", "Reconnecting…", "Stopped", "Reopen Talk"]
 )
-def test_connection_state_replaces_identity_and_hides_stale_presence(
+def test_connection_state_replaces_identity_and_keeps_conversation_label(
     tmp_path, connection
 ):
     async def scenario():
@@ -177,10 +173,7 @@ def test_connection_state_replaces_identity_and_hides_stale_presence(
             text = fragment_list_to_text(ui.status_text())
             assert text.endswith(connection + "  ")
             assert "bryan" not in text and "Connected" not in text
-            assert text.startswith("  #dev(?/3)")
-            assert not any(
-                "status.online" in fragment[0] for fragment in ui.status_text()
-            )
+            assert text.startswith("  #dev(3)")
             ui.connection = "Connected"
             assert fragment_list_to_text(ui.status_text()).endswith("bryan  ")
 
@@ -212,7 +205,7 @@ def test_changed_hub_identity_requests_reopen_and_preserves_draft(
                 await ui.send("keep this draft")
             footer = fragment_list_to_text(ui.status_text())
             assert footer.endswith("Reopen Talk  ") and "bryan" not in footer
-            assert footer.startswith("  #dev(?/3)")
+            assert footer.startswith("  #dev(3)")
             assert ui.prompt.buffer.text == ui.draft.read_text() == "keep this draft"
             notice.assert_awaited_once_with("Hub identity changed; reopen Talk")
             with pytest.raises(HubIdentityChanged):
@@ -224,7 +217,7 @@ def test_changed_hub_identity_requests_reopen_and_preserves_draft(
 def test_other_terminal_errors_stop_following_and_show_notice(tmp_path, monkeypatch):
     async def scenario():
         async with talk_app(tmp_path) as (ui, _):
-            ui.client.agents.side_effect = MessagingError("Group is unavailable")
+            ui.client.history.side_effect = MessagingError("Group is unavailable")
             notice = AsyncMock()
             monkeypatch.setattr(ui, "print_notice", notice)
             await ui.follow()

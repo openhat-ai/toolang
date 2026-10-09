@@ -1,13 +1,13 @@
 """Live input and retained/live messages on the terminal's normal screen."""
 
 import asyncio
-from dataclasses import replace
+import os
 from pathlib import Path
 from typing import Any
 
 from prompt_toolkit.application import Application, run_in_terminal
 from prompt_toolkit.filters import Condition, has_focus
-from prompt_toolkit.formatted_text import StyleAndTextTuples
+from prompt_toolkit.formatted_text import StyleAndTextTuples, fragment_list_to_text
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.layout import HSplit, HorizontalAlign, Layout, VSplit, Window
 from prompt_toolkit.layout.controls import FormattedTextControl
@@ -16,6 +16,7 @@ from rich.text import Text
 
 from toolang.cli.common.console import terminal_console
 from toolang.cli.common.execution_progress.config import DEFAULT_MAX_PROGRESS_WIDTH
+from toolang.cli.common.execution_progress.formatting import truncate
 from toolang.cli.common.input import InputBox
 from toolang.cli.common.input_history import InputHistoryStore
 from toolang.cli.common.scrollback import ScrollbackRenderer
@@ -50,7 +51,6 @@ class TalkTui:
         self.surfaces = surfaces
         self.read_only = read_only
         self.conversation = conversation
-        self.online_members: set[str] | None = None
         self.max_width = max_width
         self.draft = state / "draft.txt"
         self.connection = "Connecting…"
@@ -147,7 +147,6 @@ class TalkTui:
                     "input.placeholder": "dim",
                     "control.run": "bg:ansibrightcyan",
                     "status": "nodim",
-                    "status.online": "ansigreen",
                     "status.warning": "ansiyellow",
                 }
             ),
@@ -181,26 +180,13 @@ class TalkTui:
             right, warning = self.status, True
         else:
             right = target(self.human).name
-        online = self.online_members if connected else None
         return status_line(
-            conversation_status(self.conversation, self.human, online),
+            conversation_status(self.conversation, self.human),
             right,
+            center=self.group,
             width=self.content_width(),
             warning=warning,
         )
-
-    async def refresh_directory(self) -> None:
-        agents = set(await self.client.agents())
-        groups = await self.client.contacts()
-        info = next((info for info in groups if info["group"] == self.group), None)
-        if info is None:
-            raise MessagingError(f"Unknown group: {self.group}")
-        self.agents = agents
-        self.conversation = replace(self.conversation, members=tuple(info["members"]))
-        self.online_members = set(info["online"]).intersection(
-            self.conversation.members
-        )
-        self.invalidate()
 
     def save_draft(self) -> None:
         if self.read_only:
@@ -269,19 +255,10 @@ class TalkTui:
 
     async def follow(self) -> None:
         initialized = False
-        reconnecting = False
         delay = 0.5
-        refresh_at = 0.0
         last_gap = None
         while True:
             try:
-                if (
-                    not initialized
-                    or reconnecting
-                    or asyncio.get_running_loop().time() >= refresh_at
-                ):
-                    await self.refresh_directory()
-                    refresh_at = asyncio.get_running_loop().time() + 10
                 if not initialized:
                     entries = await self.client.history(self.group)
                     if len(entries) == 200:
@@ -301,11 +278,10 @@ class TalkTui:
                 if self.connection != "Connected":
                     self.connection = "Connected"
                     self.invalidate()
-                reconnecting, delay = False, 0.5
+                delay = 0.5
             except BackendUnavailable:
                 self.connection = "Reconnecting…"
                 self.invalidate()
-                reconnecting = True
                 delay = min(delay * 2, 5)
             except MessagingError as exc:
                 self.connection = (
@@ -318,7 +294,32 @@ class TalkTui:
             await asyncio.sleep(delay)
 
     async def run(self) -> None:
-        await self.app.run_async(
-            pre_run=lambda: self.app.create_background_task(self.follow())
+        label = fragment_list_to_text(
+            conversation_status(self.conversation, self.human)
         )
-        self.save_draft()
+        title_written = self.write_title(
+            f"Talk · {target(self.human).name} · {self.group} · {label}"
+        )
+        try:
+            await self.app.run_async(
+                pre_run=lambda: self.app.create_background_task(self.follow())
+            )
+        finally:
+            if title_written:
+                self.write_title("")
+            self.save_draft()
+
+    def write_title(self, title: str) -> bool:
+        try:
+            if not (
+                os.isatty(self.app.output.fileno())
+                and os.isatty(self.app.input.fileno())
+            ):
+                return False
+            title = truncate(" ".join(display_text(title).split()), 120)
+            # OSC 0 updates iTerm2 tabs/windows and tmux pane_title, as Chat does.
+            self.app.output.write_raw(f"\x1b]0;{title}\x07")
+            self.app.output.flush()
+        except (OSError, ValueError, NotImplementedError):
+            return False
+        return True

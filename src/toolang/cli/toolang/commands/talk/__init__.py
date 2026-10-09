@@ -83,7 +83,7 @@ def talk_command(
                 session_mark="@toolang_text",
                 window_mark="@toolang_group",
                 pad_kind="text",
-                session_name=f"talk-{human}",
+                session_name=f"talk-{human.removeprefix('human:')}",
             )
             argv = [
                 sys.executable,

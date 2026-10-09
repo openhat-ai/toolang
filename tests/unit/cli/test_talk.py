@@ -224,7 +224,7 @@ def test_human_observer_sees_both_agents_left_without_a_composer(
             )
             ui.connection = "Connected"
             footer = fragment_list_to_text(ui.status_text())
-            assert footer.startswith("  alice,bob") and footer.endswith("bryan  ")
+            assert footer.startswith("  @alice,bob") and footer.endswith("bryan  ")
             assert "from " not in footer and "read-only" not in footer
             assert "Enter send" not in str(ui.status_text())
             await ui.send("accidental send")
@@ -586,6 +586,32 @@ def test_talk_tmux_identity_separates_root_connection_and_human(tmp_path):
     )
 
 
+def test_talk_tmux_session_names_login_and_reuses_canonical_window(
+    tmp_path, messaging_cli, monkeypatch
+):
+    from tests.unit.cli.test_tmux_launcher import FakePane, FakeServer, _launcher
+    from toolang.cli.common.tmux import MARK_PAD
+
+    server, pane = FakeServer(), FakePane(session_id="$shell")
+    monkeypatch.setattr(talk.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(talk.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(
+        talk, "resolve_launcher", lambda *, agent: _launcher(server, pane, agent)
+    )
+    for _ in range(2):
+        assert cli.main(["--root", str(tmp_path), "talk", "dev"]) == 0
+    assert len(server.created) == 1
+    session = server.sessions[0]
+    assert session.session_name == "talk-bryan"
+    assert session.options["@toolang_text"] == talk.talk_identity(
+        tmp_path, BackendConfig("redis://test").identity, "human:bryan"
+    )
+    assert len(session.windows) == 1
+    window = session.windows[0]
+    assert window.window_name == window.options["@toolang_group"] == "group:dev"
+    assert window.panes[0].options[MARK_PAD] == "text"
+
+
 def test_follow_reconnects_from_last_displayed_id_without_replaying_history(
     tmp_path, monkeypatch
 ):
@@ -597,14 +623,6 @@ def test_follow_reconnects_from_last_displayed_id_without_replaying_history(
             create_app_session(input=pipe, output=DummyOutput()),
         ):
             client = AsyncMock()
-            client.agents.return_value = {"agent:alice": "human:bryan"}
-            client.contacts.return_value = [
-                {
-                    "group": "group:all",
-                    "members": ["human:bryan", "agent:alice"],
-                    "online": ["agent:alice"],
-                }
-            ]
             first = (
                 "100-9",
                 {"data": Message.create("agent:alice", "history").encode()},
@@ -647,7 +665,8 @@ def test_follow_reconnects_from_last_displayed_id_without_replaying_history(
                 await ui.follow()
             assert shown == ["100-9", "100-10"]
             client.history.assert_awaited_once()
-            assert client.contacts.await_count == 2
+            client.contacts.assert_not_awaited()
+            client.agents.assert_not_awaited()
             assert [call.kwargs["after"] for call in client.read.call_args_list] == [
                 "100-9",
                 "100-9",
@@ -680,58 +699,3 @@ def test_messaging_commands_work_without_config_file(
     assert not (tmp_path / "config.toml").exists()
     assert cli.main(["--root", str(tmp_path), *arguments]) == 0
     assert "Error" not in capsys.readouterr().err
-
-
-def test_footer_refresh_uses_hub_membership_and_agent_presence(
-    tmp_path, messaging_cli, monkeypatch
-):
-    monkeypatch.setattr(talk.sys.stdin, "isatty", lambda: True)
-    monkeypatch.setattr(talk.sys.stdout, "isatty", lambda: True)
-    monkeypatch.setattr(talk, "resolve_launcher", lambda **kwargs: None)
-    monkeypatch.setenv("TOOLANG_COLOR_SCHEME", "dark")
-
-    async def inspect_ui(ui):
-        async with (
-            messaging_cli(actor="human:visitor") as visitor,
-            messaging_cli(actor="agent:bob") as bob,
-            messaging_cli(actor="agent:alice") as alice,
-        ):
-            await bob.register("human:visitor")
-            await alice.join_group("group:dev")
-            assert ui.online_members is None
-            await ui.refresh_directory()
-            ui.connection = "Connected"
-            assert (
-                len(ui.conversation.members) == 2 and len(ui.online_members or ()) == 1
-            )
-            assert "#dev(1/2)" in fragment_list_to_text(ui.status_text())
-            await visitor.join_group("group:dev")
-            await ui.refresh_directory()
-            assert (
-                len(ui.conversation.members) == 3 and len(ui.online_members or ()) == 1
-            )
-            await bob.join_group("group:dev")
-            await ui.refresh_directory()
-            assert (
-                len(ui.conversation.members) == 4 and len(ui.online_members or ()) == 2
-            )
-            assert "#dev(2/4)" in fragment_list_to_text(ui.status_text())
-            await bob.unregister()
-            await ui.refresh_directory()
-            assert (
-                len(ui.conversation.members) == 4 and len(ui.online_members or ()) == 1
-            )
-            async with messaging_cli(actor="human:newcomer"):
-                await ui.refresh_directory()
-                assert (
-                    len(ui.conversation.members) == 4
-                    and len(ui.online_members or ()) == 1
-                )
-                assert "#dev(1/4)" in fragment_list_to_text(ui.status_text())
-
-    monkeypatch.setattr(TalkTui, "run", inspect_ui)
-    with (
-        create_pipe_input() as pipe,
-        create_app_session(input=pipe, output=DummyOutput()),
-    ):
-        assert cli.main(["--root", str(tmp_path), "talk", "dev"]) == 0

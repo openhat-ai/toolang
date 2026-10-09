@@ -1,4 +1,4 @@
-"""Conversation presence and the bounded two-sided Talk footer."""
+"""Conversation identity, write access, and the bounded Talk footer."""
 
 from prompt_toolkit.formatted_text import StyleAndTextTuples, fragment_list_to_text
 
@@ -8,29 +8,17 @@ from toolang.teaming.schemas import Conversation, target
 from .rendering import display_text
 
 
-def conversation_status(
-    info: Conversation, viewer: str, online: set[str] | None
-) -> StyleAndTextTuples:
+def conversation_status(info: Conversation, viewer: str) -> StyleAndTextTuples:
     if info.kind == "group":
         name = display_text(info.label).removeprefix("gc_")
-        count = len(online.intersection(info.members)) if online is not None else None
-        return [
-            ("class:status", f"#{name}("),
-            (
-                "class:status.online" if count else "class:status",
-                str(count) if count is not None else "?",
-            ),
-            ("class:status", f"/{len(info.members)})"),
-        ]
-    others = sorted(member for member in info.members if member != viewer)
-    fragments: StyleAndTextTuples = []
-    for member in others:
-        if fragments:
-            fragments.append(("class:status", ","))
-        name = ("@" if len(others) == 1 else "") + target(member).name
-        style = "class:status.online" if online and member in online else "class:status"
-        fragments.append((style, name))
-    return fragments
+        marker, label = "#", f"{name}({len(info.members)})"
+    else:
+        others = sorted(member for member in info.members if member != viewer)
+        marker, label = "@", ",".join(target(member).name for member in others)
+    return [
+        ("class:status" if info.allows_sender(viewer) else "class:status dim", marker),
+        ("class:status", label),
+    ]
 
 
 def _truncate_fragments(
@@ -56,7 +44,12 @@ def _truncate_fragments(
 
 
 def status_line(
-    left: StyleAndTextTuples, right: str, *, width: int, warning: bool
+    left: StyleAndTextTuples,
+    right: str,
+    *,
+    center: str = "",
+    width: int,
+    warning: bool,
 ) -> StyleAndTextTuples:
     width = max(1, width)
     margin = min(2, (width - 1) // 2)
@@ -66,6 +59,29 @@ def status_line(
     safe_left: StyleAndTextTuples = [
         (fragment[0], " ".join(display_text(fragment[1]).split())) for fragment in left
     ]
+    center = " ".join(display_text(center).split())
+    center_width = display_width(center)
+    center_start = (width - center_width) // 2
+    right_start = width - margin - right_width
+    if (
+        center
+        and center_start >= margin
+        and center_start + center_width + bool(right) <= right_start
+    ):
+        left = _truncate_fragments(safe_left, center_start - margin - 1)
+        return [
+            ("", " " * margin),
+            *left,
+            (
+                "",
+                " "
+                * (center_start - margin - display_width(fragment_list_to_text(left))),
+            ),
+            ("class:status", center),
+            ("", " " * (right_start - center_start - center_width)),
+            ("class:status.warning" if warning else "class:status", right),
+            ("", " " * margin),
+        ]
     left = _truncate_fragments(safe_left, inner - right_width - bool(right))
     gap = inner - display_width(fragment_list_to_text(left)) - right_width
     return [
