@@ -409,6 +409,7 @@ def test_idle_backend_reset_is_detected_and_recovered(tmp_path):
 def test_hub_filters_and_cursor_errors_have_flat_http_contract(tmp_path):
     import httpx
     from toolang.teaming.api import create_app
+    from toolang.teaming.event_backend import AGENTS, MANIFEST, generation_key
     from toolang.teaming.messaging import MessagingClient
 
     async def scenario():
@@ -445,6 +446,23 @@ def test_hub_filters_and_cursor_errors_have_flat_http_contract(tmp_path):
             )
             await EventBackend(driver).initialize()
             await driver._call("HSET", META, "pending", "broken")
+            response = await http.get("/events/stream")
+            assert (
+                response.status_code == 503
+                and response.json()["code"] == "protocol_error"
+            )
+            await driver._call("HDEL", META, "pending")
+            await driver._call(
+                "HSET", AGENTS, "agent:alice", json.dumps({"v": 1, "generation": "g"})
+            )
+            await driver._call(
+                "HSET",
+                generation_key("agent:alice", "g"),
+                MANIFEST,
+                json.dumps({"v": 1, "count": 1, "baseline": "0-0"}),
+                '["run","r"]',
+                "{",
+            )
             response = await http.get("/events/stream")
             assert (
                 response.status_code == 503
@@ -722,3 +740,33 @@ def test_projection_omits_optional_history_before_failing_active_budget(
 
     with pytest.raises(SnapshotLimitError):
         projection.trim()
+
+
+@pytest.mark.parametrize(
+    "stored",
+    [
+        "{",
+        "[]",
+        "null",
+        '{"v":1,"entity":[],"delivery":"1-0"}',
+        '{"v":1,"entity":{"v":2},"delivery":"1-0"}',
+    ],
+)
+def test_malformed_stored_projection_is_a_protocol_failure(stored):
+    from toolang.teaming.event_backend import generation_key
+
+    async def scenario():
+        driver = backend(FakeServer(server_type="valkey"))
+        try:
+            await driver._call(
+                "HSET",
+                generation_key("agent:alice", "generation"),
+                '["run","r"]',
+                stored,
+            )
+            with pytest.raises(EventProtocolError):
+                await EventBackend(driver).projection("agent:alice", "generation")
+        finally:
+            await driver.close()
+
+    asyncio.run(scenario())

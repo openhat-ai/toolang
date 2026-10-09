@@ -292,11 +292,17 @@ class EventBackend:
                     size += len(name.encode()) + len(value.encode())
                 if size > MAX_BYTES or len(result) > MAX_ENTITIES:
                     raise EventProtocolError("Oversized event generation")
-                data = json.loads(value)
-                if data.get("v") != 1:
-                    raise EventProtocolError("Unsupported event entity version")
-                if "entity" in data:
-                    data = {**data["entity"], "delivery": data["delivery"]}
+                try:
+                    data = json.loads(value)
+                    if not isinstance(data, dict) or data.get("v") != 1:
+                        raise ValueError("Unsupported event entity version")
+                    if "entity" in data:
+                        entity = data["entity"]
+                        if not isinstance(entity, dict) or entity.get("v") != 1:
+                            raise ValueError("Unsupported event entity version")
+                        data = {**entity, "delivery": data["delivery"]}
+                except (ValueError, TypeError, KeyError) as exc:
+                    raise EventProtocolError("Invalid stored event entity") from exc
                 result[name] = data
             if int(cursor) == 0:
                 return result
