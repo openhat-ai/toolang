@@ -34,22 +34,22 @@ from .records import MAX_BYTES, MAX_RECENT, EventProjection, field
 logger = logging.getLogger(__name__)
 
 
-def _read_projection(store: RunStore, boundary: EventCursor) -> EventProjection:
+def _read_projection(
+    store: RunStore, boundary: EventCursor, *, deadline: float
+) -> EventProjection:
     """Load active structure first; optional history cannot evict an active tree."""
     projection = EventProjection()
     # Leave time to finish encoding/trimming and return the active snapshot.
     # Optional trees share this deadline instead of each getting five seconds.
-    history_deadline = time.monotonic() + SNAPSHOT_SECONDS / 2
+    history_deadline = deadline - SNAPSHOT_SECONDS / 2
 
-    def add(
-        runs: list[RunRecord], steps: list[StepRecord], *, deadline: float | None = None
-    ) -> None:
+    def add(runs: list[RunRecord], steps: list[StepRecord], *, deadline: float) -> None:
         snapshot = RecordSnapshot(store, runs, steps, deadline=deadline)
         roots: dict[str, str] = {}
         threads: dict[str, str] = {}
         for frame in snapshot.structural():
-            if deadline is not None and time.monotonic() >= deadline:
-                raise SnapshotLimitError("Optional history snapshot expired")
+            if time.monotonic() >= deadline:
+                raise SnapshotLimitError("Records snapshot expired")
             event = event_from_data(frame.data)
             if isinstance(event, RunBegin):
                 roots[event.run] = (
@@ -85,11 +85,14 @@ def _read_projection(store: RunStore, boundary: EventCursor) -> EventProjection:
     runs, steps = store.stream_records(
         root=None, thread=None, after=None, complete=False
     )
-    add(runs, steps)
+    add(runs, steps, deadline=deadline)
+    if time.monotonic() >= history_deadline:
+        return projection
     active = {run.id for run in runs}
     # Thread controls are optional history as well. Resolve them before the
     # optional roots consume the remaining private SQLite read budget.
     try:
+        store.limit_stream_snapshot(deadline=history_deadline)
         for frame in record_controls(store, recent=True):
             if time.monotonic() >= history_deadline:
                 break
@@ -185,19 +188,20 @@ class EventExporter:
         reader = None
         try:
             with self.source.boundary() as (boundary, _, _):
+                deadline = time.monotonic() + SNAPSHOT_SECONDS
                 store.pin_stream_snapshot(seconds=SNAPSHOT_SECONDS, max_bytes=MAX_BYTES)
                 reader = self.source.subscribe(after=boundary)
 
             def read():
                 try:
-                    return _read_projection(store, boundary)
+                    return _read_projection(store, boundary, deadline=deadline)
                 finally:
                     store.close()
 
             worker = asyncio.create_task(asyncio.to_thread(read))
             try:
                 projection = await asyncio.wait_for(
-                    asyncio.shield(worker), SNAPSHOT_SECONDS
+                    asyncio.shield(worker), max(0, deadline - time.monotonic())
                 )
             except BaseException:
                 store.expire_stream_snapshot()

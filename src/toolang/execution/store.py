@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import fields, is_dataclass, replace
 import hashlib
@@ -139,6 +139,7 @@ class RunStore:
     def __init__(self, db_path: Path, *, read_only: bool = False) -> None:
         self.db_path = db_path
         self.read_only = read_only
+        self._stream_deadline: float | None = None
         if read_only:
             target = f"{db_path.expanduser().resolve().as_uri()}?mode=ro"
             self._conn = sqlite3.connect(
@@ -185,8 +186,12 @@ class RunStore:
         """Pin and bound an independently owned read-only connection."""
         if not self.read_only or self._conn.in_transaction:
             raise ValueError("stream snapshots require a fresh read-only store")
-        deadline = time.monotonic() + seconds
+        self._stream_deadline = time.monotonic() + seconds
         remaining_bytes, remaining_records = max_bytes, max_records
+
+        def expired() -> bool:
+            deadline = self._stream_deadline
+            return deadline is not None and time.monotonic() >= deadline
 
         def bounded_row(cursor: sqlite3.Cursor, values: tuple[Any, ...]) -> sqlite3.Row:
             nonlocal remaining_bytes, remaining_records
@@ -199,11 +204,7 @@ class RunStore:
                 else 8
                 for value in values
             )
-            if (
-                remaining_records < 0
-                or remaining_bytes < 0
-                or time.monotonic() >= deadline
-            ):
+            if remaining_records < 0 or remaining_bytes < 0 or expired():
                 raise ValueError("stream snapshot read budget exceeded")
             return sqlite3.Row(cursor, values)
 
@@ -211,10 +212,27 @@ class RunStore:
         # projection, before their JSON payloads are decoded into Python objects.
         self._conn.row_factory = bounded_row
         self._conn.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, max_bytes)
-        self._conn.set_progress_handler(lambda: time.monotonic() >= deadline, 1000)
+        self._conn.set_progress_handler(expired, 1000)
         with self._lock:
             self._conn.execute("BEGIN")
             self._conn.execute("SELECT id FROM runs LIMIT 1").fetchone()
+
+    def limit_stream_snapshot(self, *, deadline: float) -> None:
+        """Shorten the pinned read deadline without resetting byte/record budgets."""
+        with self._lock:
+            if self._stream_deadline is None or not self._conn.in_transaction:
+                raise ValueError("stream deadlines require a pinned read-only store")
+            self._stream_deadline = min(self._stream_deadline, deadline)
+
+    def _stream_rows(self, rows: Iterable[sqlite3.Row]) -> Iterator[sqlite3.Row]:
+        """Keep batch decoding under the same deadline as SQLite reads."""
+        for row in rows:
+            if (
+                self._stream_deadline is not None
+                and time.monotonic() >= self._stream_deadline
+            ):
+                raise ValueError("stream snapshot read budget exceeded")
+            yield row
 
     def expire_stream_snapshot(self) -> None:
         """Release the pinned WAL view even when its reconstruction worker is queued."""
@@ -293,7 +311,7 @@ class RunStore:
             rows = self._conn.execute(query, params).fetchall()
             if len(rows) > limit:
                 raise ValueError("stream snapshot record budget exceeded")
-            runs = [_run_from_row(row) for row in rows]
+            runs = [_run_from_row(row) for row in self._stream_rows(rows)]
             rows = self._conn.execute(
                 "SELECT * FROM steps WHERE run IN (SELECT value FROM json_each(?)) LIMIT ?",
                 (json.dumps([run.id for run in runs]), limit - len(runs) + 1),
@@ -301,7 +319,7 @@ class RunStore:
             if len(rows) + len(runs) > limit:
                 raise ValueError("stream snapshot record budget exceeded")
         return runs, sorted(
-            (_step_from_row(row) for row in rows),
+            (_step_from_row(row) for row in self._stream_rows(rows)),
             key=lambda step: (step.run_id, step.ref.indices),
         )
 
@@ -334,7 +352,8 @@ class RunStore:
         if len(rows) > limit:
             raise ValueError("stream snapshot control budget exceeded")
         return tuple(
-            _control_from_row(row) for row in (reversed(rows) if recent else rows)
+            _control_from_row(row)
+            for row in self._stream_rows(reversed(rows) if recent else rows)
         )
 
     def stream_recent_roots(self, limit: int = 100) -> tuple[str, ...]:
@@ -363,8 +382,8 @@ class RunStore:
         if len(rows) + len(controls) > limit:
             raise ValueError("stream snapshot history budget exceeded")
         view = _ThreadProjection(
-            [_run_from_row(row) for row in rows],
-            [_control_from_row(row) for row in controls],
+            [_run_from_row(row) for row in self._stream_rows(rows)],
+            [_control_from_row(row) for row in self._stream_rows(controls)],
         )
         history = view.history(str(payload.rewind_if.target), head=payload.rewind_if)
         ids = [run.id for run in history]

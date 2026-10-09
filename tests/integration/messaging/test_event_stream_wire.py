@@ -24,7 +24,7 @@ from toolang.execution.schemas import StreamFrame
 from toolang.execution.activity import ActivityQuery, ActivityReader
 from toolang.execution.types import ThreadPrefix
 from toolang.teaming.backend import Backend
-from toolang.teaming.agent_client import AgentClient
+from toolang.teaming.agent_client import AgentClient, AgentEventClient
 from toolang.teaming.client import HubClient
 from toolang.teaming.errors import BackendUnavailable
 from toolang.teaming.event_backend import EventBackend
@@ -35,6 +35,122 @@ from toolang.teaming.stream_client import HubStreamState
 from toolang.up.hub import HubProcess
 
 pytestmark = pytest.mark.live_valkey
+
+
+def test_recovery_keeps_active_snapshot_and_live_suffix_after_slow_history(
+    running_hub, tmp_path, monkeypatch
+):
+    import threading
+    import time
+
+    from tests.support.execution_harness import AsyncGate, ScriptedModelTurn
+    from toolang.base.types.run import ModelCallResult
+    from toolang.execution.store import RunStore
+
+    entered = threading.Event()
+    gate = AsyncGate()
+    harness = ExecutionHarness.create(
+        tmp_path / "execution",
+        source="agic slow:\n  Wait.\n",
+        responses=[ScriptedModelTurn(ModelCallResult(), gate=gate)],
+    )
+    recent_roots = RunStore.stream_recent_roots
+
+    def slow_history(store, limit=100):
+        def tick(value):
+            time.sleep(0.001)
+            return value
+
+        store._conn.create_function("tick", 1, tick)
+        entered.set()
+        store._conn.execute(
+            """WITH RECURSIVE n(x) AS (
+            VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<1000000
+            ) SELECT sum(tick(x)) FROM n"""
+        ).fetchone()
+        return recent_roots(store, limit)
+
+    monkeypatch.setattr(RunStore, "stream_recent_roots", slow_history)
+
+    async def scenario():
+        connection = running_hub.connection()
+        async with (
+            harness,
+            AgentClient(tmp_path, actor="agent:alice", token="recovery") as publisher,
+            httpx.AsyncClient(
+                base_url=connection.endpoint,
+                headers={"X-Toolang-Backend": connection.identity},
+                timeout=10,
+                trust_env=False,
+            ) as http,
+        ):
+            await publisher.register("human:owner")
+            active = harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    runnable="slow",
+                    primary=(TextPart("input"),),
+                )
+            )
+            exporter = EventExporter(
+                harness.executor.stream,
+                harness.store.db_path,
+                AgentEventClient(publisher),
+                agent="agent:alice",
+                token="recovery",
+            )
+            recovery = None
+            try:
+                await asyncio.wait_for(gate.wait_until_entered(), 2)
+                recovery = asyncio.create_task(exporter.recover("initial"))
+                if not await asyncio.to_thread(entered.wait, 3):
+                    await recovery
+                    pytest.fail("Recovery did not read optional history")
+                # Execution and persistence can finish while the private snapshot
+                # is still reading history at its earlier publication boundary.
+                gate.release()
+                await asyncio.wait_for(active, 2)
+                assert not recovery.done()
+                await asyncio.wait_for(recovery, 6)
+
+                async def observed():
+                    state = HubStreamState(HubScope("agent:alice", run=active.run_id))
+                    async with aconnect_sse(
+                        http,
+                        "GET",
+                        "/events/stream",
+                        params={"agent": "agent:alice", "run": active.run_id},
+                    ) as stream:
+                        stream.response.raise_for_status()
+                        async for event in stream.aiter_sse():
+                            if not event.data:
+                                continue
+                            state.feed(
+                                StreamFrame(
+                                    event.event, json.loads(event.data), event.id
+                                )
+                            )
+                            if event.event == "stream_checkpoint":
+                                return state
+                    pytest.fail("Hub did not commit an observation checkpoint")
+
+                state = await observed()
+                assert state.status["agent:alice"]["complete"]
+                assert not state.agents["agent:alice"].complete(active.run_id)
+                while exporter.highwater.seq < harness.executor.stream.tail.seq:
+                    batch = await asyncio.wait_for(exporter.reader.receive(), 2)
+                    for frame in batch.events:
+                        await exporter.publish(frame)
+                state = await observed()
+                assert state.agents["agent:alice"].complete(active.run_id)
+            finally:
+                gate.release()
+                if recovery is not None:
+                    recovery.cancel()
+                    await asyncio.gather(recovery, return_exceptions=True)
+                exporter.close()
+
+    asyncio.run(scenario())
 
 
 def test_agents_reconnect_through_hub_without_direct_backend_access(valkey, tmp_path):
