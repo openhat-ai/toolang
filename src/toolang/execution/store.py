@@ -309,6 +309,7 @@ class RunStore:
         thread: str | None,
         after: str | None,
         limit: int = 10000,
+        recent: bool = False,
     ) -> tuple[ControlRecord, ...]:
         """Return durable thread mutations, including forks of the selected source."""
         cursor_filter = (
@@ -320,17 +321,29 @@ class RunStore:
             rows = self._conn.execute(
                 "SELECT * FROM controls WHERE scope = 'thread' AND status = 'applied' "
                 "AND (:thread IS NULL OR target = :thread OR json_extract(payload, '$.fork_from') = :thread) "
-                f"{cursor_filter} ORDER BY rowid LIMIT :limit",
+                f"{cursor_filter} ORDER BY rowid {'DESC' if recent else 'ASC'} LIMIT :limit",
                 dict(
                     thread=thread,
                     after=after,
                     ceiling=after[:33] + "f" * 16 if after else None,
-                    limit=limit + 1,
+                    limit=limit if recent else limit + 1,
                 ),
             ).fetchall()
         if len(rows) > limit:
             raise ValueError("stream snapshot control budget exceeded")
-        return tuple(_control_from_row(row) for row in rows)
+        return tuple(
+            _control_from_row(row) for row in (reversed(rows) if recent else rows)
+        )
+
+    def stream_recent_roots(self, limit: int = 100) -> tuple[str, ...]:
+        """Bound optional observation history before loading complete trees."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id FROM runs WHERE parent IS NULL AND status NOT IN "
+                "('pending', 'running') ORDER BY finished_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return tuple(row[0] for row in rows)
 
     def stream_rewound_runs(
         self, payload: RewindControlPayload, *, limit: int = 10000

@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from toolang.api import common
+from toolang.common import sse as common
 
 
 @pytest.mark.parametrize("blocked", ["http.response.start", "http.response.body"])

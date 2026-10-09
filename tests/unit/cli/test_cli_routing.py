@@ -357,7 +357,7 @@ def test_cli_visible_commands_follow_the_public_panel_order(arguments, capsys) -
         "Work Commands": ("chat", "chore", "task", "workspace"),
         "Inspection Commands": ("caps", "tools", "models", "providers", "inspect"),
         "Script Commands": ("init", "run"),
-        "Teaming Commands": ("hub", "text"),
+        "Teaming Commands": ("hub", "text", "top"),
     }
 
     assert isinstance(group, TyperGroup)

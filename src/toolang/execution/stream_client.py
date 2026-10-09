@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from dataclasses import replace
 import json
 from typing import Any
 
@@ -39,6 +40,21 @@ class StreamClientState:
         self._replacement: dict[str, Any] | None = None
         self._bytes = 0
 
+    def copy(self) -> StreamClientState:
+        """Copy committed structural state without an in-flight prefix."""
+        result = StreamClientState()
+        result.cursor = self.cursor
+        result._records = dict(self._records)
+        result._positions = dict(self._positions)
+        return result
+
+    def forget(self, roots: set[str]) -> None:
+        """Release whole trees while retaining the last transport checkpoint."""
+        self._remove_runs(self._descendants(roots))
+
+    def has_run(self, run: str) -> bool:
+        return ("run_begin", run) in self._records
+
     def attach(self) -> RunSnapshot:
         self._prefix = None
         self._replacement = None
@@ -73,13 +89,16 @@ class StreamClientState:
                 replacement = self._replacement
                 if replacement is None or cursor != replacement["cursor"]:
                     raise ValueError("checkpoint does not complete its prefill")
-                self._replace(replacement)
+                candidate = self.copy()
+                candidate._replace(replacement)
                 mutations: list[ExecutionEvent] = []
                 for item in self._prefix:
                     event = event_from_data(item.data)
-                    self._apply(event, item.data.get("cursor"))
+                    candidate._apply(event, item.data.get("cursor"))
                     if not isinstance(event, RunBegin | RunEnd | StepBegin | StepEnd):
                         mutations.append(event)
+                self._records = candidate._records
+                self._positions = candidate._positions
                 self._prefix = None
                 self._replacement = None
                 self._bytes = 0
@@ -218,6 +237,11 @@ class StreamClientState:
                 self._positions.pop(key, None)
 
     def _invalidate(self, event: RunRetried) -> None:
+        key = ("run_begin", event.run)
+        begin = self._records.get(key)
+        if isinstance(begin, RunBegin):
+            self._records[key] = replace(begin, control=event.control, started_at="")
+            self._positions[key] = None
         self._remove_runs(set(event.removed_runs))
         for ref in event.invalidated_steps:
             for kind in ("step_begin", "step_end"):

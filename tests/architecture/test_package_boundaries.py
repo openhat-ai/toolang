@@ -54,7 +54,9 @@ PACKAGE_IMPORT_RULES: dict[str, frozenset[str] | None] = {
     # lang uses the shared error type and immutable metadata containers.
     "lang": frozenset({"base", "common"}),
     # Plugins may use package-neutral helpers from common.
-    "teaming": frozenset({"common"}),
+    # Team observation consumes execution-owned events and normalization;
+    # execution remains independent of the optional backend.
+    "teaming": frozenset({"common", "execution"}),
     "plugin": frozenset({"base", "common", "teaming"}),
     "setup": frozenset({"base", "common", "plugin", "teaming"}),
     "state": None,  # TODO: Review the state package boundary.

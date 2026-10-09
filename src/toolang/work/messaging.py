@@ -18,7 +18,7 @@ from toolang.execution.runnables import resolve_runnable_reference, runnable_fal
 from toolang.execution.threads import ThreadManager
 from toolang.execution.types import ThreadPrefix
 from toolang.lang.input import resolve_runnable_input
-from toolang.teaming.messaging import MessagingClient, RENEW_SECONDS
+from toolang.teaming.messaging import MessagingClient
 from toolang.teaming.config import BackendConfig
 from toolang.teaming.errors import MessagingError
 from toolang.teaming.schemas import Message, stream_id
@@ -82,39 +82,7 @@ class MessagingLoop:
         except (OSError, ValueError, KeyError, TypeError, MessagingError) as exc:
             raise MessagingError(f"Invalid messaging checkpoint: {self.path}") from exc
 
-    async def run(self, stop: asyncio.Event) -> None:
-        delay = 0.5
-        try:
-            self.load()
-            while not stop.is_set():
-                try:
-                    await self.client.register(self.owner, endpoint=self.endpoint)
-                    async with asyncio.TaskGroup() as tasks:
-                        tasks.create_task(self._heartbeat(stop))
-                        tasks.create_task(self._consume(stop))
-                    return
-                except asyncio.CancelledError:
-                    raise
-                except Exception:
-                    logger.exception("Messaging disconnected; reconnecting")
-                    await self._wait(stop, delay)
-                    delay = min(delay * 2, 5)
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.exception("Messaging stopped; check configuration and checkpoint")
-        finally:
-            with suppress(Exception):
-                await self.client.unregister()
-            await self.client.close()
-
-    async def _heartbeat(self, stop: asyncio.Event) -> None:
-        while not stop.is_set():
-            await self._wait(stop, RENEW_SECONDS)
-            if not stop.is_set():
-                await self.client.renew()
-
-    async def _consume(self, stop: asyncio.Event) -> None:
+    async def consume(self, stop: asyncio.Event) -> None:
         while not stop.is_set():
             await self.poll()
             await self._wait(stop, 0.5)

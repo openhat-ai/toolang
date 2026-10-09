@@ -42,3 +42,7 @@ class RunStoreSchemaError(RuntimeError):
         super().__init__(
             f"unsupported run store schema version: {version}; expected {expected}"
         )
+
+
+class SnapshotLimitError(RuntimeError):
+    """Structural recovery exceeded its bounded read or output budget."""

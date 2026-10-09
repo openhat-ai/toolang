@@ -1,15 +1,31 @@
 """Root-scoped Hub HTTP transport for shared teaming services."""
 
-from collections.abc import Callable
+from collections.abc import Callable, AsyncIterator
+import asyncio
 from contextlib import asynccontextmanager
 import secrets
-from typing import Annotated, Any
+from typing import Annotated, Any, cast
 
 from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from fastapi.sse import EventSourceResponse, ServerSentEvent
+from starlette.middleware import Middleware
+from toolang.common.sse import SSESendDeadline
+from toolang.execution.errors import SnapshotLimitError
+from toolang.execution.errors import StreamOverflowError
+from .event_backend import EventBackend
+from .events import HubScope
+from .subscriptions import HubSubscription
 
-from .errors import BackendUnavailable, MessagingError, SendUnconfirmed
+from .errors import (
+    BackendUnavailable,
+    MessagingError,
+    SendUnconfirmed,
+    EventProtocolError,
+    EventRecoveryRequired,
+    ScopeUnavailable,
+)
 from .messaging import MessagingClient
 from .schemas import (
     Conversation,
@@ -53,6 +69,7 @@ def create_app(
 
     app = FastAPI(
         title="Toolang Hub API",
+        middleware=[Middleware(cast(Any, SSESendDeadline))],
         lifespan=lifespan,
         dependencies=[Depends(prepare_request)],
         docs_url=None,
@@ -69,6 +86,11 @@ def create_app(
         else:
             status, code = 400, "messaging_error"
         return JSONResponse({"code": code, "detail": str(exc)}, status_code=status)
+
+    @app.exception_handler(HTTPException)
+    async def http_error(request: Request, exc: HTTPException) -> JSONResponse:
+        data = exc.detail if isinstance(exc.detail, dict) else {"detail": exc.detail}
+        return JSONResponse(data, status_code=exc.status_code)
 
     @app.exception_handler(RequestValidationError)
     async def validation_error(
@@ -151,6 +173,83 @@ def create_app(
             in_reply_to=body.in_reply_to,
             message_id=body.id,
         )
+
+    async def event_subscription(
+        agent: Annotated[str | None, Query()] = None,
+        thread: Annotated[str | None, Query()] = None,
+        run: Annotated[str | None, Query()] = None,
+        after: Annotated[str | None, Query()] = None,
+    ) -> AsyncIterator[HubSubscription]:
+        subscription = None
+        try:
+            subscription = HubSubscription(
+                EventBackend(client._backend), HubScope(agent, thread, run), after
+            )
+            await subscription.prepare()
+        except ScopeUnavailable as exc:
+            raise HTTPException(
+                404, {"code": "scope_unavailable", "detail": str(exc)}
+            ) from exc
+        except (SnapshotLimitError, StreamOverflowError) as exc:
+            raise HTTPException(
+                503, {"code": "snapshot_limit", "detail": str(exc)}
+            ) from exc
+        except (EventProtocolError, BackendUnavailable) as exc:
+            raise HTTPException(
+                503,
+                {
+                    "code": "protocol_error"
+                    if isinstance(exc, EventProtocolError)
+                    else "backend_unavailable",
+                    "detail": str(exc),
+                },
+            ) from exc
+        except (ValueError, MessagingError) as exc:
+            raise HTTPException(
+                400, {"code": "invalid_request", "detail": str(exc)}
+            ) from exc
+        try:
+            yield subscription
+        finally:
+            if subscription is not None:
+                subscription.close()
+
+    @app.get("/events/stream", response_class=EventSourceResponse)
+    async def events(
+        subscription: Annotated[HubSubscription, Depends(event_subscription)],
+    ) -> AsyncIterator[ServerSentEvent]:
+        try:
+            while True:
+                try:
+                    frame = await asyncio.wait_for(subscription.receive(), 15)
+                except TimeoutError:
+                    yield ServerSentEvent(comment="keep-alive")
+                    continue
+                yield ServerSentEvent(event=frame.event, data=frame.data, id=frame.id)
+        except StopAsyncIteration:
+            return
+        except (
+            StreamOverflowError,
+            SnapshotLimitError,
+            BackendUnavailable,
+            ScopeUnavailable,
+            EventProtocolError,
+            EventRecoveryRequired,
+        ) as exc:
+            code = (
+                "overflow"
+                if isinstance(exc, (StreamOverflowError, EventRecoveryRequired))
+                else "snapshot_limit"
+                if isinstance(exc, SnapshotLimitError)
+                else "backend_unavailable"
+                if isinstance(exc, BackendUnavailable)
+                else "scope_unavailable"
+                if isinstance(exc, ScopeUnavailable)
+                else "protocol_error"
+            )
+            yield ServerSentEvent(event="stream_error", data={"code": code})
+        finally:
+            subscription.close()
 
     app.include_router(router)
     return app

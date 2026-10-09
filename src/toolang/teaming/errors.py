@@ -17,3 +17,19 @@ class BackendUnavailable(MessagingError):
 
 class SendUnconfirmed(MessagingError):
     """The server may have accepted the message; do not retransmit automatically."""
+
+
+class EventProtocolError(RuntimeError):
+    """The established event dataset is inconsistent; repair is required."""
+
+
+class EventRecoveryRequired(RuntimeError):
+    """The source must publish a new structural generation."""
+
+
+class ScopeUnavailable(ValueError):
+    """A requested origin or retained scope does not exist."""
+
+
+class ForgottenTree(ValueError):
+    """Reattach at the previous checkpoint before applying this retry."""

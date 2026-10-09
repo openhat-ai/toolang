@@ -318,9 +318,9 @@ structure/final results must be repaired before claiming continuous observation.
 Recovery markers are transport control, not invented source execution events;
 Hub marks stale/incomplete views until recovery establishes a new boundary.
 
-The [stage 5 proposal](team-observation.md) defines backend schemas, projection
-versioning, retention, recovery transactions, Hub routes/envelopes, and activity
-presentation. Confirm it before implementation. Backend retention is separate
+The approved [stage 5 contract](team-observation.md) defines backend schemas,
+projection versioning, retention, recovery transactions, Hub routes/envelopes,
+and activity presentation. Backend retention is separate
 from the local cache and messaging retention; coordination remains outside scope.
 
 ## Acceptance and touchpoints
