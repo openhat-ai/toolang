@@ -3,6 +3,7 @@
 import asyncio
 import json
 import os
+import socket
 import subprocess
 import sys
 
@@ -199,3 +200,99 @@ def test_hub_event_fanout_recovery_and_top_once(
                 await driver.close()
 
     asyncio.run(scenario())
+
+
+def test_resident_shutdown_publishes_final_structure(valkey, running_hub, tmp_path):
+    home = tmp_path / "agents" / "alice"
+    home.mkdir(parents=True)
+    (home / "config.toml").write_text("[teaming]\nenabled = true\n")
+    (home / "agent.too").write_text(
+        "flow busy(_: Text):\n  repeat 5000 times:\n    let result = Done\n"
+    )
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        port = listener.getsockname()[1]
+    command = [
+        sys.executable,
+        "-m",
+        "toolang.cli.toolang.main",
+        "--root",
+        str(tmp_path),
+    ]
+
+    def cli(*args):
+        return subprocess.run(
+            [*command, *args], capture_output=True, text=True, timeout=40
+        )
+
+    async def scenario():
+        driver = Backend(valkey)
+        service = EventBackend(driver)
+        connection = running_hub.connection()
+        endpoint = f"http://127.0.0.1:{port}"
+        try:
+            async with httpx.AsyncClient(timeout=20, trust_env=False) as http:
+                await service.initialize()
+                async with asyncio.timeout(10):
+                    while True:
+                        _, origins, _ = await service.capture("agent:alice")
+                        if origins.get("agent:alice", {}).get("status") == "complete":
+                            break
+                        await asyncio.sleep(0.01)
+                response = await http.post(
+                    f"{endpoint}/api/v1/threads", json={"client": "script"}
+                )
+                response.raise_for_status()
+                root = None
+                async with aconnect_sse(
+                    http,
+                    "POST",
+                    f"{endpoint}/api/v1/runs/authored/stream",
+                    json={
+                        "thread_id": response.json()["thread"]["id"],
+                        "request_id": "shutdown",
+                        "runnable": {"ref": "flow:busy", "input": {"_": "Done"}},
+                        "model": None,
+                        "policy": {"allow": [], "limits": {}},
+                    },
+                ) as stream:
+                    stream.response.raise_for_status()
+                    async for event in stream.aiter_sse():
+                        if event.event == "run_begin":
+                            root = json.loads(event.data)["run"]
+                        if event.event == "step_begin":
+                            break
+                assert root is not None
+                stopped = await asyncio.to_thread(cli, "stop", "alice")
+                assert stopped.returncode == 0, stopped.stderr
+                state = HubStreamState(HubScope("agent:alice", run=root))
+                async with aconnect_sse(
+                    http,
+                    "GET",
+                    f"{connection.endpoint}/events/stream",
+                    headers={"Authorization": f"Bearer {connection.token}"},
+                    params={"agent": "agent:alice", "run": root},
+                ) as stream:
+                    stream.response.raise_for_status()
+                    async for event in stream.aiter_sse():
+                        if not event.data:
+                            continue
+                        frame = StreamFrame(
+                            event.event, json.loads(event.data), event.id or None
+                        )
+                        assert frame.event != "stream_error", frame.data
+                        state.feed(frame)
+                        if frame.event == "run_end" and frame.data["run"] == root:
+                            assert frame.data["status"] == "canceled"
+                assert state.agents["agent:alice"].complete(root)
+                assert state.status["agent:alice"]["complete"]
+                assert not state.status["agent:alice"]["online"]
+        finally:
+            await driver.close()
+
+    try:
+        started = cli("start", "alice", "--sandbox", "host", "--port", str(port))
+        assert started.returncode == 0, started.stderr
+        asyncio.run(scenario())
+    finally:
+        cli("stop", "alice", "--force")

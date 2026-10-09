@@ -647,7 +647,8 @@ def test_multi_origin_cached_replay_preserves_global_order_and_identity(tmp_path
     asyncio.run(scenario())
 
 
-def test_teaming_keeps_lease_through_final_export_drain(tmp_path, monkeypatch):
+@pytest.mark.parametrize("backlog", [False, True])
+def test_teaming_keeps_lease_through_final_export_drain(tmp_path, monkeypatch, backlog):
     from toolang.work.messaging import MessagingLoop
     from toolang.work.teaming import TeamingLoop
     from toolang.teaming.messaging import MessagingClient
@@ -681,8 +682,12 @@ def test_teaming_keeps_lease_through_final_export_drain(tmp_path, monkeypatch):
             lifecycle = TeamingLoop(messaging)
             observed = []
             original = lifecycle.exporter.publish
+            entered, release = asyncio.Event(), asyncio.Event()
 
             async def checked(frame):
+                if backlog:
+                    entered.set()
+                    await release.wait()
                 assert (
                     await inspector._call("HGET", online_key(client.actor), "token")
                     == "lease"
@@ -691,17 +696,30 @@ def test_teaming_keeps_lease_through_final_export_drain(tmp_path, monkeypatch):
                 observed.append(frame.event.type)
 
             monkeypatch.setattr(lifecycle.exporter, "publish", checked)
+            finish = lifecycle.exporter.finish
+
+            def drain():
+                finish()
+                release.set()
+
+            monkeypatch.setattr(lifecycle.exporter, "finish", drain)
             lifecycle.start()
             try:
                 async with asyncio.timeout(3):
                     while not lifecycle.exporter.generation:
                         await asyncio.sleep(0.01)
                 record = await run(harness)
+                if backlog:
+                    await asyncio.wait_for(entered.wait(), 2)
                 await lifecycle.stop_messages()
                 await harness.executor.stop()
             finally:
                 await lifecycle.close()
-            assert "run_end" in observed
+            if backlog:
+                # Finish the in-flight write, then replace obsolete queued
+                # progress with one final structure while still owning the lease.
+                assert len(observed) == 1
+            assert lifecycle.exporter.highwater == harness.executor.stream.tail
             assert not await inspector.online(client.actor)
             service = EventBackend(inspector)
             origin = (await service.capture(client.actor))[1][client.actor]

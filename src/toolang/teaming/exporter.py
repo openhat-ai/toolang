@@ -352,6 +352,11 @@ class EventExporter:
                             raise EventRecoveryRequired("backend reset")
                         continue
                     for frame in batch.events:
+                        if self._stopping:
+                            # Execution has stopped. Recover its final structure
+                            # once instead of spending the drain budget on backlog.
+                            await self.recover("shutdown")
+                            return
                         await self.publish(frame)
             except StopAsyncIteration:
                 return
