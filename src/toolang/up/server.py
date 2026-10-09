@@ -296,7 +296,12 @@ def serve(
                     get_agent_setup=current_setup,
                     get_agent_state=current_state,
                 )
-                teaming = TeamingLoop(messaging, AgentEventClient(hub_client))
+                teaming = TeamingLoop(
+                    messaging,
+                    AgentEventClient(hub_client),
+                    activity=core.activity,
+                    publish_activity=hub_client.publish_activity,
+                )
                 teaming.start()
             await scheduler.start()
             app.state.job_scheduler = scheduler

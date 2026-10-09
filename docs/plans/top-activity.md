@@ -1,9 +1,8 @@
 # Top activity
 
-Feature definition; examples are proposed behavior, not current CLI usage.
+Approved feature definition.
 Replaces the presentation and retention rules in [team observation](team-observation.md),
-preserving its recovery contract. Implementation requires approval and resolution
-of the open questions below.
+preserving its recovery contract.
 
 ## Goal and terms
 
@@ -287,12 +286,18 @@ Reuse execution summary helpers, Rich and prompt_toolkit.
 | Offline agent, Hub reconnect and incomplete recovery | No invented idle/failure/zero; stale time freezes and confirmed running paths recover. |
 | Multiple subscribers, large history and both HTTP sources | Shared compact reads; equivalent agent/Hub data without per-client history aggregation. |
 
-Open questions before implementation:
+Implementation decisions:
 
-- Model summary source: tool steps have explicit summaries; model steps do not.
-  Define a summary field or a labeled existing-content preview.
-- Specify compact HTTP frames, cursor adaptation, history pagination and projection
-  limits over persisted Stats. Large running paths must expose incomplete coverage.
+- Model summaries use a bounded `preview:` of existing user content, with
+  instructions as fallback. Tools keep their explicit summaries; no extra model call.
+- Compact HTTP sends absolute `activity_page` frames and an atomic
+  `activity_checkpoint`; reconnect always takes a fresh snapshot. Pages contain
+  200 roots, with explicit coverage for the 4,000-node running-path and
+  10,000-thread projection limits. See [HTTP activity](../api.md#team-activity).
+- A shared reader checks the durable revision; unchanged revisions advance cached
+  open intervals. Hub queries source HTTP and keeps the default publication plus
+  the last requested range. The default is also exported every five seconds and
+  at shutdown, so observation does not require a connected top client.
 
 Risks are migration size, missing legacy usage/model summaries, and atomic aggregate
 maintenance; acceptance must cover them before implementation handoff.

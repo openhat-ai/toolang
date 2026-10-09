@@ -9,6 +9,22 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Added
 
+- `too top` adds activity views, filters, sorting, and consumption statistics:
+  `--view agent|thread|execution` selects the row object, `--tree` (with
+  `--view execution`) follows confirmed running paths, `--sort activity|cost|time`
+  orders whole objects by displayed values, `--filter TEXT` matches IDs, names,
+  statuses, and summaries literally and case-insensitively, `--active` keeps
+  unfinished work only, and `--recent DURATION|all` (default `30m`) and
+  `--since session|TIMESTAMP|DURATION|all` (default `session`) select visible
+  recent work and the stats start shared by MODEL, TOOL, COST, and TIME. Each
+  row's metrics cover only its own and transitive calls, `TIME*` marks a
+  non-session range, and incomplete coverage is labeled instead of shown as idle.
+
+- Agents expose activity over HTTP at `GET /api/v1/activity`,
+  `/api/v1/activity/batch`, and the SSE `/api/v1/activity/stream`, and enabled
+  agents publish the same snapshots to the Hub, which serves `GET /activity` and
+  `/activity/stream` from last-observed coverage while an origin is offline.
+
 - `too top` observes a running team or agent without starting execution: `too top`
   follows the running Hub for the whole team, while `too AGENT top` follows the
   selected running agent through existing target and endpoint discovery. `--once`
@@ -136,6 +152,12 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   see `docs/messaging.md` for setup. (#708)
 
 ### Changed
+
+- `too top` retention follows `--recent` instead of a fixed cap: completed root
+  runs and threads stay while the rolling range covers them, running paths remain
+  visible regardless of age, and larger results load through pagination with
+  loaded and available counts instead of dropping completed rows beyond 20 in 30
+  seconds.
 
 - **Breaking:** reversible short IDs for runs, threads, tasks, and chores are
   now keyed by the canonical agent name, so equal tick/sequence pairs from

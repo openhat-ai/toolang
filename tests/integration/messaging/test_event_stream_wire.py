@@ -21,6 +21,7 @@ from tests.support.execution_harness import ExecutionHarness
 from tests.support.chat_tui_pty import ChatTuiPtySession
 from toolang.base.types.message import TextPart
 from toolang.execution.schemas import StreamFrame
+from toolang.execution.activity import ActivityQuery, ActivityReader
 from toolang.execution.types import ThreadPrefix
 from toolang.teaming.backend import Backend
 from toolang.teaming.agent_client import AgentClient
@@ -302,6 +303,15 @@ def test_hub_event_fanout_recovery_and_top_once(
                 recovered, frames = await snapshot(initial.cursor)
                 assert frames[0].event == "stream_prefill"
                 assert recovered.agents["agent:alice"].complete(record.id)
+                pages = ActivityReader(harness.store.db_path, "agent:alice").pages(
+                    ActivityQuery()
+                )
+                published = await http.put(
+                    "/agents/agent:alice/activity",
+                    headers={"X-Toolang-Agent-Lease": "lease"},
+                    json=[page.model_dump() for page in pages],
+                )
+                published.raise_for_status()
                 result = await asyncio.to_thread(
                     subprocess.run,
                     [
@@ -320,14 +330,22 @@ def test_hub_event_fanout_recovery_and_top_once(
                 )
                 assert result.returncode == 0, result.stderr
                 assert isinstance(result.stdout, str)
-                assert "agent:alice" in result.stdout and "online" in result.stdout
+                assert "alice" in result.stdout and "online" in result.stdout
 
                 def terminal():
                     session = ChatTuiPtySession.start(
                         "toolang.cli.toolang.main", "--root", tmp_path, "top"
                     )
                     try:
-                        output = session.wait_for("agent:alice", "online", "quit")
+                        output = session.wait_for("alice", "online", "q Quit")
+                        session.send(b"e")
+                        session.wait_for("Execution", "STEP", record.id)
+                        session.send(b"\x1b[15~")
+                        session.wait_for("Layout Tree")
+                        session.send(b"t")
+                        session.wait_for("View Thread")
+                        session.send(b"a")
+                        session.wait_for("View Agent")
                         assert "Traceback" not in output
                         session.send(b"q")
                         assert session.wait_for_exit() == 0, session.output

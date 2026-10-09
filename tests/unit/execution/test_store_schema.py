@@ -15,7 +15,7 @@ from toolang.execution.types import ContentRef
     [
         pytest.param(28, id="historical"),
         pytest.param(51, id="previous"),
-        pytest.param(54, id="future"),
+        pytest.param(55, id="future"),
     ],
 )
 @pytest.mark.parametrize("read_only", (False, True))
@@ -37,7 +37,7 @@ def test_run_store_rejects_any_other_schema_without_modifying_it(
         RunStore(path, read_only=read_only)
 
     assert raised.value.version == schema_version
-    assert raised.value.current == 53
+    assert raised.value.current == 54
     assert raised.value.read_only is read_only
     assert path.read_bytes() == before
     connection = sqlite3.connect(path)
@@ -92,7 +92,7 @@ def test_run_store_opens_the_current_schema(tmp_path: Path) -> None:
 
     connection = sqlite3.connect(path)
     try:
-        assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 53
+        assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 54
         columns = {
             table: {
                 str(row[1]) for row in connection.execute(f"PRAGMA table_info({table})")
@@ -318,7 +318,7 @@ def test_schema_52_records_remain_readable_and_upgrade_without_invented_cursors(
     upgraded.close()
     connection = sqlite3.connect(path)
     try:
-        assert connection.execute("PRAGMA user_version").fetchone() == (53,)
+        assert connection.execute("PRAGMA user_version").fetchone() == (54,)
         indexes = {
             row[0]
             for row in connection.execute(

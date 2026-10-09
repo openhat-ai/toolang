@@ -10,6 +10,7 @@ from urllib.parse import quote
 import httpx
 
 from .client import HubClient
+from toolang.execution.schemas import ActivitySnapshot
 from .discovery import host_token, hub_connection
 from .schemas import HubConnection, Message, target
 
@@ -64,6 +65,11 @@ class AgentClient(HubClient):
 
     async def unregister(self) -> None:
         await self._request("DELETE", "/lease")
+
+    async def publish_activity(self, pages: list[ActivitySnapshot]) -> None:
+        await self._request(
+            "PUT", "/activity", json=[page.model_dump() for page in pages]
+        )
 
     async def send(
         self,

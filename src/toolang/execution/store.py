@@ -127,9 +127,10 @@ from .types import (
 )
 from .schemas import Record, RecordSelection, select_record
 from .values import parts_from_value
+from . import statistics
 
-_SCHEMA_VERSION = 53
-_SUPPORTED_SCHEMA_VERSIONS = (52, _SCHEMA_VERSION)
+_SCHEMA_VERSION = 54
+_SUPPORTED_SCHEMA_VERSIONS = (52, 53, _SCHEMA_VERSION)
 
 
 class RunStore:
@@ -165,6 +166,7 @@ class RunStore:
                     db_path.with_name(db_path.name + ".init.lock"), inherit_owner=True
                 ):
                     self._init_schema()
+                statistics.backfill(self)
         except BaseException:
             self._conn.close()
             raise
@@ -414,6 +416,7 @@ class RunStore:
             try:
                 yield
                 if owner:
+                    statistics.flush(self)
                     self._conn.commit()
             except BaseException:
                 if owner:
@@ -1984,7 +1987,7 @@ class RunStore:
         updated_at: str | None = None,
     ) -> ThreadRecord:
         now = updated_at or utc_now()
-        with self._lock:
+        with self.write_transaction():
             row = self._conn.execute(
                 "SELECT * FROM threads WHERE id = ?",
                 (thread_id,),
@@ -2003,7 +2006,6 @@ class RunStore:
                 "SELECT * FROM threads WHERE id = ?",
                 (thread_id,),
             ).fetchone()
-            self._conn.commit()
         if updated is None:
             raise RuntimeError(f"thread not found after update: {thread_id}")
         return _thread_from_row(updated)
@@ -4187,6 +4189,7 @@ class RunStore:
                     self._conn.execute(
                         f"CREATE INDEX IF NOT EXISTS idx_{table}_{name} ON {table}({name})"
                     )
+            statistics.initialize(self._conn)
             self._conn.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
             self._conn.commit()
 
