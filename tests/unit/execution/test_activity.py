@@ -2,6 +2,7 @@
 
 from contextlib import closing
 from datetime import datetime
+import sqlite3
 
 import pytest
 
@@ -410,3 +411,82 @@ def test_thread_limit_applies_after_recent_selection(store, monkeypatch):
     assert [node.id for node in page.threads] == ["term_test"]
     assert page.thread_count == 4
     assert page.complete
+
+
+def test_page_size_does_not_multiply_history_reads(store, monkeypatch):
+    for index in range(12):
+        root(store, f"run_{index}")
+    statements = []
+    connect = sqlite3.connect
+
+    def traced(*args, **kwargs):
+        conn = connect(*args, **kwargs)
+        conn.set_trace_callback(statements.append)
+        return conn
+
+    monkeypatch.setattr(sqlite3, "connect", traced)
+    query = ActivityQuery("all", None, "run_")
+    whole = ActivityReader(store.db_path, "agent:alice").pages(query, now=clock(100))
+    whole_reads = len(statements)
+    statements.clear()
+    monkeypatch.setattr("toolang.execution.activity.PAGE_SIZE", 1)
+    paged = ActivityReader(store.db_path, "agent:alice").pages(query, now=clock(100))
+    assert [node for page in paged for node in page.roots] == whole[0].roots
+    assert all(page.stats == whole[0].stats for page in paged)
+    assert len(statements) <= whole_reads + 10
+    assert sum(len(page.threads) for page in paged) == len(whole[0].threads)
+
+
+def test_thread_counts_describe_recent_eligibility_before_filters_and_limits(
+    store, monkeypatch
+):
+    root(store)
+    root(store, "run_second")
+    store.create_thread(thread_id="term_empty", origin="chat", created_at=at(100))
+    store.create_thread(thread_id="term_old", origin="chat", created_at=at(0))
+    page = snapshot(store, recent=30, text="run_root")
+    assert page.thread_count == 3
+    assert page.thread_eligible == 2
+    assert page.thread_matched == 1
+    assert page.eligible == 2 and page.matched == 1
+    monkeypatch.setattr("toolang.execution.activity.THREAD_LIMIT", 1)
+    limited = snapshot(store, recent=30)
+    assert limited.thread_matched == limited.thread_eligible == 2
+    assert len(limited.threads) == 1
+    assert not limited.complete
+
+
+def test_model_completion_reuses_the_captured_preview(store, monkeypatch):
+    from toolang.base.types.run import ModelCall
+    from toolang.execution.types import ModelStepGiven, ModelStepNoted, StepRef
+
+    root(store)
+    ref = StepRef.parse("run_root.0")
+    store.begin_step(
+        ref=ref,
+        kind="model",
+        input=(),
+        given=ModelStepGiven(
+            "test/model",
+            ModelCall("instructions", [Message.user("Review configuration")]),
+            setup="test-setup",
+        ),
+        started_at=at(10),
+    )
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError(
+            "Completion must not reload the prompt to recapture a preview"
+        )
+
+    monkeypatch.setattr(store, "get_content", forbidden)
+    store.finish_step(
+        ref=ref,
+        kind="model",
+        status="canceled",
+        output=None,
+        noted=ModelStepNoted(),
+        error=None,
+        finished_at=at(20),
+    )
+    assert snapshot(store, text="Review configuration").roots[0].matches == [str(ref)]

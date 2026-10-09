@@ -987,6 +987,8 @@ class ActivitySnapshot(BaseModel):
     active: int = 0
     failed: int = 0
     thread_count: int = 0
+    thread_eligible: int = 0
+    thread_matched: int = 0
     eligible: int = 0
     matched: int = 0
     available: int = 0

@@ -106,15 +106,7 @@ class ActivityReader:
                     page.observed += advance
                 self._cache.move_to_end(query)
                 return pages
-            pages = []
-            offset = 0
-            memo: dict[tuple[str, str], ActivityMetrics] = {}
-            while True:
-                page = _read(conn, self.agent, query, offset, clock, memo)
-                pages.append(page)
-                if page.next_offset is None:
-                    break
-                offset = page.next_offset
+            pages = _read(conn, self.agent, query, clock)
             expiry = float("inf")
             if query.recent is not None:
                 row = conn.execute(
@@ -232,10 +224,8 @@ def _read(
     conn: sqlite3.Connection,
     agent: str,
     query: ActivityQuery,
-    offset: int,
     now: float,
-    memo: dict[tuple[str, str], ActivityMetrics],
-) -> ActivitySnapshot:
+) -> list[ActivitySnapshot]:
     meta = conn.execute("SELECT * FROM activity_meta").fetchone()
     if meta is None:
         raise ValueError("Activity migration is not available")
@@ -244,6 +234,7 @@ def _read(
     ).fetchone()
     if session and session["ended"] is not None:
         now = min(now, session["ended"])
+    memo: dict[tuple[str, str], ActivityMetrics] = {}
 
     def metrics(scope: str, since: str) -> ActivityMetrics:
         key = scope, since
@@ -310,8 +301,8 @@ def _read(
                 continue
             matches[row["id"]] = list(dict.fromkeys(ids))[:100]
         selected.append(row)
-    roots = [node(row) for row in selected[offset : offset + PAGE_SIZE]]
-    paths: list[ActivityNode] = []
+    roots = [node(row) for row in selected]
+    paths: dict[str, list[ActivityNode]] = {}
     complete = bool(meta["migrated"])
     for root in roots:
         root.matches = matches.get(root.id, [])
@@ -355,7 +346,7 @@ def _read(
                     (current.id + ".",),
                 ).fetchone()[0]
             if current is not root:
-                paths.append(current)
+                paths.setdefault(root.id, []).append(current)
     thread_count = conn.execute(
         "SELECT COUNT(*) FROM activity_nodes WHERE kind='thread' AND current=1"
     ).fetchone()[0]
@@ -368,11 +359,13 @@ def _read(
         (recent,),
     )
     threads = []
+    thread_eligible = thread_matched = 0
     matched_threads = {row["thread"] for row in selected}
     for row in thread_rows:
         active, failed = counts.get(row["id"], (0, 0))
         if not active and row["changed"] < recent:
             continue
+        thread_eligible += 1
         if query.active and not active:
             continue
         if (
@@ -382,13 +375,14 @@ def _read(
             and row["id"] not in matched_threads
         ):
             continue
+        thread_matched += 1
         if len(threads) == THREAD_LIMIT:
             complete = False
-            break
+            continue
         item = node(row)
         item.active, item.failed = active, failed
         threads.append(item)
-    return ActivitySnapshot(
+    snapshot = ActivitySnapshot(
         agent=agent,
         revision=meta["revision"],
         session=meta["session"],
@@ -406,14 +400,33 @@ def _read(
         stats=metrics("@agent", query.since),
         total=metrics("@agent", "all"),
         threads=threads,
-        roots=roots,
-        paths=paths,
         active=sum(value[0] for value in counts.values()),
         failed=sum(value[1] for value in counts.values()),
         thread_count=thread_count,
+        thread_eligible=thread_eligible,
+        thread_matched=thread_matched,
         eligible=len(eligible),
         matched=len(selected),
         available=len(selected),
-        offset=offset,
-        next_offset=offset + PAGE_SIZE if offset + PAGE_SIZE < len(selected) else None,
     )
+    # Project a boundary once, then paginate it. Smaller wire pages must not
+    # multiply history searches, thread projection, or scope aggregation.
+    pages = []
+    for offset in range(0, max(1, len(roots)), PAGE_SIZE):
+        batch = roots[offset : offset + PAGE_SIZE]
+        pages.append(
+            snapshot.model_copy(
+                update={
+                    "roots": batch,
+                    "threads": threads if offset == 0 else [],
+                    "paths": [
+                        child for root in batch for child in paths.get(root.id, ())
+                    ],
+                    "offset": offset,
+                    "next_offset": offset + PAGE_SIZE
+                    if offset + PAGE_SIZE < len(roots)
+                    else None,
+                }
+            )
+        )
+    return pages

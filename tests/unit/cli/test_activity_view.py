@@ -220,3 +220,44 @@ def test_header_keeps_unavailable_statistics_unknown():
     output = io.StringIO()
     Console(file=output, width=160).print(state.render(width=160, once=True))
     assert "Agent Stats: MODEL -  TOOL -  COST -  TIME -" in output.getvalue()
+
+
+def test_list_summary_follows_tree_execution_order():
+    snapshot = page()
+    later = node("run_root.2", kind="step", parent="run_root")
+    later.position = [2]
+    earlier = node("run_root.1", kind="step", parent="run_root")
+    earlier.position = [1]
+    earlier.created = 5  # Parallel work can begin in a different order.
+    snapshot.paths = [later, earlier]
+    state = Activity(None, view="execution")
+    feed(state, snapshot)
+    assert state.rows()[0].activity == "run_root.1 · 2 current calls"
+    state.key(Keys.F5)
+    assert [row.id for row in state.rows()[:3]] == [
+        "run_root",
+        "run_root.1",
+        "run_root.2",
+    ]
+
+
+def test_header_counts_follow_the_view_without_counting_tree_rows():
+    snapshot = page()
+    snapshot.thread_count = 7
+    snapshot.thread_eligible = 4
+    snapshot.thread_matched = 1
+    state = Activity(None, view="thread")
+    feed(state, snapshot)
+
+    def rendered():
+        output = io.StringIO()
+        Console(file=output, width=240).print(state.render(width=240, once=True))
+        return output.getvalue()
+
+    assert "Threads 1/4 matched/eligible" in rendered()
+    state.key("a")
+    assert "Agents 1/1 matched/eligible" in rendered()
+    state.key("e")
+    state.key(Keys.F5)
+    assert "Root runs 2/2 matched/eligible" in rendered()
+    assert "Loaded 2/2" in rendered()

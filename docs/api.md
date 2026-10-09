@@ -205,6 +205,8 @@ presets, and Ctrl-A to toggle Active in the filter editor. `<`/`>` scroll wide
 rows. RUN always identifies the root; STEP holds the row's complete run or step
 reference. Only running paths expand, including required completed ancestors.
 Agent/Thread rows summarize active and failed root counts, without task titles.
+Matched/eligible and loaded counts follow the view; Execution counts root runs,
+including in Tree layout.
 
 Stats defaults to the owning executor session; `--since` accepts `session`,
 `all`, a duration resolved once, or a timestamp with timezone. Calls and cost
@@ -223,8 +225,9 @@ Legacy history and interrupted sessions carry explicit coverage information.
 
 Queries accept `since`, `recent` (seconds), `all_recent=true`, `filter`, and
 `active`. Pages include session/revision, observation time, Stats/Total,
-coverage, available counts and `next_offset`. Individual page requests must agree
-on session/revision; otherwise restart pagination. SSE connections always begin
+coverage, root/thread counts and `next_offset`; only the first page carries the
+thread rows. Individual page requests must agree on session/revision; otherwise
+restart pagination. SSE connections always begin
 with a fresh atomic snapshot. They do not replay token deltas or full outputs.
 The agent reader shares committed aggregates and open duration anchors; Hub
 queries agent HTTP and caches absolute values. Offline data freezes at its last

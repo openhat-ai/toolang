@@ -473,9 +473,18 @@ def flush(store: RunStore, *, limit: int | None = None) -> None:
                 ).fetchone(),
                 1,
             )
-        title, summary = (
-            (ref, "") if kind == "thread" else _summary(store, kind, ref, row)
-        )
+        if kind == "thread":
+            title, summary = ref, ""
+        elif (
+            kind == "step"
+            and row["kind"] == "model"
+            and old
+            and attempt_id is not None
+            and old["attempt"] == attempt_id
+        ):
+            title, summary = old["title"], old["summary"]
+        else:
+            title, summary = _summary(store, kind, ref, row)
         status = "idle" if kind == "thread" else row["status"]
         occur = json.loads(row["occur"]) if kind != "thread" and row["occur"] else {}
         item, lane, iteration = (

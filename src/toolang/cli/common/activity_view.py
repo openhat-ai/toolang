@@ -239,6 +239,13 @@ class Activity:
         )
         return (0, not active, -changed, row.key)
 
+    def _matches_agent(self, snapshot: ActivitySnapshot) -> bool:
+        return (not self.display_query.active or bool(snapshot.active)) and (
+            not self.display_query.text
+            or self.display_query.text.casefold() in snapshot.agent.casefold()
+            or bool(snapshot.matched or snapshot.threads)
+        )
+
     def rows(self) -> list[Row]:
         groups: list[list[Row]] = []
         self.parents = {}
@@ -259,15 +266,7 @@ class Activity:
                 or self.display_query.text.casefold() in agent.casefold()
             )
             if self.view == "agent":
-                if (
-                    self.agent
-                    or (self.display_query.active and not snapshot.active)
-                    or (
-                        not agent_match
-                        and not snapshot.matched
-                        and not snapshot.threads
-                    )
-                ):
+                if self.agent or not self._matches_agent(snapshot):
                     continue
                 groups.append([Row(agent, agent, None, snapshot.stats, summary)])
                 continue
@@ -367,13 +366,15 @@ class Activity:
                         else:
                             descend(root.id, "", 1)
                     elif root.status == "running" and not root.stale:
-                        leaves = [
-                            node
-                            for node in snapshot.paths
-                            if node.root == root.id
-                            and node.status == "running"
-                            and not by_parent.get(node.id)
-                        ]
+                        leaves = []
+                        pending = list(reversed(by_parent.get(root.id, [])))
+                        while pending:
+                            node = pending.pop()
+                            children = by_parent.get(node.id, [])
+                            if children:
+                                pending.extend(reversed(children))
+                            elif node.status == "running":
+                                leaves.append(node)
                         if leaves and not snapshot.stale and not self.reconnecting:
                             root_row.activity = node_summary(leaves[0])
                             if len(leaves) > 1:
@@ -620,9 +621,26 @@ class Activity:
                     f"Agents {sum(s.presence == 'online' for s in snapshots) if not self.reconnecting else '?'} online / {len(snapshots)}  Agent Stats: MODEL {total.model if total.model is not None else '-'}  TOOL {total.tool if total.tool is not None else '-'}  COST {cost(total)}  {time_label} {elapsed(total.time)}"
                 )
             )
+        if self.view == "agent":
+            label = "Agents"
+            matched = sum(self._matches_agent(s) for s in snapshots)
+            eligible = len(snapshots)
+            loaded = matched
+        elif self.view == "thread":
+            label = "Threads"
+            matched = sum(s.thread_matched for s in snapshots)
+            eligible = sum(s.thread_eligible for s in snapshots)
+            loaded = sum(len(s.threads) for s in snapshots)
+        else:
+            label = "Root runs"
+            matched = sum(s.matched for s in snapshots)
+            eligible = sum(s.eligible for s in snapshots)
+            loaded = sum(len(s.roots) for s in snapshots)
         values.append(
             Text(
-                f"Root runs {sum(s.active for s in snapshots)} active · {sum(s.failed for s in snapshots)} failed  {sum(s.matched for s in snapshots)}/{sum(s.eligible for s in snapshots)} matched/eligible  Loaded {sum(len(s.roots) for s in snapshots)}/{sum(s.available for s in snapshots)}  Threads {sum(s.thread_count for s in snapshots)}"
+                f"{label} {matched}/{eligible} matched/eligible  Loaded {loaded}/{matched}"
+                + f"  Root runs {sum(s.active for s in snapshots)} active · {sum(s.failed for s in snapshots)} failed"
+                + f"  Total threads {sum(s.thread_count for s in snapshots)}"
                 + ("  Reconnecting · presence unknown" if self.reconnecting else "")
             )
         )

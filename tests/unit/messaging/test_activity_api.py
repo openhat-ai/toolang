@@ -65,6 +65,10 @@ def test_http_sources_share_absolute_stats_and_freeze_offline_cache(
                     assert federated["revision"] == direct["revision"]
                     assert federated["stats"]["model"] == direct["stats"]["model"] == 1
                     assert federated["stats"]["cost"] == direct["stats"]["cost"] == 0.5
+                    assert (
+                        federated["thread_eligible"] == direct["thread_eligible"] == 1
+                    )
+                    assert federated["thread_matched"] == direct["thread_matched"] == 1
                     assert [n["id"] for n in federated["roots"]] == [
                         n["id"] for n in direct["roots"]
                     ]
@@ -86,6 +90,8 @@ def test_http_sources_share_absolute_stats_and_freeze_offline_cache(
                         ActivityQuery(at(30), None)
                     )
                     assert not unknown[0].complete
+                    assert unknown[0].stats.cost is None
+                    assert unknown[0].total.cost is None
 
     asyncio.run(scenario())
 

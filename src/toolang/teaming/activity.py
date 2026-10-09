@@ -144,6 +144,9 @@ class ActivityBackend:
                 page.filter = query.text
                 page.active_only = query.active
             return fallback
+        unknown = ActivityMetrics(
+            model=None, tool=None, cost=None, time=None, complete=False
+        )
         return [
             ActivitySnapshot(
                 agent=agent,
@@ -155,9 +158,8 @@ class ActivityBackend:
                 active_only=query.active,
                 complete=False,
                 coverage="Waiting for source activity",
-                stats=ActivityMetrics(
-                    model=None, tool=None, cost=None, time=None, complete=False
-                ),
+                stats=unknown,
+                total=unknown,
             )
         ]
 
@@ -214,11 +216,13 @@ def cached_selection(
         thread.failed = sum(
             node.thread == thread.id and node.status == "failed" for node in eligible
         )
+    eligible_threads = [
+        thread for thread in first.threads if thread.active or thread.changed >= cutoff
+    ]
     first.threads = [
         thread
-        for thread in first.threads
-        if (thread.active or thread.changed >= cutoff)
-        and (not query.active or thread.active)
+        for thread in eligible_threads
+        if (not query.active or thread.active)
         and (
             not text
             or text in first.agent.casefold()
@@ -226,6 +230,8 @@ def cached_selection(
             or any(node.thread == thread.id for node in roots)
         )
     ]
+    first.thread_eligible = len(eligible_threads)
+    first.thread_matched = len(first.threads)
     return [first]
 
 
