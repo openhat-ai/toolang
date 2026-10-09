@@ -3,8 +3,8 @@
 from collections.abc import Callable, AsyncIterator
 import asyncio
 from contextlib import asynccontextmanager
-import secrets
 from typing import Annotated, Any, cast
+from urllib.parse import quote
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
@@ -36,21 +36,22 @@ from .agent_api import agent_router
 def create_app(
     client: MessagingClient,
     *,
-    token: str,
     on_ready: Callable[[], None] | None = None,
 ) -> FastAPI:
     """Bind requests to one configured human; own the service for this lifespan."""
     target(client.actor, kind="human")
-    if not token:
-        raise ValueError("Hub bearer token must not be empty")
 
     async def prepare_request(
-        authorization: Annotated[str | None, Header()] = None,
+        backend: Annotated[str | None, Header(alias="X-Toolang-Backend")] = None,
+        human: Annotated[str | None, Header(alias="X-Toolang-Human")] = None,
     ) -> None:
-        if not secrets.compare_digest(
-            (authorization or "").encode(), f"Bearer {token}".encode()
+        if (backend is not None and backend != client.config.identity) or (
+            human is not None and human != quote(client.actor, safe="")
         ):
-            raise HTTPException(401, "Hub authentication required")
+            raise HTTPException(
+                409,
+                {"code": "hub_changed", "detail": "Hub identity changed"},
+            )
         # The backend may have restarted empty without this Hub observing an outage.
         # Restore only registration; never retry a message append.
         await client.register_human()

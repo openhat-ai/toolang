@@ -129,27 +129,32 @@ def test_agents_reconnect_through_hub_without_direct_backend_access(valkey, tmp_
                         await remote.targets()
                 await asyncio.to_thread(cli, "hub", "start", "--port", str(hub_port))
                 original = hub.connection()
-                for name, run in runs.items():
-                    await wait_exported(name, run)
-                    # Exercise the resident's active lease through the same API
-                    # used by its msg tools, without invoking a model provider.
-                    lease = await service.online_token(f"agent:{name}")
-                    async with AgentClient(
-                        tmp_path, actor=f"agent:{name}", token=lease
-                    ) as remote:
-                        receipt = await remote.send("human:owner", body=name, run=run)
-                        async with HubClient(hub.connection()) as human:
+                async with HubClient(original) as human:
+                    for name, run in runs.items():
+                        await wait_exported(name, run)
+                        # Exercise the resident's active lease through the same API
+                        # used by its msg tools, without invoking a model provider.
+                        lease = await service.online_token(f"agent:{name}")
+                        async with AgentClient(
+                            tmp_path, actor=f"agent:{name}", token=lease
+                        ) as remote:
+                            receipt = await remote.send(
+                                "human:owner", body=name, run=run
+                            )
                             assert (await human.history(receipt["group"]))[0][
                                 0
                             ] == receipt["stream_id"]
-                await asyncio.to_thread(cli, "hub", "stop")
-                tail = (await service.capture())[0]["tail"]
-                runs = {name: await local_run(name) for name in agents}
-                assert (await service.capture())[0]["tail"] == tail
-                await asyncio.to_thread(cli, "hub", "start", "--port", str(hub_port))
-                assert hub.connection().token != original.token
-                for name, run in runs.items():
-                    await wait_exported(name, run)
+                    await asyncio.to_thread(cli, "hub", "stop")
+                    tail = (await service.capture())[0]["tail"]
+                    runs = {name: await local_run(name) for name in agents}
+                    assert (await service.capture())[0]["tail"] == tail
+                    await asyncio.to_thread(
+                        cli, "hub", "start", "--port", str(hub_port)
+                    )
+                    assert hub.connection() == original
+                    for name, run in runs.items():
+                        await wait_exported(name, run)
+                    assert await human.targets()
             finally:
                 await driver.close()
 
@@ -180,7 +185,7 @@ def test_hub_event_fanout_recovery_and_top_once(
             harness,
             httpx.AsyncClient(
                 base_url=connection.endpoint,
-                headers={"Authorization": f"Bearer {connection.token}"},
+                headers={"X-Toolang-Backend": connection.identity},
                 timeout=10,
                 trust_env=False,
             ) as http,
@@ -420,7 +425,7 @@ def test_resident_shutdown_drains_or_bounds_backend_outage(
                     http,
                     "GET",
                     f"{connection.endpoint}/events/stream",
-                    headers={"Authorization": f"Bearer {connection.token}"},
+                    headers={"X-Toolang-Backend": connection.identity},
                     params={"agent": "agent:alice", "run": root},
                 ) as stream:
                     stream.response.raise_for_status()

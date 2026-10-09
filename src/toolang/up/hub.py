@@ -6,7 +6,6 @@ from collections.abc import Sequence
 import fcntl
 import os
 from pathlib import Path
-import secrets
 import socket
 import subprocess
 import time
@@ -65,7 +64,7 @@ class HubProcess:
             with httpx.Client(trust_env=False, timeout=1) as client:
                 response = client.get(
                     record.connection.endpoint + "/healthz",
-                    headers={"Authorization": f"Bearer {record.token}"},
+                    headers={"X-Toolang-Backend": record.identity},
                 )
             return response.status_code == 200 and response.json() == {"ok": True}
         except (httpx.HTTPError, ValueError):
@@ -150,7 +149,6 @@ def serve(root: Path, config: TeamingRootConfig, *, port: int) -> int:
                 pid=os.getpid(),
                 created=psutil.Process().create_time(),
                 port=port,
-                token=secrets.token_urlsafe(32),
                 human=config.human,
                 identity=config.backend.identity,
                 status="starting",
@@ -166,7 +164,6 @@ def serve(root: Path, config: TeamingRootConfig, *, port: int) -> int:
                 record.save(hub.path)
                 app = create_app(
                     MessagingClient(config.backend, actor=config.human),
-                    token=record.token,
                     on_ready=publish_ready,
                 )
                 server = uvicorn.Server(

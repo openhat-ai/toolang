@@ -71,7 +71,10 @@ class HubClient:
         self, method: str, path: str, *, message_id: str | None = None, **kwargs: Any
     ) -> Any:
         connection = self.config
-        headers = {"Authorization": f"Bearer {connection.token}"}
+        headers = {
+            "X-Toolang-Backend": connection.identity,
+            "X-Toolang-Human": quote(connection.human, safe=""),
+        }
         if self._lease is not None:
             headers["X-Toolang-Agent-Lease"] = self._lease
         try:
@@ -115,7 +118,7 @@ class HubClient:
             raise BackendUnavailable(str(detail))
         if message_id and response.status_code >= 500:
             raise SendUnconfirmed(f"Send unconfirmed for {message_id}: {detail}")
-        if response.status_code == 401:
+        if code == "hub_changed":
             if self._lease is not None:
                 raise BackendUnavailable("Hub identity changed; reconnecting")
             raise MessagingError("Hub identity changed; reopen Text")

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import json
 from pathlib import Path
 from typing import Any, Literal
 
@@ -35,16 +36,13 @@ class HubRecord(BaseModel):
     pid: int = Field(gt=0)
     created: float = Field(gt=0)
     port: int = Field(ge=1, le=65535)
-    token: str = Field(min_length=32)
     human: str
     identity: str
     status: Literal["starting", "running"] = "running"
 
     @property
     def connection(self) -> HubConnection:
-        return HubConnection(
-            f"http://127.0.0.1:{self.port}", self.token, self.human, self.identity
-        )
+        return HubConnection(f"http://127.0.0.1:{self.port}", self.human, self.identity)
 
     def save(self, path: Path) -> None:
         if path.exists():
@@ -54,7 +52,11 @@ class HubRecord(BaseModel):
     @classmethod
     def load(cls, path: Path) -> HubRecord | None:
         try:
-            return cls.model_validate_json(path.read_text(encoding="utf-8"))
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                # Keep lifecycle commands usable for Hubs started before upgrade.
+                data.pop("token", None)
+            return cls.model_validate(data)
         except FileNotFoundError:
             return None
         except (OSError, ValueError) as exc:

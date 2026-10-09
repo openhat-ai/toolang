@@ -243,6 +243,5 @@ class HistoryEntry(BaseModel):
 @dataclass(frozen=True)
 class HubConnection:
     endpoint: str
-    token: str
     human: str
     identity: str

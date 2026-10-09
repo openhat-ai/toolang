@@ -174,8 +174,7 @@ blocking connection; no Hub fanout queue or consumer group is required.
 
 ## Hub HTTP and client contract
 
-Add one authenticated endpoint, `GET /events/stream`, using existing Hub discovery
-and bearer authentication. Optional `agent=agent:alice` selects an origin;
+Add `GET /events/stream`, using existing local Hub discovery. Optional `agent=agent:alice` selects an origin;
 `thread=ID` or `run=ID` additionally selects its thread or root tree. Thread/run
 are mutually exclusive and require an agent. No filter means the whole team.
 `after` is a Hub cursor; do not add execution POST routes or a run-ID header.
@@ -244,7 +243,7 @@ retain at most 20 session-completed roots for 30 seconds. Label offline,
 incomplete, and reconnecting states; lease loss never invents a canceled result.
 Omit content bodies and resource metrics. Refresh TTY at most twice per second;
 `q`/Ctrl-C exits. Reconnect GET using the committed cursor with 0.5–5-second
-backoff; authentication/schema/budget errors require user action. `--once` stops
+backoff; configuration/schema/budget errors require user action. `--once` stops
 at the initial checkpoint with incomplete labels or fails on transport/protocol
 error, never presenting an error as an empty successful snapshot.
 Expire completed trees from client structural state as well as rendered rows.

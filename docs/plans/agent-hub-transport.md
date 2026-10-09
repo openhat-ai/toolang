@@ -16,19 +16,20 @@ connections. Coordination and remote Hub deployment remain outside this change.
 
 ## Connection and identity
 
-- Reuse the root's private `.runtime/hub.json` endpoint, bearer token, and backend
+- Reuse the root's private `.runtime/hub.json` endpoint and backend
   identity. Read the current record when connecting/reconnecting; a missing or
-  starting record means unavailable. A changed token is picked up on the next
+  starting record means unavailable. Endpoint changes are picked up on the next
   operation, without restarting the agent. Clients do not validate Hub's PID.
 - Keep process validation in `up/hub.py`; share record decoding and connection
   discovery under `teaming`. Setup passes root/discovery configuration to `msg`
   and the lifecycle, never backend credentials or a backend client.
-- Retain the existing root-local trust boundary and loopback listener. This adds
-  no remote authentication, binding, or sandbox networking configuration. An
-  agent that cannot reach this Hub reports unavailability without a bypass.
-- Require Hub bearer authentication on every agent route. Derive the owner from
-  Hub configuration and the actor from the agent route. Use the resident process's
-  existing lease token for fenced writes; never accept an arbitrary actor/owner
+- Assume trusted local callers and retain the loopback listener. Defer security
+  authentication; remove Hub bearer tokens and credential refresh. This adds
+  no remote binding or sandbox networking configuration. An agent that cannot
+  reach this Hub reports unavailability without a bypass.
+- Derive the owner from Hub configuration and the actor from the agent route.
+  Use the resident process's existing lease token for fenced writes; never accept
+  an arbitrary actor/owner
   in message bodies. Human routes retain their current actor and origin rules.
 
 ## API and ownership
@@ -61,8 +62,13 @@ before writes. Preserve current atomic lease checks and deduplication in storage
   Hub restart must work while agents remain running. An interrupted receive does
   not advance its saved message cursor; in-flight execution is not canceled.
 - Keep checkpoints separated by Hub's backend identity. Switching datasets cannot
-  reuse another dataset's message cursor. Canonical export keeps its existing
-  event identity, lease fencing, bounded backlog, and records-based recovery.
+  reuse another dataset's message cursor. HTTP clients send the discovered
+  identity in `X-Toolang-Backend` and the percent-encoded configured human in
+  `X-Toolang-Human`; Hub rejects a mismatch with `409 hub_changed` before storage
+  access. A receive batch pins that connection. These are configuration consistency
+  checks, not authentication; direct local requests may omit them.
+  Canonical export keeps its existing event identity, lease fencing, bounded
+  backlog, and records-based recovery.
 - Event publication may retry the exact operation after an uncertain HTTP result;
   existing deduplication resolves it. Lease loss/reset requires recovery; invalid
   protocol data fails closed. Use `409` for recovery/lease loss, `503` for
@@ -78,7 +84,7 @@ before writes. Preserve current atomic lease checks and deduplication in storage
 | --- | --- |
 | No Hub, live backend | Default agent starts, executes, streams locally, and stops without any direct backend access. `msg` reports Hub unavailable. |
 | Hub starts after agent | The existing agent registers, consumes messages, and exports without restart. |
-| Hub stops/restarts | Local runs continue; polling/export reconnect, refresh credentials, and recover structure/cursors. |
+| Hub stops/restarts | Local runs continue; polling/export reconnect and recover structure/cursors without credentials. |
 | Messaging parity | Human and agent routes preserve membership, origin, uncertain-send handling, and explicit opt-out. |
 | Publication faults | Lost responses, stale leases, invalid requests, and oversized snapshots preserve fencing, deduplication, and recovery. |
 | Both engines | Isolated Redis and Valkey tests exercise two agents through Hub HTTP APIs and local/Hub subscriptions. |

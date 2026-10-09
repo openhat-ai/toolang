@@ -93,7 +93,7 @@ ports are `1..65535`. Temporary agent port selection is unchanged.
 
 One Hub per root binds `127.0.0.1`. Remote access/authentication is outside this
 delivery. Its private `.runtime/hub.json` records PID/creation time, endpoint,
-human, backend identity, status, and a generated bearer token. Text discovers this
+human, backend identity, and status. Text discovers this
 record; it never guesses a port or starts Hub implicitly. Configuration changes
 require restart. Lifecycle commands verify process identity and never manage
 agents or Redis/Valkey. A process lock prevents concurrent Hubs for the same root.
@@ -101,8 +101,8 @@ agents or Redis/Valkey. A process lock prevents concurrent Hubs for the same roo
 Startup publishes a `starting` record before backend access, so status/stop remain
 available while registration is pending; readiness changes it to `running`.
 Startup registers the configured human and requires backend readiness. Each
-authenticated request idempotently restores that human and system membership if
-the backend restarted empty; message writes are never retried. Authenticated
+request idempotently restores that human and system membership if
+the backend restarted empty; message writes are never retried.
 `GET /healthz` checks current backend availability. Messaging routes under `/msg`
 delegate to the existing service as that human; requests cannot supply an actor
 or agent origin. No agent execution routes are mounted.
@@ -121,12 +121,12 @@ or agent origin. No agent execution routes are mounted.
 History rows carry `stream_id` and raw message JSON (`data`, nullable for a corrupt
 record), preserving cursor advancement past malformed records. Service errors
 carry `code`/`detail`: invalid operations `400`, backend outages `503`, uncertain
-sends `502`; authentication failures return `401`. Clients never retry writes.
+sends `502`; backend identity mismatches return `409`. Clients never retry writes.
 A lost send response reports its UUID for manual reconciliation; this is not an
 idempotency guarantee.
 
 Acceptance adds HTTP/service parity (including Unicode, membership, corrupt rows,
-and uncertainty), token/actor isolation, empty-backend recovery, unavailable-backend
+and uncertainty), actor isolation, empty-backend recovery, unavailable-backend
 startup, stop during startup, concurrent start, stale PID safety, stop isolation,
 actual-port discovery, and CLI/environment/config precedence. Tests use an
 in-memory backend by default and isolated optional

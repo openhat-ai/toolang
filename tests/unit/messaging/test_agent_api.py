@@ -12,13 +12,14 @@ import pytest
 
 from tests.support.execution_harness import ExecutionHarness
 from tests.unit.messaging.test_event_observation import run, publish, prefix
-from tests.unit.messaging.test_protocol import client
+from tests.unit.messaging.test_protocol import CONFIG, client
 from toolang.base.types.tool import ToolContext
 from toolang.common.layout import AgentLayout
 from toolang.execution.errors import SnapshotLimitError
 from toolang.plugin.toolsets.msg import MsgToolset
 from toolang.teaming.agent_client import AgentClient, AgentEventClient
 from toolang.teaming.api import create_app
+from toolang.teaming.config import BackendConfig
 from toolang.teaming.errors import (
     BackendUnavailable,
     EventRecoveryRequired,
@@ -34,7 +35,7 @@ from toolang.teaming.stream_client import HubStreamState
 from toolang.teaming.subscriptions import HubSubscription
 from toolang.work.messaging import MessagingLoop
 
-CONNECTION = HubConnection("http://hub", "a" * 32, "human:owner", "dataset-one")
+CONNECTION = HubConnection("http://hub", "human:owner", CONFIG.identity)
 
 
 def agent(app, root, actor="agent:alice", token="lease", transport=None):
@@ -50,7 +51,7 @@ def agent(app, root, actor="agent:alice", token="lease", transport=None):
 def test_agent_messaging_uses_hub_authority_and_context(tmp_path):
     async def scenario():
         human = client(FakeServer(server_type="valkey"), CONNECTION.human)
-        app = create_app(human, token=CONNECTION.token)
+        app = create_app(human)
         async with (
             app.router.lifespan_context(app),
             agent(app, tmp_path) as alice,
@@ -97,11 +98,11 @@ def test_agent_tools_without_hub_never_construct_backend(tmp_path):
     asyncio.run(scenario())
 
 
-def test_agent_discovery_refreshes_tokens_and_pins_batch_identity(tmp_path):
+def test_agent_discovery_pins_batch_identity_and_refreshes_connections(tmp_path):
     async def scenario():
         current = CONNECTION
         human = client(FakeServer(server_type="valkey"), CONNECTION.human)
-        app = create_app(human, token=current.token)
+        app = create_app(human)
 
         async def handle(request):
             return await httpx.ASGITransport(app).handle_async_request(request)
@@ -111,7 +112,6 @@ def test_agent_discovery_refreshes_tokens_and_pins_batch_identity(tmp_path):
                 pid=1,
                 created=1.0,
                 port=7000,
-                token=current.token,
                 human=current.human,
                 identity=current.identity,
             ).save(tmp_path / ".runtime" / "hub.json")
@@ -125,8 +125,9 @@ def test_agent_discovery_refreshes_tokens_and_pins_batch_identity(tmp_path):
         ):
             await alice.register(CONNECTION.human)
             with alice.session() as identity:
-                current = replace(current, token="b" * 32, identity="dataset-two")
-                app = create_app(human, token=current.token)
+                human.config = BackendConfig("redis://second")
+                current = replace(current, identity=human.config.identity)
+                app = create_app(human)
                 save()
                 assert identity == CONNECTION.identity
                 with pytest.raises(BackendUnavailable, match="identity changed"):
@@ -134,7 +135,7 @@ def test_agent_discovery_refreshes_tokens_and_pins_batch_identity(tmp_path):
             await alice.register(CONNECTION.human)
             assert await alice.targets()
             with alice.session() as identity:
-                assert identity == "dataset-two"
+                assert identity == current.identity
             (tmp_path / ".runtime" / "hub.json").unlink()
             with pytest.raises(BackendUnavailable):
                 await alice.targets()
@@ -147,7 +148,9 @@ def test_message_checkpoints_are_separate_after_backend_switch(tmp_path, monkeyp
         humans = [
             client(FakeServer(server_type="valkey"), CONNECTION.human) for _ in range(2)
         ]
-        apps = [create_app(human, token=CONNECTION.token) for human in humans]
+        for index, human in enumerate(humans):
+            human.config = BackendConfig(f"redis://dataset-{index}")
+        apps = [create_app(human) for human in humans]
         current = 0
 
         async def handle(request):
@@ -163,7 +166,9 @@ def test_message_checkpoints_are_separate_after_backend_switch(tmp_path, monkeyp
                 actor="agent:alice",
                 token="lease",
                 transport=httpx.MockTransport(handle),
-                connection=lambda: replace(CONNECTION, identity=f"dataset-{current}"),
+                connection=lambda: replace(
+                    CONNECTION, identity=humans[current].config.identity
+                ),
             ) as alice,
         ):
             loop = MessagingLoop(
@@ -201,7 +206,7 @@ def test_message_checkpoints_are_separate_after_backend_switch(tmp_path, monkeyp
 def test_agent_send_lost_http_ack_is_not_retried(tmp_path):
     async def scenario():
         human = client(FakeServer(server_type="valkey"), CONNECTION.human)
-        app = create_app(human, token=CONNECTION.token)
+        app = create_app(human)
         writes = 0
 
         async def handle(request):
@@ -232,7 +237,7 @@ def test_event_publication_retries_exact_http_operation_and_recovers(tmp_path):
 
     async def scenario():
         human = client(FakeServer(server_type="valkey"), CONNECTION.human)
-        app = create_app(human, token=CONNECTION.token)
+        app = create_app(human)
         lost = False
         commits = []
 
@@ -320,7 +325,7 @@ def test_event_publication_retries_exact_http_operation_and_recovers(tmp_path):
 def test_agent_api_rejects_bad_identity_lease_and_publications(tmp_path):
     async def scenario():
         human = client(FakeServer(server_type="valkey"), CONNECTION.human)
-        app = create_app(human, token=CONNECTION.token)
+        app = create_app(human)
         async with app.router.lifespan_context(app), agent(app, tmp_path) as alice:
             await alice.register(CONNECTION.human)
             publisher = AgentEventClient(alice)
@@ -353,13 +358,12 @@ def test_agent_api_rejects_bad_identity_lease_and_publications(tmp_path):
             ) as http:
                 assert (
                     await http.put("/agents/agent:alice/lease", json={})
-                ).status_code == 401
+                ).status_code == 400
                 assert (
                     await http.put(
                         "/agents/human:owner/lease",
                         json={},
                         headers={
-                            "Authorization": "Bearer " + CONNECTION.token,
                             "X-Toolang-Agent-Lease": "lease",
                         },
                     )

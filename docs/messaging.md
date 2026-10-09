@@ -45,24 +45,26 @@ too hub stop                        # Leaves agents and Redis/Valkey running.
 ```
 
 `too hub serve` runs in the foreground. Hub binds `127.0.0.1`; clients discover its
-actual endpoint and bearer token from the private root `.runtime/hub.json` file.
+actual endpoint and backend identity from the private root `.runtime/hub.json`
+file. Calls assume trusted local clients; security authentication is deferred.
 Start Hub before using Text or `msg` tools. Agents use it for messages, presence,
 and event export. Stopping Hub leaves agents running; communication fails until
-Hub returns. Background communication refreshes credentials and resumes without
-an agent restart; uncertain message sends are never automatically repeated.
+Hub returns. Background communication resumes without an agent restart; uncertain
+message sends are never automatically repeated.
 Isolated guests without access to this local Hub report unavailability.
 
 `too hub status` reports `starting` while waiting for the backend;
 `too hub stop --force` can stop a stalled startup. After an empty backend restart,
-Hub restores the configured human's registration on the next authenticated
-request. Lost messages and custom groups are not restored.
+Hub restores the configured human's registration on the next request. Lost
+messages and custom groups are not restored.
 
 Hub `start`/`serve` ports resolve as `--port` > `TOOLANG_HUB_PORT` >
 `teaming.hub.port` > `7000`. Resident agent `start`/`serve` uses `--port` >
 `TOOLANG_AGENT_PORT` > home `[api] port` > recorded/available `7001`–`7999`.
 Explicit ports must be `1..65535`; an occupied explicit port fails. Overrides do
 not change configuration. Restart to apply configuration changes; reopen Text
-after restarting Hub. Temporary agents keep their existing port selection.
+if its endpoint, backend, or human changes. Temporary agents keep their existing
+port selection.
 
 Targets use `agent:`, `human:`, or `group:`. IDs are case-sensitive Unicode
 letters/numbers with combining marks and `-_.`; the first character must be a

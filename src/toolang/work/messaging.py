@@ -96,7 +96,7 @@ class MessagingLoop:
 
     async def poll(self) -> None:
         # Pin discovery for the whole batch. A Hub/backend switch fails this
-        # attempt instead of mixing data or credentials across checkpoints.
+        # attempt instead of mixing data across checkpoints.
         with self.client.session() as identity:
             path = self.room / f"v1-{identity}.json"
             if path != self.path:

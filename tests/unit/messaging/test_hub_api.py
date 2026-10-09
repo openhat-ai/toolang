@@ -1,6 +1,7 @@
-"""Hub HTTP parity, authorization, lifecycle, and lost-ack behavior, offline."""
+"""Hub HTTP parity, local access, lifecycle, and lost-ack behavior, offline."""
 
 import asyncio
+from dataclasses import replace
 import json
 from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
@@ -9,14 +10,14 @@ from fakeredis import FakeServer
 import httpx
 import pytest
 
-from tests.unit.messaging.test_protocol import client
+from tests.unit.messaging.test_protocol import CONFIG, client
 from toolang.teaming.api import create_app
 from toolang.teaming.backend import group_key
 from toolang.teaming.client import HubClient
 from toolang.teaming.errors import BackendUnavailable, MessagingError, SendUnconfirmed
 from toolang.teaming.schemas import HubConnection, Message
 
-CONNECTION = HubConnection("http://hub", "test-token", "human:owner", "test")
+CONNECTION = HubConnection("http://hub", "human:owner", CONFIG.identity)
 
 
 @pytest.mark.parametrize("first_request", ["health", "create", "send", "directory"])
@@ -24,7 +25,7 @@ def test_hub_recovers_human_registration_after_empty_backend_restart(first_reque
     async def scenario():
         server = FakeServer(server_type="valkey")
         human = client(server, CONNECTION.human)
-        app = create_app(human, token=CONNECTION.token)
+        app = create_app(human)
         async with (
             app.router.lifespan_context(app),
             HubClient(CONNECTION, transport=httpx.ASGITransport(app)) as hub,
@@ -35,16 +36,15 @@ def test_hub_recovers_human_registration_after_empty_backend_restart(first_reque
             server.connected = False
             assert (
                 await http.get(
-                    "/healthz", headers={"Authorization": f"Bearer {CONNECTION.token}"}
+                    "/healthz", headers={"X-Toolang-Backend": CONNECTION.identity}
                 )
             ).status_code == 503
             server.connected = True
             await human._backend._client.flushdb()
-            assert (await http.get("/healthz")).status_code == 401
             assert await human._backend.participants() == {}
             if first_request == "health":
                 response = await http.get(
-                    "/healthz", headers={"Authorization": f"Bearer {CONNECTION.token}"}
+                    "/healthz", headers={"X-Toolang-Backend": CONNECTION.identity}
                 )
                 assert response.status_code == 200
             elif first_request == "create":
@@ -70,7 +70,7 @@ def test_http_messaging_matches_service_and_isolates_agent_conversations():
     async def scenario():
         server = FakeServer(server_type="valkey")
         human = client(server, CONNECTION.human)
-        app = create_app(human, token=CONNECTION.token)
+        app = create_app(human)
         async with (
             client(server, "agent:alice") as alice,
             client(server, "agent:bob") as bob,
@@ -125,20 +125,24 @@ def test_http_messaging_matches_service_and_isolates_agent_conversations():
     asyncio.run(scenario())
 
 
-def test_authentication_validation_and_backend_readiness():
+@pytest.mark.parametrize("owner", ["human:owner", "human:维护者"])
+def test_local_access_validation_and_backend_readiness(owner):
     async def scenario():
         server = FakeServer(server_type="valkey")
-        human = client(server, CONNECTION.human)
-        app = create_app(human, token=CONNECTION.token)
+        human = client(server, owner)
+        app = create_app(human)
         async with (
             app.router.lifespan_context(app),
             httpx.AsyncClient(
                 transport=httpx.ASGITransport(app), base_url="http://hub"
             ) as http,
+            HubClient(
+                replace(CONNECTION, human=owner), transport=httpx.ASGITransport(app)
+            ) as hub,
         ):
-            assert (await http.get("/healthz")).status_code == 401
-            assert (await http.post("/msg/messages", json={})).status_code == 401
-            http.headers["Authorization"] = f"Bearer {CONNECTION.token}"
+            assert await hub.targets() == await human.targets()
+            assert (await http.get("/healthz")).status_code == 200
+            assert (await http.post("/msg/messages", json={})).status_code == 400
             assert (await http.get("/healthz")).json() == {"ok": True}
             assert (await http.get("/threads")).status_code == 404
             body = {"id": str(uuid4()), "target": "group:all", "body": "test"}
@@ -178,9 +182,7 @@ def test_startup_failure_closes_service_without_publishing_readiness():
         human.check_backend = AsyncMock(side_effect=BackendUnavailable("offline"))
         human.close = AsyncMock(wraps=human.close)
         ready = []
-        app = create_app(
-            human, token=CONNECTION.token, on_ready=lambda: ready.append(True)
-        )
+        app = create_app(human, on_ready=lambda: ready.append(True))
         with pytest.raises(BackendUnavailable):
             async with app.router.lifespan_context(app):
                 pytest.fail("startup must fail")
@@ -190,10 +192,34 @@ def test_startup_failure_closes_service_without_publishing_readiness():
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize(
+    "changes", [{"identity": "another-backend"}, {"human": "human:another"}]
+)
+def test_hub_config_switch_rejects_stale_text_before_any_storage_access(changes):
+    async def scenario():
+        human = client(FakeServer(server_type="valkey"), CONNECTION.human)
+        app = create_app(human)
+        async with (
+            human,
+            HubClient(
+                replace(CONNECTION, **changes),
+                transport=httpx.ASGITransport(app),
+            ) as hub,
+        ):
+            human.register_human = AsyncMock(
+                side_effect=AssertionError("storage touched")
+            )
+            with pytest.raises(MessagingError, match="identity changed; reopen Text"):
+                await hub.send("group:all", body="must not reach another dataset")
+            human.register_human.assert_not_awaited()
+
+    asyncio.run(scenario())
+
+
 def test_history_preserves_corrupt_records_and_full_cursors():
     async def scenario():
         human = client(FakeServer(server_type="valkey"), CONNECTION.human)
-        app = create_app(human, token=CONNECTION.token)
+        app = create_app(human)
         async with (
             app.router.lifespan_context(app),
             HubClient(CONNECTION, transport=httpx.ASGITransport(app)) as hub,
@@ -252,7 +278,7 @@ def test_backend_uncertain_send_keeps_uuid_over_http():
             raise SendUnconfirmed("ack lost")
 
         human._backend.append = lose_ack
-        app = create_app(human, token=CONNECTION.token)
+        app = create_app(human)
         async with (
             app.router.lifespan_context(app),
             HubClient(CONNECTION, transport=httpx.ASGITransport(app)) as hub,

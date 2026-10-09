@@ -28,15 +28,15 @@ def test_top_observes_hub_without_preparing_an_agent(tmp_path, monkeypatch):
     monkeypatch.setattr(
         top.HubProcess,
         "connection",
-        lambda self: SimpleNamespace(endpoint="http://hub", token="secret"),
+        lambda self: SimpleNamespace(endpoint="http://hub", identity="backend"),
     )
 
     async def observe(endpoint, **options):
-        seen.append((endpoint, options["agent"], options["token"], options["once"]))
+        seen.append((endpoint, options["agent"], options["backend"], options["once"]))
 
     monkeypatch.setattr(top, "watch", observe)
     assert cli.main(["--root", str(tmp_path), "top", "--once"]) == 0
-    assert seen == [("http://hub", None, "secret", True)]
+    assert seen == [("http://hub", None, "backend", True)]
     assert not (tmp_path / "agents").exists()
 
 
@@ -120,7 +120,7 @@ def test_once_does_not_turn_transport_failure_into_an_empty_snapshot(monkeypatch
             watch(
                 "http://hub",
                 agent=None,
-                token="secret",
+                backend="backend",
                 once=True,
                 console=Console(file=output),
             )
