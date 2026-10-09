@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 from collections import defaultdict, deque
 from collections.abc import Callable
-from dataclasses import dataclass
 from pathlib import Path
 import sqlite3
 import threading
@@ -43,34 +42,10 @@ from .observation import (
     SnapshotFrames as _Frames,
     StructuralSnapshot,
     StreamNormalizer,
+    StreamScope as StreamScope,
 )
 
 _TERMINAL = {"succeeded", "failed", "canceled"}
-
-
-@dataclass(frozen=True, slots=True)
-class StreamScope:
-    root: str | None = None
-    thread: str | None = None
-
-    def __post_init__(self) -> None:
-        if self.root is not None and self.thread is not None:
-            raise ValueError("select one stream scope")
-
-    def matches(self, frame: CanonicalEvent) -> bool:
-        return (self.root is None or self.root == frame.root_run_id) and (
-            self.thread is None
-            or self.thread == frame.thread_id
-            or isinstance(frame.event, ThreadForked)
-            and self.thread == frame.event.source_thread
-        )
-
-    def data(self) -> dict[str, str]:
-        if self.root is not None:
-            return {"kind": "run", "id": self.root}
-        if self.thread is not None:
-            return {"kind": "thread", "id": self.thread}
-        return {"kind": "agent"}
 
 
 class Subscriptions:

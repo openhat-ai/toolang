@@ -5,10 +5,10 @@ from __future__ import annotations
 from typing import Any
 
 from toolang.execution.events import RunRetried, event_from_data
-from toolang.execution.schemas import StreamFrame
+from toolang.execution.schemas import STREAM_PREFILL_MAX_BYTES, StreamFrame
 from toolang.execution.stream_client import StreamClientState
 from .errors import ForgottenTree
-from .events import HubCursor, HubScope, MAX_BYTES, encode
+from .events import HubCursor, HubScope, encode
 
 
 class HubStreamState:
@@ -117,7 +117,7 @@ class HubStreamState:
             if frame.id is not None or frame.event.startswith("part_"):
                 raise ValueError("Hub prefill contains acknowledged progress")
             self._bytes += len(encode(frame.data).encode())
-            if self._bytes > MAX_BYTES or len(self._prefix) >= 20000:
+            if self._bytes > STREAM_PREFILL_MAX_BYTES or len(self._prefix) >= 20000:
                 raise ValueError("Hub prefill exceeds client budget")
             self._prefix.append(frame)
             return

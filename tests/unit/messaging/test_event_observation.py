@@ -494,7 +494,7 @@ def test_retry_admission_clears_old_result_and_source_begin(tmp_path):
     from toolang.execution.events import RunRetried
     from toolang.execution.stream import CanonicalEvent
     from toolang.execution.types import ControlRef, EventCursor
-    from toolang.teaming.events import field
+    from toolang.teaming.records import field
 
     harness = ExecutionHarness.create(
         tmp_path, source="flow example:\n  let result = Done\n", responses=[]
@@ -789,13 +789,13 @@ def test_teaming_close_bounds_unresponsive_lease_release(tmp_path, monkeypatch):
 def test_projection_omits_optional_history_before_failing_active_budget(
     tmp_path, monkeypatch
 ):
-    import toolang.teaming.events as events
+    import toolang.teaming.records as records
     from toolang.execution.events import RunBegin, RunEnd
     from toolang.execution.stream import CanonicalEvent
     from toolang.execution.types import ControlRef, EventCursor
 
-    projection = events.Projection()
-    monkeypatch.setattr(events, "MAX_RECENT", 2)
+    projection = records.EventProjection()
+    monkeypatch.setattr(records, "MAX_RECENT", 2)
     for index in range(4):
         name = f"run_{index}"
         begin = RunBegin(name, ControlRef.for_run(name, 0), thread_id="term_one")
@@ -817,12 +817,12 @@ def test_projection_omits_optional_history_before_failing_active_budget(
                 )
             )
     assert projection.trim()
-    assert events.field("run", "run_0") not in projection.entities
-    assert events.field("run", "run_3") in projection.entities
-    monkeypatch.setattr(events, "MAX_ENTITIES", 2)
+    assert records.field("run", "run_0") not in projection.entities
+    assert records.field("run", "run_3") in projection.entities
+    monkeypatch.setattr(records, "MAX_ENTITIES", 2)
     projection.trim()
     assert {value.get("root") for value in projection.entities.values()} == {"run_3"}
-    monkeypatch.setattr(events, "MAX_ENTITIES", 1)
+    monkeypatch.setattr(records, "MAX_ENTITIES", 1)
     from toolang.execution.errors import SnapshotLimitError
 
     with pytest.raises(SnapshotLimitError):
@@ -990,7 +990,7 @@ def test_projection_preserves_nested_background_run_structure():
     from toolang.execution.subscriptions import StreamScope
     from toolang.execution.types import ControlRef, EventCursor, StepRef
     from toolang.lang.ast import RunStmt, Span
-    from toolang.teaming.events import Projection
+    from toolang.teaming.records import EventProjection
 
     root = RunBegin("run_root", ControlRef.for_run("run_root", 0))
     step = StepBegin(
@@ -1002,7 +1002,7 @@ def test_projection_preserves_nested_background_run_structure():
     step_end = StepEnd(step.step, "run", "succeeded")
     root_end = RunEnd(root.run, "succeeded")
     child_end = RunEnd(child.run, "succeeded")
-    projection = Projection()
+    projection = EventProjection()
     for seq, event in enumerate((root, step, child, step_end, root_end, child_end), 1):
         projection.apply(
             CanonicalEvent(EventCursor("a" * 32, seq), event, "term_one", root.run, 0)
@@ -1024,9 +1024,9 @@ def test_projection_rejects_invalid_tree_structure(damage):
     from toolang.execution.stream import CanonicalEvent
     from toolang.execution.subscriptions import StreamScope
     from toolang.execution.types import ControlRef, EventCursor, StepRef
-    from toolang.teaming.events import Projection, field
+    from toolang.teaming.records import EventProjection, field
 
-    projection = Projection()
+    projection = EventProjection()
     name = "run_one"
     projection.apply(
         CanonicalEvent(
@@ -1055,7 +1055,7 @@ def test_invalid_recovery_metadata_is_a_backend_error(damage):
     import httpx
     from toolang.teaming.api import create_app
     from toolang.teaming.event_backend import AGENTS, MANIFEST, generation_key
-    from toolang.teaming.events import field
+    from toolang.teaming.records import field
     from toolang.teaming.messaging import MessagingClient
 
     async def scenario():

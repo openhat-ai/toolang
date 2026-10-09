@@ -20,30 +20,24 @@ from toolang.execution.events import RunBegin, StepBegin, event_from_data, event
 from toolang.execution.errors import StreamGapError, StreamOverflowError
 from toolang.execution.observation import SNAPSHOT_SECONDS
 from toolang.execution.errors import SnapshotLimitError
+from toolang.execution.records import RunRecord, StepRecord
 from toolang.execution.store import RunStore
 from toolang.execution.stream import CanonicalStream, CanonicalEvent, StreamReader
 from toolang.execution.subscriptions import RecordSnapshot, record_controls
 from toolang.execution.types import EventCursor
 from .errors import BackendUnavailable, EventProtocolError, EventRecoveryRequired
 from .event_backend import EventBackend, generation_key
-from .events import (
-    MAX_BYTES,
-    MAX_RECENT,
-    MAX_EVENT_BYTES,
-    PARTS,
-    Projection,
-    encode,
-    field,
-)
+from .events import MAX_EVENT_BYTES, PARTS, encode
+from .records import MAX_BYTES, MAX_RECENT, EventProjection, field
 
 logger = logging.getLogger(__name__)
 
 
-def _records(store: RunStore, boundary: EventCursor) -> Projection:
+def _read_projection(store: RunStore, boundary: EventCursor) -> EventProjection:
     """Load active structure first; optional history cannot evict an active tree."""
-    projection = Projection()
+    projection = EventProjection()
 
-    def add(runs, steps):
+    def add(runs: list[RunRecord], steps: list[StepRecord]) -> None:
         snapshot = RecordSnapshot(store, runs, steps)
         roots: dict[str, str] = {}
         threads: dict[str, str] = {}
@@ -143,7 +137,7 @@ class EventExporter:
         )
         # Install before any producer is started, without backend I/O.
         self.reader = source.subscribe()
-        self.projection = Projection()
+        self.projection = EventProjection()
         self._projection_bytes = 0
         self.epoch = ""
         self.generation = ""
@@ -160,7 +154,7 @@ class EventExporter:
                 await asyncio.sleep(delay)
                 delay = min(5, delay * 2)
 
-    async def _snapshot(self) -> tuple[EventCursor, Projection, StreamReader]:
+    async def _snapshot(self) -> tuple[EventCursor, EventProjection, StreamReader]:
         opening = asyncio.create_task(
             asyncio.to_thread(RunStore, self.path, read_only=True)
         )
@@ -183,7 +177,7 @@ class EventExporter:
 
             def read():
                 try:
-                    return _records(store, boundary)
+                    return _read_projection(store, boundary)
                 finally:
                     store.close()
 

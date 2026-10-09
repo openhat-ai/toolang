@@ -1,4 +1,4 @@
-"""Agent-owned messaging lifecycle and serial batch handling."""
+"""Agent-owned message polling and serial batch handling."""
 
 from __future__ import annotations
 

@@ -13,10 +13,9 @@ from .events import (
     HubCursor,
     MAX_STREAM_BYTES,
     MAX_STREAM_EVENTS,
-    MAX_BYTES,
-    MAX_ENTITIES,
     encode,
 )
+from .records import MAX_BYTES, MAX_ENTITIES
 from .schemas import stream_id, target
 
 EVENTS = f"{PREFIX}:events"

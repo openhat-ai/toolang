@@ -15,6 +15,8 @@ from toolang.execution.errors import (
 )
 from toolang.execution.events import RunRetried, event_from_data
 from toolang.execution.observation import (
+    OPEN_ENTITIES,
+    SNAPSHOT_SECONDS,
     SnapshotBudget,
     SnapshotFrames,
     StreamNormalizer,
@@ -32,8 +34,8 @@ from .event_backend import EventBackend, MANIFEST
 from .events import (
     HubCursor,
     HubScope,
-    Projection,
 )
+from .records import EventProjection
 from .schemas import stream_id
 
 
@@ -67,6 +69,22 @@ def envelope(
     return StreamFrame(frame.event, data, None if context else cursor)
 
 
+def _origin_status(
+    agent: str, origin: dict[str, Any], current_token: str | None
+) -> dict[str, Any]:
+    # An offline origin can retain complete data; a new lease owner cannot
+    # claim the previous owner's projection until it has recovered.
+    complete = origin.get("status") == "complete" and (
+        current_token is None or current_token == origin.get("token")
+    )
+    return dict(
+        agent=agent,
+        online=current_token is not None,
+        complete=complete,
+        reason=None if complete else origin.get("reason") or "unpublished",
+    )
+
+
 class HubSubscription:
     def __init__(
         self, backend: EventBackend, scope: HubScope, after: str | None = None
@@ -84,13 +102,13 @@ class HubSubscription:
 
     async def prepare(self) -> None:
         try:
-            async with asyncio.timeout(5):
+            async with asyncio.timeout(SNAPSHOT_SECONDS):
                 await self._prepare()
         except TimeoutError as exc:
             raise SnapshotLimitError("Hub snapshot expired") from exc
 
     async def _prepare(self) -> None:
-        deadline = time.monotonic() + 5
+        deadline = time.monotonic() + SNAPSHOT_SECONDS
         await self.backend.initialize()
         while True:
             if time.monotonic() > deadline:
@@ -118,7 +136,7 @@ class HubSubscription:
                 and self.after is not None
                 and self.after.position >= stream_id(meta["floor"])
             )
-            projections: dict[str, Projection] = {}
+            projections: dict[str, EventProjection] = {}
             baselines: dict[str, str] = {}
             status: dict[str, dict[str, Any]] = {}
             resets: set[str] = set()
@@ -149,18 +167,10 @@ class HubSubscription:
                 count += len(entities)
                 if count > 10000:
                     raise SnapshotLimitError("Hub snapshot entity budget exceeded")
-                projections[agent] = Projection(entities)
+                projections[agent] = EventProjection(entities)
                 baselines[agent] = manifest["baseline"] if manifest else "0-0"
                 token = await self.backend.online_token(agent)
-                complete = origin.get("status") == "complete" and (
-                    token is None or token == origin.get("token")
-                )
-                status[agent] = dict(
-                    agent=agent,
-                    online=token is not None,
-                    complete=complete,
-                    reason=None if complete else origin.get("reason") or "unpublished",
-                )
+                status[agent] = _origin_status(agent, origin, token)
                 if self.after is not None and (
                     not same
                     or self.after.position < stream_id(origin.get("floor", "0-0"))
@@ -219,15 +229,15 @@ class HubSubscription:
                 ):
                     continue
                 try:
-                    self._build(
-                        projections,
-                        baselines,
-                        status,
-                        rows,
-                        boundary,
-                        cached,
-                        resets,
-                        deadline,
+                    self._build_prefix(
+                        projections=projections,
+                        baselines=baselines,
+                        statuses=status,
+                        rows=rows,
+                        boundary=boundary,
+                        cached=cached,
+                        resets=resets,
+                        deadline=deadline,
                     )
                 except ScopeUnavailable:
                     raise
@@ -246,8 +256,17 @@ class HubSubscription:
                 return
             await asyncio.sleep(0)
 
-    def _build(
-        self, projections, baselines, statuses, rows, boundary, cached, resets, deadline
+    def _build_prefix(
+        self,
+        *,
+        projections: dict[str, EventProjection],
+        baselines: dict[str, str],
+        statuses: dict[str, dict[str, Any]],
+        rows: list[tuple[str, dict[str, str]]],
+        boundary: HubCursor,
+        cached: bool,
+        resets: set[str],
+        deadline: float,
     ) -> None:
         scope = self.scope.local
         if (
@@ -398,7 +417,7 @@ class HubSubscription:
                 prefix.append(StreamFrame("stream_status", status))
             for _, items in sorted(ordered, key=lambda item: item[0]):
                 prefix.extend(items)
-        if sum(normal.open_entities for normal in normalizers.values()) > 4096:
+        if sum(normal.open_entities for normal in normalizers.values()) > OPEN_ENTITIES:
             raise StreamOverflowError("Hub open-entity budget exceeded")
         prefix.append(
             StreamFrame("stream_checkpoint", {"cursor": str(boundary)}, str(boundary))
@@ -415,7 +434,7 @@ class HubSubscription:
             and not any(normal.active for normal in self._normalizers.values())
         )
 
-    async def _presence(self) -> None:
+    async def _refresh_presence(self) -> None:
         self._last_presence = time.monotonic()
         _, origins, directory = await self.backend.capture(self.scope.agent)
         agents = {a for a in directory if a.startswith("agent:")} | set(origins)
@@ -427,15 +446,7 @@ class HubSubscription:
         for agent, status in tuple(self._status.items()):
             token = await self.backend.online_token(agent)
             origin = origins.get(agent, {})
-            complete = origin.get("status") == "complete" and (
-                token is None or token == origin.get("token")
-            )
-            current = dict(
-                agent=agent,
-                online=token is not None,
-                complete=complete,
-                reason=None if complete else origin.get("reason") or "unpublished",
-            )
+            current = _origin_status(agent, origin, token)
             if current != status:
                 self._status[agent] = current
                 self._prefix.append(StreamFrame("stream_status", current))
@@ -464,7 +475,7 @@ class HubSubscription:
                 except EventRecoveryRequired as exc:
                     raise StreamOverflowError(str(exc)) from exc
                 if time.monotonic() - self._last_presence >= 15:
-                    await self._presence()
+                    await self._refresh_presence()
                     if self._prefix:
                         continue
                 if self._terminal() and self._closing_tail is None:
@@ -497,7 +508,7 @@ class HubSubscription:
                             normal.open_entities
                             for normal in self._normalizers.values()
                         )
-                        > 4096
+                        > OPEN_ENTITIES
                     ):
                         raise StreamOverflowError("Hub open-entity budget exceeded")
                     self.cursor = position

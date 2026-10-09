@@ -3,6 +3,7 @@
 from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Iterable, Iterator
+from dataclasses import dataclass
 import json
 import time
 from typing import Any
@@ -17,6 +18,7 @@ from .events import (
     RunRetried,
     StepBegin,
     StepEnd,
+    ThreadForked,
 )
 from .schemas import STREAM_PREFILL_MAX_BYTES, StreamFrame
 from .stream import CanonicalEvent
@@ -26,6 +28,31 @@ SNAPSHOT_SECONDS = 5.0
 SNAPSHOT_BYTES = STREAM_PREFILL_MAX_BYTES
 OPEN_ENTITIES = 4096
 _PARTS = (PartBegin, PartDelta, PartEnd)
+
+
+@dataclass(frozen=True, slots=True)
+class StreamScope:
+    root: str | None = None
+    thread: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.root is not None and self.thread is not None:
+            raise ValueError("select one stream scope")
+
+    def matches(self, frame: CanonicalEvent) -> bool:
+        return (self.root is None or self.root == frame.root_run_id) and (
+            self.thread is None
+            or self.thread == frame.thread_id
+            or isinstance(frame.event, ThreadForked)
+            and self.thread == frame.event.source_thread
+        )
+
+    def data(self) -> dict[str, str]:
+        if self.root is not None:
+            return {"kind": "run", "id": self.root}
+        if self.thread is not None:
+            return {"kind": "thread", "id": self.thread}
+        return {"kind": "agent"}
 
 
 class SnapshotBudget:
