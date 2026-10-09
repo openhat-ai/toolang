@@ -261,6 +261,12 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Fixed
 
+- Active-tree selection no longer rescans all runs for every root: parent run
+  IDs are materialized once so recursive lookups are indexed, keeping a large
+  completed history from exhausting the five-second snapshot budget before
+  optional history is read, with existing tree selection and cursor semantics
+  unchanged. (#723)
+
 - Team event observation keeps a large recovery history from stalling or
   replacing the active snapshot: optional SQL reads and structural
   reconstruction now share one deadline of half the five-second snapshot

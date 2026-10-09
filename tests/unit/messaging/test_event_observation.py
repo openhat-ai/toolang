@@ -827,6 +827,86 @@ def test_projection_omits_optional_history_before_failing_active_budget(
         projection.trim()
 
 
+@pytest.mark.parametrize("scope", ["agent", "thread", "run"])
+def test_active_records_do_not_rescan_history_for_every_root(tmp_path, scope):
+    from tests.support.execution_harness import AsyncGate, ScriptedModelTurn
+    from toolang.base.types.run import ModelCallResult
+    from toolang.execution.store import RunStore
+    from toolang.execution.subscriptions import RecordSnapshot
+    from toolang.teaming.records import MAX_BYTES
+
+    gate = AsyncGate()
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=(
+            "flow example:\n  let result = Done\n"
+            "flow parent:\n  run example\n  run slow\n"
+            "agic slow:\n  Wait.\n"
+        ),
+        responses=[ScriptedModelTurn(ModelCallResult(), gate=gate)],
+    )
+
+    async def scenario():
+        async with harness:
+            old = await run(harness)
+            # Bulk-copy completed records so the fixture stays fast. All roots
+            # share a thread, exercising both global and thread subscriptions.
+            harness.store._conn.execute(
+                """WITH RECURSIVE n(x) AS (
+                VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<10000
+                ) INSERT INTO runs (
+                    id, thread, control, state, status, created_at, finished_at
+                ) SELECT 'run_history_' || x, thread, control, state, status,
+                    created_at, finished_at FROM runs, n WHERE id=?""",
+                (old.id,),
+            )
+            harness.store._conn.commit()
+            active = harness.executor.run(
+                harness.run_spec(
+                    thread=str(old.thread),
+                    runnable="parent",
+                    primary=(TextPart("input"),),
+                )
+            )
+            await asyncio.wait_for(gate.wait_until_entered(), 2)
+            store = RunStore(harness.store.db_path, read_only=True)
+            try:
+                store.pin_stream_snapshot(seconds=5, max_bytes=MAX_BYTES)
+                operations = 0
+
+                def bounded_work():
+                    nonlocal operations
+                    operations += 1000
+                    # Bound database work rather than wall time: repeated full
+                    # scans must fail independently of machine speed/load.
+                    return operations > 2_000_000
+
+                store._conn.set_progress_handler(bounded_work, 1000)
+                runs, steps = store.stream_records(
+                    root=active.run_id if scope == "run" else None,
+                    thread=str(old.thread) if scope == "thread" else None,
+                    after=None,
+                    complete=False,
+                )
+                assert len(runs) == 3  # Root, completed sibling, active child.
+                assert runs[0].id == active.run_id
+                assert [run.status for run in runs] == [
+                    "running",
+                    "succeeded",
+                    "running",
+                ]
+                frames = list(RecordSnapshot(store, runs, steps).structural())
+                assert {
+                    frame.data["run"] for frame in frames if frame.event == "run_begin"
+                } == {run.id for run in runs}
+            finally:
+                store.close()
+                gate.release()
+                await active
+
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize("phase", ["serialization", "application"])
 def test_recovery_bounds_optional_history_without_losing_active_tree(
     tmp_path, monkeypatch, phase

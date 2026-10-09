@@ -282,14 +282,19 @@ class RunStore:
             if self.stream_has_cursors
             else "r.status IN ('pending', 'running')"
         )
+        # Materialize parent run IDs once so SQLite can index recursive lookups
+        # instead of scanning all historical runs for every node in the forest.
         query = f"""
-            WITH RECURSIVE tree(id, root) AS (
+            WITH RECURSIVE parents(id, parent) AS MATERIALIZED (
+                SELECT id, substr(parent, 1, instr(parent, '.') - 1)
+                FROM runs WHERE parent IS NOT NULL
+            ), tree(id, root) AS (
                 SELECT id, id FROM runs WHERE parent IS NULL
                     AND (:root IS NULL OR id = :root)
                     AND (:thread IS NULL OR thread = :thread)
                 UNION ALL
-                SELECT r.id, tree.root FROM runs r JOIN tree
-                    ON substr(r.parent, 1, instr(r.parent, '.') - 1) = tree.id
+                SELECT r.id, tree.root FROM parents r JOIN tree
+                    ON r.parent = tree.id
             ), selected(root) AS (
                 SELECT DISTINCT tree.root FROM tree JOIN runs r ON r.id = tree.id
                 WHERE :complete OR :root IS NOT NULL OR {changed}
