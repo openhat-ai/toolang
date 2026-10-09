@@ -160,14 +160,27 @@ class HubActivityFeed:
                         elif event.event == "activity_checkpoint":
                             if json.loads(event.data)["agents"] != [agent]:
                                 raise ValueError("Source activity identity mismatch")
-                            if await self.reader.backend.save(
-                                agent, lease["token"], pages
+                            batch, pages = pages, []
+                            saved = await self.reader.backend.save(
+                                agent, lease["token"], batch
+                            )
+                            if (
+                                not saved
+                                and await self.reader.backend.lease(agent) != lease
                             ):
-                                await self.reader.decorate(
-                                    agent, pages, lease, fresh=True
-                                )
-                                self.replace(agent, pages)
-                            pages = []
+                                return
+                            # Another reader may have cached a later observation.
+                            # That must not block this feed's ordered live frames.
+                            previous = self.pages.get(agent)
+                            if (
+                                previous
+                                and previous[0].session == batch[0].session
+                                and (batch[0].revision, batch[0].observed or 0)
+                                < (previous[0].revision, previous[0].observed or 0)
+                            ):
+                                continue
+                            await self.reader.decorate(agent, batch, lease, fresh=True)
+                            self.replace(agent, batch)
                             delay = 0.5
                     raise httpx.ReadError("Source activity disconnected")
             except (

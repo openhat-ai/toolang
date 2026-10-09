@@ -4,6 +4,7 @@ import asyncio
 from contextlib import aclosing
 
 from fakeredis import FakeServer
+import pytest
 
 from toolang.cli.common.activity_view import Activity
 from toolang.execution.activity import ActivityQuery
@@ -77,5 +78,96 @@ def test_slow_source_independent_updates_roster_and_reconnect(monkeypatch):
                         state.feed(event, data)
                 assert sorted(state.snapshots) == ["agent:alice"]
             assert not reader._feeds
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "revision,observed,token,expected",
+    [
+        (1, 10, "lease", (2, 20)),
+        (2, 30, "lease", (2, 30)),
+        (1, 10, "replacement", (1, 10)),
+    ],
+)
+def test_live_frames_advance_independently_of_cache_without_regression(
+    revision, observed, token, expected
+):
+    import json
+    import httpx
+    from toolang.teaming.activity import ActivityBackend
+
+    async def scenario():
+        consumed = asyncio.Event()
+        page = ActivitySnapshot(
+            agent="agent:alice",
+            session="session",
+            revision=2,
+            observed=20,
+            since="session",
+            recent=1800,
+        )
+
+        class Frames(httpx.AsyncByteStream):
+            async def __aiter__(self):
+                yield (
+                    "event: activity_page\ndata: "
+                    + page.model_dump_json()
+                    + "\n\nevent: activity_checkpoint\ndata: "
+                    + json.dumps({"agents": [page.agent]})
+                    + "\n\n"
+                ).encode()
+                consumed.set()
+                await asyncio.Event().wait()
+
+        server = FakeServer(server_type="valkey")
+        async with client(server, "human:owner") as human:
+            backend = ActivityBackend(human._backend)
+            await human._backend.register(
+                human.actor, agent=page.agent, token="lease", endpoint="http://agent"
+            )
+            # A REST reader or independent publication observed the same revision later.
+            await backend.save(
+                page.agent, "lease", [page.model_copy(update={"observed": 21})]
+            )
+            lease = await backend.lease(page.agent)
+            if token != "lease":
+                await human._backend.lease(page.agent, "lease", 0)
+                await human._backend.register(
+                    human.actor, agent=page.agent, token=token, endpoint="http://agent"
+                )
+            reader = HubActivity(human._backend)
+            feed = HubActivityFeed(reader, ActivityQuery())
+            feed.replace(
+                page.agent,
+                [page.model_copy(update={"revision": revision, "observed": observed})],
+            )
+            async with httpx.AsyncClient(
+                transport=httpx.MockTransport(
+                    lambda _: httpx.Response(
+                        200,
+                        headers={"content-type": "text/event-stream"},
+                        stream=Frames(),
+                    )
+                )
+            ) as http:
+                task = asyncio.create_task(feed.source(http, page.agent, lease))
+                drained = asyncio.create_task(consumed.wait())
+                try:
+                    async with asyncio.timeout(2):
+                        await asyncio.wait(
+                            {task, drained}, return_when=asyncio.FIRST_COMPLETED
+                        )
+                    displayed = feed.pages[page.agent][0]
+                    assert (displayed.revision, displayed.observed) == expected
+                    assert not feed.pages[page.agent][0].stale
+                    # The display advances without downgrading the more recent cache.
+                    assert (await backend.cached(page.agent, ActivityQuery()))[
+                        0
+                    ].observed == 21
+                finally:
+                    task.cancel()
+                    drained.cancel()
+                    await asyncio.gather(task, drained, return_exceptions=True)
 
     asyncio.run(scenario())

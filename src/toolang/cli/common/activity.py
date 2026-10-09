@@ -247,7 +247,7 @@ async def watch(
                                     (
                                         state.result_key,
                                         state.result_text,
-                                        state.result_offset,
+                                        state.details_offset,
                                     ) = target, "Loading result…", 0
                                     result_task = (
                                         asyncio.create_task(fetch_result(target))

@@ -117,20 +117,30 @@ class ActivityReader:
         deadline = 0.0
         try:
             while True:
-                pages = await asyncio.to_thread(self.pages, query)
-                current = (pages[0].session, pages[0].revision)
+                current = await asyncio.to_thread(self._revision)
                 if current != boundary or time.monotonic() >= deadline:
+                    pages = await asyncio.to_thread(self.pages, query)
                     for queue in self._listeners[query]:
                         if queue.full():
                             queue.get_nowait()
                         queue.put_nowait(pages)
-                    boundary, deadline = current, time.monotonic() + 1
+                    boundary = (pages[0].session, pages[0].revision)
+                    deadline = time.monotonic() + 1
                 await asyncio.sleep(0.1)
         except Exception as exc:
             for queue in self._listeners[query]:
                 if queue.full():
                     queue.get_nowait()
                 queue.put_nowait(exc)
+
+    def _revision(self) -> tuple[str | None, int]:
+        # Poll only the committed marker; copying the full projection belongs to
+        # an actual publication or a clock tick, not every 100 ms probe.
+        with closing(RunStore(self.path, read_only=True)) as store:
+            row = store._conn.execute(
+                "SELECT session,revision FROM activity_meta"
+            ).fetchone()
+            return row["session"], row["revision"]
 
     def read(
         self, query: ActivityQuery, offset: int = 0, *, now: float | None = None

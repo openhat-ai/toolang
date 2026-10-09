@@ -188,7 +188,9 @@ class Activity:
         self.details = False
         self.result_key: tuple[str, str, str] | None = None
         self.result_text = ""
-        self.result_offset = 0
+        self.details_offset = 0
+        self.details_page_size = 3
+        self.details_selection: tuple[str, str] | None = None
         self.editor: str | None = None
         self.filter_active = self.query.active
         self.buffer = ""
@@ -603,9 +605,13 @@ class Activity:
             self.filter_active = self.query.active
         elif key == Keys.ControlM:
             self.details = not self.details
+            self.details_offset = 0
         elif self.details and key in {Keys.PageUp, Keys.PageDown}:
-            self.result_offset = max(
-                0, self.result_offset + (3 if key == Keys.PageDown else -3)
+            self.details_offset = max(
+                0,
+                self.details_offset
+                + max(1, self.details_page_size - 1)
+                * (1 if key == Keys.PageDown else -1),
             )
         elif key == Keys.Escape:
             self.details = False
@@ -833,7 +839,7 @@ class Activity:
                 )
             return rendered
 
-        footer: list[Text] = []
+        detail: list[Text] = []
         current = next((row for row in rows if row.key == self.selected), None)
         if current and self.details:
             command = (
@@ -841,44 +847,27 @@ class Activity:
                 if current.node and current.node.kind != "thread"
                 else ""
             )
-            footer.append(
+            detail.append(
                 Text(
                     f"Selected: {current.agent} / {current.thread or '-'} / root {current.root or '-'} / {current.id}"
                 )
             )
             if command:
-                footer.append(Text(f"Inspect: {command}"))
-            footer.append(Text(clean(current.activity)))
-            if self.result_key and self.result_key[:2] == current.key:
-                result_lines = Text(
-                    "\n".join(clean(line) for line in self.result_text.splitlines())
-                ).wrap(Console(width=width), width)
-                self.result_offset = min(
-                    self.result_offset, max(0, len(result_lines) - 3)
-                )
-                if result_lines:
-                    footer.append(
-                        Text(
-                            f"Result {self.result_offset + 1}-{min(len(result_lines), self.result_offset + 3)}/{len(result_lines)} · PgUp/PgDn",
-                            style="dim",
-                        )
-                    )
-                    footer.extend(
-                        result_lines[self.result_offset : self.result_offset + 3]
-                    )
-            footer.append(
+                detail.append(Text(f"Inspect: {command}"))
+            detail.append(Text(clean(current.activity)))
+            detail.append(
                 Text("Stats: " + metrics_text(current.stats, time_label, exact=True))
             )
             if current.node:
-                footer.append(
+                detail.append(
                     Text("Total: " + metrics_text(current.node.total, exact=True))
                 )
                 if current.node.matches:
-                    footer.append(
+                    detail.append(
                         Text("Matched IDs: " + ", ".join(current.node.matches))
                     )
             coverage = self.snapshots[current.agent].coverage
-            footer.append(
+            detail.append(
                 Text(
                     (
                         "Spend source: estimated"
@@ -895,6 +884,17 @@ class Activity:
                     style="dim",
                 )
             )
+            if self.result_key and self.result_key[:2] == current.key:
+                detail.append(Text("Result", style="dim"))
+                detail.append(
+                    Text(
+                        "\n".join(clean(line) for line in self.result_text.splitlines())
+                    )
+                )
+        if self.details_selection != self.selected:
+            self.details_selection = self.selected
+            self.details_offset = 0
+        footer: list[Text] = []
         if self.help:
             footer.append(
                 Text(
@@ -931,15 +931,37 @@ class Activity:
                     if show_table and not rows
                     else []
                 ),
+                *detail,
                 *footer,
             )
 
         console = Console(width=width)
         header_lines = [part for value in values for part in value.wrap(console, width)]
-        footer_lines = [part for value in footer for part in value.wrap(console, width)]
+        detail_lines = [part for value in detail for part in value.wrap(console, width)]
+        key_lines = list(footer[-1].wrap(console, width))
+        extra_lines = [
+            part for value in footer[:-1] for part in value.wrap(console, width)
+        ]
         footer_limit = max(1, height // 2)
-        if len(footer_lines) > footer_limit:
-            footer_lines = [*footer_lines[: footer_limit - 1], footer_lines[-1]]
+        extra_limit = max(0, footer_limit - len(key_lines) - (2 if detail_lines else 0))
+        footer_lines = [*extra_lines[:extra_limit], *key_lines]
+        if detail_lines:
+            self.details_page_size = max(1, footer_limit - len(footer_lines) - 1)
+            self.details_offset = min(
+                self.details_offset, max(0, len(detail_lines) - self.details_page_size)
+            )
+            end = min(len(detail_lines), self.details_offset + self.details_page_size)
+            indicator = Text(
+                f"Details {self.details_offset + 1}-{end}/{len(detail_lines)} · PgUp/PgDn",
+                style="dim",
+                no_wrap=True,
+            )
+            indicator.truncate(width)
+            footer_lines = [
+                indicator,
+                *detail_lines[self.details_offset : end],
+                *footer_lines,
+            ]
         header_limit = max(0, height - len(footer_lines) - int(show_table))
         if len(header_lines) > header_limit:
             header_lines = (

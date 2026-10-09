@@ -64,7 +64,7 @@ def test_numbers_align_with_headers_and_footer_stays_at_bottom():
     assert cost(ActivityMetrics(cost=1.28, estimated=True, partial=True)) == "$1.28"
 
 
-def test_markdown_result_is_not_a_pseudo_summary_and_details_can_page():
+def test_markdown_result_uses_runnable_name_in_the_list():
     snapshot = page()
     snapshot.roots[1].title = "review_project"
     snapshot.roots[1].summary = (
@@ -73,12 +73,34 @@ def test_markdown_result_is_not_a_pseudo_summary_and_details_can_page():
     state = Activity(None, view="execution")
     feed(state, snapshot)
     assert state.rows()[-1].activity == "succeeded · review_project"
+
+
+def test_narrow_details_can_reach_every_field_and_result_line():
+    snapshot = page()
+    state = Activity("agent:alice", view="execution")
+    snapshot.roots[1].stats = ActivityMetrics(
+        input_tokens=123456789,
+        cached_tokens=23456789,
+        output_tokens=34567890,
+        cost=1.28,
+        estimated=True,
+    )
+    feed(state, snapshot)
     state.selected = state.rows()[-1].key
     state.details = True
     state.result_key = (*state.selected, "succeeded")
     state.result_text = "\n".join(f"Result line {i}" for i in range(30))
-    assert "Result line 0" in "\n".join(render(state))
-    state.key(Keys.PageDown)
-    output = "\n".join(render(state))
-    assert "Result line 3" in output and "Result line 0\n" not in output
-    assert "Inspect:" in output
+    seen = []
+    for _ in range(40):
+        output = io.StringIO()
+        Console(file=output, width=80, height=18, color_system=None).print(
+            state.render(width=80, height=18)
+        )
+        lines = output.getvalue().splitlines()
+        assert len(lines) == 18 and "q Quit" in lines[-1]
+        seen.append(output.getvalue())
+        state.key(Keys.PageDown)
+    text = "\n".join(seen)
+    assert "123456789" in text and "23456789" in text and "34567890" in text
+    assert "Spend source: estimated" in text
+    assert "Result line 29" in text

@@ -56,3 +56,28 @@ def test_full_result_is_loaded_only_for_details(tmp_path):
         page = reader.read(ActivityQuery(recent=None))
         assert result not in page.model_dump_json()
         assert len(page.roots[0].summary) <= 240
+
+
+def test_clock_ticks_do_not_copy_full_projection_at_poll_frequency(
+    tmp_path, monkeypatch
+):
+    async def scenario():
+        with closing(RunStore(tmp_path / "runs.db")) as store:
+            statistics.start_session(store, "one", at(0))
+            root(store)
+            reader = ActivityReader(store.db_path, "agent:alice")
+            calls = 0
+            original = reader.pages
+
+            def pages(*args, **kwargs):
+                nonlocal calls
+                calls += 1
+                return original(*args, **kwargs)
+
+            monkeypatch.setattr(reader, "pages", pages)
+            async with aclosing(reader.updates(ActivityQuery())) as frames:
+                await anext(frames)
+                await asyncio.wait_for(anext(frames), 2)
+                assert calls <= 3  # Initial frame and the source-owned clock tick.
+
+    asyncio.run(scenario())

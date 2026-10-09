@@ -115,7 +115,7 @@ Stats defaults to the current executor session; `--since TIMESTAMP|DURATION|all`
 changes the range for MODEL, TOOL, IN, CACHED, OUT, SPEND and TIME together. CACHED
 is cache-read input already included in IN. `--recent DURATION|all` independently
 controls visible activity (default `30m`). `--sort spend` accepts `cost` as an alias.
-Enter opens full IDs, exact token counts and result text; PgUp/PgDn scroll the result.
+Enter opens full IDs, exact token counts and result text; PgUp/PgDn scroll Details.
 Old records backfill token totals on startup; unavailable usage remains unknown.
 
 The [teaming plan](plans/teaming.md) defines keys, values, and delivery stages.
