@@ -132,6 +132,20 @@ def test_agent_discovery_pins_batch_identity_and_refreshes_connections(tmp_path)
                 assert identity == CONNECTION.identity
                 with pytest.raises(BackendUnavailable, match="identity changed"):
                     await alice.targets()
+                async with AgentClient(
+                    tmp_path,
+                    actor=alice.actor,
+                    transport=httpx.MockTransport(handle),
+                ) as tool_client:
+                    with pytest.raises(BackendUnavailable, match="identity changed"):
+                        await tool_client.targets()
+                async with AgentClient(
+                    tmp_path / "other-root",
+                    actor=alice.actor,
+                    connection=lambda: current,
+                    transport=httpx.MockTransport(handle),
+                ) as other:
+                    assert await other.targets()
             await alice.register(CONNECTION.human)
             assert await alice.targets()
             with alice.session() as identity:

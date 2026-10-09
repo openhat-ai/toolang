@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
-from contextlib import contextmanager
-from contextvars import ContextVar
+from collections.abc import Callable
 from typing import Any, Self
 from urllib.parse import quote
 
@@ -34,9 +32,6 @@ class HubClient:
         self._resolve: Callable[[], HubConnection] = (
             (lambda: config) if isinstance(config, HubConnection) else config
         )
-        self._session: ContextVar[HubConnection | None] = ContextVar(
-            "hub_session", default=None
-        )
         self.actor = actor if actor is not None else self.config.human
         self._prefix, self._lease = prefix, lease
         self._http = httpx.AsyncClient(
@@ -47,16 +42,7 @@ class HubClient:
 
     @property
     def config(self) -> HubConnection:
-        return self._session.get() or self._resolve()
-
-    @contextmanager
-    def session(self) -> Iterator[str]:
-        connection = self.config
-        token = self._session.set(connection)
-        try:
-            yield connection.identity
-        finally:
-            self._session.reset(token)
+        return self._resolve()
 
     async def __aenter__(self) -> Self:
         return self

@@ -65,8 +65,10 @@ before writes. Preserve current atomic lease checks and deduplication in storage
   reuse another dataset's message cursor. HTTP clients send the discovered
   identity in `X-Toolang-Backend` and the percent-encoded configured human in
   `X-Toolang-Human`; Hub rejects a mismatch with `409 hub_changed` before storage
-  access. A receive batch pins that connection. These are configuration consistency
-  checks, not authentication; direct local requests may omit them.
+  access. A receive batch pins that connection for its runs and newly created
+  `msg` clients; other roots and independent tasks remain isolated. These are
+  configuration consistency checks, not authentication; direct local requests
+  may omit them.
   Canonical export keeps its existing event identity, lease fencing, bounded
   backlog, and records-based recovery.
 - Event publication may retry the exact operation after an uncertain HTTP result;
