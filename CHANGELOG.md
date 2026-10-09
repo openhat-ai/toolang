@@ -229,6 +229,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Fixed
 
+- `msg` calls made while handling a received batch now stay on the Hub
+  connection that delivered it: a Hub or backend identity change rejects
+  the tool request instead of mixing conversations across backends, and other
+  roots and independent tasks remain isolated.
+
 - Text renders agent messages with the shared terminal Markdown layout:
   fenced and inline code use the resolved terminal surfaces, tables fill
   the message body width and fold long cells instead of truncating them,

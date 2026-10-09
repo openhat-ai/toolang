@@ -68,7 +68,8 @@ before writes. Preserve current atomic lease checks and deduplication in storage
   access. A receive batch pins that connection for its runs and newly created
   `msg` clients; other roots and independent tasks remain isolated. These are
   configuration consistency checks, not authentication; direct local requests
-  may omit them.
+  may omit them. A mismatch rejects the tool request; the model may handle that
+  error and finish the run normally.
   Canonical export keeps its existing event identity, lease fencing, bounded
   backlog, and records-based recovery.
 - Event publication may retry the exact operation after an uncertain HTTP result;
