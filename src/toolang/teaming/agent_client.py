@@ -28,9 +28,11 @@ class AgentClient(HubClient):
         token: str | None = None,
         connection: Callable[[], HubConnection] | None = None,
         transport: httpx.AsyncBaseTransport | None = None,
+        managed: bool = True,
     ) -> None:
         target(actor, kind="agent")
         self.root = root
+        self.managed = managed
         self.token = token if token is not None else host_token()
         super().__init__(
             connection or (lambda: hub_connection(root)),
@@ -58,7 +60,14 @@ class AgentClient(HubClient):
     async def register(self, owner: str, *, endpoint: str = "") -> None:
         # Owner is supplied by the hosting boundary; Hub derives authority from
         # its own root configuration, never a caller-provided owner field.
-        await self._request("PUT", "/lease", json={"endpoint": endpoint})
+        await self._request(
+            "PUT",
+            "/lease",
+            json={
+                "endpoint": endpoint,
+                "managed": self.managed,
+            },
+        )
 
     async def renew(self) -> None:
         await self._request("PATCH", "/lease")

@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 from pathlib import Path
 import socket
 import sys
@@ -105,6 +106,7 @@ flow review(_: Text) -> Text:
                     backend=hub[1] if hub else None,
                     once=False,
                     console=Console(),
+                    refresh=float(os.environ.get("TOOLANG_TEST_REFRESH", "0.1")),
                 )
             finally:
                 execution.cancel()

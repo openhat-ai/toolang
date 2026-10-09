@@ -1,6 +1,7 @@
 """Compact absolute activity over the same committed boundary as records."""
 
-import asyncio
+from contextlib import aclosing
+
 from collections.abc import AsyncGenerator
 from typing import Annotated
 
@@ -50,19 +51,31 @@ def batch(
     return reader.pages(query)
 
 
+@router.get("/result")
+def result(
+    ref: str,
+    reader: Annotated[ActivityReader, Depends(activity_reader)],
+) -> dict[str, str]:
+    try:
+        return {"text": reader.result(ref)}
+    except KeyError as exc:
+        raise HTTPException(404, "Execution record not found") from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
 @router.get("/stream", response_class=EventSourceResponse)
 async def stream(
     query: Annotated[ActivityQuery, Depends(activity_query)],
     reader: Annotated[ActivityReader, Depends(activity_reader)],
 ) -> AsyncGenerator[ServerSentEvent]:
-    while True:
-        pages = await asyncio.to_thread(reader.pages, query)
-        for page in pages:
-            yield ServerSentEvent(event="activity_page", data=page.model_dump())
-        first = pages[0]
-        yield ServerSentEvent(
-            event="activity_checkpoint",
-            data={"agents": [first.agent]},
-            id=f"{first.session}:{first.revision}",
-        )
-        await asyncio.sleep(0.5)
+    async with aclosing(reader.updates(query)) as updates:
+        async for pages in updates:
+            for page in pages:
+                yield ServerSentEvent(event="activity_page", data=page.model_dump())
+            first = pages[0]
+            yield ServerSentEvent(
+                event="activity_checkpoint",
+                data={"agents": [first.agent]},
+                id=f"{first.session}:{first.revision}",
+            )

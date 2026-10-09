@@ -38,10 +38,27 @@ def test_top_hub_modes_and_source_recovery(valkey, running_hub, tmp_path):
             endpoint = json.loads((tmp_path / "activity-endpoint.json").read_text())[
                 "endpoint"
             ]
-            await driver.register(
-                "human:owner", agent="agent:alice", token="wire", endpoint=endpoint
-            )
-            await driver.register("human:owner", agent="agent:bob", token="idle")
+
+            async def register(agent, token, endpoint=""):
+                async with httpx.AsyncClient(trust_env=False) as http:
+                    response = await http.put(
+                        connection.endpoint + f"/agents/{agent}/lease",
+                        headers={"X-Toolang-Agent-Lease": token},
+                        json={"endpoint": endpoint, "managed": False},
+                    )
+                    response.raise_for_status()
+
+            await register("agent:alice", "wire", endpoint)
+            await register("agent:bob", "idle")
+
+            async def heartbeat():
+                while True:
+                    await driver.lease("agent:alice", "wire", 15)
+                    await driver.lease("agent:alice", "new", 15)
+                    await driver.lease("agent:bob", "idle", 15)
+                    await asyncio.sleep(3)
+
+            beating = asyncio.create_task(heartbeat())
             async with httpx.AsyncClient(trust_env=False, timeout=10) as http:
                 await asyncio.to_thread(session.wait_for, "2 online / 2", "$0.25")
                 for options, labels in [
@@ -49,11 +66,11 @@ def test_top_hub_modes_and_source_recovery(valkey, running_hub, tmp_path):
                     (("--view", "thread"), ("View Thread", "THREAD", "1 active")),
                     (
                         ("--view", "execution", "--tree"),
-                        ("Layout Tree", "math__double", "└─"),
+                        ("/ Tree", "math__double", "└─"),
                     ),
                     (
                         ("--view", "execution", "--sort", "cost", "--since", "all"),
-                        ("Layout List", "Sort cost", "TIME*"),
+                        ("/ List", "Sort spend", "TIME*"),
                     ),
                     (
                         ("--filter", "MATH__DOUBLE", "--active", "--recent", "all"),
@@ -110,19 +127,25 @@ def test_top_hub_modes_and_source_recovery(valkey, running_hub, tmp_path):
                 assert await driver.lease("agent:alice", "wire", 0)
                 session.data.clear()
                 await asyncio.to_thread(session.wait_for, "offline", "last seen")
-                offline = (await pages())["agent:alice"]
-                assert offline["stale"] and not offline["paths"]
+                async with asyncio.timeout(3):
+                    while True:
+                        offline = (await pages())["agent:alice"]
+                        if offline["stale"] and not offline["paths"]:
+                            break
+                        await asyncio.sleep(0.1)
                 assert offline["stats"]["model"] == 2
-                await driver.register(
-                    "human:owner", agent="agent:alice", token="new", endpoint=endpoint
-                )
+                await register("agent:alice", "new", endpoint)
                 session.data.clear()
                 await asyncio.to_thread(session.wait_for, "2 online / 2")
-                recovered = (await pages())["agent:alice"]
-                assert not recovered["stale"] and recovered["paths"]
+                async with asyncio.timeout(3):
+                    while True:
+                        recovered = (await pages())["agent:alice"]
+                        if not recovered["stale"] and recovered["paths"]:
+                            break
+                        await asyncio.sleep(0.1)
                 assert recovered["stats"]["model"] == 2
                 session.send(b"e\x1b[15~")
-                await asyncio.to_thread(session.wait_for, "Layout Tree", "math__double")
+                await asyncio.to_thread(session.wait_for, "/ Tree", "math__double")
                 (tmp_path / "release-tool").touch()
                 await asyncio.to_thread(session.wait_for, "test/scripted", "preview:")
                 (tmp_path / "release-model").touch()
@@ -133,9 +156,89 @@ def test_top_hub_modes_and_source_recovery(valkey, running_hub, tmp_path):
                 session.send(b"q")
                 assert await asyncio.to_thread(session.wait_for_exit) == 0
         finally:
+            if "beating" in locals():
+                beating.cancel()
+                await asyncio.gather(beating, return_exceptions=True)
             await driver.close()
 
     try:
         asyncio.run(scenario())
     finally:
         session.close()
+
+
+def test_hub_reconciles_removed_and_recreated_agent(valkey, running_hub, tmp_path):
+    """Production scans remove vanished homes while keeping historical activity."""
+    import shutil
+    from toolang.common.layout import AgentLayout
+    from toolang.execution.schemas import ActivitySnapshot
+    from toolang.teaming.agent_client import AgentClient
+    from toolang.teaming.backend import PREFIX
+    from toolang.teaming.errors import EventRecoveryRequired
+
+    async def scenario():
+        layout = AgentLayout.resident(tmp_path, "alice")
+        layout.home.mkdir(parents=True)
+        connection = running_hub.connection()
+        async with (
+            AgentClient(
+                tmp_path,
+                actor="agent:alice",
+                token="old",
+                connection=lambda: connection,
+            ) as old,
+            httpx.AsyncClient(base_url=connection.endpoint, trust_env=False) as http,
+        ):
+            await old.register(connection.human)
+            await old.publish_activity(
+                [
+                    ActivitySnapshot(
+                        agent=old.actor,
+                        revision=1,
+                        observed=10,
+                        since="session",
+                        recent=1800,
+                    )
+                ]
+            )
+            shutil.rmtree(layout.home)
+            await old.unregister()
+            async with asyncio.timeout(15):
+                while True:
+                    response = await http.get("/activity")
+                    response.raise_for_status()
+                    if not response.json():
+                        break
+                    await asyncio.sleep(0.2)
+            driver = Backend(valkey)
+            try:
+                assert await driver._call("TTL", f"{PREFIX}:activity:agent:alice") == -1
+            finally:
+                await driver.close()
+            layout.home.mkdir()
+            async with AgentClient(
+                tmp_path,
+                actor="agent:alice",
+                token="new",
+                connection=lambda: connection,
+            ) as new:
+                await new.register(connection.human)
+                with pytest.raises(EventRecoveryRequired):
+                    await old.publish_activity(
+                        [
+                            ActivitySnapshot(
+                                agent=old.actor,
+                                revision=999,
+                                observed=20,
+                                since="session",
+                                recent=1800,
+                            )
+                        ]
+                    )
+                await asyncio.sleep(0.6)  # Let the snapshot cache expire.
+                pages = (await http.get("/activity")).json()
+                assert len(pages) == 1 and pages[0]["presence"] == "online"
+                assert pages[0]["observed"] == 10 and pages[0]["stale"]
+                await new.unregister()
+
+    asyncio.run(scenario())

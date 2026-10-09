@@ -9,6 +9,19 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Added
 
+- Hub scans its root every 5 seconds with `too list` discovery: new homes are
+  offline with unavailable activity and vanished online homes show `home
+  missing`; after two absent scans with no live lease, only the
+  roster/participant entry and ordinary group memberships are removed,
+  preserving DM mappings and membership, messages, event history, activity
+  caches, and last-seen. A 5-second heartbeat under a 15-second lease marks
+  agents offline within 15 seconds of a crash or graceful stop.
+
+- `too top` adds IN, CACHED, and OUT token columns (CACHED is cache-read input
+  included in IN; OUT is normalized output) in compact k/M/G units, with exact
+  values in Details and `-` for unknown; SPEND replaces COST and `--sort spend`
+  aliases `--sort cost`.
+
 - `too top` adds activity views, filters, sorting, and consumption statistics:
   `--view agent|thread|execution` selects the row object, `--tree` (with
   `--view execution`) follows confirmed running paths, `--sort activity|cost|time`
@@ -152,6 +165,22 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   see `docs/messaging.md` for setup. (#708)
 
 ### Changed
+
+- `too top` uses one responsive three-region layout: header totals and a context
+  line, a full-width one-line-per-row body, and a fixed bottom key bar, with
+  shared column widths, right-aligned numerics, and MODEL/TOOL hidden below 110
+  columns. `--refresh SECONDS` (default 0.1) replaces the fixed redraw, while
+  keys, filters, view changes, and resize repaint immediately from cached state.
+
+- Hub activity streaming updates agents independently with shared per-query
+  projections, so one slow or offline agent no longer stalls the others; roster
+  changes and each agent's replacement are atomic, omitted agents are never
+  treated as removed, and reconnects baseline first.
+
+- Schema 54 upgrades automatically to 55, adding per-attempt input, cached, and
+  output token facts with a resumable backfill that settles tokens at the same
+  accounting boundary as spend; historical attempts without durable accounting
+  stay explicitly unknown.
 
 - `too top` retention follows `--recent` instead of a fixed cap: completed root
   runs and threads stay while the rolling range covers them, running paths remain

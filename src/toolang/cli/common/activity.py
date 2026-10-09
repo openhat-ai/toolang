@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 from contextlib import closing, suppress
 import json
+import math
+import signal
 import sys
 from typing import TextIO, cast
 
@@ -44,12 +46,23 @@ async def watch(
     sort: Sort = "activity",
     query: ActivityQuery | None = None,
     recent_label: str = "30m",
+    refresh: float = 0.1,
 ) -> None:
+    if not math.isfinite(refresh) or refresh <= 0:
+        raise ValueError("Refresh must be a finite positive number of seconds")
     state = Activity(
-        agent, view=view, tree=tree, sort=sort, query=query, recent_label=recent_label
+        agent,
+        view=view,
+        tree=tree,
+        sort=sort,
+        query=query,
+        recent_label=recent_label,
+        refresh=refresh,
     )
     stop = asyncio.Event()
     changed = asyncio.Event()
+    redraw = asyncio.Event()
+    needs_render = True
     path = "/api/v1/activity" if agent else "/activity"
     async with httpx.AsyncClient(
         base_url=endpoint,
@@ -78,6 +91,7 @@ async def watch(
             return
 
         async def receive() -> None:
+            nonlocal needs_render
             delay = 0.5
             while not stop.is_set():
                 state.attach()
@@ -103,11 +117,14 @@ async def watch(
                                     raise httpx.ReadError(
                                         "Activity source is recovering"
                                     )
-                                state.feed(event.event, json.loads(event.data))
+                                needs_render |= state.feed(
+                                    event.event, json.loads(event.data)
+                                )
                                 delay = 0.5
                         raise httpx.ReadError("Activity stream disconnected")
                 except httpx.HTTPError:
                     state.reconnecting = True
+                    needs_render = True
                 try:
                     await asyncio.wait_for(stop.wait(), delay)
                 except TimeoutError:
@@ -127,6 +144,8 @@ async def watch(
                         changed.set()
                 if terminal.closed:
                     stop.set()
+                if events or terminal.closed:
+                    redraw.set()
 
             def keys() -> None:
                 nonlocal flush_handle
@@ -168,24 +187,98 @@ async def watch(
                 output.enable_bracketed_paste()
                 output.flush()
                 task = asyncio.create_task(observe())
+                task.add_done_callback(lambda _: redraw.set())
+                result_task: asyncio.Task | None = None
+
+                async def fetch_result(key: tuple[str, str, str]) -> None:
+                    nonlocal needs_render
+                    try:
+                        response = await http.get(
+                            path + "/result",
+                            params={"agent": key[0], "ref": key[1]},
+                            timeout=3,
+                        )
+                        response.raise_for_status()
+                        text = response.json()["text"] or "No result yet"
+                    except (httpx.HTTPError, ValueError, KeyError):
+                        text = "Result unavailable · use the inspect command"
+                    if state.result_key == key:
+                        state.result_text = text
+                        needs_render = True
+
+                old_resize = signal.getsignal(signal.SIGWINCH)
+                resize_installed = False
+                try:
+                    signal.signal(signal.SIGWINCH, lambda *_: redraw.set())
+                    resize_installed = True
+                except ValueError:
+                    pass  # Embedded callers may run outside the main thread.
+                deadline = loop.time()
                 try:
                     while not stop.is_set():
                         if task.done():
                             await task
-                        live.update(
-                            state.render(width=console.width, height=console.height),
-                            refresh=True,
-                        )
+                        immediate = redraw.is_set()
+                        if immediate or loop.time() >= deadline:
+                            redraw.clear()
+                            if immediate or needs_render:
+                                current = next(
+                                    (
+                                        row
+                                        for row in state.rows()
+                                        if row.key == state.selected
+                                    ),
+                                    None,
+                                )
+                                target = (
+                                    (current.agent, current.id, current.node.status)
+                                    if state.details
+                                    and current
+                                    and current.node
+                                    and current.node.kind != "thread"
+                                    else None
+                                )
+                                if target != state.result_key:
+                                    if result_task:
+                                        result_task.cancel()
+                                        await asyncio.gather(
+                                            result_task, return_exceptions=True
+                                        )
+                                    (
+                                        state.result_key,
+                                        state.result_text,
+                                        state.result_offset,
+                                    ) = target, "Loading result…", 0
+                                    result_task = (
+                                        asyncio.create_task(fetch_result(target))
+                                        if target
+                                        else None
+                                    )
+                                live.update(
+                                    state.render(
+                                        width=console.width, height=console.height
+                                    ),
+                                    refresh=True,
+                                )
+                                needs_render = False
+                            deadline = loop.time() + refresh
                         try:
-                            await asyncio.wait_for(stop.wait(), 0.5)
+                            await asyncio.wait_for(
+                                redraw.wait(), max(0, deadline - loop.time())
+                            )
                         except TimeoutError:
                             pass
                 finally:
+                    if resize_installed:
+                        signal.signal(signal.SIGWINCH, old_resize)
                     if flush_handle is not None:
                         flush_handle.cancel()
                     output.disable_bracketed_paste()
                     output.flush()
                     stop.set()
+                    if result_task:
+                        result_task.cancel()
+                        await asyncio.gather(result_task, return_exceptions=True)
                     task.cancel()
                     with suppress(asyncio.CancelledError):
                         await task

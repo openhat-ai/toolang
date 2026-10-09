@@ -284,7 +284,9 @@ def serve(
             messaging_setup = current_setup().teaming
             if messaging_setup is not None and messaging_setup.home.enabled:
                 hub_client = AgentClient(
-                    spec.layout.root, actor=f"agent:{spec.layout.name}"
+                    spec.layout.root,
+                    actor=f"agent:{spec.layout.name}",
+                    managed=spec.layout.placement == "resident",
                 )
                 messaging = MessagingLoop(
                     layout=spec.layout,

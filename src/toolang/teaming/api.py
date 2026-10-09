@@ -2,7 +2,8 @@
 
 from collections.abc import Callable, AsyncIterator
 import asyncio
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
+import logging
 from typing import Annotated, Any, cast
 from urllib.parse import quote
 
@@ -31,12 +32,14 @@ from .messaging import MessagingClient
 from .schemas import target
 from .messaging_api import messaging_router
 from .agent_api import agent_router
+from .roster import Roster
 
 
 def create_app(
     client: MessagingClient,
     *,
     on_ready: Callable[[], None] | None = None,
+    roster: Roster | None = None,
 ) -> FastAPI:
     """Bind requests to one configured human; own the service for this lifespan."""
     target(client.actor, kind="human")
@@ -60,9 +63,25 @@ def create_app(
     async def lifespan(app: FastAPI):
         async with client:
             await client.check_backend()
+            task = None
+            if roster:
+                try:
+                    await roster.scan()
+                except Exception:
+                    logging.getLogger(__name__).warning(
+                        "Initial roster scan unavailable; retaining saved entries",
+                        exc_info=True,
+                    )
+                task = asyncio.create_task(roster.run())
             if on_ready is not None:
                 on_ready()
-            yield
+            try:
+                yield
+            finally:
+                if task:
+                    task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await task
 
     app = FastAPI(
         title="Toolang Hub API",
@@ -204,8 +223,8 @@ def create_app(
             subscription.close()
 
     app.include_router(messaging_router(lambda: client, prefix="/msg"))
-    app.include_router(agent_router(client))
+    app.include_router(agent_router(client, roster=roster))
     from .activity import activity_router
 
-    app.include_router(activity_router(client._backend))
+    app.include_router(activity_router(client._backend, roster=roster))
     return app

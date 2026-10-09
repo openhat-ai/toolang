@@ -134,6 +134,7 @@ def test_retry_preserves_attempts_and_duplicates_do_not_recount(store):
     page = snapshot(store, now=120)
     assert page.stats.model == 2
     assert page.stats.cost == pytest.approx(0.7)
+    assert page.stats.input_tokens == 10 and page.stats.output_tokens == 10
     assert page.stats.time == 100
 
 

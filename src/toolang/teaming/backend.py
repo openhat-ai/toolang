@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import json
+import time
 from typing import Any
 
 from valkey.asyncio import Valkey
@@ -25,7 +26,9 @@ PREFIX = "too:teaming:v1"
 PARTICIPANTS = f"{PREFIX}:participants"
 GROUPS = f"{PREFIX}:msg:groups"
 DIRECT = f"{PREFIX}:msg:direct"
-LEASE_SECONDS = 30
+LEASE_SECONDS = 15
+LAST_SEEN = f"{PREFIX}:last_seen"
+ROSTER = f"{PREFIX}:roster"
 RETENTION = 10000
 
 
@@ -70,6 +73,14 @@ _REGISTER = (
     + """
 expect(KEYS[1], 'hash'); expect(KEYS[2], 'hash'); expect(KEYS[3], 'set')
 if ARGV[4] ~= '' then
+  if ARGV[9] ~= '' then
+    local managed = redis.call('HGET',KEYS[6],ARGV[4])
+    if not managed then return {err='Agent identity unavailable'} end
+    managed=cjson.decode(managed)
+    if managed.root ~= ARGV[9] then
+      return {err='Agent identity changed'}
+    end
+  end
   expect(KEYS[4], 'hash')
   local old = redis.call('HGET', KEYS[1], ARGV[4])
   if old and cjson.decode(old).owner ~= ARGV[1] then return {err='Agent owner mismatch'} end
@@ -84,12 +95,14 @@ if ARGV[4] ~= '' then
   redis.call('SADD', KEYS[3], ARGV[4])
   redis.call('HSET', KEYS[4], 'token', ARGV[6], 'endpoint', ARGV[7])
   redis.call('EXPIRE', KEYS[4], ARGV[8])
+  redis.call('HSET',KEYS[5],ARGV[4],ARGV[10])
 end
 return 1
 """
 )
 _LEASE = """
 if redis.call('HGET', KEYS[1], 'token') ~= ARGV[1] then return 0 end
+redis.call('HSET',KEYS[2],ARGV[3],ARGV[4])
 if ARGV[2] == '0' then return redis.call('DEL', KEYS[1]) end
 return redis.call('EXPIRE', KEYS[1], ARGV[2])
 """
@@ -201,6 +214,7 @@ class Backend:
         agent: str | None = None,
         token: str = "",
         endpoint: str = "",
+        root: str = "",
     ) -> None:
         human_name = target(human, kind="human").name
         agent_record = ""
@@ -216,6 +230,8 @@ class Backend:
                 GROUPS,
                 group_key("group:all", "members"),
                 online_key(agent) if agent else PARTICIPANTS,
+                LAST_SEEN,
+                ROSTER,
             ],
             [
                 human,
@@ -226,11 +242,19 @@ class Backend:
                 token,
                 endpoint,
                 LEASE_SECONDS,
+                root,
+                time.time(),
             ],
         )
 
     async def lease(self, agent: str, token: str, seconds: int) -> bool:
-        return bool(await self._eval(_LEASE, [online_key(agent)], [token, seconds]))
+        return bool(
+            await self._eval(
+                _LEASE,
+                [online_key(agent), LAST_SEEN],
+                [token, seconds, agent, time.time()],
+            )
+        )
 
     async def create(
         self, group: str, actor: str, *, token: str = "", other: str | None = None

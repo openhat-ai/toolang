@@ -1,6 +1,6 @@
 # Top live updates and layout
 
-Feature definition for review; no implementation in this change. Extends
+Implementation contract. Extends
 [Top activity](top-activity.md), replacing its header/footer, COST presentation and
 fixed redraw rules. Existing views, ownership, recovery and Stats/Recent semantics
 remain the contract.
@@ -15,8 +15,8 @@ controls and new model-generated summaries are outside scope.
 
 ## Presence and roster
 
-- Reuse the current lease: accepted current-instance reports renew presence;
-  otherwise send a heartbeat every 5 seconds, expiring after 15 seconds. Event
+- Reuse the current lease: accepted current-instance reports renew presence.
+  An independent heartbeat runs every 5 seconds; the lease expires after 15. Event
   backlog cannot block heartbeats. Graceful stop releases the lease immediately.
   Hub receipt time is `last_seen`; snapshot observation time remains separate.
   Heartbeats neither create canonical execution events nor extend Recent activity.
@@ -29,14 +29,12 @@ controls and new model-generated summaries are outside scope.
   A live agent whose directory disappeared remains visible with `home missing`.
   Failed scans preserve the previous roster. Only this root's managed entries are
   eligible; never apply directory absence to another root's or transient agents.
-- Confirmed deletion removes the current roster entry, memberships and delivery
-  eligibility. Retain its private event/activity cache and consumer state for
-  24 hours, then reclaim them. Preserve shared conversation messages. Offline
-  alone never triggers deletion. Cleanup is restart-safe and idempotent.
-- Fence removal and cleanup by agent incarnation. Same-name recreation uses a
-  new incarnation without old memberships, cursors or live projections. Late old
-  reports and delayed cleanup cannot revive or erase the new incarnation. Existing
-  unscoped registrations must be reconciled conservatively before cleanup.
+- Confirmed deletion removes the current roster entry and ordinary group
+  memberships. Preserve DM mappings/memberships, conversation messages and all
+  historical event/activity data; no deletion or expiry policy is added.
+  Offline alone never triggers removal. Manage agents by name using the existing
+  process lease; directory incarnations and same-name recreation fencing are
+  deferred. Existing unscoped registrations are not eligible for automatic cleanup.
 
 ## Delivery and redraw
 
@@ -137,13 +135,13 @@ migration for tokens; `api/routers/activity.py`, `cli/common/activity.py`,
 | Scenario | Pass condition |
 | --- | --- |
 | Idle, busy, crash and graceful stop | Online lease stays fresh without execution events; offline transition follows release/expiry; no invented Recent activity. |
-| Create/delete, failed scans, Hub restart and same-name recreation | Roster converges; cleanup respects the grace period, root and incarnation; shared messages survive; old reports cannot resurrect data. |
+| Create/delete, failed scans, Hub restart and same-name recreation | Roster converges; cleanup respects the grace period and owning root; historical data and DMs survive. |
 | Slow source, reconnect and partial multi-agent delivery | Other agents continue updating; no partial state or accidental roster removal. |
 | SSE/time bursts and configured refresh | Data updates asynchronously; scheduled frames use latest complete state; stale time freezes; no backlog of paints. |
 | Keys during a deliberately long refresh interval/slow HTTP | Selection, filter editing and expansion repaint immediately without an unnecessary reconnect. |
 | All views, List/Tree, single agent, resize and Unicode | Shared column boundaries, full-width selection, fixed footer, readable clipped activity and intact inspect references. |
 | Token ranges, retry, replay, migration and missing usage | Local/Hub totals agree; CACHED is not added to IN; no double counting or fabricated zeros. |
 
-Risks: destructive cleanup must identify root and incarnation correctly; old token
+Risks: membership cleanup must identify the owning root correctly; old token
 coverage may be unrecoverable; independent Hub updates must preserve atomic
-recovery. No open user-facing layout decisions remain in this draft.
+recovery. No additional configuration is required for these defaults.

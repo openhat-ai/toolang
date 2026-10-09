@@ -12,6 +12,7 @@ from .errors import EventRecoveryRequired
 from .messaging import MessagingClient
 from .messaging_api import messaging_router
 from .publication import validate_publication
+from .roster import Roster
 from .records import MAX_BYTES
 from .schemas import (
     AgentRegistration,
@@ -47,7 +48,7 @@ async def _body(request: Request, adapter: TypeAdapter[T]) -> T:
         ) from exc
 
 
-def agent_router(human: MessagingClient) -> APIRouter:
+def agent_router(human: MessagingClient, *, roster: Roster | None = None) -> APIRouter:
     router = APIRouter(prefix="/agents/{agent}", tags=["agents"])
     events = EventBackend(human._backend)
 
@@ -73,7 +74,15 @@ def agent_router(human: MessagingClient) -> APIRouter:
 
     @router.put("/lease")
     async def register(body: AgentRegistration, client: Client) -> dict[str, bool]:
-        await client.register(human.actor, endpoint=body.endpoint)
+        if roster:
+            await roster.register(
+                client.actor,
+                client.token,
+                body.endpoint,
+                body.managed,
+            )
+        else:
+            await client.register(human.actor, endpoint=body.endpoint)
         return {"ok": True}
 
     @router.patch("/lease")
@@ -92,6 +101,7 @@ def agent_router(human: MessagingClient) -> APIRouter:
         if not pages or any(page.agent != client.actor for page in pages):
             raise HTTPException(400, "Activity identity mismatch")
         await ActivityBackend(client._backend).save(client.actor, client.token, pages)
+        await client.renew()
         return {"ok": True}
 
     @router.get("/events/state")
@@ -123,6 +133,7 @@ def agent_router(human: MessagingClient) -> APIRouter:
         sid = await events.commit(
             {**body.model_dump(), "agent": client.actor, "token": client.token}
         )
+        await client.renew()
         return {"stream_id": sid}
 
     @router.delete("/events/staging/{generation}")

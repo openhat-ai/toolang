@@ -3,7 +3,7 @@
 from contextlib import AbstractContextManager
 from typing import Any, Protocol
 
-RENEW_SECONDS = 10
+RENEW_SECONDS = 5
 
 
 class MessageReceiver(Protocol):

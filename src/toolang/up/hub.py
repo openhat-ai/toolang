@@ -20,6 +20,8 @@ from toolang.teaming.errors import TeamingError
 from toolang.teaming.messaging import MessagingClient
 from toolang.teaming.schemas import HubConnection
 from .records import HubRecord
+from .discovery import agent_roster
+from toolang.teaming.roster import Roster
 
 
 class HubProcess:
@@ -162,9 +164,16 @@ def serve(root: Path, config: TeamingRootConfig, *, port: int) -> int:
 
             try:
                 record.save(hub.path)
+                client = MessagingClient(config.backend, actor=config.human)
                 app = create_app(
-                    MessagingClient(config.backend, actor=config.human),
+                    client,
                     on_ready=publish_ready,
+                    roster=Roster(
+                        client._backend,
+                        root=str(root.resolve()),
+                        owner=config.human,
+                        discover=lambda: agent_roster(root),
+                    ),
                 )
                 server = uvicorn.Server(
                     uvicorn.Config(
