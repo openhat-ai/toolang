@@ -261,13 +261,27 @@ class Activity:
             marker = ""
             presence = "unknown" if self.reconnecting else snapshot.presence
             if presence != "online":
-                marker = f"{presence} · last seen {elapsed(time.time() - snapshot.observed)} ago · "
-            if snapshot.stale and snapshot.presence == "online":
+                marker = f"{presence} · "
+                if snapshot.observed is not None:
+                    marker += (
+                        f"last seen {elapsed(time.time() - snapshot.observed)} ago · "
+                    )
+            if (
+                snapshot.stale
+                and presence == "online"
+                and snapshot.observed is not None
+            ):
                 marker += "stale · "
-            if not snapshot.complete:
+            if (
+                not snapshot.complete
+                and presence == "online"
+                and snapshot.observed is not None
+            ):
                 marker += "syncing · "
-            summary = marker + counts(
-                snapshot.active, snapshot.failed, snapshot.complete
+            summary = marker + (
+                counts(snapshot.active, snapshot.failed, snapshot.complete)
+                if snapshot.observed is not None
+                else "activity unavailable"
             )
             agent_match = (
                 not self.display_query.text
@@ -665,7 +679,11 @@ class Activity:
                 if s.session_start
             ]
             uptime = ""
-            if len(snapshots) == 1 and snapshots[0].session_start is not None:
+            if (
+                len(snapshots) == 1
+                and snapshots[0].session_start is not None
+                and snapshots[0].observed is not None
+            ):
                 uptime = f" · Uptime {elapsed(snapshots[0].observed - snapshots[0].session_start)}"
             values.append(
                 Text(

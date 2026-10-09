@@ -19,6 +19,49 @@ from toolang.teaming.backend import Backend
 pytestmark = pytest.mark.live_valkey
 
 
+def test_top_unobserved_offline_registration(valkey, running_hub, tmp_path):
+    async def register():
+        driver = Backend(valkey)
+        try:
+            await driver.register("human:owner", agent="agent:alice", token="wire")
+            assert await driver.lease("agent:alice", "wire", 0)
+        finally:
+            await driver.close()
+
+    asyncio.run(register())
+    connection = running_hub.connection()
+    with httpx.Client(
+        base_url=connection.endpoint,
+        headers={"X-Toolang-Backend": connection.identity},
+        trust_env=False,
+    ) as http:
+        response = http.get("/activity")
+        response.raise_for_status()
+        assert response.json()[0]["observed"] is None
+    for view in ("agent", "thread", "execution"):
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "toolang.cli.toolang.main",
+                "--root",
+                str(tmp_path),
+                "top",
+                "--once",
+                "--view",
+                view,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            env={**os.environ, "COLUMNS": "180", "TOOLANG_TMUX": "0"},
+        )
+        assert result.returncode == 0, result.stderr
+        assert "alice" in result.stdout
+        assert "offline · activity unavailable" in result.stdout
+        assert "last seen" not in result.stdout and "syncing" not in result.stdout
+
+
 def test_top_hub_modes_and_source_recovery(valkey, running_hub, tmp_path):
     connection = running_hub.connection()
     session = ChatTuiPtySession.start(

@@ -190,6 +190,8 @@ settings.
 `too top` observes the running Hub; `too AGENT top` connects directly to an
 existing agent. Neither starts execution. `--once` (also implied for redirected
 output) prints a snapshot. Interactive updates are limited to twice per second.
+`too list` lists local agents; Hub observation includes registered agents even
+when they are offline or no longer installed locally.
 
 ```sh
 too top --view agent
@@ -232,6 +234,9 @@ with a fresh atomic snapshot. They do not replay token deltas or full outputs.
 The agent reader shares committed aggregates and open duration anchors; Hub
 queries agent HTTP and caches absolute values. Offline data freezes at its last
 observation; unavailable ranges are labeled. Layout and sort changes stay local.
+Without a retained activity snapshot, `observed` is `null` and top shows
+`activity unavailable`, without inventing a last-seen time. `syncing` applies
+only to online origins with incomplete observations.
 
 The existing canonical event subscription API remains separate:
 

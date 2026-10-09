@@ -85,6 +85,9 @@ class ActivityReader:
             ):
                 pages = [page.model_copy(deep=True) for page in cached[1]]
                 for page in pages:
+                    # Local projections always have an observation boundary;
+                    # only Hub placeholders can lack one.
+                    assert page.observed is not None
                     advance = (
                         max(0, clock - page.observed)
                         if page.presence == "online"

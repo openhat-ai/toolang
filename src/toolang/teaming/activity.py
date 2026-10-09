@@ -54,6 +54,8 @@ class ActivityBackend:
     async def save(self, agent: str, token: str, pages: list[ActivitySnapshot]) -> None:
         if not pages or any(page.agent != agent for page in pages):
             raise ValueError("Activity snapshot belongs to another agent")
+        if any(page.observed is None for page in pages):
+            raise ValueError("Activity publication requires an observation time")
         first = pages[0]
         expected = 0
         for page in pages:
@@ -151,13 +153,13 @@ class ActivityBackend:
             ActivitySnapshot(
                 agent=agent,
                 revision=0,
-                observed=time.time(),
+                observed=None,
                 since=query.since,
                 recent=query.recent,
                 filter=query.text,
                 active_only=query.active,
                 complete=False,
-                coverage="Waiting for source activity",
+                coverage="No activity snapshot available",
                 stats=unknown,
                 total=unknown,
             )

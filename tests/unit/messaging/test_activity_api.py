@@ -7,6 +7,7 @@ import json
 from fakeredis import FakeServer
 from fastapi import FastAPI
 import httpx
+import pytest
 
 from toolang.api.routers.activity import router as agent_router, stream as agent_stream
 from toolang.execution.activity import ActivityQuery, ActivityReader
@@ -16,6 +17,32 @@ from toolang.teaming.api import create_app
 from toolang.teaming.activity import ActivityBackend, HubActivity
 from tests.unit.messaging.test_protocol import client
 from tests.unit.execution.test_activity import root, model, at, clock
+
+
+@pytest.mark.parametrize("online", [False, True])
+def test_registered_agent_without_activity_has_no_observation_time(online):
+    async def scenario():
+        server = FakeServer(server_type="valkey")
+        async with (
+            client(server, "human:owner") as human,
+            client(server, "agent:alice") as alice,
+        ):
+            await alice.register("human:owner")
+            if not online:
+                await alice.unregister()
+            page = (await HubActivity(human._backend).read(ActivityQuery()))[0]
+            assert page.agent == "agent:alice"
+            assert page.presence == ("online" if online else "offline")
+            assert page.observed is None
+            assert page.stats.model is None
+            assert page.coverage == "No activity snapshot available"
+            if online:
+                with pytest.raises(ValueError, match="observation time"):
+                    await ActivityBackend(human._backend).save(
+                        alice.actor, alice.token, [page]
+                    )
+
+    asyncio.run(scenario())
 
 
 def test_http_sources_share_absolute_stats_and_freeze_offline_cache(

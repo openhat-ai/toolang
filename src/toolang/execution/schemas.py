@@ -970,7 +970,7 @@ class ActivitySnapshot(BaseModel):
     revision: int
     session: str | None = None
     session_start: float | None = None
-    observed: float
+    observed: float | None
     since: str
     recent: float | None
     filter: str = ""

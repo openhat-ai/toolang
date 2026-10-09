@@ -119,6 +119,38 @@ def test_offline_tree_collapses_and_reconnecting_does_not_invent_offline():
     assert state.rows()[0].activity.startswith("unknown")
 
 
+@pytest.mark.parametrize("view", ["agent", "thread", "execution"])
+def test_unobserved_offline_agent_does_not_invent_last_seen_or_syncing(view):
+    snapshot = page().model_copy(
+        update=dict(
+            session=None,
+            observed=None,
+            presence="offline",
+            stale=True,
+            complete=False,
+            roots=[],
+            paths=[],
+            threads=[],
+            active=0,
+        )
+    )
+    state = Activity(None, view=view)
+    feed(state, snapshot)
+    assert state.rows()[0].activity == "offline · activity unavailable"
+
+
+def test_offline_incomplete_snapshot_keeps_last_seen_without_claiming_syncing():
+    snapshot = page()
+    snapshot.presence = "offline"
+    snapshot.stale = True
+    snapshot.complete = False
+    state = Activity(None)
+    feed(state, snapshot)
+    summary = state.rows()[0].activity
+    assert "last seen" in summary and "counts incomplete" in summary
+    assert "syncing" not in summary
+
+
 def test_view_controls_do_not_change_query_and_editors_consume_shortcuts():
     state = Activity(None)
     feed(state, page())

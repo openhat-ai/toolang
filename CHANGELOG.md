@@ -261,6 +261,13 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Fixed
 
+- `too top` no longer invents a last-seen time or a `syncing` state for a
+  registered agent with no retained activity snapshot: offline rows show
+  `offline · activity unavailable`, online rows show `activity unavailable`,
+  and `syncing` applies only to online origins with incomplete observations.
+  The activity API returns `observed: null` when no snapshot exists, so
+  consumers must accept an unknown observation time.
+
 - Hub send responses are now validated before a message is treated as
   delivered: a 2xx response with a missing or malformed receipt, a
   different message ID or sender, or an invalid group or empty cursor is
