@@ -162,9 +162,9 @@ def test_footer_keeps_identity_after_send_and_prioritizes_reconnection(tmp_path)
             assert "Connected" not in footer() and "Sent" not in footer()
             assert "Enter" not in footer() and "Ctrl" not in footer()
             ui.connection = "Reconnecting…"
-            assert footer().endswith("Reconnecting…  ")
+            assert footer().rstrip() == "! Reconnecting…"
             assert "bryan" not in footer() and "Sent" not in footer()
-            assert footer().startswith("  #dev(3)")
+            assert "#dev" not in footer()
             for width in (1, 12, 29, 30, 60):
                 output.columns = width
                 assert len(footer()) <= width

@@ -8,12 +8,29 @@ import pytest
 from tests.unit.cli.test_talk_layout import talk_app
 from toolang.cli.common.execution_progress.formatting import display_width
 from toolang.cli.toolang.commands.talk import tui
+from toolang.teaming.schemas import Conversation
 
 
 @pytest.mark.parametrize("fails", [False, True])
-def test_talk_sets_osc_zero_title_and_clears_it_on_exit(tmp_path, monkeypatch, fails):
+@pytest.mark.parametrize(
+    "conversation,label",
+    [
+        (None, "#dev"),
+        (
+            Conversation("group:pair", "direct", ("human:bryan", "agent:alice")),
+            "@alice",
+        ),
+        (
+            Conversation("group:pair", "direct", ("agent:bob", "agent:alice")),
+            "@alice,bob",
+        ),
+    ],
+)
+def test_talk_sets_osc_zero_title_and_clears_it_on_exit(
+    tmp_path, monkeypatch, fails, conversation, label
+):
     async def scenario():
-        async with talk_app(tmp_path) as (ui, output):
+        async with talk_app(tmp_path, conversation=conversation) as (ui, output):
             monkeypatch.setenv("TOOLANG_TMUX", "0")
             monkeypatch.setattr(tui.os, "isatty", lambda _fd: True)
             monkeypatch.setattr(output, "fileno", lambda: 1)
@@ -33,7 +50,7 @@ def test_talk_sets_osc_zero_title_and_clears_it_on_exit(tmp_path, monkeypatch, f
             else:
                 await ui.run()
             assert [call.args[0] for call in write.call_args_list] == [
-                "\x1b]0;Talk · bryan · group:gc_dev · #dev(3)\x07",
+                f"\x1b]0;{label}\x07",
                 "\x1b]0;\x07",
             ]
             assert ui.draft.read_text() == "keep this draft"

@@ -8,16 +8,22 @@ from toolang.teaming.schemas import Conversation, target
 from .rendering import display_text
 
 
-def conversation_status(info: Conversation, viewer: str) -> StyleAndTextTuples:
+def conversation_label(info: Conversation, viewer: str) -> str:
     if info.kind == "group":
-        name = display_text(info.label).removeprefix("gc_")
-        marker, label = "#", f"{name}({len(info.members)})"
-    else:
-        others = sorted(member for member in info.members if member != viewer)
-        marker, label = "@", ",".join(target(member).name for member in others)
+        return "#" + display_text(info.label).removeprefix("gc_")
+    others = sorted(member for member in info.members if member != viewer)
+    return "@" + ",".join(target(member).name for member in others)
+
+
+def conversation_status(info: Conversation, viewer: str) -> StyleAndTextTuples:
+    label = conversation_label(info, viewer)
+    count = f"({len(info.members)})" if info.kind == "group" else ""
     return [
-        ("class:status" if info.allows_sender(viewer) else "class:status dim", marker),
-        ("class:status", label),
+        (
+            "class:status" if info.allows_sender(viewer) else "class:status dim",
+            label[0],
+        ),
+        ("class:status", label[1:] + count),
     ]
 
 
@@ -49,7 +55,6 @@ def status_line(
     *,
     center: str = "",
     width: int,
-    warning: bool,
 ) -> StyleAndTextTuples:
     width = max(1, width)
     margin = min(2, (width - 1) // 2)
@@ -79,7 +84,7 @@ def status_line(
             ),
             ("class:status", center),
             ("", " " * (right_start - center_start - center_width)),
-            ("class:status.warning" if warning else "class:status", right),
+            ("class:status", right),
             ("", " " * margin),
         ]
     left = _truncate_fragments(safe_left, inner - right_width - bool(right))
@@ -88,6 +93,6 @@ def status_line(
         ("", " " * margin),
         *left,
         ("", " " * gap),
-        ("class:status.warning" if warning else "class:status", right),
+        ("class:status", right),
         ("", " " * margin),
     ]

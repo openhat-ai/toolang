@@ -586,7 +586,7 @@ def test_talk_tmux_identity_separates_root_connection_and_human(tmp_path):
     )
 
 
-def test_talk_tmux_session_names_login_and_reuses_canonical_window(
+def test_talk_tmux_session_reuses_canonical_window(
     tmp_path, messaging_cli, monkeypatch
 ):
     from tests.unit.cli.test_tmux_launcher import FakePane, FakeServer, _launcher
@@ -602,7 +602,7 @@ def test_talk_tmux_session_names_login_and_reuses_canonical_window(
         assert cli.main(["--root", str(tmp_path), "talk", "dev"]) == 0
     assert len(server.created) == 1
     session = server.sessions[0]
-    assert session.session_name == "talk-bryan"
+    assert session.session_name == "talk"
     assert session.options["@toolang_text"] == talk.talk_identity(
         tmp_path, BackendConfig("redis://test").identity, "human:bryan"
     )
@@ -610,6 +610,10 @@ def test_talk_tmux_session_names_login_and_reuses_canonical_window(
     window = session.windows[0]
     assert window.window_name == window.options["@toolang_group"] == "group:dev"
     assert window.panes[0].options[MARK_PAD] == "text"
+    window.rename_window("my conversation")
+    assert cli.main(["--root", str(tmp_path), "talk", "dev"]) == 0
+    assert len(server.created) == 1 and len(session.windows) == 1
+    assert window.window_name == "my conversation"
 
 
 def test_follow_reconnects_from_last_displayed_id_without_replaying_history(

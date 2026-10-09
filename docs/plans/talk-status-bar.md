@@ -6,8 +6,9 @@ Online information is deferred until Hub offers a suitable presence subscription
 ## Goal and scope
 
 Show the conversation on the left, its canonical ID in the center, and the
-viewer's login name or current error on the right. Inset both ends by two terminal
-cells, aligned with the input text.
+viewer's login name on the right. Errors replace the whole footer using Chat's
+error row. Inset the normal footer by two terminal cells on both ends, aligned
+with the input text.
 Rename the messaging command from `text` to `talk`, keeping `write a message` as
 the input placeholder and preserving existing key bindings.
 
@@ -33,28 +34,32 @@ the input placeholder and preserving existing key bindings.
   Do not poll the agent directory or conversation directory from the message loop.
   No new API or subscription protocol is in scope.
 - The right side shows the plain login name, including for read-only observers.
-  Omit `from`, role prefixes, and read-only suffixes. Preserve existing connection
-  and error notices, including `Reopen Talk` for Hub HTTP 409 `hub_changed`, without
-  changing identity in place. Preserve the draft.
+  Omit `from`, role prefixes, and read-only suffixes. While connecting, show the
+  connection status. Errors replace all three segments with Chat's red `!` row,
+  starting in the first column and retaining its trailing inset. Show the actual
+  returned error instead of a generic send-failure label; keep drafts and Hub
+  identity validation without changing identity in place.
 - Sending/sent acknowledgments do not replace the login name. Keep actionable
   send/draft errors visible. Omit `Connected` and key hints.
 - Center the full canonical conversation ID within the footer. Never truncate
   the ID into a misleading copy target. On narrow terminals, prioritize the
-  right side; hide the ID if it cannot fit at the center without overlapping it,
+  login; hide the ID if it cannot fit at the center without overlapping it,
   then truncate the left label by terminal cells. Reduce margins only below five
   cells. Never wrap or overflow.
-- Publish a sanitized OSC 0 title containing Talk, the login, canonical ID, and
-  conversation label on interactive TTYs; clear it on exit. This updates iTerm2
-  tab/window titles and tmux's native pane title. New tmux sessions use
-  `talk-<login>`; window names and `@toolang_group` contain the canonical ID.
+- Publish only the conversation label (`@alice`, `@alice,bob`, or `#dev`) as a
+  sanitized OSC 0 title on interactive TTYs; omit member totals and clear it on exit.
+  This updates iTerm2 tab/window titles and tmux's native pane title. New tmux
+  sessions use `talk`, with the existing collision suffix when that name is taken;
+  window names and `@toolang_group` contain the canonical ID.
   Preserve existing identity marks and pad kinds to reuse already-open windows.
+  Window lookup uses the canonical mark even after a user renames the window.
 - Message dividers, input editing, receive retries, and persisted messages remain
   outside this change. Existing standalone directory output is unchanged.
 
 ## Touchpoints and acceptance
 
 - Talk CLI passes resolved conversation metadata into its TUI; the Talk status
-  renderer owns labels and row geometry.
+  renderer owns labels and row geometry. Chat and Talk share the error-row renderer.
 - Verify command routing/help, literal flags in messages, absence of a Text alias,
   and restored drafts/history from the existing storage namespace.
 - Verify margins, centered canonical IDs, direct/member/observer labels, group

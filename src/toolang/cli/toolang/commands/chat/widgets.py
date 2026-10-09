@@ -20,6 +20,7 @@ from toolang.cli.common.terminal_surfaces import (
     TerminalSurfaces,
 )
 from toolang.cli.common.input import InputBox
+from toolang.cli.common.status import error_status_line
 from .events import ChatUIEvent
 from .history import ChatInputHistoryStore
 from .input import normalize_chat_input
@@ -596,30 +597,7 @@ class StatusBar:
 
     def _render(self) -> list[tuple[str, str]]:
         if self.error_message:
-            marker = "!"
-            left_cell, right_cell, body_width = self._status_insets(leading=False)
-            remaining_width = max(0, body_width - get_cwidth(marker))
-            detail = " ".join(self.error_message.split())
-            message = (
-                f" {truncate(detail, remaining_width - 1)}" if remaining_width else ""
-            )
-            padding = " " * max(
-                0,
-                body_width - get_cwidth(f"{marker}{message}"),
-            )
-            cells: list[tuple[str, str]] = (
-                [("class:status", left_cell)] if left_cell else []
-            )
-            cells.extend(
-                [
-                    ("class:status.error.marker", marker),
-                    ("class:status.error", message),
-                    ("class:status", padding),
-                ]
-            )
-            if right_cell:
-                cells.append(("class:status", right_cell))
-            return cells
+            return error_status_line(self.error_message, width=self._terminal_width())
 
         left_cell, right_cell, body_width = self._status_insets()
         full_left_label = _chat_runnable_label(self.runnable_label)

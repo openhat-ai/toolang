@@ -7,7 +7,7 @@ from typing import Any
 
 from prompt_toolkit.application import Application, run_in_terminal
 from prompt_toolkit.filters import Condition, has_focus
-from prompt_toolkit.formatted_text import StyleAndTextTuples, fragment_list_to_text
+from prompt_toolkit.formatted_text import StyleAndTextTuples
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.layout import HSplit, HorizontalAlign, Layout, VSplit, Window
 from prompt_toolkit.layout.controls import FormattedTextControl
@@ -20,6 +20,7 @@ from toolang.cli.common.execution_progress.formatting import truncate
 from toolang.cli.common.input import InputBox
 from toolang.cli.common.input_history import InputHistoryStore
 from toolang.cli.common.scrollback import ScrollbackRenderer
+from toolang.cli.common.status import error_status_line
 from toolang.cli.common.terminal_surfaces import TerminalSurfaces
 from toolang.common.files import atomic_write_text
 from toolang.teaming.client import HubClient
@@ -27,12 +28,11 @@ from toolang.teaming.errors import (
     BackendUnavailable,
     HubIdentityChanged,
     MessagingError,
-    SendUnconfirmed,
 )
 from toolang.teaming.schemas import Conversation, Message, target
 
 from .rendering import display_text, message_block
-from .status import conversation_status, status_line
+from .status import conversation_label, conversation_status, status_line
 
 
 class TalkTui:
@@ -147,7 +147,8 @@ class TalkTui:
                     "input.placeholder": "dim",
                     "control.run": "bg:ansibrightcyan",
                     "status": "nodim",
-                    "status.warning": "ansiyellow",
+                    "status.error.marker": "fg:ansired",
+                    "status.error": "fg:ansired",
                 }
             ),
         )
@@ -171,21 +172,21 @@ class TalkTui:
         return int(self.app.output.get_size().rows >= 5)
 
     def status_text(self) -> StyleAndTextTuples:
-        connected = self.connection == "Connected"
-        warning = False
-        if not connected:
-            right = self.connection
-            warning = self.connection != "Connecting…"
-        elif self.status not in {"", "Sending…", "Sent"}:
-            right, warning = self.status, True
-        else:
-            right = target(self.human).name
+        error = self.status if self.status not in {"", "Sending…", "Sent"} else ""
+        if not error and self.connection not in {"Connected", "Connecting…"}:
+            error = self.connection
+        if error:
+            return [*error_status_line(display_text(error), width=self.content_width())]
+        right = (
+            target(self.human).name
+            if self.connection == "Connected"
+            else self.connection
+        )
         return status_line(
             conversation_status(self.conversation, self.human),
             right,
             center=self.group,
             width=self.content_width(),
-            warning=warning,
         )
 
     def save_draft(self) -> None:
@@ -207,11 +208,7 @@ class TalkTui:
         except MessagingError as exc:
             if isinstance(exc, HubIdentityChanged):
                 self.connection = "Reopen Talk"
-            self.status = (
-                "Send not confirmed"
-                if isinstance(exc, SendUnconfirmed)
-                else "Send failed"
-            )
+            self.status = str(exc)
             await self.print_notice(str(exc))
         else:
             self.connection = "Connected"
@@ -294,11 +291,8 @@ class TalkTui:
             await asyncio.sleep(delay)
 
     async def run(self) -> None:
-        label = fragment_list_to_text(
-            conversation_status(self.conversation, self.human)
-        )
         title_written = self.write_title(
-            f"Talk · {target(self.human).name} · {self.group} · {label}"
+            conversation_label(self.conversation, self.human)
         )
         try:
             await self.app.run_async(

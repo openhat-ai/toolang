@@ -10,17 +10,21 @@ from prompt_toolkit.formatted_text import fragment_list_to_text
 from tests.unit.cli.test_talk_layout import talk_app
 from toolang.cli.common.execution_progress.formatting import display_width
 from toolang.cli.toolang.commands.talk.status import conversation_status, status_line
+from toolang.cli.toolang.commands.chat.widgets import StatusBar
 from toolang.teaming.client import HubClient
-from toolang.teaming.errors import HubIdentityChanged, MessagingError
+from toolang.teaming.errors import (
+    BackendUnavailable,
+    HubIdentityChanged,
+    MessagingError,
+    SendUnconfirmed,
+)
 from toolang.teaming.schemas import Conversation, HubConnection
 
 
 @pytest.mark.parametrize("width", [1, 2, 3, 4, 5, 8, 12, 20, 40, 60, 120])
 @pytest.mark.parametrize("right", ["bryan", "爱丽丝", "Reconnecting…"])
 def test_status_sides_fit_cells_and_preserve_margins(width, right):
-    fragments = status_line(
-        [("class:status", "@中文e\u0301")], right, width=width, warning=False
-    )
+    fragments = status_line([("class:status", "@中文e\u0301")], right, width=width)
     rendered = fragment_list_to_text(fragments)
     assert display_width(rendered) == width
     assert "\n" not in rendered
@@ -32,16 +36,15 @@ def test_status_sides_fit_cells_and_preserve_margins(width, right):
         assert rendered.startswith("  @中文e\u0301")
 
 
-def test_status_sides_sanitize_controls_and_keep_warning_local():
+def test_status_sides_sanitize_terminal_controls():
     fragments = status_line(
         [("class:status", "#\x1b]52;c;secret\x07dev(2)")],
         "Reconnect\x1b[2J\nnow",
         width=80,
-        warning=True,
     )
     text = fragment_list_to_text(fragments)
     assert "\x1b" not in text and "secret" not in text and "\n" not in text
-    assert ("class:status.warning", "Reconnect now") in fragments
+    assert ("class:status", "Reconnect now") in fragments
     assert ("class:status", "#dev(2)") in fragments
     assert text.endswith("Reconnect now  ")
 
@@ -51,11 +54,65 @@ def test_clipping_preserves_name_style_and_prioritizes_login():
         [("class:status", "@alice"), ("class:status", ",bob")],
         "bryan",
         width=14,
-        warning=False,
     )
     assert fragment_list_to_text(fragments) == "  @al… bryan  "
     assert ("class:status", "@al") in fragments
     assert ("class:status", "…") in fragments
+
+
+@pytest.mark.parametrize("width", [1, 2, 3, 4, 5, 8, 20, 80, 120])
+def test_error_replaces_all_footer_segments_and_matches_chat(tmp_path, width):
+    async def scenario():
+        async with talk_app(tmp_path) as (ui, output):
+            output.columns = width
+            ui.status = "Permission denied: 开发e\u0301\nPlease reconnect"
+            chat = StatusBar("agic:chat", "model", "agent", "repo")
+            chat.set_error(ui.status)
+            fragments = ui.status_text()
+            assert fragments == chat._render()
+            text = fragment_list_to_text(fragments)
+            assert display_width(text) == width
+            assert text.startswith("!") and "\n" not in text
+            assert (
+                "bryan" not in text
+                and "group:gc_dev" not in text
+                and "#dev" not in text
+            )
+            if width >= 80:
+                assert (
+                    text.rstrip() == "! Permission denied: 开发e\u0301 Please reconnect"
+                )
+                assert text.endswith("  ")
+            for style, *_ in fragments:
+                if style.startswith("class:status.error"):
+                    assert (
+                        ui.app.style.get_attrs_for_style_str(style).color == "ansired"
+                    )
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("error", [MessagingError, BackendUnavailable, SendUnconfirmed])
+def test_send_errors_keep_the_draft_and_show_returned_detail_without_retry(
+    tmp_path, monkeypatch, error
+):
+    async def scenario():
+        async with talk_app(tmp_path) as (ui, _):
+            ui.prompt.replace_input("keep this draft")
+            ui.client.send.side_effect = error(
+                "Delivery unavailable; reconnect manually"
+            )
+            notice = AsyncMock()
+            monkeypatch.setattr(ui, "print_notice", notice)
+            await ui.send("keep this draft")
+            assert fragment_list_to_text(ui.status_text()).rstrip() == (
+                "! Delivery unavailable; reconnect manually"
+            )
+            assert ui.prompt.buffer.text == ui.draft.read_text() == "keep this draft"
+            ui.client.send.assert_awaited_once_with(ui.group, body="keep this draft")
+            notice.assert_awaited_once_with("Delivery unavailable; reconnect manually")
+
+    asyncio.run(scenario())
 
 
 @pytest.mark.parametrize(
@@ -112,7 +169,6 @@ def test_full_canonical_id_is_centered_by_terminal_cells(width, canonical):
         "bryan",
         center=canonical,
         width=width,
-        warning=False,
     )
     text = fragment_list_to_text(fragments)
     assert text.startswith("  #dev(3)") and text.endswith("bryan  ")
@@ -124,19 +180,18 @@ def test_full_canonical_id_is_centered_by_terminal_cells(width, canonical):
 
 
 @pytest.mark.parametrize("width", [1, 12, 25, 40, 60, 80, 120])
-def test_long_ids_are_shown_whole_or_hidden_without_overlapping_errors(width):
+def test_long_ids_are_shown_whole_or_hidden_without_overlapping_login(width):
     canonical = "group:12345678-1234-1234-1234-123456789012"
     fragments = status_line(
         [("class:status dim", "@"), ("class:status", "alice,bob" * 10)],
-        "Send failed",
+        "bryan",
         center=canonical,
         width=width,
-        warning=True,
     )
     text = fragment_list_to_text(fragments)
     assert display_width(text) == width
     if width >= 16:
-        assert text.endswith("Send failed  ")
+        assert text.endswith("bryan  ")
     if "group:" in text:
         assert canonical in text
         assert ("class:status", canonical) in fragments
@@ -171,9 +226,13 @@ def test_connection_state_replaces_identity_and_keeps_conversation_label(
         async with talk_app(tmp_path) as (ui, _):
             ui.connection = connection
             text = fragment_list_to_text(ui.status_text())
-            assert text.endswith(connection + "  ")
             assert "bryan" not in text and "Connected" not in text
-            assert text.startswith("  #dev(3)")
+            if connection == "Connecting…":
+                assert text.startswith("  #dev(3)")
+                assert text.endswith(connection + "  ")
+            else:
+                assert text.rstrip() == "! " + connection
+                assert "group:gc_dev" not in text and "#dev" not in text
             ui.connection = "Connected"
             assert fragment_list_to_text(ui.status_text()).endswith("bryan  ")
 
@@ -204,8 +263,8 @@ def test_changed_hub_identity_requests_reopen_and_preserves_draft(
             else:
                 await ui.send("keep this draft")
             footer = fragment_list_to_text(ui.status_text())
-            assert footer.endswith("Reopen Talk  ") and "bryan" not in footer
-            assert footer.startswith("  #dev(3)")
+            assert footer.rstrip() == "! Hub identity changed; reopen Talk"
+            assert "bryan" not in footer and "group:gc_dev" not in footer
             assert ui.prompt.buffer.text == ui.draft.read_text() == "keep this draft"
             notice.assert_awaited_once_with("Hub identity changed; reopen Talk")
             with pytest.raises(HubIdentityChanged):
@@ -221,7 +280,10 @@ def test_other_terminal_errors_stop_following_and_show_notice(tmp_path, monkeypa
             notice = AsyncMock()
             monkeypatch.setattr(ui, "print_notice", notice)
             await ui.follow()
-            assert fragment_list_to_text(ui.status_text()).endswith("Stopped  ")
+            assert (
+                fragment_list_to_text(ui.status_text()).rstrip()
+                == "! Group is unavailable"
+            )
             notice.assert_awaited_once_with("Group is unavailable")
 
     asyncio.run(scenario())
@@ -238,12 +300,12 @@ def test_draft_failure_remains_visible_when_connected(tmp_path, monkeypatch):
                 fail_write,
             )
             ui.prompt.replace_input("draft")
-            assert fragment_list_to_text(ui.status_text()).endswith(
-                "Draft could not be saved: disk full  "
+            assert fragment_list_to_text(ui.status_text()).rstrip() == (
+                "! Draft could not be saved: disk full"
             )
             assert (
-                "class:status.warning",
-                "Draft could not be saved: disk full",
+                "class:status.error",
+                " Draft could not be saved: disk full",
             ) in ui.status_text()
 
     asyncio.run(scenario())
