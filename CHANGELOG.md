@@ -261,6 +261,13 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Fixed
 
+- Team event observation keeps a large recovery history from stalling or
+  replacing the active snapshot: non-active trees now share a deadline of half
+  the five-second snapshot budget instead of five seconds each, so a slow
+  optional tree cannot delay or evict the active run's snapshot, and `too top`
+  ages out retained completed rows by each row's own terminal status, so rows
+  for an origin that is offline or still recovering no longer accumulate.
+
 - Hub send responses are now validated before a message is treated as
   delivered: a 2xx response with a missing or malformed receipt, a
   different message ID or sender, or an invalid group or empty cursor is
