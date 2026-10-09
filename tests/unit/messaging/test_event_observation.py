@@ -827,6 +827,73 @@ def test_projection_omits_optional_history_before_failing_active_budget(
         projection.trim()
 
 
+def test_recovery_bounds_optional_history_without_losing_active_tree(
+    tmp_path, monkeypatch
+):
+    from types import SimpleNamespace
+
+    from tests.support.execution_harness import AsyncGate, ScriptedModelTurn
+    from toolang.base.types.run import ModelCallResult
+    from toolang.execution import observation, subscriptions
+    from toolang.execution.events import RunBegin
+    from toolang.execution.store import RunStore
+    from toolang.teaming import exporter
+    from toolang.teaming.records import MAX_BYTES, field
+
+    gate = AsyncGate()
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="flow example:\n  let result = Done\nagic slow:\n  Wait.\n",
+        responses=[ScriptedModelTurn(ModelCallResult(), gate=gate)],
+    )
+
+    async def scenario():
+        async with harness:
+            old = await run(harness)
+            recent = await run(harness)
+            active = harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    runnable="slow",
+                    primary=(TextPart("input"),),
+                )
+            )
+            await asyncio.wait_for(gate.wait_until_entered(), 2)
+            store = RunStore(harness.store.db_path, read_only=True)
+            try:
+                store.pin_stream_snapshot(seconds=5, max_bytes=MAX_BYTES)
+                clock = [100.0]
+                timer = SimpleNamespace(monotonic=lambda: clock[0])
+                serialize = subscriptions.event_to_data
+
+                def slow_history(event):
+                    if isinstance(event, RunBegin) and event.run == old.id:
+                        # One optional tree consumes most of the overall budget.
+                        clock[0] += exporter.SNAPSHOT_SECONDS * 0.6
+                    return serialize(event)
+
+                with monkeypatch.context() as patch:
+                    for module in (exporter, subscriptions, observation):
+                        patch.setattr(module, "time", timer, raising=False)
+                    patch.setattr(subscriptions, "event_to_data", slow_history)
+                    patch.setattr(
+                        store, "stream_recent_roots", lambda limit: (recent.id, old.id)
+                    )
+                    projection = exporter._read_projection(
+                        store, harness.executor.stream.tail
+                    )
+                assert field("run", active.run_id) in projection.entities
+                assert field("run", recent.id) in projection.entities
+                assert field("run", old.id) not in projection.entities
+                projection.snapshot(observation.StreamScope())
+            finally:
+                store.close()
+                gate.release()
+                await active
+
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize(
     "stored",
     [

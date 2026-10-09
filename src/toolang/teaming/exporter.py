@@ -7,6 +7,7 @@ from hashlib import sha256
 import logging
 from pathlib import Path
 import sqlite3
+import time
 from uuid import uuid4
 
 from toolang.execution.events import (
@@ -36,12 +37,19 @@ logger = logging.getLogger(__name__)
 def _read_projection(store: RunStore, boundary: EventCursor) -> EventProjection:
     """Load active structure first; optional history cannot evict an active tree."""
     projection = EventProjection()
+    # Leave time to finish encoding/trimming and return the active snapshot.
+    # Optional trees share this deadline instead of each getting five seconds.
+    history_deadline = time.monotonic() + SNAPSHOT_SECONDS / 2
 
-    def add(runs: list[RunRecord], steps: list[StepRecord]) -> None:
-        snapshot = RecordSnapshot(store, runs, steps)
+    def add(
+        runs: list[RunRecord], steps: list[StepRecord], *, deadline: float | None = None
+    ) -> None:
+        snapshot = RecordSnapshot(store, runs, steps, deadline=deadline)
         roots: dict[str, str] = {}
         threads: dict[str, str] = {}
         for frame in snapshot.structural():
+            if deadline is not None and time.monotonic() >= deadline:
+                raise SnapshotLimitError("Optional history snapshot expired")
             event = event_from_data(frame.data)
             if isinstance(event, RunBegin):
                 roots[event.run] = (
@@ -83,6 +91,8 @@ def _read_projection(store: RunStore, boundary: EventCursor) -> EventProjection:
     # optional roots consume the remaining private SQLite read budget.
     try:
         for frame in record_controls(store, recent=True):
+            if time.monotonic() >= history_deadline:
+                break
             event = event_from_data(frame.data)
             assert isinstance(event, ThreadCreated | ThreadForked | ThreadRewound)
             projection.apply(
@@ -100,6 +110,8 @@ def _read_projection(store: RunStore, boundary: EventCursor) -> EventProjection:
                 frame.data.get("cursor")
             )
         for root in store.stream_recent_roots(MAX_RECENT):
+            if time.monotonic() >= history_deadline:
+                break
             if root in active:
                 continue
             before = projection.copy()
@@ -107,7 +119,8 @@ def _read_projection(store: RunStore, boundary: EventCursor) -> EventProjection:
                 add(
                     *store.stream_records(
                         root=root, thread=None, after=None, complete=True
-                    )
+                    ),
+                    deadline=history_deadline,
                 )
             except (ValueError, sqlite3.Error, SnapshotLimitError):
                 projection = before

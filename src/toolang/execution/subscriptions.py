@@ -167,10 +167,17 @@ class Attachment:
 
 class RecordSnapshot(StructuralSnapshot):
     def __init__(
-        self, store: RunStore, runs: list[RunRecord], steps: list[StepRecord]
+        self,
+        store: RunStore,
+        runs: list[RunRecord],
+        steps: list[StepRecord],
+        *,
+        deadline: float | None = None,
     ) -> None:
         super().__init__()
-        budget = _Budget(time.monotonic() + SNAPSHOT_SECONDS)
+        budget = _Budget(
+            time.monotonic() + SNAPSHOT_SECONDS if deadline is None else deadline
+        )
         self.parents = {run.id: run.parent for run in runs}
         self.steps = {step.ref: step for step in steps}
         self.begins: dict[str | StepRef, tuple[ExecutionEvent, str | None]] = {}
