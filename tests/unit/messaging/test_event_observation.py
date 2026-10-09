@@ -417,13 +417,12 @@ def test_hub_filters_and_cursor_errors_have_flat_http_contract(tmp_path):
         client = MessagingClient(
             BackendConfig("redis://test"), actor="human:owner", backend=driver
         )
-        app = create_app(client, token="secret")
+        app = create_app(client)
         async with (
             app.router.lifespan_context(app),
             httpx.AsyncClient(
                 transport=httpx.ASGITransport(app),
                 base_url="http://hub",
-                headers={"Authorization": "Bearer secret"},
             ) as http,
         ):
             for params in (
@@ -672,14 +671,13 @@ def test_teaming_keeps_lease_through_final_export_drain(tmp_path, monkeypatch, b
             messaging = MessagingLoop(
                 layout=harness.setup.layout,
                 owner="human:owner",
-                config=client.config,
                 executor=harness.executor,
                 threads=harness.threads,
                 get_agent_setup=lambda: harness.setup,
                 get_agent_state=lambda: harness.state,
                 client=client,
             )
-            lifecycle = TeamingLoop(messaging)
+            lifecycle = TeamingLoop(messaging, EventBackend(driver))
             observed = []
             original = lifecycle.exporter.publish
             entered, release = asyncio.Event(), asyncio.Event()
@@ -754,13 +752,13 @@ def test_teaming_close_bounds_unresponsive_lease_release(tmp_path, monkeypatch):
                 MessagingLoop(
                     layout=harness.setup.layout,
                     owner="human:owner",
-                    config=client.config,
                     executor=harness.executor,
                     threads=harness.threads,
                     get_agent_setup=lambda: harness.setup,
                     get_agent_state=lambda: harness.state,
                     client=client,
-                )
+                ),
+                EventBackend(driver),
             )
             closed = False
             close = client.close
@@ -1063,13 +1061,12 @@ def test_invalid_recovery_metadata_is_a_backend_error(damage):
         client = MessagingClient(
             BackendConfig("redis://test"), actor="human:owner", backend=driver
         )
-        app = create_app(client, token="secret")
+        app = create_app(client)
         async with (
             app.router.lifespan_context(app),
             httpx.AsyncClient(
                 transport=httpx.ASGITransport(app, raise_app_exceptions=False),
                 base_url="http://hub",
-                headers={"Authorization": "Bearer secret"},
             ) as http,
         ):
             await EventBackend(driver).initialize()

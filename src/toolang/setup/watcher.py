@@ -197,7 +197,9 @@ class SetupWatcher:
             )
         else:
             teaming = self._setup.teaming
-        toolset_configs["msg"] = teaming.toolset_config() if teaming else {}
+        toolset_configs["msg"] = (
+            teaming.toolset_config(root=self.layout.root) if teaming else {}
+        )
         catalog_path = resolve_model_catalog_path(
             self.layout,
             explicit=self._model_catalog_override,

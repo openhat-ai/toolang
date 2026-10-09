@@ -1,14 +1,14 @@
 """Model-facing messaging tools backed by the shared teaming service."""
 
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
 from toolang.base.protocols.tool import Tool, Toolset
 from toolang.base.types.tool import MsgToolContext, ToolContext
 from toolang.base.utils.function_tools import create_function_tool, tool
-from toolang.teaming.config import BackendConfig
 from toolang.teaming.errors import MessagingError
-from toolang.teaming.messaging import MessagingClient
+from toolang.teaming.agent_client import AgentClient
 from toolang.teaming.schemas import target as parse_target
 
 
@@ -17,12 +17,12 @@ class MsgToolset:
     description = "Discover message targets, send messages, and manage your groups."
 
     def __init__(self, config: Mapping[str, Any]):
-        self.config = BackendConfig(config["url"]) if config else None
+        self.root = Path(config["root"]) if config else None
 
-    def connection(self, context: ToolContext) -> MessagingClient:
-        if self.config is None:
+    def connection(self, context: ToolContext) -> AgentClient:
+        if self.root is None:
             raise MessagingError("Teaming is disabled for this agent")
-        return MessagingClient(self.config, actor=f"agent:{context.home.name}")
+        return AgentClient(self.root, actor=f"agent:{context.home.name}")
 
     def tools(self) -> Mapping[str, Tool]:
         @tool(

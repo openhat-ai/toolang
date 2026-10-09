@@ -2,6 +2,7 @@
 
 from dataclasses import replace
 import fcntl
+import json
 import os
 import socket
 import subprocess
@@ -24,7 +25,6 @@ def record(**changes):
         pid=os.getpid(),
         created=psutil.Process().create_time(),
         port=7000,
-        token="x" * 32,
         human="human:owner",
         identity="backend",
     )
@@ -38,6 +38,7 @@ def test_private_discovery_uses_actual_endpoint_and_ignores_stale_pid(
     saved = record(port=7123)
     saved.save(hub.path)
     assert hub.path.stat().st_mode & 0o777 == 0o600
+    assert "token" not in json.loads(hub.path.read_text())
     monkeypatch.setenv("TOOLANG_HUB_PORT", "invalid")
     assert hub.connection().endpoint == "http://127.0.0.1:7123"
     assert hub.connection().human == "human:owner"
@@ -46,6 +47,15 @@ def test_private_discovery_uses_actual_endpoint_and_ignores_stale_pid(
     assert hub.stop() is False
     with pytest.raises(TeamingError, match="too hub start"):
         hub.connection()
+
+
+def test_discovery_reads_legacy_token_record_for_process_cleanup(tmp_path):
+    hub = HubProcess(tmp_path)
+    saved = record()
+    saved.save(hub.path)
+    hub.path.write_text(json.dumps(saved.model_dump() | {"token": "old-token"}))
+    assert hub.current() == saved
+    assert hub.connection() == saved.connection
 
 
 def test_stop_signals_only_the_verified_hub_process(tmp_path, monkeypatch):
@@ -170,9 +180,7 @@ from pathlib import Path
 import toolang.up.hub as module
 from toolang.teaming.config import BackendConfig, TeamingRootConfig
 root, port = Path(sys.argv[1]), int(sys.argv[2])
-class SlowClient:
-    actor = "human:owner"
-    def __init__(self, *args, **kwargs): pass
+class SlowClient(module.MessagingClient):
     async def __aenter__(self):
         (root / "starting").touch()
         await asyncio.sleep(60)

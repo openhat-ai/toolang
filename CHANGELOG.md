@@ -21,7 +21,7 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 - Enabled agents export their canonical event stream to the teaming backend
   independently of execution and messaging, including retained finals from
-  offline origins, and the authenticated Hub serves it at `GET /events/stream`.
+  offline origins, and the Hub serves it at `GET /events/stream`.
   Optional `agent=agent:alice` selects one origin, and `thread=ID` or `run=ID`
   selects a thread or root tree under it; no filter observes the whole team.
   Execution frames keep their event name and payload and add `agent`,
@@ -56,7 +56,7 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   backend readiness, `serve` runs it in the foreground, `stop` leaves agents
   and Redis/Valkey running, and `status` reports the endpoint and current
   backend readiness. Hub binds `127.0.0.1` and records its actual endpoint,
-  human, backend identity, and generated bearer token in the root's private
+  human, and backend identity in the root's private
   `.runtime/hub.json`.
 
 - Hub `start`/`serve` ports resolve as `--port` > `TOOLANG_HUB_PORT` >
@@ -104,10 +104,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   columns by default, configurable with `TOOLANG_PROGRESS_MAX_WIDTH`), capped by
   the current terminal width.
 
-- Teaming is opt-in: an agent participates only after its `config.toml` sets
-  `[teaming].enabled = true` (default `false`), and a disabled agent makes no
-  backend connections. The backend URL defaults to `redis://localhost:6379/0`,
-  so a local Redis or Valkey server needs no URL. (#708)
+- Teaming is enabled by default: an agent participates unless its `config.toml`
+  sets `[teaming].enabled = false`, and a disabled agent makes no backend
+  connections. The backend URL defaults to `redis://localhost:6379/0`, so a
+  local Redis or Valkey server needs no URL, and local execution works while
+  the backend is unavailable. (#708)
 
 - `too text TARGET [MESSAGE...]` opens a conversation or sends a message and exits.
   It resolves a bare name that matches exactly one participant or conversation, plus
@@ -122,7 +123,7 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   list registered participants and accessible conversations with their canonical
   targets, `msg/send` (wire name `msg__send`) to send a message immediately, and
   `msg/create_group`, `msg/join_group`, and `msg/leave_group` to create and manage
-  custom groups. Enabled hosted agents poll an external Redis or Valkey server and
+  custom groups. Enabled hosted agents poll the Hub and
   handle incoming batches through `agic:msg`, or the default agic, replying in the
   source group; own messages do not re-trigger handling and failed or malformed
   batches are logged and skipped. (#708)
@@ -135,6 +136,21 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   see `docs/messaging.md` for setup. (#708)
 
 ### Changed
+
+- The Hub HTTP API no longer requires bearer-token authentication: requests may
+  identify the backend and human with optional `X-Toolang-Backend` and
+  `X-Toolang-Human` headers, and a mismatch fails with `409` code `hub_changed`.
+  The private `.runtime/hub.json` no longer records a token, though records that
+  still carry one load normally, and Text reconnects across a Hub restart,
+  needing a reopen only when the Hub's endpoint, backend, or human changes.
+
+- **Breaking (teaming transport):** agents now reach messaging, presence, and
+  event export through the Hub HTTP API instead of connecting to Redis/Valkey
+  directly, so only Hub talks to the backend. Start the Hub with `too hub
+  start` before using agent `msg` tools or exporting agent events; stopping it
+  leaves agents running, and they resume without a
+  restart, while an uncertain send is never retried automatically. Isolated
+  guests without access to the local Hub report unavailability. (#721)
 
 - Interactive Text draws a dim bright-black `┄` rule on its own row above
   each agent's complete name, starting at the body inset and reaching the
@@ -188,9 +204,9 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 - `too text` and Interactive Text now reach messaging through the Hub HTTP
   API instead of connecting to Redis/Valkey directly, so run `too hub start`
-  before using Text and reopen Text after restarting the Hub. Agents and
-  their `msg` tools still communicate directly with the backend and remain
-  independent of the Hub.
+  before using Text and reopen Text if the Hub's endpoint, backend, or human
+  changes. Agents and
+  their `msg` tools use the same Hub API.
 
 - **Breaking:** the experimental `coop` toolset (wire names `coop__contacts` and
   `coop__send`), the public `CoopToolContext` type, the `too team` command,
@@ -213,6 +229,17 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Fixed
 
+- Hub send responses are now validated before a message is treated as
+  delivered: a 2xx response with a missing or malformed receipt, a
+  different message ID or sender, or an invalid group or empty cursor is
+  rejected, and the send is reported as unconfirmed with its message UUID
+  and never resent automatically.
+
+- `msg` calls made while handling a received batch now stay on the Hub
+  connection that delivered it: a Hub or backend identity change rejects
+  the tool request instead of mixing conversations across backends, and other
+  roots and independent tasks remain isolated.
+
 - Text renders agent messages with the shared terminal Markdown layout:
   fenced and inline code use the resolved terminal surfaces, tables fill
   the message body width and fold long cells instead of truncating them,
@@ -226,7 +253,7 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   another process cannot claim the same port while startup is in
   progress. (#710)
 
-- Authenticated Hub API requests restore the human's registration and the
+- Hub API requests restore the human's registration and the
   system membership when the backend restarted empty, without retrying the
   failed message append. (#710)
 

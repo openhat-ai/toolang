@@ -9,6 +9,8 @@ import sys
 import time
 import json
 
+import httpx
+from httpx_sse import connect_sse
 import psutil
 
 from toolang.plugin.sandboxes.host import HOST_LAUNCH_ENV
@@ -18,11 +20,17 @@ from toolang.common.layout import AgentLayout
 from toolang.up.sandbox import SandboxState
 
 
-def test_host_sandbox_start_health_and_stop(tmp_path: Path) -> None:
+def test_host_sandbox_runs_without_backend_with_default_teaming(tmp_path: Path) -> None:
     root = tmp_path / "toolang"
     layout = AgentLayout.resident(root, "alice")
     layout.home.mkdir(parents=True)
-    layout.program.write_text("# Agent alice\n", encoding="utf-8")
+    layout.program.write_text(
+        "flow example(_: Text):\n  let result = Done\n", encoding="utf-8"
+    )
+    # An absent, isolated socket keeps this test independent of local services.
+    layout.root_config.write_text(
+        f'[teaming.backend]\nurl = "unix://{root / "missing.sock"}"\n'
+    )
     port = _available_port()
     env = {**os.environ, "TOOLANG_ROOT": str(root)}
     base = (
@@ -59,6 +67,33 @@ def test_host_sandbox_start_health_and_stop(tmp_path: Path) -> None:
         with urlopen(f"http://localhost:{port}/healthz", timeout=2) as response:
             assert response.status == 200
 
+        with httpx.Client(
+            base_url=state.ref.endpoint, timeout=10, trust_env=False
+        ) as http:
+            response = http.post("/api/v1/threads", json={"client": "script"})
+            response.raise_for_status()
+            with connect_sse(
+                http,
+                "POST",
+                "/api/v1/runs/authored/stream",
+                json={
+                    "thread_id": response.json()["thread"]["id"],
+                    "request_id": "without-backend",
+                    "runnable": {"ref": "flow:example", "input": {"_": "Done"}},
+                    "model": None,
+                    "policy": {"allow": [], "limits": {}},
+                },
+            ) as stream:
+                if not stream.response.is_success:
+                    stream.response.read()
+                    raise AssertionError(stream.response.text)
+                stream.response.raise_for_status()
+                events = list(stream.iter_sse())
+            ended = [
+                json.loads(event.data) for event in events if event.event == "run_end"
+            ]
+            assert len(ended) == 1 and ended[0]["status"] == "succeeded"
+
         stopped = subprocess.run(
             (*base, "stop", "alice"),
             check=False,
@@ -92,7 +127,9 @@ def test_concurrent_cli_acquisition_shares_a_persistent_host(tmp_path: Path) -> 
     layout = AgentLayout.resident(tmp_path / "toolang", "alice")
     layout.home.mkdir(parents=True)
     layout.program.write_text("# Agent alice\n")
-    layout.config.write_text(f"[api]\nport = {_available_port()}\n")
+    layout.config.write_text(
+        f"[api]\nport = {_available_port()}\n[teaming]\nenabled = false\n"
+    )
     port = _available_port()
     env = {
         **os.environ,
@@ -192,6 +229,7 @@ def test_direct_server_registers_and_stops_without_signalling_shell(
     layout = AgentLayout.resident(root, "alice")
     layout.home.mkdir(parents=True)
     layout.program.write_text("# Agent alice\n")
+    layout.config.write_text("[teaming]\nenabled = false\n")
     base = (sys.executable, "-m", "toolang.cli.toolang", "--root", str(root))
     port = _available_port()
     env = {key: value for key, value in os.environ.items() if key != HOST_LAUNCH_ENV}

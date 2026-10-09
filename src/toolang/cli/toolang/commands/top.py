@@ -26,7 +26,7 @@ def top_command(
 ) -> None:
     """Show team or selected agent activity"""
     selected = cli_context(ctx)
-    token = None
+    backend = None
     agent = None
     if selected.agent is not None or selected.layout is not None:
         layout = context_layout(ctx)
@@ -41,14 +41,14 @@ def top_command(
         agent = f"agent:{layout.name}"
     else:
         connection = user_call(HubProcess(context_root(ctx)).connection)
-        endpoint, token = connection.endpoint, connection.token
+        endpoint, backend = connection.endpoint, connection.identity
     console = Console()
     try:
         asyncio.run(
             watch(
                 endpoint,
                 agent=agent,
-                token=token,
+                backend=backend,
                 once=once or not console.is_terminal,
                 console=console,
             )

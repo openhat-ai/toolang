@@ -206,7 +206,12 @@ class Activity:
 
 
 async def watch(
-    endpoint: str, *, agent: str | None, token: str | None, once: bool, console: Console
+    endpoint: str,
+    *,
+    agent: str | None,
+    backend: str | None,
+    once: bool,
+    console: Console,
 ) -> None:
     state = Activity(agent)
     stop = asyncio.Event()
@@ -215,7 +220,7 @@ async def watch(
         delay = 0.5
         async with httpx.AsyncClient(
             base_url=endpoint,
-            headers={"Authorization": f"Bearer {token}"} if token else {},
+            headers={"X-Toolang-Backend": backend} if backend else {},
             timeout=httpx.Timeout(10, read=None),
             trust_env=False,
         ) as http:
@@ -228,7 +233,14 @@ async def watch(
                         "/events/stream" if agent is None else "/api/v1/stream",
                         params={"after": state.cursor} if state.cursor else {},
                     ) as events:
-                        if events.response.status_code in {400, 401, 403, 404, 422}:
+                        if events.response.status_code in {
+                            400,
+                            401,
+                            403,
+                            404,
+                            409,
+                            422,
+                        }:
                             raise ValueError(
                                 f"Activity request rejected ({events.response.status_code}); check the running service"
                             )

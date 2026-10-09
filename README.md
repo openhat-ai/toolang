@@ -142,7 +142,7 @@ too --help                            # Show common commands
 too more                              # Show additional commands
 ```
 
-Optional teaming requires an externally running Redis or Valkey server; see [messaging setup](docs/messaging.md).
+Teaming is enabled by default and uses Hub HTTP APIs; Hub requires an external Redis or Valkey server. Local execution works without Hub. See [messaging setup](docs/messaging.md) to configure or disable it.
 
 ## Links
 

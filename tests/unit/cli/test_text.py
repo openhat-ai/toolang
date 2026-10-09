@@ -43,11 +43,11 @@ from toolang.teaming.client import HubClient
 
 
 def install_hub(monkeypatch, client, *, human="human:bryan", identity="test"):
-    connection = HubConnection("http://hub", "test-token", human, identity)
+    connection = HubConnection("http://hub", human, identity)
 
     @asynccontextmanager
     async def hub(config):
-        app = create_app(client(actor=human), token=config.token)
+        app = create_app(client(actor=human))
         async with app.router.lifespan_context(app):
             async with HubClient(config, transport=httpx.ASGITransport(app)) as remote:
                 yield remote

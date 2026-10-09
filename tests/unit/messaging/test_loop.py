@@ -48,7 +48,6 @@ def make_loop(path, client, harness=None):
     return MessagingLoop(
         layout=AgentLayout.resident(path, "alice"),
         owner="human:owner",
-        config=CONFIG,
         client=client,
         executor=harness.executor if harness else MagicMock(),
         threads=harness.threads if harness else MagicMock(),
@@ -58,7 +57,7 @@ def make_loop(path, client, harness=None):
 
 
 def harness_with_msg(path, server, responses, source="agic:\n  {{_}}\n"):
-    msg = MsgToolset({"url": CONFIG.url})
+    msg = MsgToolset({"root": str(path)})
     setattr(msg, "connection", lambda context: make_client(server))
     tools = tools_from_toolsets({"msg": LoadedPlugin("msg", "msg", msg, "built-in")})
     return ExecutionHarness.create(
@@ -221,15 +220,21 @@ def test_heartbeat_continues_during_slow_batch_and_reconnects(tmp_path, monkeypa
     async def scenario():
         client = MagicMock()
         client.register = AsyncMock(
-            side_effect=[BackendUnavailable("temporarily unavailable"), None]
+            side_effect=[BackendUnavailable("temporarily unavailable"), None, None]
         )
-        client.renew = AsyncMock()
+        client.renew = AsyncMock(
+            side_effect=[BackendUnavailable("Hub stopped"), None, None, None]
+        )
         client.unregister = AsyncMock()
         client.close = AsyncMock()
         loop = make_loop(tmp_path, client)
         entered = asyncio.Event()
 
+        polls = 0
+
         async def slow_poll():
+            nonlocal polls
+            polls += 1
             entered.set()
             await asyncio.Event().wait()
 
@@ -240,17 +245,19 @@ def test_heartbeat_continues_during_slow_batch_and_reconnects(tmp_path, monkeypa
         exporter.run = drained.wait
         exporter.finish = drained.set
         monkeypatch.setattr(teaming, "EventExporter", lambda *args, **kwargs: exporter)
-        lifecycle = teaming.TeamingLoop(loop)
+        lifecycle = teaming.TeamingLoop(loop, MagicMock())
         lifecycle.start()
         await asyncio.wait_for(entered.wait(), 2)
-        for _ in range(100):
+        for _ in range(200):
             if client.renew.await_count >= 2:
                 break
             await asyncio.sleep(0.005)
         assert client.renew.await_count >= 2
+        assert polls == 1 and lifecycle._consumer is not None
+        assert not lifecycle._consumer.done()
         await lifecycle.stop_messages()
         await lifecycle.close()
-        assert client.register.await_count == 2
+        assert client.register.await_count == 3
         client.unregister.assert_awaited_once_with()
         client.close.assert_awaited_once()
 
@@ -282,11 +289,14 @@ def test_hosted_lifespan_starts_and_stops_messaging(tmp_path, monkeypatch, enabl
     entered, stopped = asyncio.Event(), asyncio.Event()
 
     def message_loop(**kwargs):
-        assert kwargs["config"] == CONFIG and kwargs["executor"] is core.executor
+        assert (
+            kwargs["client"].actor == "agent:alice"
+            and kwargs["executor"] is core.executor
+        )
         return object()
 
     class Lifecycle:
-        def __init__(self, messaging):
+        def __init__(self, messaging, publisher):
             pass
 
         def start(self):
@@ -410,7 +420,7 @@ def test_msg_is_unavailable_without_configuration_and_fences_offline_sends(tmp_p
         async with make_client(server) as agent:
             await agent.register("human:owner")
             await agent.unregister()
-        msg = MsgToolset({"url": CONFIG.url})
+        msg = MsgToolset({"root": str(tmp_path)})
         setattr(msg, "connection", lambda context: make_client(server))
         assert set(msg.tools()) == {
             "targets",
@@ -435,7 +445,7 @@ def test_all_msg_tools_use_the_context_identity(tmp_path):
         server = FakeServer(server_type="valkey")
         async with make_client(server) as agent:
             await agent.register("human:owner")
-        msg = MsgToolset({"url": CONFIG.url})
+        msg = MsgToolset({"root": str(tmp_path)})
         setattr(
             msg,
             "connection",

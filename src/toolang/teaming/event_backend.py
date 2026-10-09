@@ -158,7 +158,7 @@ for key,value in pairs(op.updates or {}) do
   fields[key]=value
 end
 local old_generation = agent.generation
-if op.kind == 'recover' and old_generation and KEYS[6] ~= op.old_key then error('protocol_error: previous generation key') end
+if op.kind == 'recover' and old_generation and old_generation ~= op.old_generation then return {'recover'} end
 redis.call('HSET',KEYS[1],'pending',op.id)
 local sid
 if op.kind == 'incomplete' then
@@ -328,6 +328,12 @@ class EventBackend:
         return await self._command("HGET", online_key(agent), "token")
 
     async def commit(self, op: dict[str, Any]) -> str:
+        op = {
+            **op,
+            "old_key": generation_key(
+                op["agent"], op.get("old_generation") or op["generation"]
+            ),
+        }
         raw = encode(op)
         keys = [
             META,

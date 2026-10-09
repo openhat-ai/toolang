@@ -1,7 +1,8 @@
 # Messaging
 
-Teaming connects agents through an externally running Redis or Valkey server.
-Ordinary agent execution needs neither server. `too` is an alias for `toolang`.
+Teaming connects agents through Hub HTTP APIs. Only Hub connects to an externally
+running Redis or Valkey server. Local execution needs neither Hub nor that server.
+`too` is an alias for `toolang`.
 
 Root `<root>/config.toml` (normally `~/.toolang/config.toml`):
 
@@ -16,11 +17,13 @@ url = "redis://localhost:6379/0"
 port = 7000
 ```
 
-Enable each participating agent in `<agent-home>/config.toml`, then restart it:
+Teaming is enabled by default. Agents reconnect when Hub becomes available;
+local execution and subscriptions work without it. To opt out, set
+`<agent-home>/config.toml` and restart the agent:
 
 ```toml
 [teaming]
-enabled = true # Defaults to false.
+enabled = false
 ```
 
 Root settings cannot appear in home configuration; `enabled` is home-only.
@@ -41,22 +44,27 @@ too text alice -- hello -sdf         # Flags after target are literal message te
 too hub stop                        # Leaves agents and Redis/Valkey running.
 ```
 
-`too hub serve` runs in the foreground. Hub binds `127.0.0.1`; Text discovers its
-actual endpoint and bearer token from the private root `.runtime/hub.json` file.
-Start Hub before using Text. Agents and their `msg` tools communicate directly
-with the backend and remain independent of Hub.
+`too hub serve` runs in the foreground. Hub binds `127.0.0.1`; clients discover its
+actual endpoint and backend identity from the private root `.runtime/hub.json`
+file. Calls assume trusted local clients; security authentication is deferred.
+Start Hub before using Text or `msg` tools. Agents use it for messages, presence,
+and event export. Stopping Hub leaves agents running; communication fails until
+Hub returns. Background communication resumes without an agent restart; uncertain
+message sends are never automatically repeated.
+Isolated guests without access to this local Hub report unavailability.
 
 `too hub status` reports `starting` while waiting for the backend;
 `too hub stop --force` can stop a stalled startup. After an empty backend restart,
-Hub restores the configured human's registration on the next authenticated
-request. Lost messages and custom groups are not restored.
+Hub restores the configured human's registration on the next request. Lost
+messages and custom groups are not restored.
 
 Hub `start`/`serve` ports resolve as `--port` > `TOOLANG_HUB_PORT` >
 `teaming.hub.port` > `7000`. Resident agent `start`/`serve` uses `--port` >
 `TOOLANG_AGENT_PORT` > home `[api] port` > recorded/available `7001`–`7999`.
 Explicit ports must be `1..65535`; an occupied explicit port fails. Overrides do
 not change configuration. Restart to apply configuration changes; reopen Text
-after restarting Hub. Temporary agents keep their existing port selection.
+if its endpoint, backend, or human changes. Temporary agents keep their existing
+port selection.
 
 Targets use `agent:`, `human:`, or `group:`. IDs are case-sensitive Unicode
 letters/numbers with combining marks and `-_.`; the first character must be a
