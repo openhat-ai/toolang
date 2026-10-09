@@ -1,11 +1,10 @@
 # Teaming
 
-Approved architecture; implement in the delivery order below. Earlier messaging
-was experimental: no data migration or compatibility aliases are required.
+Approved architecture for messaging and team observation.
 
-The approved [agent Hub transport amendment](agent-hub-transport.md) replaces
-direct agent-to-backend access: messaging, presence, and export use Hub HTTP APIs.
-Only Hub connects to Redis/Valkey; local execution remains independent.
+The [agent Hub transport contract](agent-hub-transport.md) defines messaging,
+presence, and export over Hub HTTP APIs. Only Hub connects to Redis/Valkey;
+local execution remains independent.
 
 ## Goal and delivery
 
@@ -13,18 +12,13 @@ Single-agent execution and multi-client subscriptions work without Redis/Valkey.
 Optional teaming adds messaging and cross-agent observation through shared
 services. `coord` is reserved; its operations are outside this delivery.
 
-| PR | Outcome | Dependencies |
-| --- | --- | --- |
-| 1. Design | Record these contracts and the acceptance criteria. | None. |
-| 2. [#708](https://github.com/openhat-ai/toolang/pull/708), revised | Deliver `teaming` messaging, typed targets, scoped setup, backend membership, `msg`, and Talk. Replace `team` with bare `talk`. | Design. |
-| 3. Hub | Add Hub API/client, `hub start/serve/stop/status`, port overrides, and route Talk through Hub. | Revised #708. |
-| 4. [Canonical subscriptions](local-subscriptions.md) | Unify resident CLI runtime ownership; persist canonical cursors; add shared caching and agent/thread/root-run catchup. | Design and remaining local protocol decisions. |
-| 5. [Team observation](team-observation.md) | Bridge agent events through the backend; add global subscriptions and `top`/agent `top`. | Hub and local subscriptions. |
-
-PR #708 is reused, not replaced by a parallel messaging implementation. Its Talk
-commands may call the shared messaging service until the Hub PR replaces that
-adapter. Each implementation PR updates documentation and its acceptance tests;
-subsequent PRs define their remaining protocol details before implementation.
+| Capability | Contract |
+| --- | --- |
+| Messaging | Typed participants, direct/group conversations, membership, messages, and `msg` tools, defined below. |
+| Talk | [Conversation interface](talk-status-bar.md): message following, input, footer, titles, and tmux placement. |
+| Hub transport | [Agent Hub transport](agent-hub-transport.md): human and agent HTTP routes; Hub owns backend access. |
+| Subscriptions | [Canonical subscriptions](local-subscriptions.md): cursors, caches, prefill, and recovery. |
+| Observation | [Team observation](team-observation.md): event export, Hub subscriptions, and activity views. |
 
 ## Ownership
 
@@ -80,7 +74,7 @@ enabled = true
 No root enable switch or configured group/member lists. Parse scopes separately,
 reject unknown/misplaced fields with their source, and prevent script projections
 from supplying root settings. Core services receive concrete values. Changes
-require restart; experimental `[human]`/`[messaging]` settings are not migrated.
+require restart.
 
 Both `start` and `serve` resolve ports as **`--port` > environment > scoped config
 > default selection**. Environments are `TOOLANG_HUB_PORT` and
@@ -231,9 +225,10 @@ Backend-owned atomic operations enforce these invariants:
 
 Readers have independent cursors ([XREAD](https://valkey.io/commands/xread/) or
 exclusive `XRANGE`), not a competing consumer group; report retention gaps.
-Agent processing context/checkpoints stay in local runtime files; Talk owns its
-local drafts/cursors. Derive previews/presence from Streams/leases; add no reverse
-membership, latest-message, or message-UUID indexes initially. Backend persistence
+Agent processing context/checkpoints stay in local runtime files; Talk persists
+drafts and sent-input history and keeps its live receive cursor in memory.
+Derive previews/presence from Streams/leases; add no reverse membership,
+latest-message, or message-UUID indexes initially. Backend persistence
 controls survival across server restarts. Reserve `P:coord:*` and `P:events:*`;
 Hub process records and subscription queues remain local.
 
@@ -259,8 +254,8 @@ neither enables/stops agents nor manages Redis/Valkey.
 | `too top` | Global activity through Hub. |
 | `too AGENT top` | Agent activity through its own API. |
 
-Remove `too team`. Global commands resolve root configuration; agent API exposes
-only its own data. Preserve Talk literal bodies, drafts, input, tmux, and rendering.
+Global commands resolve root configuration; agent API exposes only its own data.
+The [Talk contract](talk-status-bar.md) defines interactive presentation and placement.
 
 | Tool | Contract |
 | --- | --- |
@@ -270,11 +265,10 @@ only its own data. Preserve Talk literal bodies, drafts, input, tmux, and render
 | `msg/join_group(group)` | Caller joins a custom group. |
 | `msg/leave_group(group)` | Caller leaves a custom group. |
 
-Replace `coop` with `msg`; reserve `coord` without tools. Services enforce the same
-rules for CLI, HTTP, and tools. Group administration is available through tools
+Services enforce the same rules for CLI, HTTP, and `msg` tools. Group administration is available through tools
 and Hub HTTP; no additional CLI commands or discovery tools are introduced.
 
-## Subscriptions and remaining definitions
+## Subscriptions and observation
 
 The [canonical subscription protocol](local-subscriptions.md) owns source cursors,
 cache watermarks, structural prefill, parallel-run handling, and HTTP recovery.
@@ -294,7 +288,7 @@ originated canonical events once, preserving actual run IDs and source cursors.
 Client-specific prefill is not republished as new canonical execution. Hub imports
 never re-export, and disabling teaming removes only this optional outlet.
 
-Stage 5 uses one shared event Stream under `P:events:*`, with agent/thread/root
+Team observation uses one shared event Stream under `P:events:*`, with agent/thread/root
 filters rather than separate copies for each scope. Entries carry origin agent,
 `runtime_epoch`, `seq`, thread/root routing context, and the canonical event.
 Use [XADD](https://valkey.io/commands/xadd/) and independent
@@ -330,7 +324,7 @@ structure/final results must be repaired before claiming continuous observation.
 Recovery markers are transport control, not invented source execution events;
 Hub marks stale/incomplete views until recovery establishes a new boundary.
 
-The approved [stage 5 contract](team-observation.md) defines backend schemas,
+The approved [team observation contract](team-observation.md) defines backend schemas,
 projection versioning, retention, recovery transactions, Hub routes/envelopes,
 and activity presentation. Backend retention is separate
 from the local cache and messaging retention; coordination remains outside scope.
@@ -339,9 +333,9 @@ from the local cache and messaging retention; coordination remains outside scope
 
 | Area | Required checks |
 | --- | --- |
-| Messaging (#708) | Scope errors; disabled agent makes no backend calls; readable typed identities; ambiguous targets; direct-pair uniqueness; participant permissions; context-derived sender. |
-| Storage (#708) | Concurrent creation; stale lease rejection; persistent membership; independent readers; full cursor order/gaps; uncertain writes; no vendor imports outside backend. |
-| CLI/tools (#708) | Bare Talk directory, no `team`, preserved interactive Talk behavior, five `msg` tools, no `coop`. |
+| Messaging | Scope errors; disabled agent makes no backend calls; readable typed identities; ambiguous targets; direct-pair uniqueness; participant permissions; context-derived sender. |
+| Storage | Concurrent creation; stale lease rejection; persistent membership; independent readers; full cursor order/gaps; uncertain writes; no vendor imports outside backend. |
+| CLI/tools | Talk directory and conversation interface, literal messages, and the five `msg` tools. |
 | Hub | Readiness failure, lifecycle isolation, port precedence/conflicts/discovery, Talk HTTP parity. |
 | Local subscriptions | Canonical cursor/prefill/cache acceptance in the linked plan; no backend required. |
 | Team observation | Run the shared normalization scenarios against the backend reader; verify multiple clients, source order, lease fencing, duplicate rejection, outage recovery, no forwarding loops, local/global `top`. |

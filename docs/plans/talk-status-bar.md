@@ -1,80 +1,103 @@
-# Talk status bar
+# Talk conversation interface
 
-Status: implementation requested on 2026-10-08 and revised in chat on 2026-10-09.
-Online information is deferred until Hub offers a suitable presence subscription.
+Approved behavior for `too talk`.
 
-## Goal and scope
+## Goal and vocabulary
 
-Show the conversation on the left, its canonical ID in the center, and the
-viewer's login name on the right. Errors replace the whole footer using Chat's
-error row. Inset the normal footer by two terminal cells on both ends, aligned
-with the input text.
-Rename the messaging command from `text` to `talk`, keeping `write a message` as
-the input placeholder and preserving existing key bindings.
+Talk reads and writes a messaging **conversation**. A conversation has a canonical
+`group:<id>`, a kind (`direct` or `group`), members, and optional display metadata.
+A direct conversation has two fixed participants; a custom group's membership can
+change. Hub manages the public `group:all`. Use `convo` for abbreviated metadata.
+[Chat](../chat.md) runs agent work within an execution **thread**.
 
-## Design
+## Command and message flow
 
-- Expose `too talk [TARGET] [MESSAGE...]` with existing flags, target resolution,
-  literal-message parsing, and human identity. Remove `too text` without an alias;
-  do not add prefix-agent syntax. Rename the command package and UI notices to
-  Talk, retaining `.runtime/text/` for drafts and history.
-- Talk resolves a conversation, displays its retained and incoming messages, and
-  allows sending for members; observers remain read-only. Keep current canonical
-  IDs and cursor-based message reads. Sending failures show the returned error
-  and preserve the draft; never automatically retry a send or reconnect from the
-  send path. The user chooses the next action.
-- A direct conversation with the viewer shows the other participant as `@alice`.
-  An observer sees both participant names in stable order, such as `@alice,bob`.
-  Groups show their name and total member count, such as `#dev(3)`; strip a leading
-  `gc_` from group display names. Use the conversation metadata loaded on entry.
-- The `@` or `#` marker is dim when the viewer cannot send and normal otherwise;
-  names and counts always use the normal foreground. Do not show
-  online counts, unknown-presence placeholders, or green online indicators.
-  Do not poll the agent directory or conversation directory from the message loop.
-  No new API or subscription protocol is in scope.
-- The right side shows the plain login name, including for read-only observers.
-  Omit `from`, role prefixes, and read-only suffixes. While connecting, show the
-  connection status. Errors replace all three segments with Chat's red `!` row,
-  starting in the first column and retaining its trailing inset. Show the actual
-  returned error instead of a generic send-failure label; keep drafts and Hub
-  identity validation without changing identity in place.
-- Sending/sent acknowledgments do not replace the login name. Keep actionable
-  send/draft errors visible. Omit `Connected` and key hints.
-- Center the full canonical conversation ID within the footer. Never truncate
-  the ID into a misleading copy target. On narrow terminals, prioritize the
-  login; hide the ID if it cannot fit at the center without overlapping it,
-  then truncate the left label by terminal cells. Reduce margins only below five
-  cells. Never wrap or overflow.
-- Publish only the conversation label (`@alice`, `@alice,bob`, or `#dev`) as a
-  sanitized OSC 0 title on interactive TTYs; omit member totals and clear it on exit.
-  This updates iTerm2 tab/window titles and tmux's native pane title.
-- All Talk windows share the single session named `talk` in the current tmux
-  server, creating it only when absent. Use an existing `talk` session without
-  replacing its windows; never create suffixed sessions. Mark it with
-  `@toolang_talk=talk`; panes use `@toolang_pad=talk`. New window names and
-  `@toolang_convo` contain the canonical conversation ID. Window lookup uses that
-  mark plus `@toolang_context` (root/backend/login identity and Hub endpoint), even
-  after a user renames the window. Different contexts stay in separate windows
-  of the same session. Do not read or migrate the old Text/Group tmux marks.
-- Message dividers, input editing, receive retries, and persisted messages remain
-  outside this change. Existing standalone directory output is unchanged.
+- `too talk` lists conversations. `too talk TARGET` opens an interactive view;
+  `too talk TARGET MESSAGE...` sends once and exits with a receipt or error.
+  Targets and `--dm`/`--group` follow the [messaging contract](../messaging.md).
+  Arguments after the target are literal message text.
+- Resolve the target to its canonical ID through the running Hub. Load that
+  conversation's metadata, show retained history, then follow incoming messages
+  using an independent Stream-ID cursor. Transient read failures resume from the
+  committed cursor with backoff; terminal failures display their error and stop
+  the receive loop. The message loop reads only this conversation.
+- The viewer is Hub's configured human. Members can send; observers see messages
+  without an input box. Membership and display metadata are loaded on entry.
+  The view pins its Hub connection and viewer until the user opens a new view.
+- The input placeholder is `write a message`. Enter sends, Ctrl+J inserts a
+  newline, Ctrl+P/Ctrl+N browse sent input, and Ctrl+Q exits. Failed sends preserve
+  the draft and display the returned error. Sends are never retried automatically;
+  the user decides whether to retry or reopen. Drafts and input history remain
+  under `.runtime/text/`, scoped by root, backend, viewer, and conversation.
 
-## Touchpoints and acceptance
+## Presentation
 
-- Talk CLI passes resolved conversation metadata into its TUI; the Talk status
-  renderer owns labels and row geometry. Chat and Talk share the error-row renderer.
-- Verify command routing/help, literal flags in messages, absence of a Text alias,
-  and restored drafts/history from the existing storage namespace.
-- Verify margins, centered canonical IDs, direct/member/observer labels, group
-  member totals, permission marker dimming, Unicode truncation, configured widths,
-  and connection/send/draft errors.
-- Verify OSC 0 publication/cleanup, non-TTY behavior, safe terminal text, and tmux
-  shared session placement across conversations and contexts, canonical marks,
-  reuse after manual window renaming, reopening after Hub port changes, and
-  preservation of unrelated windows and shells.
-- Verify that history and live reads never request the full directories, including
-  after reconnection, and that retained history is not replayed.
-- Preserve Hub identity validation and draft preservation tests. Run default checks.
-  Changelog updates are deferred at the user's request.
+The normal footer has two-cell side insets aligned with the input text. Its
+content width follows Chat's limit: 120 cells by default, configurable with
+`TOOLANG_PROGRESS_MAX_WIDTH`, and capped by the terminal width.
 
-The main risk is clipped error text on narrow terminals. No open questions.
+| Segment | Content |
+| --- | --- |
+| Left, direct | `@` plus the other participant names in stable comma-separated order, excluding the viewer. An observer sees both names. |
+| Left, group | `#` plus the conversation's display name and total member count, such as `#dev(3)`. Preserve the name as supplied. |
+| Center | Complete canonical conversation ID, centered by terminal cells. |
+| Right | Plain viewer login name; `Connecting…` during initial connection. |
+
+Only the `@` or `#` marker dims when the viewer cannot send. Names and counts use
+normal foreground. The interactive view does not display presence. On narrow
+terminals, prioritize the login, hide an ID that cannot fit intact, then truncate
+the left label. Reduce the insets only below five cells; never wrap the footer.
+
+Send, draft, and terminal receive errors replace the entire footer using Chat's
+red `!` row, with the marker in the first column and a two-cell trailing inset.
+Show the actual error detail, including Hub configuration failures. A transient
+receive interruption shows `Reconnecting…` in this row while retrying the read.
+Successful sends leave the normal identity row visible.
+
+Messages use terminal scrollback. Agent bodies reuse Chat's Markdown renderer;
+human bodies remain literal text. Names and markers share a header row aligned
+with body text. Agent names and markers use the same stable ANSI color derived
+from the name, without dimming. A faint dashed rule appears above each agent header.
+Left messages fill the available width; own messages align right. See the
+[message layout contract](talk-agent-header-divider.md).
+
+## Terminal identity and placement
+
+Publish the compact conversation label as a sanitized OSC 0 title on interactive
+TTYs: `@alice`, `@alice,bob`, or `#dev`. Clear it on exit. Terminal settings control
+how the title appears; title publication is independent of tmux placement.
+
+Inside a tmux server, all Talk windows share the session named `talk`. Create it
+only when absent. Each conversation and connection context has a reusable window;
+its initial name is the canonical ID. Resolve windows through their metadata even
+when the user renames them. Preserve other windows and shells in the session.
+A Talk pane is managed by the launcher and can be reopened after it exits.
+`TOOLANG_TMUX=0` runs Talk in the invoking terminal.
+
+| Metadata | Scope | Value |
+| --- | --- | --- |
+| `@toolang_talk` | Session | `talk` |
+| `@toolang_convo` | Window | Canonical conversation ID |
+| `@toolang_context` | Window | Hash of root, backend, viewer, and Hub endpoint |
+| `@toolang_pad` | Pane | `talk` |
+
+## Acceptance and ownership
+
+| Scenario | Pass condition |
+| --- | --- |
+| Command and targeting | Help, directory, interactive view, one-shot send, typed targets, and literal arguments match the messaging contract. |
+| Membership | A member can send; an observer sees the same messages with a dim permission marker and no composer. |
+| Footer | Direct/group names, total members, login, Unicode widths, and complete centered IDs fit the configured width. |
+| Errors | Terminal read, send, and draft errors show their detail in Chat's full error row; failed sends retain drafts and make one request. |
+| Receive recovery | Resume from the last displayed cursor without replaying history or requesting full directories. |
+| Rendering | Markdown, sender colors, header alignment, dividers, and message widths satisfy the message layout contract. |
+| Titles | TTY titles identify the conversation and clear on exit; redirected output emits no OSC. |
+| Placement | Conversations and contexts share one session; renamed windows reuse their panes; reopening after child exit or a Hub port change reaches the correct view. |
+
+Talk's CLI owns resolution and placement, its TUI owns input and message following,
+and `talk/status.py` owns labels and footer geometry. `common/status.py` owns the
+shared error row; `common/tmux.py` owns placement. Hub retains permission and
+configuration checks. Run the repository's default checks and isolated tmux tests.
+
+Limits: metadata reflects entry time, narrow screens may hide the canonical ID or
+clip error detail, and terminal settings may suppress titles. No open questions.

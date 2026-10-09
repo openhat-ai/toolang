@@ -33,7 +33,7 @@ async def talk_app(
 ):
     output = TerminalOutput()
     conversation = conversation or Conversation(
-        "group:gc_dev", "group", (human, "agent:alice", "agent:bob")
+        "group:dev", "group", (human, "agent:alice", "agent:bob")
     )
     with create_app_session(input=DummyInput(), output=output):
         app = tui.TalkTui(
@@ -133,7 +133,6 @@ def test_history_batch_uses_one_scrollback_write(tmp_path, monkeypatch):
             )
             write = AsyncMock(side_effect=lambda action: action())
             monkeypatch.setattr(tui, "run_in_terminal", write)
-            ui.agents = {"alice"}
             entries = [
                 (f"1-{index}", {"data": Message.create("agent:alice", body).encode()})
                 for index, body in enumerate(("first message", "second message"))
@@ -177,9 +176,9 @@ def test_footer_keeps_identity_after_send_and_prioritizes_reconnection(tmp_path)
     [
         (Conversation("group:all", "group", ("human:bryan",)), False, "#all(1)"),
         (
-            Conversation("group:gc_abc123", "group", ("human:bryan",)),
+            Conversation("group:design", "group", ("human:bryan",)),
             False,
-            "#abc123(1)",
+            "#design(1)",
         ),
         (
             Conversation("group:one", "direct", ("agent:alice", "human:bryan")),

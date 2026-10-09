@@ -15,7 +15,7 @@ from rich.text import Text
 from toolang.cli.common.terminal_surfaces import TerminalSurfaces
 from toolang.cli.common.control_bars import CONTROL_BAR_MARK, RUN_CONTROL_ACCENT
 from toolang.cli.common.markdown import TerminalMarkdown
-from toolang.teaming.schemas import Message, Conversation, target
+from toolang.teaming.schemas import Message, target
 
 _ESCAPE = re.compile(
     r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b\[[0-?]*[ -/]*[@-~]|\x1b[@-_]"
@@ -40,7 +40,6 @@ def display_text(value: str) -> str:
 def message_block(
     message: Message,
     identity: str,
-    agents: set[str],
     width: int,
     surfaces: TerminalSurfaces,
 ) -> RenderableType:
@@ -102,9 +101,3 @@ def message_block(
     if right:
         block = Align(block, align="right", width=width)
     return Padding(block, (0, 0, 1, 0))
-
-
-def conversation_label(info: Conversation) -> str:
-    if info.kind == "group":
-        return f"#{info.label}"
-    return " ↔ ".join(info.members)

@@ -14,7 +14,6 @@ from toolang.cli.toolang.commands.chat.widgets import StatusBar
 from toolang.teaming.client import HubClient
 from toolang.teaming.errors import (
     BackendUnavailable,
-    HubIdentityChanged,
     MessagingError,
     SendUnconfirmed,
 )
@@ -74,9 +73,7 @@ def test_error_replaces_all_footer_segments_and_matches_chat(tmp_path, width):
             assert display_width(text) == width
             assert text.startswith("!") and "\n" not in text
             assert (
-                "bryan" not in text
-                and "group:gc_dev" not in text
-                and "#dev" not in text
+                "bryan" not in text and "group:dev" not in text and "#dev" not in text
             )
             if width >= 80:
                 assert (
@@ -93,42 +90,59 @@ def test_error_replaces_all_footer_segments_and_matches_chat(tmp_path, width):
 
 
 @pytest.mark.parametrize("error", [MessagingError, BackendUnavailable, SendUnconfirmed])
+@pytest.mark.parametrize(
+    "detail", ["Delivery unavailable; reconnect manually", "Sent", "Sending…"]
+)
 def test_send_errors_keep_the_draft_and_show_returned_detail_without_retry(
-    tmp_path, monkeypatch, error
+    tmp_path, monkeypatch, error, detail
 ):
     async def scenario():
         async with talk_app(tmp_path) as (ui, _):
             ui.prompt.replace_input("keep this draft")
-            ui.client.send.side_effect = error(
-                "Delivery unavailable; reconnect manually"
-            )
+            ui.client.send.side_effect = error(detail)
             notice = AsyncMock()
             monkeypatch.setattr(ui, "print_notice", notice)
             await ui.send("keep this draft")
-            assert fragment_list_to_text(ui.status_text()).rstrip() == (
-                "! Delivery unavailable; reconnect manually"
-            )
+            assert fragment_list_to_text(ui.status_text()).rstrip() == ("! " + detail)
             assert ui.prompt.buffer.text == ui.draft.read_text() == "keep this draft"
             ui.client.send.assert_awaited_once_with(ui.group, body="keep this draft")
-            notice.assert_awaited_once_with("Delivery unavailable; reconnect manually")
+            notice.assert_awaited_once_with(detail)
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("name", ["gc_dev", "Development Team", "开发组"])
+def test_group_display_name_is_preserved(name):
+    conversation = Conversation(
+        "group:dev", "group", ("human:bryan",), display_name=name
+    )
+    assert fragment_list_to_text(conversation_status(conversation, "human:bryan")) == (
+        f"#{name}(1)"
+    )
 
 
 @pytest.mark.parametrize(
     "conversation,expected",
     [
         (
-            Conversation("group:dm_alice", "direct", ("human:bryan", "agent:alice")),
+            Conversation(
+                "group:2fbde537-00ec-4a13-b87b-9e297dd0a64f",
+                "direct",
+                ("human:bryan", "agent:alice"),
+            ),
             "@alice",
         ),
         (
-            Conversation("group:dm_pair", "direct", ("agent:bob", "agent:alice")),
+            Conversation(
+                "group:6670c498-5a60-4fc6-bdb9-fc909a088e03",
+                "direct",
+                ("agent:bob", "agent:alice"),
+            ),
             "@alice,bob",
         ),
         (
             Conversation(
-                "group:gc_dev", "group", ("human:bryan", "agent:alice", "agent:bob")
+                "group:dev", "group", ("human:bryan", "agent:alice", "agent:bob")
             ),
             "#dev(3)",
         ),
@@ -162,7 +176,7 @@ def test_conversation_formats_dim_only_read_only_markers_without_presence(
 
 
 @pytest.mark.parametrize("width", [60, 80, 120])
-@pytest.mark.parametrize("canonical", ["group:gc_dev", "group:开发e\u0301"])
+@pytest.mark.parametrize("canonical", ["group:dev", "group:开发e\u0301"])
 def test_full_canonical_id_is_centered_by_terminal_cells(width, canonical):
     fragments = status_line(
         [("class:status", "#dev(3)")],
@@ -216,12 +230,8 @@ def test_footer_uses_viewer_identity_and_survives_configured_width(tmp_path, hum
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize(
-    "connection", ["Connecting…", "Reconnecting…", "Stopped", "Reopen Talk"]
-)
-def test_connection_state_replaces_identity_and_keeps_conversation_label(
-    tmp_path, connection
-):
+@pytest.mark.parametrize("connection", ["Connecting…", "Reconnecting…", "Stopped"])
+def test_footer_displays_connection_progress_or_error(tmp_path, connection):
     async def scenario():
         async with talk_app(tmp_path) as (ui, _):
             ui.connection = connection
@@ -232,7 +242,7 @@ def test_connection_state_replaces_identity_and_keeps_conversation_label(
                 assert text.endswith(connection + "  ")
             else:
                 assert text.rstrip() == "! " + connection
-                assert "group:gc_dev" not in text and "#dev" not in text
+                assert "group:dev" not in text and "#dev" not in text
             ui.connection = "Connected"
             assert fragment_list_to_text(ui.status_text()).endswith("bryan  ")
 
@@ -240,7 +250,7 @@ def test_connection_state_replaces_identity_and_keeps_conversation_label(
 
 
 @pytest.mark.parametrize("operation", ["read", "send"])
-def test_changed_hub_identity_requests_reopen_and_preserves_draft(
+def test_hub_configuration_error_preserves_draft_and_uses_the_error_row(
     tmp_path, monkeypatch, operation
 ):
     async def scenario():
@@ -264,10 +274,10 @@ def test_changed_hub_identity_requests_reopen_and_preserves_draft(
                 await ui.send("keep this draft")
             footer = fragment_list_to_text(ui.status_text())
             assert footer.rstrip() == "! Hub identity changed; reopen Talk"
-            assert "bryan" not in footer and "group:gc_dev" not in footer
+            assert "bryan" not in footer and "group:dev" not in footer
             assert ui.prompt.buffer.text == ui.draft.read_text() == "keep this draft"
             notice.assert_awaited_once_with("Hub identity changed; reopen Talk")
-            with pytest.raises(HubIdentityChanged):
+            with pytest.raises(MessagingError, match="Hub identity changed"):
                 await client.agents()
 
     asyncio.run(scenario())

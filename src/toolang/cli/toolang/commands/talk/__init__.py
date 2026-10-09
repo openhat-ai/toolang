@@ -104,7 +104,7 @@ def talk_command(
         from .tui import TalkTui
         from toolang.cli.common.terminal_surfaces import resolve_terminal_surfaces
 
-        # Keep the existing storage namespace so drafts and history survive the rename.
+        # Persist drafts and input history per dataset, viewer, and conversation.
         state = (
             root
             / ".runtime"

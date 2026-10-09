@@ -131,7 +131,7 @@ def test_directory_lists_groups_and_interactive_requires_tty(
     assert cli.main(["--root", str(tmp_path), "alice,", "hello"]) != 0
 
 
-def test_talk_restores_drafts_and_history_from_existing_text_storage(
+def test_talk_restores_saved_drafts_and_input_history(
     tmp_path, messaging_cli, monkeypatch
 ):
     human = "human:bryan"
@@ -339,7 +339,7 @@ def test_failed_send_preserves_draft_and_success_does_not_erase_new_typing(
             assert ui.prompt.history.get_strings() == ["original"]
             await ui.send("new draft")
             assert ui.prompt.buffer.text == ""
-            assert ui.status == "Sent"
+            assert ui.status == ""
             assert "accepted" not in str(ui.status_text())
 
     asyncio.run(scenario())
@@ -353,9 +353,7 @@ def test_narrow_rendering_and_terminal_escape_removal(width, sender):
     )
     output = StringIO()
     console = Console(file=output, width=width, color_system=None)
-    console.print(
-        message_block(message, "human:bryan", {"alice"}, width, DARK_TERMINAL_SURFACES)
-    )
+    console.print(message_block(message, "human:bryan", width, DARK_TERMINAL_SURFACES))
     rendered = output.getvalue()
     assert "secret" not in rendered and "\x1b" not in rendered
     assert all(len(line) <= width for line in rendered.splitlines())
@@ -371,7 +369,6 @@ def test_left_message_marker_has_aligned_header_and_wrapped_body(identity):
         message_block(
             Message.create("agent:alice", "word " * 20 + "\n\n**Last paragraph**"),
             typed(identity),
-            {"alice", "bob"},
             40,
             DARK_TERMINAL_SURFACES,
         )
@@ -392,7 +389,6 @@ def test_owner_name_is_above_padded_background_at_top_right():
     block = message_block(
         Message.create("human:bryan", "x" * 28 + "\nshort"),
         "human:bryan",
-        {"alice"},
         40,
         DARK_TERMINAL_SURFACES,
     )
@@ -433,7 +429,6 @@ def test_agent_name_and_marker_share_ansi_color_without_dimming(
             message_block(
                 Message.create(sender, "body text"),
                 sender if own_message else "human:bryan",
-                set(),
                 60,
                 surfaces,
             )
@@ -464,7 +459,7 @@ console = Console(width=60)
 colors = {}
 for name in sys.argv[1:]:
     block = message_block(Message.create(f"agent:{name}", "body"), "human:reader",
-                          set(), 60, DARK_TERMINAL_SURFACES)
+                          60, DARK_TERMINAL_SURFACES)
     segment = next(s for s in console.render(block) if name in s.text)
     colors[name] = segment.style.color.name
 print(json.dumps(colors))
@@ -493,7 +488,6 @@ def test_message_marker_shares_name_row_and_name_aligns_with_body(identity, send
     block = message_block(
         Message.create(typed(sender), "first\n\nlast"),
         typed(identity),
-        {"alice", "bob"},
         40,
         DARK_TERMINAL_SURFACES,
     )
@@ -545,7 +539,6 @@ def test_interactive_messages_use_chat_width_after_resize(
     monkeypatch.setattr(tui, "run_in_terminal", write_now)
 
     async def render_messages(ui):
-        ui.agents = {"alice"}
         for columns in (200, 80, 160):
             monkeypatch.setattr(
                 ui.app.output, "get_size", lambda: Size(rows=24, columns=columns)

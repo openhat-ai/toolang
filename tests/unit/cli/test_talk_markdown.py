@@ -1,4 +1,4 @@
-"""Text agent messages share Chat's Markdown layout and terminal palette."""
+"""Talk agent messages share Chat's Markdown layout and terminal palette."""
 
 import pytest
 from rich.color import Color
@@ -15,7 +15,7 @@ from toolang.teaming.schemas import Message
 def render(source, *, width=60, surfaces=LIGHT_TERMINAL_SURFACES, sender="agent:alice"):
     console = Console(width=width, force_terminal=True, _environ={})
     block = message_block(
-        Message.create(sender, source), "human:bryan", set(), width, surfaces
+        Message.create(sender, source), "human:bryan", width, surfaces
     )
     return list(console.render(block))
 

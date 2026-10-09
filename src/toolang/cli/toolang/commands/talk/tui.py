@@ -24,11 +24,7 @@ from toolang.cli.common.status import error_status_line
 from toolang.cli.common.terminal_surfaces import TerminalSurfaces
 from toolang.common.files import atomic_write_text
 from toolang.teaming.client import HubClient
-from toolang.teaming.errors import (
-    BackendUnavailable,
-    HubIdentityChanged,
-    MessagingError,
-)
+from toolang.teaming.errors import BackendUnavailable, MessagingError
 from toolang.teaming.schemas import Conversation, Message, target
 
 from .rendering import display_text, message_block
@@ -57,7 +53,6 @@ class TalkTui:
         self.status = ""
         self.pending = False
         self.cursor = "0-0"
-        self.agents: set[str] = set()
         self.prompt = InputBox(
             self.invalidate,
             placeholder="write a message",
@@ -172,7 +167,7 @@ class TalkTui:
         return int(self.app.output.get_size().rows >= 5)
 
     def status_text(self) -> StyleAndTextTuples:
-        error = self.status if self.status not in {"", "Sending…", "Sent"} else ""
+        error = self.status
         if not error and self.connection not in {"Connected", "Connecting…"}:
             error = self.connection
         if error:
@@ -201,18 +196,15 @@ class TalkTui:
     async def send(self, body: str) -> None:
         if self.read_only:
             return
-        self.status = "Sending…"
+        self.status = ""
         self.invalidate()
         try:
             await self.client.send(self.group, body=body)
         except MessagingError as exc:
-            if isinstance(exc, HubIdentityChanged):
-                self.connection = "Reopen Talk"
             self.status = str(exc)
             await self.print_notice(str(exc))
         else:
             self.connection = "Connected"
-            self.status = "Sent"
             self.prompt.accept_submission(body)
             self.save_draft()
         finally:
@@ -242,9 +234,7 @@ class TalkTui:
                     )
                 else:
                     console.print(
-                        message_block(
-                            message, self.human, self.agents, width, self.surfaces
-                        )
+                        message_block(message, self.human, width, self.surfaces)
                     )
 
         await run_in_terminal(write)
@@ -281,9 +271,7 @@ class TalkTui:
                 self.invalidate()
                 delay = min(delay * 2, 5)
             except MessagingError as exc:
-                self.connection = (
-                    "Reopen Talk" if isinstance(exc, HubIdentityChanged) else "Stopped"
-                )
+                self.connection = "Stopped"
                 self.status = str(exc)
                 self.invalidate()
                 await self.print_notice(self.status)

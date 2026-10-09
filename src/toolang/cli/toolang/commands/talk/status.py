@@ -10,7 +10,7 @@ from .rendering import display_text
 
 def conversation_label(info: Conversation, viewer: str) -> str:
     if info.kind == "group":
-        return "#" + display_text(info.label).removeprefix("gc_")
+        return "#" + display_text(info.label)
     others = sorted(member for member in info.members if member != viewer)
     return "@" + ",".join(target(member).name for member in others)
 
