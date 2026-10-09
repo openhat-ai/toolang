@@ -6,10 +6,13 @@ import asyncio
 from contextlib import closing, suppress
 import json
 import sys
+from typing import TextIO, cast
 
 import httpx
 from httpx_sse import aconnect_sse
 from prompt_toolkit.input import create_input
+from prompt_toolkit.key_binding.key_processor import KeyPress
+from prompt_toolkit.output import create_output
 from rich.console import Console
 from rich.live import Live
 
@@ -112,14 +115,29 @@ async def watch(
                 delay = min(5, delay * 2)
 
         with closing(create_input(stdin=sys.stdin)) as terminal:
+            loop = asyncio.get_running_loop()
+            flush_handle: asyncio.TimerHandle | None = None
 
-            def keys() -> None:
-                for event in terminal.read_keys():
-                    if state.key(event.key):
+            def apply_keys(events: list[KeyPress]) -> None:
+                for event in events:
+                    if state.key(event.key, event.data):
                         stop.set()
                     if state.dirty:
                         state.dirty = False
                         changed.set()
+                if terminal.closed:
+                    stop.set()
+
+            def keys() -> None:
+                nonlocal flush_handle
+                apply_keys(terminal.read_keys())
+                # Escape is also an escape-sequence prefix. Flush it after a
+                # short idle interval, allowing split function/arrow sequences.
+                if flush_handle is not None:
+                    flush_handle.cancel()
+                flush_handle = loop.call_later(
+                    0.1, lambda: apply_keys(terminal.flush_keys())
+                )
 
             async def observe() -> None:
                 while not stop.is_set():
@@ -146,6 +164,9 @@ async def watch(
                 terminal.attach(keys),
                 Live(console=console, auto_refresh=False, screen=True) as live,
             ):
+                output = create_output(stdout=cast(TextIO, console.file))
+                output.enable_bracketed_paste()
+                output.flush()
                 task = asyncio.create_task(observe())
                 try:
                     while not stop.is_set():
@@ -160,6 +181,10 @@ async def watch(
                         except TimeoutError:
                             pass
                 finally:
+                    if flush_handle is not None:
+                        flush_handle.cancel()
+                    output.disable_bracketed_paste()
+                    output.flush()
                     stop.set()
                     task.cancel()
                     with suppress(asyncio.CancelledError):

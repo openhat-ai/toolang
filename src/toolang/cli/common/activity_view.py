@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
+import math
 import re
 import time
 from typing import Literal, cast
@@ -28,10 +29,13 @@ def duration(value: str) -> float | None:
     match = re.fullmatch(r"(\d+(?:\.\d+)?)([smhdw])", value)
     if not match or float(match[1]) <= 0:
         raise ValueError("Use a positive duration such as 30m, 1d, 1w, or all")
-    return (
+    seconds = (
         float(match[1])
         * {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}[match[2]]
     )
+    if not math.isfinite(seconds):
+        raise ValueError("Duration must be finite")
+    return seconds
 
 
 def since(value: str, *, now: float | None = None) -> str:
@@ -40,9 +44,12 @@ def since(value: str, *, now: float | None = None) -> str:
     if re.fullmatch(r"\d+(?:\.\d+)?[smhdw]", value):
         seconds = duration(value)
         assert seconds is not None
-        return datetime.fromtimestamp(
-            (now if now is not None else time.time()) - seconds, timezone.utc
-        ).isoformat()
+        try:
+            return datetime.fromtimestamp(
+                (now if now is not None else time.time()) - seconds, timezone.utc
+            ).isoformat()
+        except (OverflowError, OSError, ValueError) as exc:
+            raise ValueError("Stats start is outside the supported date range") from exc
     stamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
     if stamp.tzinfo is None:
         raise ValueError("Stats timestamp must include a timezone")
@@ -152,6 +159,7 @@ class Activity:
         self.horizontal = 0
         self.details = False
         self.editor: str | None = None
+        self.filter_active = self.query.active
         self.buffer = ""
         self.error = ""
         self.page_size = 15
@@ -454,12 +462,14 @@ class Activity:
                 self.selected = candidates[0].key
         self._selection(visible)
 
-    def key(self, key: str | Keys) -> bool:
+    def key(self, key: str | Keys, data: str = "") -> bool:
         """Return True to exit; query edits set dirty for one subscription replacement."""
         if key == Keys.ControlC:
             return True
         if self.editor:
-            if key == Keys.Escape:
+            if key == Keys.BracketedPaste:
+                self.buffer += clean(data)
+            elif key == Keys.Escape:
                 self.editor = None
                 self.error = ""
             elif key == Keys.ControlU:
@@ -467,8 +477,7 @@ class Activity:
             elif key in (Keys.Backspace, Keys.ControlH):
                 self.buffer = self.buffer[:-1]
             elif key == Keys.ControlA and self.editor == "filter":
-                self.query = replace(self.query, active=not self.query.active)
-                self.dirty = True
+                self.filter_active = not self.filter_active
             elif key == Keys.Tab and self.editor in {"recent", "since"}:
                 options = RECENT if self.editor == "recent" else SINCE
                 self.buffer = (
@@ -479,7 +488,9 @@ class Activity:
             elif key == Keys.ControlM:
                 try:
                     if self.editor == "filter":
-                        self.query = replace(self.query, text=self.buffer)
+                        self.query = replace(
+                            self.query, text=self.buffer, active=self.filter_active
+                        )
                         self.open_matches = True
                     elif self.editor == "recent":
                         self.query = replace(self.query, recent=duration(self.buffer))
@@ -523,6 +534,7 @@ class Activity:
                 if self.editor == "recent"
                 else self.query.since
             )
+            self.filter_active = self.query.active
         elif key == Keys.ControlM:
             self.details = not self.details
         elif key == Keys.Escape:
@@ -791,7 +803,12 @@ class Activity:
             if self.editor:
                 footer.append(
                     Text(
-                        f"{self.editor.title()}: {self.buffer}█  Enter apply · Esc cancel · Ctrl-U clear · Tab presets · Ctrl-A active={self.display_query.active}",
+                        f"{self.editor.title()}: {self.buffer}█  Enter apply · Esc cancel · Ctrl-U clear"
+                        + (
+                            f" · Ctrl-A active={self.filter_active}"
+                            if self.editor == "filter"
+                            else " · Tab presets"
+                        ),
                         style="bold",
                     )
                 )

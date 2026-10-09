@@ -125,6 +125,23 @@ def test_agents_reconnect_through_hub_without_direct_backend_access(valkey, tmp_
                 # or publishes directly; both still execute and stream over HTTP.
                 runs = {name: await local_run(name) for name in agents}
                 assert await driver.participants() == {}
+                # All local views work through the resident API without a Hub.
+                for options, labels in [
+                    ((), ("View Thread", "THREAD")),
+                    (("--view", "agent"), ("View Agent", "Agent Stats")),
+                    (
+                        ("--view", "execution", "--tree", "--since", "all"),
+                        ("Layout Tree", "TIME*", runs["alice"]),
+                    ),
+                    (("--active",), ("No matching activity",)),
+                ]:
+                    observed = await asyncio.to_thread(
+                        cli, "alice", "top", "--once", *options
+                    )
+                    assert all(label in observed.stdout for label in labels), (
+                        observed.stdout
+                    )
+                    assert "AGENT" not in observed.stdout
                 async with AgentClient(tmp_path, actor="agent:alice") as remote:
                     with pytest.raises(BackendUnavailable):
                         await remote.targets()

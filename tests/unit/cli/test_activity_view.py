@@ -6,7 +6,7 @@ import pytest
 from prompt_toolkit.keys import Keys
 from rich.console import Console
 
-from toolang.cli.common.activity_view import Activity, since
+from toolang.cli.common.activity_view import Activity, duration, since
 from toolang.execution.activity import ActivityQuery
 from toolang.execution.schemas import ActivityMetrics, ActivityNode, ActivitySnapshot
 
@@ -135,6 +135,34 @@ def test_view_controls_do_not_change_query_and_editors_consume_shortcuts():
     assert state.query.text == "e"
     assert state.dirty
     assert state.display_query.text == ""
+
+
+def test_filter_cancel_discards_active_toggle_and_text():
+    state = Activity(None)
+    state.key(Keys.F4)
+    state.key(Keys.ControlA)
+    state.key("a")
+    state.key(Keys.Escape)
+    assert not state.query.active
+    assert state.query.text == ""
+    assert not state.dirty
+    state.key(Keys.F4)
+    state.key(Keys.ControlA)
+    state.key(Keys.BracketedPaste, "math__double")
+    state.key(Keys.ControlM)
+    assert state.query.active and state.query.text == "math__double"
+    assert state.dirty
+
+
+@pytest.mark.parametrize("value", ["9" * 24 + "w", "9" * 400 + "w"])
+def test_extreme_stats_range_is_a_validation_error(value):
+    with pytest.raises(ValueError):
+        since(value)
+
+
+def test_nonfinite_duration_is_rejected():
+    with pytest.raises(ValueError, match="finite"):
+        duration("9" * 400 + "w")
 
 
 def test_single_agent_header_and_tree_columns_at_narrow_width():
