@@ -17,8 +17,7 @@ the input placeholder and preserving existing key bindings.
 - Expose `too talk [TARGET] [MESSAGE...]` with existing flags, target resolution,
   literal-message parsing, and human identity. Remove `too text` without an alias;
   do not add prefix-agent syntax. Rename the command package and UI notices to
-  Talk, retaining `.runtime/text/` and tmux identity marks so drafts, history, and
-  windows survive.
+  Talk, retaining `.runtime/text/` for drafts and history.
 - Talk resolves a conversation, displays its retained and incoming messages, and
   allows sending for members; observers remain read-only. Keep current canonical
   IDs and cursor-based message reads. Sending failures show the returned error
@@ -48,11 +47,15 @@ the input placeholder and preserving existing key bindings.
   cells. Never wrap or overflow.
 - Publish only the conversation label (`@alice`, `@alice,bob`, or `#dev`) as a
   sanitized OSC 0 title on interactive TTYs; omit member totals and clear it on exit.
-  This updates iTerm2 tab/window titles and tmux's native pane title. New tmux
-  sessions use `talk`, with the existing collision suffix when that name is taken;
-  window names and `@toolang_group` contain the canonical ID.
-  Preserve existing identity marks and pad kinds to reuse already-open windows.
-  Window lookup uses the canonical mark even after a user renames the window.
+  This updates iTerm2 tab/window titles and tmux's native pane title.
+- All Talk windows share the single session named `talk` in the current tmux
+  server, creating it only when absent. Use an existing `talk` session without
+  replacing its windows; never create suffixed sessions. Mark it with
+  `@toolang_talk=talk`; panes use `@toolang_pad=talk`. New window names and
+  `@toolang_convo` contain the canonical conversation ID. Window lookup uses that
+  mark plus `@toolang_context` (root/backend/login identity), even after a user
+  renames the window. Different contexts stay in separate windows of the same
+  session. Do not read or migrate the old Text/Group tmux marks.
 - Message dividers, input editing, receive retries, and persisted messages remain
   outside this change. Existing standalone directory output is unchanged.
 
@@ -66,7 +69,8 @@ the input placeholder and preserving existing key bindings.
   member totals, permission marker dimming, Unicode truncation, configured widths,
   and connection/send/draft errors.
 - Verify OSC 0 publication/cleanup, non-TTY behavior, safe terminal text, and tmux
-  session naming, canonical marks, and existing-window reuse.
+  shared session placement across conversations and contexts, canonical marks,
+  reuse after manual window renaming, and preservation of unrelated windows.
 - Verify that history and live reads never request the full directories, including
   after reconnection, and that retained history is not replayed.
 - Preserve Hub identity validation and draft preservation tests. Run default checks.

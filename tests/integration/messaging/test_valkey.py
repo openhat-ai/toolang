@@ -240,7 +240,7 @@ def test_real_talk_terminal_sends_reads_and_reuses_tmux(valkey, tmp_path, runnin
     (tmp_path / "config.toml").write_text(
         f'[teaming]\nhuman = "owner"\n[teaming.backend]\nurl = "{valkey.url}"\n'
     )
-    with tempfile.TemporaryDirectory(prefix="too-text-tmux-", dir="/tmp") as directory:
+    with tempfile.TemporaryDirectory(prefix="too-talk-tmux-", dir="/tmp") as directory:
         tmux = libtmux.Server(
             socket_path=f"{directory}/socket", config_file="/dev/null"
         )
@@ -257,13 +257,13 @@ def test_real_talk_terminal_sends_reads_and_reuses_tmux(valkey, tmp_path, runnin
             )
             pane = source.active_window.panes[0]
             launcher = Launcher(
-                agent="isolated-text",
+                agent="isolated-talk",
                 _server=cast(Any, tmux),
                 _pane=cast(Any, pane),
-                session_mark="@toolang_text",
-                window_mark="@toolang_group",
-                pad_kind="text",
-                session_name="text-owner",
+                session_mark="@toolang_talk",
+                window_mark="@toolang_convo",
+                pad_kind="talk",
+                shared_session="talk",
             )
             # A detached test server has no client to switch; placement remains real.
             argv = [
@@ -287,7 +287,7 @@ def test_real_talk_terminal_sends_reads_and_reuses_tmux(valkey, tmp_path, runnin
                 launcher.place_chat(
                     thread_id="group:dev", argv=argv, directory=str(tmp_path)
                 )
-            session = next(s for s in tmux.sessions if s.session_name == "text-owner")
+            session = next(s for s in tmux.sessions if s.session_name == "talk")
             window = session.windows[0]
             target = window.panes[0]
 
@@ -309,15 +309,17 @@ def test_real_talk_terminal_sends_reads_and_reuses_tmux(valkey, tmp_path, runnin
                         (
                             line
                             for line in reversed(target.capture_pane())
-                            if "Ctrl+Q quit" in line
+                            if "group:dev" in line and "owner" in line
                         ),
                         "",
                     )
-                    if "dev" in footer and len(footer) == min(width, 120):
+                    if len(footer.rstrip()) == min(width, 120) - 2:
                         break
                     time.sleep(0.02)
-                assert "dev" in footer and "group:dev" not in footer, screen()
-                assert len(footer) == min(width, 120)
+                assert footer.startswith("  #dev(1)") and "group:dev" in footer, (
+                    screen()
+                )
+                assert len(footer.rstrip()) == min(width, 120) - 2
                 target.send_keys("resize draft", enter=False)
                 for _ in range(300):
                     if "resize draft" in "\n".join(target.capture_pane()):
@@ -327,10 +329,10 @@ def test_real_talk_terminal_sends_reads_and_reuses_tmux(valkey, tmp_path, runnin
                 target.send_keys("C-u", enter=False)
                 for _ in range(300):
                     current = "\n".join(target.capture_pane())
-                    if "Write a message" in current and "resize draft" not in current:
+                    if "write a message" in current and "resize draft" not in current:
                         break
                     time.sleep(0.02)
-                assert "Write a message" in current and "resize draft" not in current
+                assert "write a message" in current and "resize draft" not in current
                 painted = Text.from_ansi(
                     "\n".join(
                         target.capture_pane(
@@ -341,7 +343,7 @@ def test_real_talk_terminal_sends_reads_and_reuses_tmux(valkey, tmp_path, runnin
                 input_row = next(
                     index
                     for index, line in enumerate(painted)
-                    if "Write a message" in line.plain
+                    if "write a message" in line.plain
                 )
                 console = Console()
                 gap = painted[input_row - 2]
@@ -354,10 +356,11 @@ def test_real_talk_terminal_sends_reads_and_reuses_tmux(valkey, tmp_path, runnin
                         ).bgcolor == Color.parse("#1f1f1f")
             target.send_keys("terminal reply", enter=True)
             for _ in range(300):
-                if "Connected · Sent" in screen():
+                sent = screen()
+                if "terminal reply" in sent and "write a message" in sent:
                     break
                 time.sleep(0.02)
-            assert "Connected · Sent" in screen(), screen()
+            assert "terminal reply" in sent and "write a message" in sent, sent
 
             async def check():
                 async with MessagingClient(valkey, actor="human:owner") as client:
@@ -379,7 +382,9 @@ def test_real_talk_terminal_sends_reads_and_reuses_tmux(valkey, tmp_path, runnin
             # Another group owns a separate live draft and input history.
             with suppress(TmuxPlacementError):
                 launcher.place_chat(
-                    thread_id="all", argv=[*argv[:-1], "all"], directory=str(tmp_path)
+                    thread_id="group:all",
+                    argv=[*argv[:-1], "group:all"],
+                    directory=str(tmp_path),
                 )
             assert len(session.windows) == 2
 
@@ -408,15 +413,13 @@ def test_real_talk_terminal_sends_reads_and_reuses_tmux(valkey, tmp_path, runnin
                 return "\n".join(observer.capture_pane(start=-200))
 
             for _ in range(300):
-                if "Read-only · Connected" in observed_screen():
+                if "@alice,bob" in observed_screen() and "owner" in observed_screen():
                     break
                 time.sleep(0.02)
             observed = observed_screen()
-            assert "agent:alice ↔ agent:bob · Read-only · Connected" in observed, (
-                observed
-            )
-            assert "Write a message" not in observed and "Enter send" not in observed
-            headers = {line.rstrip() for line in observed.splitlines()}
+            assert "@alice,bob" in observed and "owner" in observed, observed
+            assert "write a message" not in observed and "Enter send" not in observed
+            headers = {line.strip() for line in observed.splitlines()}
             assert {"• alice", "• bob"} <= headers, observed
             observer.send_keys("human cannot join this DM", enter=True)
 

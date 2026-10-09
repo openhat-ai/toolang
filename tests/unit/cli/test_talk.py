@@ -571,7 +571,7 @@ def test_interactive_messages_use_chat_width_after_resize(
         assert cli.main(["--root", str(tmp_path), "talk", "all"]) == 0
 
 
-def test_talk_tmux_identity_separates_root_connection_and_human(tmp_path):
+def test_talk_identity_separates_root_connection_and_human(tmp_path):
     base = talk.talk_identity(tmp_path, "one", "bryan")
     assert (
         len(
@@ -590,7 +590,7 @@ def test_talk_tmux_session_reuses_canonical_window(
     tmp_path, messaging_cli, monkeypatch
 ):
     from tests.unit.cli.test_tmux_launcher import FakePane, FakeServer, _launcher
-    from toolang.cli.common.tmux import MARK_PAD
+    from toolang.cli.common.tmux import MARK_CONTEXT, MARK_PAD
 
     server, pane = FakeServer(), FakePane(session_id="$shell")
     monkeypatch.setattr(talk.sys.stdin, "isatty", lambda: True)
@@ -603,17 +603,21 @@ def test_talk_tmux_session_reuses_canonical_window(
     assert len(server.created) == 1
     session = server.sessions[0]
     assert session.session_name == "talk"
-    assert session.options["@toolang_text"] == talk.talk_identity(
-        tmp_path, BackendConfig("redis://test").identity, "human:bryan"
-    )
+    assert session.options["@toolang_talk"] == "talk"
     assert len(session.windows) == 1
     window = session.windows[0]
-    assert window.window_name == window.options["@toolang_group"] == "group:dev"
-    assert window.panes[0].options[MARK_PAD] == "text"
+    assert window.options[MARK_CONTEXT] == talk.talk_identity(
+        tmp_path, BackendConfig("redis://test").identity, "human:bryan"
+    )
+    assert window.window_name == window.options["@toolang_convo"] == "group:dev"
+    assert window.panes[0].options[MARK_PAD] == "talk"
     window.rename_window("my conversation")
     assert cli.main(["--root", str(tmp_path), "talk", "dev"]) == 0
     assert len(server.created) == 1 and len(session.windows) == 1
     assert window.window_name == "my conversation"
+    assert cli.main(["--root", str(tmp_path), "talk", "all"]) == 0
+    assert len(server.created) == 1 and len(session.windows) == 2
+    assert session.windows[1].options["@toolang_convo"] == "group:all"
 
 
 def test_follow_reconnects_from_last_displayed_id_without_replaying_history(

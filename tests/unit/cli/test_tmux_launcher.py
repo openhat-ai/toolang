@@ -842,41 +842,53 @@ def test_chat_reentry_preserves_placement_and_config_rules(
     assert ("TEST_REENTRY_DOTENV" in observed["env"]) == (placement != "roaming")
 
 
-def test_talk_placement_reuses_group_and_never_adopts_chat_session():
+@pytest.mark.parametrize("existing_talk", [False, True])
+def test_talk_placement_shares_one_session_across_conversations_and_contexts(
+    existing_talk,
+):
     from dataclasses import replace
 
-    chat_session = FakeSession("$0", "text-owner")
+    chat_session = FakeSession("$0", "talk" if existing_talk else "alice")
     chat_session.options[tmux.SESSION_AGENT] = "alice"
+    original = chat_session.add_window(FakeWindow("@original"))
     server = FakeServer([chat_session])
     launcher = replace(
         _launcher(server, FakePane(session_id="$0"), "root-url-human"),
-        session_mark="@toolang_text",
-        window_mark="@toolang_group",
-        pad_kind="text",
-        session_name="text-owner",
+        session_mark="@toolang_talk",
+        window_mark="@toolang_convo",
+        pad_kind="talk",
+        shared_session="talk",
     )
     arguments: dict[str, Any] = dict(
         thread_id="gc_dev", argv=["too", "talk", "gc_dev"], directory="/tmp"
     )
     assert launcher.place_chat(**arguments) is False
-    assert len(server.created) == 1
+    assert len(server.created) == (0 if existing_talk else 1)
     session = server.sessions[-1]
-    assert session.session_name == "text-owner-2"
-    assert session.options["@toolang_text"] == "root-url-human"
-    window = session.windows[0]
-    assert window.options["@toolang_group"] == "gc_dev"
-    assert window.panes[0].options[tmux.MARK_PAD] == "text"
+    assert session.session_name == "talk"
+    assert session.options["@toolang_talk"] == "talk"
+    window = session.windows[-1]
+    assert window.options["@toolang_convo"] == "gc_dev"
+    assert window.options[tmux.MARK_CONTEXT] == "root-url-human"
+    assert window.panes[0].options[tmux.MARK_PAD] == "talk"
     assert launcher.place_chat(**arguments) is False
-    assert len(server.created) == 1 and len(session.windows) == 1
+    assert len(session.windows) == (2 if existing_talk else 1)
     assert not window.pads
+    assert launcher.place_chat(**{**arguments, "thread_id": "gc_other"}) is False
     other = replace(launcher, agent="different-connection")
     assert other.place_chat(**arguments) is False
-    assert len(server.created) == 2
+    assert other.place_chat(**arguments) is False
+    assert len(session.windows) == (4 if existing_talk else 3)
+    assert session.windows[-1].options[tmux.MARK_CONTEXT] == "different-connection"
+    assert len(server.created) == (0 if existing_talk else 1)
+    assert chat_session.options[tmux.SESSION_AGENT] == "alice"
+    assert original in chat_session.windows
+    assert original.options == original.panes[0].options == {}
 
 
-def test_chat_does_not_adopt_a_text_session_with_the_same_display_name():
-    session = FakeSession("$0", "text-owner")
-    session.options["@toolang_text"] = "root-url-human"
-    launcher = _launcher(FakeServer([session]), FakePane(session_id="$9"), "text-owner")
+def test_chat_does_not_adopt_a_talk_session_with_the_same_display_name():
+    session = FakeSession("$0", "talk")
+    session.options["@toolang_talk"] = "talk"
+    launcher = _launcher(FakeServer([session]), FakePane(session_id="$9"), "talk")
     assert launcher.agent_session() is None
     assert tmux.SESSION_AGENT not in session.options

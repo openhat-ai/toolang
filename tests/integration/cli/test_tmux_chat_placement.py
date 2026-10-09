@@ -7,6 +7,7 @@ from contextlib import contextmanager
 import json
 import os
 import pty
+from dataclasses import replace
 from pathlib import Path
 import selectors
 import shutil
@@ -19,7 +20,13 @@ from typing import Any, cast
 import libtmux
 import pytest
 
-from toolang.cli.common.tmux import Launcher, MARK_AGENT, MARK_THREAD, MARK_PAD
+from toolang.cli.common.tmux import (
+    Launcher,
+    MARK_AGENT,
+    MARK_CONTEXT,
+    MARK_THREAD,
+    MARK_PAD,
+)
 
 pytestmark = pytest.mark.skipif(
     shutil.which("tmux") is None, reason="tmux is not installed"
@@ -142,6 +149,40 @@ def events(client: subprocess.Popen[bytes], *, wait_for_first: bool = False) -> 
                 break
             output += chunk
     return output.decode()
+
+
+def test_talk_conversations_and_contexts_share_one_named_session(
+    server: libtmux.Server,
+    tmp_path: Path,
+):
+    origin = server.sessions[0]
+    launcher = Launcher(
+        agent="root-backend-alice",
+        _server=cast(Any, server),
+        _pane=cast(Any, origin.active_pane),
+        shared_session="talk",
+        session_mark="@toolang_talk",
+        window_mark="@toolang_convo",
+        pad_kind="talk",
+    )
+    arguments: dict[str, Any] = dict(argv=["sleep", "60"], directory=str(tmp_path))
+    with control_client(server, origin):
+        assert not launcher.place_chat(thread_id="group:dev", **arguments)
+        session = next(s for s in server.sessions if s.session_name == "talk")
+        first = session.windows[0]
+        first.rename_window("custom name")
+        assert not launcher.place_chat(thread_id="group:dev", **arguments)
+        assert len(session.windows) == 1
+        assert first.window_name == "custom name"
+        assert first.show_option("@toolang_convo") == "group:dev"
+        assert first.show_option(MARK_CONTEXT) == "root-backend-alice"
+        assert first.panes[0].show_option(MARK_PAD) == "talk"
+        assert not launcher.place_chat(thread_id="group:ops", **arguments)
+        other = replace(launcher, agent="root-backend-bob")
+        assert not other.place_chat(thread_id="group:dev", **arguments)
+        assert not other.place_chat(thread_id="group:dev", **arguments)
+        assert len(session.windows) == 3
+        assert {s.session_name for s in server.sessions} == {"origin", "talk"}
 
 
 def test_same_session_selection_uses_session_id_for_a_linked_window(

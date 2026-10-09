@@ -79,11 +79,10 @@ def talk_command(
         if launcher is not None:
             launcher = replace(
                 launcher,
-                # Existing tmux marks retain conversation-window reuse.
-                session_mark="@toolang_text",
-                window_mark="@toolang_group",
-                pad_kind="text",
-                session_name="talk",
+                session_mark="@toolang_talk",
+                window_mark="@toolang_convo",
+                pad_kind="talk",
+                shared_session="talk",
             )
             argv = [
                 sys.executable,
