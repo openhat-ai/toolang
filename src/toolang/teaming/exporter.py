@@ -216,7 +216,7 @@ class EventExporter:
         _, origins, _ = await self.backend.capture(self.agent)
         old = origins.get(self.agent, {})
         if old.get("staging"):
-            await self.backend.abandon(self.agent, old["staging"])
+            await self.backend.abandon(self.agent, old["staging"], token=self.token)
         generation, recovery = uuid4().hex, uuid4().hex
         base = dict(
             v=1,

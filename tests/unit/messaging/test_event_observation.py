@@ -770,3 +770,122 @@ def test_malformed_stored_projection_is_a_protocol_failure(stored):
             await driver.close()
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("replacement", [False, True])
+def test_hub_recovery_ignores_inherited_sse_ids(replacement):
+    import httpx
+    from httpx_sse import connect_sse
+    from toolang.execution.events import RunBegin
+    from toolang.execution.types import ControlRef, EventCursor
+    from toolang.teaming.subscriptions import envelope
+
+    before = str(HubCursor("a" * 32, (1, 0)))
+    boundary = str(HubCursor("a" * 32, (2, 0)))
+    scope = HubScope()
+    frames = [StreamFrame("stream_checkpoint", {"cursor": before}, before)]
+    if replacement:
+        frames.append(
+            StreamFrame(
+                "stream_prefill",
+                {"cursor": boundary, "scope": scope.data(), "replace": None},
+            )
+        )
+    frames.append(
+        envelope(
+            "agent:alice",
+            StreamFrame.source(
+                RunBegin("run_one", ControlRef.for_run("run_one", 0)),
+                str(EventCursor("b" * 32, 1)),
+                context=True,
+            ),
+            boundary,
+            context=True,
+        )
+    )
+    frames.append(StreamFrame("stream_checkpoint", {"cursor": boundary}, boundary))
+    wire = "".join(
+        f"event: {frame.event}\ndata: {json.dumps(frame.data)}\n"
+        + (f"id: {frame.id}\n" if frame.id else "")
+        + "\n"
+        for frame in frames
+    )
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(
+            200, text=wire, headers={"content-type": "text/event-stream"}
+        )
+    )
+    state = HubStreamState(scope)
+    with httpx.Client(transport=transport) as http:
+        with connect_sse(http, "GET", "http://hub/events/stream") as stream:
+            events = list(stream.iter_sse())
+    assert events[1].id == before  # SSE carries the previous ID across absent fields.
+    for event in events[:-1]:
+        state.feed(StreamFrame(event.event, json.loads(event.data), event.id or None))
+    assert state.cursor == before
+    if replacement:
+        assert not state.agents  # The prefix has not committed yet.
+    event = events[-1]
+    state.feed(StreamFrame(event.event, json.loads(event.data), event.id or None))
+    assert state.agents["agent:alice"].has_run("run_one")
+    assert state.cursor == boundary
+
+
+def test_stale_exporter_cannot_remove_the_new_owners_staging(tmp_path, monkeypatch):
+    from toolang.teaming.event_backend import generation_key
+
+    harness = ExecutionHarness.create(
+        tmp_path, source="flow example:\n  let result = Done\n", responses=[]
+    )
+
+    async def scenario():
+        driver = backend(FakeServer(server_type="valkey"))
+        service = EventBackend(driver)
+        async with harness:
+            old = EventExporter(
+                harness.executor.stream,
+                harness.store.db_path,
+                service,
+                agent="agent:alice",
+                token="old",
+            )
+            new = EventExporter(
+                harness.executor.stream,
+                harness.store.db_path,
+                service,
+                agent="agent:alice",
+                token="new",
+            )
+            try:
+                await driver.register("human:owner", agent="agent:alice", token="old")
+                await old.recover("initial")
+                await driver.lease("agent:alice", "old", 0)
+                await driver.register("human:owner", agent="agent:alice", token="new")
+                stage = service.stage
+
+                async def interrupt(op):
+                    await stage(op)
+                    key = generation_key("agent:alice", op["generation"])
+                    assert await driver._call("EXISTS", key) == 1
+                    # The old process has not noticed lease loss yet and retries
+                    # just after the new owner uploads its replacement.
+                    with pytest.raises(EventRecoveryRequired, match="lease"):
+                        await old.recover("source_gap")
+                    assert await driver._call("EXISTS", key) == 1
+
+                monkeypatch.setattr(service, "stage", interrupt)
+                await new.recover("initial")
+                _, origins, _ = await service.capture("agent:alice")
+                assert origins["agent:alice"]["generation"] == new.generation
+                assert origins["agent:alice"]["status"] == "complete"
+                # Cleanup must also preserve a generation that already activated.
+                await service.abandon("agent:alice", new.generation, token="new")
+                assert await driver._call(
+                    "EXISTS", generation_key("agent:alice", new.generation)
+                )
+            finally:
+                old.close()
+                new.close()
+                await driver.close()
+
+    asyncio.run(scenario())

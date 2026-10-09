@@ -204,7 +204,8 @@ close after the complete tree and queued retries; other scopes stay open.
 
 Execution frames preserve their event name/data and add `agent`, `source_cursor`,
 and Hub `cursor`. SSE IDs acknowledge Hub positions. Structural context has
-`context: true` and no SSE ID. `stream_prefill` carries `{cursor, scope, replace}`:
+`context: true` and no SSE ID. Ignore inherited SSE IDs on context,
+`stream_prefill`, and `stream_status` frames. `stream_prefill` carries `{cursor, scope, replace}`:
 `replace: null` resets the selected view; otherwise each `{agent, roots}` replaces
 that agent's selected view (`roots: null`) or named trees. Stage the entire prefix
 and atomically commit it at `stream_checkpoint`. `stream_status` supplies

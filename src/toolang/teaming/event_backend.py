@@ -230,6 +230,20 @@ return {'ok','0-0'}
 """
 )
 
+_ABANDON = (
+    _COMMON
+    + """
+valid()
+expect(KEYS[4],'hash'); expect(KEYS[5],'hash')
+if redis.call('HGET',KEYS[4],'token') ~= ARGV[1] then return {'lease'} end
+local raw = redis.call('HGET',KEYS[3],ARGV[2])
+local agent = raw and cjson.decode(raw) or {}
+if raw and agent.v ~= 1 then error('protocol_error: origin version') end
+if agent.generation ~= ARGV[3] then redis.call('UNLINK',KEYS[5]) end
+return {'ok','0-0'}
+"""
+)
+
 
 def _hash(values: Any) -> dict[str, str]:
     if isinstance(values, dict):
@@ -347,13 +361,21 @@ class EventBackend:
         )
         self._result(response)
 
-    async def abandon(self, agent: str, generation: str) -> None:
-        # A staging key expires on its own. Do not risk deleting a generation that
-        # an uncertain activation may already have made current.
-        meta, origins, _ = await self.capture(agent)
-        origin = origins.get(agent, {})
-        if origin.get("generation") != generation:
-            await self._command("UNLINK", generation_key(agent, generation))
+    async def abandon(self, agent: str, generation: str, *, token: str) -> None:
+        # Cleanup is a fenced write too. Check the lease and current generation
+        # atomically so ownership changes or activation cannot race the deletion.
+        response = await self._eval(
+            _ABANDON,
+            [
+                META,
+                STREAM,
+                AGENTS,
+                online_key(agent),
+                generation_key(agent, generation),
+            ],
+            [token, agent, generation],
+        )
+        self._result(response)
 
     @staticmethod
     def _result(response: Any) -> str:

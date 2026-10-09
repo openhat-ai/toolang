@@ -21,6 +21,7 @@ from toolang.execution.schemas import StreamFrame
 from toolang.execution.types import ThreadPrefix
 from toolang.teaming.backend import Backend
 from toolang.teaming.event_backend import EventBackend
+from toolang.teaming.errors import EventRecoveryRequired
 from toolang.teaming.events import HubScope
 from toolang.teaming.exporter import EventExporter
 from toolang.teaming.stream_client import HubStreamState
@@ -111,6 +112,45 @@ def test_hub_event_fanout_recovery_and_top_once(
                 state, frames = await snapshot(initial.cursor, record.id)
                 assert state.agents["agent:alice"].complete(record.id)
                 assert frames[-1].event == "stream_checkpoint"
+                with pytest.raises(EventRecoveryRequired, match="lease"):
+                    await service.abandon(
+                        "agent:alice", exporter.generation, token="stale"
+                    )
+                await service.abandon("agent:alice", exporter.generation, token="lease")
+                assert await service.projection("agent:alice", exporter.generation)
+                # Recover on an existing connection. SSE decoders retain the
+                # previous event ID on the unacknowledged replacement frames.
+                watching = views[0][0]
+                watching.attach()
+                async with aconnect_sse(
+                    http,
+                    "GET",
+                    "/events/stream",
+                    params={"after": watching.cursor},
+                ) as stream:
+                    stream.response.raise_for_status()
+                    events = stream.aiter_sse()
+                    for recovery in (False, True):
+                        before = watching.cursor
+                        if recovery:
+                            await exporter.recover("source_gap")
+                        saw_prefill = False
+                        async for event in events:
+                            if not event.data:
+                                continue
+                            frame = StreamFrame(
+                                event.event, json.loads(event.data), event.id or None
+                            )
+                            assert frame.event != "stream_error", frame.data
+                            saw_prefill |= frame.event == "stream_prefill"
+                            watching.feed(frame)
+                            if frame.event == "stream_checkpoint":
+                                break
+                            if saw_prefill:
+                                assert watching.cursor == before
+                        assert saw_prefill == recovery
+                    assert watching.agents["agent:alice"].complete(record.id)
+                    assert watching.cursor != before
                 # A committed generation replacement remains recoverable after its
                 # control is trimmed from the event stream.
                 import toolang.teaming.event_backend as event_backend

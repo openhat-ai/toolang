@@ -46,6 +46,13 @@ class HubStreamState:
         )
 
     def feed(self, frame: StreamFrame) -> None:
+        # SSE decoders inherit the last ID when the server omits the field.
+        # Context and recovery controls never acknowledge that inherited ID.
+        if frame.data.get("context") is True or frame.event in {
+            "stream_prefill",
+            "stream_status",
+        }:
+            frame = StreamFrame(frame.event, frame.data)
         if frame.event == "stream_prefill":
             if (
                 self._prefix is not None
