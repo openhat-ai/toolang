@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import suppress
+from collections.abc import Awaitable, Callable
+from toolang.execution.schemas import ActivitySnapshot
 import logging
+
+from toolang.execution.activity import ActivityQuery, ActivityReader
 
 from toolang.teaming.exporter import EventExporter
 from toolang.teaming.types import EventPublisher, RENEW_SECONDS
@@ -14,7 +18,15 @@ logger = logging.getLogger(__name__)
 
 
 class TeamingLoop:
-    def __init__(self, messaging: MessagingLoop, publisher: EventPublisher) -> None:
+    def __init__(
+        self,
+        messaging: MessagingLoop,
+        publisher: EventPublisher,
+        *,
+        activity: ActivityReader | None = None,
+        publish_activity: Callable[[list[ActivitySnapshot]], Awaitable[None]]
+        | None = None,
+    ) -> None:
         self.messaging = messaging
         self.exporter = EventExporter(
             messaging.executor.stream,
@@ -23,6 +35,9 @@ class TeamingLoop:
             agent=messaging.agent,
             token=messaging.client.token,
         )
+        self.activity = activity
+        self.publish_activity = publish_activity
+        self._activity: asyncio.Task[None] | None = None
         self._stop = asyncio.Event()
         self._messages = asyncio.Event()
         self._consumer: asyncio.Task[None] | None = None
@@ -53,6 +68,18 @@ class TeamingLoop:
                 logger.exception("Event exporter failed; recovering independently")
                 await self.messaging._wait(self._stop, 1)
 
+    async def _publish_activity(self) -> None:
+        assert self.activity is not None and self.publish_activity is not None
+        while not self._stop.is_set():
+            try:
+                pages = await asyncio.to_thread(self.activity.pages, ActivityQuery())
+                await self.publish_activity(pages)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.debug("Activity publication unavailable", exc_info=True)
+            await self.messaging._wait(self._stop, 5)
+
     async def _run(self) -> None:
         delay = 0.5
         registered = False
@@ -69,6 +96,13 @@ class TeamingLoop:
                         if self._consumer is None:
                             self._consumer = tasks.create_task(self._consume())
                             self._export = tasks.create_task(self._export_events())
+                            if (
+                                self.activity is not None
+                                and self.publish_activity is not None
+                            ):
+                                self._activity = tasks.create_task(
+                                    self._publish_activity()
+                                )
                     delay = 0.5
                     await self.messaging._wait(self._stop, RENEW_SECONDS)
                 except asyncio.CancelledError:
@@ -90,6 +124,13 @@ class TeamingLoop:
     async def close(self) -> None:
         # Called after executor.stop() persisted its final events, while the
         # heartbeat and lease still belong to this lifecycle.
+        if self.activity is not None and self.publish_activity is not None:
+            with suppress(Exception):
+                async with asyncio.timeout(2):
+                    pages = await asyncio.to_thread(
+                        self.activity.pages, ActivityQuery()
+                    )
+                    await self.publish_activity(pages)
         self.exporter.finish()
         try:
             if self._export is not None:

@@ -187,13 +187,53 @@ settings.
 
 ## Team activity
 
-`too top` observes the running Hub; `too AGENT top` observes the selected running
-agent directly. Neither starts execution. Use `--once` for one snapshot; redirected
-output also exits after the first checkpoint. Interactive views refresh at most
-twice per second, reconnect from their committed cursor, and exit with `q` or
-Ctrl-C. Rows show active root trees and up to 20 recently completed roots for
-30 seconds. Offline, incomplete, and reconnecting states are explicit; message
-and result bodies are omitted.
+`too top` observes the running Hub; `too AGENT top` connects directly to an
+existing agent. Neither starts execution. `--once` (also implied for redirected
+output) prints a snapshot. Interactive updates are limited to twice per second.
+
+```sh
+too top --view agent
+too alice top --view execution --tree
+too top --since 1d --recent 1h --sort cost
+too top --filter fs.read --active --once
+```
+
+Use `a/t/e` for Agent/Thread/Execution, F5 for List/Tree, F4 for filters, F6 for
+sort, F7 for Recent, F8 for Stats, arrows to select/fold, Enter for details, and
+`q` or Ctrl-C to exit. Editors accept Enter/Esc, Ctrl-U to clear, Tab for range
+presets, and Ctrl-A to toggle Active in the filter editor. `<`/`>` scroll wide
+rows. RUN always identifies the root; STEP holds the row's complete run or step
+reference. Only running paths expand, including required completed ancestors.
+Agent/Thread rows summarize active and failed root counts, without task titles.
+Matched/eligible and loaded counts follow the view; Execution counts root runs,
+including in Tree layout.
+
+Stats defaults to the owning executor session; `--since` accepts `session`,
+`all`, a duration resolved once, or a timestamp with timezone. Calls and cost
+include descendants; TIME measures the row's own execution, or sums root durations
+for Agent/Thread. Retries retain consumption. `TIME*` marks a custom Stats range.
+Recent independently retains unfinished work and recently changed objects
+(default `30m`). Unknown cost is `-`, estimates use `~`, partial cost uses `+`.
+Legacy history and interrupted sessions carry explicit coverage information.
+
+| Compact activity endpoint | Response |
+| --- | --- |
+| Agent `GET /api/v1/activity?offset=0` | One page of up to 200 root summaries and their running paths. |
+| Agent `GET /api/v1/activity/batch` | Pages from one database snapshot. |
+| Hub `GET /activity` | Agent pages, with presence and cached coverage. |
+| Agent `GET /api/v1/activity/stream`, Hub `GET /activity/stream` | Absolute `activity_page` frames, committed together by `activity_checkpoint`. |
+
+Queries accept `since`, `recent` (seconds), `all_recent=true`, `filter`, and
+`active`. Pages include session/revision, observation time, Stats/Total,
+coverage, root/thread counts and `next_offset`; only the first page carries the
+thread rows. Individual page requests must agree on session/revision; otherwise
+restart pagination. SSE connections always begin
+with a fresh atomic snapshot. They do not replay token deltas or full outputs.
+The agent reader shares committed aggregates and open duration anchors; Hub
+queries agent HTTP and caches absolute values. Offline data freezes at its last
+observation; unavailable ranges are labeled. Layout and sort changes stay local.
+
+The existing canonical event subscription API remains separate:
 
 An enabled agent exports its canonical stream independently of execution and
 messaging. The authenticated Hub endpoint is `GET /events/stream`, with optional

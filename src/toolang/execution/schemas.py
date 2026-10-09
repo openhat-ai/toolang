@@ -19,7 +19,7 @@ from typing import (
     get_type_hints,
 )
 
-from pydantic import BaseModel, TypeAdapter
+from pydantic import BaseModel, Field, TypeAdapter
 
 from toolang.base.types.compaction import CompactionResult
 from toolang.base.types.message import Part, message_summary
@@ -925,3 +925,72 @@ class StreamFrame:
     @classmethod
     def checkpoint(cls, cursor: EventCursor) -> StreamFrame:
         return cls("stream_checkpoint", {"cursor": str(cursor)}, str(cursor))
+
+
+class ActivityMetrics(BaseModel):
+    """Inclusive consumption and the object's own duration for one Stats range."""
+
+    model: int | None = 0
+    tool: int | None = 0
+    cost: float | None = 0
+    time: float | None = 0
+    estimated: bool = False
+    partial: bool = False
+    complete: bool = True
+    time_rate: int = Field(default=0, exclude=True)
+
+
+class ActivityNode(BaseModel):
+    id: str
+    kind: Literal["thread", "run", "step"]
+    thread: str
+    root: str
+    parent: str | None = None
+    title: str
+    summary: str = ""
+    status: str
+    changed: float
+    created: float
+    position: list[int] = []
+    stale: bool = False
+    stats: ActivityMetrics = ActivityMetrics()
+    total: ActivityMetrics = ActivityMetrics()
+    active: int = 0
+    failed: int = 0
+    pending: int = 0
+    completed: int = 0
+    children: int = 0
+    matches: list[str] = []
+
+
+class ActivitySnapshot(BaseModel):
+    """One atomic, bounded absolute projection; token deltas are never included."""
+
+    agent: str
+    revision: int
+    session: str | None = None
+    session_start: float | None = None
+    observed: float
+    since: str
+    recent: float | None
+    filter: str = ""
+    active_only: bool = False
+    presence: Literal["online", "offline", "unknown"] = "online"
+    stale: bool = False
+    complete: bool = True
+    coverage: str = ""
+    stats: ActivityMetrics = ActivityMetrics()
+    total: ActivityMetrics = ActivityMetrics()
+    threads: list[ActivityNode] = []
+    roots: list[ActivityNode] = []
+    paths: list[ActivityNode] = []
+    active: int = 0
+    failed: int = 0
+    thread_count: int = 0
+    thread_eligible: int = 0
+    thread_matched: int = 0
+    eligible: int = 0
+    matched: int = 0
+    available: int = 0
+    offset: int = 0
+    next_offset: int | None = None

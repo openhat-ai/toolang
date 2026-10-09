@@ -9,6 +9,7 @@ from dataclasses import dataclass, field, replace
 import logging
 import threading
 import time
+from uuid import uuid4
 from typing import Any, Literal, cast
 
 from toolang.base.model_settings import apply_model_override
@@ -62,6 +63,7 @@ from toolang.state.state import AgentState, state_program
 from toolang.state.types import StateSync
 from toolang.setup import AgentSetup
 
+from .. import statistics
 from ..accounting import build_model_accounting, selected_usd_cost
 from ..assembly.history import MessageHistory, adopted_horizon
 from ..recall import canonical_recall
@@ -329,6 +331,8 @@ class RunExecutor:
         self._active_lock = threading.Lock()
         self._monitor_task: asyncio.Task[None] | None = None
         self._control_revision = self.store.latest_run_control_revision()
+        self._session: str | None = None
+        self._checkpoint_at = 0.0
         self._stopped = False
         self.stream = stream or CanonicalStream()
         self._observers: set[TraceObserver] = set()
@@ -1092,6 +1096,8 @@ class RunExecutor:
         if monitor is not None and not monitor.done():
             monitor.cancel()
             await asyncio.gather(monitor, return_exceptions=True)
+        if self._session is not None:
+            statistics.checkpoint(self.store, self._session, utc_now(), end=True)
         self.stream.close()
         observers = tuple(self._observers)
         if observers:
@@ -1106,6 +1112,10 @@ class RunExecutor:
     def _require_available(self) -> None:
         if self._stopped:
             raise RuntimeError("run executor is stopped")
+        if self._session is None:
+            session = uuid4().hex
+            statistics.start_session(self.store, session, utc_now())
+            self._session = session
 
     def _task_done(self, task: asyncio.Task[RunRecord]) -> None:
         owned = self._tasks.pop(task, None)
@@ -1469,6 +1479,9 @@ class RunExecutor:
         while True:
             await asyncio.sleep(self._control_poll_interval)
             self._refresh_controls()
+            if self._session and time.monotonic() - self._checkpoint_at >= 5:
+                statistics.checkpoint(self.store, self._session, utc_now())
+                self._checkpoint_at = time.monotonic()
 
     async def _ensure_terminal(
         self,

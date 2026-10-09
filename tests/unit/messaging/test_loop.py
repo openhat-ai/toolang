@@ -296,7 +296,7 @@ def test_hosted_lifespan_starts_and_stops_messaging(tmp_path, monkeypatch, enabl
         return object()
 
     class Lifecycle:
-        def __init__(self, messaging, publisher):
+        def __init__(self, messaging, publisher, **kwargs):
             pass
 
         def start(self):
