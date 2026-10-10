@@ -15,6 +15,8 @@ from toolang.cli.common.context import (
 )
 from toolang.cli.common.output import echo_collection_summary
 from toolang.cli.common.records import check_output_options, echo_records
+from toolang.cli.common.progress import make_cli_progress
+from toolang.common.progress import ProgressSink
 from toolang.common.layout import AgentLayout
 from toolang.plugin.models.query import filter_models
 from toolang.plugin.models.records import model_record, provider_record
@@ -59,8 +61,13 @@ def models_command(
     ] = False,
 ) -> None:
     check_output_options(human=human, json_=json_)
-    setup = _setup(ctx, model_catalog=model_catalog)
-    models = setup.models() if all_ else setup.models_effective()
+    with make_cli_progress() as progress:
+        setup = _setup(ctx, model_catalog=model_catalog, progress=progress.sink)
+        models = (
+            setup.models(progress=progress.sink)
+            if all_
+            else setup.models_effective(progress=progress.sink)
+        )
     selected = user_call(filter_models, models, query)
     echo_records(
         [model_record(model) for model in selected],
@@ -94,8 +101,13 @@ def providers_command(
     ] = False,
 ) -> None:
     check_output_options(human=human, json_=json_)
-    setup = _setup(ctx, model_catalog=model_catalog)
-    providers = setup.providers() if all_ else setup.providers_effective()
+    with make_cli_progress() as progress:
+        setup = _setup(ctx, model_catalog=model_catalog, progress=progress.sink)
+        providers = (
+            setup.providers(progress=progress.sink)
+            if all_
+            else setup.providers_effective(progress=progress.sink)
+        )
     records = [provider_record(provider) for provider in providers]
     echo_records(records, PROVIDER_COLUMNS, json_=json_)
     if not json_:
@@ -114,7 +126,12 @@ def _layout(ctx: typer.Context) -> tuple[AgentLayout, bool]:
     )
 
 
-def _setup(ctx: typer.Context, *, model_catalog: Path | None = None) -> AgentSetup:
+def _setup(
+    ctx: typer.Context,
+    *,
+    model_catalog: Path | None = None,
+    progress: ProgressSink | None = None,
+) -> AgentSetup:
     """Build one setup version for the catalog commands."""
 
     layout, agent_context = _layout(ctx)
@@ -124,5 +141,6 @@ def _setup(ctx: typer.Context, *, model_catalog: Path | None = None) -> AgentSet
             model_catalog=resolve_model_catalog_option(model_catalog),
             agent_context=agent_context,
             validate_defaults=False,
+            progress=progress,
         )
     )

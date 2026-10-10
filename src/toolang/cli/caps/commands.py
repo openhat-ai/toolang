@@ -592,13 +592,16 @@ def _scope_cap_entries(
     toolang_root: Path, agent_name: str, *, scope: MutableScope, kind: EntryKind
 ) -> tuple["StateCap", ...]:
     layout = AgentLayout.resident(toolang_root, agent_name)
-    if scope == "root":
-        if not toolang_root.exists():
-            return ()
-        entries, _ = user_call(inspect_root_caps, layout, kinds={kind})
-        return entries
-    state = user_call(prepare_agent_state, layout)
-    return load_state_caps(layout, state, scope=scope)
+    with _make_cap_write_progress() as progress:
+        if scope == "root":
+            if not toolang_root.exists():
+                return ()
+            entries, _ = user_call(
+                inspect_root_caps, layout, kinds={kind}, progress=progress.sink
+            )
+            return entries
+        state = user_call(prepare_agent_state, layout, progress=progress.sink)
+        return load_state_caps(layout, state, scope=scope)
 
 
 def _cap_directory(

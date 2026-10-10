@@ -18,6 +18,8 @@ from toolang.base.protocols.tool import Toolset
 from toolang.base.types.model import Model, ModelOverride, Provider
 from toolang.base.types.policy import RunDefaults, RunLimits
 from toolang.common.layout import AgentLayout, IMPLICIT_WORKSPACE_NAME
+from toolang.common.progress import ProgressSink
+from .progress import setup_progress
 from .teaming import TeamingSetup
 from toolang.plugin.toolsets.collections import ToolCollection
 from toolang.plugin.types import LoadedPlugin
@@ -113,7 +115,15 @@ class _LazyValues:
     values: dict[str, object] = field(default_factory=dict)
     loading: dict[str, Future[object]] = field(default_factory=dict)
 
-    def get(self, key: str, loader: Callable[[], T]) -> T:
+    def get(
+        self,
+        key: str,
+        loader: Callable[[], T],
+        *,
+        progress: ProgressSink | None = None,
+        target: str = "",
+        resource: str = "resources",
+    ) -> T:
         with self.lock:
             if key in self.values:
                 return cast(T, self.values[key])
@@ -123,16 +133,17 @@ class _LazyValues:
                 future = Future()
                 self.loading[key] = future
 
-        if not owner:
-            return cast(T, future.result())
-
         try:
-            value = loader()
+            with setup_progress(progress, target=target, resource=resource):
+                if not owner:
+                    return cast(T, future.result())
+                value = loader()
         except BaseException as error:
-            with self.lock:
-                if self.loading.get(key) is future:
-                    self.loading.pop(key, None)
-            future.set_exception(error)
+            if owner:
+                with self.lock:
+                    if self.loading.get(key) is future:
+                        self.loading.pop(key, None)
+                future.set_exception(error)
             raise
 
         with self.lock:
@@ -214,25 +225,31 @@ class AgentSetup:
                 result[name] = mounted[1]
         return result
 
-    def models(self) -> tuple[Model, ...]:
+    def models(self, *, progress: ProgressSink | None = None) -> tuple[Model, ...]:
         """Load and memoize every ordered model record, including unavailable ones."""
 
-        return self._model_data().models
+        return self._model_data(progress=progress).models
 
-    def providers(self) -> tuple[Provider, ...]:
+    def providers(
+        self, *, progress: ProgressSink | None = None
+    ) -> tuple[Provider, ...]:
         """Load and memoize every provider in catalog-file order."""
 
-        return self._model_data().providers
+        return self._model_data(progress=progress).providers
 
-    def models_effective(self) -> tuple[Model, ...]:
+    def models_effective(
+        self, *, progress: ProgressSink | None = None
+    ) -> tuple[Model, ...]:
         """Return routable, allowed model records in policy order."""
 
-        return self._model_data().models_effective
+        return self._model_data(progress=progress).models_effective
 
-    def providers_effective(self) -> tuple[Provider, ...]:
+    def providers_effective(
+        self, *, progress: ProgressSink | None = None
+    ) -> tuple[Provider, ...]:
         """Return providers used by effective models in catalog-file order."""
 
-        return self._model_data().providers_effective
+        return self._model_data(progress=progress).providers_effective
 
     def model_allowed(self, ref: str) -> bool:
         """Return allow-policy membership independently of route readiness."""
@@ -242,19 +259,28 @@ class AgentSetup:
             for model in self._model_data().models
         )
 
-    def tools(self, *, all: bool = False) -> ToolCollection:
+    def tools(
+        self, *, all: bool = False, progress: ProgressSink | None = None
+    ) -> ToolCollection:
         """Load effective tools, or the complete pre-allow set."""
 
         complete = self._lazy.get(
             "tools:all",
             lambda: self._load_tools(self._toolset_plugins()),
+            progress=progress,
+            target=self.layout.name,
+            resource="tools",
         )
         if all or self._allowed_tools is None:
             return complete
         queries = self._allowed_tools
         assert queries is not None
         return self._lazy.get(
-            "tools:effective", lambda: _filter_tools(complete, queries)
+            "tools:effective",
+            lambda: _filter_tools(complete, queries),
+            progress=progress,
+            target=self.layout.name,
+            resource="allowed tools",
         )
 
     def toolsets(self) -> Mapping[str, Toolset]:
@@ -290,8 +316,14 @@ class AgentSetup:
             }
         )
 
-    def _model_data(self) -> _ModelData:
-        return self._lazy.get("models", lambda: self._load_models(self))
+    def _model_data(self, *, progress: ProgressSink | None = None) -> _ModelData:
+        return self._lazy.get(
+            "models",
+            lambda: self._load_models(self),
+            progress=progress,
+            target=self.layout.name,
+            resource="models",
+        )
 
     def __post_init__(self) -> None:
         object.__setattr__(

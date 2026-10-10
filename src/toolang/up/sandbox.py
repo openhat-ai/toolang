@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Callable, Mapping, Sequence
-from contextlib import suppress
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 import os
@@ -175,8 +175,42 @@ async def launch(
 
     lock_path = spec.serve.layout.sandbox_state.with_suffix(".lock")
     async with _task_lock(lock_path):
-        with file_write_lock(lock_path):
+        with management_lock(spec.serve.layout, progress=progress):
             return await _launch_locked(spec, progress=progress)
+
+
+@contextmanager
+def management_lock(
+    layout: AgentLayout, *, progress: ProgressSink | None = None
+) -> Iterator[None]:
+    """Show contention while retaining the shared, reentrant lifecycle lock."""
+    waiting = False
+    item_id = f"runtime:{layout.name}:lock"
+
+    def on_wait() -> None:
+        nonlocal waiting
+        waiting = True
+        emit_progress(
+            progress,
+            id=item_id,
+            kind="runtime",
+            stage="start",
+            label="Waiting for agent management...",
+            status="running",
+            detail=layout.name,
+        )
+
+    with file_write_lock(layout.sandbox_state.with_suffix(".lock"), on_wait=on_wait):
+        if waiting:
+            emit_progress(
+                progress,
+                id=item_id,
+                kind="runtime",
+                stage="start",
+                label="Agent management available",
+                status="ok",
+            )
+        yield
 
 
 async def _launch_locked(
@@ -215,6 +249,7 @@ async def _launch_locked(
                 prepare_agent_state,
                 spec.serve.layout,
                 workspace_additions=spec.serve.workspace_additions,
+                progress=progress,
             )
             workspace_mounts, workspace_mapping = prepare_workspace_mounts(
                 spec.serve.layout.home, hosted_home, workspaces=state.workspaces

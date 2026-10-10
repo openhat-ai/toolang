@@ -3649,7 +3649,7 @@ def test_agent_info_builds_state_and_setup_without_server(
         def __init__(self, layout: AgentLayout) -> None:
             self.layout = layout
 
-        async def refresh(self) -> AgentSetup:
+        async def refresh(self, *, progress=None) -> AgentSetup:
             return materialized_setup(
                 revision="test-setup",
                 layout=self.layout,
@@ -3684,7 +3684,7 @@ def test_agent_info_fields_follow_the_compact_layout(
     _create_agent(root)
 
     class _SetupWatcher(_EmptySetupWatcher):
-        async def refresh(self) -> AgentSetup:
+        async def refresh(self, *, progress=None) -> AgentSetup:
             return materialized_setup(
                 layout=self.layout,
                 providers=(Provider(id="test", name="Test"),),
@@ -3740,19 +3740,16 @@ def test_agent_info_fields_follow_the_compact_layout(
         },
     )
     monkeypatch.setattr(agents, "runtime_identity_row", lambda *a, **kw: ("PID", "123"))
-    from toolang.state.schemas import WorkspaceInfo, WorkspaceInspection
-
     monkeypatch.setattr(
         agent_commands,
-        "running_workspace_inspection",
-        lambda _layout, **kwargs: WorkspaceInspection(
-            revision="a" * 64,
-            items=tuple(
-                WorkspaceInfo(name=name, path=str(tmp_path), available=True)
-                for name in ("lab", "extra", "runtime")
-            ),
-            workdir="runtime://",
-        ),
+        "_running_resources",
+        lambda _client, **_kwargs: [
+            ("Tools", "0 tools, 0 toolsets"),
+            ("Models", "2 models, 1 provider"),
+            ("Caps", "0 psyches, 0 skills, 0 services, 0 prompts"),
+            ("Jobs", "0 chores, 0 tasks"),
+            ("Workspaces", "lab, extra, runtime"),
+        ],
     )
     captured: list[tuple[str, str]] = []
     monkeypatch.setattr(
@@ -3806,7 +3803,7 @@ def test_agent_info_reports_only_state_published_caps(
         def __init__(self, layout: AgentLayout) -> None:
             self.layout = layout
 
-        async def refresh(self) -> AgentSetup:
+        async def refresh(self, *, progress=None) -> AgentSetup:
             return materialized_setup(
                 revision="test-setup",
                 layout=self.layout,
@@ -3961,7 +3958,7 @@ class _EmptySetupWatcher:
     def __init__(self, layout: AgentLayout) -> None:
         self.layout = layout
 
-    async def refresh(self) -> AgentSetup:
+    async def refresh(self, *, progress=None) -> AgentSetup:
         return materialized_setup(
             revision="test-setup",
             layout=self.layout,
@@ -4150,6 +4147,13 @@ def test_running_roaming_inspection_preserves_runtime_workspaces(
 
     def get(self, path):
         requests.append(path)
+        if path in {"/api/v1/models", "/api/v1/tools"}:
+            return {"items": []}
+        if path == "/api/v1/caps":
+            return {kind: [] for kind in ("psyches", "skills", "services", "prompts")}
+        if path in {"/api/v1/chores", "/api/v1/tasks"}:
+            return []
+        assert path == "/api/v1/workspaces"
         return {
             "revision": "a" * 64,
             "items": [{"name": "lab", "path": "/host/lab", "available": True}],
@@ -4161,7 +4165,8 @@ def test_running_roaming_inspection_preserves_runtime_workspaces(
     output = capsys.readouterr()
 
     assert result == 0, output.err
-    assert requests == ["/api/v1/workspaces"]
+    assert requests[-1] == "/api/v1/workspaces"
+    assert len(requests) == (6 if command == ("info",) else 1)
 
 
 @pytest.mark.parametrize("command", ["models", "providers", "tools"])

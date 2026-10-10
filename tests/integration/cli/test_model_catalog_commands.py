@@ -846,7 +846,8 @@ def test_models_uses_isolated_resident_catalogs(
             )
             output = capsys.readouterr()
             assert result == 0, output.err
-            assert not output.err
+            assert "Loading setup..." in output.err
+            assert "Loaded models" in output.err
             if json_output:
                 exported = json.loads(output.out, parse_float=float)
                 actual = tuple(item["id"] for item in exported)
@@ -899,7 +900,8 @@ def test_models_uses_agent_provider_config_and_environment(
         )
         output = capsys.readouterr()
         assert result == 0, output.err
-        assert not output.err
+        assert "Loading setup..." in output.err
+        assert "Loaded models" in output.err
         assert "synthetic-agent-key" not in output.out
         if json_output:
             exported = json.loads(output.out, parse_float=float)

@@ -3,6 +3,10 @@
 from pathlib import Path
 
 import pytest
+from toolang.cli.toolang.main import main
+from toolang.cli.common.client import RuntimeClient
+from toolang.cli.common.errors import RuntimeClientError
+from toolang.up.process import AgentProcess, AgentStatus
 
 from tests.support.setup import materialized_setup
 from toolang.base.types.model import Model, ModelToolang, Provider
@@ -62,3 +66,69 @@ def test_model_summary_counts_effective_setup_resources(
     tmp_path: Path, refs: tuple[str, ...], expected: str
 ) -> None:
     assert agent._models_summary(_setup(tmp_path, refs)) == expected
+
+
+@pytest.mark.parametrize("sandbox", ["host", "docker:python:3.13-slim"])
+def test_running_info_uses_runtime_resources_without_loading_local_sources(
+    tmp_path, monkeypatch, capsys, sandbox
+):
+    layout = AgentLayout.resident(tmp_path, "alice")
+    layout.home.mkdir(parents=True)
+    layout.program.write_text("invalid Toolang!!!")
+    monkeypatch.setattr(
+        AgentProcess,
+        "status",
+        lambda *_args, **_kwargs: AgentStatus(
+            name="alice",
+            status="running",
+            endpoint="http://localhost:8123",
+            api_url=None,
+            webui_url=None,
+            sandbox=sandbox,
+        ),
+    )
+    monkeypatch.setattr(AgentProcess, "state", lambda _self: {})
+    payloads = {
+        "/api/v1/models": {"items": [{"provider": "guest"}]},
+        "/api/v1/tools": {"items": [{"toolset": "guest"}, {"toolset": "guest"}]},
+        "/api/v1/caps": {"psyches": [], "skills": [{}], "services": [], "prompts": []},
+        "/api/v1/tasks": [{}],
+        "/api/v1/chores": [],
+        "/api/v1/workspaces": {
+            "revision": "a" * 64,
+            "items": [{"name": "guest", "path": "/guest", "available": True}],
+            "workdir": "guest://",
+        },
+    }
+    calls = []
+
+    def get(_self, path, **_kwargs):
+        if not calls:
+            assert "Loading runtime resources..." in capsys.readouterr().err
+        calls.append(path)
+        return payloads[path]
+
+    monkeypatch.setattr(RuntimeClient, "get", get)
+    assert main(["--root", str(tmp_path), "info", "alice"]) == 0
+    output = capsys.readouterr()
+    assert "1 model, 1 provider" in output.out
+    assert "2 tools, 1 toolset" in output.out
+    assert "1 skill" in output.out
+    assert "0 chores, 1 task" in output.out
+    assert "guest" in output.out
+    assert set(calls) == set(payloads)
+    assert not (layout.home / ".state").exists()
+
+    calls.clear()
+    assert (
+        main(["--root", str(tmp_path), "info", "alice", "--catalog", "other.json"]) == 1
+    )
+    assert "--catalog" in capsys.readouterr().err
+    assert not calls
+
+    def failed(_self, _path, **_kwargs):
+        raise RuntimeClientError("runtime request failed: unavailable")
+
+    monkeypatch.setattr(RuntimeClient, "get", failed)
+    assert main(["--root", str(tmp_path), "info", "alice"]) == 1
+    assert "runtime request failed: unavailable" in capsys.readouterr().err

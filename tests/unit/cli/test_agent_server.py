@@ -832,22 +832,25 @@ def test_running_server_cannot_rebind_workspace_names(
 
 @pytest.mark.parametrize("outcome", ("running", "failed", "timeout"))
 def test_persistent_acquisition_waits_for_an_existing_startup(
-    tmp_path, monkeypatch, outcome
+    tmp_path, monkeypatch, capsys, outcome
 ):
     layout = AgentLayout.resident(tmp_path, "alice")
     statuses = iter(("starting", outcome))
+    observed_wait = []
 
-    class Process:
-        def __init__(self, _layout):
-            pass
-
+    class Process(agent_server.agents.AgentProcess):
         def status(self, **_kwargs):
+            value = next(statuses)
+            if value != "starting":
+                observed_wait.append(
+                    "Waiting for agent API..." in capsys.readouterr().err
+                )
             return _status(
-                value=next(statuses), endpoint="http://localhost:7001", sandbox="host"
+                value=value, endpoint="http://localhost:7001", sandbox="host"
             )
 
     monkeypatch.setattr(agent_server.agents, "AgentProcess", Process)
-    monkeypatch.setattr(agent_server.time, "sleep", lambda _duration: None)
+    monkeypatch.setattr(agent_server.agents.time, "sleep", lambda _duration: None)
     monkeypatch.setattr(
         agent_server, "AGENT_READY_TIMEOUT_SEC", 0 if outcome == "timeout" else 1
     )
@@ -865,6 +868,11 @@ def test_persistent_acquisition_waits_for_an_existing_startup(
         with pytest.raises(agent_server.AgentServerAcquisitionError, match="ready"):
             with agent_server.acquire_agent_server(layout, sandbox="host"):
                 pytest.fail("unready runtime acquired")
+
+    if outcome == "timeout":
+        assert "Waiting for agent API..." in capsys.readouterr().err
+    else:
+        assert observed_wait == [True]
 
 
 @pytest.mark.parametrize("interrupted", (False, True))
@@ -939,7 +947,7 @@ def test_persistent_acquisition_waits_for_http_after_running_report(
         return ready and len(probes) > 1
 
     monkeypatch.setattr(agent_server.sandbox_runtime, "_health_ready", health)
-    monkeypatch.setattr(agent_server.time, "sleep", lambda _duration: None)
+    monkeypatch.setattr(agent_server.agents.time, "sleep", lambda _duration: None)
     monkeypatch.setattr(agent_server, "AGENT_READY_TIMEOUT_SEC", 1 if ready else 0)
     monkeypatch.setattr(
         agent_server,

@@ -132,6 +132,86 @@ def test_current_requires_initial_refresh(tmp_path: Path) -> None:
         watcher.current()
 
 
+def test_initial_refresh_and_lazy_loading_report_progress_only_when_requested(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dynamic = _DynamicCatalog()
+    watcher, counts = _watcher(monkeypatch, tmp_path, dynamic=dynamic)
+    events = []
+    original_snapshot = dynamic.snapshot
+
+    async def snapshot():
+        assert any(
+            event.kind == "setup"
+            and event.stage == "discover"
+            and event.status == "running"
+            for event in events
+        )
+        return await original_snapshot()
+
+    monkeypatch.setattr(dynamic, "snapshot", snapshot)
+    setup = asyncio.run(watcher.refresh(progress=events.append))
+    assert events[0].status == "running"
+    assert events[-1].status == "ok"
+    assert counts["adapters"] == counts["toolsets"] == 0
+    events.clear()
+    original_adapters = watcher_module.load_model_adapters
+
+    def adapters(config):
+        assert events[-1].kind == "setup"
+        assert events[-1].status == "running"
+        return original_adapters(config)
+
+    monkeypatch.setattr(watcher_module, "load_model_adapters", adapters)
+    models = setup.models_effective(progress=events.append)
+    assert [event.status for event in events] == ["running", "ok"]
+    events.clear()
+    assert setup.models_effective(progress=events.append) is models
+    setup.providers(progress=events.append)
+    assert events == []
+    setup.tools(progress=events.append)
+    assert [event.status for event in events] == ["running", "ok"]
+    events.clear()
+    monkeypatch.setattr(dynamic, "snapshot", original_snapshot)
+    assert asyncio.run(watcher.refresh()) is setup
+    assert events == []
+
+
+def test_lazy_setup_progress_failure_is_retryable_and_advisory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    watcher, _counts = _watcher(monkeypatch, tmp_path)
+    setup = asyncio.run(watcher.refresh())
+    events = []
+    original = watcher_module.load_model_adapters
+
+    def fail(_config):
+        raise ValueError("adapter failed")
+
+    monkeypatch.setattr(watcher_module, "load_model_adapters", fail)
+    with pytest.raises(ValueError, match="adapter failed"):
+        setup.models(progress=events.append)
+    assert [event.status for event in events] == ["running", "failed"]
+    monkeypatch.setattr(watcher_module, "load_model_adapters", original)
+
+    def broken_sink(_event):
+        raise RuntimeError("renderer failed")
+
+    assert setup.models(progress=broken_sink)
+
+
+def test_failed_setup_refresh_reports_progress(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    watcher, _counts = _watcher(monkeypatch, tmp_path)
+    (tmp_path / "catalog.json").write_text("invalid JSON")
+    events = []
+    with pytest.raises(ValueError):
+        asyncio.run(watcher.refresh(progress=events.append))
+    assert events[0].status == "running"
+    assert events[-1].status == "failed"
+
+
 def test_refresh_publishes_without_loading_adapters_tools_or_routes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

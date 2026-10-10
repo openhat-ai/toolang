@@ -574,7 +574,7 @@ def test_script_validates_before_creating_a_thread(
         responses=[],
     )
 
-    async def current_setup(_watcher):
+    async def current_setup(_watcher, *, progress=None):
         return harness.setup
 
     monkeypatch.setattr("toolang.setup.SetupWatcher.refresh", current_setup)
@@ -2240,7 +2240,7 @@ def test_script_passes_resolved_surfaces_before_starting_run(
     else:
         harness = ExecutionHarness.create(tmp_path, source=_SOURCE, responses=[])
 
-        async def current_setup(_watcher):
+        async def current_setup(_watcher, *, progress=None):
             return harness.setup
 
         async def current_state(_watcher):

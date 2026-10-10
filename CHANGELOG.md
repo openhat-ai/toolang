@@ -9,6 +9,13 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Added
 
+- Commands that load agent setup or attach to a running agent now report
+  staged progress while they block instead of appearing stalled, covering
+  setup, models, tools, model-catalog discovery, capability materialization,
+  workspace inspection, and runtime readiness and management-lock waits, with
+  statuses such as `Loading setup...`, `Loading models...`, `Discovering model
+  catalogs...`, and `Waiting for agent API...`.
+
 - Conversations now use canonical IDs and optional names: direct messages use
   `dm_` plus eight base32 characters derived from the two typed participant
   names, custom conversations (GCs) use `gc_` plus eight backend-allocated
@@ -209,6 +216,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   see `docs/messaging.md` for setup. (#708)
 
 ### Changed
+
+- `too info AGENT` and `too AGENT info` read a running agent's models, tools,
+  caps, chores, tasks, and workspaces from its runtime API instead of loading
+  the local setup, and reject `--catalog` while the agent is running; stop the
+  agent to change the catalog.
 
 - **Breaking:** workspace selection options are now accepted only where a
   command executes with caller-selected directories (`serve`, `chat`, and

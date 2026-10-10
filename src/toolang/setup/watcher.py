@@ -14,6 +14,8 @@ from toolang.base.protocols.model import ModelAdapter, ModelCatalog
 from toolang.base.types.model import ModelCatalogSnapshot, ModelOverride
 from toolang.base.types.policy import AgentCeiling, RunDefaults, RunLimits
 from toolang.common.layout import AgentLayout
+from toolang.common.progress import ProgressSink
+from .progress import setup_progress
 from .teaming import TeamingSetup, resolve_teaming_setup
 from toolang.plugin.config import merge_plugin_configs
 from toolang.common.config_sources import ConfigSource, config_sources
@@ -161,12 +163,15 @@ class SetupWatcher:
 
         return self._diagnostics
 
-    async def refresh(self) -> AgentSetup:
+    async def refresh(self, *, progress: ProgressSink | None = None) -> AgentSetup:
         """Run one serialized candidate check and return the last valid Setup."""
 
         async with self._refresh_lock:
             try:
-                return await self._perform_refresh()
+                with setup_progress(
+                    progress, target=self.layout.name, resource="setup"
+                ):
+                    return await self._perform_refresh(progress=progress)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -180,7 +185,7 @@ class SetupWatcher:
                 )
                 return self._setup
 
-    async def _perform_refresh(self) -> AgentSetup:
+    async def _perform_refresh(self, *, progress: ProgressSink | None) -> AgentSetup:
         inputs = self._load_inputs()
         configs = inputs.configs
         config_value = tuple(project_setup_config(config) for config in configs)
@@ -218,7 +223,7 @@ class SetupWatcher:
         models_dev = catalogs.get("models_dev")
         if not isinstance(models_dev, ModelsDevModelCatalog):
             raise RuntimeError("models_dev catalog plugin is not installed")
-        load = await self._load_sources(models_dev, catalogs)
+        load = await self._load_sources(models_dev, catalogs, progress=progress)
         source_revisions = (
             ("models_dev", load.source.content_revision),
             *((name, revision) for name, revision, _snapshot in load.additional),
@@ -331,13 +336,21 @@ class SetupWatcher:
         self,
         models_dev: ModelsDevModelCatalog,
         catalogs: Mapping[str, ModelCatalog],
+        *,
+        progress: ProgressSink | None,
     ) -> _CatalogLoad:
         """Capture validated source snapshots for watcher revision detection."""
 
         _observation, source = await asyncio.to_thread(models_dev.capture)
         static = await asyncio.to_thread(source.snapshot)
         ordered = _ordered_additional_catalogs(catalogs)
-        probes = await asyncio.gather(*(catalog.snapshot() for catalog in ordered))
+        with setup_progress(
+            progress,
+            target=self.layout.name,
+            resource="model catalogs",
+            stage="discover",
+        ):
+            probes = await asyncio.gather(*(catalog.snapshot() for catalog in ordered))
         additional = tuple(
             await asyncio.gather(
                 *(
@@ -577,6 +590,7 @@ async def load_setup(
     sandbox: str = "host",
     agent_context: bool = True,
     validate_defaults: bool = True,
+    progress: ProgressSink | None = None,
 ) -> AgentSetup:
     """Build one setup version once, without a running watcher."""
 
@@ -587,4 +601,4 @@ async def load_setup(
         agent_context=agent_context,
         validate_defaults=validate_defaults,
     )
-    return await watcher.refresh()
+    return await watcher.refresh(progress=progress)

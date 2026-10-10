@@ -14,6 +14,7 @@ from typer._click.exceptions import ClickException
 
 from toolang.up import process as agents
 from toolang.common.layout import AgentLayout
+from toolang.common.progress import ProgressSink, emit_progress
 from .context import context_root, require_prefix_agent, ui_base_url
 from .errors import RuntimeClientError
 
@@ -30,6 +31,43 @@ class RuntimeClient:
             raise _http_error(exc) from exc
         except URLError as exc:
             raise RuntimeClientError(f"runtime request failed: {exc.reason}") from exc
+
+    def inspect_resources(
+        self, *, progress: ProgressSink | None = None
+    ) -> dict[str, Any]:
+        """Read the running agent's resource views with invocation-scoped feedback."""
+        emit_progress(
+            progress,
+            id="setup:runtime:resources",
+            kind="setup",
+            stage="load",
+            label="Loading runtime resources...",
+            status="running",
+        )
+        try:
+            resources = {
+                name: self.get(f"/api/v1/{name}")
+                for name in ("models", "tools", "caps", "chores", "tasks", "workspaces")
+            }
+        except BaseException:
+            emit_progress(
+                progress,
+                id="setup:runtime:resources",
+                kind="setup",
+                stage="load",
+                label="Failed to load runtime resources",
+                status="failed",
+            )
+            raise
+        emit_progress(
+            progress,
+            id="setup:runtime:resources",
+            kind="setup",
+            stage="load",
+            label="Loaded runtime resources",
+            status="ok",
+        )
+        return resources
 
     def post(
         self,

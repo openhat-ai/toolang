@@ -250,6 +250,59 @@ class AgentProcess:
 
         return self._report(self.reference)
 
+    def wait_ready(
+        self,
+        status: AgentStatus,
+        *,
+        ui_base_url: str,
+        timeout: float,
+        progress: ProgressSink | None = None,
+    ) -> AgentStatus:
+        """Wait for an existing launch, reporting the blocking readiness check."""
+        item_id = f"runtime:{self.layout.name}:ready"
+        emit_progress(
+            progress,
+            id=item_id,
+            kind="runtime",
+            stage="start",
+            label="Waiting for agent API...",
+            status="running",
+            detail=self.layout.name,
+        )
+        current: AgentStatus | None = status
+        deadline = time.monotonic() + timeout
+        try:
+            while current is not None and current.status in {"preparing", "starting"}:
+                if time.monotonic() >= deadline:
+                    raise ValueError(
+                        f"agent {self.layout.name} did not become ready; see {self.layout.runtime_log}"
+                    )
+                time.sleep(0.1)
+                current = self.status(ui_base_url=ui_base_url, check_health=True)
+            if current is None or current.status != "running":
+                raise ValueError(
+                    f"agent {self.layout.name} stopped before becoming ready; see {self.layout.runtime_log}"
+                )
+        except BaseException:
+            emit_progress(
+                progress,
+                id=item_id,
+                kind="runtime",
+                stage="start",
+                label="Agent did not become ready",
+                status="failed",
+            )
+            raise
+        emit_progress(
+            progress,
+            id=item_id,
+            kind="runtime",
+            stage="start",
+            label="Agent API ready",
+            status="ok",
+        )
+        return current
+
     def _report(self, reference: SandboxState | None) -> dict[str, object] | None:
         report = _load_runtime_state(self.layout.runtime_status)
         if report is None or reference is None:
