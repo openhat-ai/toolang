@@ -343,15 +343,19 @@ def test_top_terminal_grid_resize_and_markdown_pages(tmp_path, local):
         screen(lambda lines: any(" RUN " in line for line in lines))
         pane.send_keys("C-n", enter=False)
         pane.send_keys("Enter", enter=False)
+        # A terminal capture can see the heading before the redraw reaches the body.
         lines = screen(
-            lambda lines: any(
-                (match := re.match(r"Details 1-\d+/(\d+)", line)) and int(match[1]) > 30
-                for line in lines
+            lambda lines: (
+                any(
+                    (match := re.match(r"Details 1-\d+/(\d+)", line))
+                    and int(match[1]) > 30
+                    for line in lines
+                )
+                and any("Review result" in line for line in lines)
+                and any("Verified configuration." in line for line in lines)
             )
         )
-        assert any("Review result" in line for line in lines)
         assert "**Verified**" not in "\n".join(lines)
-        assert any("Verified configuration." in line for line in lines)
         pane.send_keys("PageDown", enter=False)
         lines = screen(
             lambda lines: any("Item 0: 中文 e\u0301" in line for line in lines)
