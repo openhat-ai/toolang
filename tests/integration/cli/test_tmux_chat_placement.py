@@ -167,20 +167,20 @@ def test_talk_conversations_and_contexts_share_one_named_session(
     )
     arguments: dict[str, Any] = dict(argv=["sleep", "60"], directory=str(tmp_path))
     with control_client(server, origin):
-        assert not launcher.place_chat(thread_id="group:dev", **arguments)
+        assert not launcher.place_chat(thread_id="gc_00000001", **arguments)
         session = next(s for s in server.sessions if s.session_name == "talk")
         first = session.windows[0]
         first.rename_window("custom name")
-        assert not launcher.place_chat(thread_id="group:dev", **arguments)
+        assert not launcher.place_chat(thread_id="gc_00000001", **arguments)
         assert len(session.windows) == 1
         assert first.window_name == "custom name"
-        assert first.show_option("@toolang_convo") == "group:dev"
+        assert first.show_option("@toolang_convo") == "gc_00000001"
         assert first.show_option(MARK_CONTEXT) == "root-backend-alice"
         assert first.panes[0].show_option(MARK_PAD) == "talk"
-        assert not launcher.place_chat(thread_id="group:ops", **arguments)
+        assert not launcher.place_chat(thread_id="gc_00000002", **arguments)
         other = replace(launcher, agent="root-backend-bob")
-        assert not other.place_chat(thread_id="group:dev", **arguments)
-        assert not other.place_chat(thread_id="group:dev", **arguments)
+        assert not other.place_chat(thread_id="gc_00000001", **arguments)
+        assert not other.place_chat(thread_id="gc_00000001", **arguments)
         assert len(session.windows) == 3
         assert {s.session_name for s in server.sessions} == {"origin", "talk"}
 
@@ -194,7 +194,7 @@ def test_talk_reopens_from_a_shell_left_in_its_conversation_window(
     )
     window = session.active_window
     shell = window.panes[0]
-    window.set_option("@toolang_convo", "group:dev")
+    window.set_option("@toolang_convo", "gc_00000001")
     window.set_option(MARK_CONTEXT, "root-backend-human")
     launcher = Launcher(
         agent="root-backend-human",
@@ -207,7 +207,7 @@ def test_talk_reopens_from_a_shell_left_in_its_conversation_window(
     )
     marker = tmp_path / "exit"
     arguments: dict[str, Any] = dict(
-        thread_id="group:dev",
+        thread_id="gc_00000001",
         directory=str(tmp_path),
         argv=[
             sys.executable,

@@ -29,7 +29,7 @@ _CONTEXT = 20
 _INSTRUCTIONS = """Handle this message batch as the receiving agent.
 Use msg/targets to find agents and conversations; never inspect other agents'
 threads, files, configuration, or shell sessions to discover how to communicate.
-Reply using msg/send to the source group, with in_reply_to set to the source
+Reply using msg/send to the source conversation, with in_reply_to set to the source
 message ID, unless explicitly asked to contact someone elsewhere. The tool owns
 the envelope and delivery. Never resend a successful tool send. Your final output
 is a brief handling summary, not a chat message or a replies JSON object.
@@ -63,12 +63,12 @@ class MessagingLoop:
         self.room = layout.channel_room("messaging")
         self.path = self.room / "unselected.json"
         self.saved: dict[str, Any] = {}
-        self.last_group = ""
+        self.last_conversation = ""
         self.gaps: dict[str, str | None] = {}
 
     def load(self) -> None:
         with self.client.session() as identity:
-            path = self.room / f"v1-{identity}.json"
+            path = self.room / f"v2-{identity}.json"
         saved = {}
         try:
             if path.exists():
@@ -82,7 +82,7 @@ class MessagingLoop:
         except (OSError, ValueError, KeyError, TypeError, MessagingError) as exc:
             raise MessagingError(f"Invalid messaging checkpoint: {path}") from exc
         self.path, self.saved = path, saved
-        self.gaps, self.last_group = {}, ""
+        self.gaps, self.last_conversation = {}, ""
 
     async def consume(self, stop: asyncio.Event) -> None:
         while not stop.is_set():
@@ -98,36 +98,43 @@ class MessagingLoop:
         # Pin discovery for the whole batch. A Hub/backend switch fails this
         # attempt instead of mixing data across checkpoints.
         with self.client.session() as identity:
-            path = self.room / f"v1-{identity}.json"
+            path = self.room / f"v2-{identity}.json"
             if path != self.path:
                 self.load()
             await self._poll()
 
     async def _poll(self) -> None:
-        groups = await self.client.contacts()
+        conversations = await self.client.contacts()
         # Round-robin independently of membership changes.
-        groups.sort(key=lambda g: (g["group"] <= self.last_group, g["group"]))
-        for info in groups:
-            group = info["group"]
-            previous = self.saved.get(
-                group, {"cursor": "0-0", "messages": [], "result": None}
+        conversations.sort(
+            key=lambda g: (
+                g["conversation"] <= self.last_conversation,
+                g["conversation"],
             )
-            gap = await self.client.check_cursor(group, previous["cursor"])
-            if gap and gap != self.gaps.get(group):
-                logger.warning("%s: %s", group, gap)
-            self.gaps[group] = gap
+        )
+        for info in conversations:
+            conversation = info["conversation"]
+            previous = self.saved.get(
+                conversation, {"cursor": "0-0", "messages": [], "result": None}
+            )
+            gap = await self.client.check_cursor(conversation, previous["cursor"])
+            if gap and gap != self.gaps.get(conversation):
+                logger.warning("%s: %s", conversation, gap)
+            self.gaps[conversation] = gap
             entries = await self.client.read(
-                group, after=previous["cursor"], count=_CONTEXT
+                conversation, after=previous["cursor"], count=_CONTEXT
             )
             if not entries:
                 continue
-            self.last_group = group
+            self.last_conversation = conversation
             messages = []
             for sid, fields in entries:
                 try:
                     message = Message.decode(fields["data"])
                 except (MessagingError, KeyError):
-                    logger.warning("Skipping malformed message: %s %s", group, sid)
+                    logger.warning(
+                        "Skipping malformed message: %s %s", conversation, sid
+                    )
                     continue
                 messages.append({**message.data(), "stream_id": sid})
             outcome = previous["result"]
@@ -137,10 +144,10 @@ class MessagingLoop:
                     await self.handle(
                         {
                             "agent": self.agent,
-                            "available_groups": groups,
-                            "groups": [
+                            "available_conversations": conversations,
+                            "conversations": [
                                 {
-                                    "group": group,
+                                    "conversation": conversation,
                                     "messages": messages,
                                     "previous": previous,
                                 }
@@ -153,13 +160,13 @@ class MessagingLoop:
                     outcome["status"] = "cancelled"
                 raise
             except Exception as exc:
-                logger.exception("Messaging batch failed; skipping %s", group)
+                logger.exception("Messaging batch failed; skipping %s", conversation)
                 if outcome is not None:
                     outcome["error"] = str(exc)
             finally:
                 saved = {
                     **self.saved,
-                    group: {
+                    conversation: {
                         "cursor": entries[-1][0],
                         "messages": (previous["messages"] + messages)[-_CONTEXT:],
                         "result": outcome,

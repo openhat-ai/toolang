@@ -16,7 +16,8 @@ from toolang.base.types.message import Message as ModelMessage
 from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.common.layout import AgentLayout
 from toolang.teaming.messaging import MessagingClient
-from toolang.teaming.backend import Backend, group_key
+from toolang.teaming.backend import Backend
+from toolang.teaming.keys import convo_key
 from toolang.teaming.config import BackendConfig, TeamingHomeConfig, TeamingRootConfig
 from toolang.plugin.toolsets.msg import MsgToolset
 from toolang.plugin.toolsets.loading import tools_from_toolsets
@@ -40,8 +41,10 @@ def make_client(server, actor="agent:alice"):
 async def prepare(agent, human):
     await agent.register("human:owner")
     for name in ("dev", "other"):
-        await human.create_group(name)
-        await agent.join_group(f"group:{name}")
+        await human.create_conversation(name)
+        await agent.join_conversation(
+            (await human.resolve(name, kind="name")).conversation
+        )
 
 
 def make_loop(path, client, harness=None):
@@ -74,7 +77,7 @@ def test_tool_reply_receipt_context_and_restart(tmp_path, custom):
                 "call-1",
                 "call-1",
                 "msg__send",
-                {"target": "group:dev", "body": "done", "in_reply_to": REPLY_TO},
+                {"target": "gc_00000001", "body": "done", "in_reply_to": REPLY_TO},
             ),
         )
     )
@@ -96,10 +99,10 @@ def test_tool_reply_receipt_context_and_restart(tmp_path, custom):
             make_client(server, "human:owner") as human,
         ):
             await prepare(client, human)
-            await human.send("group:dev", body="literal $prompt {{x}} @file")
+            await human.send("gc_00000001", body="literal $prompt {{x}} @file")
             loop = make_loop(tmp_path, client, harness)
             await loop.poll()
-            saved = loop.saved["group:dev"]
+            saved = loop.saved["gc_00000001"]
             assert saved["result"]["status"] == "succeeded"
             receipt = saved["result"]["replies"][0]
             handled = harness.store.get_run(run_id=saved["result"]["run"])
@@ -109,10 +112,10 @@ def test_tool_reply_receipt_context_and_restart(tmp_path, custom):
                 "run": saved["result"]["run"],
             }
             assert receipt["message"]["in_reply_to"] == REPLY_TO
-            assert len(await client.history("group:dev")) == 2
+            assert len(await client.history("gc_00000001")) == 2
             await loop.poll()  # Own reply is context, never another model invocation.
             assert len(harness.adapter.invocations) == 2
-            await human.send("group:dev", body="next")
+            await human.send("gc_00000001", body="next")
             restarted = make_loop(tmp_path, client, harness)
             restarted.load()
             await restarted.poll()
@@ -123,7 +126,7 @@ def test_tool_reply_receipt_context_and_restart(tmp_path, custom):
                 and "next" in prompt
             )
             assert (
-                len(await client.history("group:dev")) == 3
+                len(await client.history("gc_00000001")) == 3
             )  # Final summaries are not messages.
 
     asyncio.run(scenario())
@@ -138,28 +141,32 @@ def test_failed_batches_skip_bad_entries_and_rotate_groups(tmp_path):
         ):
             await prepare(client, human)
             await FakeAsyncValkey(server=server, decode_responses=True).xadd(
-                group_key("group:dev", "messages"), {"data": "broken"}
+                convo_key("gc_00000001", "messages"), {"data": "broken"}
             )
             for i in range(25):
-                await human.send("group:dev", body=str(i))
-            await human.send("group:other", body="other context")
+                await human.send("gc_00000001", body=str(i))
+            await human.send("gc_00000002", body="other context")
             loop = make_loop(tmp_path, client)
             loop.handle = AsyncMock(side_effect=RuntimeError("handler failed"))
             await loop.poll()
-            assert len(loop.saved["group:dev"]["messages"]) == 19
-            assert loop.saved["group:dev"]["result"]["status"] == "failed"
+            assert len(loop.saved["gc_00000001"]["messages"]) == 19
+            assert loop.saved["gc_00000001"]["result"]["status"] == "failed"
             await loop.poll()
-            assert loop.handle.call_args[0][0]["groups"][0]["group"] == "group:other"
             assert (
-                loop.handle.call_args[0][0]["groups"][0]["previous"]["messages"] == []
+                loop.handle.call_args[0][0]["conversations"][0]["conversation"]
+                == "gc_00000002"
+            )
+            assert (
+                loop.handle.call_args[0][0]["conversations"][0]["previous"]["messages"]
+                == []
             )
             await loop.poll()
-            batch = loop.handle.call_args[0][0]["groups"][0]
+            batch = loop.handle.call_args[0][0]["conversations"][0]
             assert batch["previous"]["result"]["error"] == "handler failed"
-            assert len(loop.saved["group:dev"]["messages"]) == 20
+            assert len(loop.saved["gc_00000001"]["messages"]) == 20
             assert (
-                json.loads(loop.path.read_text())["group:dev"]["cursor"]
-                == loop.saved["group:dev"]["cursor"]
+                json.loads(loop.path.read_text())["gc_00000001"]["cursor"]
+                == loop.saved["gc_00000001"]["cursor"]
             )
 
     asyncio.run(scenario())
@@ -178,7 +185,7 @@ def test_arrivals_during_handling_and_cancellation_save_delivered_receipts(tmp_p
                         "send",
                         "send",
                         "msg__send",
-                        {"target": "group:dev", "body": "delivered"},
+                        {"target": "gc_00000001", "body": "delivered"},
                     ),
                 )
             ),
@@ -196,15 +203,15 @@ def test_arrivals_during_handling_and_cancellation_save_delivered_receipts(tmp_p
             make_client(server, "human:owner") as human,
         ):
             await prepare(client, human)
-            source = await human.send("group:dev", body="please reply")
+            source = await human.send("gc_00000001", body="please reply")
             loop = make_loop(tmp_path, client, harness)
             task = asyncio.create_task(loop.poll())
             await asyncio.wait_for(gate.wait_until_entered(), 2)
-            await human.send("group:dev", body="arrived during handler")
+            await human.send("gc_00000001", body="arrived during handler")
             task.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await task
-            saved = loop.saved["group:dev"]
+            saved = loop.saved["gc_00000001"]
             assert saved["cursor"] == source["stream_id"]
             assert saved["result"]["status"] == "cancelled"
             assert len(saved["result"]["replies"]) == 1
@@ -363,7 +370,7 @@ def test_spawned_worker_sends_with_its_own_run_origin(tmp_path):
                         "send",
                         "send",
                         "msg__send",
-                        {"target": "group:dev", "body": "Worker result"},
+                        {"target": "gc_00000001", "body": "Worker result"},
                     ),
                 )
             ),
@@ -389,7 +396,7 @@ def test_spawned_worker_sends_with_its_own_run_origin(tmp_path):
             while harness.executor._tasks:
                 await asyncio.gather(*tuple(harness.executor._tasks))
             assert parent.status == "succeeded"
-            entries = await client.history("group:dev")
+            entries = await client.history("gc_00000001")
             assert len(entries) == 1
             message = Message.decode(entries[0][1]["data"])
             assert message.origin is not None and message.origin["run"] != parent.id
@@ -414,7 +421,7 @@ def test_msg_is_unavailable_without_configuration_and_fences_offline_sends(tmp_p
             await (
                 MsgToolset({})
                 .tools()["send"]
-                .invoke({"target": "group:all", "body": "hi"}, context)
+                .invoke({"target": "gc_00000000", "body": "hi"}, context)
             )
         server = FakeServer(server_type="valkey")
         async with make_client(server) as agent:
@@ -425,13 +432,15 @@ def test_msg_is_unavailable_without_configuration_and_fences_offline_sends(tmp_p
         assert set(msg.tools()) == {
             "targets",
             "send",
-            "create_group",
-            "join_group",
-            "leave_group",
+            "create_conversation",
+            "join_conversation",
+            "leave_conversation",
+            "rename_conversation",
+            "resolve",
         }
         with pytest.raises(MessagingError, match="lease lost"):
             await msg.tools()["send"].invoke(
-                {"target": "group:all", "body": "hi"}, context
+                {"target": "gc_00000000", "body": "hi"}, context
             )
 
     asyncio.run(scenario())
@@ -459,22 +468,30 @@ def test_all_msg_tools_use_the_context_identity(tmp_path):
         )
         tools = msg.tools()
         result = await tools["targets"].invoke({}, context)
-        assert result.output["participants"][0]["target"] == "human:owner"
-        created = await tools["create_group"].invoke({"name": "dev"}, context)
-        assert created.output == {"group": "group:dev", "members": ["agent:alice"]}
+        assert "human:owner" in {row["member"] for row in result.output["participants"]}
+        created = await tools["create_conversation"].invoke({"name": "dev"}, context)
+        assert created.output["value"].id == "gc_00000001"
+        assert created.output["value"].participants == ("agent:alice",)
         sent = await tools["send"].invoke(
-            {"target": "group:dev", "body": "hello"}, context
+            {"target": "gc_00000001", "body": "hello"}, context
         )
         assert sent.output["message"]["sender"] == "agent:alice"
         assert sent.output["message"]["origin"] == {
             "run": "run_test",
             "thread": "term_test",
         }
-        left = await tools["leave_group"].invoke({"group": "group:dev"}, context)
-        assert left.output["members"] == []
-        joined = await tools["join_group"].invoke({"group": "group:dev"}, context)
-        assert joined.output["members"] == ["agent:alice"]
-        with pytest.raises(MessagingError, match="Invalid target"):
+        left = await tools["leave_conversation"].invoke(
+            {"conversation": "gc_00000001"}, context
+        )
+        assert left.output == {"conversation": "gc_00000001"}
+        joined = await tools["join_conversation"].invoke(
+            {"conversation": "gc_00000001"}, context
+        )
+        assert joined.output["participants"] == ["agent:alice"]
+        with pytest.raises(MessagingError, match="Unknown participant"):
             await tools["send"].invoke({"target": "dev", "body": "ambiguous"}, context)
 
     asyncio.run(scenario())
+
+
+pytestmark = pytest.mark.usefixtures("fixed_conversation_ids")

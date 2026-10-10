@@ -5,16 +5,21 @@ from __future__ import annotations
 from contextlib import contextmanager
 from typing import Any
 from uuid import uuid4
+import json
+
+from .ids import dm_id
 
 from .backend import Backend, LEASE_SECONDS
 from .discovery import host_token as host_token
 from .types import RENEW_SECONDS as RENEW_SECONDS
 from .config import BackendConfig
-from .errors import LeaseLost, MessagingError
+from .errors import ConversationAccessDenied, LeaseLost, MessagingError
 from .schemas import (
     Conversation,
     Message,
     direct_pair,
+    Resolution,
+    conversation_id,
     identifier,
     participant,
     stream_id,
@@ -45,12 +50,13 @@ class MessagingClient:
         yield self.config.identity
 
     async def __aenter__(self) -> MessagingClient:
-        if target(self.actor).kind == "human":
-            try:
+        try:
+            await self.check_backend()
+            if target(self.actor).kind == "human":
                 await self.register_human()
-            except BaseException:
-                await self.close()
-                raise
+        except BaseException:
+            await self.close()
+            raise
         return self
 
     async def __aexit__(self, *args: object) -> None:
@@ -61,9 +67,10 @@ class MessagingClient:
 
     async def check_backend(self) -> None:
         await self._backend.ping()
+        await self._backend.initialize()
 
     async def register_human(self) -> None:
-        """Ensure the human and system membership exist without changing custom groups."""
+        """Ensure the human and system membership exist without changing custom conversations."""
         target(self.actor, kind="human")
         await self._backend.register(self.actor)
 
@@ -92,91 +99,130 @@ class MessagingClient:
             if target(name).kind == "agent"
         }
 
-    async def conversation(self, group: str) -> Conversation:
-        target(group, kind="group")
-        info = (await self._backend.groups()).get(group)
-        if info is None:
-            raise MessagingError(f"Unknown group: {group}")
-        members = await self._backend.members(group)
-        if self._lease and self.actor not in members:
-            raise MessagingError("Agent is not a member of this group")
-        return Conversation(
-            group, info["kind"], members, info["display_name"], info["system"]
-        )
+    async def team(self) -> list[dict[str, Any]]:
+        return await self._backend.team()
 
-    async def resolve(self, value: str, *, kind: str | None = None) -> str:
-        participants = await self._backend.participants()
-        groups = await self._backend.groups()
-        if ":" in value:
-            selected = target(value)
-            if kind and selected.kind != ("agent" if kind == "dm" else kind):
-                raise MessagingError("Target conflicts with the requested type")
-        elif value == "all" and kind is None:
-            selected = target("group:all")
-        elif kind is not None:
-            selected = target(
-                f"{'agent' if kind == 'dm' else kind}:{identifier(value)}"
+    async def conversation(self, conversation: str) -> Conversation:
+        info = await self._backend.conversation(conversation, self.actor)
+        if info is None:
+            raise MessagingError(f"Unknown conversation: {conversation}")
+        return info
+
+    async def resolve(
+        self, value: str, *, kind: str | None = None, create: bool = False
+    ) -> Resolution:
+        if kind == "name":
+            matches = []
+            for ref in await self._backend.named(value):
+                try:
+                    info = await self.conversation(ref)
+                except ConversationAccessDenied:
+                    continue
+                if info.name == value:
+                    matches.append(info)
+            if not matches:
+                raise MessagingError(f"Unknown conversation name: {value}")
+            if len(matches) != 1:
+                raise MessagingError(
+                    "Ambiguous conversation name: "
+                    + json.dumps(
+                        [
+                            dict(id=c.id, kind=c.kind, participants=c.participants)
+                            for c in matches
+                        ]
+                    )
+                )
+            info = matches[0]
+            return Resolution(info.id, info.participants, True)
+        if kind is not None:
+            raise MessagingError("Unsupported lookup kind")
+        try:
+            canonical = conversation_id(value)
+        except MessagingError:
+            canonical = None
+        if canonical:
+            info = await self.conversation(canonical)
+            return Resolution(info.id, info.participants, True)
+        if "," in value:
+            names = value.split(",")
+            if len(names) != 2:
+                raise MessagingError("A DM requires exactly two distinct participants")
+            pair = tuple(f"agent:{identifier(name)}" for name in names)
+        else:
+            selected = (
+                participant(value).id if ":" in value else f"agent:{identifier(value)}"
+            )
+            pair = (self.actor, selected)
+        a, b = pair
+        direct_pair(a, b)
+        for member in pair:
+            if not await self._backend.known_participant(member):
+                raise MessagingError(f"Unknown participant: {member}")
+        ref = dm_id(a, b)
+        info = await self._backend.conversation(ref, self.actor, pair=pair)
+        if not info and self.actor not in pair:
+            raise MessagingError("No conversation exists between these participants")
+        if create and not info:
+            await self._backend.create_dm(self.actor, (a, b), token=self._lease)
+            info = await self.conversation(ref)
+        return Resolution(ref, tuple(sorted(pair)), info is not None)
+
+    async def create_conversation(
+        self, name: str | None = None, *, participants: list[str] | None = None
+    ) -> Conversation:
+        if participants is None:
+            ref = await self._backend.create_gc(
+                self.actor, token=self._lease, name=name
             )
         else:
-            identifier(value)
-            matches = [
-                ref for ref in (*participants, *groups) if target(ref).name == value
-            ]
-            if len(matches) > 1:
-                raise MessagingError("Ambiguous target; use agent:, human:, or group:")
-            if not matches:
-                raise MessagingError(f"Unknown target: {value}")
-            selected = target(matches[0])
-        if selected.kind == "group":
-            await self.conversation(selected.id)
-            return selected.id
-        if selected.id not in participants:
-            raise MessagingError(f"Unknown participant: {selected.id}")
-        direct_pair(self.actor, selected.id)
-        for _ in range(8):
-            existing = await self._backend.direct(self.actor, selected.id)
-            if existing:
-                return existing
-            group = f"group:{uuid4()}"
-            if await self._backend.create(
-                group, self.actor, token=self._lease, other=selected.id
-            ):
-                return group
-        raise MessagingError("Could not allocate a direct conversation")
+            if len(participants) != 2:
+                raise MessagingError("A DM requires exactly two distinct participants")
+            ref = await self._backend.create_dm(
+                self.actor,
+                (participants[0], participants[1]),
+                token=self._lease,
+                name=name,
+            )
+        return await self.conversation(ref)
 
-    async def create_group(self, name: str) -> dict[str, Any]:
-        group = f"group:{identifier(name)}"
-        if group == "group:all":
-            raise MessagingError("The all group is reserved")
-        if not await self._backend.create(group, self.actor, token=self._lease):
-            raise MessagingError(f"Group already exists: {group}")
-        return {"group": group, "members": [self.actor]}
+    async def rename_conversation(
+        self, conversation: str, name: str | None, *, revision: int
+    ) -> Conversation:
+        await self._backend.rename(
+            conversation, self.actor, token=self._lease, name=name, revision=revision
+        )
+        return await self.conversation(conversation)
 
-    async def join_group(self, group: str) -> dict[str, Any]:
-        target(group, kind="group")
-        await self._backend.member(group, self.actor, token=self._lease, join=True)
-        return {"group": group, "members": list(await self._backend.members(group))}
+    async def join_conversation(self, conversation: str) -> dict[str, Any]:
+        await self._backend.member(
+            conversation, self.actor, token=self._lease, join=True
+        )
+        return {
+            "conversation": conversation,
+            "participants": list((await self.conversation(conversation)).participants),
+        }
 
-    async def leave_group(self, group: str) -> dict[str, Any]:
-        target(group, kind="group")
-        await self._backend.member(group, self.actor, token=self._lease, join=False)
-        return {"group": group, "members": list(await self._backend.members(group))}
+    async def leave_conversation(self, conversation: str) -> dict[str, Any]:
+        await self._backend.member(
+            conversation, self.actor, token=self._lease, join=False
+        )
+        return {"conversation": conversation}
 
     async def contacts(self, *, include_preview: bool = False) -> list[dict[str, Any]]:
-        agents = await self.agents()
-        online = {agent for agent in agents if await self._backend.online(agent)}
         result = []
-        for group, info in (await self._backend.groups()).items():
-            members = await self._backend.members(group)
-            if self._lease and self.actor not in members:
+        for ref in await self._backend.conversation_ids():
+            try:
+                info = await self.conversation(ref)
+                latest = await self.history(ref, count=1)
+            except ConversationAccessDenied:
+                # Membership may change between metadata and preview reads.
                 continue
-            latest = await self._backend.history(group, 1)
             item = dict(
-                group=group,
-                name=info["display_name"] or " ↔ ".join(members),
-                kind=info["kind"],
-                members=list(members),
-                online=sorted(online.intersection(members)),
+                conversation=ref,
+                name=info.name,
+                kind=info.kind,
+                revision=info.revision,
+                participants=list(info.participants),
                 latest=latest[0][0] if latest else None,
             )
             if include_preview:
@@ -192,21 +238,15 @@ class MessagingClient:
         return result
 
     async def targets(self) -> dict[str, Any]:
-        records = await self._backend.participants()
         return {
-            "participants": [
-                {
-                    "target": ref,
-                    "name": info["display_name"],
-                    "online": await self._backend.online(ref)
-                    if target(ref).kind == "agent"
-                    else None,
-                }
-                for ref, info in sorted(records.items())
-                if ref != self.actor
-            ],
-            "groups": await self.contacts(),
+            "participants": await self.team(),
+            "conversations": await self.contacts(),
         }
+
+    async def statistics(
+        self, conversation: str | None = None
+    ) -> dict[str, int | str | None]:
+        return await self._backend.statistics(self.actor, conversation)
 
     async def send(
         self,
@@ -217,6 +257,7 @@ class MessagingClient:
         run: str | None = None,
         thread: str | None = None,
         message_id: str | None = None,
+        participants: list[str] | None = None,
     ) -> dict[str, Any]:
         message = Message(
             message_id if message_id is not None else str(uuid4()),
@@ -225,38 +266,66 @@ class MessagingClient:
             in_reply_to,
             {"thread": thread, "run": run} if self._lease else None,
         )
-        group = await self.resolve(destination)
+        if participants is not None:
+            if len(participants) != 2 or dm_id(*participants) != conversation_id(
+                destination
+            ):
+                raise MessagingError("DM pair does not match conversation ID")
+            ref, pair = destination, tuple(participants)
+        else:
+            resolved = await self.resolve(destination)
+            ref, pair = (
+                resolved.conversation,
+                resolved.participants
+                if resolved.conversation.startswith("dm_")
+                else (),
+            )
         sid = await self._backend.append(
-            group, self.actor, message.encode(), token=self._lease
+            ref, self.actor, message.encode(), token=self._lease, pair=pair
         )
-        return {"group": group, "stream_id": sid, "message": message.data()}
+        return {"conversation": ref, "stream_id": sid, "message": message.data()}
 
     async def read(
-        self, group: str, *, after: str = "0-0", count: int = 100
+        self, conversation: str, *, after: str = "0-0", count: int = 100
     ) -> list[tuple[str, dict[str, str]]]:
         stream_id(after)
         if not 1 <= count <= 1000:
             raise MessagingError("Read count must be between 1 and 1000")
-        await self.conversation(group)
-        return await self._backend.read(group, after, count)
+        await self.conversation(conversation)
+        return await self._backend.messages(
+            conversation, self.actor, start=f"({after}", finish="+", count=count
+        )
 
     async def history(
-        self, group: str, *, count: int = 200
+        self, conversation: str, *, count: int = 200
     ) -> list[tuple[str, dict[str, str]]]:
         if not 1 <= count <= 1000:
             raise MessagingError("History count must be between 1 and 1000")
-        await self.conversation(group)
-        return await self._backend.history(group, count)
+        await self.conversation(conversation)
+        return list(
+            reversed(
+                await self._backend.messages(
+                    conversation,
+                    self.actor,
+                    start="+",
+                    finish="-",
+                    count=count,
+                    reverse=True,
+                )
+            )
+        )
 
-    async def check_cursor(self, group: str, cursor: str) -> str | None:
+    async def check_cursor(self, conversation: str, cursor: str) -> str | None:
         stream_id(cursor)
-        await self.conversation(group)
+        await self.conversation(conversation)
         if cursor == "0-0":
             return None
-        first = await self._backend.first(group)
+        first = await self._backend.messages(
+            conversation, self.actor, start="-", finish="+", count=1
+        )
         if not first:
             return "Conversation history is missing"
-        last = await self._backend.history(group, 1)
+        last = await self.history(conversation, count=1)
         if stream_id(cursor) > stream_id(last[0][0]):
             raise MessagingError(
                 "Stream precedes saved cursor; explicitly reset the local checkpoint"

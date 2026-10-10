@@ -20,7 +20,9 @@ Toolang-owned ids should be:
 
 ## Scope
 
-This design applies only to Toolang-owned local ids.
+The local allocator described below applies to Toolang-owned local ids.
+Conversation IDs use the separate backend allocation contract at the end of this
+document.
 
 It does not rewrite the opaque payload of external ids such as:
 
@@ -31,7 +33,7 @@ It does not rewrite the opaque payload of external ids such as:
 
 ## Families
 
-Toolang currently defines two families:
+The local allocator defines two families:
 
 | Family | Width | Raw layout | Intended use |
 | --- | --- | --- | --- |
@@ -223,3 +225,29 @@ The encode, decode, reserve, allocate, and archive-prefix helpers require
 `agent_name`. `IdIssuer.issue_run()` and `IdIssuer.issue_thread(prefix)` retain
 their existing signatures and prepend the full-ID prefix after allocation.
 These helpers are used by local task, chore, thread, and run creation.
+
+
+## Conversation IDs
+
+Conversations use eight characters from the same base32 alphabet, prefixed by
+`dm_` or `gc_`. Execution/thread outputs and per-agent allocator files are unchanged.
+
+DM IDs hash compact UTF-8 JSON `["toolang:dm:v1", a, b]`, where `a` and `b` are
+the exact typed participant names sorted by UTF-8 bytes. The first five SHA-256
+bytes form the 40-bit suffix. Reversed lookups agree; a stored pair mismatch fails
+as a collision. The hash is not reversible and membership cannot change.
+
+GC IDs encode `(hourly_tick << 20) | sequence` with the shared four-round Feistel
+permutation, using BLAKE2s of `toolang:conversation:gc:v1` as its fixed key. GC uses
+no local-family affine transform or agent name. The epoch is 2026-01-01 UTC. Atomic
+Valkey `TIME` reservations keep the tick monotonic through clock rollback; a new
+hour resets the sequence to zero. This allows 1,048,576 reservations per backend
+per hour (about 291.27 per second averaged over the hour), including abandoned
+reservations and candidate conflicts. This is an ID budget, not a throughput
+benchmark. Allocation fails at exhaustion instead of wrapping or resetting.
+Retries of GC creation can create another GC if the earlier response was lost.
+
+GC names and membership can change without changing the ID. The fixed permutation
+is reversible and introduces no collisions between distinct reservations. The
+[conversation contract](plans/conversation-ids.md) defines storage, exact vectors,
+collision checks, and the fresh-dataset-only rollout.

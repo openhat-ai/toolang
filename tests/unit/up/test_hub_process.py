@@ -181,12 +181,10 @@ import toolang.up.hub as module
 from toolang.teaming.config import BackendConfig, TeamingRootConfig
 root, port = Path(sys.argv[1]), int(sys.argv[2])
 class SlowClient(module.MessagingClient):
-    async def __aenter__(self):
+    async def check_backend(self):
         (root / "starting").touch()
         await asyncio.sleep(60)
-        return self
-    async def __aexit__(self, *args): pass
-    async def check_backend(self): pass
+    async def close(self): pass
 module.MessagingClient = SlowClient
 module.serve(root, TeamingRootConfig("human:owner", BackendConfig("redis://localhost"), port), port=port)
 """

@@ -73,7 +73,7 @@ def test_error_replaces_all_footer_segments_and_matches_chat(tmp_path, width):
             assert display_width(text) == width
             assert text.startswith("!") and "\n" not in text
             assert (
-                "bryan" not in text and "group:dev" not in text and "#dev" not in text
+                "bryan" not in text and "gc_00000001" not in text and "#dev" not in text
             )
             if width >= 80:
                 assert (
@@ -105,7 +105,9 @@ def test_send_errors_keep_the_draft_and_show_returned_detail_without_retry(
             await ui.send("keep this draft")
             assert fragment_list_to_text(ui.status_text()).rstrip() == ("! " + detail)
             assert ui.prompt.buffer.text == ui.draft.read_text() == "keep this draft"
-            ui.client.send.assert_awaited_once_with(ui.group, body="keep this draft")
+            ui.client.send.assert_awaited_once_with(
+                ui.conversation_id, body="keep this draft", participants=None
+            )
             notice.assert_awaited_once_with(detail)
 
     asyncio.run(scenario())
@@ -113,9 +115,7 @@ def test_send_errors_keep_the_draft_and_show_returned_detail_without_retry(
 
 @pytest.mark.parametrize("name", ["gc_dev", "Development Team", "开发组"])
 def test_group_display_name_is_preserved(name):
-    conversation = Conversation(
-        "group:dev", "group", ("human:bryan",), display_name=name
-    )
+    conversation = Conversation("gc_00000001", "gc", ("human:bryan",), name=name)
     assert fragment_list_to_text(conversation_status(conversation, "human:bryan")) == (
         f"#{name}(1)"
     )
@@ -126,33 +126,38 @@ def test_group_display_name_is_preserved(name):
     [
         (
             Conversation(
-                "group:2fbde537-00ec-4a13-b87b-9e297dd0a64f",
-                "direct",
+                "dm_00000003",
+                "dm",
                 ("human:bryan", "agent:alice"),
             ),
             "@alice",
         ),
         (
             Conversation(
-                "group:6670c498-5a60-4fc6-bdb9-fc909a088e03",
-                "direct",
+                "dm_00000004",
+                "dm",
                 ("agent:bob", "agent:alice"),
             ),
             "@alice,bob",
         ),
         (
             Conversation(
-                "group:dev", "group", ("human:bryan", "agent:alice", "agent:bob")
+                "gc_00000001",
+                "gc",
+                ("human:bryan", "agent:alice", "agent:bob"),
+                name="dev",
             ),
             "#dev(3)",
         ),
         (
-            Conversation("group:dev", "group", ("human:bryan", "agent:alice")),
+            Conversation(
+                "gc_00000001", "gc", ("human:bryan", "agent:alice"), name="dev"
+            ),
             "#dev(2)",
         ),
-        (Conversation("group:empty", "group", ()), "#empty(0)"),
+        (Conversation("gc_00000004", "gc", (), name="empty"), "#empty(0)"),
         (
-            Conversation("group:observed", "group", ("agent:alice",)),
+            Conversation("gc_00000005", "gc", ("agent:alice",), name="observed"),
             "#observed(1)",
         ),
     ],
@@ -176,7 +181,7 @@ def test_conversation_formats_dim_only_read_only_markers_without_presence(
 
 
 @pytest.mark.parametrize("width", [60, 80, 120])
-@pytest.mark.parametrize("canonical", ["group:dev", "group:开发e\u0301"])
+@pytest.mark.parametrize("canonical", ["gc_00000001", "gc_abcdef01"])
 def test_full_canonical_id_is_centered_by_terminal_cells(width, canonical):
     fragments = status_line(
         [("class:status", "#dev(3)")],
@@ -195,7 +200,7 @@ def test_full_canonical_id_is_centered_by_terminal_cells(width, canonical):
 
 @pytest.mark.parametrize("width", [1, 12, 25, 40, 60, 80, 120])
 def test_long_ids_are_shown_whole_or_hidden_without_overlapping_login(width):
-    canonical = "group:12345678-1234-1234-1234-123456789012"
+    canonical = "dm_01234567"
     fragments = status_line(
         [("class:status dim", "@"), ("class:status", "alice,bob" * 10)],
         "bryan",
@@ -206,7 +211,7 @@ def test_long_ids_are_shown_whole_or_hidden_without_overlapping_login(width):
     assert display_width(text) == width
     if width >= 16:
         assert text.endswith("bryan  ")
-    if "group:" in text:
+    if "dm_" in text:
         assert canonical in text
         assert ("class:status", canonical) in fragments
     if width >= 80:
@@ -242,7 +247,7 @@ def test_footer_displays_connection_progress_or_error(tmp_path, connection):
                 assert text.endswith(connection + "  ")
             else:
                 assert text.rstrip() == "! " + connection
-                assert "group:dev" not in text and "#dev" not in text
+                assert "gc_00000001" not in text and "#dev" not in text
             ui.connection = "Connected"
             assert fragment_list_to_text(ui.status_text()).endswith("bryan  ")
 
@@ -274,7 +279,7 @@ def test_hub_configuration_error_preserves_draft_and_uses_the_error_row(
                 await ui.send("keep this draft")
             footer = fragment_list_to_text(ui.status_text())
             assert footer.rstrip() == "! Hub identity changed; reopen Talk"
-            assert "bryan" not in footer and "group:dev" not in footer
+            assert "bryan" not in footer and "gc_00000001" not in footer
             assert ui.prompt.buffer.text == ui.draft.read_text() == "keep this draft"
             notice.assert_awaited_once_with("Hub identity changed; reopen Talk")
             with pytest.raises(MessagingError, match="Hub identity changed"):
@@ -319,3 +324,6 @@ def test_draft_failure_remains_visible_when_connected(tmp_path, monkeypatch):
             ) in ui.status_text()
 
     asyncio.run(scenario())
+
+
+pytestmark = pytest.mark.usefixtures("fixed_conversation_ids")

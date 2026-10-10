@@ -493,52 +493,47 @@ def _agent_id_key(*, family: IdFamily, agent_name: str) -> bytes:
     return hashlib.blake2s(material).digest()
 
 
-def _permute_wire_code(value: int, *, family: IdFamily, agent_key: bytes) -> int:
-    wire_bits = family.width * 5
-    wire_modulus = 1 << wire_bits
-    _check_range("wire_code", value, wire_modulus)
-    if wire_bits % 2 != 0:
+def scramble_id(value: int, *, width: int, key: bytes, reverse: bool = False) -> int:
+    """Permute a fixed-width code without changing its capacity."""
+    bits = width * 5
+    _check_range("wire_code", value, 1 << bits)
+    if bits % 2:
         raise ValueError("wire bits must be even")
-    half_bits = wire_bits // 2
-    half_mask = (1 << half_bits) - 1
-    left = (value >> half_bits) & half_mask
-    right = value & half_mask
-    for round_index in range(_ID_FEISTEL_ROUNDS):
-        left, right = (
-            right,
-            left
-            ^ _wire_round_function(
+    half = bits // 2
+    mask = (1 << half) - 1
+    left, right = value >> half, value & mask
+    rounds = range(_ID_FEISTEL_ROUNDS)
+    for index in reversed(rounds) if reverse else rounds:
+        if reverse:
+            left, right = (
+                right
+                ^ _wire_round_function(
+                    left, agent_key=key, round_index=index, mask=mask
+                ),
+                left,
+            )
+        else:
+            left, right = (
                 right,
-                agent_key=agent_key,
-                round_index=round_index,
-                mask=half_mask,
-            ),
-        )
-    return ((left & half_mask) << half_bits) | (right & half_mask)
+                left
+                ^ _wire_round_function(
+                    right, agent_key=key, round_index=index, mask=mask
+                ),
+            )
+    return (left << half) | right
+
+
+def encode_short_id(value: int, *, width: int = 8) -> str:
+    """Encode an unsigned value using the shared lowercase base32 alphabet."""
+    return _encode_fixed_width(value, width=width)
+
+
+def _permute_wire_code(value: int, *, family: IdFamily, agent_key: bytes) -> int:
+    return scramble_id(value, width=family.width, key=agent_key)
 
 
 def _unpermute_wire_code(value: int, *, family: IdFamily, agent_key: bytes) -> int:
-    wire_bits = family.width * 5
-    wire_modulus = 1 << wire_bits
-    _check_range("wire_code", value, wire_modulus)
-    if wire_bits % 2 != 0:
-        raise ValueError("wire bits must be even")
-    half_bits = wire_bits // 2
-    half_mask = (1 << half_bits) - 1
-    left = (value >> half_bits) & half_mask
-    right = value & half_mask
-    for round_index in range(_ID_FEISTEL_ROUNDS - 1, -1, -1):
-        left, right = (
-            right
-            ^ _wire_round_function(
-                left,
-                agent_key=agent_key,
-                round_index=round_index,
-                mask=half_mask,
-            ),
-            left,
-        )
-    return ((left & half_mask) << half_bits) | (right & half_mask)
+    return scramble_id(value, width=family.width, key=agent_key, reverse=True)
 
 
 def _wire_round_function(

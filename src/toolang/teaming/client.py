@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from typing import Any, Self
+import time
 from urllib.parse import quote
 
 import httpx
@@ -11,12 +12,20 @@ import httpx
 from toolang.execution.errors import SnapshotLimitError
 from .errors import (
     BackendUnavailable,
+    StorageIntegrityError,
     MessagingError,
     SendUnconfirmed,
     EventProtocolError,
     EventRecoveryRequired,
 )
-from .schemas import Conversation, HubConnection, Message, stream_id, target
+from .schemas import (
+    Conversation,
+    HubConnection,
+    Message,
+    Resolution,
+    conversation_id,
+    stream_id,
+)
 
 
 class HubClient:
@@ -88,7 +97,7 @@ class HubClient:
             if message_id is not None:
                 try:
                     receipt = Message(**data["message"])
-                    target(data["group"], kind="group")
+                    conversation_id(data["conversation"])
                     if (
                         receipt.id != message_id
                         or receipt.sender != self.actor
@@ -114,6 +123,8 @@ class HubClient:
             raise SnapshotLimitError(str(detail))
         if code == "send_unconfirmed":
             raise SendUnconfirmed(f"Send unconfirmed for {message_id}: {detail}")
+        if code == "storage_integrity":
+            raise StorageIntegrityError(str(detail))
         if code == "backend_unavailable":
             raise BackendUnavailable(str(detail))
         if message_id and response.status_code >= 500:
@@ -127,41 +138,92 @@ class HubClient:
     async def agents(self) -> dict[str, str]:
         return await self._request("GET", "/msg/agents")
 
+    @staticmethod
+    def _presence(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        now = time.time() * 1000
+        return [
+            {
+                **row,
+                "online": (row.get("deadline") is not None and row["deadline"] > now)
+                if row["member"].startswith("agent:")
+                else None,
+            }
+            for row in rows
+        ]
+
+    async def team(self) -> list[dict[str, Any]]:
+        return self._presence(await self._request("GET", "/team"))
+
     async def targets(self) -> dict[str, Any]:
-        return await self._request("GET", "/msg/targets")
+        data = await self._request("GET", "/msg/targets")
+        data["participants"] = self._presence(data["participants"])
+        return data
 
     async def contacts(self, *, include_preview: bool = False) -> list[dict[str, Any]]:
         return await self._request(
-            "GET", "/msg/groups", params={"include_preview": include_preview}
+            "GET", "/msg/conversations", params={"include_preview": include_preview}
         )
 
-    async def resolve(self, value: str, *, kind: str | None = None) -> str:
+    async def resolve(
+        self, value: str, *, kind: str | None = None, create: bool = False
+    ) -> Resolution:
         data = await self._request(
-            "POST", "/msg/resolve", json={"target": value, "kind": kind}
+            "POST",
+            "/msg/resolve",
+            json={"target": value, "kind": kind, "create": create},
         )
-        return data["group"]
-
-    async def conversation(self, group: str) -> Conversation:
-        data = await self._request("GET", self._group(group))
-        return Conversation(
-            data["id"],
-            data["kind"],
-            tuple(data["members"]),
-            data["display_name"],
-            data["system"],
+        return Resolution(
+            data["conversation"], tuple(data["participants"]), data["exists"]
         )
 
-    async def create_group(self, name: str) -> dict[str, Any]:
-        return await self._request("POST", "/msg/groups", json={"name": name})
+    async def conversation(self, conversation: str) -> Conversation:
+        data = await self._request("GET", self._conversation(conversation))
+        data["participants"] = tuple(data["participants"])
+        return Conversation(**data)
 
-    async def join_group(self, group: str) -> dict[str, Any]:
-        return await self._request("PUT", self._group(group) + "/membership")
+    async def create_conversation(
+        self, name: str | None = None, *, participants: list[str] | None = None
+    ) -> dict[str, Any]:
+        return await self._request(
+            "POST",
+            "/msg/conversations",
+            json={"name": name, "participants": participants},
+        )
 
-    async def leave_group(self, group: str) -> dict[str, Any]:
-        return await self._request("DELETE", self._group(group) + "/membership")
+    async def rename_conversation(
+        self, conversation: str, name: str | None, *, revision: int
+    ) -> dict[str, Any]:
+        return await self._request(
+            "PATCH",
+            self._conversation(conversation),
+            json={"name": name, "revision": revision},
+        )
+
+    async def join_conversation(self, conversation: str) -> dict[str, Any]:
+        return await self._request(
+            "PUT", self._conversation(conversation) + "/participants"
+        )
+
+    async def leave_conversation(self, conversation: str) -> dict[str, Any]:
+        return await self._request(
+            "DELETE", self._conversation(conversation) + "/participants"
+        )
+
+    async def statistics(self, conversation: str | None = None) -> dict[str, Any]:
+        return await self._request(
+            "GET",
+            self._conversation(conversation) + "/stats"
+            if conversation
+            else "/msg/stats",
+        )
 
     async def send(
-        self, destination: str, *, body: str, in_reply_to: str | None = None
+        self,
+        destination: str,
+        *,
+        body: str,
+        in_reply_to: str | None = None,
+        participants: list[str] | None = None,
     ) -> dict[str, Any]:
         message = Message.create(self.actor, body, in_reply_to)
         return await self._request(
@@ -171,38 +233,41 @@ class HubClient:
             json={
                 "id": message.id,
                 "target": destination,
+                "participants": participants,
                 "body": message.body,
                 "in_reply_to": message.in_reply_to,
             },
         )
 
     async def read(
-        self, group: str, *, after: str = "0-0", count: int = 100
+        self, conversation: str, *, after: str = "0-0", count: int = 100
     ) -> list[tuple[str, dict[str, str]]]:
-        return await self._messages(group, {"after": after, "count": count})
+        return await self._messages(conversation, {"after": after, "count": count})
 
     async def history(
-        self, group: str, *, count: int = 200
+        self, conversation: str, *, count: int = 200
     ) -> list[tuple[str, dict[str, str]]]:
-        return await self._messages(group, {"count": count})
+        return await self._messages(conversation, {"count": count})
 
     async def _messages(
-        self, group: str, params: dict[str, str | int]
+        self, conversation: str, params: dict[str, str | int]
     ) -> list[tuple[str, dict[str, str]]]:
         rows = await self._request(
-            "GET", self._group(group) + "/messages", params=params
+            "GET", self._conversation(conversation) + "/messages", params=params
         )
         return [
             (row["stream_id"], {"data": row["data"]} if row["data"] is not None else {})
             for row in rows
         ]
 
-    async def check_cursor(self, group: str, cursor: str) -> str | None:
+    async def check_cursor(self, conversation: str, cursor: str) -> str | None:
         data = await self._request(
-            "GET", self._group(group) + "/cursor", params={"after": cursor}
+            "GET",
+            self._conversation(conversation) + "/cursor",
+            params={"after": cursor},
         )
         return data["notice"]
 
     @staticmethod
-    def _group(group: str) -> str:
-        return "/msg/groups/" + quote(group, safe="")
+    def _conversation(conversation: str) -> str:
+        return "/msg/conversations/" + quote(conversation, safe="")

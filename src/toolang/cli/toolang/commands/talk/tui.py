@@ -10,6 +10,7 @@ from prompt_toolkit.filters import Condition, has_focus
 from prompt_toolkit.formatted_text import StyleAndTextTuples
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.layout import HSplit, HorizontalAlign, Layout, VSplit, Window
+from prompt_toolkit.layout.containers import ConditionalContainer
 from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.styles import Style
 from rich.text import Text
@@ -42,13 +43,17 @@ class TalkTui:
         *,
         read_only: bool,
         max_width: int = DEFAULT_MAX_PROGRESS_WIDTH,
+        selection: str | None = None,
     ):
-        self.client, self.group, self.human = client, conversation.id, human
+        self.client, self.conversation_id, self.human = client, conversation.id, human
         self.surfaces = surfaces
         self.read_only = read_only
         self.conversation = conversation
+        self.selection = selection
+        self.team: list[dict[str, Any]] = []
         self.max_width = max_width
         self.draft = state / "draft.txt"
+        self._draft_loaded = False
         self.connection = "Connecting…"
         self.status = ""
         self.pending = False
@@ -64,8 +69,7 @@ class TalkTui:
             ),
             get_width=self.content_width,
         )
-        if not read_only and self.draft.exists():
-            self.prompt.replace_input(self.draft.read_text(encoding="utf-8"))
+        self.restore_draft()
         keys = KeyBindings()
         focus = has_focus(self.prompt.buffer) & Condition(lambda: not self.read_only)
 
@@ -108,28 +112,27 @@ class TalkTui:
         def clear(_event: Any) -> None:
             self.app.renderer.clear()
 
-        footer = Window(
+        self.footer = Window(
             FormattedTextControl(self.status_text, focusable=True),
             height=1,
             wrap_lines=False,
         )
-        controls = (
-            []
-            if read_only
-            else [Window(height=self._input_gap_rows), self.prompt.container()]
+        composer = ConditionalContainer(
+            HSplit([Window(height=self._input_gap_rows), self.prompt.container()]),
+            filter=Condition(lambda: not self.read_only),
         )
         self.app: Application[None] = Application(
             layout=Layout(
                 VSplit(
                     [
                         HSplit(
-                            [*controls, footer],
+                            [composer, self.footer],
                             width=self.content_width,
                         ),
                     ],
                     align=HorizontalAlign.LEFT,
                 ),
-                focused_element=footer if read_only else self.prompt.buffer,
+                focused_element=self.footer if read_only else self.prompt.buffer,
             ),
             key_bindings=keys,
             full_screen=False,
@@ -180,7 +183,7 @@ class TalkTui:
         return status_line(
             conversation_status(self.conversation, self.human),
             right,
-            center=self.group,
+            center=self.conversation_id,
             width=self.content_width(),
         )
 
@@ -193,17 +196,41 @@ class TalkTui:
             self.status = f"Draft could not be saved: {exc}"
         self.invalidate()
 
+    def restore_draft(self) -> None:
+        if self.read_only or self._draft_loaded:
+            return
+        if self.draft.exists():
+            self.prompt.replace_input(self.draft.read_text(encoding="utf-8"))
+        self._draft_loaded = True
+
+    def update_membership(self, info: Conversation) -> None:
+        read_only = not info.allows_sender(self.human)
+        if read_only == self.read_only:
+            return
+        self.save_draft()
+        self.read_only = read_only
+        if not read_only:
+            self.restore_draft()
+        self.app.layout.focus(self.footer if read_only else self.prompt.buffer)
+
     async def send(self, body: str) -> None:
         if self.read_only:
             return
         self.status = ""
         self.invalidate()
         try:
-            await self.client.send(self.group, body=body)
+            await self.client.send(
+                self.conversation_id,
+                body=body,
+                participants=list(self.conversation.participants)
+                if self.selection
+                else None,
+            )
         except MessagingError as exc:
             self.status = str(exc)
             await self.print_notice(str(exc))
         else:
+            self.selection = None
             self.connection = "Connected"
             self.prompt.accept_submission(body)
             self.save_draft()
@@ -246,8 +273,23 @@ class TalkTui:
         last_gap = None
         while True:
             try:
+                self.team = await self.client.team()
+                if self.selection:
+                    resolved = await self.client.resolve(self.selection)
+                    if not resolved.exists:
+                        self.connection = "Connected"
+                        self.invalidate()
+                        await asyncio.sleep(0.5)
+                        continue
+                    self.selection = None
+                info = await self.client.conversation(self.conversation_id)
+                if info != self.conversation:
+                    self.update_membership(info)
+                    self.conversation = info
+                    self.write_title(conversation_label(info, self.human))
+                    self.invalidate()
                 if not initialized:
-                    entries = await self.client.history(self.group)
+                    entries = await self.client.history(self.conversation_id)
                     if len(entries) == 200:
                         await self.print_notice(
                             "Showing the latest 200 retained messages"
@@ -255,12 +297,14 @@ class TalkTui:
                     await self.show(entries)
                     initialized = True
                 else:
-                    gap = await self.client.check_cursor(self.group, self.cursor)
+                    gap = await self.client.check_cursor(
+                        self.conversation_id, self.cursor
+                    )
                     if gap and gap != last_gap:
                         await self.print_notice(gap)
                     last_gap = gap
                     await self.show(
-                        await self.client.read(self.group, after=self.cursor)
+                        await self.client.read(self.conversation_id, after=self.cursor)
                     )
                 if self.connection != "Connected":
                     self.connection = "Connected"

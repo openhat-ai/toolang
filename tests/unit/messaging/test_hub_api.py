@@ -13,7 +13,7 @@ import pytest
 from tests.unit.messaging.test_protocol import CONFIG, client
 from toolang.teaming.api import create_app
 from toolang.teaming.agent_client import AgentClient
-from toolang.teaming.backend import group_key
+from toolang.teaming.keys import convo_key
 from toolang.teaming.client import HubClient
 from toolang.teaming.errors import BackendUnavailable, MessagingError, SendUnconfirmed
 from toolang.teaming.schemas import HubConnection, Message
@@ -21,48 +21,62 @@ from toolang.teaming.schemas import HubConnection, Message
 CONNECTION = HubConnection("http://hub", "human:owner", CONFIG.identity)
 
 
-@pytest.mark.parametrize("first_request", ["health", "create", "send", "directory"])
-def test_hub_recovers_human_registration_after_empty_backend_restart(first_request):
+@pytest.mark.parametrize(
+    "after",
+    [
+        "",
+        "bad",
+        "t1." + "0" * 32 + ".00-0",
+        pytest.param("t1." + "0" * 32 + "." + "1" * 5000 + "-0", id="oversized"),
+    ],
+)
+def test_team_subscription_rejects_invalid_cursor_before_sending_headers(after):
     async def scenario():
-        server = FakeServer(server_type="valkey")
-        human = client(server, CONNECTION.human)
+        human = client(FakeServer(server_type="valkey"), CONNECTION.human)
         app = create_app(human)
         async with (
             app.router.lifespan_context(app),
-            HubClient(CONNECTION, transport=httpx.ASGITransport(app)) as hub,
             httpx.AsyncClient(
                 transport=httpx.ASGITransport(app), base_url="http://hub"
             ) as http,
         ):
-            server.connected = False
-            assert (
-                await http.get(
-                    "/healthz", headers={"X-Toolang-Backend": CONNECTION.identity}
+            response = await http.get("/team/events", params={"after": after})
+            assert response.status_code == 400
+            assert response.json()["code"] == "messaging_error"
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("operation", ["health", "create", "send", "directory"])
+def test_hub_rejects_missing_initialized_data_without_recreating_it(operation):
+    async def scenario():
+        human = client(FakeServer(server_type="valkey"), CONNECTION.human)
+        app = create_app(human)
+        async with (
+            app.router.lifespan_context(app),
+            httpx.AsyncClient(
+                transport=httpx.ASGITransport(app), base_url="http://hub"
+            ) as http,
+        ):
+            raw = human._backend._client
+            await raw.flushdb()
+            if operation == "health":
+                response = await http.get("/healthz")
+            elif operation == "create":
+                response = await http.post("/msg/conversations", json={"name": "new"})
+            elif operation == "send":
+                response = await http.post(
+                    "/msg/messages",
+                    json={
+                        "id": str(uuid4()),
+                        "target": "gc_00000000",
+                        "body": "no recreation",
+                    },
                 )
-            ).status_code == 503
-            server.connected = True
-            await human._backend._client.flushdb()
-            assert await human._backend.participants() == {}
-            if first_request == "health":
-                response = await http.get(
-                    "/healthz", headers={"X-Toolang-Backend": CONNECTION.identity}
-                )
-                assert response.status_code == 200
-            elif first_request == "create":
-                await hub.create_group("recovered")
-            elif first_request == "send":
-                await hub.send("group:all", body="after recovery")
             else:
-                assert [item["group"] for item in await hub.contacts()] == ["group:all"]
-            assert CONNECTION.human in await human._backend.participants()
-            assert await human._backend.members("group:all") == (CONNECTION.human,)
-            if first_request != "send":
-                await hub.send("group:all", body="after recovery")
-            assert len(await hub.history("group:all")) == 1
-            # Registration remains idempotent and does not undo custom membership.
-            await hub.create_group("custom")
-            await hub.leave_group("group:custom")
-            assert (await hub.conversation("group:custom")).members == ()
+                response = await http.get("/msg/conversations")
+            assert response.status_code == 503
+            assert await raw.dbsize() == 0
 
     asyncio.run(scenario())
 
@@ -81,47 +95,45 @@ def test_http_messaging_matches_service_and_isolates_agent_conversations():
             await alice.register("human:owner")
             await bob.register("human:owner")
             assert await hub.agents() == await human.agents()
-            assert await hub.targets() == await human.targets()
-            assert await hub.create_group("后端开发") == {
-                "group": "group:后端开发",
-                "members": ["human:owner"],
-            }
-            group = await hub.resolve("后端开发")
-            assert group == "group:后端开发"
-            assert await hub.conversation(group) == await human.conversation(group)
+            created = await hub.create_conversation("后端开发")
+            ref = created["id"]
+            assert created["participants"] == ["human:owner"]
+            assert (await hub.resolve("后端开发", kind="name")).conversation == ref
+            assert await hub.conversation(ref) == await human.conversation(ref)
             receipt = await hub.send(
-                group, body="literal $x\n你好", in_reply_to=str(uuid4())
+                ref, body="literal $x\n你好", in_reply_to=str(uuid4())
             )
             assert receipt["message"]["sender"] == "human:owner"
             assert receipt["message"]["origin"] is None
-            assert await hub.read(group) == await human.read(group)
-            assert await hub.history(group) == await human.history(group)
-            assert await hub.check_cursor(group, receipt["stream_id"]) is None
-            assert await hub.read(group, after=receipt["stream_id"]) == []
+            assert await hub.read(ref) == await human.read(ref)
+            assert await hub.history(ref) == await human.history(ref)
+            assert await hub.check_cursor(ref, receipt["stream_id"]) is None
+            assert await hub.read(ref, after=receipt["stream_id"]) == []
             assert await hub.contacts(include_preview=True) == await human.contacts(
                 include_preview=True
             )
-            assert await hub.leave_group(group) == {"group": group, "members": []}
+            assert await hub.statistics(ref) == await human.statistics(ref)
+            assert await hub.leave_conversation(ref) == {"conversation": ref}
             with pytest.raises(MessagingError, match="read-only"):
-                await hub.send(group, body="outside membership")
-            await hub.join_group(group)
-            await hub.send(group, body="joined again")
-            direct = await alice.resolve("agent:bob")
-            assert (await hub.conversation(direct)).allows_sender(
-                "human:owner"
-            ) is False
-            assert await hub.history(direct) == []
-            for action in (hub.join_group, hub.leave_group):
-                with pytest.raises(MessagingError, match="direct/system"):
+                await hub.send(ref, body="outside membership")
+            await hub.join_conversation(ref)
+            direct = (await alice.send("bob", body="existing exchange"))["conversation"]
+            assert not (await hub.conversation(direct)).allows_sender("human:owner")
+            for action in (hub.join_conversation, hub.leave_conversation):
+                with pytest.raises(MessagingError, match="DM/system"):
                     await action(direct)
             with pytest.raises(MessagingError, match="read-only"):
                 await hub.send(direct, body="observer cannot write")
-            dm = await hub.resolve("alice", kind="dm")
-            assert dm == await alice.resolve("human:owner")
-            assert await hub.resolve("all") == "group:all"
-            # Canonical API send targets are enforced; only resolve accepts shorthand.
-            with pytest.raises(MessagingError, match="Invalid target"):
-                await hub.send("all", body="not canonical")
+            dm = await hub.resolve("alice")
+            assert dm.conversation == (await alice.resolve("human:owner")).conversation
+            assert not dm.exists
+            await hub.send(
+                dm.conversation, body="first", participants=list(dm.participants)
+            )
+            assert (await hub.resolve("alice")).exists
+            assert all(
+                "lease" not in row and "deadline" in row for row in await hub.team()
+            )
 
     asyncio.run(scenario())
 
@@ -141,12 +153,14 @@ def test_local_access_validation_and_backend_readiness(owner):
                 replace(CONNECTION, human=owner), transport=httpx.ASGITransport(app)
             ) as hub,
         ):
-            assert await hub.targets() == await human.targets()
+            expected = await human.targets()
+            expected["participants"] = HubClient._presence(expected["participants"])
+            assert await hub.targets() == expected
             assert (await http.get("/healthz")).status_code == 200
             assert (await http.post("/msg/messages", json={})).status_code == 400
             assert (await http.get("/healthz")).json() == {"ok": True}
             assert (await http.get("/threads")).status_code == 404
-            body = {"id": str(uuid4()), "target": "group:all", "body": "test"}
+            body = {"id": str(uuid4()), "target": "gc_00000000", "body": "test"}
             for extra in (
                 {"actor": "agent:alice"},
                 {"sender": "human:another"},
@@ -166,10 +180,10 @@ def test_local_access_validation_and_backend_readiness(owner):
                 ).status_code == 400
             for query in ("count=0", "count=1001", "after=bad"):
                 assert (
-                    await http.get("/msg/groups/group:all/messages?" + query)
+                    await http.get("/msg/conversations/gc_00000000/messages?" + query)
                 ).status_code == 400
-            assert await human.history("group:all") == []
-            human.check_backend = AsyncMock(side_effect=BackendUnavailable("offline"))
+            assert await human.history("gc_00000000") == []
+            human._backend.ping = AsyncMock(side_effect=BackendUnavailable("offline"))
             response = await http.get("/healthz")
             assert response.status_code == 503
             assert response.json()["code"] == "backend_unavailable"
@@ -211,7 +225,7 @@ def test_hub_config_switch_rejects_stale_talk_before_any_storage_access(changes)
                 side_effect=AssertionError("storage touched")
             )
             with pytest.raises(MessagingError, match="identity changed; reopen Talk"):
-                await hub.send("group:all", body="must not reach another dataset")
+                await hub.send("gc_00000000", body="must not reach another dataset")
             human.register_human.assert_not_awaited()
 
     asyncio.run(scenario())
@@ -226,7 +240,7 @@ def test_history_preserves_corrupt_records_and_full_cursors():
             HubClient(CONNECTION, transport=httpx.ASGITransport(app)) as hub,
         ):
             raw = human._backend._client
-            key = group_key("group:all", "messages")
+            key = convo_key("gc_00000000", "messages")
             await raw.xadd(key, {"data": "broken"}, id="100-9")
             await raw.xadd(key, {"other": "no data"}, id="100-10")
             await raw.xadd(
@@ -234,12 +248,12 @@ def test_history_preserves_corrupt_records_and_full_cursors():
                 {"data": Message.create("human:owner", "valid").encode()},
                 id="101-0",
             )
-            rows = await hub.read("group:all")
+            rows = await hub.read("gc_00000000")
             assert [sid for sid, _ in rows] == ["100-9", "100-10", "101-0"]
             assert rows[0][1] == {"data": "broken"} and rows[1][1] == {}
-            assert await hub.check_cursor("group:all", "99-0") is not None
+            assert await hub.check_cursor("gc_00000000", "99-0") is not None
             with pytest.raises(MessagingError, match="precedes saved cursor"):
-                await hub.check_cursor("group:all", "102-0")
+                await hub.check_cursor("gc_00000000", "102-0")
 
     asyncio.run(scenario())
 
@@ -275,7 +289,7 @@ def test_lost_send_response_reports_preallocated_id_without_retry(
         if failure == "missing_receipt":
             return httpx.Response(200, json={"ok": True})
         receipt = {
-            "group": "group:all",
+            "conversation": "gc_00000000",
             "stream_id": "1-0",
             "message": Message(calls[-1]["id"], actor, "once").data(),
         }
@@ -284,7 +298,7 @@ def test_lost_send_response_reports_preallocated_id_without_retry(
         elif failure == "wrong_sender":
             receipt["message"]["sender"] = "human:another"
         elif failure == "invalid_group":
-            receipt["group"] = "agent:alice"
+            receipt["conversation"] = "agent:alice"
         else:
             receipt["stream_id"] = "bad" if failure == "invalid_cursor" else "0-0"
         return httpx.Response(201, json=receipt)
@@ -300,7 +314,7 @@ def test_lost_send_response_reports_preallocated_id_without_retry(
         )
         async with hub:
             with pytest.raises(SendUnconfirmed) as error:
-                await hub.send("group:all", body="once")
+                await hub.send("gc_00000000", body="once")
             assert len(calls) == 1
             UUID(calls[0]["id"])
             assert calls[0]["id"] in str(error.value)
@@ -324,9 +338,12 @@ def test_backend_uncertain_send_keeps_uuid_over_http():
             HubClient(CONNECTION, transport=httpx.ASGITransport(app)) as hub,
         ):
             with pytest.raises(SendUnconfirmed) as error:
-                await hub.send("group:all", body="one append")
-            rows = await hub.history("group:all")
+                await hub.send("gc_00000000", body="one append")
+            rows = await hub.history("gc_00000000")
             assert len(rows) == 1
             assert Message.decode(rows[0][1]["data"]).id in str(error.value)
 
     asyncio.run(scenario())
+
+
+pytestmark = pytest.mark.usefixtures("fixed_conversation_ids")

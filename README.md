@@ -124,7 +124,7 @@ too clone <ref> <agent>               # Clone an agent
 too <agent> chat                      # Chat with an agent
 too hub start                        # Start the messaging Hub; requires Redis/Valkey
 too talk <target> [message...]        # Open a conversation or send a message
-too talk                             # List messaging conversations
+too talk                             # List team members and conversations
 too [agent] home                      # Open a shell in agent home
 too serve <ref>                       # Run an agent in the foreground
 too start <agent>                     # Start an agent in the background

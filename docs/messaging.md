@@ -32,12 +32,12 @@ Membership is stored only in the backend, never in configuration.
 ```sh
 too hub start                       # Background Hub; requires Redis/Valkey.
 too hub status                      # Endpoint and backend readiness.
-too talk                            # Conversations, membership, presence, previews.
-too talk alice                      # Private conversation with a unique target.
-too talk agent:alice hello          # Send and exit after acknowledgment.
-too talk human:alex hello
-too talk group:dev                   # Existing custom group.
-too talk all hello                   # Public group:all.
+too talk                            # List Team and Convos, including IDs and names.
+too talk alice                      # Empty human-agent DM until the first send.
+too talk alice hello                 # Send and exit after acknowledgment.
+too talk alice,bob                   # Observe an existing agent-agent DM.
+too talk dm_6x89kwxn                 # Open an existing DM by ID.
+too talk gc_rcpya1zw                 # Open an existing GC by ID.
 too talk alice -- hello -sdf         # Flags after target are literal message text.
 too hub stop                        # Leaves agents and Redis/Valkey running.
 ```
@@ -52,9 +52,11 @@ message sends are never automatically repeated.
 Isolated guests without access to this local Hub report unavailability.
 
 `too hub status` reports `starting` while waiting for the backend;
-`too hub stop --force` can stop a stalled startup. After an empty backend restart,
-Hub restores the configured human's registration on the next request. Lost
-messages and custom groups are not restored.
+`too hub stop --force` can stop a stalled startup. Missing or corrupt initialized
+conversation data fails closed; Hub does not reset counters or rebuild it.
+Upgrade Hub and clients together and select a fresh Redis/Valkey dataset for this
+schema. Old datasets remain untouched; history, drafts, and checkpoints are not
+migrated or imported.
 
 Hub `start`/`serve` ports resolve as `--port` > `TOOLANG_HUB_PORT` >
 `teaming.hub.port` > `7000`. Resident agent `start`/`serve` uses `--port` >
@@ -70,27 +72,42 @@ Talk is the messaging interface for a **conversation**. [Chat](chat.md) runs age
 work within an execution **thread**. Conversation metadata and IDs belong to Hub;
 terminal titles and window names are display labels.
 
-Targets use `agent:`, `human:`, or `group:`. IDs are case-sensitive Unicode
-letters/numbers with combining marks and `-_.`; the first character must be a
-letter/number. Bare names require a unique match. Use a typed target or place
-`--dm`/`--group` before the target to disambiguate. Arguments after the target are
-literal message text. Same-name agents and humans are distinct participants.
+Participants use `agent:<name>` and `human:<name>` in APIs and tools. Names are
+case-sensitive Unicode letters/numbers with combining marks and `-_.`; the first
+character must be a letter/number. Same-name agents and humans remain distinct.
 
-Both conversation kinds have canonical `group:<id>` IDs:
-
-| Kind | Creation and membership |
+| Kind | ID and membership |
 | --- | --- |
-| Direct | Targeting a participant automatically resolves the unique conversation for that pair. Its two participants are fixed. |
-| Group | Explicitly created with `msg/create_group` or the Hub API; registered participants can join or leave. Hub maintains the public `group:all`. |
+| DM | `dm_` plus eight base32 characters, derived from the two exact typed participant names. Its two participants are fixed. |
+| GC | `gc_` plus eight base32 characters, allocated independently of its name and participants. Registered participants can join or leave. |
 
-Sending requires membership. Human observers can read conversations without
-joining. Use a custom group when a discussion needs additional participants.
+Either kind can have an editable name (1–128 characters), or no name. Names may
+repeat. Members can rename a conversation with its current revision; stale
+revisions fail. Human observers can read all conversations; agents can read only
+joined conversations. Sending and renaming require membership. The system GC is
+listed with the initial name `all`; open its ID from the directory. Its membership
+is maintained by Hub, while its name can change.
+
+Talk accepts positional targets: `alice` selects the current human's DM with that
+agent; `alice,bob` observes an existing agent-agent DM; a canonical `dm_...` or
+`gc_...` selects that existing conversation. Missing agent-agent DMs and unknown
+IDs fail without creation. Bare names always select agents, including `all`;
+conversation names are directory labels, not CLI targets. Selector flags such as
+`--dm` and `--group` are not supported. Arguments after the target are literal
+message text.
+
+Opening a missing human-agent DM keeps its ID and pair locally with empty history.
+The first accepted send atomically creates the conversation and appends its first
+message. Closing without sending writes no conversation, counters, or events.
+Explicit creation, rename, and name lookup are available through API/tools;
+ambiguous name lookup returns candidate IDs rather than choosing one.
 
 ## Interactive Talk
 
 `too talk TARGET` resolves the canonical ID, loads conversation metadata, displays
 retained history, and follows new messages using a Stream-ID cursor. A member sees
 an input box with `write a message`; an observer sees messages without a composer.
+The composer and focus update when GC membership changes, preserving unsent drafts.
 Enter sends, Ctrl+J inserts a newline, Ctrl+P/Ctrl+N browse sent input, and Ctrl+Q
 exits. Interactive input requires a TTY. Supplying message arguments sends once
 and exits with a receipt or error.
@@ -100,14 +117,14 @@ ID in the center, and the viewer's login on the right. Examples for login `brice
 
 | Conversation | Left | Center | Right | Sending |
 | --- | --- | --- | --- | --- |
-| Direct with `alice` | `@alice` | Its canonical `group:<id>` | `brice` | Allowed |
-| Direct between `alice` and `bob` | `@alice,bob` | Its canonical `group:<id>` | `brice` | Read-only; `@` is dim |
-| Group `dev`, three members including `brice` | `#dev(3)` | `group:dev` | `brice` | Allowed |
-| The same group viewed by a nonmember | `#dev(3)` | `group:dev` | The viewer's login | Read-only; `#` is dim |
+| Direct with `alice` | `@alice` | Its canonical `dm_...` | `brice` | Allowed |
+| Direct between `alice` and `bob` | `@alice,bob` | Its canonical `dm_...` | `brice` | Read-only; `@` is dim |
+| Group `dev`, three members including `brice` | `#dev(3)` | Its canonical `gc_...` | `brice` | Allowed |
+| The same group viewed by a nonmember | `#dev(3)` | Its canonical `gc_...` | The viewer's login | Read-only; `#` is dim |
 
-Only the permission marker dims; names and counts use normal foreground. Metadata
-is loaded on entry. The interactive footer does not display presence. The separate
-`too talk` directory shows the current agent presence snapshot with message previews.
+Only the permission marker dims; names and counts use normal foreground. Conversation metadata and team deadlines refresh in the receive loop. The interactive footer does not display presence. The separate
+`too talk` directory shows Team and Convos with IDs, names, participants, the current
+agent presence snapshot, and message previews. It runs once without requiring a TTY.
 On narrow terminals, the footer prioritizes the login and hides a canonical ID
 that cannot fit intact. Initial connection shows `Connecting…` on the right.
 
@@ -150,29 +167,80 @@ OSC titles describe the displayed conversation.
 
 | Tool | Purpose |
 | --- | --- |
-| `msg/targets()` | Discover participants and joined conversations. |
+| `msg/targets()` | Discover participants and joined conversations, including current metadata revisions for renaming. |
 | `msg/send(target, body, in_reply_to?)` | Send immediately and return a receipt. |
-| `msg/create_group(name)` | Create a custom group containing the caller. |
-| `msg/join_group(group)` | Join an existing custom group. |
-| `msg/leave_group(group)` | Leave without deleting its history. |
+| `msg/create_conversation(name?, participants?)` | Create a GC containing the caller, or explicitly create/reuse a two-participant DM. |
+| `msg/rename_conversation(conversation, name, revision)` | Rename or clear the name with revision checking. |
+| `msg/join_conversation(conversation)` | Join a GC. |
+| `msg/leave_conversation(conversation)` | Leave a GC without deleting its history. |
+| `msg/resolve(target, by_name=false)` | Resolve an ID/participant or explicitly look up a conversation name with `by_name=true`. |
 
-Enabled agents poll joined groups in serial batches of up to 20 entries through
+Enabled agents poll joined conversations in serial batches of up to 20 entries through
 `agic:msg`, or their default agic. Previous messages, handling results, and send
 receipts provide context. Final model output is a summary; replies use `msg/send`.
 Own messages do not trigger another handler. Failed/malformed batches are logged
 and skipped. Agent origin records contain context-derived thread/run IDs.
 
-Accepted event/activity reports renew presence; an independent heartbeat runs
-every 5 seconds. Presence expires after 15 seconds; graceful stop releases it.
+An independent heartbeat runs every 5 seconds. Agent presence is a ZSet deadline
+in backend Unix milliseconds, renewed to at least 15 seconds ahead. Expired
+leases grant no authority even before cleanup; graceful stop releases the lease.
+Hub owns a cancellable presence loop, reconciling up to 128 due agents per batch
+and checking every second. Heartbeats update only the score. Readers compare
+returned deadlines with their own clocks and correct their local view without
+writing to the backend. No last-seen timestamp is stored or displayed.
 Hub scans resident homes at startup and every 5 seconds. Two successful scans
 confirming absence plus no live lease remove an agent from the roster and ordinary
-groups. DM mappings, DM membership and all historical data remain. A live process with a missing home
+GCs. DM membership and all historical data remain. A live process with a missing home
 stays visible. A recreated name retains its DM identity and history.
 
 Streams retain approximately 10,000 entries. Readers use independent full Stream-ID
 cursors and report retention gaps. Uncertain sends report their UUID without
 retrying; check history before resending. Local checkpoints live under the agent's
-`.runtime/channels/messaging/`; Talk drafts/history live under root `.runtime/text/`.
+`.runtime/channels/messaging/` in the `v2-<backend-identity>.json` file; Talk
+drafts/history live under root `.runtime/talk-v2/`.
+
+## Storage, events, and statistics
+
+With `P = too:teaming:v1`, the messaging key spaces are:
+
+| Key | Type | Contents |
+| --- | --- | --- |
+| `P:team` | Hash | Typed member ID → display name, owner, creation time, private lease JSON |
+| `P:team:presence` | ZSet | Agent ID → lease deadline in Unix milliseconds |
+| `P:team:events` | Stream | `data` → versioned team, conversation membership, or presence change JSON |
+| `P:convos` | Hash | Conversation ID → kind, name, creator, timestamps, revision JSON |
+| `P:convo:C:members` | Set | Authoritative typed participants |
+| `P:convo:C:messages` | Stream | `data` → message JSON |
+| `P:convo:name:N` | Set | IDs matching an exact name; `N` is unpadded base64url UTF-8 |
+| `P:convo:schema` | String | Schema version `2` |
+| `P:convo:id:gc` | Hash | Last allocated hourly tick and sequence |
+| `P:convo:stats` | Hash | DM count, GC count, accepted message count |
+| `P:convo:system` | Hash | `all` → system GC ID |
+
+`P:roster`, `P:activity:*`, and execution `P:events:*` retain their separate roles.
+Raw leases stay private; team responses expose only public metadata and deadlines.
+
+`GET /team/events` returns an initial checkpoint before snapshots are loaded, then
+changes and checkpoints. Resume using `?after=t1.<epoch>.<stream-id>`. A trimmed,
+ahead, or previous-epoch cursor emits `resync_required` and closes; reconnect
+without a cursor and reload snapshots. Independent readers do not consume each
+other's events. Agents receive only visible conversation changes plus their own
+removal; each replay batch rechecks their live lease. Invalid cursors return HTTP
+400. Failures after streaming starts emit `stream_error` and close without
+advancing past unread events; an expired or replaced lease uses
+`code: recovery_required`. Rename, messages, and heartbeat renewal emit no team
+events; clients refresh those snapshots themselves. The stream retains approximately 100,000
+entries. There is no separate event metadata key.
+
+Messaging routes use `/msg/conversations`, `/{id}`, and `/participants`,
+`/messages`, `/cursor`, `/stats` subresources. `GET /msg/stats` exposes human-only
+global totals. Conversation statistics use native Stream `entries-added` for
+accepted appends and `length` for retained messages; trimming does not reduce
+lifetime totals. Empty message streams count as zero. Global conversation totals
+include the system GC.
+
+The [conversation contract](plans/conversation-ids.md) specifies record JSON,
+atomic writes, event payloads, ID capacity, and fresh-dataset rollout.
 
 ## Activity views
 
@@ -192,7 +260,7 @@ F7/F8 cycle Activity/Stats. `--sort spend` accepts `cost` as an alias.
 Enter opens full IDs, exact usage and Markdown results; Ctrl-P/N selects rows,
 and PgUp/PgDn pages Details. Unavailable historical usage remains unknown.
 
-The [Talk contract](plans/talk-status-bar.md) defines presentation and acceptance
-checks. The [teaming plan](plans/teaming.md) defines messaging data and APIs.
+The [Talk presentation plan](plans/talk-status-bar.md) records the original layout;
+the [conversation contract](plans/conversation-ids.md) supersedes its IDs and targets.
 [Team observation](plans/team-observation.md) and [activity views](plans/top-activity.md)
 define Hub event subscriptions and `too top`.

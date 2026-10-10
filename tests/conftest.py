@@ -85,3 +85,23 @@ def offline_token_encoding(request):
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(tiktoken, "get_encoding", lambda name: Encoding())
         yield
+
+
+@pytest.fixture(autouse=True)
+def valkey_lua_subcommands():
+    from tests.support.valkey_lua import install_subcommands
+
+    with pytest.MonkeyPatch.context() as patch:
+        install_subcommands(patch)
+        yield
+
+
+@pytest.fixture
+def fixed_conversation_ids(monkeypatch):
+    """Use predictable GC labels in UI/transport fixtures; test the real codec separately."""
+    from toolang.teaming import backend
+    from toolang.common.ids import encode_short_id
+
+    monkeypatch.setattr(
+        backend, "gc_id", lambda tick, seq: "gc_" + encode_short_id(seq)
+    )

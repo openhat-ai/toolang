@@ -11,6 +11,7 @@ from toolang.execution.schemas import ActivitySnapshot
 from .errors import EventRecoveryRequired
 from .messaging import MessagingClient
 from .messaging_api import messaging_router
+from .team_api import team_router
 from .publication import validate_publication
 from .roster import Roster
 from .records import MAX_BYTES
@@ -141,5 +142,6 @@ def agent_router(human: MessagingClient, *, roster: Roster | None = None) -> API
         await events.abandon(client.actor, generation, token=client.token)
         return {"ok": True}
 
+    router.include_router(team_router(active_client))
     router.include_router(messaging_router(active_client, prefix="/msg", agent=True))
     return router

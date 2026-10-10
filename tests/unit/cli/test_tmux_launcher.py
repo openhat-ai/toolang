@@ -860,7 +860,7 @@ def test_talk_placement_shares_one_session_across_conversations_and_contexts(
         shared_session="talk",
     )
     arguments: dict[str, Any] = dict(
-        thread_id="group:dev", argv=["too", "talk", "group:dev"], directory="/tmp"
+        thread_id="gc_00000001", argv=["too", "talk", "gc_00000001"], directory="/tmp"
     )
     assert launcher.place_chat(**arguments) is False
     assert len(server.created) == (0 if existing_talk else 1)
@@ -868,13 +868,13 @@ def test_talk_placement_shares_one_session_across_conversations_and_contexts(
     assert session.session_name == "talk"
     assert session.options["@toolang_talk"] == "talk"
     window = session.windows[-1]
-    assert window.options["@toolang_convo"] == "group:dev"
+    assert window.options["@toolang_convo"] == "gc_00000001"
     assert window.options[tmux.MARK_CONTEXT] == "root-url-human"
     assert window.panes[0].options[tmux.MARK_PAD] == "talk"
     assert launcher.place_chat(**arguments) is False
     assert len(session.windows) == (2 if existing_talk else 1)
     assert not window.pads
-    assert launcher.place_chat(**{**arguments, "thread_id": "group:ops"}) is False
+    assert launcher.place_chat(**{**arguments, "thread_id": "gc_00000002"}) is False
     other = replace(launcher, agent="different-connection")
     assert other.place_chat(**arguments) is False
     assert other.place_chat(**arguments) is False
@@ -900,7 +900,7 @@ def test_talk_started_from_shell_in_conversation_window_stays_reusable():
     session = FakeSession("$0", "talk")
     window = session.add_window(FakeWindow("@conversation"))
     window.options.update(
-        {"@toolang_convo": "group:dev", tmux.MARK_CONTEXT: "root-backend-human"}
+        {"@toolang_convo": "gc_00000001", tmux.MARK_CONTEXT: "root-backend-human"}
     )
     shell = window.panes[0]
     server = FakeServer([session])
@@ -916,7 +916,7 @@ def test_talk_started_from_shell_in_conversation_window_stays_reusable():
         shared_session="talk",
     )
     arguments: dict[str, Any] = dict(
-        thread_id="group:dev", argv=["too", "talk", "group:dev"], directory="/tmp"
+        thread_id="gc_00000001", argv=["too", "talk", "gc_00000001"], directory="/tmp"
     )
     assert launcher.place_chat(**arguments) is False
     assert len(window.panes) == 2

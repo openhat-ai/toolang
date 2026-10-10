@@ -6,12 +6,13 @@ from fastapi import APIRouter, Depends, Query
 from .messaging import MessagingClient
 from .schemas import (
     Conversation,
-    CreateGroupRequest,
+    CreateConversationRequest,
     HistoryEntry,
     ResolveRequest,
     SendRequest,
     AgentSendRequest,
-    target,
+    RenameConversationRequest,
+    Resolution,
 )
 
 
@@ -29,57 +30,78 @@ def messaging_router(
     async def agents(client: Client) -> dict[str, str]:
         return await client.agents()
 
-    @router.get("/groups")
-    async def groups(
+    @router.get("/conversations")
+    async def conversations(
         client: Client,
         include_preview: Annotated[bool, Query()] = False,
     ) -> list[dict[str, Any]]:
         return await client.contacts(include_preview=include_preview)
 
+    @router.get("/stats")
+    async def statistics(client: Client) -> dict[str, int | str | None]:
+        return await client.statistics()
+
+    @router.get("/conversations/{conversation}/stats")
+    async def conversation_statistics(
+        conversation: str, client: Client
+    ) -> dict[str, int | str | None]:
+        return await client.statistics(conversation)
+
+    @router.patch("/conversations/{conversation}")
+    async def rename(
+        conversation: str, body: RenameConversationRequest, client: Client
+    ) -> Conversation:
+        return await client.rename_conversation(
+            conversation, body.name, revision=body.revision
+        )
+
     @router.post("/resolve")
-    async def resolve(body: ResolveRequest, client: Client) -> dict[str, str]:
-        return {"group": await client.resolve(body.target, kind=body.kind)}
+    async def resolve(body: ResolveRequest, client: Client) -> Resolution:
+        return await client.resolve(body.target, kind=body.kind, create=body.create)
 
-    @router.get("/groups/{group}")
-    async def conversation(group: str, client: Client) -> Conversation:
-        return await client.conversation(group)
+    @router.get("/conversations/{conversation}")
+    async def conversation(conversation: str, client: Client) -> Conversation:
+        return await client.conversation(conversation)
 
-    @router.post("/groups", status_code=201)
-    async def create_group(body: CreateGroupRequest, client: Client) -> dict[str, Any]:
-        return await client.create_group(body.name)
+    @router.post("/conversations", status_code=201)
+    async def create_conversation(
+        body: CreateConversationRequest, client: Client
+    ) -> Conversation:
+        return await client.create_conversation(
+            body.name, participants=body.participants
+        )
 
-    @router.put("/groups/{group}/membership")
-    async def join_group(group: str, client: Client) -> dict[str, Any]:
-        return await client.join_group(group)
+    @router.put("/conversations/{conversation}/participants")
+    async def join_conversation(conversation: str, client: Client) -> dict[str, Any]:
+        return await client.join_conversation(conversation)
 
-    @router.delete("/groups/{group}/membership")
-    async def leave_group(group: str, client: Client) -> dict[str, Any]:
-        return await client.leave_group(group)
+    @router.delete("/conversations/{conversation}/participants")
+    async def leave_conversation(conversation: str, client: Client) -> dict[str, Any]:
+        return await client.leave_conversation(conversation)
 
-    @router.get("/groups/{group}/messages")
+    @router.get("/conversations/{conversation}/messages")
     async def messages(
         client: Client,
-        group: str,
+        conversation: str,
         after: Annotated[str | None, Query()] = None,
         count: Annotated[int, Query(ge=1, le=1000)] = 200,
     ) -> list[HistoryEntry]:
         rows = (
-            await client.history(group, count=count)
+            await client.history(conversation, count=count)
             if after is None
-            else await client.read(group, after=after, count=count)
+            else await client.read(conversation, after=after, count=count)
         )
         return [
             HistoryEntry(stream_id=sid, data=data.get("data")) for sid, data in rows
         ]
 
-    @router.get("/groups/{group}/cursor")
+    @router.get("/conversations/{conversation}/cursor")
     async def cursor(
-        client: Client, group: str, after: Annotated[str, Query()]
+        client: Client, conversation: str, after: Annotated[str, Query()]
     ) -> dict[str, str | None]:
-        return {"notice": await client.check_cursor(group, after)}
+        return {"notice": await client.check_cursor(conversation, after)}
 
     async def deliver(body: SendRequest, client: MessagingClient) -> dict[str, Any]:
-        target(body.target)
         origin = (
             {"run": body.run, "thread": body.thread}
             if isinstance(body, AgentSendRequest)
@@ -90,6 +112,7 @@ def messaging_router(
             body=body.body,
             in_reply_to=body.in_reply_to,
             message_id=body.id,
+            participants=body.participants,
             **origin,
         )
 

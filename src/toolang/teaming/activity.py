@@ -16,7 +16,9 @@ import httpx
 
 from toolang.execution.activity import ActivityQuery, ActivityReader
 from toolang.execution.schemas import ActivityMetrics, ActivitySnapshot
-from .backend import Backend, PREFIX, LAST_SEEN, online_key
+from .backend import Backend
+from .keys import PREFIX, TEAM, PRESENCE
+from .storage_scripts import LEASE_CHECK
 from .roster import Roster
 from .observation import HttpObservation, LocalObservation
 
@@ -31,7 +33,7 @@ class ActivityBackend:
         self.backend = backend
 
     async def lease(self, agent: str) -> dict[str, str]:
-        return await self.backend._call("HGETALL", online_key(agent))
+        return (await self.backend.lease_info(agent))["lease"] or {}
 
     async def save(self, agent: str, token: str, pages: list[ActivitySnapshot]) -> bool:
         if not pages or any(page.agent != agent for page in pages):
@@ -56,8 +58,10 @@ class ActivityBackend:
         slot = "default" if query == self.key(ActivityQuery()) else "query"
         return bool(
             await self.backend._eval(
-                """
-            if redis.call('HGET',KEYS[1],'token')~=ARGV[1] then return 0 end
+                LEASE_CHECK
+                + """
+            local lease=current_lease(KEYS[1],KEYS[3],ARGV[4])
+            if not lease or lease.token~=ARGV[1] then return 0 end
             local old=redis.call('HGET',KEYS[2],ARGV[2])
             if old then
               local a=cjson.decode(old); local b=cjson.decode(ARGV[3])
@@ -69,7 +73,7 @@ class ActivityBackend:
             end
             redis.call('HSET',KEYS[2],ARGV[2],ARGV[3]); return 1
             """,
-                [online_key(agent), f"{PREFIX}:activity:{agent}"],
+                [TEAM, f"{PREFIX}:activity:{agent}", PRESENCE],
                 [
                     token,
                     slot,
@@ -80,6 +84,7 @@ class ActivityBackend:
                         },
                         separators=(",", ":"),
                     ),
+                    agent,
                 ],
             )
         )
@@ -268,11 +273,9 @@ class HubActivity:
         *,
         fresh: bool,
     ) -> None:
-        seen = await self.backend.backend._call("HGET", LAST_SEEN, agent)
         info = (await self.roster.agents()).get(agent, {}) if self.roster else {}
         for page in pages:
             page.presence = "online" if lease else "offline"
-            page.last_seen = float(seen) if seen else None
             page.home_missing = bool(info.get("missing"))
             page.stale = not fresh or page.stale
             if page.stale or not lease:

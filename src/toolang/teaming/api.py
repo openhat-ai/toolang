@@ -2,8 +2,7 @@
 
 from collections.abc import Callable, AsyncIterator
 import asyncio
-from contextlib import asynccontextmanager, suppress
-import logging
+from contextlib import asynccontextmanager
 from typing import Annotated, Any, cast
 from urllib.parse import quote
 
@@ -22,6 +21,7 @@ from .subscriptions import HubSubscription
 
 from .errors import (
     BackendUnavailable,
+    StorageIntegrityError,
     LeaseLost,
     MessagingError,
     SendUnconfirmed,
@@ -32,6 +32,8 @@ from .errors import (
 from .messaging import MessagingClient
 from .schemas import target
 from .messaging_api import messaging_router
+from .lifecycle import HubLifecycle
+from .team_api import team_router
 from .agent_api import agent_router
 from .roster import Roster
 
@@ -57,33 +59,15 @@ def create_app(
                 409,
                 {"code": "hub_changed", "detail": "Hub identity changed"},
             )
-        # The backend may have restarted empty without this Hub observing an outage.
-        # Restore only registration; never retry a message append.
+        # Registration is idempotent; damaged or reset storage fails closed.
         await client.register_human()
+
+    lifecycle = HubLifecycle(client, roster=roster)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        async with client:
-            await client.check_backend()
-            task = None
-            if roster:
-                try:
-                    await roster.scan()
-                except Exception:
-                    logging.getLogger(__name__).warning(
-                        "Initial roster scan unavailable; retaining saved entries",
-                        exc_info=True,
-                    )
-                task = asyncio.create_task(roster.run())
-            if on_ready is not None:
-                on_ready()
-            try:
-                yield
-            finally:
-                if task:
-                    task.cancel()
-                    with suppress(asyncio.CancelledError):
-                        await task
+        async with lifecycle.lifespan(on_ready):
+            yield
 
     app = FastAPI(
         title="Toolang Hub API",
@@ -101,6 +85,8 @@ def create_app(
             status, code = 409, "recovery_required"
         elif isinstance(exc, SendUnconfirmed):
             status, code = 502, "send_unconfirmed"
+        elif isinstance(exc, StorageIntegrityError):
+            status, code = 503, "storage_integrity"
         elif isinstance(exc, BackendUnavailable):
             status, code = 503, "backend_unavailable"
         else:
@@ -144,7 +130,9 @@ def create_app(
 
     @app.get("/healthz")
     async def health() -> dict[str, bool]:
-        await client.check_backend()
+        if not lifecycle.ready or lifecycle.failed:
+            raise HTTPException(503, "Hub maintenance is not ready")
+        await client._backend.ping()
         return {"ok": True}
 
     async def event_subscription(
@@ -205,6 +193,7 @@ def create_app(
             StreamOverflowError,
             SnapshotLimitError,
             BackendUnavailable,
+            StorageIntegrityError,
             ScopeUnavailable,
             EventProtocolError,
             EventRecoveryRequired,
@@ -224,6 +213,7 @@ def create_app(
         finally:
             subscription.close()
 
+    app.include_router(team_router(lambda: client))
     app.include_router(messaging_router(lambda: client, prefix="/msg"))
     app.include_router(agent_router(client, roster=roster))
     from .activity_api import activity_router

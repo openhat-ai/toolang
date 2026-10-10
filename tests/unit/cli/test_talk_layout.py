@@ -33,11 +33,14 @@ async def talk_app(
 ):
     output = TerminalOutput()
     conversation = conversation or Conversation(
-        "group:dev", "group", (human, "agent:alice", "agent:bob")
+        "gc_00000001", "gc", (human, "agent:alice", "agent:bob"), name="dev"
     )
+    client = AsyncMock()
+    client.conversation.return_value = conversation
+    client.team.return_value = []
     with create_app_session(input=DummyInput(), output=output):
         app = tui.TalkTui(
-            AsyncMock(),
+            client,
             conversation,
             human,
             tmp_path,
@@ -174,19 +177,23 @@ def test_footer_keeps_identity_after_send_and_prioritizes_reconnection(tmp_path)
 @pytest.mark.parametrize(
     "conversation,read_only,label",
     [
-        (Conversation("group:all", "group", ("human:bryan",)), False, "#all(1)"),
         (
-            Conversation("group:design", "group", ("human:bryan",)),
+            Conversation("gc_00000000", "gc", ("human:bryan",), name="all"),
+            False,
+            "#all(1)",
+        ),
+        (
+            Conversation("gc_00000003", "gc", ("human:bryan",), name="design"),
             False,
             "#design(1)",
         ),
         (
-            Conversation("group:one", "direct", ("agent:alice", "human:bryan")),
+            Conversation("dm_00000001", "dm", ("agent:alice", "human:bryan")),
             False,
             "@alice",
         ),
         (
-            Conversation("group:two", "direct", ("agent:bob", "agent:alice")),
+            Conversation("dm_00000002", "dm", ("agent:bob", "agent:alice")),
             True,
             "@alice,bob",
         ),
@@ -217,3 +224,53 @@ def test_read_only_view_preserves_previous_draft(tmp_path):
             assert (tmp_path / "draft.txt").read_text() == "unsent message"
 
     asyncio.run(scenario())
+
+
+def test_live_membership_changes_update_input_focus_and_preserve_drafts(
+    tmp_path, monkeypatch
+):
+    human = "human:bryan"
+    observer = Conversation("gc_00000001", "gc", ("agent:alice",), name="dev")
+    joined = Conversation("gc_00000001", "gc", (human, "agent:alice"), name="dev")
+    draft = tmp_path / "draft.txt"
+    draft.write_text("saved before joining")
+
+    async def scenario():
+        async with talk_app(tmp_path, conversation=observer, read_only=True) as (ui, _):
+            ui.client.conversation.return_value = joined
+            ui.client.history.return_value = []
+            ui.client.read.return_value = []
+            ui.client.check_cursor.return_value = None
+            polls = 0
+
+            async def after_poll(_delay):
+                nonlocal polls
+                polls += 1
+                if polls == 1:
+                    assert not ui.read_only
+                    assert ui.app.layout.has_focus(ui.prompt.buffer)
+                    assert ui.prompt.buffer.text == "saved before joining"
+                    ui.prompt.replace_input("unfinished while participating")
+                    ui.client.conversation.return_value = observer
+                elif polls == 2:
+                    assert ui.read_only
+                    assert not ui.app.layout.has_focus(ui.prompt.buffer)
+                    await ui.send("must not send after leaving")
+                    ui.client.send.assert_not_awaited()
+                    assert draft.read_text() == "unfinished while participating"
+                    ui.client.conversation.return_value = joined
+                else:
+                    assert not ui.read_only
+                    assert ui.app.layout.has_focus(ui.prompt.buffer)
+                    assert ui.prompt.buffer.text == "unfinished while participating"
+                    raise asyncio.CancelledError
+
+            monkeypatch.setattr(asyncio, "sleep", after_poll)
+            with pytest.raises(asyncio.CancelledError):
+                await ui.follow()
+            assert polls == 3
+
+    asyncio.run(scenario())
+
+
+pytestmark = pytest.mark.usefixtures("fixed_conversation_ids")
