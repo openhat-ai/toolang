@@ -46,9 +46,9 @@ the last online count as current.
 Agent/Thread counts use Activity-eligible runs before filters; show nonzero active
 and failed counts. Failed means a failed top-level run, not a step/child run.
 Agent/Thread never show task summaries; incomplete counts cannot assert `idle`.
-Roster agents stay visible unless filtered. In team Thread/Run levels, agents
-without eligible work have a branchless placeholder with inapplicable fields
-`-`; single-agent mode instead shows an empty Table. Actual Agent rows show
+Roster agents stay visible unless filtered. At Thread/Run levels in either
+scope, agents without eligible work have a branchless placeholder preserving
+their name and presence, with inapplicable fields `-`. Actual Agent rows show
 known metrics even without work.
 
 Each Tree row's metrics belong to its own run/step; RUN expresses ownership only.

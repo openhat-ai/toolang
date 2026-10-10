@@ -321,6 +321,46 @@ def test_full_screen_identity_clock_settings_and_single_agent_row(agent, title):
 
 
 @pytest.mark.parametrize(
+    "view,tree", [("thread", False), ("execution", False), ("execution", True)]
+)
+@pytest.mark.parametrize("presence", ["online", "offline", "unknown"])
+def test_single_agent_without_recent_work_keeps_identity_and_presence(
+    view, tree, presence
+):
+    state = Activity("agent:alice", view=view, tree=tree)
+    snapshot = page()
+    snapshot.threads = snapshot.roots = snapshot.paths = []
+    snapshot.eligible = snapshot.matched = snapshot.available = snapshot.active = 0
+    snapshot.presence = presence
+    feed(state, snapshot)
+    rows = state.rows()
+    assert len(rows) == 1
+    assert rows[0].placeholder and rows[0].agent == snapshot.agent
+    assert rows[0].stats.model is None and rows[0].root == rows[0].thread == ""
+    assert rows[0].activity == ("idle" if presence == "online" else "-")
+    line = render(state)[7]
+    assert line.split()[:2] == [
+        "alice",
+        {"online": "+", "offline": "-", "unknown": "?"}[presence],
+    ]
+
+
+@pytest.mark.parametrize("active,text", [(True, ""), (False, "another-agent")])
+def test_single_agent_placeholder_respects_filters(active, text):
+    from toolang.execution.activity import ActivityQuery
+
+    state = Activity(
+        "agent:alice", view="thread", query=ActivityQuery(active=active, text=text)
+    )
+    snapshot = page()
+    snapshot.threads = snapshot.roots = snapshot.paths = []
+    snapshot.eligible = snapshot.matched = snapshot.available = snapshot.active = 0
+    snapshot.filter, snapshot.active_only = text, active
+    feed(state, snapshot)
+    assert state.rows() == []
+
+
+@pytest.mark.parametrize(
     "view, tree, columns",
     [
         ("agent", False, ()),

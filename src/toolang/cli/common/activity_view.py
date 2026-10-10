@@ -413,7 +413,6 @@ class Activity:
                     groups.append(rows)
             if (
                 not any(group[0].agent == agent for group in groups)
-                and not self.agent
                 and not self.display_query.active
                 and agent_match
             ):

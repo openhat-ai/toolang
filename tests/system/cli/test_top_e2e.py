@@ -405,7 +405,8 @@ def test_offline_agent_top_recovers_when_history_becomes_available(tmp_path, nam
         columns=180,
     )
     try:
-        session.wait_for("Agent uptime -", "No matching activity")
+        initial = session.wait_for("Agent uptime -", "AGENT", name)
+        assert re.search(rf"(?m)^{re.escape(name)}\s+-\s+-", initial)
         assert not layout.run_store.exists(), "Observation must not create history"
         # Simulate committed history arriving while this read-only client stays open.
         with closing(RunStore(layout.run_store)) as store:
