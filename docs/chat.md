@@ -401,6 +401,8 @@ Sandbox driver and environment use a dim ` · ` separator. The banner preserves 
 padding and folds long metadata values in narrow terminals. Two blank rows
 separate its bottom border from both the initial input box and the first
 submitted run control bar. The input placeholder is `Describe your task`.
+Chat requests a steady beam cursor so it does not obscure the placeholder or
+draft text, and resets the cursor shape to the terminal default on exit.
 
 The host sandbox description remains optional runtime-profile presentation
 metadata. A missing or `null` value uses the local host sandbox plugin's

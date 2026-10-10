@@ -11,6 +11,7 @@ import threading
 from typing import TypeGuard, cast
 from uuid import uuid4
 
+from prompt_toolkit.cursor_shapes import CursorShape
 from prompt_toolkit.filters import Condition, has_focus
 from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.input.ansi_escape_sequences import ANSI_SEQUENCES
@@ -373,6 +374,7 @@ class ChatTuiApp:
             key_bindings=keys,
             style=Style.from_dict(widgets._chat_ui_palette(surfaces)),
             full_screen=False,
+            cursor=CursorShape.BEAM,
             color_depth=ColorDepth.DEPTH_24_BIT,
             erase_when_done=True,
             mouse_support=False,

@@ -1,11 +1,16 @@
 """Real-terminal resize checks shared by Chat and Talk."""
 
 import json
+import fcntl
 import os
 from pathlib import Path
+import re
 import shlex
 import shutil
+import signal
+import struct
 import sys
+import termios
 import time
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
@@ -14,6 +19,42 @@ from libtmux import Server
 import pytest
 
 from tests import PROJECT_ROOT
+from tests.support.chat_tui_pty import ChatTuiPtySession
+
+
+@pytest.mark.skipif(os.name != "posix", reason="pseudo-terminal testing requires POSIX")
+@pytest.mark.parametrize("surface", ["chat", "talk"])
+def test_input_cursor_remains_a_beam_until_exit(tmp_path, surface):
+    session = ChatTuiPtySession.start(
+        "tests.system.cli.test_scrollback_resize", surface, tmp_path, "", "0"
+    )
+    cursor_shapes = re.compile(rb"\x1b\[([0-6]) q")
+    try:
+        placeholder = "Describe your task" if surface == "chat" else "Type a message"
+        session.wait_for(placeholder)
+        session.wait_for_bytes(b"\x1b[6 q")
+
+        session.data.clear()
+        session.send(b"\x0c")
+        session.wait_for_bytes(b"\x1b[6 q")
+        assert cursor_shapes.findall(session.data)[-1] == b"6"
+
+        session.send(b"draft\x01")
+        session.wait_for("draft")
+        session.data.clear()
+        fcntl.ioctl(
+            session.master, termios.TIOCSWINSZ, struct.pack("HHHH", 20, 40, 0, 0)
+        )
+        session.process.send_signal(signal.SIGWINCH)
+        session.wait_for_bytes(b"\x1b[6 q")
+        assert cursor_shapes.findall(session.data)[-1] == b"6"
+
+        session.data.clear()
+        session.send(b"\x11")
+        assert session.wait_for_exit() == 0, session.output
+        assert cursor_shapes.findall(session.data)[-1] == b"0"
+    finally:
+        session.close()
 
 
 @pytest.mark.skipif(shutil.which("tmux") is None, reason="tmux is not installed")

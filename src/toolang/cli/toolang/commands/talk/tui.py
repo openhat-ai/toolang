@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from prompt_toolkit.application import Application, run_in_terminal
+from prompt_toolkit.cursor_shapes import CursorShape
 from prompt_toolkit.filters import Condition, has_focus
 from prompt_toolkit.formatted_text import StyleAndTextTuples
 from prompt_toolkit.key_binding import KeyBindings
@@ -146,6 +147,7 @@ class TalkTui:
             ),
             key_bindings=keys,
             full_screen=False,
+            cursor=CursorShape.BEAM,
             erase_when_done=True,
             mouse_support=False,
             refresh_interval=0.5,

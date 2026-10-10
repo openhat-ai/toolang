@@ -107,6 +107,8 @@ ambiguous name lookup returns candidate IDs rather than choosing one.
 `too talk TARGET` resolves the canonical ID, loads conversation metadata, displays
 retained history, and follows new messages using a Stream-ID cursor. A member sees
 an input box with `Type a message`; an observer sees messages without a composer.
+Talk requests a steady beam cursor so it does not obscure the placeholder or
+draft text, and resets the cursor shape to the terminal default on exit.
 The composer and focus update when GC membership changes, preserving unsent drafts.
 Enter sends, Ctrl+J inserts a newline, Ctrl+P/Ctrl+N browse sent input, and Ctrl+Q
 exits. Interactive input requires a TTY. Supplying message arguments sends once
