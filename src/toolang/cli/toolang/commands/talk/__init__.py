@@ -36,12 +36,19 @@ def talk_command(
     target: Annotated[
         str | None,
         typer.Argument(
-            help="Agent name, two comma-separated agent names, or dm_/gc_ ID"
+            metavar="conversation",
+            help=(
+                "Conversation ID or shorthand (alice, alice,bob). "
+                "Omit to list conversations"
+            ),
         ),
     ] = None,
     body: Annotated[
         list[str] | None,
-        typer.Argument(help="Literal message; omit to open interactive input"),
+        typer.Argument(
+            metavar="message",
+            help="Message to send and exit. Omit to open the conversation",
+        ),
     ] = None,
 ) -> None:
     if target is None:

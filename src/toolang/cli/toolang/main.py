@@ -407,7 +407,15 @@ _registered_group(
 _registered_command(
     "talk",
     "toolang.cli.toolang.commands.talk:talk_command",
-    help="Talk in direct or group conversations",
+    help="Open a conversation",
+    epilog=(
+        "\nExamples:\n"
+        "  too talk                     List conversations\n"
+        "  too talk alice               Talk to an agent\n"
+        "  too talk alice,bob           View a conversation between agents\n"
+        "  too talk gc_abcd1234         Open a conversation by ID\n"
+        '  too talk alice "Hello"       Send a message and exit'
+    ),
     context_settings={"allow_interspersed_args": False},
     rich_help_panel=TEAMING_COMMAND_PANEL,
 )
@@ -415,14 +423,14 @@ _registered_command(
 _registered_command(
     "top",
     "toolang.cli.toolang.commands.top:top_command",
-    help="Show team or agent activity",
+    help="Monitor agent activity",
     rich_help_panel=TEAMING_COMMAND_PANEL,
 )
 
 _registered_group(
     "toolang.cli.toolang.commands.hub:hub_app",
     name="hub",
-    help="Manage the agent teaming service",
+    help="Manage the hub service",
     no_args_is_help=True,
     rich_help_panel=TEAMING_COMMAND_PANEL,
 )
