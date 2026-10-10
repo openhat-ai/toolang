@@ -106,7 +106,7 @@ ambiguous name lookup returns candidate IDs rather than choosing one.
 
 `too talk TARGET` resolves the canonical ID, loads conversation metadata, displays
 retained history, and follows new messages using a Stream-ID cursor. A member sees
-an input box with `write a message`; an observer sees messages without a composer.
+an input box with `Type a message`; an observer sees messages without a composer.
 The composer and focus update when GC membership changes, preserving unsent drafts.
 Enter sends, Ctrl+J inserts a newline, Ctrl+P/Ctrl+N browse sent input, and Ctrl+Q
 exits. Interactive input requires a TTY. Supplying message arguments sends once
@@ -147,7 +147,9 @@ Messages use `TOOLANG_PROGRESS_MAX_WIDTH`, defaulting to 120 terminal cells.
 unset, it falls back to the progress limit. Both settings accept positive
 integers and are capped by the terminal width. Empty or invalid values are
 configuration errors. The input-only setting does not affect the directory or
-one-shot sends.
+one-shot sends. Ctrl+L preserves visible output in native scrollback and
+places the input box at the top without a leading blank row. Its usual gap
+returns when a new message or notice is displayed.
 
 ## Terminal titles and tmux
 

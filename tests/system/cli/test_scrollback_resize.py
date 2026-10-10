@@ -53,7 +53,7 @@ def test_repeated_resize_preserves_history_and_input_origin(
         pane = window.active_pane
         assert pane is not None
 
-        def snapshot(width, height=24, expected_draft=draft):
+        def snapshot(width, height=24, expected_draft=draft, expected_input_row=None):
             deadline = time.monotonic() + 10
             previous = None
             stable = 0
@@ -69,9 +69,9 @@ def test_repeated_resize_preserves_history_and_input_origin(
                     ):
                         lines = pane.capture_pane() or []
                         placeholder = (
-                            "Ask or describe"
+                            "Describe your task"
                             if surface == "chat"
-                            else "write a message"
+                            else "Type a message"
                         )
                         input_rows = (
                             [i for i, line in enumerate(lines) if placeholder in line]
@@ -90,7 +90,14 @@ def test_repeated_resize_preserves_history_and_input_origin(
                         )
                         current = (flags, input_rows)
                         stable = stable + 1 if current == previous else 0
-                        if len(input_rows) == 1 and stable >= 3:
+                        if (
+                            len(input_rows) == 1
+                            and stable >= 3
+                            and (
+                                expected_input_row is None
+                                or input_rows == [expected_input_row]
+                            )
+                        ):
                             return current
                         previous = current
                 time.sleep(0.03)
@@ -115,6 +122,11 @@ def test_repeated_resize_preserves_history_and_input_origin(
                 window.resize(width=width)
                 current = snapshot(width, expected_draft="")
             assert current == cleared
+        pane.send_keys("C-l", enter=False)
+        snapshot(200, expected_draft="", expected_input_row=1)
+        for width in (40, 120, 200):
+            window.resize(width=width)
+            snapshot(width, expected_draft="", expected_input_row=1)
         output = "\n".join(pane.cmd("capture-pane", "-p", "-S", "-").stdout)
         for index in range(40):
             assert output.count(f"history marker {index:02}") == 1

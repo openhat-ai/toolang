@@ -46,7 +46,7 @@ _QUEUE_ROW_PADDING = 2
 _QUEUE_ENTRY_ICON = "↳"
 _QUEUE_HINT_GAP = 2
 _QUEUE_MIN_PREVIEW_WIDTH = 3
-_INPUT_PLACEHOLDER = "Ask or describe a task"
+_INPUT_PLACEHOLDER = "Describe your task"
 # The status bar insets its content on each side so its text lines up with the
 # other chat surfaces; the inset cells stay blank.
 _STATUS_INSET = "  "

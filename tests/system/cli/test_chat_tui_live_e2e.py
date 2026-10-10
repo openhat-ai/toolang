@@ -62,9 +62,7 @@ def test_chat_tui_runs_with_real_deepseek_provider(
         kind,
     )
     try:
-        session.wait_for(
-            "runtime", "Ask or describe a task", deepseek_model, timeout=30
-        )
+        session.wait_for("runtime", "Describe your task", deepseek_model, timeout=30)
         session.send(marker.encode())
         session.wait_for(marker)
         session.send(b"\r")

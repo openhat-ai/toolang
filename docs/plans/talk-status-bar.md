@@ -27,7 +27,7 @@ system GC, initially named `all`. Use `convo` for abbreviated metadata.
 - The viewer is Hub's configured human. Members can send; observers see messages
   without an input box. Membership and display metadata are loaded on entry.
   The view pins its Hub connection and viewer until the user opens a new view.
-- The input placeholder is `write a message`. Enter sends, Ctrl+J inserts a
+- The input placeholder is `Type a message`. Enter sends, Ctrl+J inserts a
   newline, Ctrl+P/Ctrl+N browse sent input, and Ctrl+Q exits. Failed sends preserve
   the draft and display the returned error. Sends are never retried automatically;
   the user decides whether to retry or reopen. Drafts and input history remain

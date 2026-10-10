@@ -339,10 +339,10 @@ def test_real_talk_terminal_sends_reads_and_reuses_tmux(valkey, tmp_path, runnin
                 target.send_keys("C-u", enter=False)
                 for _ in range(300):
                     current = "\n".join(target.capture_pane())
-                    if "write a message" in current and "resize draft" not in current:
+                    if "Type a message" in current and "resize draft" not in current:
                         break
                     time.sleep(0.02)
-                assert "write a message" in current and "resize draft" not in current
+                assert "Type a message" in current and "resize draft" not in current
                 painted = Text.from_ansi(
                     "\n".join(
                         target.capture_pane(
@@ -353,7 +353,7 @@ def test_real_talk_terminal_sends_reads_and_reuses_tmux(valkey, tmp_path, runnin
                 input_row = next(
                     index
                     for index, line in enumerate(painted)
-                    if "write a message" in line.plain
+                    if "Type a message" in line.plain
                 )
                 console = Console()
                 gap = painted[input_row - 2]
@@ -367,10 +367,10 @@ def test_real_talk_terminal_sends_reads_and_reuses_tmux(valkey, tmp_path, runnin
             target.send_keys("terminal reply", enter=True)
             for _ in range(300):
                 sent = screen()
-                if "terminal reply" in sent and "write a message" in sent:
+                if "terminal reply" in sent and "Type a message" in sent:
                     break
                 time.sleep(0.02)
-            assert "terminal reply" in sent and "write a message" in sent, sent
+            assert "terminal reply" in sent and "Type a message" in sent, sent
 
             async def check():
                 async with MessagingClient(valkey, actor="human:owner") as client:
@@ -426,7 +426,7 @@ def test_real_talk_terminal_sends_reads_and_reuses_tmux(valkey, tmp_path, runnin
                 time.sleep(0.02)
             observed = observed_screen()
             assert "@alice,bob" in observed and "owner" in observed, observed
-            assert "write a message" not in observed and "Enter send" not in observed
+            assert "Type a message" not in observed and "Enter send" not in observed
             headers = {line.strip() for line in observed.splitlines()}
             assert {"• alice", "• bob"} <= headers, observed
             observer.send_keys("human cannot join this DM", enter=True)

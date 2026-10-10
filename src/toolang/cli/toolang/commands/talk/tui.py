@@ -68,9 +68,9 @@ class TalkTui:
         self.status = ""
         self.pending = False
         self.cursor = "0-0"
+        self._input_gap_visible = True
         self.prompt = InputBox(
             self.invalidate,
-            placeholder="write a message",
             history_store=InputHistoryStore(state / "input.jsonl"),
             on_input=self.save_draft,
             normalize=lambda text: text,
@@ -120,7 +120,7 @@ class TalkTui:
 
         @keys.add("c-l")
         def clear(_event: Any) -> None:
-            self.app.renderer.clear()
+            self._handle_clear()
 
         self.footer = Window(
             FormattedTextControl(self.status_text, focusable=True),
@@ -180,7 +180,11 @@ class TalkTui:
 
     def _input_gap_rows(self) -> int:
         # Keep the three-row input and footer usable in very short terminals.
-        return int(self.app.output.get_size().rows >= 5)
+        return int(self._input_gap_visible and self.app.output.get_size().rows >= 5)
+
+    def _handle_clear(self) -> None:
+        self._input_gap_visible = False
+        self.app.renderer.clear()
 
     def status_text(self) -> StyleAndTextTuples:
         error = self.status
@@ -252,11 +256,13 @@ class TalkTui:
             self.invalidate()
 
     async def print_notice(self, text: str) -> None:
-        await run_in_terminal(
-            lambda: terminal_console(width=self.content_width()).print(
+        def write() -> None:
+            terminal_console(width=self.content_width()).print(
                 Text(display_text(text), style="yellow")
             )
-        )
+            self._input_gap_visible = True
+
+        await run_in_terminal(write)
 
     async def show(self, entries: list[tuple[str, dict[str, str]]]) -> None:
         if not entries:
@@ -276,6 +282,7 @@ class TalkTui:
                     console.print(
                         message_block(message, self.human, width, self.surfaces)
                     )
+            self._input_gap_visible = True
 
         await run_in_terminal(write)
         self.cursor = entries[-1][0]

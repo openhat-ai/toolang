@@ -105,7 +105,7 @@ def test_talk_empty_dm_first_send_peer_reply_and_observation(
             )
             tui = terminal("alice")
             try:
-                await asyncio.to_thread(tui.wait_for, "write a message", direct)
+                await asyncio.to_thread(tui.wait_for, "Type a message", direct)
                 tui.send(b"\x11")
                 assert await asyncio.to_thread(tui.wait_for_exit) == 0, tui.output
             finally:
@@ -114,7 +114,7 @@ def test_talk_empty_dm_first_send_peer_reply_and_observation(
 
             tui = terminal("alice")
             try:
-                await asyncio.to_thread(tui.wait_for, "write a message", direct)
+                await asyncio.to_thread(tui.wait_for, "Type a message", direct)
                 tui.send(b"first human send\r")
                 async with asyncio.timeout(8):
                     while not await raw.exists(convo_key(direct, "messages")):
@@ -138,7 +138,7 @@ def test_talk_empty_dm_first_send_peer_reply_and_observation(
             tui = terminal("bob")
             try:
                 peer_direct = dm_id(connection.human, bob.actor)
-                await asyncio.to_thread(tui.wait_for, "write a message", peer_direct)
+                await asyncio.to_thread(tui.wait_for, "Type a message", peer_direct)
                 assert not await raw.hexists(CONVOS, peer_direct)
                 receipt = await bob.send("human:owner", body="peer creates this DM")
                 await asyncio.to_thread(tui.wait_for, "peer creates this DM")
@@ -152,7 +152,7 @@ def test_talk_empty_dm_first_send_peer_reply_and_observation(
             tui = terminal("alice,bob")
             try:
                 await asyncio.to_thread(tui.wait_for, "agents only", observed)
-                assert "write a message" not in tui.output
+                assert "Type a message" not in tui.output
                 tui.send(b"observer cannot send\r\x11")
                 assert await asyncio.to_thread(tui.wait_for_exit) == 0, tui.output
             finally:
@@ -183,9 +183,9 @@ def test_open_talk_updates_composer_when_gc_membership_changes(
             )
             try:
                 await asyncio.to_thread(tui.wait_for, "Observers(1)")
-                assert "write a message" not in tui.output
+                assert "Type a message" not in tui.output
                 await human.join_conversation(conversation.id)
-                await asyncio.to_thread(tui.wait_for, "Observers(2)", "write a message")
+                await asyncio.to_thread(tui.wait_for, "Observers(2)", "Type a message")
                 tui.send(b"joined from another client\r")
                 async with asyncio.timeout(5):
                     while not await human.history(conversation.id):

@@ -406,7 +406,7 @@ rows. A root-run submission uses the full terminal width. Steer and quick-
 command bars use the same lesser-of-available-and-configured-maximum width as
 execution and command output, so their Input background ends at the output
 boundary on wider terminals. An empty `PromptBox` shows the muted placeholder
-`Ask or describe a task`.
+`Describe your task`.
 The placeholder disappears as soon as the buffer contains text and is never
 part of submission or input history.
 

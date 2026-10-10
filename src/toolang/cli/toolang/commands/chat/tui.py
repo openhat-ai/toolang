@@ -955,16 +955,7 @@ class ChatTuiApp:
         self.status_bar.clear_transient_error()
         self._footer_row_floor = 0
         self._run_status_collapsed = True
-        renderer = self.app.renderer
-        output = self.app.output
-        renderer.erase()
-        # Scroll the cleared live origin off the display so it becomes one
-        # separator line after the prior terminal history.
-        output.write_raw("\r\n" * output.get_size().rows)
-        output.erase_screen()
-        output.cursor_goto(0, 0)
-        output.flush()
-        renderer.request_absolute_cursor_position()
+        self.app.renderer.clear()
 
     def _finish_active_run(self) -> None:
         self.active_run_id = None

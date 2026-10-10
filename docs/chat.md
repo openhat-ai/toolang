@@ -97,8 +97,9 @@ cells on each side so it lines up with the areas above it.
 Keyboard controls replace `/queue`, `/q`, `/steer`, and `/s`; those names are
 unregistered. Esc Esc, Ctrl+C, and Ctrl+D apply only while Input is focused.
 They never cancel the run, clear the draft, or exit Chat from Queue. Esc only
-dismisses transient status and never changes focus. Ctrl+L retains its global
-clear-display behavior when idle, and Ctrl+Q exits from either area. `/keys`
+dismisses transient status and never changes focus. Ctrl+L clears the display
+when idle and places the input area at the top without a leading blank row,
+preserving prior output in native scrollback. Ctrl+Q exits from either area. `/keys`
 groups Input, Queue, and global actions explicitly.
 
 Chat and Talk retain native terminal scrollback during resize. Repainting keeps
@@ -397,7 +398,9 @@ status bar continues to show the current workspace as it changes. Use
 `too AGENT workspace list` to inspect current workspace mappings and availability.
 
 Sandbox driver and environment use a dim ` · ` separator. The banner preserves its
-padding and folds long metadata values in narrow terminals.
+padding and folds long metadata values in narrow terminals. Two blank rows
+separate its bottom border from both the initial input box and the first
+submitted run control bar. The input placeholder is `Describe your task`.
 
 The host sandbox description remains optional runtime-profile presentation
 metadata. A missing or `null` value uses the local host sandbox plugin's
