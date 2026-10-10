@@ -208,6 +208,22 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Changed
 
+- **Breaking:** workspace selection options are now accepted only where a
+  command executes with caller-selected directories (`serve`, `chat`, and
+  script runs): `-w`/`--workspace` and `-d`/`--workdir` are removed from
+  `tools`, `models`, `providers`, `workspace list`, and `start`, and
+  `--no-auto-workspace` is removed everywhere. Configure `[workspaces]` or run
+  `too AGENT workspace add DIR` before `start`, whose former `-d` subdirectory
+  override has no configuration equivalent, and replace `--no-auto-workspace`
+  with explicit `-w` options, since a script run without `-w` still adds its
+  source directory even when `-d` selects a workdir.
+
+- `too AGENT workspace list` now reads authored workspace configuration
+  (source-local `toolang.toml` for scripts, layout `config.toml`
+  otherwise) and lists configured names, resolved paths, and local
+  availability without preparing State, querying a running server, or
+  including the implicit `lab` workspace, temporary grants, or a workdir.
+
 - Chat's startup banner now describes the connected runtime and its
   workspaces instead of the executor and agent home. Its caption reads
   `Toolang Chat <version>`, and its rows are `runtime` (always
