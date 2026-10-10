@@ -185,8 +185,9 @@ def test_top_live_tree_views_ranges_and_completion(
                 session.wait_for(model["id"])
             (tmp_path / "release-model").touch()
             session.data.clear()
+            session.send(b"t")
             session.wait_for("idle")
-            session.send(b"\r")
+            session.send(b"e\r")
             session.wait_for("Status: succeeded", "flow:review")
             final = snapshot()
             assert not final["paths"]

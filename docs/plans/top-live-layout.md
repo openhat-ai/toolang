@@ -28,7 +28,7 @@ at the lower right:
 
 ```text
 Team         1/2 online  12m30s                                                      19:08:51
-Threads: 1         Runs:   1 active      Models: 24       Tools: 46
+Threads: 1         Runs:   1            Models: 24       Tools: 46
 In:      128k      Cached: 96k           Out:    12k      Spend: $1.28
                                                               Stats: session  Activity: 30m
 
@@ -54,8 +54,9 @@ Agent team   offline  12m30s
 - First-line duration is accumulated execution time for Stats, with the same
   meaning as TIME+, not process uptime.
 - Header metrics cover the whole observation scope, independent of view,
-  selection, filters and folds. Threads and Runs describe Activity-eligible work
-  before filters; Runs shows active/failed counts, or `idle` when both are zero.
+  selection, filters and folds. Threads and Runs count Activity-eligible work
+  before filters, including completed Runs; show `0` when empty and `-` when
+  unavailable. Active/failed counts and `idle` belong in Table ACTIVITY.
 - Statistics groups share four column starts; align labels and values within
   each column. Use subdued labels, emphasized values and fixed column widths.
   On narrow terminals, reflow at column boundaries; only terminal resize changes

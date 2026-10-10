@@ -62,6 +62,41 @@ def test_header_reflow_aligns_values_within_each_metric_column(width):
     assert all(len(starts) == 1 for starts in columns.values())
 
 
+@pytest.mark.parametrize("agent", [None, "agent:alice"])
+@pytest.mark.parametrize("eligible,active,failed", [(0, 0, 0), (7, 0, 0), (7, 2, 1)])
+def test_header_runs_counts_activity_eligible_runs_before_filters(
+    agent, eligible, active, failed
+):
+    from toolang.cli.common.activity_dashboard import header
+    from toolang.execution.activity import ActivityQuery
+
+    state = Activity(agent, query=ActivityQuery(text="unmatched", active=True))
+    snapshot = page()
+    snapshot.filter = state.query.text
+    snapshot.active_only = True
+    snapshot.eligible = eligible
+    snapshot.active, snapshot.failed = active, failed
+    snapshot.matched = snapshot.available = 0
+    snapshot.roots = snapshot.paths = []
+    feed(state, snapshot)
+    text = "\n".join(line.plain for line in header(state, 180))
+    assert re.findall(r"Runs:\s+(\S+)", text) == [str(eligible)]
+
+
+def test_team_header_runs_aggregates_agents():
+    from toolang.cli.common.activity_dashboard import header
+
+    state = Activity(None)
+    alice, bob = page(), page()
+    bob.agent = "agent:bob"
+    alice.eligible, bob.eligible = 7, 3
+    for snapshot in (alice, bob):
+        state.feed("activity_page", snapshot.model_dump())
+    state.feed("activity_checkpoint", {"agents": [alice.agent, bob.agent]})
+    text = "\n".join(line.plain for line in header(state, 180))
+    assert re.findall(r"Runs:\s+(\S+)", text) == ["10"]
+
+
 def test_status_bar_contains_only_function_key_hints_and_no_incomplete():
     from toolang.cli.common.activity_dashboard import status_bar
 
@@ -328,7 +363,7 @@ def test_large_history_formats_only_visible_table_rows(monkeypatch):
 
 
 @pytest.mark.parametrize("stale,reconnecting", [(True, False), (False, True)])
-def test_header_does_not_claim_idle_from_stale_counts(stale, reconnecting):
+def test_header_keeps_stale_counts_unknown(stale, reconnecting):
     snapshot = page()
     snapshot.active = snapshot.failed = 0
     snapshot.stale = stale
@@ -336,7 +371,7 @@ def test_header_does_not_claim_idle_from_stale_counts(stale, reconnecting):
     feed(state, snapshot)
     state.reconnecting = reconnecting
     lines = render(state)
-    assert "idle" not in lines[1]
+    assert re.findall(r"(?:Runs|Threads):\s+(\S+)", lines[1]) == ["-", "-"]
 
 
 def test_three_line_terminal_keeps_identity_headings_and_status():

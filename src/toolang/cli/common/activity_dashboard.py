@@ -12,7 +12,7 @@ from rich.text import Text
 
 from toolang.execution.schemas import ActivityMetrics, ActivitySnapshot
 from toolang.teaming.observation import totals
-from .activity_view import clean, cost, counts, elapsed, metrics_text, tokens
+from .activity_view import clean, cost, elapsed, metrics_text, tokens
 from .markdown import TerminalMarkdown
 
 if TYPE_CHECKING:
@@ -84,13 +84,7 @@ def header(state: Activity, width: int) -> list[Text]:
             ),
             (
                 "Runs",
-                counts(
-                    sum(p.active for p in snapshots),
-                    sum(p.failed for p in snapshots),
-                    complete,
-                )
-                if not updating
-                else "-",
+                str(sum(p.eligible for p in snapshots)) if complete else "-",
             ),
             ("Models", str(metrics.model) if metrics.model is not None else "-"),
             ("Tools", str(metrics.tool) if metrics.tool is not None else "-"),
