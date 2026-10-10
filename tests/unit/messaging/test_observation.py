@@ -101,6 +101,7 @@ def test_hub_and_local_share_rolling_offline_history_and_results(tmp_path, monke
                 await human.backend.release_lease("agent:alice", "lease")
                 app = create_app(
                     human,
+                    version="0.4.0-test",
                     local_activity=lambda agent: (
                         reader if agent == reader.agent else None
                     ),

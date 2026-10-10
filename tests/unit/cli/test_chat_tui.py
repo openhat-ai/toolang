@@ -3210,13 +3210,16 @@ def test_chat_slash_table_uses_neutral_headers_and_one_line_rows() -> None:
 
 
 def test_chat_header_leaves_two_empty_rows_before_initial_input_or_control() -> None:
-    header = blocks.HeaderBlock(executor_metadata=FakeClient().executor_metadata)
+    header = blocks.HeaderBlock(
+        client_version="0.4.0-client", executor_metadata=FakeClient().executor_metadata
+    )
     output = rendering.renderables_output([header.render()], width=120)
     assert len(output) - len(output.rstrip("\n")) == 3
 
 
 def test_chat_header_uses_wide_runtime_layout() -> None:
     block = blocks.HeaderBlock(
+        client_version="0.4.0-client",
         executor_metadata=ChatExecutorMetadata(
             sandbox_driver="host",
             sandbox_detail=_HOST_DESCRIPTION,
@@ -3228,7 +3231,7 @@ def test_chat_header_uses_wide_runtime_layout() -> None:
     rendered = _render_text(block.render(), width=100)
     lines = rendered.splitlines()
     assert lines[0] == ""
-    assert lines[1] == "╭" + "─" * (len(lines[1]) - 2) + "╮"
+    assert "Chat v0.4.0-client" in lines[1]
     assert "Toolang Chat" not in rendered
     assert rendered.count("v0.3.9") == 1
     assert "http://localhost:7001" not in rendered
@@ -3259,6 +3262,7 @@ def test_chat_header_uses_wide_runtime_layout() -> None:
 def test_chat_header_stacks_without_clipping_in_a_narrow_terminal(width: int) -> None:
     rendered = _render_text(
         blocks.HeaderBlock(
+            client_version="0.4.0-client",
             executor_metadata=ChatExecutorMetadata(
                 sandbox_driver="docker",
                 sandbox_detail="registry.example:5000/team/python:3.13-slim",
@@ -3294,6 +3298,7 @@ def test_chat_header_keeps_metadata_when_label_and_value_columns_cannot_fit(
 ) -> None:
     rendered = _render_text(
         blocks.HeaderBlock(
+            client_version="0.4.0-client",
             executor_metadata=ChatExecutorMetadata(
                 sandbox_driver="host",
                 sandbox_detail=_HOST_DESCRIPTION,
@@ -3322,9 +3327,13 @@ def test_chat_header_keeps_metadata_when_label_and_value_columns_cannot_fit(
         ("unknown", "unknown"),
     ],
 )
-def test_chat_header_shows_only_runtime_version(version: str, expected: str) -> None:
+@pytest.mark.parametrize("matching", [False, True])
+def test_chat_header_keeps_client_and_runtime_versions(
+    version: str, expected: str, matching: bool
+) -> None:
     rendered = _render_text(
         blocks.HeaderBlock(
+            client_version=version if matching else "0.4.0-client",
             executor_metadata=ChatExecutorMetadata(
                 sandbox_driver="host",
                 sandbox_detail=_HOST_DESCRIPTION,
@@ -3335,6 +3344,7 @@ def test_chat_header_shows_only_runtime_version(version: str, expected: str) -> 
         ).render(),
         width=120,
     )
+    assert f"Chat {expected if matching else 'v0.4.0-client'}" in rendered
     runtime_line = next(line for line in rendered.splitlines() if "runtime" in line)
     assert runtime_line.split("runtime", 1)[1].strip("│ ") == expected
     assert "http://runtime.test:7001" not in rendered
@@ -3350,6 +3360,7 @@ def test_chat_header_distinguishes_empty_and_unavailable_workspaces(
 ) -> None:
     rendered = _render_text(
         blocks.HeaderBlock(
+            client_version="0.4.0-client",
             executor_metadata=ChatExecutorMetadata(
                 sandbox_driver="host",
                 sandbox_detail=_HOST_DESCRIPTION,
@@ -3369,6 +3380,7 @@ def test_chat_header_keeps_logo_styles_and_padding_without_links(
     driver: str, detail: str
 ) -> None:
     block = blocks.HeaderBlock(
+        client_version="0.4.0-client",
         executor_metadata=ChatExecutorMetadata(
             sandbox_driver=driver,
             sandbox_detail=detail,

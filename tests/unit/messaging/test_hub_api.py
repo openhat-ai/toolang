@@ -33,7 +33,7 @@ CONNECTION = HubConnection("http://hub", "human:owner", CONFIG.identity)
 def test_team_subscription_rejects_invalid_cursor_before_sending_headers(after):
     async def scenario():
         human = client(FakeServer(server_type="valkey"), CONNECTION.human)
-        app = create_app(human)
+        app = create_app(human, version="0.4.0-test")
         async with (
             app.router.lifespan_context(app),
             httpx.AsyncClient(
@@ -51,7 +51,7 @@ def test_team_subscription_rejects_invalid_cursor_before_sending_headers(after):
 def test_hub_rejects_missing_initialized_data_without_recreating_it(operation):
     async def scenario():
         human = client(FakeServer(server_type="valkey"), CONNECTION.human)
-        app = create_app(human)
+        app = create_app(human, version="0.4.0-test")
         async with (
             app.router.lifespan_context(app),
             httpx.AsyncClient(
@@ -85,7 +85,7 @@ def test_http_messaging_matches_service_and_isolates_agent_conversations():
     async def scenario():
         server = FakeServer(server_type="valkey")
         human = client(server, CONNECTION.human)
-        app = create_app(human)
+        app = create_app(human, version="0.4.0-test")
         async with (
             client(server, "agent:alice") as alice,
             client(server, "agent:bob") as bob,
@@ -143,7 +143,7 @@ def test_local_access_validation_and_backend_readiness(owner):
     async def scenario():
         server = FakeServer(server_type="valkey")
         human = client(server, owner)
-        app = create_app(human)
+        app = create_app(human, version="0.4.0-test")
         async with (
             app.router.lifespan_context(app),
             httpx.AsyncClient(
@@ -197,7 +197,9 @@ def test_startup_failure_closes_service_without_publishing_readiness():
         human.check_backend = AsyncMock(side_effect=BackendUnavailable("offline"))
         human.close = AsyncMock(wraps=human.close)
         ready = []
-        app = create_app(human, on_ready=lambda: ready.append(True))
+        app = create_app(
+            human, version="0.4.0-test", on_ready=lambda: ready.append(True)
+        )
         with pytest.raises(BackendUnavailable):
             async with app.router.lifespan_context(app):
                 pytest.fail("startup must fail")
@@ -213,7 +215,7 @@ def test_startup_failure_closes_service_without_publishing_readiness():
 def test_hub_config_switch_rejects_stale_talk_before_any_storage_access(changes):
     async def scenario():
         human = client(FakeServer(server_type="valkey"), CONNECTION.human)
-        app = create_app(human)
+        app = create_app(human, version="0.4.0-test")
         async with (
             human,
             HubClient(
@@ -234,7 +236,7 @@ def test_hub_config_switch_rejects_stale_talk_before_any_storage_access(changes)
 def test_history_preserves_corrupt_records_and_full_cursors():
     async def scenario():
         human = client(FakeServer(server_type="valkey"), CONNECTION.human)
-        app = create_app(human)
+        app = create_app(human, version="0.4.0-test")
         async with (
             app.router.lifespan_context(app),
             HubClient(CONNECTION, transport=httpx.ASGITransport(app)) as hub,
@@ -332,7 +334,7 @@ def test_backend_uncertain_send_keeps_uuid_over_http():
             raise SendUnconfirmed("ack lost")
 
         human.backend.append = lose_ack
-        app = create_app(human)
+        app = create_app(human, version="0.4.0-test")
         async with (
             app.router.lifespan_context(app),
             HubClient(CONNECTION, transport=httpx.ASGITransport(app)) as hub,
@@ -354,7 +356,7 @@ def test_membership_denial_keeps_its_error_type_across_http(tmp_path):
 
     async def scenario():
         human = client(FakeServer(server_type="valkey"), CONNECTION.human)
-        app = create_app(human)
+        app = create_app(human, version="0.4.0-test")
         async with (
             app.router.lifespan_context(app),
             AgentClient(
@@ -396,5 +398,27 @@ def test_client_rejects_malformed_public_records(operation, body):
                 else:
                     await getattr(hub, operation)()
             assert "private" not in str(error.value)
+
+    asyncio.run(scenario())
+
+
+def test_hub_info_reports_server_version_and_keeps_readiness_contract():
+    async def scenario():
+        human = client(FakeServer(server_type="valkey"), CONNECTION.human)
+        app = create_app(human, version="0.4.0-server*")
+        async with (
+            app.router.lifespan_context(app),
+            HubClient(CONNECTION, transport=httpx.ASGITransport(app)) as hub,
+            httpx.AsyncClient(
+                transport=httpx.ASGITransport(app), base_url="http://hub"
+            ) as http,
+        ):
+            assert (await hub.info()).version == "0.4.0-server*"
+            assert (await http.get("/healthz")).json() == {"ok": True}
+            response = await http.get(
+                "/info", headers={"X-Toolang-Backend": "different"}
+            )
+            assert response.status_code == 409
+            assert response.json()["code"] == "hub_changed"
 
     asyncio.run(scenario())

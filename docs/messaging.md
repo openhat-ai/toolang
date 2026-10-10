@@ -114,6 +114,22 @@ Enter sends, Ctrl+J inserts a newline, Ctrl+P/Ctrl+N browse sent input, and Ctrl
 exits. Interactive input requires a TTY. Supplying message arguments sends once
 and exits with a receipt or error.
 
+A startup panel appears once before messages, with the local `Talk <version>`
+as its caption and these rows:
+
+```text
+hub    v0.4.0a2
+convo  gc_rcpya1zw
+user   bryan
+```
+
+Only observers append ` · view only` to the user, in the same normal style.
+The Hub version comes from `GET /info`; unsupported, failed, or malformed
+inspection displays `unknown` after at most two seconds. The panel is an entry
+snapshot that scrolls away; reconnects and Ctrl+L do not reprint it. It shares
+Chat's responsive layout and uses the message width limit. Directory and
+one-shot sends do not show it or request version metadata.
+
 The footer has two-cell side insets: conversation on the left, complete canonical
 ID in the center, and the viewer's login on the right. Examples for login `brice`:
 
@@ -124,13 +140,11 @@ ID in the center, and the viewer's login on the right. Examples for login `brice
 | Group `dev`, three members including `brice` | `#dev(3)` | Its canonical `gc_...` | `brice` | Allowed |
 | The same group viewed by a nonmember | `#dev(3)` | Its canonical `gc_...` | The viewer's login | Read-only; `#` is dim |
 
-Only the permission marker dims; names and counts use normal foreground. Conversation metadata and team deadlines refresh in the receive loop. The interactive footer does not display presence. The separate
-`too talk` directory prints usage first, then Team and Conversations separated by
-blank lines. Team lists only agent names and presence. Conversations shows ID,
-Name, Members, and Latest message; member and sender names omit identity prefixes,
-and members have no presence badges. Conversation names are capped at 24 terminal cells;
-long names, member lists, and previews are ellipsized to keep each row on one line,
-with aligned timestamps and previews. It runs once without requiring a TTY.
+Only the permission marker dims; names and counts use normal foreground.
+Conversation metadata and team deadlines refresh in the receive loop. The
+interactive footer does not display presence. The separate `too talk` directory
+lists conversations with CONVERSATION, NAME, MEMBERS, UPDATED, and MESSAGE
+columns, followed by a count. It runs once without requiring a TTY.
 On narrow terminals, the footer prioritizes the login and hides a canonical ID
 that cannot fit intact. Initial connection shows `Connecting…` on the right.
 

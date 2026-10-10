@@ -28,6 +28,7 @@ from .schemas import (
     TeamMember,
     Targets,
     HubConnection,
+    HubInfo,
     Message,
     Resolution,
     conversation_id,
@@ -37,6 +38,7 @@ from .schemas import (
 
 T = TypeVar("T")
 _TEAM = TypeAdapter(list[TeamMember])
+_INFO = TypeAdapter(HubInfo)
 _CONTACTS = TypeAdapter(list[ConversationSummary])
 _TARGETS = TypeAdapter(Targets)
 _GLOBAL_STATS = TypeAdapter(GlobalStatistics)
@@ -158,6 +160,9 @@ class HubClient:
                 raise BackendUnavailable("Hub identity changed; reconnecting")
             raise MessagingError("Hub identity changed; reopen Talk")
         raise MessagingError(str(detail))
+
+    async def info(self) -> HubInfo:
+        return _response(_INFO, await self._request("GET", "/info"))
 
     async def agents(self) -> dict[str, str]:
         return await self._request("GET", "/msg/agents")

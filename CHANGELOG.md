@@ -9,6 +9,18 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Added
 
+- `too talk` opens with a startup panel captioned `Talk <client-version>`,
+  printed once before the first messages: `hub` shows the connected Hub's
+  version from the new `GET /info` endpoint — `unknown` when that inspection
+  is unsupported, failed, or malformed after a two-second deadline, and never
+  the local version — `convo` the conversation's complete ID, including a
+  pending DM, and `user` the viewer's login, shown as
+  `<login> · view only` to observers. The panel shares Chat's responsive
+  layout and content width, scrolls away with the messages as an entry-time
+  snapshot, and is not reprinted by reconnects, redraws, tmux window reuse, or
+  Ctrl+L, while the Talk directory and one-shot sends show no panel and
+  request no Hub version.
+
 - `too chat` and `too talk` accept `TOOLANG_INPUTBOX_MAX_WIDTH`, a positive
   terminal-cell width limit for the input area — Chat's Input, Queue, and
   status bars and Talk's input and footer — independent of message output.
@@ -256,10 +268,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   including the implicit `lab` workspace, temporary grants, or a workdir.
 
 - Chat's startup banner now describes the connected runtime and its
-  workspaces instead of the executor and agent home. It has no caption, and
-  its rows are `runtime` (only `<version>`, with a single `v` prefix on known
-  versions; `too -V` reports the client version and `too AGENT info` the API
-  endpoint), `sandbox` (`<driver> · <environment>`; Docker shows its image
+  workspaces instead of the executor and agent home. Its caption is
+  `Chat <client-version>` from the local process, and its rows are `runtime`
+  (only `<version>`, with a single `v` prefix on known versions; `too -V`
+  reports the client version and `too AGENT info` the API endpoint),
+  `sandbox` (`<driver> · <environment>`; Docker shows its image
   selector instead of a container ID), and `workspaces` (the runtime's
   available logical names from `GET /api/v1/workspaces` in response order,
   `none` when the list is empty, `unavailable` when inspection fails, and

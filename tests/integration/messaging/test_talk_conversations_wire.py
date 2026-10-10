@@ -27,6 +27,7 @@ from toolang.teaming.backend.valkey.keys import (
     convo_key,
 )
 from toolang.teaming.schemas import Message
+from toolang.common.version import displayed_toolang_version
 
 pytestmark = pytest.mark.live_valkey
 
@@ -90,13 +91,15 @@ def test_talk_empty_dm_first_send_peer_reply_and_observation(
             active_agent(tmp_path, "agent:bob", connection.human) as bob,
             Valkey.from_url(valkey.url, decode_responses=True) as raw,
         ):
+            server_version = (await human.info()).version
+            assert server_version != "unknown"
             direct = dm_id(connection.human, alice.actor)
             before = {key: await raw.dump(key) for key in (CONVOS, STATS, TEAM_EVENTS)}
             listing = await asyncio.to_thread(command)
             assert listing.returncode == 0, listing.stderr
             assert all(
                 word in listing.stdout
-                for word in ("Team", "Conversations", "alice", "bob")
+                for word in ("CONVERSATION", "MEMBERS", "alice", "bob")
             )
             assert direct not in listing.stdout
             missing = await asyncio.to_thread(command, "alice,bob")
@@ -105,7 +108,17 @@ def test_talk_empty_dm_first_send_peer_reply_and_observation(
             )
             tui = terminal("alice")
             try:
-                await asyncio.to_thread(tui.wait_for, "Type a message", direct)
+                await asyncio.to_thread(
+                    tui.wait_for,
+                    "Type a message",
+                    direct,
+                    "Talk " + displayed_toolang_version(),
+                )
+                hub_line = next(
+                    line for line in tui.output.splitlines() if "hub" in line
+                )
+                assert "v" + server_version.removeprefix("v") in hub_line
+                assert "convo" in tui.output
                 tui.send(b"\x11")
                 assert await asyncio.to_thread(tui.wait_for_exit) == 0, tui.output
             finally:
@@ -153,6 +166,8 @@ def test_talk_empty_dm_first_send_peer_reply_and_observation(
             try:
                 await asyncio.to_thread(tui.wait_for, "agents only", observed)
                 assert "Type a message" not in tui.output
+                assert "owner · view only" in tui.output
+                assert tui.output.count("Talk " + displayed_toolang_version()) == 1
                 tui.send(b"observer cannot send\r\x11")
                 assert await asyncio.to_thread(tui.wait_for_exit) == 0, tui.output
             finally:
@@ -184,6 +199,8 @@ def test_open_talk_updates_composer_when_gc_membership_changes(
             try:
                 await asyncio.to_thread(tui.wait_for, "Observers(1)")
                 assert "Type a message" not in tui.output
+                assert "owner · view only" in tui.output
+                assert tui.output.count("Talk " + displayed_toolang_version()) == 1
                 await human.join_conversation(conversation.id)
                 await asyncio.to_thread(tui.wait_for, "Observers(2)", "Type a message")
                 tui.send(b"joined from another client\r")

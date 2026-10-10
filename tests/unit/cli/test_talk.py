@@ -54,7 +54,7 @@ def install_hub(monkeypatch, client, *, human="human:bryan", identity="test"):
 
     @asynccontextmanager
     async def hub(config):
-        app = create_app(client(actor=human))
+        app = create_app(client(actor=human), version="0.4.0-test")
         async with app.router.lifespan_context(app):
             async with HubClient(config, transport=httpx.ASGITransport(app)) as remote:
                 yield remote
@@ -109,6 +109,11 @@ def messaging_cli(tmp_path, monkeypatch):
 def test_send_body_is_literal_and_exits_on_ack(
     tmp_path, capsys, monkeypatch, messaging_cli, words, expected
 ):
+    monkeypatch.setattr(
+        HubClient,
+        "info",
+        AsyncMock(side_effect=AssertionError("unexpected metadata request")),
+    )
     monkeypatch.setenv("TOOLANG_INPUTBOX_MAX_WIDTH", "invalid")
     result = cli.main(["--root", str(tmp_path), "talk", "alice", *words])
     assert result == 0
@@ -129,6 +134,11 @@ def test_send_body_is_literal_and_exits_on_ack(
 def test_directory_lists_conversations_and_interactive_requires_tty(
     tmp_path, capsys, monkeypatch, messaging_cli
 ):
+    monkeypatch.setattr(
+        HubClient,
+        "info",
+        AsyncMock(side_effect=AssertionError("unexpected metadata request")),
+    )
     monkeypatch.setenv("TOOLANG_INPUTBOX_MAX_WIDTH", "invalid")
     assert cli.main(["--root", str(tmp_path), "talk"]) == 0
     output = capsys.readouterr().out
@@ -160,9 +170,12 @@ def test_talk_restores_saved_drafts_and_input_history(
     monkeypatch.setattr(talk.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr(talk.sys.stdout, "isatty", lambda: True)
     monkeypatch.setattr(talk, "resolve_launcher", lambda **kwargs: None)
+    monkeypatch.setattr(talk, "toolang_version", lambda: "0.4.0-client")
     restored = []
 
     async def inspect_ui(ui):
+        assert ui.header.caption == "Talk v0.4.0-client"
+        assert ui.header.fields[0] == ("hub", "v0.4.0-test")
         restored.append(ui.prompt.buffer.text)
         assert ui.prompt.history.get_strings() == ["previous message"]
         assert ui.prompt.placeholder == "Type a message"
@@ -767,6 +780,11 @@ def test_talk_tmux_session_reuses_canonical_window(
     from tests.unit.cli.test_tmux_launcher import FakePane, FakeServer, _launcher
     from toolang.cli.common.tmux import MARK_CONTEXT, MARK_PAD
 
+    monkeypatch.setattr(
+        HubClient,
+        "info",
+        AsyncMock(side_effect=AssertionError("parent queried metadata")),
+    )
     server, pane = FakeServer(), FakePane(session_id="$shell")
     monkeypatch.setattr(talk.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr(talk.sys.stdout, "isatty", lambda: True)

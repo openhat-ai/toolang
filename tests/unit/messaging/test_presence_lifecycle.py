@@ -193,7 +193,7 @@ def test_failed_presence_worker_marks_hub_unhealthy_until_restart(monkeypatch, f
 
         monkeypatch.setattr(PresenceWorker, "run", run)
         human = client(FakeServer(server_type="valkey"), "human:owner")
-        app = create_app(human)
+        app = create_app(human, version="0.4.0-test")
         async with (
             app.router.lifespan_context(app),
             httpx.AsyncClient(

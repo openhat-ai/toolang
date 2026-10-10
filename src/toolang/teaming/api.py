@@ -30,7 +30,7 @@ from .errors import (
     ScopeUnavailable,
 )
 from .messaging import MessagingClient
-from .schemas import target
+from .schemas import HubInfo, target
 from .messaging_api import messaging_router
 from .lifecycle import HubLifecycle
 from .team_api import team_router
@@ -41,12 +41,14 @@ from .roster import Roster
 def create_app(
     client: MessagingClient,
     *,
+    version: str,
     on_ready: Callable[[], None] | None = None,
     roster: Roster | None = None,
     local_activity: Callable[[str], ActivityReader | None] | None = None,
 ) -> FastAPI:
     """Bind requests to one configured human; own the service for this lifespan."""
     target(client.actor, kind="human")
+    info = HubInfo(version=version)
 
     async def prepare_request(
         backend: Annotated[str | None, Header(alias="X-Toolang-Backend")] = None,
@@ -129,6 +131,10 @@ def create_app(
             {"code": "messaging_error", "detail": "Invalid Hub request"},
             status_code=400,
         )
+
+    @app.get("/info")
+    async def server_info() -> HubInfo:
+        return info
 
     @app.get("/healthz")
     async def health() -> dict[str, bool]:

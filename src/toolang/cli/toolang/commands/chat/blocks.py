@@ -7,15 +7,12 @@ from dataclasses import dataclass, field
 import re
 from typing import Any, Literal
 
-from rich import box
 from rich.console import Console, ConsoleOptions, Group, RenderableType, RenderResult
 from rich.markup import escape
-from rich.panel import Panel
-from rich.table import Table
 from rich.text import Text
 
 from toolang.base.types.message import Part
-from toolang.cli.common.output import toolang_logo, toolang_logo_text
+from toolang.cli.common.banner import Banner, version_label
 from toolang.cli.common.terminal_surfaces import DARK_TERMINAL_SURFACES
 from toolang.cli.common.model_formatting import model_reasoning_value
 from toolang.execution.events import RunBegin, RunEnd, RunEvent, StepBegin, StepEnd
@@ -58,11 +55,6 @@ from .slashes import (
     outcome_lines,
 )
 from .tables import table_lines
-
-_HEADER_MIN_WIDE_WIDTH = 69
-_HEADER_HORIZONTAL_PADDING = 2
-_HEADER_COLUMN_GAP = 4
-_HEADER_FIELD_GAP = 2
 
 
 def _terminal_diagnostic(status: str, error: str | ErrorMessage | ErrorRef) -> str:
@@ -662,6 +654,7 @@ class _SlashResultDivider:
 @dataclass(frozen=True, slots=True)
 class HeaderBlock:
     executor_metadata: ChatExecutorMetadata
+    client_version: str
 
     def render(self) -> RenderableType:
         return Group(Text(), self, Text("\n\n"))
@@ -682,59 +675,7 @@ class HeaderBlock:
             ("sandbox", sandbox_value),
             ("workspaces", Text(workspace_value)),
         )
-        key_width = max(display_width(key) for key, _value in fields)
-        content_width = options.max_width - 2 - 2 * _HEADER_HORIZONTAL_PADDING
-        if content_width <= key_width + _HEADER_FIELD_GAP:
-            details = Table.grid(padding=0)
-            details.add_column(no_wrap=False, overflow="fold")
-            for key, value in fields:
-                details.add_row(Text(key, style="dim"))
-                details.add_row(value)
-        else:
-            details = Table.grid(padding=(0, _HEADER_FIELD_GAP))
-            details.add_column(no_wrap=True)
-            details.add_column(no_wrap=False, overflow="fold")
-            for key, value in fields:
-                details.add_row(Text(key, style="dim"), value)
-
-        logo_text = toolang_logo_text()
-        logo = toolang_logo(console)
-        logo_width = max(display_width(line) for line in logo_text.splitlines())
-        details_width = (
-            key_width
-            + _HEADER_FIELD_GAP
-            + max(
-                display_width(workspace_value),
-                display_width(runtime_value.plain),
-                display_width(sandbox_value.plain),
-            )
-        )
-        wide_width = (
-            2
-            + 2 * _HEADER_HORIZONTAL_PADDING
-            + logo_width
-            + _HEADER_COLUMN_GAP
-            + details_width
-        )
-        if options.max_width >= max(_HEADER_MIN_WIDE_WIDTH, wide_width):
-            content = Table.grid(padding=(0, _HEADER_COLUMN_GAP))
-            content.add_column(no_wrap=True, vertical="top")
-            content.add_column(no_wrap=False, vertical="top")
-            content.add_row(logo, details)
-        else:
-            content = Table.grid(padding=0)
-            content.add_column(no_wrap=False)
-            content.add_row(logo)
-            content.add_row(Text())
-            content.add_row(details)
-
-        yield Panel(
-            content,
-            box=box.ROUNDED,
-            border_style="dim",
-            padding=(1, _HEADER_HORIZONTAL_PADDING),
-            expand=False,
-        )
+        yield Banner(f"Chat {version_label(self.client_version)}", fields)
 
 
 def _header_runtime_value(metadata: ChatExecutorMetadata) -> Text:
@@ -743,7 +684,7 @@ def _header_runtime_value(metadata: ChatExecutorMetadata) -> Text:
     if metadata.version is None:
         raise ValueError("remote chat executor metadata is missing its version")
     version = metadata.version
-    return Text(version if version == "unknown" else f"v{version.removeprefix('v')}")
+    return Text(version_label(version))
 
 
 def _header_sandbox_value(metadata: ChatExecutorMetadata) -> Text:
