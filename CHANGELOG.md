@@ -474,6 +474,17 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Fixed
 
+- `too chat` and `too talk` align their live output: execution progress
+  footers and two-ended rows end two cells before the available progress
+  width's right edge, Chat's banner is followed by two blank rows before
+  the input box and the first control bar, and the empty-input placeholders
+  read `Describe your task` in Chat and `Type a message` in Talk.
+
+- Ctrl+L in Chat and Talk clears the display and places the input area at
+  the top without a leading blank row, preserving prior output in native
+  scrollback; Talk restores the gap above its input when a new message or
+  notice is displayed.
+
 - `too chat` and `too talk` pass the invoking process's
   `TOOLANG_PROGRESS_MAX_WIDTH` and `TOOLANG_INPUTBOX_MAX_WIDTH` into new tmux
   panes — including unset values, preserving the fallback — so a tmux server's
