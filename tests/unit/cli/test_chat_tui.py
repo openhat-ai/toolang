@@ -2175,7 +2175,7 @@ def test_chat_durable_response_matches_run_model_markdown(live: bool) -> None:
     progress_text = _render_text(progress.render(), width=40).rstrip("\n")
 
     assert durable_text.startswith("• Heading\n")
-    assert f"  {'─' * 38}\n" in durable_text
+    assert f"  {'─' * 36}\n" in durable_text
     assert durable_text == progress_text.removeprefix("\n")
 
 
@@ -2197,7 +2197,7 @@ def test_chat_fenced_code_preserves_one_rectangular_background() -> None:
         for line in lines
     ]
 
-    assert background_widths == [40, 40, 40, 40, 40]
+    assert background_widths == [38, 38, 38, 38, 38]
     assert "".join(segment.text for segment in lines[1]).startswith("    x = 1")
     assert {
         segment.style.bgcolor.get_truecolor().hex

@@ -489,6 +489,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Fixed
 
+- Execution progress Markdown blocks and the script run context header now
+  end two cells before the available progress width's right edge, matching
+  execution footers and two-ended rows and keeping one right margin across
+  progress output.
+
 - `too chat` and `too talk` show a blinking block cursor in their input area
   so it is easier to see while composing, and restore the terminal's default
   cursor shape on exit.

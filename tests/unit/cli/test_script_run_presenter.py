@@ -687,11 +687,11 @@ def test_progress_markdown_uses_a_quiet_unicode_horizontal_rule() -> None:
 
     rendered = stream.getvalue()
     assert "-" not in rendered
-    assert "  " + "─" * 38 in rendered
+    assert "  " + "─" * 36 in rendered
     assert rendered.splitlines() == [
         "• before",
         "",
-        "  " + "─" * 38,
+        "  " + "─" * 36,
         "",
         "  after",
     ]
@@ -790,7 +790,7 @@ def test_non_tty_markdown_code_preserves_tty_geometry_without_ansi() -> None:
 
     lines = stream.getvalue().splitlines()
     assert [line.strip() for line in lines] == ["•", "x = 1", ""]
-    assert all(len(line) == 40 for line in lines)
+    assert all(len(line) == 38 for line in lines)
     assert "\x1b" not in stream.getvalue()
 
 
@@ -1005,7 +1005,7 @@ def test_script_context_alignment_and_dim_style(model, label) -> None:
     text = "".join(segment.text for segment in segments).rstrip("\n")
     assert text.startswith("‣ agic:_  ")
     assert text.endswith(label)
-    assert display_width(text) == 80
+    assert display_width(text) == 78
     assert display_width("‣") == 1
     for segment in segments:
         if segment.text.strip():
@@ -1019,7 +1019,7 @@ def test_script_context_alignment_and_dim_style(model, label) -> None:
 def test_script_context_stacks_at_two_space_boundary() -> None:
     context = RunContext("agic:demo", ModelRequest("test/model"))
     left, right = "‣ agic:demo", "test/model · auto"
-    threshold = display_width(left + "  " + right)
+    threshold = display_width(left + "  " + right) + 2
     stream = StringIO()
     Console(file=stream, width=threshold, color_system=None).print(context)
     assert stream.getvalue() == left + "  " + right + "\n"
@@ -1034,7 +1034,7 @@ def test_script_context_preserves_long_literal_fields_at_narrow_widths(width) ->
     stream = StringIO()
     Console(file=stream, width=width, color_system=None).print(context)
     output = stream.getvalue()
-    assert all(display_width(line) <= width for line in output.splitlines())
+    assert all(display_width(line) <= max(1, width - 2) for line in output.splitlines())
     assert "\x1b" not in output
     joined = "".join(line.strip() for line in output.splitlines()).removeprefix("‣")
     assert "provider/long-model" in joined
