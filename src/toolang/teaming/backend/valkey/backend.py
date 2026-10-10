@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import random
 from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
@@ -58,6 +60,13 @@ class _SnapshotChanged(Exception):
 
 def _json(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+
+async def _snapshot_backoff(attempt: int) -> None:
+    """Desynchronize contenders after a rejected, definitely unwritten operation."""
+    if attempt + 1 < SNAPSHOT_RETRIES:
+        ceiling = min(0.1, 0.005 * 2**attempt)
+        await asyncio.sleep(random.uniform(ceiling / 2, ceiling))
 
 
 class ValkeyBackend:
@@ -120,7 +129,7 @@ class ValkeyBackend:
         only a rejected snapshot, never an uncertain transport result.
         """
         target(agent, kind="agent")
-        for _ in range(SNAPSHOT_RETRIES):
+        for attempt in range(SNAPSHOT_RETRIES):
             raw = await self._call("HGET", TEAM, agent)
             try:
                 if raw is not None:
@@ -131,7 +140,7 @@ class ValkeyBackend:
             try:
                 return await self._eval(TEAM_GUARD + script, keys, [*args, checked])
             except _SnapshotChanged:
-                continue
+                await _snapshot_backoff(attempt)
         raise MessagingError("Teaming state changed repeatedly; retry the operation")
 
     async def initialize(self) -> None:
@@ -233,7 +242,7 @@ class ValkeyBackend:
     async def _operation(
         self, script: str, op: dict, extra: list[str] | None = None
     ) -> Any:
-        for _ in range(SNAPSHOT_RETRIES):
+        for attempt in range(SNAPSHOT_RETRIES):
             snapshot = await self._snapshot(op)
             seconds, micros = map(int, snapshot["clock"])
             stamp = datetime.fromtimestamp(seconds, UTC).replace(microsecond=micros)
@@ -251,7 +260,7 @@ class ValkeyBackend:
                     script, [*BASE_KEYS, *(extra or [])], [_json(checked)]
                 )
             except _SnapshotChanged:
-                continue
+                await _snapshot_backoff(attempt)
         raise MessagingError("Teaming state changed repeatedly; retry the operation")
 
     async def team(self) -> list[TeamMember]:

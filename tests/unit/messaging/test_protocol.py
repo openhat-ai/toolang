@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from random import Random
 from uuid import UUID
 
 from fakeredis import FakeAsyncValkey, FakeServer
@@ -590,10 +591,28 @@ def test_gc_retry_after_lost_response_creates_another_distinct_conversation(
     asyncio.run(scenario())
 
 
-def test_concurrent_initialization_preserves_one_system_gc_after_rename():
+def test_concurrent_initialization_preserves_one_system_gc_after_rename(monkeypatch):
+    # Fix the backoff sequence while exercising actual concurrent transactions.
+    monkeypatch.setattr("random.uniform", Random(0).uniform)
+
     async def scenario():
         server = FakeServer(server_type="valkey")
         clients = [client(server, f"human:h{i}") for i in range(10)]
+
+        def interleave_snapshots(backend):
+            capture = backend._snapshot
+
+            async def snapshot(op):
+                result = await capture(op)
+                # A real connection can yield between validation and commit.
+                # Force that interleaving even when the fake driver does not.
+                await asyncio.sleep(0)
+                return result
+
+            monkeypatch.setattr(backend, "_snapshot", snapshot)
+
+        for human in clients:
+            interleave_snapshots(human.backend)
         try:
             await asyncio.gather(*(human.__aenter__() for human in clients))
             systems = await asyncio.gather(
