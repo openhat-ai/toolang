@@ -65,6 +65,8 @@ def test_remote_chat_initial_workdir_uses_selected_thread() -> None:
         requests.append(request)
         if request.url.path == "/healthz":
             return httpx.Response(200, json={"ok": True})
+        if request.url.path == "/api/v1/workspaces":
+            return httpx.Response(200, json=_workspaces())
         if request.url.path == "/api/v1/profile":
             return httpx.Response(200, json=_profile())
         if request.url.path == "/api/v1/runs/defaults":
@@ -124,6 +126,8 @@ def test_remote_chat_initializes_a_fallback_when_run_defaults_have_no_model() ->
         nonlocal model_requests
         if request.url.path == "/healthz":
             return httpx.Response(200, json={"ok": True})
+        if request.url.path == "/api/v1/workspaces":
+            return httpx.Response(200, json=_workspaces())
         if request.url.path == "/api/v1/profile":
             return httpx.Response(200, json=_profile())
         if request.url.path == "/api/v1/runs/defaults":
@@ -194,6 +198,18 @@ class _Bytes(httpx.AsyncByteStream):
     async def __aiter__(self) -> AsyncIterator[bytes]:
         for chunk in self._chunks:
             yield chunk
+
+
+def _workspaces() -> dict[str, object]:
+    return {
+        "revision": "state_remote",
+        "workdir": "lab://",
+        "items": [
+            {"name": "lab", "path": "/runtime/lab", "available": True},
+            {"name": "unmounted", "path": "/host-only/repo", "available": False},
+            {"name": "toolang", "path": "/runtime/toolang", "available": True},
+        ],
+    }
 
 
 def _profile(
@@ -332,6 +348,8 @@ def test_remote_chat_non_run_operations_and_executor_metadata() -> None:
         requests.append((request.method, request.url.path, body))
         if request.url.path == "/healthz":
             return httpx.Response(200, json={"ok": True})
+        if request.url.path == "/api/v1/workspaces":
+            return httpx.Response(200, json=_workspaces())
         if request.url.path == "/api/v1/profile":
             return httpx.Response(
                 200,
@@ -394,10 +412,11 @@ def test_remote_chat_non_run_operations_and_executor_metadata() -> None:
     )
     try:
         assert session.executor_metadata == ChatExecutorMetadata(
-            sandbox_selector="docker:python:3.13-slim",
-            sandbox_detail="176191c1528b",
+            sandbox_driver="docker",
+            sandbox_detail="python:3.13-slim",
             endpoint="http://runtime.test:7001",
             version="v0.3.9",
+            workspaces=("lab", "toolang"),
         )
         assert session.run_client is not None
         assert session.run_client.endpoint == "http://runtime.test:7001"
@@ -447,6 +466,8 @@ def test_remote_chat_resource_queries_and_model_reconciliation() -> None:
         query = tuple(request.url.params.get_list("query"))
         if path == "/healthz":
             return httpx.Response(200, json={"ok": True})
+        if path == "/api/v1/workspaces":
+            return httpx.Response(200, json=_workspaces())
         if path == "/api/v1/profile":
             return httpx.Response(200, json=_profile())
         if path == "/api/v1/runs/defaults":
@@ -635,6 +656,8 @@ def test_remote_chat_rejects_invalid_runtime_identity(
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/healthz":
             return httpx.Response(200, json={"ok": True})
+        if request.url.path == "/api/v1/workspaces":
+            return httpx.Response(200, json=_workspaces())
         if request.url.path == "/api/v1/profile":
             return httpx.Response(200, json=profile_payload)
         if request.url.path == "/api/v1/runs/defaults":
@@ -739,6 +762,8 @@ def test_remote_chat_uses_local_host_description_when_profile_does_not_supply_it
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/healthz":
             return httpx.Response(200, json={"ok": True})
+        if request.url.path == "/api/v1/workspaces":
+            return httpx.Response(200, json=_workspaces())
         if request.url.path == "/api/v1/profile":
             return httpx.Response(200, json=profile_payload)
         if request.url.path == "/api/v1/runs/defaults":
@@ -752,13 +777,108 @@ def test_remote_chat_uses_local_host_description_when_profile_does_not_supply_it
     )
     try:
         assert session.executor_metadata == ChatExecutorMetadata(
-            sandbox_selector="host",
+            sandbox_driver="host",
             sandbox_detail="Test OS 1.0 arm64",
             endpoint="http://runtime.test:7001",
             version=remote._runtime_identity(profile_payload).version,
+            workspaces=("lab", "toolang"),
         )
     finally:
         session.close()
+
+
+@pytest.mark.parametrize(
+    "payload, expected",
+    [
+        (_workspaces(), ("lab", "toolang")),
+        ({"items": []}, ()),
+        ({"items": [{"name": "lab", "available": False}]}, ()),
+        (
+            {
+                "future": True,
+                "items": [{"name": "repo", "available": True, "future": 1}],
+            },
+            ("repo",),
+        ),
+        ({}, None),
+        ({"items": "lab"}, None),
+        ({"items": [None]}, None),
+        ({"items": [{"name": "lab", "available": "true"}]}, None),
+        ({"items": [{"name": "bad\nname", "available": True}]}, None),
+        ({"items": [{"name": "lab", "available": True}] * 2}, None),
+    ],
+)
+def test_remote_chat_workspace_snapshot_uses_only_valid_available_names(
+    payload: object, expected: tuple[str, ...] | None
+) -> None:
+    requests: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request.url.path)
+        if request.url.path == "/healthz":
+            return httpx.Response(200, json={"ok": True})
+        if request.url.path == "/api/v1/profile":
+            return httpx.Response(200, json=_profile())
+        if request.url.path == "/api/v1/workspaces":
+            return httpx.Response(200, json=payload)
+        if request.url.path == "/api/v1/runs/defaults":
+            return httpx.Response(200, json=_run_defaults())
+        raise AssertionError(f"unexpected request: {request.method} {request.url}")
+
+    session = remote.RemoteChatSession(
+        "http://runtime.test:7001",
+        expected_sandbox="host",
+        transport=httpx.MockTransport(handler),
+    )
+    try:
+        assert session.executor_metadata.workspaces == expected
+        assert session.initial_setting().model is not None
+        assert requests.count("/api/v1/workspaces") == 1
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("failure", ["http", "transport", "json"])
+def test_remote_chat_workspace_inspection_failure_does_not_block_startup(
+    failure: str,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/healthz":
+            return httpx.Response(200, json={"ok": True})
+        if request.url.path == "/api/v1/profile":
+            return httpx.Response(200, json=_profile())
+        if request.url.path == "/api/v1/workspaces":
+            if failure == "transport":
+                raise httpx.ReadTimeout("workspace timeout")
+            if failure == "json":
+                return httpx.Response(200, content="not json")
+            return httpx.Response(404, json={"detail": "unavailable"})
+        if request.url.path == "/api/v1/runs/defaults":
+            return httpx.Response(200, json=_run_defaults())
+        raise AssertionError(f"unexpected request: {request.method} {request.url}")
+
+    session = remote.RemoteChatSession(
+        "http://runtime.test:7001",
+        expected_sandbox="host",
+        transport=httpx.MockTransport(handler),
+    )
+    try:
+        assert session.executor_metadata.workspaces is None
+        assert session.initial_setting().model is not None
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize(
+    "image", ["python:3.13-slim", "registry.test:5000/team/python@sha256:abcdef"]
+)
+def test_remote_chat_sandbox_description_preserves_complete_image(image: str) -> None:
+    identity = remote._runtime_identity(
+        _profile(
+            driver="docker", selector=f"docker:{image}", instance=_CONTAINER_ID[:12]
+        )
+    )
+    assert remote._sandbox_detail(identity) == image
 
 
 def test_remote_chat_repeated_concrete_runs_do_not_list_models() -> None:
@@ -769,6 +889,8 @@ def test_remote_chat_repeated_concrete_runs_do_not_list_models() -> None:
         requests.append(request.url.path)
         if request.url.path == "/healthz":
             return httpx.Response(200, json={"ok": True})
+        if request.url.path == "/api/v1/workspaces":
+            return httpx.Response(200, json=_workspaces())
         if request.url.path == "/api/v1/profile":
             return httpx.Response(200, json=_profile())
         if request.url.path == "/api/v1/runs/defaults":
@@ -810,10 +932,11 @@ def test_remote_chat_repeated_concrete_runs_do_not_list_models() -> None:
         session.close()
 
     assert session.executor_metadata == ChatExecutorMetadata(
-        sandbox_selector="host",
+        sandbox_driver="host",
         sandbox_detail=_HOST_DESCRIPTION,
         endpoint="http://runtime.test:7001",
         version="v0.3.9",
+        workspaces=("lab", "toolang"),
     )
     assert [type(item) for item in events] == [RunBegin, RunEnd, RunBegin, RunEnd]
     assert states == [RunAccepted("run_remote"), RunAccepted("run_remote")]
@@ -844,6 +967,8 @@ def test_remote_chat_falls_back_to_detail_without_resubmitting(
         nonlocal submissions
         if request.url.path == "/healthz":
             return httpx.Response(200, json={"ok": True})
+        if request.url.path == "/api/v1/workspaces":
+            return httpx.Response(200, json=_workspaces())
         if request.url.path == "/api/v1/profile":
             return httpx.Response(200, json=_profile())
         if request.url.path == "/api/v1/runs/defaults":
@@ -902,6 +1027,8 @@ def test_remote_chat_blocks_ambiguous_pre_acceptance_failure() -> None:
         nonlocal submissions
         if request.url.path == "/healthz":
             return httpx.Response(200, json={"ok": True})
+        if request.url.path == "/api/v1/workspaces":
+            return httpx.Response(200, json=_workspaces())
         if request.url.path == "/api/v1/profile":
             return httpx.Response(200, json=_profile())
         if request.url.path == "/api/v1/runs/defaults":
@@ -967,6 +1094,8 @@ def test_remote_chat_steer_delivers_receipt_or_error_once(failure: str | None) -
         path = request.url.path
         if path == "/healthz":
             return httpx.Response(200, json={"ok": True})
+        if path == "/api/v1/workspaces":
+            return httpx.Response(200, json=_workspaces())
         if path == "/api/v1/profile":
             return httpx.Response(200, json=_profile())
         if path == "/api/v1/runs/defaults":

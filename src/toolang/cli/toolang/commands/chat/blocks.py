@@ -662,7 +662,6 @@ class _SlashResultDivider:
 
 @dataclass(frozen=True, slots=True)
 class HeaderBlock:
-    home: str
     executor_metadata: ChatExecutorMetadata
     version_label: str
 
@@ -677,24 +676,25 @@ class HeaderBlock:
         details = Table.grid(padding=(0, _HEADER_FIELD_GAP))
         details.add_column(no_wrap=True)
         details.add_column(no_wrap=False, overflow="fold")
-        executor_value = _header_executor_value(
-            self.executor_metadata,
-            tui_version=self.version_label,
-        )
-        details.add_row(Text("executor", style="dim"), executor_value)
+        runtime_value = _header_runtime_value(self.executor_metadata)
+        details.add_row(Text("runtime", style="dim"), runtime_value)
         sandbox_value = _header_sandbox_value(self.executor_metadata)
         details.add_row(Text("sandbox", style="dim"), sandbox_value)
-        details.add_row(Text("home", style="dim"), Text(self.home))
+        workspaces = self.executor_metadata.workspaces
+        workspace_value = (
+            "unavailable" if workspaces is None else ", ".join(workspaces) or "none"
+        )
+        details.add_row(Text("workspaces", style="dim"), Text(workspace_value))
 
         logo_text = toolang_logo_text()
         logo = toolang_logo(console)
         logo_width = max(display_width(line) for line in logo_text.splitlines())
         details_width = (
-            display_width("executor")
+            display_width("workspaces")
             + _HEADER_FIELD_GAP
             + max(
-                display_width(self.home),
-                display_width(executor_value.plain),
+                display_width(workspace_value),
+                display_width(runtime_value.plain),
                 display_width(sandbox_value.plain),
             )
         )
@@ -725,42 +725,29 @@ class HeaderBlock:
             expand=False,
             title_align="left",
             title=Text(
-                f"Toolang {self.version_label}",
+                f"Toolang Chat {self.version_label}",
                 style=Style(bold=False, dim=False),
             ),
         )
 
 
-def _header_executor_value(
-    metadata: ChatExecutorMetadata,
-    *,
-    tui_version: str,
-) -> Text:
+def _header_runtime_value(metadata: ChatExecutorMetadata) -> Text:
     if metadata.endpoint is None:
         return Text("embedded")
     if metadata.version is None:
         raise ValueError("remote chat executor metadata is missing its version")
-    executor = Text()
-    executor.append(metadata.endpoint, style=Style(link=metadata.endpoint))
-    if not _versions_confirmed_equal(metadata.version, tui_version):
-        executor.append(" · ", style="dim")
-        executor.append(metadata.version)
-    return executor
+    version = metadata.version
+    runtime = Text(version if version == "unknown" else f"v{version.removeprefix('v')}")
+    runtime.append(" · ", style="dim")
+    runtime.append(metadata.endpoint, style=Style(link=metadata.endpoint))
+    return runtime
 
 
 def _header_sandbox_value(metadata: ChatExecutorMetadata) -> Text:
-    sandbox = Text(metadata.sandbox_selector)
+    sandbox = Text(metadata.sandbox_driver)
     sandbox.append(" · ", style="dim")
     sandbox.append(metadata.sandbox_detail)
     return sandbox
-
-
-def _versions_confirmed_equal(executor_version: str, tui_version: str) -> bool:
-    return (
-        executor_version == tui_version
-        and executor_version != "unknown"
-        and not executor_version.endswith("*")
-    )
 
 
 @dataclass(frozen=True, slots=True)

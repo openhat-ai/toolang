@@ -90,7 +90,6 @@ def run_chat_tui(
         ChatTuiApp.run(
             thread_id=thread_id,
             setting=setting,
-            home=str(setup.layout.home),
             input_history=None,
             client=session,
         )

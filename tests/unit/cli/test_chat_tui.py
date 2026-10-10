@@ -162,7 +162,6 @@ async def _queue_test_app() -> AsyncIterator[tuple[tui.ChatTuiApp, _TerminalOutp
         app = tui.ChatTuiApp(
             thread_id="term_busy",
             setting=FakeClient().initial_setting(),
-            home="/tmp/agent",
             input_history=None,
             client=FakeClient(),
         )
@@ -2085,7 +2084,6 @@ def test_chat_tui_bindings_cover_all_documented_shortcut_metadata() -> None:
     app = tui.ChatTuiApp(
         thread_id=None,
         setting=FakeClient().initial_setting(),
-        home="/tmp/agent",
         input_history=None,
         client=FakeClient(),
     )
@@ -2330,7 +2328,6 @@ def test_chat_input_area_absorbs_live_progress_contraction() -> None:
             app = tui.ChatTuiApp(
                 thread_id=None,
                 setting=FakeClient().initial_setting(),
-                home="/tmp/agent",
                 input_history=None,
                 client=FakeClient(),
             )
@@ -2643,7 +2640,6 @@ def test_chat_delayed_cursor_reports_do_not_scroll_unused_terminal_rows(
             app = tui.ChatTuiApp(
                 thread_id=None,
                 setting=FakeClient().initial_setting(),
-                home="/tmp/agent",
                 input_history=None,
                 client=FakeClient(),
             )
@@ -3081,288 +3077,169 @@ def test_chat_slash_table_uses_neutral_headers_and_one_line_rows() -> None:
     assert model_header.style is None or model_header.style.color is None
 
 
-def test_chat_header_uses_wide_local_executor_layout() -> None:
+def test_chat_header_uses_wide_runtime_layout() -> None:
     block = blocks.HeaderBlock(
-        home="/tmp/toolang/agents/alice",
         executor_metadata=ChatExecutorMetadata(
-            sandbox_selector="host",
+            sandbox_driver="host",
             sandbox_detail=_HOST_DESCRIPTION,
+            endpoint="http://localhost:7001",
+            version="0.3.9",
+            workspaces=("lab", "toolang"),
         ),
-        version_label="v0.1.0",
+        version_label="v0.3.9",
     )
-    rendered = _render_text(block.render(), width=80)
-
-    assert "████        ██" in rendered
-    assert " ██  ⬤  ⬤   ██" in rendered
-    assert " ██        ███" in rendered
-    assert "Toolang" in rendered
-    assert "0.1.0" in rendered
-    assert "v0.1.0" in rendered
-    assert "model" not in rendered
-    assert "home" in rendered
-    assert "/tmp/toolang/agents/alice" in rendered
-    assert "executor" in rendered
-    assert "embedded" in rendered
+    rendered = _render_text(block.render(), width=100)
     lines = rendered.splitlines()
     assert lines[0] == ""
-    assert lines[1].startswith("╭")
-    home_line = next(line for line in lines if "/tmp/toolang/agents/alice" in line)
-    executor_line = next(line for line in lines if "embedded" in line)
-    sandbox_line = next(line for line in lines if _HOST_SANDBOX_VALUE in line)
-    version_line = next(line for line in lines if "v0.1.0" in line)
-    assert lines.index(version_line) < lines.index(executor_line)
-    assert lines.index(executor_line) < lines.index(sandbox_line)
-    assert lines.index(sandbox_line) < lines.index(home_line)
-    assert next(index for index, line in enumerate(lines) if "████" in line) == next(
-        index for index, line in enumerate(lines) if "embedded" in line
-    )
-    assert next(index for index, line in enumerate(lines) if "⬤" in line) == next(
-        index for index, line in enumerate(lines) if _HOST_SANDBOX_VALUE in line
-    )
-    assert next(
-        index for index, line in enumerate(lines) if "████" in line
-    ) + 2 == next(
-        index for index, line in enumerate(lines) if "/tmp/toolang/agents/alice" in line
-    )
-    assert home_line.index("home") == executor_line.index("executor")
-    assert executor_line.index("executor") == sandbox_line.index("sandbox")
-    value_column = home_line.index("/tmp/toolang/agents/alice")
-    assert value_column == executor_line.index("embedded")
-    assert value_column == sandbox_line.index(_HOST_SANDBOX_VALUE)
-    bordered_lines = [line for line in lines if line]
-    assert len({len(line) for line in bordered_lines}) == 1
-    assert not bordered_lines[1].strip("│ ")
-    assert "████" in bordered_lines[2]
-    assert "executor" in bordered_lines[-5]
-    assert "embedded" in bordered_lines[-5]
-    assert "sandbox" in bordered_lines[-4]
-    assert _HOST_SANDBOX_VALUE in bordered_lines[-4]
-    assert "home" in bordered_lines[-3]
-    assert not bordered_lines[-2].strip("│ ")
-    assert lines[1].startswith("╭─ Toolang v0.1.0 ─")
+    assert lines[1].startswith("╭─ Toolang Chat v0.3.9 ─")
     assert rendered.count("Toolang") == 1
-    assert rendered.count("v0.1.0") == 1
+    assert rendered.count("v0.3.9") == 2
+    assert "home" not in rendered
+    assert "executor" not in rendered
+    assert "embedded" not in rendered
+    runtime_line, sandbox_line, workspace_line = (
+        next(line for line in lines if key in line)
+        for key in ("runtime", "sandbox", "workspaces")
+    )
+    assert "████" in runtime_line
+    assert "⬤" in sandbox_line
+    assert "███" in workspace_line
+    assert "v0.3.9 · http://localhost:7001" in runtime_line
+    assert _HOST_SANDBOX_VALUE in sandbox_line
+    assert "lab, toolang" in workspace_line
+    assert runtime_line.index("runtime") == sandbox_line.index("sandbox")
+    assert runtime_line.index("runtime") == workspace_line.index("workspaces")
+    assert runtime_line.index("v0.3.9") == sandbox_line.index("host")
+    assert runtime_line.index("v0.3.9") == workspace_line.index("lab")
+    bordered = [line for line in lines if line]
+    assert len({len(line) for line in bordered}) == 1
+    assert not bordered[1].strip("│ ")
+    assert not bordered[-2].strip("│ ")
 
 
-def test_chat_header_stacks_without_clipping_in_a_narrow_terminal() -> None:
+@pytest.mark.parametrize("width", [30, 40, 60])
+def test_chat_header_stacks_without_clipping_in_a_narrow_terminal(width: int) -> None:
     rendered = _render_text(
         blocks.HeaderBlock(
-            home="/tmp/toolang/agents/alice-with-a-long-home",
             executor_metadata=ChatExecutorMetadata(
-                sandbox_selector="docker:python:3.13-slim",
-                sandbox_detail="176191c1528b",
+                sandbox_driver="docker",
+                sandbox_detail="registry.example:5000/team/python:3.13-slim",
                 endpoint="http://runtime.test:7001",
                 version="v0.3.9",
+                workspaces=("lab", "toolang-with-a-long-workspace-name"),
             ),
             version_label="v0.1.0",
         ).render(),
-        width=40,
+        width=width,
     )
-
     lines = rendered.splitlines()
     logo_index = next(index for index, line in enumerate(lines) if "⬤" in line)
-    toolang_index = next(index for index, line in enumerate(lines) if "Toolang" in line)
-    executor_index = next(
-        index for index, line in enumerate(lines) if "executor" in line
-    )
-    assert toolang_index < logo_index
-    assert executor_index > logo_index + 1
-    assert all(len(line) <= 40 for line in lines)
-    bordered_lines = [line for line in lines if line]
-    assert len({len(line) for line in bordered_lines}) == 1
+    runtime_index = next(index for index, line in enumerate(lines) if "runtime" in line)
+    assert runtime_index > logo_index + 1
+    assert all(len(line) <= width for line in lines)
+    bordered = [line for line in lines if line]
+    assert len({len(line) for line in bordered}) == 1
+    assert not bordered[1].strip("│ ")
+    assert not bordered[-2].strip("│ ")
     unwrapped = rendered.replace("\n", "").replace("│", "").replace(" ", "")
-    assert "alice-with-a-long-home" in unwrapped
-    assert "executorhttp://runtime.test:7001·v0.3.9" in unwrapped
-    assert "sandboxdocker:python:3.13-slim·176191c1528b" in unwrapped
+    assert "runtimev0.3.9·http://runtime.test:7001" in unwrapped
+    assert "sandboxdocker·registry.example:5000/team/python:3.13-slim" in unwrapped
+    assert "workspaceslab,toolang-with-a-long-workspace-name" in unwrapped
     assert rendered.count("·") == 2
-    assert rendered.count("Toolang v0.1.0") == 1
-    assert _CONTAINER_ID not in rendered
+    assert rendered.count("Toolang Chat v0.1.0") == 1
+    assert _CONTAINER_ID[:12] not in rendered
 
 
 @pytest.mark.parametrize(
-    "executor_metadata, version_label, expected_executor, expected_sandbox",
-    (
-        (
-            ChatExecutorMetadata(
-                sandbox_selector="host",
-                sandbox_detail=_HOST_DESCRIPTION,
-                endpoint="http://runtime.test:7001",
-                version="v0.2.7-88-gc73484a9",
-            ),
-            "v0.2.7-87-g69439a4e",
-            "http://runtime.test:7001 · v0.2.7-88-gc73484a9",
-            _HOST_SANDBOX_VALUE,
-        ),
-        (
-            ChatExecutorMetadata(
-                sandbox_selector="docker:python:3.13-slim",
-                sandbox_detail="176191c1528b",
-                endpoint="http://runtime.test:7001",
-                version="v0.3.9",
-            ),
-            "v0.3.8",
-            "http://runtime.test:7001 · v0.3.9",
-            "docker:python:3.13-slim · 176191c1528b",
-        ),
-        (
-            ChatExecutorMetadata(
-                sandbox_selector="host",
-                sandbox_detail=_HOST_DESCRIPTION,
-                endpoint="http://runtime.test:7001",
-                version="v0.3.9",
-            ),
-            "v0.3.9",
-            "http://runtime.test:7001",
-            _HOST_SANDBOX_VALUE,
-        ),
-        (
-            ChatExecutorMetadata(
-                sandbox_selector="host",
-                sandbox_detail=_HOST_DESCRIPTION,
-                endpoint="http://runtime.test:7001",
-                version="v0.3.9*",
-            ),
-            "v0.3.9*",
-            "http://runtime.test:7001 · v0.3.9*",
-            _HOST_SANDBOX_VALUE,
-        ),
-        (
-            ChatExecutorMetadata(
-                sandbox_selector="host",
-                sandbox_detail=_HOST_DESCRIPTION,
-                endpoint="http://runtime.test:7001",
-                version="unknown",
-            ),
-            "unknown",
-            "http://runtime.test:7001 · unknown",
-            _HOST_SANDBOX_VALUE,
-        ),
-    ),
+    "version, expected",
+    [
+        ("0.3.8", "v0.3.8"),
+        ("v0.3.9", "v0.3.9"),
+        ("0.3.9*", "v0.3.9*"),
+        ("unknown", "unknown"),
+    ],
 )
-def test_chat_header_supports_remote_executor_identity(
-    executor_metadata: ChatExecutorMetadata,
-    version_label: str,
-    expected_executor: str,
-    expected_sandbox: str | None,
+def test_chat_header_always_shows_runtime_version_before_endpoint(
+    version: str, expected: str
 ) -> None:
     rendered = _render_text(
         blocks.HeaderBlock(
-            home="~/.toolang/agents/alice",
-            executor_metadata=executor_metadata,
-            version_label=version_label,
+            executor_metadata=ChatExecutorMetadata(
+                sandbox_driver="host",
+                sandbox_detail=_HOST_DESCRIPTION,
+                endpoint="http://runtime.test:7001",
+                version=version,
+                workspaces=("lab",),
+            ),
+            version_label="v0.3.9",
         ).render(),
         width=120,
     )
-
-    executor_line = next(line for line in rendered.splitlines() if "executor" in line)
-    executor_text = executor_line[executor_line.index("executor") :].rstrip("│ ")
-    assert " ".join(executor_text.split()) == f"executor {expected_executor}"
-    assert expected_sandbox is not None
-    sandbox_line = next(line for line in rendered.splitlines() if "sandbox" in line)
-    sandbox_text = sandbox_line[sandbox_line.index("sandbox") :].rstrip("│ ")
-    assert " ".join(sandbox_text.split()) == f"sandbox {expected_sandbox}"
+    runtime_line = next(line for line in rendered.splitlines() if "runtime" in line)
+    assert f"{expected} · http://runtime.test:7001" in runtime_line
 
 
-def test_chat_header_links_remote_endpoint_and_preserves_vertical_padding() -> None:
-    local = blocks.HeaderBlock(
-        home="~/.toolang/agents/eve",
-        executor_metadata=ChatExecutorMetadata(
-            sandbox_selector="host",
-            sandbox_detail=_HOST_DESCRIPTION,
-        ),
-        version_label="v0.2.7-87-g69439a4e*",
-    )
-    remote = blocks.HeaderBlock(
-        home="~/.toolang/agents/eve",
-        executor_metadata=ChatExecutorMetadata(
-            sandbox_selector="host",
-            sandbox_detail=_HOST_DESCRIPTION,
-            endpoint="http://localhost:7001",
-            version="v0.3.0",
-        ),
-        version_label="v0.2.7-87-g69439a4e*",
-    )
-    sandboxed = blocks.HeaderBlock(
-        home="~/.toolang/agents/eve",
-        executor_metadata=ChatExecutorMetadata(
-            sandbox_selector="docker:pyslim-3.11",
-            sandbox_detail="2f0f8934abcd",
-            endpoint="http://localhost:7001",
-            version="v0.3.0",
-        ),
-        version_label="v0.2.7-87-g69439a4e*",
-    )
-
-    local_lines = _render_text(local.render(), width=120).splitlines()
-    remote_lines = _render_text(remote.render(), width=120).splitlines()
-    sandboxed_lines = _render_text(sandboxed.render(), width=120).splitlines()
-    sandboxed_segments = rendering.render_segments(sandboxed.render(), width=120)
-
-    assert "Toolang v0.2.7-87-g69439a4e*" in " ".join(" ".join(local_lines).split())
-    assert len(remote_lines) == len(local_lines)
-    assert len(sandboxed_lines) == len(remote_lines)
-    for lines in (local_lines, remote_lines, sandboxed_lines):
-        assert "Toolang v0.2.7-87-g69439a4e*" in lines[1]
-        assert " ".join(lines).count("Toolang") == 1
-        assert " ".join(lines).count("v0.2.7-87-g69439a4e*") == 1
-        bordered = [line for line in lines if line]
-        assert not bordered[1].strip("│ ")
-        assert not bordered[-2].strip("│ ")
-    ordered = [
-        next(index for index, line in enumerate(sandboxed_lines) if value in line)
-        for value in (
-            "v0.2.7-87-g69439a4e*",
-            "http://localhost:7001",
-            "docker:pyslim-3.11",
-            "~/.toolang/agents/eve",
-        )
-    ]
-    assert ordered == sorted(ordered)
-    endpoint = next(
-        segment
-        for segment in sandboxed_segments
-        if segment.text == "http://localhost:7001"
-    )
-    separators = [segment for segment in sandboxed_segments if "·" in segment.text]
-    assert endpoint.style is not None
-    assert endpoint.style.link == "http://localhost:7001"
-    assert len(separators) == 2
-    assert all(
-        segment.style is not None and segment.style.dim for segment in separators
-    )
-
-
-def test_chat_header_keeps_logo_cells_selectable_and_styles_metadata() -> None:
-    segments = rendering.render_segments(
+@pytest.mark.parametrize(
+    "workspaces, expected",
+    [((), "none"), (None, "unavailable"), (("lab",), "lab")],
+)
+def test_chat_header_distinguishes_empty_and_unavailable_workspaces(
+    workspaces: tuple[str, ...] | None, expected: str
+) -> None:
+    rendered = _render_text(
         blocks.HeaderBlock(
-            home="/tmp/toolang/agents/alice",
             executor_metadata=ChatExecutorMetadata(
-                sandbox_selector="host",
+                sandbox_driver="host",
                 sandbox_detail=_HOST_DESCRIPTION,
+                workspaces=workspaces,
             ),
-            version_label="v0.1.0",
+            version_label="v0.3.9",
         ).render(),
-        width=80,
+        width=100,
     )
+    row = next(line for line in rendered.splitlines() if "workspaces" in line)
+    assert row.split("workspaces", 1)[1].strip("│ ") == expected
 
+
+@pytest.mark.parametrize(
+    "driver, detail", [("host", _HOST_DESCRIPTION), ("docker", "python:3.13-slim")]
+)
+def test_chat_header_keeps_logo_styles_links_and_padding(
+    driver: str, detail: str
+) -> None:
+    block = blocks.HeaderBlock(
+        executor_metadata=ChatExecutorMetadata(
+            sandbox_driver=driver,
+            sandbox_detail=detail,
+            endpoint="http://localhost:7001",
+            version="v0.3.9",
+            workspaces=("lab", "toolang"),
+        ),
+        version_label="v0.1.0",
+    )
+    segments = rendering.render_segments(block.render(), width=100)
+    rendered = _render_text(block.render(), width=100)
+    assert f"{driver} · {detail}" in rendered
+    assert _CONTAINER_ID[:12] not in rendered
     logo_blocks = [segment for segment in segments if "█" in segment.text]
     logo_dots = [segment for segment in segments if "⬤" in segment.text]
-    caption = next(segment for segment in segments if "Toolang v0.1.0" in segment.text)
+    caption = next(
+        segment for segment in segments if "Toolang Chat v0.1.0" in segment.text
+    )
     keys = [
         next(segment for segment in segments if segment.text.strip() == key)
-        for key in ("home", "executor", "sandbox")
+        for key in ("runtime", "sandbox", "workspaces")
     ]
     values = [
         next(segment for segment in segments if segment.text.strip() == value)
-        for value in (
-            "/tmp/toolang/agents/alice",
-            "embedded",
-            "host",
-            _HOST_DESCRIPTION,
-        )
+        for value in ("lab, toolang", "v0.3.9", driver, detail)
     ]
     separators = [segment for segment in segments if "·" in segment.text]
-
+    endpoint = next(
+        segment for segment in segments if segment.text == "http://localhost:7001"
+    )
+    assert endpoint.style is not None
+    assert endpoint.style.link == "http://localhost:7001"
     assert sum(segment.text.count("█") for segment in logo_blocks) == 15
     assert all(
         segment.style is not None
@@ -3390,8 +3267,13 @@ def test_chat_header_keeps_logo_cells_selectable_and_styles_metadata() -> None:
         segment.style is None or (not segment.style.bold and not segment.style.dim)
         for segment in values
     )
-    assert len(separators) == 1
-    assert separators[0].style is not None and separators[0].style.dim
+    assert len(separators) == 2
+    assert all(
+        segment.style is not None and segment.style.dim for segment in separators
+    )
+    bordered = [line for line in rendered.splitlines() if line]
+    assert not bordered[1].strip("│ ")
+    assert not bordered[-2].strip("│ ")
 
 
 def test_chat_model_label_uses_canonical_ref_and_reasoning_status() -> None:
@@ -3670,7 +3552,6 @@ def test_chat_status_resolves_absolute_and_default_session_workspaces() -> None:
             client.initial_setting(),
             workdir="/private/project",
         ),
-        home="/tmp/agent",
         input_history=None,
         client=client,
         agent_name="hak",
@@ -3697,7 +3578,6 @@ def test_chat_tui_tracks_only_root_chdir_workspace_in_center(
             runnable="agic:chat",
             workdir="session://",
         ),
-        home="/tmp/agent",
         input_history=None,
         client=FakeClient(),
         agent_name="hak",
@@ -3784,7 +3664,6 @@ def test_chat_tui_floors_status_elapsed_time() -> None:
     app = tui.ChatTuiApp(
         thread_id=None,
         setting=FakeClient().initial_setting(),
-        home="/tmp/agent",
         input_history=None,
         client=FakeClient(),
     )
@@ -3805,7 +3684,6 @@ def test_chat_ticker_refreshes_compact_progress_without_replacing_the_block() ->
     app = tui.ChatTuiApp(
         thread_id=None,
         setting=FakeClient().initial_setting(),
-        home="/tmp/agent",
         input_history=None,
         client=FakeClient(),
     )
@@ -3852,7 +3730,6 @@ def test_chat_tui_invalidates_only_when_the_visible_elapsed_second_changes(
     app = tui.ChatTuiApp(
         thread_id=None,
         setting=FakeClient().initial_setting(),
-        home="/tmp/agent",
         input_history=None,
         client=FakeClient(),
     )
@@ -3880,7 +3757,6 @@ def test_chat_tui_repaints_run_elapsed_while_session_error_is_visible(
     app = tui.ChatTuiApp(
         thread_id=None,
         setting=FakeClient().initial_setting(),
-        home="/tmp/agent",
         input_history=None,
         client=FakeClient(),
     )
@@ -3910,7 +3786,6 @@ def test_chat_tui_refreshes_elapsed_status_only_while_a_run_is_active(
         app = tui.ChatTuiApp(
             thread_id=None,
             setting=FakeClient().initial_setting(),
-            home="/tmp/agent",
             input_history=None,
             client=FakeClient(),
         )
@@ -3951,7 +3826,6 @@ def test_chat_tui_restarts_elapsed_refresh_timing_for_the_next_run(
         app = tui.ChatTuiApp(
             thread_id=None,
             setting=FakeClient().initial_setting(),
-            home="/tmp/agent",
             input_history=None,
             client=FakeClient(),
         )
@@ -3989,7 +3863,6 @@ def test_chat_tui_stops_short_run_activity_immediately() -> None:
     app = tui.ChatTuiApp(
         thread_id=None,
         setting=FakeClient().initial_setting(),
-        home="/tmp/agent",
         input_history=None,
         client=FakeClient(),
     )
@@ -4014,7 +3887,6 @@ def test_chat_tui_run_lifecycle_starts_and_stops_status_activity(
     app = tui.ChatTuiApp(
         thread_id=None,
         setting=FakeClient().initial_setting(),
-        home="/tmp/agent",
         input_history=None,
         client=FakeClient(),
     )
@@ -4105,7 +3977,6 @@ def test_chat_tui_uses_truecolor_for_live_block_rendering() -> None:
     app = tui.ChatTuiApp(
         thread_id=None,
         setting=FakeClient().initial_setting(),
-        home="/tmp/agent",
         input_history=None,
         client=FakeClient(),
     )
@@ -4143,7 +4014,6 @@ def test_chat_tui_resolves_only_the_selected_model_for_status() -> None:
     app = tui.ChatTuiApp(
         thread_id=None,
         setting=FakeClient().initial_setting(),
-        home="/tmp/agent",
         input_history=None,
         client=client,
     )
@@ -4174,7 +4044,6 @@ def test_chat_tui_omits_effort_when_model_metadata_lookup_fails() -> None:
     app = tui.ChatTuiApp(
         thread_id=None,
         setting=FakeClient().initial_setting(),
-        home="/tmp/agent",
         input_history=None,
         client=UnavailableCatalogClient(),
     )
@@ -4186,7 +4055,6 @@ def test_chat_tui_empty_enter_preserves_status_error() -> None:
     app = tui.ChatTuiApp(
         thread_id=None,
         setting=FakeClient().initial_setting(),
-        home="/tmp/agent",
         input_history=None,
         client=FakeClient(),
     )
@@ -4208,7 +4076,6 @@ def test_chat_tui_navigation_clears_transient_status_error() -> None:
     app = tui.ChatTuiApp(
         thread_id=None,
         setting=FakeClient().initial_setting(),
-        home="/tmp/agent",
         input_history=None,
         client=FakeClient(),
     )
@@ -4230,7 +4097,6 @@ def test_chat_tui_first_escape_immediately_clears_status_error() -> None:
     app = tui.ChatTuiApp(
         thread_id=None,
         setting=FakeClient().initial_setting(),
-        home="/tmp/agent",
         input_history=None,
         client=FakeClient(),
     )
@@ -4250,7 +4116,6 @@ def test_chat_tui_treats_kind_specific_default_as_a_runnable_name() -> None:
         setting=SessionSetting(
             model=ModelRequest("openai/gpt-5"), runnable="agic:default"
         ),
-        home="/tmp/agent",
         input_history=None,
         client=FakeClient(),
     )
@@ -4280,7 +4145,6 @@ def test_chat_tui_keeps_session_runnable_when_run_events_arrive(
             runnable="flow:research",
             workdir="tq://",
         ),
-        home="/tmp/agent",
         input_history=None,
         client=FakeClient(),
         agent_name="hak",
@@ -4310,7 +4174,6 @@ def test_chat_tui_applies_default_settings_while_a_run_is_active() -> None:
     app = tui.ChatTuiApp(
         thread_id="term_status",
         setting=FakeClient().initial_setting(),
-        home="/tmp/agent",
         input_history=None,
         client=FakeClient(),
         agent_name="hak",
@@ -4406,7 +4269,6 @@ def test_chat_tui_creates_a_thread_only_for_the_first_submission(
     app = tui.ChatTuiApp(
         thread_id=None,
         setting=FakeClient().initial_setting(),
-        home="/tmp/agent",
         input_history=None,
         client=client,
     )
@@ -4429,7 +4291,6 @@ def test_chat_thread_creation_error_is_a_submission_error() -> None:
     app = tui.ChatTuiApp(
         thread_id=None,
         setting=FakeClient().initial_setting(),
-        home="/tmp/agent",
         input_history=None,
         client=FailingClient(),
     )
@@ -4475,7 +4336,6 @@ def test_chat_tui_submits_empty_runnable_call(
     app = tui.ChatTuiApp(
         thread_id="term_test",
         setting=setting,
-        home="/tmp/agent",
         input_history=None,
         client=RunnableClient(),
     )
@@ -4504,7 +4364,6 @@ def test_chat_queue_captures_settings_at_submission_time() -> None:
     app = tui.ChatTuiApp(
         thread_id="term_busy",
         setting=FakeClient().initial_setting(),
-        home="/tmp/agent",
         input_history=None,
         client=FakeClient(),
     )
@@ -4545,7 +4404,6 @@ def test_chat_tui_meta_enter_steers_literal_input_and_accepts_the_draft() -> Non
     app = tui.ChatTuiApp(
         thread_id="term_busy",
         setting=FakeClient().initial_setting(),
-        home="/tmp/agent",
         input_history=None,
         client=RecordingClient(),
         progress_max_width=40,
@@ -4572,7 +4430,6 @@ def test_chat_tui_meta_enter_without_an_active_run_preserves_the_draft() -> None
     app = tui.ChatTuiApp(
         thread_id=None,
         setting=FakeClient().initial_setting(),
-        home="/tmp/agent",
         input_history=None,
         client=FakeClient(),
     )
@@ -4589,7 +4446,6 @@ def test_chat_tui_queue_panel_edit_refuses_to_overwrite_a_draft() -> None:
     app = tui.ChatTuiApp(
         thread_id="term_busy",
         setting=FakeClient().initial_setting(),
-        home="/tmp/agent",
         input_history=None,
         client=FakeClient(),
     )
@@ -4631,7 +4487,6 @@ def test_chat_tui_queue_panel_steers_and_removes_only_after_local_acceptance() -
     app = tui.ChatTuiApp(
         thread_id="term_busy",
         setting=FakeClient().initial_setting(),
-        home="/tmp/agent",
         input_history=None,
         client=RecordingClient(),
     )
@@ -4649,7 +4504,6 @@ def test_chat_tui_queue_panel_steers_and_removes_only_after_local_acceptance() -
     rejected = tui.ChatTuiApp(
         thread_id="term_busy",
         setting=FakeClient().initial_setting(),
-        home="/tmp/agent",
         input_history=None,
         client=FakeClient(),
     )
@@ -4676,7 +4530,6 @@ def test_chat_tui_queue_panel_delete_clamps_selection() -> None:
     app = tui.ChatTuiApp(
         thread_id="term_busy",
         setting=FakeClient().initial_setting(),
-        home="/tmp/agent",
         input_history=None,
         client=FakeClient(),
     )
@@ -4701,7 +4554,6 @@ def test_chat_tui_queue_shortcuts_switch_focus_and_move_selection() -> None:
     app = tui.ChatTuiApp(
         thread_id="term_busy",
         setting=FakeClient().initial_setting(),
-        home="/tmp/agent",
         input_history=None,
         client=FakeClient(),
     )
@@ -4746,7 +4598,6 @@ def test_chat_tui_space_toggles_queue_and_tab_only_switches_focus() -> None:
     app = tui.ChatTuiApp(
         thread_id="term_busy",
         setting=FakeClient().initial_setting(),
-        home="/tmp/agent",
         input_history=None,
         client=FakeClient(),
     )
@@ -4843,7 +4694,6 @@ def test_chat_tui_namespace_input_does_not_interfere_with_queue_focus(
     app = tui.ChatTuiApp(
         thread_id="term_busy",
         setting=client.initial_setting(),
-        home="/tmp/agent",
         input_history=None,
         client=client,
     )
@@ -4900,7 +4750,6 @@ def test_chat_run_and_input_controls_require_input_focus(
             app = tui.ChatTuiApp(
                 thread_id="term_busy",
                 setting=FakeClient().initial_setting(),
-                home="/tmp/agent",
                 input_history=None,
                 client=FakeClient(),
             )
@@ -5046,7 +4895,6 @@ def test_chat_removed_queue_commands_preserve_queue_selection_and_draft(
     app = tui.ChatTuiApp(
         thread_id="term_busy",
         setting=FakeClient().initial_setting(),
-        home="/tmp/agent",
         input_history=None,
         client=FakeClient(),
     )
@@ -5127,7 +4975,6 @@ def test_chat_tui_queue_blocks_mutations_after_ambiguous_acceptance() -> None:
     app = tui.ChatTuiApp(
         thread_id="term_busy",
         setting=FakeClient().initial_setting(),
-        home="/tmp/agent",
         input_history=None,
         client=FakeClient(),
     )
@@ -5149,7 +4996,6 @@ def test_chat_tui_keeps_the_queue_paused_while_remote_stream_is_disconnected() -
     app = tui.ChatTuiApp(
         thread_id="term_remote",
         setting=FakeClient().initial_setting(),
-        home="/tmp/agent",
         input_history=None,
         client=FakeClient(),
     )
@@ -5182,7 +5028,6 @@ def test_chat_tui_recovers_from_durable_terminal_truth(
     app = tui.ChatTuiApp(
         thread_id="term_remote",
         setting=FakeClient().initial_setting(),
-        home="/tmp/agent",
         input_history=None,
         client=FakeClient(),
     )
@@ -5252,7 +5097,6 @@ def test_chat_tui_blocks_mutating_input_after_ambiguous_acceptance(
     app = tui.ChatTuiApp(
         thread_id="term_remote",
         setting=FakeClient().initial_setting(),
-        home="/tmp/agent",
         input_history=None,
         client=FakeClient(),
     )
@@ -5302,7 +5146,6 @@ def test_chat_tui_bare_model_command_does_not_open_or_load_a_picker(
     app = tui.ChatTuiApp(
         thread_id="term_remote",
         setting=FakeClient().initial_setting(),
-        home="/tmp/agent",
         input_history=None,
         client=client,
     )
@@ -5332,7 +5175,6 @@ def test_chat_tui_routes_slash_shaped_parse_errors_to_scrollback(
     app = tui.ChatTuiApp(
         thread_id="term_remote",
         setting=FakeClient().initial_setting(),
-        home="/tmp/agent",
         input_history=None,
         client=FakeClient(),
     )
@@ -5383,7 +5225,6 @@ def test_chat_tui_rejected_command_shaped_input_stays_editable_in_status(
     app = tui.ChatTuiApp(
         thread_id="term_remote",
         setting=FakeClient().initial_setting(),
-        home="/tmp/agent",
         input_history=None,
         client=FakeClient(),
     )
@@ -5426,7 +5267,6 @@ def test_chat_tui_recognized_help_usage_and_errors_enter_scrollback(
     app = tui.ChatTuiApp(
         thread_id=None,
         setting=FakeClient().initial_setting(),
-        home="/tmp/agent",
         input_history=None,
         client=FakeClient(),
     )
@@ -5459,7 +5299,6 @@ def test_chat_tui_request_build_failure_retains_input_and_active_run(
     app = tui.ChatTuiApp(
         thread_id="term_remote",
         setting=FakeClient().initial_setting(),
-        home="/tmp/agent",
         input_history=None,
         client=FailingRequestClient(),
     )
@@ -5504,7 +5343,6 @@ def test_chat_tui_rejects_known_unsupported_colon_effort_in_status() -> None:
     app = tui.ChatTuiApp(
         thread_id="term_remote",
         setting=FakeClient().initial_setting(),
-        home="/tmp/agent",
         input_history=None,
         client=UnsupportedEffortClient(),
     )
@@ -5529,7 +5367,6 @@ def test_chat_tui_uses_queued_workspace_snapshot_for_the_next_active_status() ->
         setting=SessionSetting(
             model=ModelRequest("openai/gpt-5"), runnable="agic:chat"
         ),
-        home="/tmp/agent",
         input_history=None,
         client=FakeClient(),
     )
@@ -5568,7 +5405,6 @@ def test_chat_tui_empty_input_requires_two_interrupts_to_exit() -> None:
     app = tui.ChatTuiApp(
         thread_id=None,
         setting=FakeClient().initial_setting(),
-        home="/tmp/agent",
         input_history=None,
         client=FakeClient(),
     )
@@ -5584,7 +5420,6 @@ def test_chat_tui_typing_resets_pending_interrupt_exit() -> None:
     app = tui.ChatTuiApp(
         thread_id=None,
         setting=FakeClient().initial_setting(),
-        home="/tmp/agent",
         input_history=None,
         client=FakeClient(),
     )
@@ -5607,7 +5442,6 @@ def test_chat_initial_input_and_first_control_share_the_live_origin(
             app = tui.ChatTuiApp(
                 thread_id="term_new",
                 setting=FakeClient().initial_setting(),
-                home="/tmp/agent",
                 input_history=None,
                 client=FakeClient(),
             )
@@ -5697,7 +5531,6 @@ def test_chat_tui_clear_scrolls_one_separator_into_history_before_redrawing(
     app = tui.ChatTuiApp(
         thread_id=None,
         setting=FakeClient().initial_setting(),
-        home="/tmp/agent",
         input_history=None,
         client=FakeClient(),
     )
@@ -5755,7 +5588,6 @@ def test_chat_tui_removes_live_block_before_writing_scrollback(
     app = tui.ChatTuiApp(
         thread_id=None,
         setting=FakeClient().initial_setting(),
-        home="/tmp/agent",
         input_history=None,
         client=FakeClient(),
     )
@@ -5778,7 +5610,6 @@ def test_chat_tui_commits_live_finalization_in_one_terminal_transaction(
     app = tui.ChatTuiApp(
         thread_id=None,
         setting=FakeClient().initial_setting(),
-        home="/tmp/agent",
         input_history=None,
         client=FakeClient(),
     )
@@ -5836,7 +5667,6 @@ def test_chat_tui_commits_slash_outcome_in_scrollback_transaction(
     app = tui.ChatTuiApp(
         thread_id=None,
         setting=FakeClient().initial_setting(),
-        home="/tmp/agent",
         input_history=None,
         client=FakeClient(),
     )
@@ -5879,7 +5709,6 @@ def test_chat_tui_adds_one_trailing_gap_to_summary_only_output(
     app = tui.ChatTuiApp(
         thread_id=None,
         setting=FakeClient().initial_setting(),
-        home="/tmp/agent",
         input_history=None,
         client=FakeClient(),
     )
@@ -5904,7 +5733,6 @@ def test_chat_tui_replaces_failed_model_live_state_in_scrollback_transaction(
     app = tui.ChatTuiApp(
         thread_id="thread_1",
         setting=FakeClient().initial_setting(),
-        home="/tmp/agent",
         input_history=None,
         client=FakeClient(),
     )
@@ -5962,7 +5790,6 @@ def test_chat_tui_output_command_renders_durable_markdown(
     app = tui.ChatTuiApp(
         thread_id="thread_1",
         setting=FakeClient().initial_setting(),
-        home="/tmp/agent",
         input_history=None,
         client=FakeClient(),
     )
@@ -6246,7 +6073,7 @@ class FakeApp:
 
 class FakeClient(ChatClient):
     executor_metadata = ChatExecutorMetadata(
-        sandbox_selector="host",
+        sandbox_driver="host",
         sandbox_detail=_HOST_DESCRIPTION,
     )
 
@@ -6789,7 +6616,6 @@ def test_chat_queued_root_context_survives_new_defaults_and_run_transition(
     app = tui.ChatTuiApp(
         thread_id="term_1",
         setting=FakeClient().initial_setting(),
-        home="/tmp/agent",
         input_history=None,
         client=FakeClient(),
     )
@@ -6924,7 +6750,6 @@ def test_chat_burst_steers_keep_each_draft_independent() -> None:
             app = tui.ChatTuiApp(
                 thread_id="term_busy",
                 setting=FakeClient().initial_setting(),
-                home="/tmp/agent",
                 input_history=None,
                 client=FakeClient(),
             )
@@ -7084,7 +6909,6 @@ def test_chat_terminal_publication_does_not_block_ui_events(slow_metadata: str) 
         app = tui.ChatTuiApp(
             thread_id="term_x",
             setting=FakeClient().initial_setting(),
-            home="/tmp/agent",
             input_history=None,
             client=FakeClient(),
             marks=marks,
@@ -7156,7 +6980,6 @@ def test_terminal_title_requires_tty_but_not_tmux(
         app = tui.ChatTuiApp(
             thread_id=None,
             setting=FakeClient().initial_setting(),
-            home="/tmp/agent",
             input_history=None,
             client=FakeClient(),
         )
@@ -7178,7 +7001,6 @@ def test_terminal_focus_reports_preserve_chat_draft_and_status(
         app = tui.ChatTuiApp(
             thread_id="term_x",
             setting=FakeClient().initial_setting(),
-            home="/tmp/agent",
             input_history=None,
             client=FakeClient(),
         )
@@ -7214,7 +7036,6 @@ def test_chat_tui_seeds_and_updates_session_workdir() -> None:
     app = tui.ChatTuiApp(
         thread_id="term_existing",
         setting=WorkdirClient().initial_setting(),
-        home="/tmp/agent",
         input_history=None,
         client=WorkdirClient(),
     )
@@ -7428,7 +7249,6 @@ def test_chat_palette_reaches_live_committed_and_durable_output(
     app = tui.ChatTuiApp(
         thread_id="thread_1",
         setting=client.initial_setting(),
-        home="/tmp/agent",
         input_history=None,
         client=client,
         surfaces=palette,
@@ -7517,7 +7337,6 @@ def test_snapshot_updates_tui_run_identity_and_completion_title(monkeypatch):
     app = tui.ChatTuiApp(
         thread_id="term_status",
         setting=FakeClient().initial_setting(),
-        home="/tmp/agent",
         input_history=None,
         client=FakeClient(),
     )

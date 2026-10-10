@@ -229,7 +229,6 @@ class ChatTuiApp:
         *,
         thread_id: str | None,
         setting: SessionSetting,
-        home: str,
         input_history: ChatInputHistoryStore | None,
         client: ChatClient,
         agent_name: str | None = None,
@@ -241,7 +240,6 @@ class ChatTuiApp:
             ChatTuiApp(
                 thread_id=thread_id,
                 setting=setting,
-                home=home,
                 input_history=input_history,
                 client=client,
                 agent_name=agent_name,
@@ -256,7 +254,6 @@ class ChatTuiApp:
         *,
         thread_id: str | None,
         setting: SessionSetting,
-        home: str,
         input_history: ChatInputHistoryStore | None,
         client: ChatClient,
         agent_name: str | None = None,
@@ -270,7 +267,6 @@ class ChatTuiApp:
         ANSI_SEQUENCES.setdefault("\x1b[O", Keys.Ignore)
         self.thread_id = thread_id
         self.marks = marks if marks is not None else ChatMarks.disabled()
-        self.home = home
         self.input_history = input_history
         self.client = client
         client_layout = getattr(client, "layout", None)
@@ -530,7 +526,6 @@ class ChatTuiApp:
         self.loop = asyncio.get_running_loop()
         rendering.write_renderable(
             blocks.HeaderBlock(
-                home=self.home,
                 executor_metadata=self.client.executor_metadata,
                 version_label=displayed_toolang_version(),
             ).render(),

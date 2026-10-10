@@ -28,7 +28,10 @@ from toolang.execution.runnables import (
     runnable_binding_defaults,
     resolve_runnable_reference,
 )
-from toolang.execution.executor.resources import validate_agent_ceiling
+from toolang.execution.executor.resources import (
+    validate_agent_ceiling,
+    workspace_inspection,
+)
 from toolang.plugin.models.query import filter_models, first_model_ref
 from toolang.plugin.models.resolution import (
     model_reasoning_effort_applicable,
@@ -100,10 +103,6 @@ class LocalChatSession:
     ) -> None:
         self._invocation_workdir = workdir
         self.layout = layout
-        self.executor_metadata = ChatExecutorMetadata(
-            sandbox_selector="host",
-            sandbox_detail=host_sandbox_description(),
-        )
         self.store = RunStore(layout.run_store)
         self.history = RunHistory(self.store)
         self.ids = IdIssuer(layout.id_state, agent_name=layout.name)
@@ -521,6 +520,15 @@ class LocalChatSession:
             self.setup_watcher.refresh(),
         )
         validate_agent_ceiling(setup, state, AgentCeiling())
+        self.executor_metadata = ChatExecutorMetadata(
+            sandbox_driver="host",
+            sandbox_detail=host_sandbox_description(),
+            workspaces=tuple(
+                item.name
+                for item in workspace_inspection(setup, state, workdir=None).items
+                if item.available
+            ),
+        )
         self._surface = self._current_session_setting(setup=setup, state=state)
         if self._stop_signal is None:
             raise RuntimeError("local chat event loop was not initialized")

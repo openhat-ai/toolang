@@ -132,16 +132,17 @@ class SteerError:
 
 @dataclass(frozen=True, slots=True)
 class ChatExecutorMetadata:
-    """Structured executor source identity rendered by the Chat banner."""
+    """Runtime identity and workspace snapshot rendered by the Chat banner."""
 
-    sandbox_selector: str
+    sandbox_driver: str
     sandbox_detail: str
     endpoint: str | None = None
     version: str | None = None
+    workspaces: tuple[str, ...] | None = None
 
     def __post_init__(self) -> None:
         values = {
-            "sandbox_selector": self.sandbox_selector,
+            "sandbox_driver": self.sandbox_driver,
             "sandbox_detail": self.sandbox_detail,
             "endpoint": self.endpoint,
             "version": self.version,

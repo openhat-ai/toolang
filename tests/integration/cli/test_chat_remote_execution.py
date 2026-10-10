@@ -93,6 +93,9 @@ agic chat(_: Part[]) -> Part[]:
     errors: list[str] = []
 
     try:
+        assert session.executor_metadata.workspaces == ("lab",)
+        assert session.executor_metadata.sandbox_driver == "host"
+        assert session.executor_metadata.sandbox_detail == _HOST_DESCRIPTION
         assert session.list_models()["default"] == "test/scripted"
         setting = session.initial_setting().runnable or ""
         if entry.endswith(":_"):

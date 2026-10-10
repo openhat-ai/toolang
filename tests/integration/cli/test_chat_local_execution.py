@@ -468,6 +468,7 @@ agic chat(_: Part[]) -> Part[]:
         lambda: "macOS 27.0 arm64",
     )
 
+    (harness.setup.layout.home / "lab").mkdir(exist_ok=True)
     session = local.LocalChatSession(
         harness.setup.layout,
     )
@@ -482,8 +483,9 @@ agic chat(_: Part[]) -> Part[]:
 
     try:
         assert session.executor_metadata == ChatExecutorMetadata(
-            sandbox_selector="host",
+            sandbox_driver="host",
             sandbox_detail="macOS 27.0 arm64",
+            workspaces=("lab",),
         )
         absolute_workspace = harness.setup.layout.home / "lab" / "absolute"
         absolute_workspace.mkdir(parents=True)

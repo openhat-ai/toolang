@@ -38,6 +38,7 @@ from toolang.execution.types import RunOverride, SessionSetting
 from toolang.lang.input import CallInput
 from toolang.execution.values import parts_from_value
 from toolang.plugin.sandboxes.host import host_sandbox_description
+from toolang.state.config import validate_workspace_name
 
 from .base import (
     ChatExecutorMetadata,
@@ -403,15 +404,6 @@ class RemoteChatSession:
             if identity.driver == "host" and identity.description is None
             else None
         )
-        self.executor_metadata = ChatExecutorMetadata(
-            sandbox_selector=identity.selector,
-            sandbox_detail=_sandbox_detail(
-                identity,
-                fallback_host_description=fallback_host_description,
-            ),
-            endpoint=self.run_client.endpoint,
-            version=identity.version,
-        )
         defaults = await self._request_json(
             "GET",
             "/api/v1/runs/defaults",
@@ -426,6 +418,27 @@ class RemoteChatSession:
                     self._surface,
                     model=ModelRequest(default),
                 )
+        self.executor_metadata = ChatExecutorMetadata(
+            sandbox_driver=identity.driver,
+            sandbox_detail=_sandbox_detail(
+                identity,
+                fallback_host_description=fallback_host_description,
+            ),
+            endpoint=self.run_client.endpoint,
+            version=identity.version,
+            workspaces=await self._workspace_names(),
+        )
+
+    async def _workspace_names(self) -> tuple[str, ...] | None:
+        """Inspect runtime availability without making banner details mandatory."""
+
+        try:
+            payload = await self._request_json(
+                "GET", "/api/v1/workspaces", operation="workspaces"
+            )
+            return _workspace_names(payload)
+        except (RemoteChatError, ValueError):
+            return None
 
     async def _list_models(
         self,
@@ -1013,19 +1026,37 @@ def _sandbox_detail(
     fallback_host_description: str | None = None,
 ) -> str:
     if identity.driver == "docker":
-        if identity.instance is None:
-            raise AssertionError("docker runtime identity is missing its instance")
-        instance = identity.instance
-        if len(instance) > 12 and all(
-            character.casefold() in "0123456789abcdef" for character in instance
-        ):
-            instance = instance[:12]
-        return instance
+        image = identity.selector.partition(":")[2]
+        if not image:
+            raise ValueError("docker runtime identity is missing its image")
+        return image
     if identity.description is None:
         if identity.driver == "host" and fallback_host_description is not None:
             return fallback_host_description
         raise AssertionError("non-docker runtime identity is missing its description")
     return identity.description
+
+
+def _workspace_names(payload: object) -> tuple[str, ...]:
+    body = _mapping(payload, operation="workspaces")
+    names: list[str] = []
+    seen: set[str] = set()
+    for item in _object_list(body.get("items"), operation="workspaces"):
+        entry = _mapping(item, operation="workspace")
+        name, available = entry.get("name"), entry.get("available")
+        if not isinstance(name, str) or not isinstance(available, bool):
+            raise _RemoteChatProtocolError(
+                "remote chat workspaces returned invalid data"
+            )
+        validate_workspace_name(name)
+        if name in seen:
+            raise _RemoteChatProtocolError(
+                "remote chat workspaces returned duplicate names"
+            )
+        seen.add(name)
+        if available:
+            names.append(name)
+    return tuple(names)
 
 
 def _catalog_payload(

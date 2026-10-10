@@ -96,7 +96,9 @@ def test_chat_tui_runs_one_local_exchange_in_a_pseudo_terminal(
     try:
         session.wait_for(
             "Toolang",
-            "executor",
+            "runtime",
+            "workspaces",
+            "lab",
             "embedded",
             "Ask or describe a task",
             "agic:chat",
@@ -135,7 +137,9 @@ def test_chat_tui_runs_one_remote_exchange_in_a_pseudo_terminal(
     try:
         banner = session.wait_for(
             "Toolang",
-            "executor",
+            "runtime",
+            "workspaces",
+            "lab",
             ":7001",
             "Ask or describe a task",
             "agic:chat",

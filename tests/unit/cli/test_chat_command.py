@@ -19,7 +19,6 @@ from toolang.base.types.model import (
     Reasoning,
 )
 from toolang.base.types.policy import RunPolicy
-from toolang.cli.common.output import shorten_home_path
 from toolang.cli.common.context import context_layout
 from toolang.cli.common.terminal_surfaces import TerminalSurfaces
 from toolang.cli.toolang.commands.chat import main as chat
@@ -272,7 +271,7 @@ class _Layout:
 
 class _Client:
     executor_metadata = ChatExecutorMetadata(
-        sandbox_selector="host",
+        sandbox_driver="host",
         sandbox_detail=_HOST_DESCRIPTION,
     )
 
@@ -939,9 +938,6 @@ def test_chat_ui_paths_follow_the_selected_layout(
 
     assert history is not None
     assert history.path == layout.runtime / "chat-input-history.jsonl"
-    assert chat._chat_home_label(object()) == shorten_home_path(  # type: ignore[arg-type]
-        layout.home
-    )
 
 
 def test_chat_runtime_forwards_dev_when_acquiring_a_guest(
