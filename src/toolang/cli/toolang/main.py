@@ -46,6 +46,9 @@ _PREFIX_AGENT: ContextVar[str | None] = ContextVar(
 _SELECTED_LAYOUT: ContextVar[AgentLayout | None] = ContextVar(
     "toolang_cli_selected_layout", default=None
 )
+_SELECTED_SOURCE: ContextVar[Path | None] = ContextVar(
+    "toolang_cli_selected_source", default=None
+)
 AGENT_COMMAND_PANEL = "Agent Commands"
 WORK_COMMAND_PANEL = "Work Commands"
 CAPS_COMMAND_PANEL = "Cap Commands"
@@ -273,6 +276,7 @@ def callback(
         root=resolve_root(toolang_root),
         agent=_PREFIX_AGENT.get(),
         layout=_SELECTED_LAYOUT.get(),
+        source=_SELECTED_SOURCE.get(),
     )
 
 
@@ -641,11 +645,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     routed = routing.dispatch_roaming(
         raw_args,
         prog_name=prog_name,
-        run_app=lambda args, layout: _run_app(
+        run_app=lambda args, layout, source: _run_app(
             args,
             layout.name,
             prog_name=prog_name,
             layout=layout,
+            source=source,
         ),
     )
     if routed is not None:
@@ -719,12 +724,15 @@ def _run_app(
     *,
     prog_name: str,
     layout: AgentLayout | None = None,
+    source: Path | None = None,
 ) -> int:
     agent_token = _PREFIX_AGENT.set(prefix_agent)
     layout_token = _SELECTED_LAYOUT.set(layout)
+    source_token = _SELECTED_SOURCE.set(source)
     try:
         return run(app, args=args, prog_name=prog_name)
     finally:
+        _SELECTED_SOURCE.reset(source_token)
         _SELECTED_LAYOUT.reset(layout_token)
         _PREFIX_AGENT.reset(agent_token)
 

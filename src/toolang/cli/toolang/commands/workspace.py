@@ -11,15 +11,13 @@ from toolang.cli.common.parameters import PathType, TextType
 
 
 from toolang.state.config import ConfiguredWorkspaces
-from toolang.cli.common.workspaces import (
-    WorkspaceOptions,
-    WorkdirOption,
-    NoAutoWorkspaceOption,
-    resolve_workspaces,
-    inspect_workspace_selection,
-)
 from toolang.common.layout import AgentLayout
-from ...common.context import context_layout, require_prefix_agent, user_call
+from ...common.context import (
+    cli_context,
+    context_layout,
+    require_prefix_agent,
+    user_call,
+)
 from ...common.output import echo_table
 from ...common.routing import RequiredPrefixAgentCommand, RequiredPrefixAgentGroup
 
@@ -43,7 +41,7 @@ def workspace_app() -> typer.Typer:
     )
     app.command(
         "list",
-        help="List workspaces",
+        help="List configured workspaces",
         cls=_WorkspaceCommand,
     )(list_workspaces)
     app.command(
@@ -83,34 +81,23 @@ def add_workspace(
     typer.echo(f"Workspace {selected_name} added: {selected_path}")
 
 
-def list_workspaces(
-    ctx: typer.Context,
-    workspace: WorkspaceOptions = None,
-    workdir: WorkdirOption = None,
-    no_auto_workspace: NoAutoWorkspaceOption = False,
-) -> None:
+def list_workspaces(ctx: typer.Context) -> None:
     require_prefix_agent(ctx)
     layout = context_layout(ctx)
-    selection = user_call(
-        resolve_workspaces,
-        layout,
-        procdir=Path.cwd(),
-        paths=workspace or (),
-        workdir=workdir,
-        srcdir=layout.program.resolve().parent
-        if layout.placement == "roaming"
-        else None,
-        no_auto=no_auto_workspace,
-    )
-    inspection = user_call(inspect_workspace_selection, layout, selection)
+    if layout.placement == "roaming":
+        source = cli_context(ctx).source
+        assert source is not None
+        config_path = source.parent / "toolang.toml"
+    else:
+        config_path = layout.config
+    workspaces = user_call(ConfiguredWorkspaces(config_path).list)
     echo_table(
         ("NAME", "PATH", "AVAILABLE"),
         tuple(
-            (item.name, item.path, "yes" if item.available else "no")
-            for item in inspection.items
+            (name, path, "yes" if Path(path).is_dir() else "no")
+            for name, path in workspaces.items()
         ),
     )
-    typer.echo(f"Workdir: {inspection.workdir or 'unavailable'}")
 
 
 def _authored_config(layout: AgentLayout) -> Path:

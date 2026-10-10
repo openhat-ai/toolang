@@ -803,7 +803,7 @@ def test_explicit_metavars_keep_lowercase_runtime_flags(command, capsys):
     assert "<PORT>" in port_row.split()
 
 
-@pytest.mark.parametrize("command", ["chat", "serve", "start"])
+@pytest.mark.parametrize("command", ["chat", "serve"])
 def test_non_script_execution_exposes_only_effective_workspace_options(command):
     root = typer.main.get_command(app)
     assert isinstance(root, TyperGroup)
@@ -815,3 +815,16 @@ def test_non_script_execution_exposes_only_effective_workspace_options(command):
     }
     assert {"-w", "--workspace", "-d", "--workdir"} <= options
     assert "--no-auto-workspace" not in options
+
+
+@pytest.mark.parametrize("command", ["tools", "models", "providers", "start"])
+def test_commands_without_workspace_selection_hide_workspace_options(command):
+    root = typer.main.get_command(app)
+    assert isinstance(root, TyperGroup)
+    lazy = root.commands[command]
+    assert isinstance(lazy, LazyCommand)
+    loaded = lazy.load()
+    options = {
+        option for param in loaded.get_params(Context(loaded)) for option in param.opts
+    }
+    assert not {"-w", "--workspace", "-d", "--workdir", "--no-auto-workspace"} & options

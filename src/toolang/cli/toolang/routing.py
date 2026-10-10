@@ -225,7 +225,7 @@ def dispatch_roaming(
     argv: list[str],
     *,
     prog_name: str,
-    run_app: Callable[[list[str], AgentLayout], int],
+    run_app: Callable[[list[str], AgentLayout, Path], int],
 ) -> int | None:
     """Route a local source target or fall through to runnable invocation."""
 
@@ -246,13 +246,22 @@ def dispatch_roaming(
         if not spec.accepts(position, "roaming"):
             return _unsupported_target(command, "roaming", position)
         try:
-            layout = _roaming_layout(source, _preparation(spec, body, position))
+            prepare = _preparation(spec, body, position)
+            if command == "workspace" and (
+                body[2:3] == ["list"] or body[2:4] == ["--", "list"]
+            ):
+                # Authored configuration can be inspected without project caches.
+                if not source.is_file():
+                    raise FileNotFoundError(f"agent program not found: {source}")
+                prepare = "layout"
+            layout = _roaming_layout(source, prepare)
         except (OSError, ValueError) as exc:
             echo_error(str(exc))
             return 1
         return run_app(
             _selected_command_args(body, position, target=layout.name),
             layout,
+            source,
         )
     from .commands import script
 

@@ -274,7 +274,7 @@ Usage only when the file has an unnamed entry.
 
 Root and runnable help show the same common options, ordered as `-q` / `--quiet`,
 `-o` / `--out`, `--model`, `-w` / `--workspace`, `-d` / `--workdir`,
-`--sandbox`, `--allow`, `--limit`, `--no-auto-workspace`, `--dev`, then
+`--sandbox`, `--allow`, `--limit`, `--dev`, then
 `-h` / `--help`. Common options may appear on either side of RUNNABLE, before
 input. Runnable-level scalar values override root values when explicitly set;
 repeated `--workspace`, `--allow`, and `--limit` values accumulate in command-line

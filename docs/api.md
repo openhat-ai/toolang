@@ -382,7 +382,7 @@ no longer a selector. Named runnables retain their names and descriptions.
 
 Both levels show the same common options, ordered as `-q` / `--quiet`,
 `-o` / `--out`, `--model`, `-w` / `--workspace`, `-d` / `--workdir`,
-`--sandbox`, `--allow`, `--limit`, `--no-auto-workspace`, `--dev`, then
+`--sandbox`, `--allow`, `--limit`, `--dev`, then
 `-h` / `--help`.
 Common options may appear before or after RUNNABLE, before input. Explicit
 runnable-level scalar values override root values; repeated `--workspace`,
@@ -1082,13 +1082,14 @@ Optional `workdir=NAME://path` validates that location independently of the runt
 default; invalid or unavailable requested locations return HTTP 400. In a guest sandbox,
 availability requires a matching captured mount and an existing guest directory.
 
-`too AGENT workspace list` uses this endpoint while the agent is running. Without
-a server it prepares local State and inspects host directories. Inspection of a
-running roaming agent keeps its runtime workspace defaults; it does not add an
-automatic source workspace. Execution CLI commands parse local directory grants
-but leave named workspace URI validation
-to the embedded executor or remote server; client configuration and filesystem
-paths do not determine remote availability.
+`too AGENT info` uses this endpoint while the agent is running and preserves its
+runtime workspace defaults. `too AGENT workspace list` reads authored workspace
+configuration and checks local directory availability without querying the server
+or preparing State. It excludes implicit `lab` and temporary grants. See
+[Script Projects](script-projects.md) for configuration locations and CLI options.
+Execution CLI commands parse local directory grants but leave named workspace URI
+validation to the embedded executor or remote server; client configuration and
+filesystem paths do not determine remote availability.
 
 `/api/v1/profile` returns:
 
