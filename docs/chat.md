@@ -115,6 +115,8 @@ the terminal; empty or invalid configured values are errors. For example:
 TOOLANG_PROGRESS_MAX_WIDTH=120 TOOLANG_INPUTBOX_MAX_WIDTH=80 too chat
 ```
 
+Width settings also follow the invoking process when tmux opens a new pane.
+
 Submitted controls and message output retain the progress width. A non-empty
 Queue appears expanded above Input without taking focus and directly joins it
 without a separator row.

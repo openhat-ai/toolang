@@ -19,6 +19,8 @@ message output, without changing the default layout or native scrollback.
 - Resolve environment values at interactive command entry points and pass
   concrete limits to the TUI. Scripted Chat and noninteractive Talk ignore the
   input-only setting. No new flags or live environment reload are introduced.
+- New tmux panes receive the invoking process's width settings, including unset
+  values, so stale server settings cannot override these limits or fallback.
 
 ## Touchpoints and Verification
 

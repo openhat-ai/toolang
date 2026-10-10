@@ -26,6 +26,7 @@ from toolang.cli.common.tmux import (
     MARK_CONTEXT,
     MARK_THREAD,
     MARK_PAD,
+    resolve_launcher,
 )
 
 pytestmark = pytest.mark.skipif(
@@ -149,6 +150,73 @@ def events(client: subprocess.Popen[bytes], *, wait_for_first: bool = False) -> 
                 break
             output += chunk
     return output.decode()
+
+
+@pytest.mark.parametrize("surface", ["chat", "talk"])
+@pytest.mark.parametrize("input_width", [None, " 60 "])
+@pytest.mark.parametrize("progress_width", [None, "72"])
+def test_new_pane_uses_caller_widths_instead_of_stale_tmux_environment(
+    server, tmp_path, surface, input_width, progress_width
+):
+    tmux(server, "set-environment", "-g", "TOOLANG_PROGRESS_MAX_WIDTH", "200")
+    tmux(server, "set-environment", "-g", "TOOLANG_INPUTBOX_MAX_WIDTH", "180")
+    origin = server.sessions[0]
+    pane = origin.active_pane
+    assert pane is not None
+    environment = {
+        "TMUX": str(server.socket_path),
+        "TMUX_PANE": pane.pane_id,
+        "TOOLANG_TEST_PRIVATE": "must not be forwarded",
+    }
+    if progress_width is not None:
+        environment["TOOLANG_PROGRESS_MAX_WIDTH"] = progress_width
+    if input_width is not None:
+        environment["TOOLANG_INPUTBOX_MAX_WIDTH"] = input_width
+    launcher = resolve_launcher(
+        agent="alice",
+        environment=environment,
+        server_factory=lambda: cast(Any, server),
+        pane_factory=lambda: cast(Any, pane),
+    )
+    assert launcher is not None
+    if surface == "talk":
+        launcher = replace(
+            launcher,
+            shared_session="talk",
+            session_mark="@toolang_talk",
+            window_mark="@toolang_convo",
+            pad_kind="talk",
+        )
+    result = tmp_path / "widths.json"
+    script = """
+import json, os, sys, time
+from pathlib import Path
+from toolang.cli.common.execution_progress.config import resolve_progress_max_width
+from toolang.cli.common.input import resolve_inputbox_max_width
+progress = resolve_progress_max_width(os.environ)
+Path(sys.argv[1]).write_text(json.dumps({
+    "progress": progress,
+    "input": resolve_inputbox_max_width(os.environ, fallback=progress),
+    "private": os.environ.get("TOOLANG_TEST_PRIVATE"),
+}))
+time.sleep(30)
+"""
+    with control_client(server, origin):
+        assert not launcher.place_chat(
+            thread_id="term_widths" if surface == "chat" else "gc_00000001",
+            argv=[sys.executable, "-c", script, str(result)],
+            directory=str(tmp_path),
+        )
+        deadline = time.monotonic() + 5
+        while not result.exists() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert result.exists(), "The launched process did not report its widths"
+        expected_progress = 120 if progress_width is None else int(progress_width)
+        assert json.loads(result.read_text()) == {
+            "progress": expected_progress,
+            "input": expected_progress if input_width is None else int(input_width),
+            "private": None,
+        }
 
 
 def test_talk_conversations_and_contexts_share_one_named_session(

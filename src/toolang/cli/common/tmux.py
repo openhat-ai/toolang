@@ -68,6 +68,7 @@ DETACH_ON_DESTROY = "detach-on-destroy"
 ENABLED_ENV = "TOOLANG_TMUX"
 DEBUG_ENV = "TOOLANG_TMUX_DEBUG"
 _DISABLED_VALUES = frozenset({"0", "false", "no", "off"})
+_WIDTH_ENV = ("TOOLANG_PROGRESS_MAX_WIDTH", "TOOLANG_INPUTBOX_MAX_WIDTH")
 
 PaneFactory = Callable[[], "TmuxPane"]
 ServerFactory = Callable[[], "TmuxServer"]
@@ -343,13 +344,14 @@ class Launcher:
     window_mark: str = MARK_THREAD
     pad_kind: str = PAD_CHAT
     shared_session: str | None = None
+    child_environment: Mapping[str, str | None] = field(default_factory=dict)
 
     def place_chat(
         self, *, thread_id: str, argv: Sequence[str], directory: str
     ) -> bool:
         """Ensure and enter one target; return True only to run in this pane."""
 
-        command = self.chat_command(argv)
+        command = self.chat_command(argv, environment=self.child_environment)
         operation = "prepare"
         try:
             session = self.agent_session()
@@ -418,7 +420,9 @@ class Launcher:
         return False
 
     @staticmethod
-    def chat_command(argv: Sequence[str]) -> str:
+    def chat_command(
+        argv: Sequence[str], *, environment: Mapping[str, str | None] | None = None
+    ) -> str:
         """Install failure retention in the new pane before executing Chat.
 
         The pane ID is expanded by the new pane's shell, never by the caller.
@@ -426,11 +430,22 @@ class Launcher:
         its identity. The process exit status remains visible to tmux.
         """
 
+        overrides = {} if environment is None else environment
+        unset = [
+            part
+            for name, value in overrides.items()
+            if value is None
+            for part in ("-u", name)
+        ]
+        assignments = [
+            f"{name}={value}" for name, value in overrides.items() if value is not None
+        ]
+        command = shlex.join(["env", *unset, f"{ENABLED_ENV}=0", *assignments, *argv])
         script = (
             'if ! tmux set-option -p -t "$TMUX_PANE" remain-on-exit failed; then '
             "printf '%s\\n' 'Could not configure chat pane; press Enter to close.' >&2; "
             "read -r reply; exit 1; fi; "
-            f"exec env {ENABLED_ENV}=0 {shlex.join(argv)}"
+            f"exec {command}"
         )
         # Explicit POSIX shell also works when tmux's default-shell is fish.
         return shlex.join(["/bin/sh", "-c", script])
@@ -609,7 +624,14 @@ def resolve_launcher(
             raise ValueError("Current tmux pane has no ID")
     except Exception as exc:
         raise TmuxPlacementError(f"Could not resolve current tmux pane: {exc}") from exc
-    return Launcher(agent=agent, _server=server, _pane=pane)
+    return Launcher(
+        agent=agent,
+        _server=server,
+        _pane=pane,
+        # New tmux panes otherwise inherit the server's stale environment.
+        # Preserve the caller's unset values too, so input fallback still works.
+        child_environment={name: environ.get(name) for name in _WIDTH_ENV},
+    )
 
 
 def _rename_window(rename: TextSetter | None, name: str) -> bool:
