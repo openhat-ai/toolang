@@ -51,6 +51,35 @@ def test_agent_rule_follows_body_without_a_gap_and_preserves_block_spacing(
             assert segment.style.color is not None
 
 
+@pytest.mark.parametrize("width", [24, 60])
+@pytest.mark.parametrize("own_message", [False, True])
+@pytest.mark.parametrize(
+    "body",
+    [
+        "First.\n\nLast.",
+        "First.\n\n---",
+        "```text\nfirst\n\nlast\n```",
+        "    first\n    last",
+        "- first\n- last",
+        "| heading |\n| --- |\n| last |",
+        "```text\n\n```",
+        "<!-- comment -->",
+    ],
+)
+def test_agent_divider_touches_the_last_visible_markdown_row(body, width, own_message):
+    console = Console(width=width)
+    block = message_block(
+        Message.create("agent:alice", body),
+        "agent:alice" if own_message else "human:bryan",
+        width,
+        LIGHT_TERMINAL_SURFACES,
+    )
+    lines = "".join(segment.text for segment in console.render(block)).splitlines()
+    assert lines[-2].strip().startswith("┄")
+    assert lines[-3].strip(), "Markdown must not leave an empty row before the divider"
+    assert not lines[-1].strip()
+
+
 @pytest.mark.parametrize("own_message", [False, True])
 @pytest.mark.parametrize(
     "name,width",
