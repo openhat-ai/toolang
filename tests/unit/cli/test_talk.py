@@ -413,22 +413,29 @@ def test_directory_keeps_timestamps_and_messages_aligned(width):
     assert lines[-1].rstrip().endswith("-")
 
 
-@pytest.mark.parametrize("width", [60, 80, 120])
+@pytest.mark.parametrize("width", [24, 32, 40, 48, 60, 80, 120])
 @pytest.mark.parametrize("name", ["long-agent-" * 24, "开发助手" * 32])
-def test_directory_preserves_member_count_when_names_are_truncated(width, name):
+@pytest.mark.parametrize("member_count", [3, 12])
+def test_directory_preserves_ids_and_member_counts_in_narrow_terminals(
+    width, name, member_count
+):
+    timestamp = datetime(2025, 12, 31, 18, 5, tzinfo=timezone.utc)
     rendered = render_directory(
         conversations=[
             {
                 "conversation": "gc_abcd1234",
                 "name": None,
-                "participants": [f"agent:{name}", "human:bryan", "human:carol"],
-                "latest": None,
+                "participants": [f"agent:{name}"]
+                + [f"human:member{index}" for index in range(member_count - 1)],
+                "latest": f"{int(timestamp.timestamp() * 1000)}-0",
+                "preview": {"sender": "agent:alice", "body": "hello world"},
             }
         ],
         width=width,
     )
     row = rendered.splitlines()[1]
-    assert "… (3)" in row
+    assert row.split()[0] == "gc_abcd1234"
+    assert f"… ({member_count})" in row
     assert all(cell_len(line) <= width for line in rendered.splitlines())
 
 

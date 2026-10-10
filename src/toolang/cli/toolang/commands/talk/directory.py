@@ -88,16 +88,17 @@ def _print_directory(
     ]
     id_width, name_width, members_width, time_width, message_width = content_widths
     name_width = min(_NAME_MAX_WIDTH, name_width)
+    members_min_width = max(len("MEMBERS"), max(map(len, member_suffixes)) + 1)
     # Protect timestamps and previews, then share the remaining space between
     # names and members. Short cells release their unused space to the other column.
     padding_width = len(headers) - 1
     preview_width = min(message_width, _PREVIEW_MIN_WIDTH)
     metadata_width = max(
-        len("NAME") + len("MEMBERS"),
+        len("NAME") + members_min_width,
         console.width - id_width - time_width - padding_width - preview_width,
     )
     members_limit = min(
-        members_width, max(len("MEMBERS"), metadata_width - len("NAME"))
+        members_width, max(members_min_width, metadata_width - len("NAME"))
     )
     name_limit = min(name_width, metadata_width - members_limit)
     message_limit = max(
@@ -116,9 +117,17 @@ def _print_directory(
         pad_edge=False,
         collapse_padding=True,
     )
-    table.add_column("CONVERSATION", width=id_width, no_wrap=True)
+    # Rich may shrink fixed widths when the terminal is too narrow. Keep IDs
+    # and the pre-truncated member counts intact with explicit minimum widths.
+    table.add_column("CONVERSATION", min_width=id_width, no_wrap=True)
     table.add_column("NAME", max_width=name_limit, no_wrap=True, overflow="ellipsis")
-    table.add_column("MEMBERS", width=members_limit, no_wrap=True, overflow="ellipsis")
+    table.add_column(
+        "MEMBERS",
+        min_width=members_limit,
+        max_width=members_limit,
+        no_wrap=True,
+        overflow="ellipsis",
+    )
     table.add_column("UPDATED", width=time_width, justify="right", no_wrap=True)
     table.add_column(
         "MESSAGE", max_width=message_limit, no_wrap=True, overflow="ellipsis"
