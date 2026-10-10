@@ -31,11 +31,7 @@ from toolang.plugin.catalogs.models_dev.catalog import (
 from toolang.plugin.catalogs.models_dev.path import resolve_model_catalog_path
 from toolang.plugin.models.config import validate_models_config
 from toolang.plugin.models.resolution import resolve_model_reasoning
-from toolang.plugin.toolsets.collections import ToolCollection
-from toolang.plugin.toolsets.loading import (
-    load_toolsets_with_sources,
-    tools_from_toolsets,
-)
+from .tools import capture_toolset_loader, materialize_tools
 from toolang.setup.routes import RouteAdapter, resolve_catalog_providers
 
 from .revisions import (
@@ -463,7 +459,6 @@ def _build_setup(
 
     captured_envs = dict(envs)
     adapter_config = {name: dict(value) for name, value in adapter_configs.items()}
-    toolset_config = {name: dict(value) for name, value in toolset_configs.items()}
     catalog_config = {name: dict(value) for name, value in catalog_configs.items()}
     # Hold one generation's input snapshots until its first successful model
     # materialization, then release them so only the resolved records and view
@@ -475,9 +470,6 @@ def _build_setup(
 
     def load_catalog_plugins() -> Mapping[str, ModelCatalog]:
         return MappingProxyType(load_model_catalogs(catalog_config))
-
-    def load_toolset_plugins():
-        return MappingProxyType(load_toolsets_with_sources(config=toolset_config))
 
     def load_model_data(setup: AgentSetup) -> _ModelData:
         merged = merge_catalog_snapshots(tuple(source_snapshots))
@@ -521,9 +513,6 @@ def _build_setup(
         source_snapshots.clear()
         return data
 
-    def load_tool_collection(plugins) -> ToolCollection:
-        return ToolCollection.from_tools(tools_from_toolsets(plugins))
-
     return AgentSetup(
         layout=layout,
         envs=captured_envs,
@@ -535,9 +524,9 @@ def _build_setup(
         teaming=teaming,
         catalog_sources=catalog_sources,
         _load_models=load_model_data,
-        _load_tools=load_tool_collection,
+        _load_tools=materialize_tools,
         _allowed_tools=allow.tools,
-        _load_toolset_plugins=load_toolset_plugins,
+        _load_toolset_plugins=capture_toolset_loader(toolset_configs),
         _load_adapters=load_adapters,
         _load_catalogs=load_catalog_plugins,
     )

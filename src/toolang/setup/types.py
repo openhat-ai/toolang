@@ -164,6 +164,65 @@ class CompactConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class ToolSetup:
+    """One captured tool resource view, independent of model discovery."""
+
+    layout: AgentLayout
+    revision: str
+    _load_tools: Callable[[Mapping[str, LoadedPlugin]], ToolCollection] = field(
+        repr=False, compare=False
+    )
+    _load_toolset_plugins: Callable[[], Mapping[str, LoadedPlugin]] = field(
+        repr=False, compare=False
+    )
+    _allowed_tools: tuple[str, ...] | None = None
+    _lazy: _LazyValues = field(default_factory=_LazyValues, repr=False, compare=False)
+
+    def tools(
+        self, *, all: bool = False, progress: ProgressSink | None = None
+    ) -> ToolCollection:
+        """Load effective tools, or the complete pre-allow set."""
+
+        complete = self._lazy.get(
+            "tools:all",
+            lambda: self._load_tools(self._toolset_plugins()),
+            progress=progress,
+            target=self.layout.name,
+            resource="tools",
+        )
+        if all or self._allowed_tools is None:
+            return complete
+        queries = self._allowed_tools
+        assert queries is not None
+        return self._lazy.get(
+            "tools:effective",
+            lambda: _filter_tools(complete, queries),
+            progress=progress,
+            target=self.layout.name,
+            resource="allowed tools",
+        )
+
+    def toolsets(self) -> Mapping[str, Toolset]:
+        """Load toolset plugins without materializing their leaf tools."""
+
+        return self._lazy.get("toolsets", self._public_toolsets)
+
+    def _toolset_plugins(self) -> Mapping[str, LoadedPlugin]:
+        return self._lazy.get(
+            "toolset_plugins",
+            lambda: MappingProxyType(dict(self._load_toolset_plugins())),
+        )
+
+    def _public_toolsets(self) -> Mapping[str, Toolset]:
+        return MappingProxyType(
+            {
+                name: cast(Toolset, value.plugin)
+                for name, value in self._toolset_plugins().items()
+            }
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class AgentSetup:
     """One immutable setup generation with independently lazy resources."""
 
@@ -262,30 +321,23 @@ class AgentSetup:
         self, *, all: bool = False, progress: ProgressSink | None = None
     ) -> ToolCollection:
         """Load effective tools, or the complete pre-allow set."""
-
-        complete = self._lazy.get(
-            "tools:all",
-            lambda: self._load_tools(self._toolset_plugins()),
-            progress=progress,
-            target=self.layout.name,
-            resource="tools",
-        )
-        if all or self._allowed_tools is None:
-            return complete
-        queries = self._allowed_tools
-        assert queries is not None
-        return self._lazy.get(
-            "tools:effective",
-            lambda: _filter_tools(complete, queries),
-            progress=progress,
-            target=self.layout.name,
-            resource="allowed tools",
-        )
+        return self._tool_resources().tools(all=all, progress=progress)
 
     def toolsets(self) -> Mapping[str, Toolset]:
         """Load toolset plugins without materializing their leaf tools."""
+        return self._tool_resources().toolsets()
 
-        return self._lazy.get("toolsets", self._public_toolsets)
+    def _tool_resources(self) -> ToolSetup:
+        return self._lazy.get(
+            "tool_resources",
+            lambda: ToolSetup(
+                layout=self.layout,
+                revision=self.revision,
+                _load_tools=self._load_tools,
+                _load_toolset_plugins=self._load_toolset_plugins,
+                _allowed_tools=self._allowed_tools,
+            ),
+        )
 
     def adapters(self) -> Mapping[str, ModelAdapter]:
         """Load model-adapter plugins without materializing model data."""
@@ -299,20 +351,6 @@ class AgentSetup:
 
         return self._lazy.get(
             "catalogs", lambda: MappingProxyType(dict(self._load_catalogs()))
-        )
-
-    def _toolset_plugins(self) -> Mapping[str, LoadedPlugin]:
-        return self._lazy.get(
-            "toolset_plugins",
-            lambda: MappingProxyType(dict(self._load_toolset_plugins())),
-        )
-
-    def _public_toolsets(self) -> Mapping[str, Toolset]:
-        return MappingProxyType(
-            {
-                name: cast(Toolset, value.plugin)
-                for name, value in self._toolset_plugins().items()
-            }
         )
 
     def _model_data(self, *, progress: ProgressSink | None = None) -> _ModelData:

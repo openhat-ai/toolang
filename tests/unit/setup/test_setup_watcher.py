@@ -114,7 +114,7 @@ def _watcher(
 
     monkeypatch.setattr(watcher_module, "load_model_adapters", load_adapters)
     monkeypatch.setattr(watcher_module, "load_model_catalogs", load_catalogs)
-    monkeypatch.setattr(watcher_module, "load_toolsets_with_sources", load_toolsets)
+    monkeypatch.setattr("toolang.setup.tools.load_toolsets_with_sources", load_toolsets)
     return (
         SetupWatcher(
             layout,
@@ -486,7 +486,7 @@ def test_teaming_config_is_shared_and_frozen_until_restart(tmp_path, monkeypatch
         captured.append(kwargs["config"])
         return {}
 
-    monkeypatch.setattr(watcher_module, "load_toolsets_with_sources", load_toolsets)
+    monkeypatch.setattr("toolang.setup.tools.load_toolsets_with_sources", load_toolsets)
     first = asyncio.run(watcher.refresh())
     first.toolsets()
     assert first.teaming is not None
@@ -532,7 +532,7 @@ def test_teaming_consumers_share_scoped_configuration(tmp_path, monkeypatch, ena
             "msg": LoadedPlugin("msg", "msg", MsgToolset(config["msg"]), "built-in")
         }
 
-    monkeypatch.setattr(watcher_module, "load_toolsets_with_sources", load_toolsets)
+    monkeypatch.setattr("toolang.setup.tools.load_toolsets_with_sources", load_toolsets)
     setup = asyncio.run(watcher.refresh())
     assert setup.teaming is not None
     msg = setup.toolsets()["msg"]

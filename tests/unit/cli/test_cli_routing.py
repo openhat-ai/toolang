@@ -1221,7 +1221,7 @@ def test_cli_does_not_route_removed_history_commands_for_visiting(
     assert result is None
 
 
-def test_cli_routes_command_before_visiting_info_through_materialization(
+def test_cli_routes_command_before_visiting_info_without_materialization(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1234,11 +1234,10 @@ def test_cli_routes_command_before_visiting_info_through_materialization(
     captured: dict[str, object] = {}
     monkeypatch.setattr(
         agents,
-        "resolve_visiting_layout",
-        lambda source, *, progress: (
+        "visiting_layout",
+        lambda source: (
             captured.update(
                 source=source,
-                progress=progress,
             )
             or layout
         ),
@@ -1257,7 +1256,7 @@ def test_cli_routes_command_before_visiting_info_through_materialization(
 
     assert result == 14
     assert captured["source"] == selector
-    assert captured["args"] == ["info", "researcher"]
+    assert captured["args"] == ["info", selector]
     assert captured["layout"] == layout
 
 

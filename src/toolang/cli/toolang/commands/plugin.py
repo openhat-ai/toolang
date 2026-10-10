@@ -22,7 +22,7 @@ from toolang.plugin.loading import list_plugin_infos
 from toolang.plugin.toolsets.collections import (
     tool_record,
 )
-from toolang.setup.watcher import load_setup
+from toolang.setup.tools import load_tool_setup
 
 channel_app = typer.Typer(
     help="List installed channels",
@@ -60,14 +60,13 @@ def list_tools(
     agent = context_agent(ctx)
     with make_cli_progress() as progress:
         setup = asyncio.run(
-            load_setup(
+            load_tool_setup(
                 (
                     context_layout(ctx)
                     if agent is not None
                     else AgentLayout.resident(context_root(ctx), "default")
                 ),
                 agent_context=agent is not None,
-                validate_defaults=False,
                 progress=progress.sink,
             )
         )

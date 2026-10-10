@@ -174,16 +174,17 @@ def info_agent(
     agent_name = require_runtime_agent(ctx, agent)
     selected_layout = cli_context(ctx).layout
     layout = selected_layout or AgentLayout.resident(context_root(ctx), agent_name)
+    agent_name = layout.name
     process = agents.AgentProcess(layout)
     status = user_call(process.status, ui_base_url=ui_base_url())
-    if status is None:
+    if status is None and layout.placement == "resident":
         raise ClickException(f"Agent {agent_name} not found")
     try:
         runtime_state = process.state() or {}
         runtime_identity = agents.runtime_identity_row(runtime_state, layout=layout)
     except (OSError, ValueError):
         runtime_state, runtime_identity = {}, None
-    if status.status == "running":
+    if status is not None and status.status == "running":
         if model_catalog is not None:
             raise ClickException("--catalog only applies when the agent is not running")
         if status.endpoint is None:
@@ -197,8 +198,15 @@ def info_agent(
             raise ClickException(str(exc)) from exc
     else:
         resources = _local_resources(
-            layout, model_catalog=resolve_model_catalog_option(model_catalog)
+            layout,
+            model_catalog=resolve_model_catalog_option(model_catalog),
+            source=cli_context(ctx).source,
+            selector=agent if layout.placement == "visiting" else None,
         )
+        if status is None:
+            status = user_call(process.status, ui_base_url=ui_base_url())
+            if status is None:
+                raise ClickException(f"Agent {agent_name} not found")
     started_at = runtime_value(runtime_state.get("started_at"))
     status_value = "not running" if status.status == "stopped" else status.status
     if status.status == "running" and started_at != "-":
@@ -239,11 +247,21 @@ def _caps_summary(state: AgentState) -> str:
 
 
 def _local_resources(
-    layout: AgentLayout, *, model_catalog: Path | None
+    layout: AgentLayout,
+    *,
+    model_catalog: Path | None,
+    source: Path | None = None,
+    selector: str | None = None,
 ) -> list[tuple[str, str]]:
     progress = make_cli_progress()
     try:
         with progress:
+            if source is not None:
+                user_call(agents.materialize_roaming_program, source)
+            elif selector is not None:
+                user_call(
+                    agents.resolve_visiting_layout, selector, progress=progress.sink
+                )
             state = cast(
                 AgentState,
                 user_call(

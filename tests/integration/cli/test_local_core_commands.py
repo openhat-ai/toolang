@@ -3226,7 +3226,7 @@ def test_tools_reads_published_query_views_without_rediscovering_plugins(
     def reject_discovery(*args, **kwargs):
         pytest.fail("Tool inspection must use the published setup dataset")
 
-    monkeypatch.setattr(plugin_commands, "load_setup", load_published)
+    monkeypatch.setattr(plugin_commands, "load_tool_setup", load_published)
     monkeypatch.setattr("toolang.plugin.loading.entry_points", reject_discovery)
     result = _invoke(tmp_path, "tools", "--query", "*[toolset=shell]")
 
@@ -3888,6 +3888,7 @@ def test_visiting_agent_info_uses_the_materialized_layout(
         encoding="utf-8",
     )
     monkeypatch.setattr(agent_commands, "SetupWatcher", _EmptySetupWatcher)
+    monkeypatch.setattr(agents, "visiting_layout", lambda _: layout)
     captured: dict[str, object] = {}
     monkeypatch.setattr(
         agent_commands,
@@ -4041,7 +4042,7 @@ def test_tools_help_and_missing_agent_need_no_setup(
     def reject_setup(*args, **kwargs):
         pytest.fail("Help and missing-agent routing must not construct setup")
 
-    monkeypatch.setattr(plugin_commands, "load_setup", reject_setup)
+    monkeypatch.setattr(plugin_commands, "load_tool_setup", reject_setup)
     help_result = runner.invoke(cli.app, ["--root", str(tmp_path), "tools", "--help"])
     assert help_result.exit_code == 0
     assert "[AGENT] tools" in strip_ansi(help_result.stdout)
@@ -4183,7 +4184,7 @@ def test_setup_inspection_does_not_require_valid_program(
         return await _EmptySetupWatcher(layout).refresh()
 
     monkeypatch.setattr(model_commands, "load_setup", load_setup)
-    monkeypatch.setattr(plugin_commands, "load_setup", load_setup)
+    monkeypatch.setattr(plugin_commands, "load_tool_setup", load_setup)
     result = _invoke(tmp_path, "alice", command)
 
     assert result.exit_code == 0, result.stderr
@@ -4246,3 +4247,50 @@ def test_resource_json_human_and_external_tq_select_identical_records(
         if "location" in row:
             assert row["location"] == record["location"]
         assert "id" not in record
+
+
+@pytest.mark.parametrize("agent_context", [False, True])
+def test_tool_setup_matches_full_setup_and_captures_only_tool_inputs(
+    tmp_path, monkeypatch, plugin_inventory, agent_context
+):
+    from toolang.setup.tools import load_tool_setup
+    from toolang.setup.watcher import load_setup
+
+    layout = AgentLayout.resident(tmp_path, "alice")
+    layout.home.mkdir(parents=True)
+    layout.root_config.write_text(
+        '[allow]\ntools = ["shell/*"]\n[plugin.toolset.shell]\nvalue = "root"\n'
+    )
+    layout.config.write_text(
+        '[allow]\ntools = ["vendor/*"]\n[plugin.toolset.shell]\nvalue = "home"\n'
+    )
+    full = asyncio.run(load_setup(layout, agent_context=agent_context))
+    narrow = asyncio.run(load_tool_setup(layout, agent_context=agent_context))
+    # Access after mutation: both generations must retain their captured inputs.
+    layout.root_config.write_text('[allow]\ntools = ["none"]\n')
+    layout.config.write_text("")
+    assert tuple(narrow.tools(all=True)) == tuple(full.tools(all=True))
+    assert tuple(narrow.tools()) == tuple(full.tools())
+    assert narrow.tools() is narrow.tools()
+    assert [
+        config["value"] for name, config in plugin_inventory if name == "shell"
+    ] == ["home" if agent_context else "root"] * 2
+    newer = asyncio.run(load_tool_setup(layout, agent_context=agent_context))
+    assert newer.revision != narrow.revision
+    assert tuple(newer.tools().user) == ()
+    # Invalid model semantics and catalogs are irrelevant to the same tool view.
+    layout.root_config.write_text(
+        '[allow]\ntools = ["none"]\nmodels = 7\n[default]\nmodel = []\n'
+    )
+    bad_catalog = tmp_path / "bad-catalog.json"
+    bad_catalog.write_text("invalid JSON")
+    monkeypatch.setenv("TOOLANG_MODEL_CATALOG", str(bad_catalog))
+
+    def reject_models(*_args, **_kwargs):
+        pytest.fail("tool setup must not load model plugins")
+
+    monkeypatch.setattr("toolang.setup.watcher.load_model_catalogs", reject_models)
+    monkeypatch.setattr("toolang.setup.watcher.load_model_adapters", reject_models)
+    unchanged = asyncio.run(load_tool_setup(layout, agent_context=agent_context))
+    assert unchanged.revision == newer.revision
+    assert tuple(unchanged.tools()) == tuple(newer.tools())

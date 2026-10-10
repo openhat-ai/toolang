@@ -162,20 +162,7 @@ def resolve_setup_allow(
 ) -> AgentCeiling:
     """Resolve Setup-owned model/tool allow configuration and overrides."""
 
-    fields: dict[str, tuple[str, ...]] = {}
-    for config in configs:
-        raw_allow = _table(config, "allow")
-        if raw_allow is None:
-            continue
-        _reject_unknown(raw_allow, _KNOWN_ALLOW_FIELDS, "allow field")
-        for name in ("models", "tools"):
-            if name not in raw_allow:
-                continue
-            normalized = _query_values(name, raw_allow[name])
-            if normalized is None:
-                fields.pop(name, None)
-            else:
-                fields[name] = normalized
+    fields = _resolve_setup_queries(configs, names=("models", "tools"))
     resolved_overrides = overrides or {}
     _reject_unknown(resolved_overrides, _SETUP_ALLOW_FIELDS, "Setup allow override")
     for name, value in resolved_overrides.items():
@@ -236,6 +223,33 @@ def _compact_size(name: str, value: object) -> int | float:
     raise ValueError(
         f"compact.{name} requires a positive integer or percentage in (0%, 100%]"
     )
+
+
+def resolve_tool_allow(
+    configs: Sequence[Mapping[str, object]],
+) -> tuple[str, ...] | None:
+    """Resolve tool policy without parsing model-owned allow expressions."""
+    return _resolve_setup_queries(configs, names=("tools",)).get("tools")
+
+
+def _resolve_setup_queries(
+    configs: Sequence[Mapping[str, object]], *, names: tuple[str, ...]
+) -> dict[str, tuple[str, ...]]:
+    fields: dict[str, tuple[str, ...]] = {}
+    for config in configs:
+        raw_allow = _table(config, "allow")
+        if raw_allow is None:
+            continue
+        _reject_unknown(raw_allow, _KNOWN_ALLOW_FIELDS, "allow field")
+        for name in names:
+            if name not in raw_allow:
+                continue
+            normalized = _query_values(name, raw_allow[name])
+            if normalized is None:
+                fields.pop(name, None)
+            else:
+                fields[name] = normalized
+    return fields
 
 
 def resolve_run_defaults(

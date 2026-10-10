@@ -9,6 +9,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Added
 
+- Commands that prepare State now report waiting on a held State lock,
+  showing `Waiting for root State...`, `Waiting for home State...`, or
+  `Waiting for agent <name> State...` and reporting when the lock becomes
+  available instead of appearing stalled.
+
 - Commands that load agent setup or attach to a running agent now report
   staged progress while they block instead of appearing stalled, covering
   setup, models, tools, model-catalog discovery, capability materialization,
@@ -458,6 +463,21 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   direct conversation's `agent:alice ↔ agent:bob` participants. (#708)
 
 ### Fixed
+
+- `too info` prepares only the selected target's layout and materializes a
+  roaming `.too` source or visiting remote agent only when the target is not
+  running, so a running roaming or visiting agent is inspected without
+  projecting or fetching its source.
+
+- Cap `new` and `edit` commands read the authored catalog without preparing
+  State first, so they no longer fetch unrelated configured caps before the
+  editor opens, and changes are published only after being saved; a failed
+  publication now reports that the change was saved but agent State could not
+  be published.
+
+- `too tools` resolves tool policy through a tool-only Setup view that loads
+  no model catalogs or adapters, so an invalid or unavailable model catalog
+  no longer breaks tool listing.
 
 - A malformed stored conversation record now rejects membership changes without
   partial writes, and losing membership in one conversation during a polling

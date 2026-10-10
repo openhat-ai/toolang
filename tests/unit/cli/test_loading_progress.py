@@ -10,8 +10,9 @@ from toolang.state import state as cap_state
 
 
 @pytest.mark.parametrize("command", ["edit", "new"])
-def test_cap_materialization_reports_progress_before_editing(
-    tmp_path, monkeypatch, capsys, command
+@pytest.mark.parametrize("save", [False, True])
+def test_cap_materialization_only_starts_after_saving(
+    tmp_path, monkeypatch, capsys, command, save
 ):
     layout = AgentLayout.resident(tmp_path, "alice")
     layout.home.mkdir(parents=True)
@@ -22,10 +23,18 @@ def test_cap_materialization_reports_progress_before_editing(
     monkeypatch.setattr("sys.stdin", StringIO())
     monkeypatch.setattr(cap_state, "_github_repo_default_branch", lambda *_: "main")
     monkeypatch.setattr(cap_state, "_github_remote_exists", lambda *_: True)
-    monkeypatch.setattr("toolang.cli.caps.commands.edit_markdown", lambda _: None)
+    edited = []
+
+    def edit(text):
+        assert "Preparing" not in capsys.readouterr().err
+        edited.append(text)
+        return "Updated local content.\n" if save else None
+
+    monkeypatch.setattr("toolang.cli.caps.commands.edit_markdown", edit)
     observed = []
 
     def materialize(*, relative_entry_path, **kwargs):
+        assert edited
         observed.append(kwargs.get("progress") is not None)
         assert "Preparing" in capsys.readouterr().err
         return {str(relative_entry_path): b"Remote content.\n"}
@@ -33,7 +42,7 @@ def test_cap_materialization_reports_progress_before_editing(
     monkeypatch.setattr(cap_state, "_remote_materialized_files", materialize)
     arguments = ["prompt", command, "note" if command == "edit" else "another"]
     assert main(["--root", str(tmp_path), "alice", *arguments]) == 0
-    assert observed == [True]
+    assert observed == ([True] if save else [])
 
 
 @pytest.mark.parametrize("command", ["models", "providers", "tools"])
@@ -78,7 +87,28 @@ def test_setup_inspection_reports_loading_before_work_and_keeps_json_clean(
             return setup
 
     monkeypatch.setattr(model_catalog, "load_setup", load_setup)
-    monkeypatch.setattr(plugin, "load_setup", load_setup)
+    monkeypatch.setattr(plugin, "load_tool_setup", load_setup)
     assert main(["--root", str(tmp_path), command, "--json"]) == 0
     assert json.loads(capsys.readouterr().out) == []
     assert loads == ["tools" if command == "tools" else "models"]
+
+
+@pytest.mark.parametrize("target", [None, "alice"])
+def test_tools_does_not_load_invalid_model_catalog(
+    tmp_path, monkeypatch, capsys, target
+):
+    import json
+
+    catalog = tmp_path / "broken-catalog.json"
+    catalog.write_text("invalid JSON")
+    monkeypatch.setenv("TOOLANG_MODEL_CATALOG", str(catalog))
+    args = ["--root", str(tmp_path)]
+    if target:
+        layout = AgentLayout.resident(tmp_path, target)
+        layout.home.mkdir(parents=True)
+        layout.program.write_text("flow run():\n  pass\n")
+        args.append(target)
+    assert main([*args, "tools", "--json"]) == 0
+    output = capsys.readouterr()
+    assert json.loads(output.out)
+    assert "model catalog" not in output.err

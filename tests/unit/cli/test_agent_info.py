@@ -69,10 +69,43 @@ def test_model_summary_counts_effective_setup_resources(
 
 
 @pytest.mark.parametrize("sandbox", ["host", "docker:python:3.13-slim"])
+@pytest.mark.parametrize("placement", ["resident", "roaming", "visiting"])
+@pytest.mark.parametrize("target_first", [False, True])
 def test_running_info_uses_runtime_resources_without_loading_local_sources(
-    tmp_path, monkeypatch, capsys, sandbox
+    tmp_path, monkeypatch, capsys, sandbox, placement, target_first
 ):
+    from toolang.up import process
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    selector = "alice"
+    global_args = ["--root", str(tmp_path)]
     layout = AgentLayout.resident(tmp_path, "alice")
+    if placement == "roaming":
+        source = tmp_path / "alice.too"
+        source.write_text("invalid Toolang!!!")
+        (tmp_path / "toolang.toml").write_text("invalid TOML!!!")
+        layout = AgentLayout.roaming(source)
+        selector, global_args = str(source), []
+        monkeypatch.setattr(
+            process,
+            "materialize_roaming_program",
+            lambda *_: pytest.fail("running info must not project sources"),
+        )
+    elif placement == "visiting":
+        selector, global_args = "acme/alice", []
+        layout = AgentLayout(
+            root=tmp_path / "visiting", name="alice", placement="visiting"
+        )
+        monkeypatch.setattr(process, "visiting_layout", lambda _: layout)
+        monkeypatch.setattr(
+            process,
+            "resolve_visiting_layout",
+            lambda *a, **kw: pytest.fail("running info must not fetch sources"),
+        )
+    arguments = [
+        *global_args,
+        *([selector, "info"] if target_first else ["info", selector]),
+    ]
     layout.home.mkdir(parents=True)
     layout.program.write_text("invalid Toolang!!!")
     monkeypatch.setattr(
@@ -109,7 +142,7 @@ def test_running_info_uses_runtime_resources_without_loading_local_sources(
         return payloads[path]
 
     monkeypatch.setattr(RuntimeClient, "get", get)
-    assert main(["--root", str(tmp_path), "info", "alice"]) == 0
+    assert main(arguments) == 0
     output = capsys.readouterr()
     assert "1 model, 1 provider" in output.out
     assert "2 tools, 1 toolset" in output.out
@@ -120,9 +153,7 @@ def test_running_info_uses_runtime_resources_without_loading_local_sources(
     assert not (layout.home / ".state").exists()
 
     calls.clear()
-    assert (
-        main(["--root", str(tmp_path), "info", "alice", "--catalog", "other.json"]) == 1
-    )
+    assert main([*arguments, "--catalog", "other.json"]) == 1
     assert "--catalog" in capsys.readouterr().err
     assert not calls
 
@@ -130,5 +161,50 @@ def test_running_info_uses_runtime_resources_without_loading_local_sources(
         raise RuntimeClientError("runtime request failed: unavailable")
 
     monkeypatch.setattr(RuntimeClient, "get", failed)
-    assert main(["--root", str(tmp_path), "info", "alice"]) == 1
+    assert main(arguments) == 1
     assert "runtime request failed: unavailable" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("placement", ["roaming", "visiting"])
+@pytest.mark.parametrize("target_first", [False, True])
+def test_offline_info_prepares_a_fresh_nonresident_target(
+    tmp_path, monkeypatch, capsys, placement, target_first
+):
+    from toolang.up import process
+
+    source = tmp_path / "alice.too"
+    source.write_text("flow run():\n  pass\n")
+    selector = str(source)
+    layout = AgentLayout.roaming(source)
+    if placement == "visiting":
+        selector = "acme/alice"
+        layout = AgentLayout(
+            root=tmp_path / "visiting", name="alice", placement="visiting"
+        )
+        monkeypatch.setattr(process, "visiting_layout", lambda _: layout)
+
+        def fetch(selected, *, progress):
+            assert selected == selector
+            assert progress is not None
+            assert not layout.program.exists()
+            layout.home.mkdir(parents=True)
+            layout.program.write_text(source.read_text())
+            return layout
+
+        monkeypatch.setattr(process, "resolve_visiting_layout", fetch)
+    setup = _setup(tmp_path, ())
+
+    class Watcher:
+        def __init__(self, selected):
+            assert selected == layout
+
+        async def refresh(self, *, progress):
+            return setup
+
+    monkeypatch.setattr(agent, "SetupWatcher", Watcher)
+    assert not layout.home.exists()
+    assert main([selector, "info"] if target_first else ["info", selector]) == 0
+    output = capsys.readouterr()
+    assert "not running" in output.out
+    assert layout.program.is_file()
+    assert layout.agent_state.is_dir()
