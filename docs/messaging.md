@@ -32,7 +32,7 @@ Membership is stored only in the backend, never in configuration.
 ```sh
 too hub start                       # Background Hub; requires Redis/Valkey.
 too hub status                      # Endpoint and backend readiness.
-too talk                            # List Team and Convos, including IDs and names.
+too talk                            # List agents and conversations, including IDs and names.
 too talk alice                      # Empty human-agent DM until the first send.
 too talk alice hello                 # Send and exit after acknowledgment.
 too talk alice,bob                   # Observe an existing agent-agent DM.
@@ -123,8 +123,12 @@ ID in the center, and the viewer's login on the right. Examples for login `brice
 | The same group viewed by a nonmember | `#dev(3)` | Its canonical `gc_...` | The viewer's login | Read-only; `#` is dim |
 
 Only the permission marker dims; names and counts use normal foreground. Conversation metadata and team deadlines refresh in the receive loop. The interactive footer does not display presence. The separate
-`too talk` directory shows Team and Convos with IDs, names, participants, the current
-agent presence snapshot, and message previews. It runs once without requiring a TTY.
+`too talk` directory prints usage first, then Team and Conversations separated by
+blank lines. Team lists only agent names and presence. Conversations shows ID,
+Name, Members, and Latest message; member and sender names omit identity prefixes,
+and members have no presence badges. Conversation names are capped at 24 terminal cells;
+long names, member lists, and previews are ellipsized to keep each row on one line,
+with aligned timestamps and previews. It runs once without requiring a TTY.
 On narrow terminals, the footer prioritizes the login and hides a canonical ID
 that cannot fit intact. Initial connection shows `Connecting…` on the right.
 
