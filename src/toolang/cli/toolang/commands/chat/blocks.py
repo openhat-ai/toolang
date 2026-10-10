@@ -11,7 +11,6 @@ from rich import box
 from rich.console import Console, ConsoleOptions, Group, RenderableType, RenderResult
 from rich.markup import escape
 from rich.panel import Panel
-from rich.style import Style
 from rich.table import Table
 from rich.text import Text
 
@@ -663,7 +662,6 @@ class _SlashResultDivider:
 @dataclass(frozen=True, slots=True)
 class HeaderBlock:
     executor_metadata: ChatExecutorMetadata
-    version_label: str
 
     def render(self) -> RenderableType:
         return Group(Text(), self, Text("\n"))
@@ -736,11 +734,6 @@ class HeaderBlock:
             border_style="dim",
             padding=(1, _HEADER_HORIZONTAL_PADDING),
             expand=False,
-            title_align="left",
-            title=Text(
-                f"Toolang Chat {self.version_label}",
-                style=Style(bold=False, dim=False),
-            ),
         )
 
 
@@ -750,10 +743,7 @@ def _header_runtime_value(metadata: ChatExecutorMetadata) -> Text:
     if metadata.version is None:
         raise ValueError("remote chat executor metadata is missing its version")
     version = metadata.version
-    runtime = Text(version if version == "unknown" else f"v{version.removeprefix('v')}")
-    runtime.append(" · ", style="dim")
-    runtime.append(metadata.endpoint, style=Style(link=metadata.endpoint))
-    return runtime
+    return Text(version if version == "unknown" else f"v{version.removeprefix('v')}")
 
 
 def _header_sandbox_value(metadata: ChatExecutorMetadata) -> Text:

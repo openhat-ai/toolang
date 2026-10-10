@@ -95,7 +95,6 @@ def test_chat_tui_runs_one_local_exchange_in_a_pseudo_terminal(
     session = ChatTuiPtySession.start("tests.support.chat_tui_e2e", tmp_path)
     try:
         session.wait_for(
-            "Toolang",
             "runtime",
             "workspaces",
             "lab",
@@ -136,16 +135,16 @@ def test_chat_tui_runs_one_remote_exchange_in_a_pseudo_terminal(
     session = ChatTuiPtySession.start("tests.support.chat_tui_remote_e2e", tmp_path)
     try:
         banner = session.wait_for(
-            "Toolang",
             "runtime",
             "workspaces",
             "lab",
-            ":7001",
             "Ask or describe a task",
             "agic:chat",
             "scripted",
         )
         assert "embedded" not in banner
+        assert "Toolang Chat" not in banner
+        assert "http://runtime.test:7001" not in banner
         session.wait_for_bytes(b"\x1b]0;[new chat]\x07")
 
         session.send(b"hello remote\r")
@@ -175,7 +174,7 @@ def test_chat_tui_preserves_long_final_output_in_a_small_terminal(
         columns=80,
     )
     try:
-        session.wait_for("Toolang", "agic:chat", "scripted")
+        session.wait_for("runtime", "agic:chat", "scripted")
         session.send(b"show long output\r")
         final_output = session.wait_for(
             "• terminal e2e line 000",
@@ -202,7 +201,7 @@ def test_chat_tui_reopens_a_durable_flow_result(
         "flow",
     )
     try:
-        session.wait_for("Toolang", "flow:relay")
+        session.wait_for("runtime", "flow:relay")
         session.send(b"hello flow\r")
         output = session.wait_for(
             "[0] Run chat",
@@ -332,7 +331,7 @@ def test_chat_tui_keeps_multiple_steers_visible_until_their_step_finishes(
         "tests.system.cli.test_chat_tui_e2e", tmp_path, rows=12, columns=80
     )
     try:
-        session.wait_for("Toolang", "Ask or describe a task")
+        session.wait_for("runtime", "Ask or describe a task")
         session.send(b"start run\r")
         session.wait_for("Thinking")
         session.send(b"queued steer\r")

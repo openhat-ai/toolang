@@ -355,19 +355,19 @@ blocks further submissions until Chat restarts; read-only commands and exit
 remain available. Chat never retries a submission or falls back to embedded
 execution after selecting the remote runtime.
 
-The startup banner identifies the client with a `Toolang Chat <version>` frame
-caption. Its three metadata rows are always `runtime`, `sandbox`, then
-`workspaces`:
+The startup banner has no frame caption. Its three metadata rows are always
+`runtime`, `sandbox`, then `workspaces`:
 
 ```text
-runtime     v0.3.8 · http://localhost:7001
+runtime     v0.3.8
 sandbox     docker · python:3.13-slim
 workspaces  lab, toolang
 ```
 
-The runtime version always precedes its linked endpoint, including when it
-matches the client version, is dirty, or is `unknown`. Known versions have one
-`v` prefix. Host execution uses the same sandbox format, for example
+The runtime row shows only its version, including when it matches the client
+version, is dirty, or is `unknown`. Known versions have one `v` prefix. Use
+`too -V` for the client version and `too AGENT info` for the API endpoint.
+Host execution uses the same sandbox format, for example
 `sandbox  host · macOS 27.0 arm64`. Docker shows the complete image name and tag
 or digest. Container IDs and agent-home paths are omitted from the banner;
 the runtime profile still exposes its container identity.
@@ -379,7 +379,7 @@ malformed inspection renders `unavailable` without blocking Chat. The existing
 status bar continues to show the current workspace as it changes. Use
 `too AGENT workspace list` to inspect current workspace mappings and availability.
 
-Adjacent identity values use a dim ` · ` separator. The banner preserves its
+Sandbox driver and environment use a dim ` · ` separator. The banner preserves its
 padding and folds long metadata values in narrow terminals.
 
 The host sandbox description remains optional runtime-profile presentation
