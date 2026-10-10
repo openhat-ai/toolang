@@ -24,7 +24,7 @@ from tests.support.chat_tui_pty import ChatTuiPtySession
 
 @pytest.mark.skipif(os.name != "posix", reason="pseudo-terminal testing requires POSIX")
 @pytest.mark.parametrize("surface", ["chat", "talk"])
-def test_input_cursor_remains_a_beam_until_exit(tmp_path, surface):
+def test_input_cursor_remains_a_blinking_block_until_exit(tmp_path, surface):
     session = ChatTuiPtySession.start(
         "tests.system.cli.test_scrollback_resize", surface, tmp_path, "", "0"
     )
@@ -32,12 +32,12 @@ def test_input_cursor_remains_a_beam_until_exit(tmp_path, surface):
     try:
         placeholder = "Describe your task" if surface == "chat" else "Type a message"
         session.wait_for(placeholder)
-        session.wait_for_bytes(b"\x1b[6 q")
+        session.wait_for_bytes(b"\x1b[1 q")
 
         session.data.clear()
         session.send(b"\x0c")
-        session.wait_for_bytes(b"\x1b[6 q")
-        assert cursor_shapes.findall(session.data)[-1] == b"6"
+        session.wait_for_bytes(b"\x1b[1 q")
+        assert cursor_shapes.findall(session.data)[-1] == b"1"
 
         session.send(b"draft\x01")
         session.wait_for("draft")
@@ -46,8 +46,8 @@ def test_input_cursor_remains_a_beam_until_exit(tmp_path, surface):
             session.master, termios.TIOCSWINSZ, struct.pack("HHHH", 20, 40, 0, 0)
         )
         session.process.send_signal(signal.SIGWINCH)
-        session.wait_for_bytes(b"\x1b[6 q")
-        assert cursor_shapes.findall(session.data)[-1] == b"6"
+        session.wait_for_bytes(b"\x1b[1 q")
+        assert cursor_shapes.findall(session.data)[-1] == b"1"
 
         session.data.clear()
         session.send(b"\x11")

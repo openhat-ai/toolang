@@ -374,7 +374,7 @@ class ChatTuiApp:
             key_bindings=keys,
             style=Style.from_dict(widgets._chat_ui_palette(surfaces)),
             full_screen=False,
-            cursor=CursorShape.BEAM,
+            cursor=CursorShape.BLINKING_BLOCK,
             color_depth=ColorDepth.DEPTH_24_BIT,
             erase_when_done=True,
             mouse_support=False,

@@ -147,7 +147,7 @@ class TalkTui:
             ),
             key_bindings=keys,
             full_screen=False,
-            cursor=CursorShape.BEAM,
+            cursor=CursorShape.BLINKING_BLOCK,
             erase_when_done=True,
             mouse_support=False,
             refresh_interval=0.5,
