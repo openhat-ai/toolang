@@ -15,7 +15,7 @@ from toolang.teaming.schemas import Message
 @pytest.mark.parametrize("width", [24, 60, 120])
 @pytest.mark.parametrize("own_message", [False, True])
 @pytest.mark.parametrize("surfaces", [DARK_TERMINAL_SURFACES, LIGHT_TERMINAL_SURFACES])
-def test_agent_rule_is_above_name_and_flush_right_with_preserved_body_spacing(
+def test_agent_rule_follows_body_without_a_gap_and_preserves_block_spacing(
     width, own_message, surfaces
 ):
     console = Console(width=width)
@@ -32,11 +32,12 @@ def test_agent_rule_is_above_name_and_flush_right_with_preserved_body_spacing(
     lines = "".join(segment.text for segment in segments).splitlines()
     gutter = min(8, width // 5) if own_message else 0
     if own_message:
-        assert lines[1] == " " * (width - len("alice •")) + "alice •"
+        assert lines[0] == " " * (width - len("alice •")) + "alice •"
     else:
-        assert lines[1] == "• alice" + " " * (width - len("• alice"))
-    assert lines[0] == " " * (gutter + 2) + "┄" * (width - gutter - 2)
-    assert [line.strip() for line in lines[2:]] == ["First.", "", "Last.", ""]
+        assert lines[0] == "• alice" + " " * (width - len("• alice"))
+    assert [line.strip() for line in lines[1:-2]] == ["First.", "", "Last."]
+    assert lines[-2] == " " * (gutter + 2) + "┄" * (width - gutter - 2)
+    assert lines[-1] == " " * width
     rules = [segment for segment in segments if "┄" in segment.text]
     assert rules
     for segment in rules:
@@ -48,6 +49,35 @@ def test_agent_rule_is_above_name_and_flush_right_with_preserved_body_spacing(
         if "alice" in segment.text or "•" in segment.text:
             assert segment.style is not None and segment.style.dim is False
             assert segment.style.color is not None
+
+
+@pytest.mark.parametrize("width", [24, 60])
+@pytest.mark.parametrize("own_message", [False, True])
+@pytest.mark.parametrize(
+    "body",
+    [
+        "First.\n\nLast.",
+        "First.\n\n---",
+        "```text\nfirst\n\nlast\n```",
+        "    first\n    last",
+        "- first\n- last",
+        "| heading |\n| --- |\n| last |",
+        "```text\n\n```",
+        "<!-- comment -->",
+    ],
+)
+def test_agent_divider_touches_the_last_visible_markdown_row(body, width, own_message):
+    console = Console(width=width)
+    block = message_block(
+        Message.create("agent:alice", body),
+        "agent:alice" if own_message else "human:bryan",
+        width,
+        LIGHT_TERMINAL_SURFACES,
+    )
+    lines = "".join(segment.text for segment in console.render(block)).splitlines()
+    assert lines[-2].strip().startswith("┄")
+    assert lines[-3].strip(), "Markdown must not leave an empty row before the divider"
+    assert not lines[-1].strip()
 
 
 @pytest.mark.parametrize("own_message", [False, True])
@@ -62,7 +92,7 @@ def test_agent_rule_is_above_name_and_flush_right_with_preserved_body_spacing(
         ("e\u0301cho", 12),
     ],
 )
-def test_rule_precedes_full_wrapped_names_within_terminal_cell_width(
+def test_rule_follows_wrapped_names_and_body_within_terminal_cell_width(
     own_message, name, width
 ):
     sender = f"agent:{name}"
@@ -75,9 +105,9 @@ def test_rule_precedes_full_wrapped_names_within_terminal_cell_width(
     )
     lines = console.render_lines(block)
     text_lines = ["".join(segment.text for segment in line) for line in lines]
-    assert text_lines[0].strip(" ") == "┄" * text_lines[0].count("┄")
-    assert text_lines[0].endswith("┄")
-    assert name + "body" == "".join("".join(text_lines[1:]).split()).replace("•", "")
+    assert text_lines[-2].strip(" ") == "┄" * text_lines[-2].count("┄")
+    assert text_lines[-2].endswith("┄")
+    assert name + "body" == "".join("".join(text_lines[:-2]).split()).replace("•", "")
     text = "".join(text_lines)
     assert "…" not in text
     assert all(sum(segment.cell_length for segment in line) <= width for line in lines)

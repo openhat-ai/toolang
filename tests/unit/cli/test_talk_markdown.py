@@ -37,8 +37,8 @@ def test_agent_headings_lists_and_rules_follow_chat_layout():
     lines = [
         line.rstrip() for line in "".join(s.text for s in render(source)).splitlines()
     ]
-    assert lines[0] == "  " + "┄" * 58
-    assert lines[1] == "• alice"
+    assert lines[0] == "• alice"
+    assert lines[-2] == "  " + "┄" * 58
     assert "  Heading" in lines
     assert "  • outer" in lines
     assert "    • inner" in lines
@@ -56,6 +56,30 @@ def test_agent_inline_and_fenced_code_use_resolved_terminal_surfaces(surfaces):
     assert inline.style.bgcolor == Color.parse(surfaces.inline_code_background)
     assert fenced.style.bgcolor == Color.parse(surfaces.code_background)
     assert fenced.style.color is None
+
+
+@pytest.mark.parametrize("surfaces", [DARK_TERMINAL_SURFACES, LIGHT_TERMINAL_SURFACES])
+def test_divider_trimming_preserves_interior_code_spacing_and_background(surfaces):
+    console = Console(width=60)
+    block = message_block(
+        Message.create("agent:alice", "```text\nfirst\n\nlast\n```\n\nAfter."),
+        "human:bryan",
+        60,
+        surfaces,
+    )
+    rows = console.render_lines(block)
+    text = ["".join(segment.text for segment in row).strip() for row in rows]
+    first = text.index("first")
+    last = text.index("last")
+    assert last == first + 2
+    assert text[first - 1] == text[first + 1] == text[last + 1] == ""
+    for index in (first - 1, first + 1, last + 1):
+        assert any(
+            segment.style
+            and segment.style.bgcolor == Color.parse(surfaces.code_background)
+            for segment in rows[index]
+        )
+    assert text[-3:] == ["After.", "┄" * 58, ""]
 
 
 def test_agent_links_do_not_emit_terminal_hyperlinks():

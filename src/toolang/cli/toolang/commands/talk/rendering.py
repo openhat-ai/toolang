@@ -2,13 +2,15 @@
 
 import re
 import unicodedata
+from dataclasses import dataclass
 from hashlib import sha256
 
 from rich.align import Align
-from rich.console import Group, RenderableType
+from rich.console import Console, ConsoleOptions, Group, RenderableType, RenderResult
 from rich.constrain import Constrain
 from rich.padding import Padding
 from rich.rule import Rule
+from rich.segment import Segment
 from rich.table import Table
 from rich.text import Text
 
@@ -37,6 +39,24 @@ def display_text(value: str) -> str:
     )
 
 
+@dataclass(frozen=True, slots=True)
+class _AgentBody:
+    """Keep interior Markdown spacing while dropping empty rows before the divider."""
+
+    content: TerminalMarkdown
+
+    def __rich_console__(
+        self, console: Console, options: ConsoleOptions
+    ) -> RenderResult:
+        pending: list[Segment] = []
+        for line in Segment.split_lines(console.render(self.content, options)):
+            pending.extend(line)
+            pending.append(Segment.line())
+            if any(segment.text.strip() for segment in line):
+                yield from pending
+                pending.clear()
+
+
 def message_block(
     message: Message,
     identity: str,
@@ -59,12 +79,14 @@ def message_block(
     header: RenderableType = name
     body = display_text(message.body)
     content: RenderableType = (
-        TerminalMarkdown(
-            body,
-            code_background=surfaces.code_background,
-            inline_code_background=surfaces.inline_code_background,
-            code_foreground=None,
-            hyperlinks=False,
+        _AgentBody(
+            TerminalMarkdown(
+                body,
+                code_background=surfaces.code_background,
+                inline_code_background=surfaces.inline_code_background,
+                code_foreground=None,
+                hyperlinks=False,
+            )
         )
         if agent
         else Text(body)
@@ -90,9 +112,9 @@ def message_block(
         )
     rows = (
         Group(
-            Padding(Rule(characters="┄", style="bright_black dim"), (0, 0, 0, padding)),
             header,
             content,
+            Padding(Rule(characters="┄", style="bright_black dim"), (0, 0, 0, padding)),
         )
         if agent
         else Group(header, content)
