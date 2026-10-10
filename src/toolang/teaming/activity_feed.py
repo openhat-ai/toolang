@@ -4,16 +4,15 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncGenerator
-from contextlib import suppress
-import json
+from contextlib import aclosing, suppress
 from typing import TYPE_CHECKING
 
 import httpx
-from httpx_sse import SSEError, aconnect_sse
+from httpx_sse import SSEError
 
 from toolang.execution.activity import ActivityQuery
 from toolang.execution.schemas import ActivitySnapshot
-from .activity import query_params
+from .observation import HttpObservation, LocalObservation
 from .errors import BackendUnavailable
 
 if TYPE_CHECKING:
@@ -106,24 +105,36 @@ class HubActivityFeed:
                         await asyncio.gather(task, return_exceptions=True)
                     for agent in sorted(agents):
                         lease = await self.reader.backend.lease(agent)
+                        local = await self.reader.local_source(agent, lease)
+                        source_key = {
+                            **lease,
+                            "source": str(local.reader.path) if local else "http",
+                        }
                         previous = workers.get(agent)
-                        if previous and (previous[0] != lease or previous[1].done()):
+                        if previous and (
+                            previous[0] != source_key or previous[1].done()
+                        ):
                             previous[1].cancel()
                             await asyncio.gather(previous[1], return_exceptions=True)
                             del workers[agent]
                         if (
                             agent not in self.pages
                             or previous
-                            and previous[0] != lease
+                            and previous[0] != source_key
                             or not lease.get("endpoint")
+                            and local is None
                         ):
                             pages = await self.reader.backend.cached(agent, self.query)
                             await self.reader.decorate(agent, pages, lease, fresh=False)
                             self.replace(agent, pages)
-                        if lease.get("endpoint") and agent not in workers:
+                        if (
+                            local is not None or lease.get("endpoint")
+                        ) and agent not in workers:
                             workers[agent] = (
-                                lease,
-                                asyncio.create_task(self.source(http, agent, lease)),
+                                source_key,
+                                asyncio.create_task(
+                                    self.source(http, agent, lease, local)
+                                ),
                             )
                     self.ready.set()
                     await asyncio.sleep(1)
@@ -139,29 +150,28 @@ class HubActivityFeed:
             )
 
     async def source(
-        self, http: httpx.AsyncClient, agent: str, lease: dict[str, str]
+        self,
+        http: httpx.AsyncClient,
+        agent: str,
+        lease: dict[str, str],
+        local: LocalObservation | None = None,
     ) -> None:
         delay = 0.5
         while True:
             try:
-                async with aconnect_sse(
-                    http,
-                    "GET",
-                    lease["endpoint"] + "/api/v1/activity/stream",
-                    params=query_params(self.query),
-                ) as source:
-                    source.response.raise_for_status()
+                observation = local or HttpObservation(
+                    http, agent=agent, endpoint=lease["endpoint"]
+                )
+                async with aclosing(observation.updates(self.query)) as source:
                     pages: list[ActivitySnapshot] = []
-                    async for event in source.aiter_sse():
-                        if event.event == "activity_page":
-                            pages.append(
-                                ActivitySnapshot.model_validate_json(event.data)
-                            )
-                        elif event.event == "activity_checkpoint":
-                            if json.loads(event.data)["agents"] != [agent]:
+                    async for event, data in source:
+                        if event == "activity_page":
+                            pages.append(ActivitySnapshot.model_validate(data))
+                        elif event == "activity_checkpoint":
+                            if data["agents"] != [agent]:
                                 raise ValueError("Source activity identity mismatch")
                             batch, pages = pages, []
-                            saved = await self.reader.backend.save(
+                            saved = local is not None or await self.reader.backend.save(
                                 agent, lease["token"], batch
                             )
                             if (

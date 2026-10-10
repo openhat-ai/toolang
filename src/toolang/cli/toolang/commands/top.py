@@ -9,8 +9,9 @@ import typer
 from typer._click.exceptions import ClickException
 
 from toolang.cli.common.activity import watch
-from toolang.cli.common.activity_view import duration, since as stats_since
-from toolang.execution.activity import ActivityQuery
+from toolang.cli.common.activity_view import since as stats_since
+from toolang.execution.activity import ActivityQuery, ActivityReader, duration
+from toolang.teaming.observation import LocalObservation, Presence
 from toolang.cli.common.context import (
     cli_context,
     context_layout,
@@ -43,7 +44,7 @@ def top_command(
     since: Annotated[
         str,
         typer.Option(
-            help="Stats start: session, all, duration, or timezone-aware timestamp"
+            help="Stats: session, all, rolling duration, or fixed timezone-aware timestamp"
         ),
     ] = "session",
     filter: Annotated[
@@ -66,17 +67,22 @@ def top_command(
     selected = cli_context(ctx)
     backend = None
     agent = None
+    source = None
     if selected.agent is not None or selected.layout is not None:
         layout = context_layout(ctx)
-        status = user_call(
-            AgentProcess(layout).status, ui_base_url="", check_health=True
-        )
-        if status is None or status.status != "running" or not status.endpoint:
-            raise ClickException(
-                "Agent is not running; start it before observing activity"
-            )
-        endpoint = status.endpoint
+        process = AgentProcess(layout)
+
+        def presence() -> Presence:
+            status = process.status(ui_base_url="", check_health=False)
+            if status is None or status.status in {"stopped", "failed"}:
+                return "offline"
+            return "online" if status.status == "running" else "unknown"
+
+        endpoint = None
         agent = f"agent:{layout.name}"
+        source = LocalObservation(
+            ActivityReader(layout.run_store, agent), presence=presence
+        )
     else:
         connection = user_call(HubProcess(context_root(ctx)).connection)
         endpoint, backend = connection.endpoint, connection.identity
@@ -95,6 +101,7 @@ def top_command(
                 query=query,
                 recent_label=recent,
                 refresh=refresh,
+                source=source,
             )
         )
     except ValueError as exc:

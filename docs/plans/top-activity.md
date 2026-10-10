@@ -1,8 +1,7 @@
 # Top activity
 
-Target semantics for the [dashboard revision](top-live-layout.md), including
-retained accounting/recovery rules. This definition does not claim the new UI,
-rolling Stats or direct local observation are already implemented.
+View, statistics and accounting contract for the
+[dashboard](top-live-layout.md).
 
 ## Terms and scope
 

@@ -176,18 +176,21 @@ retrying; check history before resending. Local checkpoints live under the agent
 
 ## Activity views
 
-`too top` observes the team; `too AGENT top` observes one running agent. The header
-shows scope totals, the body shows Agent/Thread/Execution rows, and the bottom bar
-contains navigation and Details. `--refresh SECONDS` defaults to `0.1`; keys repaint
-immediately. SSE supplies committed activity and elapsed time independently for
-each agent. `--once` prints one snapshot.
+`too top` requires Hub and observes the team; `too AGENT top` reads local agent
+history without requiring Hub or a running executor. Header shows scope totals,
+local time and window settings; Table has Agent/Thread/Run levels, and optional
+Details sits above a fixed Status bar. `--refresh SECONDS` defaults to `0.1`;
+keys repaint immediately. Source updates carry committed activity and elapsed
+time independently for each agent. `--once` prints one snapshot.
 
-Stats defaults to the current executor session; `--since TIMESTAMP|DURATION|all`
-changes the range for MODEL, TOOL, IN, CACHED, OUT, SPEND and TIME together. CACHED
-is cache-read input already included in IN. `--recent DURATION|all` independently
-controls visible activity (default `30m`). `--sort spend` accepts `cost` as an alias.
-Enter opens full IDs, exact token counts and result text; PgUp/PgDn scroll Details.
-Old records backfill token totals on startup; unavailable usage remains unknown.
+Stats defaults to the current/latest executor session. `--since DURATION` is a
+rolling window; a timezone-aware timestamp selects a fixed start, and `all`
+includes available history. MODEL, TOOL, IN, CACHED, OUT, SPEND and TIME+ share
+that range; CACHED is cache-read input already included in IN. Activity
+(`--recent DURATION|all`, default `30m`) independently controls visibility.
+F7/F8 cycle Activity/Stats. `--sort spend` accepts `cost` as an alias.
+Enter opens full IDs, exact usage and Markdown results; Ctrl-P/N selects rows,
+and PgUp/PgDn pages Details. Unavailable historical usage remains unknown.
 
 The [Talk contract](plans/talk-status-bar.md) defines presentation and acceptance
 checks. The [teaming plan](plans/teaming.md) defines messaging data and APIs.

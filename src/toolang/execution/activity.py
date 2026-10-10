@@ -10,6 +10,7 @@ from contextlib import closing, suppress
 from datetime import datetime
 import json
 import math
+import re
 from pathlib import Path
 import sqlite3
 import threading
@@ -27,6 +28,24 @@ PATH_LIMIT = 4000
 THREAD_LIMIT = 10000
 
 
+def duration(value: str) -> float | None:
+    """Parse an activity window; keep relative Stats queries relative."""
+    if value == "all":
+        return None
+    match = re.fullmatch(r"(\d+(?:\.\d+)?)([smhdw])", value)
+    if not match or float(match[1]) <= 0:
+        raise ValueError("Use a positive duration such as 30m, 1d, 1w, or all")
+    seconds = (
+        float(match[1])
+        * {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}[match[2]]
+    )
+    if not math.isfinite(seconds):
+        raise ValueError("Duration must be finite")
+    if seconds > 315537897600:
+        raise ValueError("Duration is outside the supported date range")
+    return seconds
+
+
 @dataclass(frozen=True)
 class ActivityQuery:
     since: str = "session"
@@ -35,7 +54,7 @@ class ActivityQuery:
     active: bool = False
 
     def __post_init__(self) -> None:
-        if self.since not in {"session", "all"}:
+        if self.since not in {"session", "all"} and self.window is None:
             value = datetime.fromisoformat(self.since.replace("Z", "+00:00"))
             if value.tzinfo is None:
                 raise ValueError("Stats timestamp must include a timezone")
@@ -46,6 +65,19 @@ class ActivityQuery:
         if len(self.text) > 240:
             raise ValueError("Activity filter is limited to 240 characters")
 
+    @property
+    def window(self) -> float | None:
+        if re.fullmatch(r"\d+(?:\.\d+)?[smhdw]", self.since):
+            return duration(self.since)
+        return None
+
+    def start(self, now: float) -> float | None:
+        if self.since in {"session", "all"}:
+            return None
+        if self.window is not None:
+            return now - self.window
+        return datetime.fromisoformat(self.since.replace("Z", "+00:00")).timestamp()
+
 
 class ActivityReader:
     """Share one atomic paginated projection per query and committed revision."""
@@ -54,12 +86,16 @@ class ActivityReader:
         self.path, self.agent = path, agent
         self._lock = threading.Lock()
         self._cache: OrderedDict[
-            ActivityQuery, tuple[float, list[ActivitySnapshot]]
+            tuple[ActivityQuery, bool | None],
+            tuple[float, list[ActivitySnapshot], float | None],
         ] = OrderedDict()
         self._listeners: dict[
-            ActivityQuery, set[asyncio.Queue[list[ActivitySnapshot] | Exception]]
+            tuple[ActivityQuery, bool | None],
+            set[asyncio.Queue[list[ActivitySnapshot] | Exception]],
         ] = {}
-        self._publishers: dict[ActivityQuery, asyncio.Task[None]] = {}
+        self._publishers: dict[
+            tuple[ActivityQuery, bool | None], asyncio.Task[None]
+        ] = {}
 
     def result(self, ref: str) -> str:
         """Resolve result text only when Details is opened, outside the live feed."""
@@ -85,17 +121,18 @@ class ActivityReader:
             )
 
     async def updates(
-        self, query: ActivityQuery
+        self, query: ActivityQuery, *, live: bool | None = None
     ) -> AsyncGenerator[list[ActivitySnapshot]]:
         """Share atomic absolute updates; a slow viewer needs only the latest one."""
         queue: asyncio.Queue[list[ActivitySnapshot] | Exception] = asyncio.Queue(1)
-        listeners = self._listeners.setdefault(query, set())
+        key = query, live
+        listeners = self._listeners.setdefault(key, set())
         listeners.add(queue)
         try:
-            if query not in self._publishers or self._publishers[query].done():
-                self._publishers[query] = asyncio.create_task(self._publish(query))
+            if key not in self._publishers or self._publishers[key].done():
+                self._publishers[key] = asyncio.create_task(self._publish(key))
             else:
-                pages = await asyncio.to_thread(self.pages, query)
+                pages = await asyncio.to_thread(self.pages, query, live=live)
                 if queue.empty():
                     queue.put_nowait(pages)
             while True:
@@ -106,21 +143,22 @@ class ActivityReader:
         finally:
             listeners.discard(queue)
             if not listeners:
-                task = self._publishers.pop(query)
-                self._listeners.pop(query)
+                task = self._publishers.pop(key)
+                self._listeners.pop(key)
                 task.cancel()
                 with suppress(asyncio.CancelledError):
                     await task
 
-    async def _publish(self, query: ActivityQuery) -> None:
+    async def _publish(self, key: tuple[ActivityQuery, bool | None]) -> None:
+        query, live = key
         boundary = None
         deadline = 0.0
         try:
             while True:
                 current = await asyncio.to_thread(self._revision)
                 if current != boundary or time.monotonic() >= deadline:
-                    pages = await asyncio.to_thread(self.pages, query)
-                    for queue in self._listeners[query]:
+                    pages = await asyncio.to_thread(self.pages, query, live=live)
+                    for queue in self._listeners[key]:
                         if queue.full():
                             queue.get_nowait()
                         queue.put_nowait(pages)
@@ -128,7 +166,7 @@ class ActivityReader:
                     deadline = time.monotonic() + 1
                 await asyncio.sleep(0.1)
         except Exception as exc:
-            for queue in self._listeners[query]:
+            for queue in self._listeners[key]:
                 if queue.full():
                     queue.get_nowait()
                 queue.put_nowait(exc)
@@ -140,6 +178,8 @@ class ActivityReader:
             row = store._conn.execute(
                 "SELECT session,revision FROM activity_meta"
             ).fetchone()
+            if row is None:
+                raise ValueError("Activity metadata is unavailable")
             return row["session"], row["revision"]
 
     def read(
@@ -153,7 +193,11 @@ class ActivityReader:
         return pages[offset // PAGE_SIZE]
 
     def pages(
-        self, query: ActivityQuery, *, now: float | None = None
+        self,
+        query: ActivityQuery,
+        *,
+        now: float | None = None,
+        live: bool | None = None,
     ) -> list[ActivitySnapshot]:
         clock = time.time() if now is None else now
         with (
@@ -162,16 +206,23 @@ class ActivityReader:
             store.read_transaction(),
         ):
             conn = store._conn
-            boundary = conn.execute(
-                "SELECT revision,session FROM activity_meta"
-            ).fetchone()
+            boundary = conn.execute("SELECT * FROM activity_meta").fetchone()
+            if boundary is None:
+                raise ValueError("Activity metadata is unavailable")
             revision = boundary["revision"]
-            cached = self._cache.get(query)
+            _, online, execution_now = _execution_clock(conn, boundary, clock, live)
+            # Checkpoints advance without a record revision. Offline projections
+            # must use the latest durable duration boundary, including Total.
+            frozen_clock = None if online else execution_now
+            key = query, live
+            cached = self._cache.get(key)
             if (
                 cached
                 and (cached[1][0].revision, cached[1][0].session)
                 == (revision, boundary["session"])
-                and clock < cached[0]
+                and cached[2] == frozen_clock
+                and cached[1][0].observed is not None
+                and cached[1][0].observed <= clock < cached[0]
             ):
                 pages = [page.model_copy(deep=True) for page in cached[1]]
                 for page in pages:
@@ -194,10 +245,32 @@ class ActivityReader:
                         if id(metrics) not in seen and metrics.time is not None:
                             metrics.time += metrics.time_rate * advance
                             seen.add(id(metrics))
-                    page.observed += advance
-                self._cache.move_to_end(query)
+                    page.observed = clock
+                if query.window is not None:
+                    # Structure and lifetime totals are unchanged. Recalculate
+                    # just the moving range over indexed facts, once per scope.
+                    moving: dict[str, ActivityMetrics] = {}
+                    for page in pages:
+                        for scope, owner in [
+                            ("@agent", page),
+                            *(
+                                (node.id, node)
+                                for node in [*page.threads, *page.roots, *page.paths]
+                            ),
+                        ]:
+                            if scope not in moving:
+                                moving[scope] = _metrics(
+                                    conn,
+                                    scope,
+                                    query.since,
+                                    boundary,
+                                    clock,
+                                    execution_now=execution_now,
+                                )
+                            owner.stats = moving[scope]
+                self._cache.move_to_end(key)
                 return pages
-            pages = _read(conn, self.agent, query, clock)
+            pages = _read(conn, self.agent, query, clock, live=live)
             expiry = float("inf")
             if query.recent is not None:
                 row = conn.execute(
@@ -206,32 +279,32 @@ class ActivityReader:
                 ).fetchone()
                 if row[0] is not None:
                     expiry = row[0] + query.recent + 0.001
-            if query.since not in {"session", "all"}:
-                start = datetime.fromisoformat(
-                    query.since.replace("Z", "+00:00")
-                ).timestamp()
-                if start > clock:
-                    expiry = min(expiry, start)
-            self._cache[query] = expiry, pages
-            self._cache.move_to_end(query)
+            start = query.start(clock)
+            if query.window is None and start is not None and start > clock:
+                expiry = min(expiry, start)
+            self._cache[key] = expiry, pages, frozen_clock
+            self._cache.move_to_end(key)
             while len(self._cache) > 8:
                 self._cache.popitem(last=False)
             return [page.model_copy(deep=True) for page in pages]
 
 
 def _metrics(
-    conn: sqlite3.Connection, scope: str, since: str, meta: sqlite3.Row, now: float
+    conn: sqlite3.Connection,
+    scope: str,
+    since: str,
+    meta: sqlite3.Row,
+    now: float,
+    *,
+    execution_now: float | None = None,
 ) -> ActivityMetrics:
     session = meta["session"] if since == "session" else "*"
     if session is None:
         return ActivityMetrics(
             model=None, tool=None, cost=None, time=None, complete=False
         )
-    start = (
-        None
-        if since in {"all", "session"}
-        else datetime.fromisoformat(since.replace("Z", "+00:00")).timestamp()
-    )
+    start = ActivityQuery(since).start(now)
+    execution_now = now if execution_now is None else execution_now
     values = [0.0] * len(BUCKET_FIELDS)
     if start is None:
         bucket = conn.execute(
@@ -251,8 +324,8 @@ def _metrics(
             """WITH boundary AS (
                 SELECT id FROM activity_attempts WHERE started>=? AND started<?
                 UNION SELECT id FROM activity_attempts WHERE finished>=? AND finished<?
-            ) SELECT a.* FROM boundary b JOIN activity_attempts a ON a.id=b.id
-              JOIN activity_owners o ON o.attempt=a.id AND o.scope=?""",
+            ) SELECT a.* FROM boundary b CROSS JOIN activity_attempts a ON a.id=b.id
+              CROSS JOIN activity_owners o ON o.attempt=a.id AND o.scope=?""",
             (start, boundary, start, boundary, scope),
         ):
             for at, change in _contributions(fact):
@@ -260,8 +333,8 @@ def _metrics(
                     values = [
                         left + right for left, right in zip(values, change, strict=True)
                     ]
-    # Closed totals handle session/all in O(1); custom starts read compact
-    # intervals once per revision. Clock ticks advance only the open anchors.
+    # Session/all use closed totals. A time range visits only intervals ending
+    # inside it, rather than every duration ever owned by a long-lived agent.
     duration = 0.0
     incomplete = False
     if start is None:
@@ -273,9 +346,10 @@ def _metrics(
             duration, incomplete = closed["total"], bool(closed["incomplete"])
     else:
         for fact in conn.execute(
-            """SELECT a.* FROM activity_attempts a JOIN activity_owners o ON o.attempt=a.id
-            WHERE o.scope=? AND o.duration=1 AND a.finished>=?""",
-            (scope, start),
+            """SELECT a.* FROM activity_attempts a INDEXED BY idx_activity_finished
+            CROSS JOIN activity_owners o ON o.attempt=a.id
+            WHERE a.finished>=? AND o.scope=? AND o.duration=1""",
+            (start, scope),
         ):
             duration += max(0, fact["finished"] - max(fact["started"], start))
             incomplete |= not fact["complete"]
@@ -288,8 +362,11 @@ def _metrics(
         if start is None or start <= now:
             open_cost += fact["model"]
         if fact["duration"]:
-            duration += max(0, now - max(fact["started"], start or 0))
-            if start is None or start <= now:
+            duration += max(
+                0,
+                execution_now - max(fact["started"], start if start is not None else 0),
+            )
+            if execution_now == now and (start is None or start <= now):
                 time_rate += 1
     first = conn.execute("SELECT MIN(started) FROM activity_sessions").fetchone()[0]
     complete = not incomplete and (
@@ -322,26 +399,42 @@ def _metrics(
     )
 
 
+def _execution_clock(
+    conn: sqlite3.Connection, meta: sqlite3.Row, now: float, live: bool | None
+) -> tuple[sqlite3.Row | None, bool, float]:
+    session = conn.execute(
+        "SELECT * FROM activity_sessions WHERE id=?", (meta["session"],)
+    ).fetchone()
+    online = bool(session and session["ended"] is None) if live is None else live
+    execution_now = now
+    if session and (not online or session["ended"] is not None):
+        execution_now = min(
+            now,
+            session["ended"] if session["ended"] is not None else session["checkpoint"],
+        )
+    return session, online, execution_now
+
+
 def _read(
     conn: sqlite3.Connection,
     agent: str,
     query: ActivityQuery,
     now: float,
+    *,
+    live: bool | None = None,
 ) -> list[ActivitySnapshot]:
     meta = conn.execute("SELECT * FROM activity_meta").fetchone()
     if meta is None:
         raise ValueError("Activity migration is not available")
-    session = conn.execute(
-        "SELECT * FROM activity_sessions WHERE id=?", (meta["session"],)
-    ).fetchone()
-    if session and session["ended"] is not None:
-        now = min(now, session["ended"])
+    session, online, execution_now = _execution_clock(conn, meta, now, live)
     memo: dict[tuple[str, str], ActivityMetrics] = {}
 
     def metrics(scope: str, since: str) -> ActivityMetrics:
         key = scope, since
         if key not in memo:
-            memo[key] = _metrics(conn, scope, since, meta, now)
+            memo[key] = _metrics(
+                conn, scope, since, meta, now, execution_now=execution_now
+            )
         return memo[key]
 
     def node(row: sqlite3.Row) -> ActivityNode:
@@ -363,7 +456,11 @@ def _read(
             position=json.loads(row["position"]),
             stale=bool(
                 attempt
-                and (attempt["session"] != meta["session"] or not attempt["complete"])
+                and (
+                    not online
+                    or attempt["session"] != meta["session"]
+                    or not attempt["complete"]
+                )
                 and row["status"] in {"pending", "running"}
             ),
             stats=metrics(row["id"], query.since),
@@ -494,7 +591,8 @@ def _read(
         recent=query.recent,
         filter=query.text,
         active_only=query.active,
-        presence="offline" if session and session["ended"] else "online",
+        presence="online" if online else "offline",
+        stale=bool(not online and session and session["ended"] is None),
         complete=complete,
         coverage=""
         if complete

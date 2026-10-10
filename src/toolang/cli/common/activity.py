@@ -1,17 +1,17 @@
-"""HTTP activity observation and terminal lifecycle; never acquires an executor."""
+"""Activity observation and terminal lifecycle; never acquires an executor."""
 
 from __future__ import annotations
 
 import asyncio
-from contextlib import closing, suppress
-import json
+from contextlib import AsyncExitStack, aclosing, closing, suppress
 import math
 import signal
 import sys
+import time
+import sqlite3
 from typing import TextIO, cast
 
 import httpx
-from httpx_sse import aconnect_sse
 from prompt_toolkit.input import create_input
 from prompt_toolkit.key_binding.key_processor import KeyPress
 from prompt_toolkit.output import create_output
@@ -19,23 +19,15 @@ from rich.console import Console
 from rich.live import Live
 
 from toolang.execution.activity import ActivityQuery
+from toolang.teaming.observation import HttpObservation, Observation, frames
 from .activity_view import Activity, Sort, View
+from .terminal_surfaces import resolve_terminal_surfaces
 
 __all__ = ["Activity", "watch"]
 
 
-def parameters(query: ActivityQuery) -> dict[str, str]:
-    return {
-        "since": query.since,
-        "recent": str(query.recent or 1800),
-        "all_recent": str(query.recent is None).lower(),
-        "filter": query.text,
-        "active": str(query.active).lower(),
-    }
-
-
 async def watch(
-    endpoint: str,
+    endpoint: str | None,
     *,
     agent: str | None,
     backend: str | None,
@@ -47,6 +39,7 @@ async def watch(
     query: ActivityQuery | None = None,
     recent_label: str = "30m",
     refresh: float = 0.1,
+    source: Observation | None = None,
 ) -> None:
     if not math.isfinite(refresh) or refresh <= 0:
         raise ValueError("Refresh must be a finite positive number of seconds")
@@ -57,32 +50,32 @@ async def watch(
         sort=sort,
         query=query,
         recent_label=recent_label,
-        refresh=refresh,
+        surfaces=resolve_terminal_surfaces(
+            output_stream=cast(TextIO, console.file), probe=not once
+        ),
     )
     stop = asyncio.Event()
     changed = asyncio.Event()
     redraw = asyncio.Event()
     needs_render = True
-    path = "/api/v1/activity" if agent else "/activity"
-    async with httpx.AsyncClient(
-        base_url=endpoint,
-        headers={"X-Toolang-Backend": backend} if backend else {},
-        timeout=httpx.Timeout(10, read=None),
-        trust_env=False,
-    ) as http:
+    async with AsyncExitStack() as stack:
+        if source is None:
+            if endpoint is None:
+                raise ValueError("Activity source is required")
+            http = await stack.enter_async_context(
+                httpx.AsyncClient(
+                    base_url=endpoint,
+                    headers={"X-Toolang-Backend": backend} if backend else {},
+                    timeout=httpx.Timeout(10, read=None),
+                    trust_env=False,
+                )
+            )
+            source = HttpObservation(http, agent=agent)
+        observer = source
         if once:
             try:
-                response = await http.get(
-                    path + ("/batch" if agent else ""), params=parameters(state.query)
-                )
-                response.raise_for_status()
-                pages = response.json()
-                for page in pages:
-                    state.feed("activity_page", page)
-                state.feed(
-                    "activity_checkpoint",
-                    {"agents": sorted({page["agent"] for page in pages})},
-                )
+                for event, data in frames(await observer.read(state.query)):
+                    state.feed(event, data)
             except (httpx.HTTPError, ValueError, KeyError) as exc:
                 raise ValueError(f"Activity service unavailable: {exc}") from exc
             console.print(
@@ -96,32 +89,12 @@ async def watch(
             while not stop.is_set():
                 state.attach()
                 try:
-                    async with aconnect_sse(
-                        http, "GET", path + "/stream", params=parameters(state.query)
-                    ) as source:
-                        if source.response.status_code in {
-                            400,
-                            401,
-                            403,
-                            404,
-                            409,
-                            422,
-                        }:
-                            raise ValueError(
-                                f"Activity request rejected ({source.response.status_code}); check the running service"
-                            )
-                        source.response.raise_for_status()
-                        async for event in source.aiter_sse():
-                            if event.data:
-                                if event.event == "stream_error":
-                                    raise httpx.ReadError(
-                                        "Activity source is recovering"
-                                    )
-                                needs_render |= state.feed(
-                                    event.event, json.loads(event.data)
-                                )
-                                delay = 0.5
-                        raise httpx.ReadError("Activity stream disconnected")
+                    async with aclosing(
+                        observer.updates(state.attached_query)
+                    ) as updates:
+                        async for event, data in updates:
+                            needs_render |= state.feed(event, data)
+                            delay = 0.5
                 except httpx.HTTPError:
                     state.reconnecting = True
                     needs_render = True
@@ -193,15 +166,15 @@ async def watch(
                 async def fetch_result(key: tuple[str, str, str]) -> None:
                     nonlocal needs_render
                     try:
-                        response = await http.get(
-                            path + "/result",
-                            params={"agent": key[0], "ref": key[1]},
-                            timeout=3,
-                        )
-                        response.raise_for_status()
-                        text = response.json()["text"] or "No result yet"
-                    except (httpx.HTTPError, ValueError, KeyError):
-                        text = "Result unavailable · use the inspect command"
+                        text = await observer.result(key[0], key[1]) or "Pending"
+                    except (
+                        httpx.HTTPError,
+                        OSError,
+                        sqlite3.Error,
+                        ValueError,
+                        KeyError,
+                    ):
+                        text = "Unavailable"
                     if state.result_key == key:
                         state.result_text = text
                         needs_render = True
@@ -214,10 +187,13 @@ async def watch(
                 except ValueError:
                     pass  # Embedded callers may run outside the main thread.
                 deadline = loop.time()
+                clock = -1
                 try:
                     while not stop.is_set():
                         if task.done():
                             await task
+                        current_clock = int(time.time())
+                        needs_render |= current_clock != clock
                         immediate = redraw.is_set()
                         if immediate or loop.time() >= deadline:
                             redraw.clear()
@@ -248,7 +224,7 @@ async def watch(
                                         state.result_key,
                                         state.result_text,
                                         state.details_offset,
-                                    ) = target, "Loading result…", 0
+                                    ) = target, "Loading", 0
                                     result_task = (
                                         asyncio.create_task(fetch_result(target))
                                         if target
@@ -261,6 +237,7 @@ async def watch(
                                     refresh=True,
                                 )
                                 needs_render = False
+                                clock = current_clock
                             deadline = loop.time() + refresh
                         try:
                             await asyncio.wait_for(

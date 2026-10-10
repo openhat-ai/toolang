@@ -1,4 +1,4 @@
-"""Hub activity federation and last-observed coverage, sourced from agent HTTP."""
+"""Hub activity federation from local stores, agent HTTP and cached coverage."""
 
 from __future__ import annotations
 
@@ -9,44 +9,19 @@ from collections import OrderedDict
 import hashlib
 import json
 import time
-from typing import Annotated
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
 from typing import TYPE_CHECKING
 
 import httpx
-from fastapi import APIRouter, Depends, Query, HTTPException
-from fastapi.sse import EventSourceResponse, ServerSentEvent
 
-from toolang.execution.activity import ActivityQuery
+from toolang.execution.activity import ActivityQuery, ActivityReader
 from toolang.execution.schemas import ActivityMetrics, ActivitySnapshot
 from .backend import Backend, PREFIX, LAST_SEEN, online_key
 from .roster import Roster
+from .observation import HttpObservation, LocalObservation
 
 if TYPE_CHECKING:
     from .activity_feed import HubActivityFeed
-
-
-def activity_query(
-    since: str = "session",
-    recent: Annotated[float | None, Query(gt=0)] = 1800,
-    text: Annotated[str, Query(alias="filter", max_length=240)] = "",
-    active: bool = False,
-    all_recent: bool = False,
-) -> ActivityQuery:
-    try:
-        return ActivityQuery(since, None if all_recent else recent, text, active)
-    except ValueError as exc:
-        raise HTTPException(422, str(exc)) from exc
-
-
-def query_params(query: ActivityQuery) -> dict[str, str]:
-    return {
-        "since": query.since,
-        "recent": str(query.recent or 1800),
-        "all_recent": str(query.recent is None).lower(),
-        "filter": query.text,
-        "active": str(query.active).lower(),
-    }
 
 
 class ActivityBackend:
@@ -250,9 +225,16 @@ def cached_selection(
 
 
 class HubActivity:
-    def __init__(self, backend: Backend, *, roster: Roster | None = None) -> None:
+    def __init__(
+        self,
+        backend: Backend,
+        *,
+        roster: Roster | None = None,
+        local_reader: Callable[[str], ActivityReader | None] | None = None,
+    ) -> None:
         self.backend = ActivityBackend(backend)
         self.roster = roster
+        self.local_reader = local_reader
         self._lock = asyncio.Lock()
         self._cache: OrderedDict[
             ActivityQuery, tuple[float, list[ActivitySnapshot]]
@@ -265,6 +247,18 @@ class HubActivity:
             if self.roster
             else await self.backend.backend.participants()
         )
+
+    async def local_source(
+        self, agent: str, lease: dict[str, str]
+    ) -> LocalObservation | None:
+        if self.local_reader is None:
+            return None
+        if self.roster and not (await self.roster.agents()).get(agent, {}).get(
+            "managed"
+        ):
+            return None
+        reader = await asyncio.to_thread(self.local_reader, agent)
+        return LocalObservation(reader, live=bool(lease)) if reader else None
 
     async def decorate(
         self,
@@ -280,8 +274,8 @@ class HubActivity:
             page.presence = "online" if lease else "offline"
             page.last_seen = float(seen) if seen else None
             page.home_missing = bool(info.get("missing"))
-            page.stale = not fresh
-            if not fresh:
+            page.stale = not fresh or page.stale
+            if page.stale or not lease:
                 page.paths = []
                 for node in page.roots:
                     node.stale = node.status in {"pending", "running"}
@@ -313,19 +307,18 @@ class HubActivity:
                 async def source(agent: str) -> list[ActivitySnapshot]:
                     async with semaphore:
                         lease = await self.backend.lease(agent)
+                        local = await self.local_source(agent, lease)
+                        if local is not None:
+                            pages = await local.read(query)
+                            await self.decorate(agent, pages, lease, fresh=True)
+                            return pages
                         pages = []
                         fresh = False
                         if lease.get("endpoint"):
                             try:
-                                response = await http.get(
-                                    lease["endpoint"] + "/api/v1/activity/batch",
-                                    params=query_params(query),
-                                )
-                                response.raise_for_status()
-                                pages = [
-                                    ActivitySnapshot.model_validate(value)
-                                    for value in response.json()
-                                ]
+                                pages = await HttpObservation(
+                                    http, agent=agent, endpoint=lease["endpoint"]
+                                ).read(query)
                                 if not pages or any(
                                     page.agent != agent for page in pages
                                 ):
@@ -359,45 +352,3 @@ class HubActivity:
             while len(self._cache) > 8:
                 self._cache.popitem(last=False)
             return pages
-
-
-def activity_router(backend: Backend, *, roster: Roster | None = None) -> APIRouter:
-    reader = HubActivity(backend, roster=roster)
-    router = APIRouter(prefix="/activity", tags=["activity"])
-
-    @router.get("")
-    async def snapshot(
-        query: Annotated[ActivityQuery, Depends(activity_query)],
-    ) -> list[ActivitySnapshot]:
-        return await reader.read(query)
-
-    @router.get("/stream", response_class=EventSourceResponse)
-    async def stream(
-        query: Annotated[ActivityQuery, Depends(activity_query)],
-    ) -> AsyncGenerator[ServerSentEvent]:
-        async with aclosing(reader.updates(query)) as updates:
-            async for event, data in updates:
-                yield ServerSentEvent(event=event, data=data)
-
-    @router.get("/result")
-    async def result(agent: str, ref: str) -> dict[str, str]:
-        if agent not in await reader.agents():
-            raise HTTPException(404, "Agent not found")
-        lease = await reader.backend.lease(agent)
-        if not lease.get("endpoint"):
-            raise HTTPException(503, "Agent is offline; use inspect against its home")
-        try:
-            async with httpx.AsyncClient(timeout=2, trust_env=False) as http:
-                response = await http.get(
-                    lease["endpoint"] + "/api/v1/activity/result", params={"ref": ref}
-                )
-                response.raise_for_status()
-                if lease != await reader.backend.lease(agent):
-                    raise HTTPException(409, "Agent restarted; reopen Details")
-                return {"text": response.json()["text"]}
-        except httpx.HTTPStatusError as exc:
-            raise HTTPException(exc.response.status_code, "Result unavailable") from exc
-        except (httpx.HTTPError, ValueError, KeyError) as exc:
-            raise HTTPException(502, "Result unavailable") from exc
-
-    return router

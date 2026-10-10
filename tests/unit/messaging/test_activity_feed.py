@@ -17,7 +17,7 @@ from tests.unit.messaging.test_protocol import client
 def test_slow_source_independent_updates_roster_and_reconnect(monkeypatch):
     gates = {name: asyncio.Event() for name in ("agent:alice", "agent:bob")}
 
-    async def source(self, http, agent, lease):
+    async def source(self, http, agent, lease, local=None):
         await gates[agent].wait()
         self.replace(
             agent,

@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 from starlette.middleware import Middleware
 from toolang.common.sse import SSESendDeadline
+from toolang.execution.activity import ActivityReader
 from toolang.execution.errors import SnapshotLimitError
 from toolang.execution.errors import StreamOverflowError
 from .event_backend import EventBackend
@@ -40,6 +41,7 @@ def create_app(
     *,
     on_ready: Callable[[], None] | None = None,
     roster: Roster | None = None,
+    local_activity: Callable[[str], ActivityReader | None] | None = None,
 ) -> FastAPI:
     """Bind requests to one configured human; own the service for this lifespan."""
     target(client.actor, kind="human")
@@ -224,7 +226,9 @@ def create_app(
 
     app.include_router(messaging_router(lambda: client, prefix="/msg"))
     app.include_router(agent_router(client, roster=roster))
-    from .activity import activity_router
+    from .activity_api import activity_router
 
-    app.include_router(activity_router(client._backend, roster=roster))
+    app.include_router(
+        activity_router(client._backend, roster=roster, local_reader=local_activity)
+    )
     return app

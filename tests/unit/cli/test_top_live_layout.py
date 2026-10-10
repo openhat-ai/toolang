@@ -42,7 +42,7 @@ def test_numbers_align_with_headers_and_footer_stays_at_bottom():
         ("CACHED", "96.0k"),
         ("OUT", "12.8k"),
         ("SPEND", "$1.28"),
-        ("TIME", "12m30s"),
+        ("TIME+", "12m30s"),
     ):
         assert cell_len(header[: header.index(title) + len(title)]) == cell_len(
             row[: row.index(value) + len(value)]
