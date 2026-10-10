@@ -1,6 +1,6 @@
 # Chat runtime header
 
-Status: Approved in the implementation request on 2026-10-10.
+Status: Approved and revised in the implementation requests on 2026-10-10.
 
 ## Goal and scope
 
@@ -11,11 +11,13 @@ banner. This supersedes the metadata presentation in
 
 ## Decisions
 
-- Caption: `Toolang Chat <client-version>`; retain the logo, panel styling,
-  padding, endpoint hyperlink, and responsive folding.
+- No frame caption or client version; use `too -V` to inspect the client version.
+  Retain the logo, panel styling, padding, and responsive folding.
 - Rows, in order: `runtime`, `sandbox`, `workspaces`.
-- Runtime: always show `<version> · <endpoint>`, including matching, dirty, and
-  unknown versions. Known versions have exactly one `v` prefix.
+- Runtime: always show only `<version>`, including matching, dirty, and unknown
+  versions. Known versions have exactly one `v` prefix. Omit the endpoint and
+  its separator/link from the banner; use `too AGENT info` to inspect the API
+  endpoint. Retain endpoint metadata for connection and validation.
 - Sandbox: `<driver> · <environment>`. Host uses the existing OS description;
   Docker uses the image selector after `docker:`. Do not display container IDs.
   Runtime identity validation and the API's instance field remain unchanged.
@@ -37,8 +39,9 @@ Update the changelog through `too aide.too update_changelog`.
 
 ## Acceptance
 
-1. Host and Docker headers show ordered rows, complete runtime versions before
-   linked endpoints, and no agent-home paths or container IDs.
+1. Host and Docker headers show ordered rows and complete runtime versions,
+   with no frame caption, endpoint text/link, dangling separator, agent-home
+   paths, or container IDs. `too -V` and `too AGENT info` retain their output.
 2. Runtime workspace inspection filters unavailable entries, preserves names,
    tolerates additive fields, and handles empty/failed/malformed responses.
 3. Wide and narrow layouts preserve values, alignment, styles, and padding.

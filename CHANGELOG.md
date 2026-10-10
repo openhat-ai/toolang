@@ -244,10 +244,10 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   including the implicit `lab` workspace, temporary grants, or a workdir.
 
 - Chat's startup banner now describes the connected runtime and its
-  workspaces instead of the executor and agent home. Its caption reads
-  `Toolang Chat <version>`, and its rows are `runtime` (always
-  `<version> · <linked endpoint>`, with a single `v` prefix on known
-  versions), `sandbox` (`<driver> · <environment>`; Docker shows its image
+  workspaces instead of the executor and agent home. It has no caption, and
+  its rows are `runtime` (only `<version>`, with a single `v` prefix on known
+  versions; `too -V` reports the client version and `too AGENT info` the API
+  endpoint), `sandbox` (`<driver> · <environment>`; Docker shows its image
   selector instead of a container ID), and `workspaces` (the runtime's
   available logical names from `GET /api/v1/workspaces` in response order,
   `none` when the list is empty, `unavailable` when inspection fails, and

@@ -3086,14 +3086,14 @@ def test_chat_header_uses_wide_runtime_layout() -> None:
             version="0.3.9",
             workspaces=("lab", "toolang"),
         ),
-        version_label="v0.3.9",
     )
     rendered = _render_text(block.render(), width=100)
     lines = rendered.splitlines()
     assert lines[0] == ""
-    assert lines[1].startswith("╭─ Toolang Chat v0.3.9 ─")
-    assert rendered.count("Toolang") == 1
-    assert rendered.count("v0.3.9") == 2
+    assert lines[1] == "╭" + "─" * (len(lines[1]) - 2) + "╮"
+    assert "Toolang Chat" not in rendered
+    assert rendered.count("v0.3.9") == 1
+    assert "http://localhost:7001" not in rendered
     assert "home" not in rendered
     assert "executor" not in rendered
     assert "embedded" not in rendered
@@ -3104,7 +3104,7 @@ def test_chat_header_uses_wide_runtime_layout() -> None:
     assert "████" in runtime_line
     assert "⬤" in sandbox_line
     assert "███" in workspace_line
-    assert "v0.3.9 · http://localhost:7001" in runtime_line
+    assert runtime_line.split("runtime", 1)[1].strip("│ ") == "v0.3.9"
     assert _HOST_SANDBOX_VALUE in sandbox_line
     assert "lab, toolang" in workspace_line
     assert runtime_line.index("runtime") == sandbox_line.index("sandbox")
@@ -3128,7 +3128,6 @@ def test_chat_header_stacks_without_clipping_in_a_narrow_terminal(width: int) ->
                 version="v0.3.9",
                 workspaces=("lab", "toolang-with-a-long-workspace-name"),
             ),
-            version_label="v0.1.0",
         ).render(),
         width=width,
     )
@@ -3142,11 +3141,12 @@ def test_chat_header_stacks_without_clipping_in_a_narrow_terminal(width: int) ->
     assert not bordered[1].strip("│ ")
     assert not bordered[-2].strip("│ ")
     unwrapped = rendered.replace("\n", "").replace("│", "").replace(" ", "")
-    assert "runtimev0.3.9·http://runtime.test:7001" in unwrapped
+    assert "runtimev0.3.9" in unwrapped
+    assert "http://runtime.test:7001" not in unwrapped
     assert "sandboxdocker·registry.example:5000/team/python:3.13-slim" in unwrapped
     assert "workspaceslab,toolang-with-a-long-workspace-name" in unwrapped
-    assert rendered.count("·") == 2
-    assert rendered.count("Toolang Chat v0.1.0") == 1
+    assert rendered.count("·") == 1
+    assert "Toolang Chat" not in rendered
     assert _CONTAINER_ID[:12] not in rendered
 
 
@@ -3163,13 +3163,13 @@ def test_chat_header_keeps_metadata_when_label_and_value_columns_cannot_fit(
                 version="0.3.9",
                 workspaces=("lab", "toolang"),
             ),
-            version_label="v0.3.9",
         ).render(),
         width=width,
     )
     assert all(get_cwidth(line) <= width for line in rendered.splitlines())
     unwrapped = rendered.replace("\n", "").replace("│", "").replace(" ", "")
-    assert "runtimev0.3.9·http://runtime.test:7001" in unwrapped
+    assert "runtimev0.3.9" in unwrapped
+    assert "http://runtime.test:7001" not in unwrapped
     assert "sandbox" + _HOST_SANDBOX_VALUE.replace(" ", "") in unwrapped
     assert "workspaceslab,toolang" in unwrapped
 
@@ -3180,12 +3180,11 @@ def test_chat_header_keeps_metadata_when_label_and_value_columns_cannot_fit(
         ("0.3.8", "v0.3.8"),
         ("v0.3.9", "v0.3.9"),
         ("0.3.9*", "v0.3.9*"),
+        ("0.4.0a2-25-g7297ecfd", "v0.4.0a2-25-g7297ecfd"),
         ("unknown", "unknown"),
     ],
 )
-def test_chat_header_always_shows_runtime_version_before_endpoint(
-    version: str, expected: str
-) -> None:
+def test_chat_header_shows_only_runtime_version(version: str, expected: str) -> None:
     rendered = _render_text(
         blocks.HeaderBlock(
             executor_metadata=ChatExecutorMetadata(
@@ -3195,12 +3194,13 @@ def test_chat_header_always_shows_runtime_version_before_endpoint(
                 version=version,
                 workspaces=("lab",),
             ),
-            version_label="v0.3.9",
         ).render(),
         width=120,
     )
     runtime_line = next(line for line in rendered.splitlines() if "runtime" in line)
-    assert f"{expected} · http://runtime.test:7001" in runtime_line
+    assert runtime_line.split("runtime", 1)[1].strip("│ ") == expected
+    assert "http://runtime.test:7001" not in rendered
+    assert "Toolang Chat" not in rendered
 
 
 @pytest.mark.parametrize(
@@ -3217,7 +3217,6 @@ def test_chat_header_distinguishes_empty_and_unavailable_workspaces(
                 sandbox_detail=_HOST_DESCRIPTION,
                 workspaces=workspaces,
             ),
-            version_label="v0.3.9",
         ).render(),
         width=100,
     )
@@ -3228,7 +3227,7 @@ def test_chat_header_distinguishes_empty_and_unavailable_workspaces(
 @pytest.mark.parametrize(
     "driver, detail", [("host", _HOST_DESCRIPTION), ("docker", "python:3.13-slim")]
 )
-def test_chat_header_keeps_logo_styles_links_and_padding(
+def test_chat_header_keeps_logo_styles_and_padding_without_links(
     driver: str, detail: str
 ) -> None:
     block = blocks.HeaderBlock(
@@ -3239,7 +3238,6 @@ def test_chat_header_keeps_logo_styles_links_and_padding(
             version="v0.3.9",
             workspaces=("lab", "toolang"),
         ),
-        version_label="v0.1.0",
     )
     segments = rendering.render_segments(block.render(), width=100)
     rendered = _render_text(block.render(), width=100)
@@ -3247,9 +3245,6 @@ def test_chat_header_keeps_logo_styles_links_and_padding(
     assert _CONTAINER_ID[:12] not in rendered
     logo_blocks = [segment for segment in segments if "█" in segment.text]
     logo_dots = [segment for segment in segments if "⬤" in segment.text]
-    caption = next(
-        segment for segment in segments if "Toolang Chat v0.1.0" in segment.text
-    )
     keys = [
         next(segment for segment in segments if segment.text.strip() == key)
         for key in ("runtime", "sandbox", "workspaces")
@@ -3259,11 +3254,11 @@ def test_chat_header_keeps_logo_styles_links_and_padding(
         for value in ("lab, toolang", "v0.3.9", driver, detail)
     ]
     separators = [segment for segment in segments if "·" in segment.text]
-    endpoint = next(
-        segment for segment in segments if segment.text == "http://localhost:7001"
+    assert "Toolang Chat" not in rendered
+    assert "http://localhost:7001" not in rendered
+    assert all(
+        segment.style is None or segment.style.link is None for segment in segments
     )
-    assert endpoint.style is not None
-    assert endpoint.style.link == "http://localhost:7001"
     assert sum(segment.text.count("█") for segment in logo_blocks) == 15
     assert all(
         segment.style is not None
@@ -3282,16 +3277,12 @@ def test_chat_header_keeps_logo_styles_links_and_padding(
         and not segment.style.reverse
         for segment in logo_dots
     )
-    assert caption.style is not None
-    assert not caption.style.bold
-    assert not caption.style.dim
-    assert caption.style.color is None
     assert all(segment.style is not None and segment.style.dim for segment in keys)
     assert all(
         segment.style is None or (not segment.style.bold and not segment.style.dim)
         for segment in values
     )
-    assert len(separators) == 2
+    assert len(separators) == 1
     assert all(
         segment.style is not None and segment.style.dim for segment in separators
     )
