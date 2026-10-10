@@ -232,6 +232,14 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   unavailable, while active, failed, and `idle` summaries stay in Table
   ACTIVITY.
 
+- **Breaking (teaming API):** the Python `HubClient` and `AgentClient`
+  `create_conversation()` and `rename_conversation()` methods now return a
+  validated `Conversation`, as `conversation()` already did, instead of an
+  untyped dictionary; read attributes such as `.id` and `.participants`, or
+  call `dataclasses.asdict()` when a dictionary is needed. HTTP JSON fields and
+  `msg` tool outputs keep their record shape, and an inaccessible conversation
+  now fails with HTTP `403` code `conversation_access_denied`.
+
 - `too top` shows only function-key hints in its Status bar — F1 Help, F4
   Filter, F5 naming the next view, F6 Sort, F7 Recent, F8 Period, and F10
   Quit — so `F5` cycles the Agent, Thread, Run, and Tree levels, `F10` exits
@@ -331,9 +339,10 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 - The Hub HTTP API no longer requires bearer-token authentication: requests may
   identify the backend and human with optional `X-Toolang-Backend` and
   `X-Toolang-Human` headers, and a mismatch fails with `409` code `hub_changed`.
-  The private `.runtime/hub.json` no longer records a token, though records that
-  still carry one load normally, and Text reconnects across a Hub restart,
-  needing a reopen only when the Hub's endpoint, backend, or human changes.
+  The private `.runtime/hub.json` no longer records a token, and a record that
+  still carries one is rejected instead of loaded; Text reconnects across a Hub
+  restart, needing a reopen only when the Hub's endpoint, backend, or human
+  changes.
 
 - **Breaking (teaming transport):** agents now reach messaging, presence, and
   event export through the Hub HTTP API instead of connecting to Redis/Valkey
@@ -419,6 +428,10 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   direct conversation's `agent:alice ↔ agent:bob` participants. (#708)
 
 ### Fixed
+
+- A malformed stored conversation record now rejects membership changes without
+  partial writes, and losing membership in one conversation during a polling
+  round no longer blocks the others.
 
 - Active-tree selection no longer rescans all runs for every root: parent run
   IDs are materialized once so recursive lookups are indexed, keeping a large
