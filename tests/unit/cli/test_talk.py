@@ -304,20 +304,40 @@ def test_directory_shows_presence_previews_and_does_not_create_conversations(
     asyncio.run(unchanged())
 
 
+@pytest.mark.parametrize("agent,body", [("bob", "hello"), ("bobcat", "ok")])
+def test_directory_uses_available_space_for_members(agent, body):
+    timestamp = datetime(2026, 10, 10, 9, 10, tzinfo=timezone.utc)
+    output = render_directory(
+        conversations=[
+            {
+                "conversation": "gc_00000000",
+                "name": "all",
+                "participants": ["agent:alice", f"agent:{agent}", "human:bryan"],
+                "latest": f"{int(timestamp.timestamp() * 1000)}-0",
+                "preview": {"sender": "human:bryan", "body": body},
+            }
+        ],
+        width=60,
+    )
+    row = next(line for line in output.splitlines() if "gc_00000000" in line)
+    assert f"alice · {agent} · bryan" in row and f"bryan: {body}" in row
+    assert cell_len(row) <= 60
+
+
+def render_directory(*, conversations=(), team=(), width=120):
+    output = StringIO()
+    directory._print_directory(
+        Console(file=output, width=width, color_system=None, markup=False),
+        list(conversations),
+        list(team),
+        now=datetime(2026, 10, 10, 12, tzinfo=timezone.utc),
+    )
+    return output.getvalue()
+
+
 @pytest.mark.parametrize("width", [60, 80, 120, 240])
-def test_directory_keeps_sections_and_long_rows_aligned(tmp_path, monkeypatch, width):
-    class Clock(datetime):
-        @classmethod
-        def now(cls, tz=None):
-            return cls(2026, 10, 10, 12, tzinfo=timezone.utc)
-
-        def astimezone(self, tz=None):
-            return super().astimezone(tz or timezone.utc)
-
-    monkeypatch.setattr(directory, "datetime", Clock)
-    client = AsyncMock()
-    client.__aenter__.return_value = client
-    client.team.return_value = [
+def test_directory_keeps_sections_and_long_rows_aligned(width):
+    team = [
         {
             "member": "agent:alice",
             "display_name": "alice",
@@ -338,7 +358,7 @@ def test_directory_keeps_sections_and_long_rows_aligned(tmp_path, monkeypatch, w
         },
     ]
     times = ["2026-10-10T09:10", "2026-10-09T09:10", "2025-10-10T09:10"]
-    client.contacts.return_value = [
+    conversations = [
         {
             "conversation": f"gc_0000000{index}",
             "name": "开发讨论" * 16 if index == 0 else "Long conversation name " * 4,
@@ -363,17 +383,9 @@ def test_directory_keeps_sections_and_long_rows_aligned(tmp_path, monkeypatch, w
             "latest": None,
         }
     ]
-    monkeypatch.setattr(directory, "HubClient", lambda config: client)
-    monkeypatch.setattr(directory, "settings", lambda root: (None, "human:bryan"))
-    output = StringIO()
-    monkeypatch.setattr(
-        directory,
-        "Console",
-        lambda **kwargs: Console(file=output, width=width, color_system=None, **kwargs),
+    rendered = render_directory(
+        conversations=list(reversed(conversations)), team=team, width=width
     )
-
-    assert cli.main(["--root", str(tmp_path), "talk"]) == 0
-    rendered = output.getvalue()
     sections = rendered.strip().split("\n\n")
     assert len(sections) == 3
     usage, team, conversations = sections
@@ -407,35 +419,28 @@ def test_directory_keeps_sections_and_long_rows_aligned(tmp_path, monkeypatch, w
         name = line.split("alice", 1)[0].split(maxsplit=1)[1].strip()
         # Check terminal cells, including double-width Unicode names.
         assert cell_len(name) <= 24 and name.endswith("…")
-        members = line.split("alice", 1)[1].split(stamp, 1)[0].strip()
-        assert members.endswith("…")
+        members = line[line.index("alice") : line.index(stamp)].strip()
+        if width >= 120:
+            assert members == "alice · bob · bryan · caroline · daniel"
+        else:
+            assert members.endswith("…")
     assert len(set(message_columns)) == 1
     assert "—" in lines[-1]
 
 
 @pytest.mark.parametrize("width", [24, 40, 80, 120])
-@pytest.mark.parametrize("name", ["long-agent-" * 24, "开发助手" * 32])
-def test_directory_keeps_presence_readable_with_long_agent_names(
-    tmp_path, monkeypatch, width, name
-):
-    client = AsyncMock()
-    client.__aenter__.return_value = client
-    client.team.return_value = [
-        {"member": f"agent:{name}", "online": True},
-        {"member": "agent:bob", "online": False},
-    ]
-    client.contacts.return_value = []
-    monkeypatch.setattr(directory, "HubClient", lambda config: client)
-    monkeypatch.setattr(directory, "settings", lambda root: (None, "human:bryan"))
-    output = StringIO()
-    monkeypatch.setattr(
-        directory,
-        "Console",
-        lambda **kwargs: Console(file=output, width=width, color_system=None, **kwargs),
+@pytest.mark.parametrize(
+    "name", ["long-agent-" * 24, "开发助手" * 32], ids=["ascii", "wide"]
+)
+def test_directory_keeps_presence_readable_with_long_agent_names(width, name):
+    rendered = render_directory(
+        team=[
+            {"member": f"agent:{name}", "online": True},
+            {"member": "agent:bob", "online": False},
+        ],
+        width=width,
     )
-
-    assert cli.main(["--root", str(tmp_path), "talk"]) == 0
-    team = output.getvalue().strip().split("\n\n")[1].splitlines()
+    team = rendered.strip().split("\n\n")[1].splitlines()
     assert len(team) == 4
     assert team[1].split() == ["Agent", "Presence"]
     assert team[2].split() == ["bob", "offline"]
@@ -447,23 +452,13 @@ def test_directory_keeps_presence_readable_with_long_agent_names(
     assert all(cell_len(line) <= width for line in team)
 
 
-def test_directory_with_only_humans_shows_no_agents(
-    tmp_path, monkeypatch, messaging_cli, capsys
-):
-    client = AsyncMock()
-    client.__aenter__.return_value = client
-    client.team.return_value = [
-        {
-            "member": "human:bryan",
-            "display_name": "bryan",
-            "owner": None,
-            "online": None,
-        }
-    ]
-    client.contacts.return_value = []
-    monkeypatch.setattr(directory, "HubClient", lambda config: client)
-    assert cli.main(["--root", str(tmp_path), "talk"]) == 0
-    output = capsys.readouterr().out
+@pytest.mark.parametrize(
+    "team",
+    [[], [{"member": "human:bryan", "online": None}]],
+    ids=["empty", "humans-only"],
+)
+def test_directory_empty_sections(team):
+    output = render_directory(team=team)
     assert "No agents." in output and "No conversations." in output
     assert "bryan" not in output
 
