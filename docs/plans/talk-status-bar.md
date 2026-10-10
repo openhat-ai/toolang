@@ -60,7 +60,8 @@ Successful sends leave the normal identity row visible.
 Messages use terminal scrollback. Agent bodies reuse Chat's Markdown renderer;
 human bodies remain literal text. Names and markers share a header row aligned
 with body text. Agent names and markers use the same stable ANSI color derived
-from the name, without dimming. A faint dashed rule appears above each agent header.
+from the name, without dimming. A faint dashed rule ends each agent message block
+immediately after its body, before the spacing between messages.
 Left messages fill the available width; own messages align right. See the
 [message layout contract](talk-agent-header-divider.md).
 

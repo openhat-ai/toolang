@@ -37,8 +37,8 @@ def test_agent_headings_lists_and_rules_follow_chat_layout():
     lines = [
         line.rstrip() for line in "".join(s.text for s in render(source)).splitlines()
     ]
-    assert lines[0] == "  " + "┄" * 58
-    assert lines[1] == "• alice"
+    assert lines[0] == "• alice"
+    assert lines[-2] == "  " + "┄" * 58
     assert "  Heading" in lines
     assert "  • outer" in lines
     assert "    • inner" in lines

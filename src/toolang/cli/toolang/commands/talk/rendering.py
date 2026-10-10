@@ -90,9 +90,9 @@ def message_block(
         )
     rows = (
         Group(
-            Padding(Rule(characters="┄", style="bright_black dim"), (0, 0, 0, padding)),
             header,
             content,
+            Padding(Rule(characters="┄", style="bright_black dim"), (0, 0, 0, padding)),
         )
         if agent
         else Group(header, content)
