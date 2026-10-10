@@ -161,7 +161,44 @@ def test_lookup_command_count_does_not_scale_with_directory_size(monkeypatch):
                     call.args[0] in {"EVAL", "HEXISTS"}
                     for call in observed.await_args_list
                 )
-            assert counts[0] == counts[1] == 4
+            assert counts[0] == counts[1] == 6
             assert await raw.scard(convo_key(ref, "members")) == 2
+
+    asyncio.run(scenario())
+
+
+def test_directory_reads_use_bounded_batches_and_keep_visibility(monkeypatch):
+    async def scenario():
+        server = FakeServer(server_type="valkey")
+        async with (
+            client(server, "human:owner") as human,
+            client(server, "agent:alice") as alice,
+        ):
+            await alice.register(human.actor)
+            raw = human._backend._client
+            system = await raw.hget(SYSTEM, "all")
+            template = json.loads(await raw.hget(CONVOS, system))
+            async with raw.pipeline() as pipe:
+                for seq in range(129):
+                    ref = gc_id(0, seq)
+                    pipe.hset(
+                        CONVOS,
+                        ref,
+                        json.dumps({**template, "id": ref, "created_by": human.actor}),
+                    )
+                    pipe.sadd(convo_key(ref, "members"), human.actor)
+                pipe.hincrby(STATS, "gc_count", 129)
+                await pipe.execute()
+            for reader, expected in ((human, 130), (alice, 1)):
+                observed = AsyncMock(wraps=reader._backend._call)
+                monkeypatch.setattr(reader._backend, "_call", observed)
+                assert len(await reader.contacts()) == expected
+                # One ID read and two bounded batches; independent of visible count.
+                assert observed.await_count == 6
+                batches = [
+                    json.loads(call.args[-1]).get("conversations", [])
+                    for call in observed.await_args_list
+                ]
+                assert max(map(len, batches)) == 128
 
     asyncio.run(scenario())

@@ -167,14 +167,21 @@ def test_contacts_survive_membership_loss_while_loading_previews(monkeypatch):
             await alice.register(human.actor)
             leaving = await alice.create_conversation("Leaving")
             remaining = await alice.create_conversation("Remaining")
-            history = alice.history
+            evaluate = alice._backend._eval
+            changed = False
 
-            async def leave_before_history(conversation, **kwargs):
-                if conversation == leaving.id:
-                    await alice.leave_conversation(conversation)
-                return await history(conversation, **kwargs)
+            async def leave_before_read(script, keys, args):
+                nonlocal changed
+                if (
+                    not changed
+                    and '"checked"' in args[0]
+                    and '"action":"contacts"' in args[0]
+                ):
+                    changed = True
+                    await alice.leave_conversation(leaving.id)
+                return await evaluate(script, keys, args)
 
-            monkeypatch.setattr(alice, "history", leave_before_history)
+            monkeypatch.setattr(alice._backend, "_eval", leave_before_read)
             contacts = await alice.contacts(include_preview=True)
             ids = {row["conversation"] for row in contacts}
             assert leaving.id not in ids
@@ -200,7 +207,10 @@ def test_conversation_discovery_propagates_backend_errors(
             async def unavailable(_):
                 raise error("Permission lookup failed")
 
-            monkeypatch.setattr(alice, "conversation", unavailable)
+            if operation == "contacts":
+                monkeypatch.setattr(alice._backend, "contacts", unavailable)
+            else:
+                monkeypatch.setattr(alice, "conversation", unavailable)
             with pytest.raises(error):
                 if operation == "contacts":
                     await alice.contacts()

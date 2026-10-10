@@ -206,6 +206,7 @@ With `P = too:teaming:v1`, the messaging key spaces are:
 | Key | Type | Contents |
 | --- | --- | --- |
 | `P:team` | Hash | Typed member ID → display name, owner, creation time, private lease JSON |
+| `P:roster` | Hash | Agent ID → root ownership/discovery JSON (`root`, `managed`, `missing`) |
 | `P:team:presence` | ZSet | Agent ID → lease deadline in Unix milliseconds |
 | `P:team:events` | Stream | `data` → versioned team, conversation membership, or presence change JSON |
 | `P:convos` | Hash | Conversation ID → kind, name, creator, timestamps, revision JSON |
@@ -217,7 +218,17 @@ With `P = too:teaming:v1`, the messaging key spaces are:
 | `P:convo:stats` | Hash | DM count, GC count, accepted message count |
 | `P:convo:system` | Hash | `all` → system GC ID |
 
-`P:roster`, `P:activity:*`, and execution `P:events:*` retain their separate roles.
+`P:team` is the global member directory. `P:roster` is an optional agent-only
+subset that records which root manages discovery. It does not duplicate names,
+owners, leases, or online state. Humans have no roster entry; unscoped agent
+registration may have only a team entry. A scoped transient registration has
+`managed: false, missing: 0`; resident discovery uses `managed: true` and counts
+successful absent scans. Root claims cannot be adopted by another root.
+
+Discovery creates roster/team entries atomically. Cleanup after two absent scans
+and no live lease removes both entries and GC memberships, preserving DM
+membership and history. Expiry alone only changes presence. `P:activity:*` and
+execution `P:events:*` keep their separate roles.
 Raw leases stay private; team responses expose only public metadata and deadlines.
 
 `GET /team/events` returns an initial checkpoint before snapshots are loaded, then
@@ -234,10 +245,28 @@ entries. There is no separate event metadata key.
 
 Messaging routes use `/msg/conversations`, `/{id}`, and `/participants`,
 `/messages`, `/cursor`, `/stats` subresources. `GET /msg/stats` exposes human-only
-global totals. Conversation statistics use native Stream `entries-added` for
+global totals. Python `HubClient` and `AgentClient` creation, lookup, and rename
+methods all return a validated `Conversation`; use attributes such as `.id`
+and `.participants`, or `dataclasses.asdict()` when a dictionary is needed.
+Creation and rename no longer return untyped dictionaries. HTTP JSON fields and
+`msg` tool outputs keep their conversation record shape.
+
+Conversation statistics use native Stream `entries-added` for
 accepted appends and `length` for retained messages; trimming does not reduce
 lifetime totals. Empty message streams count as zero. Global conversation totals
 include the system GC.
+
+Python defines and validates persisted records and public responses. Lua performs
+atomic storage checks and combined writes, comparing validated snapshots before
+mutation. A changed snapshot is reread within a fixed retry bound; uncertain
+transport failures never replay writes. A pending Talk DM is local state with no
+persisted creation time or revision.
+
+Conversation lists read metadata, membership, and previews in batches of at most
+128 IDs. Each batch applies visibility atomically. Listing remains linear in the
+directory size; ID and participant-pair lookup are constant in directory size.
+GC allocation supports 1,048,576 reservations per backend per hour (about 291/s
+averaged over an hour); this is capacity, not a measured throughput claim.
 
 The [conversation contract](plans/conversation-ids.md) specifies record JSON,
 atomic writes, event payloads, ID capacity, and fresh-dataset rollout.

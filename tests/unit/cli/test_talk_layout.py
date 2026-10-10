@@ -1,6 +1,8 @@
 """Talk's bounded input, footer, and scrollback rendering."""
 
 import asyncio
+
+from tests.support.conversations import conversation_record
 from contextlib import asynccontextmanager
 from io import StringIO
 from unittest.mock import AsyncMock
@@ -16,7 +18,7 @@ from rich.console import Console
 
 from toolang.cli.common.terminal_surfaces import LIGHT_TERMINAL_SURFACES
 from toolang.cli.toolang.commands.talk import tui
-from toolang.teaming.schemas import Conversation, Message
+from toolang.teaming.schemas import Message
 
 
 class TerminalOutput(DummyOutput):
@@ -32,7 +34,7 @@ async def talk_app(
     tmp_path, *, conversation=None, human="human:bryan", read_only=False
 ):
     output = TerminalOutput()
-    conversation = conversation or Conversation(
+    conversation = conversation or conversation_record(
         "gc_00000001", "gc", (human, "agent:alice", "agent:bob"), name="dev"
     )
     client = AsyncMock()
@@ -178,22 +180,22 @@ def test_footer_keeps_identity_after_send_and_prioritizes_reconnection(tmp_path)
     "conversation,read_only,label",
     [
         (
-            Conversation("gc_00000000", "gc", ("human:bryan",), name="all"),
+            conversation_record("gc_00000000", "gc", ("human:bryan",), name="all"),
             False,
             "#all(1)",
         ),
         (
-            Conversation("gc_00000003", "gc", ("human:bryan",), name="design"),
+            conversation_record("gc_00000003", "gc", ("human:bryan",), name="design"),
             False,
             "#design(1)",
         ),
         (
-            Conversation("dm_00000001", "dm", ("agent:alice", "human:bryan")),
+            conversation_record("dm_00000001", "dm", ("agent:alice", "human:bryan")),
             False,
             "@alice",
         ),
         (
-            Conversation("dm_00000002", "dm", ("agent:bob", "agent:alice")),
+            conversation_record("dm_00000002", "dm", ("agent:bob", "agent:alice")),
             True,
             "@alice,bob",
         ),
@@ -230,8 +232,10 @@ def test_live_membership_changes_update_input_focus_and_preserve_drafts(
     tmp_path, monkeypatch
 ):
     human = "human:bryan"
-    observer = Conversation("gc_00000001", "gc", ("agent:alice",), name="dev")
-    joined = Conversation("gc_00000001", "gc", (human, "agent:alice"), name="dev")
+    observer = conversation_record("gc_00000001", "gc", ("agent:alice",), name="dev")
+    joined = conversation_record(
+        "gc_00000001", "gc", (human, "agent:alice"), name="dev"
+    )
     draft = tmp_path / "draft.txt"
     draft.write_text("saved before joining")
 

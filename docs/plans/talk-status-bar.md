@@ -5,18 +5,21 @@ Approved behavior for `too talk`.
 ## Goal and vocabulary
 
 Talk reads and writes a messaging **conversation**. A conversation has a canonical
-`group:<id>`, a kind (`direct` or `group`), members, and optional display metadata.
-A direct conversation has two fixed participants; a custom group's membership can
-change. Hub manages the public `group:all`. Use `convo` for abbreviated metadata.
+`dm_...` or `gc_...` ID, a kind (`dm` or `gc`), members, and an optional name.
+A DM has two fixed participants; a GC has mutable membership. Hub manages one
+system GC, initially named `all`. Use `convo` for abbreviated metadata.
 [Chat](../chat.md) runs agent work within an execution **thread**.
 
 ## Command and message flow
 
-- `too talk` lists conversations. `too talk TARGET` opens an interactive view;
+- `too talk` lists Team and Convos. `too talk TARGET` opens an interactive view;
   `too talk TARGET MESSAGE...` sends once and exits with a receipt or error.
-  Targets and `--dm`/`--group` follow the [messaging contract](../messaging.md).
+  Positional agent names, agent pairs, and IDs follow the
+  [messaging contract](../messaging.md); selector flags are unsupported.
   Arguments after the target are literal message text.
-- Resolve the target to its canonical ID through the running Hub. Load that
+- Resolve the target to its canonical ID through the running Hub. An absent
+  human-agent DM remains a local pending selection until the first send; refresh
+  may discover a DM created by the peer. For an existing target, load that
   conversation's metadata, show retained history, then follow incoming messages
   using an independent Stream-ID cursor. Transient read failures resume from the
   committed cursor with backoff; terminal failures display their error and stop
@@ -38,8 +41,8 @@ content width follows Chat's limit: 120 cells by default, configurable with
 
 | Segment | Content |
 | --- | --- |
-| Left, direct | `@` plus the other participant names in stable comma-separated order, excluding the viewer. An observer sees both names. |
-| Left, group | `#` plus the conversation's display name and total member count, such as `#dev(3)`. Preserve the name as supplied. |
+| Left, DM | `@` plus the other participant names in stable comma-separated order, excluding the viewer. An observer sees both names. |
+| Left, GC | `#` plus the conversation's display name and total member count, such as `#dev(3)`. Preserve the name as supplied. |
 | Center | Complete canonical conversation ID, centered by terminal cells. |
 | Right | Plain viewer login name; `Connecting…` during initial connection. |
 
@@ -87,7 +90,7 @@ A Talk pane is managed by the launcher and can be reopened after it exits.
 | --- | --- |
 | Command and targeting | Help, directory, interactive view, one-shot send, typed targets, and literal arguments match the messaging contract. |
 | Membership | A member can send; an observer sees the same messages with a dim permission marker and no composer. |
-| Footer | Direct/group names, total members, login, Unicode widths, and complete centered IDs fit the configured width. |
+| Footer | DM/GC names, total members, login, Unicode widths, and complete centered IDs fit the configured width. |
 | Errors | Terminal read, send, and draft errors show their detail in Chat's full error row; failed sends retain drafts and make one request. |
 | Receive recovery | Resume from the last displayed cursor without replaying history or requesting full directories. |
 | Rendering | Markdown, sender colors, header alignment, dividers, and message widths satisfy the message layout contract. |

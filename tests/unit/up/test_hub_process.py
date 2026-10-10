@@ -49,13 +49,13 @@ def test_private_discovery_uses_actual_endpoint_and_ignores_stale_pid(
         hub.connection()
 
 
-def test_discovery_reads_legacy_token_record_for_process_cleanup(tmp_path):
+def test_discovery_rejects_unsupported_token_record(tmp_path):
     hub = HubProcess(tmp_path)
     saved = record()
     saved.save(hub.path)
     hub.path.write_text(json.dumps(saved.model_dump() | {"token": "old-token"}))
-    assert hub.current() == saved
-    assert hub.connection() == saved.connection
+    with pytest.raises(ValueError, match="Invalid Hub record"):
+        hub.current()
 
 
 def test_stop_signals_only_the_verified_hub_process(tmp_path, monkeypatch):

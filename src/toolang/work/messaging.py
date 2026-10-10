@@ -19,7 +19,7 @@ from toolang.execution.threads import ThreadManager
 from toolang.execution.types import ThreadPrefix
 from toolang.lang.input import resolve_runnable_input
 from toolang.teaming.types import MessageReceiver
-from toolang.teaming.errors import MessagingError
+from toolang.teaming.errors import ConversationAccessDenied, MessagingError
 from toolang.teaming.schemas import Message, stream_id
 from toolang.setup import AgentSetup
 from toolang.state.state import AgentState
@@ -117,13 +117,17 @@ class MessagingLoop:
             previous = self.saved.get(
                 conversation, {"cursor": "0-0", "messages": [], "result": None}
             )
-            gap = await self.client.check_cursor(conversation, previous["cursor"])
+            try:
+                gap = await self.client.check_cursor(conversation, previous["cursor"])
+                entries = await self.client.read(
+                    conversation, after=previous["cursor"], count=_CONTEXT
+                )
+            except ConversationAccessDenied:
+                # Membership can change after the directory snapshot.
+                continue
             if gap and gap != self.gaps.get(conversation):
                 logger.warning("%s: %s", conversation, gap)
             self.gaps[conversation] = gap
-            entries = await self.client.read(
-                conversation, after=previous["cursor"], count=_CONTEXT
-            )
             if not entries:
                 continue
             self.last_conversation = conversation

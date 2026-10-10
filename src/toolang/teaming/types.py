@@ -1,9 +1,20 @@
 """Narrow transport contracts used by agent-side teaming work."""
 
+from __future__ import annotations
+
 from contextlib import AbstractContextManager
-from typing import Any, Protocol
+from typing import Any, Protocol, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .schemas import ConversationSummary
 
 RENEW_SECONDS = 5
+LEASE_SECONDS = 15
+MESSAGE_RETENTION = 10000
+TEAM_EVENT_RETENTION = 100000
+STORAGE_BATCH_SIZE = 128
+SNAPSHOT_RETRIES = 8
+MAX_SAFE_INTEGER = 9007199254740990
 
 
 class MessageReceiver(Protocol):
@@ -16,7 +27,7 @@ class MessageReceiver(Protocol):
     async def close(self) -> None: ...
     async def contacts(
         self, *, include_preview: bool = False
-    ) -> list[dict[str, Any]]: ...
+    ) -> list[ConversationSummary]: ...
     async def check_cursor(self, conversation: str, cursor: str) -> str | None: ...
     async def read(
         self, conversation: str, *, after: str = "0-0", count: int = 100

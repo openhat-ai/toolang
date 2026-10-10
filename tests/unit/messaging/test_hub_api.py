@@ -96,8 +96,8 @@ def test_http_messaging_matches_service_and_isolates_agent_conversations():
             await bob.register("human:owner")
             assert await hub.agents() == await human.agents()
             created = await hub.create_conversation("后端开发")
-            ref = created["id"]
-            assert created["participants"] == ["human:owner"]
+            ref = created.id
+            assert created.participants == ("human:owner",)
             assert (await hub.resolve("后端开发", kind="name")).conversation == ref
             assert await hub.conversation(ref) == await human.conversation(ref)
             receipt = await hub.send(
@@ -347,3 +347,54 @@ def test_backend_uncertain_send_keeps_uuid_over_http():
 
 
 pytestmark = pytest.mark.usefixtures("fixed_conversation_ids")
+
+
+def test_membership_denial_keeps_its_error_type_across_http(tmp_path):
+    from toolang.teaming.errors import ConversationAccessDenied
+
+    async def scenario():
+        human = client(FakeServer(server_type="valkey"), CONNECTION.human)
+        app = create_app(human)
+        async with (
+            app.router.lifespan_context(app),
+            AgentClient(
+                tmp_path,
+                actor="agent:alice",
+                token="lease",
+                connection=lambda: CONNECTION,
+                transport=httpx.ASGITransport(app),
+            ) as alice,
+        ):
+            await alice.register(human.actor)
+            convo = await human.create_conversation("Private")
+            with pytest.raises(ConversationAccessDenied):
+                await alice.conversation(convo.id)
+            with pytest.raises(ConversationAccessDenied):
+                await alice.read(convo.id)
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "operation,body",
+    [
+        ("team", [{"member": "agent:alice", "lease": {"token": "private"}}]),
+        ("contacts", [{"conversation": "group:old"}]),
+        ("statistics", {"messages_total": True}),
+        ("conversation", {"id": "dm_00000001", "kind": "dm", "participants": []}),
+    ],
+)
+def test_client_rejects_malformed_public_records(operation, body):
+    async def scenario():
+        async with HubClient(
+            CONNECTION,
+            transport=httpx.MockTransport(lambda _: httpx.Response(200, json=body)),
+        ) as hub:
+            with pytest.raises(MessagingError, match="Invalid Hub") as error:
+                if operation == "conversation":
+                    await hub.conversation("dm_00000001")
+                else:
+                    await getattr(hub, operation)()
+            assert "private" not in str(error.value)
+
+    asyncio.run(scenario())

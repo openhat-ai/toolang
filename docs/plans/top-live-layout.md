@@ -171,16 +171,18 @@ Retain existing defaults:
 
 - Accepted reports under the process lease renew presence. Independent heartbeats
   run every 5 seconds; leases expire after 15. Backlog cannot block heartbeats;
-  graceful stop releases the lease. Hub receipt time is `last_seen`, separate
-  from observation time. Heartbeats do not extend Activity.
+  graceful stop releases the lease. `P:team:presence` deadlines determine online
+  state; the Hub presence worker settles expiry and emits team events. Reads
+  correct only the client view. Observation time measures Activity freshness,
+  never last contact; there is no last-seen field or display.
 - Hub scans its root at startup and every 5 seconds with the same valid resident
   discovery as `too list`. Discovery owns existence, leases own presence and
   coverage owns freshness. Failed scans preserve the previous roster.
 - Two successful absent scans and no live lease confirm deletion. A live agent
   with a missing directory stays visible with a diagnostic in Details. Clean up
   only this root's managed entries, never transient/unscoped registrations.
-- Confirmed deletion removes the roster/participant and ordinary group membership.
-  Preserve DM mappings/memberships, messages and history. Offline alone never
+- Confirmed deletion removes the roster/team entry and GC membership.
+  Preserve DM identities/memberships, messages and history. Offline alone never
   removes an agent; recreated names retain history and DM identity.
 - Keep default-query publication, shutdown drain and default/last-query cached
   snapshots. Do not replace discovery, leases or event recovery in this work.

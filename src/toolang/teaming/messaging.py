@@ -9,13 +9,18 @@ import json
 
 from .ids import dm_id
 
-from .backend import Backend, LEASE_SECONDS
+from .backend import Backend
 from .discovery import host_token as host_token
 from .types import RENEW_SECONDS as RENEW_SECONDS
+from .types import LEASE_SECONDS
 from .config import BackendConfig
 from .errors import ConversationAccessDenied, LeaseLost, MessagingError
 from .schemas import (
     Conversation,
+    TeamMember,
+    Targets,
+    ConversationSummary,
+    MessagePreview,
     Message,
     direct_pair,
     Resolution,
@@ -99,7 +104,7 @@ class MessagingClient:
             if target(name).kind == "agent"
         }
 
-    async def team(self) -> list[dict[str, Any]]:
+    async def team(self) -> list[TeamMember]:
         return await self._backend.team()
 
     async def conversation(self, conversation: str) -> Conversation:
@@ -208,16 +213,13 @@ class MessagingClient:
         )
         return {"conversation": conversation}
 
-    async def contacts(self, *, include_preview: bool = False) -> list[dict[str, Any]]:
+    async def contacts(
+        self, *, include_preview: bool = False
+    ) -> list[ConversationSummary]:
         result = []
-        for ref in await self._backend.conversation_ids():
-            try:
-                info = await self.conversation(ref)
-                latest = await self.history(ref, count=1)
-            except ConversationAccessDenied:
-                # Membership may change between metadata and preview reads.
-                continue
-            item = dict(
+        for info, latest in await self._backend.contacts(self.actor):
+            ref = info.id
+            item: ConversationSummary = dict(
                 conversation=ref,
                 name=info.name,
                 kind=info.kind,
@@ -226,10 +228,13 @@ class MessagingClient:
                 latest=latest[0][0] if latest else None,
             )
             if include_preview:
-                preview = None
+                preview: MessagePreview | None = None
                 if latest:
                     try:
-                        message = Message.decode(latest[0][1]["data"])
+                        fields = dict(
+                            zip(latest[0][1][::2], latest[0][1][1::2], strict=True)
+                        )
+                        message = Message.decode(fields["data"])
                         preview = {"sender": message.sender, "body": message.body[:160]}
                     except (MessagingError, KeyError):
                         pass
@@ -237,7 +242,7 @@ class MessagingClient:
             result.append(item)
         return result
 
-    async def targets(self) -> dict[str, Any]:
+    async def targets(self) -> Targets:
         return {
             "participants": await self.team(),
             "conversations": await self.contacts(),

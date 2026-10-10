@@ -19,7 +19,7 @@ from toolang.cli.common.tmux import resolve_launcher
 from toolang.teaming.client import HubClient
 from toolang.teaming.errors import TeamingError
 from toolang.teaming.schemas import (
-    Conversation,
+    PendingDM,
     Resolution,
     conversation_id,
     identifier,
@@ -131,7 +131,7 @@ def talk_command(
                 info = (
                     await client.conversation(resolved)
                     if selection.exists
-                    else Conversation(resolved, "dm", selection.participants)
+                    else PendingDM(resolved, selection.participants)
                 )
                 await TalkTui(
                     client,

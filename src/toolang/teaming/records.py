@@ -53,9 +53,6 @@ class HubRecord(BaseModel):
     def load(cls, path: Path) -> HubRecord | None:
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                # Keep lifecycle commands usable for Hubs started before upgrade.
-                data.pop("token", None)
             return cls.model_validate(data)
         except FileNotFoundError:
             return None

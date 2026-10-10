@@ -454,3 +454,47 @@ def test_real_talk_terminal_sends_reads_and_reuses_tmux(valkey, tmp_path, runnin
             target.send_keys("C-q", enter=False)
         finally:
             tmux.kill()
+
+
+@pytest.mark.parametrize("concurrent", [False, True])
+def test_protocol_validation_prevents_partial_membership_writes(
+    valkey, monkeypatch, concurrent
+):
+    from toolang.teaming import storage_scripts
+    from toolang.teaming.keys import CONVOS, TEAM_EVENTS, convo_key
+
+    async def scenario():
+        async with (
+            MessagingClient(valkey, actor="human:owner") as human,
+            MessagingClient(valkey, actor="agent:alice", token="lease") as alice,
+            Valkey.from_url(valkey.url, decode_responses=True) as raw,
+        ):
+            await alice.register(human.actor)
+            convo = await human.create_conversation("Original")
+            events = await raw.xlen(TEAM_EVENTS)
+
+            async def corrupt():
+                record = json.loads(await raw.hget(CONVOS, convo.id))
+                record["name"] = " invalid "
+                await raw.hset(CONVOS, convo.id, json.dumps(record))
+
+            if concurrent:
+                evaluate = alice._backend._eval
+                changed = False
+
+                async def corrupt_before_commit(script, keys, args):
+                    nonlocal changed
+                    if script == storage_scripts.EDIT and not changed:
+                        changed = True
+                        await corrupt()
+                    return await evaluate(script, keys, args)
+
+                monkeypatch.setattr(alice._backend, "_eval", corrupt_before_commit)
+            else:
+                await corrupt()
+            with pytest.raises(StorageIntegrityError):
+                await alice.join_conversation(convo.id)
+            assert not await raw.sismember(convo_key(convo.id, "members"), alice.actor)
+            assert await raw.xlen(TEAM_EVENTS) == events
+
+    asyncio.run(scenario())

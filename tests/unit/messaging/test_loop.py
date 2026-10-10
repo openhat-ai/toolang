@@ -470,8 +470,8 @@ def test_all_msg_tools_use_the_context_identity(tmp_path):
         result = await tools["targets"].invoke({}, context)
         assert "human:owner" in {row["member"] for row in result.output["participants"]}
         created = await tools["create_conversation"].invoke({"name": "dev"}, context)
-        assert created.output["value"].id == "gc_00000001"
-        assert created.output["value"].participants == ("agent:alice",)
+        assert created.output["id"] == "gc_00000001"
+        assert created.output["participants"] == ("agent:alice",)
         sent = await tools["send"].invoke(
             {"target": "gc_00000001", "body": "hello"}, context
         )
@@ -495,3 +495,31 @@ def test_all_msg_tools_use_the_context_identity(tmp_path):
 
 
 pytestmark = pytest.mark.usefixtures("fixed_conversation_ids")
+
+
+def test_membership_loss_during_poll_does_not_block_other_conversations(
+    tmp_path, monkeypatch
+):
+    async def scenario():
+        server = FakeServer(server_type="valkey")
+        async with (
+            make_client(server) as agent,
+            make_client(server, "human:owner") as human,
+        ):
+            await prepare(agent, human)
+            leaving = (await agent.resolve("dev", kind="name")).conversation
+            remaining = (await agent.resolve("other", kind="name")).conversation
+            contacts = agent.contacts
+
+            async def leave_after_listing():
+                rows = await contacts()
+                await agent.leave_conversation(leaving)
+                return rows
+
+            monkeypatch.setattr(agent, "contacts", leave_after_listing)
+            loop = make_loop(tmp_path, agent)
+            await loop.poll()
+            assert remaining in loop.gaps
+            assert leaving not in loop.gaps
+
+    asyncio.run(scenario())
