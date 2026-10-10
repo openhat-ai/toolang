@@ -246,6 +246,13 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Changed
 
+- The shared `too talk` tmux session is renamed from `talk` to `talks`.
+
+- `too chat` and `too talk` report tmux placement without the chat-specific
+  wording: `located pane %6 in <session>:<window>` for an existing chat,
+  `created pane ...` for a new one, or `reused pane ...` for a retry, with
+  failures reported as `failed to create pane: <reason>`.
+
 - `too info AGENT` and `too AGENT info` read a running agent's models, tools,
   caps, chores, tasks, and workspaces from its runtime API instead of loading
   the local setup, and reject `--catalog` while the agent is running; stop the

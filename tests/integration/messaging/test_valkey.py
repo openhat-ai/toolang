@@ -277,7 +277,7 @@ def test_real_talk_terminal_sends_reads_and_reuses_tmux(valkey, tmp_path, runnin
                 session_mark="@toolang_talk",
                 window_mark="@toolang_convo",
                 pad_kind="talk",
-                shared_session="talk",
+                shared_session="talks",
             )
             # A detached test server has no client to switch; placement remains real.
             argv = [
@@ -299,7 +299,7 @@ def test_real_talk_terminal_sends_reads_and_reuses_tmux(valkey, tmp_path, runnin
 
             with suppress(TmuxPlacementError):
                 launcher.place_chat(thread_id=dev, argv=argv, directory=str(tmp_path))
-            session = next(s for s in tmux.sessions if s.session_name == "talk")
+            session = next(s for s in tmux.sessions if s.session_name == "talks")
             window = session.windows[0]
             target = window.panes[0]
 

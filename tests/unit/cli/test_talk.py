@@ -775,7 +775,7 @@ def test_talk_identity_separates_root_connection_and_human(tmp_path):
 
 
 def test_talk_tmux_session_reuses_canonical_window(
-    tmp_path, messaging_cli, monkeypatch
+    tmp_path, messaging_cli, monkeypatch, capsys
 ):
     from tests.unit.cli.test_tmux_launcher import FakePane, FakeServer, _launcher
     from toolang.cli.common.tmux import MARK_CONTEXT, MARK_PAD
@@ -791,12 +791,13 @@ def test_talk_tmux_session_reuses_canonical_window(
     monkeypatch.setattr(
         talk, "resolve_launcher", lambda *, agent: _launcher(server, pane, agent)
     )
-    for _ in range(2):
+    for action in ("created", "located"):
         assert cli.main(["--root", str(tmp_path), "talk", "gc_00000001"]) == 0
+        assert capsys.readouterr().out == f"{action} pane %1 in talks:gc_00000001\n"
     assert len(server.created) == 1
     session = server.sessions[0]
-    assert session.session_name == "talk"
-    assert session.options["@toolang_talk"] == "talk"
+    assert session.session_name == "talks"
+    assert session.options["@toolang_talk"] == "talks"
     assert len(session.windows) == 1
     window = session.windows[0]
     assert window.options[MARK_CONTEXT]
