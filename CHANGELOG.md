@@ -387,13 +387,13 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   restart, while an uncertain send is never retried automatically. Isolated
   guests without access to the local Hub report unavailability. (#721)
 
-- Interactive Text draws a dim bright-black `┄` rule on its own row above
-  each agent's complete name, starting at the body inset and reaching the
-  message area's right edge; it is present even at narrow widths and with
-  wrapped names. Left-aligned messages, including human bubbles, now fill the
-  available configured content width, while own right-aligned messages keep
-  their gutter. Sender name and marker colors and non-dim styling are
-  unchanged.
+- Interactive Text draws a dim bright-black `┄` rule on its own row below
+  each agent message body, with no added blank row before it, starting at the
+  body inset and reaching the message area's right edge; it is present even at
+  narrow widths and with wrapped names. Left-aligned messages, including human
+  bubbles, now fill the available configured content width, while own
+  right-aligned messages keep their gutter. Sender name and marker colors and
+  non-dim styling are unchanged.
 
 - **Breaking (streaming API):** execution SSE is no longer live-only. Source
   events carry `cursor` in `data` and an SSE `id`, while structural context
