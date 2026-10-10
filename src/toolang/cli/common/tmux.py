@@ -592,9 +592,7 @@ class Launcher:
         try:
             session.set_option(self.session_mark, self.shared_session or self.agent)
         except Exception as exc:
-            raise TmuxPlacementError(
-                f"Could not mark tmux agent session: {exc}"
-            ) from exc
+            raise TmuxPlacementError(f"Could not mark tmux session: {exc}") from exc
 
 
 def resolve_launcher(

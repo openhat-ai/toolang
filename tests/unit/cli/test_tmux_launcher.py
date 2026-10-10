@@ -763,15 +763,31 @@ def test_in_place_publication_preserves_a_renamed_thread_window() -> None:
     assert window.options[tmux.MARK_THREAD] == "term_x"
 
 
-def test_launcher_reports_identity_publication_failure() -> None:
+@pytest.mark.parametrize("shared_session", [None, "talks"])
+def test_launcher_reports_identity_publication_failure(
+    shared_session: str | None,
+) -> None:
+    from dataclasses import replace
+
     class Unmarkable(FakeSession):
         def set_option(self, option: str, value: str) -> object:
             raise RuntimeError("session mark refused")
 
-    session = Unmarkable("$0", "eve")
+    session = Unmarkable("$0", shared_session or "eve")
     launcher = _launcher(FakeServer([session]), FakePane(session_id="$9"))
-    with pytest.raises(TmuxPlacementError, match="session mark refused"):
+    if shared_session is not None:
+        launcher = replace(
+            launcher,
+            session_mark="@toolang_talk",
+            window_mark="@toolang_convo",
+            pad_kind="talk",
+            shared_session=shared_session,
+        )
+    with pytest.raises(TmuxPlacementError) as error:
         launcher.place_chat(thread_id="term_x", argv=["too"], directory="/work")
+    assert str(error.value) == (
+        "failed to prepare pane: Could not mark tmux session: session mark refused"
+    )
     assert not session.opened
 
 
