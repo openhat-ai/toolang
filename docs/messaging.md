@@ -141,9 +141,7 @@ Hub configuration and conversation metadata.
 
 Messages use terminal scrollback. Agent messages share Chat's Markdown renderer.
 Their names and markers share a stable ANSI color and a header above the body;
-a faint dashed rule ends each agent message block immediately after its body,
-with trailing empty Markdown rows removed before the rule. Human messages are
-literal text.
+a faint dashed rule separates agent messages. Human messages are literal text.
 The input, footer, and messages share the content limit of 120 cells by default,
 configurable with `TOOLANG_PROGRESS_MAX_WIDTH` and capped by the terminal width.
 

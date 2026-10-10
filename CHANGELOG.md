@@ -464,6 +464,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Fixed
 
+- Interactive Text now ends each agent message block at its last visible
+  Markdown row: trailing empty rows, including a fenced code block's bottom
+  padding, are trimmed so the `┄` rule follows the body with no gap, while
+  interior spacing and code backgrounds are preserved.
+
 - `too info` prepares only the selected target's layout and materializes a
   roaming `.too` source or visiting remote agent only when the target is not
   running, so a running roaming or visiting agent is inspected without
