@@ -3,18 +3,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from datetime import datetime, timezone
-import math
+from datetime import datetime
 import re
 import time
 from typing import Literal, cast
 
 from prompt_toolkit.keys import Keys
-from rich.console import Console, Group
-from rich.cells import cell_len
+from rich.console import Group
 from rich.text import Text
 
-from toolang.execution.activity import ActivityQuery
+from toolang.execution.activity import ActivityQuery, duration
+from .terminal_surfaces import DARK_TERMINAL_SURFACES, TerminalSurfaces
 from toolang.execution.schemas import ActivityMetrics, ActivityNode, ActivitySnapshot
 
 View = Literal["agent", "thread", "execution"]
@@ -23,37 +22,11 @@ RECENT = ("5m", "30m", "1h", "1d", "1w", "all")
 SINCE = ("session", "1h", "1d", "1w", "all")
 
 
-def duration(value: str) -> float | None:
-    if value == "all":
-        return None
-    match = re.fullmatch(r"(\d+(?:\.\d+)?)([smhdw])", value)
-    if not match or float(match[1]) <= 0:
-        raise ValueError("Use a positive duration such as 30m, 1d, 1w, or all")
-    seconds = (
-        float(match[1])
-        * {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}[match[2]]
-    )
-    if not math.isfinite(seconds):
-        raise ValueError("Duration must be finite")
-    return seconds
-
-
 def since(value: str, *, now: float | None = None) -> str:
-    if value in {"session", "all"}:
+    query = ActivityQuery(value)
+    if value in {"session", "all"} or query.window is not None:
         return value
-    if re.fullmatch(r"\d+(?:\.\d+)?[smhdw]", value):
-        seconds = duration(value)
-        assert seconds is not None
-        try:
-            return datetime.fromtimestamp(
-                (now if now is not None else time.time()) - seconds, timezone.utc
-            ).isoformat()
-        except (OverflowError, OSError, ValueError) as exc:
-            raise ValueError("Stats start is outside the supported date range") from exc
-    stamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    if stamp.tzinfo is None:
-        raise ValueError("Stats timestamp must include a timezone")
-    return stamp.isoformat()
+    return datetime.fromisoformat(value.replace("Z", "+00:00")).isoformat()
 
 
 def elapsed(value: float | None) -> str:
@@ -85,7 +58,7 @@ def tokens(value: int | None) -> str:
 
 
 def metrics_text(
-    metrics: ActivityMetrics, time_label: str = "TIME", *, exact: bool = False
+    metrics: ActivityMetrics, time_label: str = "TIME+", *, exact: bool = False
 ) -> str:
     number = (
         (lambda value: str(value) if value is not None else "-") if exact else tokens
@@ -102,7 +75,7 @@ def counts(active: int, failed: int, complete: bool = True) -> str:
     if failed:
         values.append(f"{failed} failed")
     if not complete:
-        values.append("counts incomplete")
+        return " · ".join(values) or "-"
     return " · ".join(values) or "idle"
 
 
@@ -116,11 +89,12 @@ def node_summary(node: ActivityNode) -> str:
         len(summary) > 160 or re.search(r"[\n\r]|\*\*|^\s*#|`", summary)
     ):
         summary = ""
-    label = node.title + (f" · {summary}" if summary else "")
+    title = node.title.removeprefix("agent::")
+    label = title + (f" · {summary}" if summary else "")
     if node.stale:
         return f"stale · {label}"
     if node.status not in {"running", "idle"}:
-        return f"{node.status} · {summary or node.title}"
+        return f"{node.status} · {summary or title}"
     if node.kind == "step" and node.children:
         label += f" · {node.completed}/{node.children} completed"
     elif node.pending:
@@ -158,7 +132,11 @@ class Activity:
         query: ActivityQuery | None = None,
         recent_label: str = "30m",
         refresh: float = 0.1,
+        surfaces: TerminalSurfaces = DARK_TERMINAL_SURFACES,
     ) -> None:
+        self.surfaces = surfaces
+        self.result_lines_key: tuple | None = None
+        self.result_lines: list[Text] = []
         self.agent = agent
         self.view: View = view or ("thread" if agent else "agent")
         self.tree = tree
@@ -309,38 +287,19 @@ class Activity:
         groups: list[list[Row]] = []
         self.parents = {}
         for agent, snapshot in sorted(self.snapshots.items()):
-            marker = ""
             presence = "unknown" if self.reconnecting else snapshot.presence
-            if presence != "online":
-                marker = f"{presence} · "
-                seen = (
-                    snapshot.last_seen
-                    if snapshot.last_seen is not None
-                    else snapshot.observed
-                )
-                if seen is not None:
-                    marker += f"last seen {elapsed(time.time() - seen)} ago · "
-            if snapshot.home_missing:
-                marker += "home missing · "
-            if snapshot.stale and snapshot.presence == "online":
-                marker += "stale · "
-            if (
-                not snapshot.complete
-                and presence == "online"
-                and snapshot.observed is not None
-            ):
-                marker += "syncing · "
-            summary = marker + (
-                "activity unavailable"
-                if snapshot.observed is None
-                else counts(snapshot.active, snapshot.failed, snapshot.complete)
+            current = presence == "online" and not snapshot.stale
+            summary = (
+                counts(snapshot.active, snapshot.failed, snapshot.complete)
+                if current
+                else "-"
             )
             agent_match = (
                 not self.display_query.text
                 or self.display_query.text.casefold() in agent.casefold()
             )
             if self.view == "agent":
-                if self.agent or not self._matches_agent(snapshot):
+                if not self._matches_agent(snapshot):
                     continue
                 groups.append([Row(agent, agent, None, snapshot.stats, summary)])
                 continue
@@ -353,14 +312,15 @@ class Activity:
                                 node.id,
                                 node,
                                 node.stats,
-                                marker
-                                + counts(
+                                counts(
                                     node.active,
                                     node.failed,
                                     snapshot.complete
                                     and not snapshot.stale
                                     and not self.reconnecting,
-                                ),
+                                )
+                                if current
+                                else "-",
                                 thread=node.id,
                             )
                         ]
@@ -385,7 +345,7 @@ class Activity:
                         and root.status == "running"
                         and not root.stale
                         and not snapshot.stale
-                        and not self.reconnecting
+                        and current
                     )
                     root_row = Row(
                         agent,
@@ -395,7 +355,7 @@ class Activity:
                         node_summary(root),
                         root.id,
                         root.thread,
-                        children=bool(by_parent.get(root.id)),
+                        children=tree and bool(by_parent.get(root.id)),
                     )
                     rows = [root_row]
                     if tree:
@@ -455,6 +415,10 @@ class Activity:
                                 root_row.activity += f" · {len(leaves)} current calls"
                         elif snapshot.stale or self.reconnecting:
                             root_row.activity = f"stale · {root.title}"
+                    if presence == "offline" or (
+                        not current and root.status in {"pending", "running"}
+                    ):
+                        root_row.activity = "-"
                     groups.append(rows)
             if (
                 not any(group[0].agent == agent for group in groups)
@@ -530,6 +494,8 @@ class Activity:
 
     def key(self, key: str | Keys, data: str = "") -> bool:
         """Return True to exit; query edits set dirty for one subscription replacement."""
+        if not self.editor and key in {Keys.ControlP, Keys.ControlN}:
+            key = Keys.Up if key == Keys.ControlP else Keys.Down
         if key == Keys.ControlC:
             return True
         if self.editor:
@@ -544,13 +510,6 @@ class Activity:
                 self.buffer = self.buffer[:-1]
             elif key == Keys.ControlA and self.editor == "filter":
                 self.filter_active = not self.filter_active
-            elif key == Keys.Tab and self.editor in {"recent", "since"}:
-                options = RECENT if self.editor == "recent" else SINCE
-                self.buffer = (
-                    options[(options.index(self.buffer) + 1) % len(options)]
-                    if self.buffer in options
-                    else options[0]
-                )
             elif key == Keys.ControlM:
                 try:
                     if self.editor == "filter":
@@ -558,11 +517,6 @@ class Activity:
                             self.query, text=self.buffer, active=self.filter_active
                         )
                         self.open_matches = True
-                    elif self.editor == "recent":
-                        self.query = replace(self.query, recent=duration(self.buffer))
-                        self.recent_label = self.buffer
-                    else:
-                        self.query = replace(self.query, since=since(self.buffer))
                     self.editor = None
                     self.error = ""
                     self.dirty = True
@@ -591,22 +545,28 @@ class Activity:
             self.sort = {"activity": "spend", "spend": "time", "time": "activity"}[
                 self.sort
             ]
-        elif key in {Keys.F4, Keys.F7, Keys.F8}:
-            self.editor = {Keys.F4: "filter", Keys.F7: "recent", Keys.F8: "since"}[
-                Keys(key)
-            ]
-            self.buffer = (
-                self.query.text
-                if self.editor == "filter"
-                else self.recent_label
-                if self.editor == "recent"
-                else self.query.since
-            )
+        elif key == Keys.F4:
+            self.editor = "filter"
+            self.buffer = self.query.text
             self.filter_active = self.query.active
+        elif key in {Keys.F7, Keys.F8}:
+            options = RECENT if key == Keys.F7 else SINCE
+            value = self.recent_label if key == Keys.F7 else self.query.since
+            value = (
+                options[(options.index(value) + 1) % len(options)]
+                if value in options
+                else options[0]
+            )
+            if key == Keys.F7:
+                self.query = replace(self.query, recent=duration(value))
+                self.recent_label = value
+            else:
+                self.query = replace(self.query, since=value)
+            self.dirty = True
         elif key == Keys.ControlM:
             self.details = not self.details
             self.details_offset = 0
-        elif self.details and key in {Keys.PageUp, Keys.PageDown}:
+        elif (self.details or self.help) and key in {Keys.PageUp, Keys.PageDown}:
             self.details_offset = max(
                 0,
                 self.details_offset
@@ -649,341 +609,6 @@ class Activity:
     def render(
         self, *, width: int = 140, height: int = 30, once: bool = False
     ) -> Group:
-        self.width = width
-        time_label = "TIME" if self.display_query.since == "session" else "TIME*"
-        rows = self.rows()
-        self._selection(rows)
-        snapshots = list(self.snapshots.values())
-        known = [snapshot.stats for snapshot in snapshots]
-        total = ActivityMetrics.model_validate(
-            {
-                **{
-                    field: sum(getattr(item, field) or 0 for item in known)
-                    if any(getattr(item, field) is not None for item in known)
-                    else None
-                    for field in (
-                        "model",
-                        "tool",
-                        "input_tokens",
-                        "cached_tokens",
-                        "output_tokens",
-                        "cost",
-                        "time",
-                    )
-                },
-                "estimated": any(item.estimated for item in known),
-                "partial": any(item.partial or item.cost is None for item in known),
-                "complete": bool(known) and all(item.complete for item in known),
-                "tokens_complete": bool(known)
-                and all(item.tokens_complete for item in known),
-            }
-        )
-        scope = f"Agent {self.agent.removeprefix('agent:')}" if self.agent else "Team"
-        presence = (
-            (
-                "unknown"
-                if self.reconnecting
-                else snapshots[0].presence
-                if snapshots
-                else "unknown"
-            )
-            if self.agent
-            else f"{sum(s.presence == 'online' for s in snapshots) if not self.reconnecting else '?'} online / {len(snapshots)} agents"
-        )
-        seen = (
-            datetime.fromtimestamp(self.received).strftime("%H:%M:%S")
-            if self.received is not None
-            else "-"
-        )
-        values = [
-            Text(
-                f"{scope} · {presence}   Root runs {sum(s.active for s in snapshots)} active · {sum(s.failed for s in snapshots)} failed   Threads {sum(s.thread_count for s in snapshots)}   Updated {seen}"
-            ),
-            Text(
-                f"{'Agent' if self.agent else 'Team'} Stats: {metrics_text(total, time_label)}"
-            ),
-            Text(
-                f"View {self.view.title()}"
-                + (
-                    f" / {'Tree' if self.tree else 'List'}"
-                    if self.view == "execution"
-                    else ""
-                )
-                + f"   Stats {self.display_query.since}   Recent {self.display_recent}   Sort {self.sort}   Refresh {self.refresh:g}s",
-                style="dim",
-            ),
-        ]
-        if not self.ready:
-            values.append(Text("Connecting to activity service", style="yellow"))
-        elif self.reconnecting:
-            values.append(Text("Reconnecting · presence unknown", style="yellow"))
-        incomplete = sum(
-            bool(s.coverage)
-            or not s.stats.complete
-            or not s.stats.tokens_complete
-            or s.stats.partial
-            for s in snapshots
-        )
-        if incomplete:
-            values.append(
-                Text(
-                    f"Coverage incomplete: {incomplete} agent(s) · Enter Details",
-                    style="yellow",
-                )
-            )
-        if self.view == "agent":
-            label, matched, eligible, loaded = (
-                "Agents",
-                sum(self._matches_agent(s) for s in snapshots),
-                len(snapshots),
-                len(rows),
-            )
-        elif self.view == "thread":
-            label, matched, eligible, loaded = (
-                "Threads",
-                sum(s.thread_matched for s in snapshots),
-                sum(s.thread_eligible for s in snapshots),
-                sum(len(s.threads) for s in snapshots),
-            )
-        else:
-            label, matched, eligible, loaded = (
-                "Root runs",
-                sum(s.matched for s in snapshots),
-                sum(s.eligible for s in snapshots),
-                sum(len(s.roots) for s in snapshots),
-            )
-        if self.display_query.text or self.display_query.active or loaded < matched:
-            values.append(
-                Text(
-                    f"{label} {matched}/{eligible} matched/eligible  Loaded {loaded}/{matched}",
-                    style="dim",
-                )
-            )
+        from .activity_dashboard import render
 
-        def fields(row: Row) -> dict[str, str]:
-            return {
-                "AGENT": row.agent.removeprefix("agent:"),
-                "MODEL": str(row.stats.model) if row.stats.model is not None else "-",
-                "TOOL": str(row.stats.tool) if row.stats.tool is not None else "-",
-                "IN": tokens(row.stats.input_tokens),
-                "CACHED": tokens(row.stats.cached_tokens),
-                "OUT": tokens(row.stats.output_tokens),
-                "SPEND": cost(row.stats),
-                time_label: elapsed(row.stats.time),
-                "THREAD": row.thread or "-",
-                "RUN": row.root or "-",
-                "STEP": row.id if row.root else "-",
-            }
-
-        numeric = {"MODEL", "TOOL", "IN", "CACHED", "OUT", "SPEND", "TIME", "TIME*"}
-        labels = [] if self.agent else ["AGENT"]
-        if width >= 110:
-            labels += ["MODEL", "TOOL"]
-        labels += ["IN", "CACHED", "OUT", "SPEND", time_label]
-        if self.view != "agent":
-            labels += ["THREAD"]
-        if self.view == "execution":
-            labels += ["RUN", "STEP"]
-        data = {row.key: fields(row) for row in rows}
-        for label in labels:
-            minimum = 7 if label in numeric else cell_len(label)
-            self.column_widths[label] = max(
-                self.column_widths.get(label, 0),
-                minimum,
-                max(
-                    (cell_len(clean(item[label])) for item in data.values()), default=0
-                ),
-            )
-
-        def line(items: dict[str, str], activity: str, style: str = "") -> Text:
-            cells = []
-            for label in labels:
-                value = clean(items[label])
-                padding = " " * max(0, self.column_widths[label] - cell_len(value))
-                cells.append(padding + value if label in numeric else value + padding)
-            value = " ".join(cells) + " " + clean(activity)
-            # Scroll by terminal cells, never split a wide glyph into another column.
-            skipped = 0
-            index = 0
-            while index < len(value) and skipped < self.horizontal:
-                skipped += cell_len(value[index])
-                index += 1
-            rendered = Text(
-                " " * max(0, skipped - self.horizontal) + value[index:],
-                style=style,
-                no_wrap=True,
-            )
-            rendered.truncate(width, overflow="ellipsis", pad=True)
-            return rendered
-
-        show_table = self.ready and not (self.agent and self.view == "agent")
-        if show_table:
-            values.append(
-                line({label: label for label in labels}, "ACTIVITY", "black on green")
-            )
-
-        def render_row(row: Row) -> Text:
-            style = (
-                "black on cyan"
-                if not once and row.key == self.selected
-                else "red"
-                if row.node and row.node.status == "failed"
-                else "dim"
-                if row.placeholder or self.snapshots[row.agent].presence != "online"
-                else ""
-            )
-            rendered = line(data[row.key], row.activity, style)
-            if self.display_query.text:
-                rendered.highlight_words(
-                    [self.display_query.text], style="bold yellow", case_sensitive=False
-                )
-            return rendered
-
-        detail: list[Text] = []
-        current = next((row for row in rows if row.key == self.selected), None)
-        if current and self.details:
-            command = (
-                f"too {current.agent.removeprefix('agent:')} inspect {current.id}"
-                if current.node and current.node.kind != "thread"
-                else ""
-            )
-            detail.append(
-                Text(
-                    f"Selected: {current.agent} / {current.thread or '-'} / root {current.root or '-'} / {current.id}"
-                )
-            )
-            if command:
-                detail.append(Text(f"Inspect: {command}"))
-            detail.append(Text(clean(current.activity)))
-            detail.append(
-                Text("Stats: " + metrics_text(current.stats, time_label, exact=True))
-            )
-            if current.node:
-                detail.append(
-                    Text("Total: " + metrics_text(current.node.total, exact=True))
-                )
-                if current.node.matches:
-                    detail.append(
-                        Text("Matched IDs: " + ", ".join(current.node.matches))
-                    )
-            coverage = self.snapshots[current.agent].coverage
-            detail.append(
-                Text(
-                    (
-                        "Spend source: estimated"
-                        if current.stats.estimated
-                        else "Spend source: reported or unavailable"
-                    )
-                    + (" · Spend incomplete" if current.stats.partial else "")
-                    + (
-                        " · Token coverage incomplete"
-                        if not current.stats.tokens_complete
-                        else ""
-                    )
-                    + (f" · {coverage}" if coverage else ""),
-                    style="dim",
-                )
-            )
-            if self.result_key and self.result_key[:2] == current.key:
-                detail.append(Text("Result", style="dim"))
-                detail.append(
-                    Text(
-                        "\n".join(clean(line) for line in self.result_text.splitlines())
-                    )
-                )
-        if self.details_selection != self.selected:
-            self.details_selection = self.selected
-            self.details_offset = 0
-        footer: list[Text] = []
-        if self.help:
-            footer.append(
-                Text(
-                    "Stats applies to all metrics; CACHED is included in IN. Recent controls visibility. TIME is this object's duration; agent/thread totals sum root durations."
-                )
-            )
-        if not once:
-            if self.editor:
-                footer.append(
-                    Text(
-                        f"{self.editor.title()}: {self.buffer}█  Enter apply · Esc cancel · Ctrl-U clear"
-                        + (
-                            f" · Ctrl-A active={self.filter_active}"
-                            if self.editor == "filter"
-                            else " · Tab presets"
-                        ),
-                        style="bold",
-                    )
-                )
-                if self.error:
-                    footer.append(Text(self.error, style="red"))
-            footer.append(
-                Text(
-                    "F1 Help  a Agent  t Thread  e Execution  F4 Filter  F5 Tree  F6 Sort  F7 Recent  F8 Stats  Enter Details  <> Scroll  q Quit",
-                    style="black on cyan",
-                )
-            )
-        if once:
-            return Group(
-                *values,
-                *(render_row(row) for row in rows if show_table),
-                *(
-                    [Text("No matching activity", style="dim")]
-                    if show_table and not rows
-                    else []
-                ),
-                *detail,
-                *footer,
-            )
-
-        console = Console(width=width)
-        header_lines = [part for value in values for part in value.wrap(console, width)]
-        detail_lines = [part for value in detail for part in value.wrap(console, width)]
-        key_lines = list(footer[-1].wrap(console, width))
-        extra_lines = [
-            part for value in footer[:-1] for part in value.wrap(console, width)
-        ]
-        footer_limit = max(1, height // 2)
-        extra_limit = max(0, footer_limit - len(key_lines) - (2 if detail_lines else 0))
-        footer_lines = [*extra_lines[:extra_limit], *key_lines]
-        if detail_lines:
-            self.details_page_size = max(1, footer_limit - len(footer_lines) - 1)
-            self.details_offset = min(
-                self.details_offset, max(0, len(detail_lines) - self.details_page_size)
-            )
-            end = min(len(detail_lines), self.details_offset + self.details_page_size)
-            indicator = Text(
-                f"Details {self.details_offset + 1}-{end}/{len(detail_lines)} · PgUp/PgDn",
-                style="dim",
-                no_wrap=True,
-            )
-            indicator.truncate(width)
-            footer_lines = [
-                indicator,
-                *detail_lines[self.details_offset : end],
-                *footer_lines,
-            ]
-        header_limit = max(0, height - len(footer_lines) - int(show_table))
-        if len(header_lines) > header_limit:
-            header_lines = (
-                [*header_lines[: header_limit - 1], header_lines[-1]]
-                if header_limit
-                else []
-            )
-        self.page_size = max(1, height - len(header_lines) - len(footer_lines))
-        self._selection(rows)
-        body = (
-            [
-                render_row(row)
-                for row in rows[self.offset : self.offset + self.page_size]
-            ]
-            if show_table
-            else []
-        )
-        if show_table and not rows:
-            body.append(Text("No matching activity", style="dim"))
-        blank = [Text("")] * max(
-            0, height - len(header_lines) - len(body) - len(footer_lines)
-        )
-        for part in footer_lines[-1:]:
-            part.truncate(width, pad=True)
-        return Group(*header_lines, *body, *blank, *footer_lines)
+        return render(self, width=width, height=height, once=once)

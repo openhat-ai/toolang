@@ -17,17 +17,17 @@ def test_top_escape_cancels_editor_without_another_key(tmp_path):
         "tests.support.top_tui_e2e", tmp_path, columns=160
     )
     try:
-        session.wait_for("View Thread", "1 active")
+        session.wait_for("THREAD", "1 active")
         session.send(b"\x1b[14~")  # F4
-        session.wait_for("Filter:", "Esc cancel")
+        session.wait_for("Filter:", "Esc Cancel")
         session.send(b"\x01")
-        session.wait_for("active=True")
+        session.wait_for("Active: True")
         session.data.clear()
         session.send(b"\x1b")
         session.wait_for("F4 Filter", timeout=3)
         session.send(b"\x1b[14~")
         session.data.clear()
-        session.wait_for("active=False")
+        session.wait_for("Active: False")
         session.send(b"\x1b")
         session.data.clear()
         session.wait_for("F4 Filter")
@@ -37,20 +37,20 @@ def test_top_escape_cancels_editor_without_another_key(tmp_path):
         session.close()
 
 
-def test_top_pastes_filter_and_handles_invalid_stats(tmp_path):
+def test_top_pastes_filter_and_cycles_stats(tmp_path):
     session = ChatTuiPtySession.start(
         "tests.support.top_tui_e2e", tmp_path, columns=160
     )
     try:
-        session.wait_for("View Thread", "1 active")
+        session.wait_for("THREAD", "1 active")
         session.send(b"\x1b[14~\x1b[200~math__double\x1b[201~")
         session.wait_for("Filter: math__double")
         session.send(b"\r")
         session.wait_for("math__double", "F4 Filter")
-        session.send(b"\x1b[19~\x15" + b"9" * 24 + b"w\r")  # F8, clear, invalid range
-        session.wait_for("Stats start is outside the supported date range")
-        session.send(b"\x15all\r")
-        session.wait_for("Stats all", "TIME*")
+        session.send(b"\x1b[19~")  # F8 applies the next preset immediately.
+        session.wait_for("Stats: 1h", "TIME+")
+        session.send(b"\x1b[19~" * 3)
+        session.wait_for("Stats: all")
         session.send(b"q")
         assert session.wait_for_exit() == 0
     finally:
@@ -58,12 +58,16 @@ def test_top_pastes_filter_and_handles_invalid_stats(tmp_path):
 
 
 @pytest.mark.parametrize("columns", [80, 160])
-def test_top_live_tree_views_ranges_and_completion(tmp_path, columns):
+@pytest.mark.parametrize("local", [False, True])
+def test_top_live_tree_views_ranges_and_completion(
+    tmp_path, columns, local, monkeypatch
+):
+    monkeypatch.setenv("TOOLANG_TEST_LOCAL", "1" if local else "0")
     session = ChatTuiPtySession.start(
         "tests.support.top_tui_e2e", tmp_path, columns=columns, rows=24
     )
     try:
-        session.wait_for("View Thread", "1 active", "$0.25")
+        session.wait_for("THREAD", "1 active", "$0.25")
         endpoint = json.loads((tmp_path / "activity-endpoint.json").read_text())[
             "endpoint"
         ]
@@ -100,9 +104,9 @@ def test_top_live_tree_views_ranges_and_completion(tmp_path, columns):
                     assert page["stats"]["cost"] == 0
 
             session.send(b"e" + (b">>" if columns == 80 else b""))
-            session.wait_for("View Execution", "/ List", root["id"])
+            session.wait_for("RUN", root["id"])
             session.send(b"\x1b[15~")
-            session.wait_for("/ Tree", current_tool["id"], "└─")
+            session.wait_for("STEP", current_tool["id"], "└─")
             session.send(b"\x1b[D")
             session.wait_for("[+]")
             session.send(b"\x1b[C\x1b[B\x1b[B\x1b[B\r")
@@ -110,19 +114,21 @@ def test_top_live_tree_views_ranges_and_completion(tmp_path, columns):
             session.send(b"\x1b")
             # The same tree selection survives view changes and range refreshes.
             session.send(b"a")
-            session.wait_for("View Agent")
+            session.wait_for("ACTIVITY(30m)")
             session.send(b"t")
             session.data.clear()
-            session.wait_for("View Thread")
-            session.send(b"e\x1b[17~")
-            session.wait_for("Sort spend")
+            session.wait_for("THREAD")
+            session.send((b"<<" if columns == 80 else b"") + b"e\x1b[17~")
+            session.wait_for("SPEND↓")
             session.send(b"\x1b[17~")
-            session.wait_for("Sort time")
-            session.send(b"\x1b[18~\x15all\r")
-            session.wait_for("Recent all")
-            session.send(b"\x1b[19~\x15all\r")
-            session.wait_for("Stats all", "TIME*")
+            session.wait_for("TIME+↓")
+            session.send(b"\x1b[18~" * 4)
+            session.wait_for("Activity: all")
+            session.send(b"\x1b[19~" * 4)
+            session.wait_for("Stats: all", "TIME+")
 
+            if columns == 80:
+                session.send(b">>")
             (tmp_path / "release-tool").touch()
             deadline = time.monotonic() + 10
             while time.monotonic() < deadline:
@@ -140,7 +146,7 @@ def test_top_live_tree_views_ranges_and_completion(tmp_path, columns):
             session.wait_for(model["id"])
             (tmp_path / "release-model").touch()
             session.data.clear()
-            session.wait_for("0 active")
+            session.wait_for("idle")
             session.send(b"\r")
             session.wait_for("succeeded · flow:review")
             final = snapshot()
@@ -161,12 +167,12 @@ def test_keys_repaint_without_waiting_for_long_refresh(tmp_path, monkeypatch):
         "tests.support.top_tui_e2e", tmp_path, columns=180
     )
     try:
-        session.wait_for("View Thread", "1 active", timeout=15)
+        session.wait_for("THREAD", "1 active", timeout=15)
         # Begin just after a full frame; a scheduled-only key update would take 5s.
         session.data.clear()
         start = time.monotonic()
         session.send(b"e")
-        session.wait_for("View Execution", timeout=1)
+        session.wait_for("RUN", timeout=1)
         assert time.monotonic() - start < 1
         session.data.clear()
         session.send(b"\x1b[14~")
@@ -176,5 +182,41 @@ def test_keys_repaint_without_waiting_for_long_refresh(tmp_path, monkeypatch):
         session.wait_for("F4 Filter", timeout=1)
         session.send(b"q")
         assert session.wait_for_exit() == 0
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("local", [False, True])
+def test_ctrl_selection_during_slow_details_and_terminal_restore(
+    tmp_path, monkeypatch, local
+):
+    monkeypatch.setenv("TOOLANG_TEST_LOCAL", "1" if local else "0")
+    monkeypatch.setenv("TOOLANG_TEST_SLOW_RESULT", "1")
+    session = ChatTuiPtySession.start(
+        "tests.support.top_tui_e2e", tmp_path, columns=180
+    )
+    try:
+        session.wait_for("THREAD", "1 active")
+        session.wait_for_bytes(b"\x1b[?1049h")
+        endpoint = json.loads((tmp_path / "activity-endpoint.json").read_text())[
+            "endpoint"
+        ]
+        with httpx.Client(base_url=endpoint, trust_env=False) as http:
+            roots = http.get("/api/v1/activity/batch").json()[0]["roots"]
+        running = next(node["id"] for node in roots if node["status"] == "running")
+        done = next(node["id"] for node in roots if node["status"] == "succeeded")
+        session.send(b"e\r")
+        session.wait_for("Inspect: too alice inspect " + running)
+        session.data.clear()
+        started = time.monotonic()
+        session.send(b"\x0e")
+        session.wait_for("Inspect: too alice inspect " + done, timeout=1)
+        assert time.monotonic() - started < 1
+        session.data.clear()
+        session.send(b"\x10")
+        session.wait_for("Inspect: too alice inspect " + running, timeout=1)
+        session.send(b"q")
+        assert session.wait_for_exit() == 0
+        session.wait_for_bytes(b"\x1b[?1049l")
     finally:
         session.close()

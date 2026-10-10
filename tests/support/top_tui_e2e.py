@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import socket
 import sys
+import time
 
 from fastapi import FastAPI
 from rich.console import Console
@@ -22,6 +23,7 @@ from toolang.base.types.message import Message, TextPart
 from toolang.base.types.run import ModelCallResult, ModelUsage, ToolCall
 from toolang.cli.common.activity import watch
 from toolang.execution.activity import ActivityReader
+from toolang.teaming.observation import LocalObservation
 from toolang.execution.types import ThreadPrefix
 
 
@@ -33,6 +35,14 @@ class FileGate(AsyncGate):
     async def wait(self) -> None:
         while not self.path.exists():
             await asyncio.sleep(0.02)
+
+
+class FixtureActivityReader(ActivityReader):
+    def result(self, ref: str) -> str:
+        value = super().result(ref)
+        if not value and os.environ.get("TOOLANG_TEST_SLOW_RESULT"):
+            time.sleep(2)
+        return value
 
 
 async def main() -> None:
@@ -82,7 +92,7 @@ flow review(_: Text) -> Text:
             )
         )
         app = FastAPI()
-        app.state.activity = ActivityReader(harness.store.db_path, "agent:alice")
+        app.state.activity = FixtureActivityReader(harness.store.db_path, "agent:alice")
         app.include_router(router, prefix="/api/v1")
         with socket.socket() as listener:
             listener.bind(("127.0.0.1", 0))
@@ -107,6 +117,11 @@ flow review(_: Text) -> Text:
                     once=False,
                     console=Console(),
                     refresh=float(os.environ.get("TOOLANG_TEST_REFRESH", "0.1")),
+                    source=LocalObservation(
+                        app.state.activity, presence=lambda: "online"
+                    )
+                    if os.environ.get("TOOLANG_TEST_LOCAL") == "1"
+                    else None,
                 )
             finally:
                 execution.cancel()

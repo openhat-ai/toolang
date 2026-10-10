@@ -9,6 +9,19 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Added
 
+- `too top` and `too AGENT top` open a full-screen dashboard on the alternate
+  screen, restoring the terminal on exit, with Header, Table, Details, and
+  Status bar regions: Header shows the scope, the local clock, and the selected
+  Stats and Activity windows, Table adds an `S` presence column (`+` online,
+  `-` offline, `?` unknown), Details renders on-demand result text as Markdown,
+  and F7/F8 cycle the Activity and Stats windows.
+
+- `too AGENT top` reads the selected agent's local run store, so it needs no
+  running agent, Hub, or Redis/Valkey and keeps retained history readable while
+  the agent is offline. The Hub likewise serves activity pages, streams, and
+  on-demand results from a managed local run store when one is available,
+  otherwise from the online source.
+
 - Hub scans its root every 5 seconds with `too list` discovery: new homes are
   offline with unavailable activity and vanished online homes show `home
   missing`; after two absent scans with no live lease, only the
@@ -30,9 +43,8 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   unfinished work only, and `--recent DURATION|all` (default `30m`) and
   `--since session|TIMESTAMP|DURATION|all` (default `session`) select visible
   recent work and the stats start shared by MODEL, TOOL, IN, CACHED, OUT, SPEND,
-  and TIME. Each row's metrics cover only its own and transitive calls, `TIME*`
-  marks a non-session range, and incomplete coverage is labeled instead of shown
-  as idle.
+  and TIME+. Each row's metrics cover only its own and transitive calls, and
+  incomplete coverage is labeled instead of shown as idle.
 
 - Agents expose activity over HTTP at `GET /api/v1/activity`,
   `/api/v1/activity/batch`, and the SSE `/api/v1/activity/stream`, and enabled
@@ -40,8 +52,8 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   `/activity/stream` from last-observed coverage while an origin is offline.
 
 - `too top` observes a running team or agent without starting execution: `too top`
-  follows the running Hub for the whole team, while `too AGENT top` follows the
-  selected running agent through existing target and endpoint discovery. `--once`
+  follows the running Hub for the whole team, while `too AGENT top` reads the
+  selected agent's local run store. `--once`
   prints one snapshot and exits, as does redirected output; interactive views
   apply asynchronous updates and render on the `--refresh` interval (default
   `0.1` seconds), reconnect from a fresh baseline with backoff, and exit on `q`
@@ -167,6 +179,10 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   see `docs/messaging.md` for setup. (#708)
 
 ### Changed
+
+- `too top --since DURATION` selects a rolling Stats window that is
+  re-evaluated as time passes instead of one fixed at start; pass a
+  timezone-aware timestamp for the previous fixed start.
 
 - `too top` uses one responsive three-region layout: header totals and a context
   line, a full-width one-line-per-row body, and a fixed bottom key bar, with

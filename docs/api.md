@@ -200,27 +200,37 @@ too top --since 1d --recent 1h --sort spend
 too top --filter fs.read --active --once
 ```
 
-Use `a/t/e` for Agent/Thread/Execution, F5 for List/Tree, F4 for filters, F6 for
-sort, F7 for Recent, F8 for Stats, arrows to select/fold, Enter for Details, and
-`q` or Ctrl-C to exit. Editors accept Enter/Esc, Ctrl-U to clear, Tab for range
-presets, and Ctrl-A to toggle Active in the filter editor. `<`/`>` scroll wide
-rows. RUN always identifies the root; STEP holds the row's complete run or step
-reference. Only running paths expand, including required completed ancestors.
-Agent/Thread rows summarize active and failed root counts, without task titles.
-Matched/eligible and loaded counts follow the view; Execution counts root runs,
-including in Tree layout. PgUp/PgDn scrolls Details when open, otherwise rows.
-Details contains exact usage, full IDs, inspect commands and on-demand result text.
+The full-screen dashboard has Header, Table, optional Details and a fixed Status
+bar. `Team` identifies Hub scope; `Agent NAME` identifies one agent. Header shows
+scope totals, the current local clock and the selected Stats/Activity settings.
+`too top` requires Hub; `too AGENT top` reads local history without Hub or a running
+executor. Observation never creates a store or starts services.
 
-Stats defaults to the owning executor session; `--since` accepts `session`,
-`all`, a duration resolved once, or a timestamp with timezone. Columns use
-`MODEL TOOL IN CACHED OUT SPEND TIME`; CACHED is cache-read input already included
-in IN. Calls, tokens and spend include descendants; TIME measures the row's own
-execution, or sums root durations for Agent/Thread. Retries retain consumption.
-`TIME*` marks a custom Stats range.
-Recent independently retains unfinished work and recently changed objects
-(default `30m`). SPEND shows plain amounts; unknown values show `-`. Estimated
-accounting and incomplete coverage are explained in Details, with incomplete
-coverage also flagged in the header. `--sort cost` remains an alias for `spend`.
+Use `a/t/e` for Agent/Thread/Run, F5 for List/Tree, F4 for filters, F6 for sort,
+F7 to cycle Activity windows and F8 to cycle Stats windows. Custom windows remain
+available through CLI options. The filter editor accepts Enter/Esc, Ctrl-U to
+clear and Ctrl-A to toggle Active. Up/Down or Ctrl-P/N selects; Left/Right folds;
+`<`/`>` scrolls wide rows. Enter toggles Details; PgUp/PgDn pages Details when open,
+otherwise the Table. Exit with `q` or Ctrl-C.
+
+RUN identifies the owning top-level run. Tree adds STEP with the complete selected
+run/step reference; only running paths and required ancestors expand. Agent/Thread
+rows show active/failed counts. S is presence (`+` online, `-` offline, `?` unknown);
+offline ACTIVITY is `-`. Rows never wrap and clip without ellipses. Details contains
+full IDs, exact usage, inspect commands and results rendered as Markdown.
+
+Stats defaults to the owning executor session (latest recorded session when
+stopped). `--since` accepts `session`, `all`, a rolling duration such as `1h`/`1d`,
+or a fixed timestamp with timezone. Use a timestamp to retain the former
+fixed-start behavior of duration values. All consumption metrics share this range:
+`MODEL TOOL IN CACHED OUT SPEND TIME+`. CACHED is cache-read input already in IN;
+calls/tokens/spend include descendants. TIME+ measures the row's own duration or
+sums top-level durations for Agent/Thread. Retries retain consumption.
+
+Activity independently retains unfinished work and recently changed objects,
+default `30m`. Windows age even without execution events. SPEND shows plain amounts;
+unknown is `-`. Incomplete coverage appears in Status bar/Details. Sort direction
+appears on its column; `--sort cost` remains an alias for `spend`.
 
 | Compact activity endpoint | Response |
 | --- | --- |
@@ -229,7 +239,7 @@ coverage also flagged in the header. `--sort cost` remains an alias for `spend`.
 | Hub `GET /activity` | Agent pages, with presence and cached coverage. |
 | Agent `GET /api/v1/activity/stream`, Hub `GET /activity/stream` | Absolute `activity_page` frames, committed together by `activity_checkpoint`. |
 | Agent `GET /api/v1/activity/result?ref=RUN_OR_STEP` | Full result as `{text}` from the execution records. |
-| Hub `GET /activity/result?agent=agent:alice&ref=RUN_OR_STEP` | Fetch the result from the online source agent; offline returns `503`. |
+| Hub `GET /activity/result?agent=agent:alice&ref=RUN_OR_STEP` | Read local records when available, otherwise fetch from the online source; unavailable offline sources return `503`. |
 
 Queries accept `since`, `recent` (seconds), `all_recent=true`, `filter`, and
 `active`. Pages include session/revision, observation time, Stats/Total,
@@ -251,11 +261,14 @@ canonical execution cursors. Compact streams exclude token deltas and full outpu
 
 The shared agent reader checks committed revisions every 0.1 seconds and emits
 one-second clock updates from persisted aggregates and open duration anchors.
-Enabled agents publish the default query even without observers. Hub subscribes
-to source HTTP and keeps the default plus last-requested query in its backend.
-Offline execution time freezes at its last observation; unavailable ranges are
-labeled. Layout and sort changes stay local. Query changes keep the previous view
-until the replacement baseline is complete.
+Enabled agents publish the default query even without observers. Hub prefers
+available managed local stores and otherwise subscribes to agent HTTP; its backend
+retains the default and last-requested query. The same execution reader serves
+local and HTTP observation through the teaming observation service. Offline local
+history still supports rolling queries; cache-only sources retain their observed
+boundary and coverage. Execution time never accrues downtime. Layout/sort changes
+stay local; query changes immediately show requested settings and mark old values
+as updating until a matching complete replacement arrives.
 
 The existing canonical event subscription API remains separate:
 

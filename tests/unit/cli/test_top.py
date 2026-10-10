@@ -33,7 +33,7 @@ def test_top_observes_hub_without_preparing_an_agent(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("kind", ["resident", "roaming", "visiting"])
-def test_top_uses_layout_only_and_requires_an_existing_service(
+def test_top_uses_layout_without_requiring_an_existing_service(
     tmp_path, monkeypatch, kind
 ):
     from toolang.cli.common.context import CliContext
@@ -43,12 +43,14 @@ def test_top_uses_layout_only_and_requires_an_existing_service(
     seen = []
 
     def status(self, **kwargs):
-        assert self.layout == layout and kwargs["check_health"]
+        assert self.layout == layout and not kwargs["check_health"]
         return SimpleNamespace(status="running", endpoint="http://agent")
 
     monkeypatch.setattr(top.AgentProcess, "status", status)
 
     async def observe(endpoint, **options):
+        assert options["source"].reader.path == layout.run_store
+        assert options["source"].presence() == "online"
         seen.append((endpoint, options["agent"], options["once"]))
 
     monkeypatch.setattr(top, "watch", observe)
@@ -56,7 +58,7 @@ def test_top_uses_layout_only_and_requires_an_existing_service(
         typer.main.get_command(cli.app), obj=CliContext(tmp_path, layout=layout)
     )
     top.top_command(context, once=True)
-    assert seen == [("http://agent", "agent:alice", True)]
+    assert seen == [(None, "agent:alice", True)]
 
 
 def test_once_does_not_turn_transport_failure_into_an_empty_snapshot(monkeypatch):

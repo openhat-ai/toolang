@@ -113,10 +113,10 @@ def test_offline_tree_collapses_and_reconnecting_does_not_invent_offline():
     snapshot.stale = True
     feed(state, snapshot)
     assert len(state.rows()) == 2
-    assert state.rows()[0].activity.startswith("stale")
+    assert state.rows()[0].activity == "-"
     state.reconnecting = True
     state.key("a")
-    assert state.rows()[0].activity.startswith("unknown")
+    assert state.rows()[0].activity == "-"
 
 
 def test_view_controls_do_not_change_query_and_editors_consume_shortcuts():
@@ -172,21 +172,18 @@ def test_single_agent_header_and_tree_columns_at_narrow_width():
     console = Console(file=output, width=160, color_system=None)
     console.print(state.render(width=160, once=True))
     text = output.getvalue()
-    assert "Agent Stats" in text and "RUN" in text and "STEP" in text
+    assert "Agent alice" in text and "RUN" in text and "STEP" in text
     assert "run_child.2" in text
     assert "AGENT" not in text
     state.key("a")
-    assert state.rows() == []
+    assert len(state.rows()) == 1
 
 
-def test_duration_start_is_fixed_and_explicit_stats_does_not_change_recent():
-    assert since("1h", now=3600) == "1970-01-01T00:00:00+00:00"
+def test_duration_start_stays_relative_and_stats_does_not_change_activity():
+    assert since("1h", now=3600) == "1h"
     state = Activity(None, query=ActivityQuery())
-    state.key(Keys.F8)
-    state.key(Keys.ControlU)
-    for key in "all":
-        state.key(key)
-    state.key(Keys.ControlM)
+    for _ in range(4):
+        state.key(Keys.F8)
     assert state.query.since == "all"
     assert state.query.recent == 1800
 
@@ -196,11 +193,8 @@ def test_query_edit_cannot_relabel_frames_from_previous_subscription():
     feed(state, page())
     state.attach()
     state.feed("activity_page", page().model_dump())
-    state.key(Keys.F8)
-    state.key(Keys.ControlU)
-    for key in "all":
-        state.key(key)
-    state.key(Keys.ControlM)
+    for _ in range(4):
+        state.key(Keys.F8)
     state.feed("activity_checkpoint", {"agents": ["agent:alice"]})
     assert state.display_query.since == "session"
     state.attach()
@@ -249,10 +243,10 @@ def test_header_keeps_unavailable_statistics_unknown():
     feed(state, snapshot)
     output = io.StringIO()
     Console(file=output, width=160).print(state.render(width=160, once=True))
-    assert (
-        "Team Stats: MODEL -  TOOL -  IN -  CACHED -  OUT -  SPEND -  TIME -"
-        in output.getvalue()
-    )
+    text = output.getvalue()
+    assert "Team  1/1 online  -" in text
+    assert "Models: -" in text and "Tools: -" in text and "Spend: -" in text
+    assert "$0.00" not in text
 
 
 def test_list_summary_follows_tree_execution_order():
@@ -287,10 +281,10 @@ def test_header_scope_totals_do_not_change_with_views_or_tree_rows():
         Console(file=output, width=240).print(state.render(width=240, once=True))
         return output.getvalue()
 
-    initial = rendered().splitlines()[:2]
-    assert "Threads 7" in initial[0]
-    assert "SPEND $1.28" in initial[1]
+    initial = rendered().splitlines()[1:3]
+    assert "Threads: 4" in initial[0]
+    assert "Spend: $1.28" in initial[1]
     for key in ("a", "e", Keys.F5):
         state.key(key)
-        assert rendered().splitlines()[:2] == initial
+        assert rendered().splitlines()[1:3] == initial
         assert "matched/eligible" not in rendered()

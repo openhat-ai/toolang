@@ -22,8 +22,8 @@ def test_slow_subscriber_shares_clock_and_resumes_at_latest_boundary(tmp_path):
             ):
                 initial = (await anext(first))[0]
                 await anext(slow)
-                producer = reader._publishers[query]
-                assert len(reader._listeners[query]) == 2
+                producer = reader._publishers[(query, None)]
+                assert len(reader._listeners[(query, None)]) == 2
                 tick = (await asyncio.wait_for(anext(first), 2))[0]
                 assert tick.revision == initial.revision
                 assert tick.stats.time is not None and initial.stats.time is not None
@@ -33,7 +33,7 @@ def test_slow_subscriber_shares_clock_and_resumes_at_latest_boundary(tmp_path):
                 assert update.stats.model == 1 and update.revision > tick.revision
                 latest = (await anext(slow))[0]
                 assert latest.revision == update.revision
-                assert reader._publishers[query] is producer
+                assert reader._publishers[(query, None)] is producer
             assert not reader._publishers and not reader._listeners
             assert producer.done()
 

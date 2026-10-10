@@ -60,21 +60,21 @@ def test_top_hub_modes_and_source_recovery(valkey, running_hub, tmp_path):
 
             beating = asyncio.create_task(heartbeat())
             async with httpx.AsyncClient(trust_env=False, timeout=10) as http:
-                await asyncio.to_thread(session.wait_for, "2 online / 2", "$0.25")
+                await asyncio.to_thread(session.wait_for, "2/2 online", "$0.25")
                 for options, labels in [
-                    (("--view", "agent"), ("View Agent", "alice", "bob")),
-                    (("--view", "thread"), ("View Thread", "THREAD", "1 active")),
+                    (("--view", "agent"), ("AGENT", "alice", "bob")),
+                    (("--view", "thread"), ("THREAD", "1 active")),
                     (
                         ("--view", "execution", "--tree"),
-                        ("/ Tree", "math__double", "└─"),
+                        ("STEP", "math__double", "└─"),
                     ),
                     (
                         ("--view", "execution", "--sort", "cost", "--since", "all"),
-                        ("/ List", "Sort spend", "TIME*"),
+                        ("RUN", "SPEND↓", "TIME+"),
                     ),
                     (
                         ("--filter", "MATH__DOUBLE", "--active", "--recent", "all"),
-                        ("1/2 matched/eligible", "Recent all"),
+                        ("Filter: MATH__DOUBLE", "Activity: all"),
                     ),
                     (("--filter", "not-found"), ("No matching activity",)),
                 ]:
@@ -126,7 +126,7 @@ def test_top_hub_modes_and_source_recovery(valkey, running_hub, tmp_path):
                 assert live["paths"]
                 assert await driver.lease("agent:alice", "wire", 0)
                 session.data.clear()
-                await asyncio.to_thread(session.wait_for, "offline", "last seen")
+                await asyncio.to_thread(session.wait_for, "1/2 online")
                 async with asyncio.timeout(3):
                     while True:
                         offline = (await pages())["agent:alice"]
@@ -136,7 +136,7 @@ def test_top_hub_modes_and_source_recovery(valkey, running_hub, tmp_path):
                 assert offline["stats"]["model"] == 2
                 await register("agent:alice", "new", endpoint)
                 session.data.clear()
-                await asyncio.to_thread(session.wait_for, "2 online / 2")
+                await asyncio.to_thread(session.wait_for, "2/2 online")
                 async with asyncio.timeout(3):
                     while True:
                         recovered = (await pages())["agent:alice"]
@@ -145,13 +145,15 @@ def test_top_hub_modes_and_source_recovery(valkey, running_hub, tmp_path):
                         await asyncio.sleep(0.1)
                 assert recovered["stats"]["model"] == 2
                 session.send(b"e\x1b[15~")
-                await asyncio.to_thread(session.wait_for, "/ Tree", "math__double")
+                await asyncio.to_thread(session.wait_for, "STEP", "math__double")
                 (tmp_path / "release-tool").touch()
                 await asyncio.to_thread(session.wait_for, "test/scripted", "preview:")
                 (tmp_path / "release-model").touch()
                 session.data.clear()
                 await asyncio.to_thread(
-                    session.wait_for, "0 active", "succeeded · flow:review"
+                    session.wait_for,
+                    "succeeded · Already complete",
+                    "succeeded · flow:review",
                 )
                 session.send(b"q")
                 assert await asyncio.to_thread(session.wait_for_exit) == 0
@@ -242,3 +244,77 @@ def test_hub_reconciles_removed_and_recreated_agent(valkey, running_hub, tmp_pat
                 await new.unregister()
 
     asyncio.run(scenario())
+
+
+def test_hub_and_stopped_local_agent_read_the_same_history(
+    valkey, running_hub, tmp_path
+):
+    """The production Hub uses local records, and agent top survives Hub shutdown."""
+    from contextlib import closing
+    import time
+    from toolang.common.layout import AgentLayout
+    from toolang.execution import statistics
+    from toolang.execution.store import RunStore
+    from toolang.execution.types import Output
+    from tests.support.execution_fixtures import project_run_end
+    from tests.unit.execution.test_activity import root, model, at
+
+    layout = AgentLayout.resident(tmp_path, "alice")
+    with closing(RunStore(layout.run_store)) as store:
+        statistics.start_session(store, "one", at(0))
+        root(store)
+        model(store)
+        project_run_end(
+            store,
+            run_id="run_root",
+            finished_at=at(120),
+            output=Output("# Saved result", "_"),
+        )
+        statistics.checkpoint(store, "one", at(120), end=True)
+    layout.program.write_text("agic main(_: Text) -> Text:\n  user: {{_}}\n")
+    endpoint = running_hub.connection().endpoint
+    with httpx.Client(base_url=endpoint, trust_env=False) as http:
+        deadline = time.monotonic() + 10
+        while True:
+            response = http.get(
+                "/activity", params={"since": "all", "all_recent": "true"}
+            )
+            response.raise_for_status()
+            pages = response.json()
+            if pages:
+                break
+            assert time.monotonic() < deadline
+            time.sleep(0.1)
+        assert len(pages) == 1 and pages[0]["presence"] == "offline"
+        assert pages[0]["stats"]["model"] == 1
+        assert pages[0]["stats"]["time"] == 120 and pages[0]["stats"]["cost"] == 0.5
+        result = http.get(
+            "/activity/result", params={"agent": "agent:alice", "ref": "run_root"}
+        )
+        assert result.status_code == 200 and result.json()["text"] == "# Saved result"
+    assert running_hub.stop()
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "toolang.cli.toolang.main",
+            "--root",
+            str(tmp_path),
+            "alice",
+            "top",
+            "--once",
+            "--since",
+            "all",
+            "--recent",
+            "all",
+            "--view",
+            "execution",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=15,
+        env={**os.environ, "COLUMNS": "180", "TOOLANG_TMUX": "0"},
+    )
+    assert result.returncode == 0, result.stderr
+    assert "Agent alice  offline  2m00s" in result.stdout
+    assert "$0.50" in result.stdout and "run_root" in result.stdout

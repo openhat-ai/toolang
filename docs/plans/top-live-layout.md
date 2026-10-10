@@ -1,6 +1,6 @@
 # Top dashboard
 
-Feature definition for the next dashboard revision; not an implementation report.
+Dashboard layout and observation contract.
 [Top activity](top-activity.md) owns row semantics, statistics and controls.
 The presence/roster and recovery contracts below remain unchanged.
 
@@ -195,5 +195,4 @@ do not move execution persistence into teaming or rewrite executor lifecycle.
 
 Risks: narrow-screen pressure, Markdown rendering cost and stale/offline coverage.
 Bound viewports and async work; expose unavailable data. Rolling-window acceptance
-belongs to [Top activity](top-activity.md#acceptance). No open product questions
-remain; this PR contains no implementation.
+belongs to [Top activity](top-activity.md#acceptance). No open product questions remain.
