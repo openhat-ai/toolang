@@ -226,4 +226,51 @@ def test_read_only_view_preserves_previous_draft(tmp_path):
     asyncio.run(scenario())
 
 
+def test_live_membership_changes_update_input_focus_and_preserve_drafts(
+    tmp_path, monkeypatch
+):
+    human = "human:bryan"
+    observer = Conversation("gc_00000001", "gc", ("agent:alice",), name="dev")
+    joined = Conversation("gc_00000001", "gc", (human, "agent:alice"), name="dev")
+    draft = tmp_path / "draft.txt"
+    draft.write_text("saved before joining")
+
+    async def scenario():
+        async with talk_app(tmp_path, conversation=observer, read_only=True) as (ui, _):
+            ui.client.conversation.return_value = joined
+            ui.client.history.return_value = []
+            ui.client.read.return_value = []
+            ui.client.check_cursor.return_value = None
+            polls = 0
+
+            async def after_poll(_delay):
+                nonlocal polls
+                polls += 1
+                if polls == 1:
+                    assert not ui.read_only
+                    assert ui.app.layout.has_focus(ui.prompt.buffer)
+                    assert ui.prompt.buffer.text == "saved before joining"
+                    ui.prompt.replace_input("unfinished while participating")
+                    ui.client.conversation.return_value = observer
+                elif polls == 2:
+                    assert ui.read_only
+                    assert not ui.app.layout.has_focus(ui.prompt.buffer)
+                    await ui.send("must not send after leaving")
+                    ui.client.send.assert_not_awaited()
+                    assert draft.read_text() == "unfinished while participating"
+                    ui.client.conversation.return_value = joined
+                else:
+                    assert not ui.read_only
+                    assert ui.app.layout.has_focus(ui.prompt.buffer)
+                    assert ui.prompt.buffer.text == "unfinished while participating"
+                    raise asyncio.CancelledError
+
+            monkeypatch.setattr(asyncio, "sleep", after_poll)
+            with pytest.raises(asyncio.CancelledError):
+                await ui.follow()
+            assert polls == 3
+
+    asyncio.run(scenario())
+
+
 pytestmark = pytest.mark.usefixtures("fixed_conversation_ids")

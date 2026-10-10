@@ -107,6 +107,7 @@ ambiguous name lookup returns candidate IDs rather than choosing one.
 `too talk TARGET` resolves the canonical ID, loads conversation metadata, displays
 retained history, and follows new messages using a Stream-ID cursor. A member sees
 an input box with `write a message`; an observer sees messages without a composer.
+The composer and focus update when GC membership changes, preserving unsent drafts.
 Enter sends, Ctrl+J inserts a newline, Ctrl+P/Ctrl+N browse sent input, and Ctrl+Q
 exits. Interactive input requires a TTY. Supplying message arguments sends once
 and exits with a receipt or error.

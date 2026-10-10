@@ -222,8 +222,8 @@ def test_human_observer_sees_both_agents_left_without_a_composer(
         with set_app(ui.app):
             ui.app.renderer.render(ui.app, ui.app.layout)
             assert not any(
-                isinstance(control, BufferControl)
-                for control in ui.app.layout.find_all_controls()
+                isinstance(window.content, BufferControl)
+                for window in ui.app.layout.visible_windows
             )
             ui.connection = "Connected"
             footer = fragment_list_to_text(ui.status_text())

@@ -10,6 +10,7 @@ from prompt_toolkit.filters import Condition, has_focus
 from prompt_toolkit.formatted_text import StyleAndTextTuples
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.layout import HSplit, HorizontalAlign, Layout, VSplit, Window
+from prompt_toolkit.layout.containers import ConditionalContainer
 from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.styles import Style
 from rich.text import Text
@@ -52,6 +53,7 @@ class TalkTui:
         self.team: list[dict[str, Any]] = []
         self.max_width = max_width
         self.draft = state / "draft.txt"
+        self._draft_loaded = False
         self.connection = "Connecting…"
         self.status = ""
         self.pending = False
@@ -67,8 +69,7 @@ class TalkTui:
             ),
             get_width=self.content_width,
         )
-        if not read_only and self.draft.exists():
-            self.prompt.replace_input(self.draft.read_text(encoding="utf-8"))
+        self.restore_draft()
         keys = KeyBindings()
         focus = has_focus(self.prompt.buffer) & Condition(lambda: not self.read_only)
 
@@ -111,28 +112,27 @@ class TalkTui:
         def clear(_event: Any) -> None:
             self.app.renderer.clear()
 
-        footer = Window(
+        self.footer = Window(
             FormattedTextControl(self.status_text, focusable=True),
             height=1,
             wrap_lines=False,
         )
-        controls = (
-            []
-            if read_only
-            else [Window(height=self._input_gap_rows), self.prompt.container()]
+        composer = ConditionalContainer(
+            HSplit([Window(height=self._input_gap_rows), self.prompt.container()]),
+            filter=Condition(lambda: not self.read_only),
         )
         self.app: Application[None] = Application(
             layout=Layout(
                 VSplit(
                     [
                         HSplit(
-                            [*controls, footer],
+                            [composer, self.footer],
                             width=self.content_width,
                         ),
                     ],
                     align=HorizontalAlign.LEFT,
                 ),
-                focused_element=footer if read_only else self.prompt.buffer,
+                focused_element=self.footer if read_only else self.prompt.buffer,
             ),
             key_bindings=keys,
             full_screen=False,
@@ -195,6 +195,23 @@ class TalkTui:
         except OSError as exc:
             self.status = f"Draft could not be saved: {exc}"
         self.invalidate()
+
+    def restore_draft(self) -> None:
+        if self.read_only or self._draft_loaded:
+            return
+        if self.draft.exists():
+            self.prompt.replace_input(self.draft.read_text(encoding="utf-8"))
+        self._draft_loaded = True
+
+    def update_membership(self, info: Conversation) -> None:
+        read_only = not info.allows_sender(self.human)
+        if read_only == self.read_only:
+            return
+        self.save_draft()
+        self.read_only = read_only
+        if not read_only:
+            self.restore_draft()
+        self.app.layout.focus(self.footer if read_only else self.prompt.buffer)
 
     async def send(self, body: str) -> None:
         if self.read_only:
@@ -267,6 +284,7 @@ class TalkTui:
                     self.selection = None
                 info = await self.client.conversation(self.conversation_id)
                 if info != self.conversation:
+                    self.update_membership(info)
                     self.conversation = info
                     self.write_title(conversation_label(info, self.human))
                     self.invalidate()
