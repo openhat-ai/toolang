@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import os
+import fcntl
 import re
 import signal
 from pathlib import Path
 import shlex
 import shutil
 import sys
+import struct
+import termios
 import time
 from uuid import uuid4
 
@@ -362,13 +365,24 @@ def test_chat_tui_keeps_multiple_steers_visible_until_their_step_finishes(
 
 
 def _wait_redrawn(session: ChatTuiPtySession, value: str) -> str:
-    # Prompt Toolkit ordinarily writes only changed cells. Request a full redraw
-    # so assertions can read a complete row from the PTY byte stream.
+    # Resize by one column to request complete rows from the PTY byte stream.
+    # Duplicate SIGWINCH at the same size deliberately preserves the live frame.
+    size = fcntl.ioctl(session.master, termios.TIOCGWINSZ, b"\0" * 8)
+    rows, columns, xpixel, ypixel = struct.unpack("HHHH", size)
     deadline = time.monotonic() + 10
+    delta = 1
     while value not in session.output and time.monotonic() < deadline:
+        fcntl.ioctl(
+            session.master,
+            termios.TIOCSWINSZ,
+            struct.pack("HHHH", rows, columns + delta, xpixel, ypixel),
+        )
         session.process.send_signal(signal.SIGWINCH)
         session._read(timeout=0.1)
         time.sleep(0.02)
+        delta = 1 - delta
+    fcntl.ioctl(session.master, termios.TIOCSWINSZ, size)
+    session.process.send_signal(signal.SIGWINCH)
     return session.wait_for(value, timeout=0.1)
 
 

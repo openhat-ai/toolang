@@ -1,6 +1,6 @@
 """Shared live input surface; each command owns its key bindings."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from prompt_toolkit.application import get_app
 from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.filters import Condition
@@ -14,6 +14,24 @@ from .input_history import InputHistoryStore
 
 MAX_INPUT_ROWS = 6
 ACCENT_CELL = " "
+INPUTBOX_MAX_WIDTH_ENV = "TOOLANG_INPUTBOX_MAX_WIDTH"
+
+
+def resolve_inputbox_max_width(environ: Mapping[str, str], *, fallback: int) -> int:
+    """Resolve the input area's positive maximum width at the command boundary."""
+
+    raw = environ.get(INPUTBOX_MAX_WIDTH_ENV)
+    if raw is None:
+        return fallback
+    try:
+        value = int(raw.strip())
+    except ValueError as exc:
+        raise ValueError(
+            f"{INPUTBOX_MAX_WIDTH_ENV} must be a positive integer"
+        ) from exc
+    if value < 1:
+        raise ValueError(f"{INPUTBOX_MAX_WIDTH_ENV} must be a positive integer")
+    return value
 
 
 class InputBox:

@@ -93,10 +93,11 @@ def renderables_to_prompt_toolkit(
     renderables: Sequence[RenderableType | None],
     *,
     max_rows: int | None = None,
+    width: int | None = None,
 ) -> FormattedText:
     """Render multiple live blocks into one optionally bounded viewport."""
 
-    rows = _prompt_toolkit_rows(renderables)
+    rows = _prompt_toolkit_rows(renderables, width=width)
     if max_rows is not None:
         if max_rows <= 0:
             rows = []
@@ -119,14 +120,18 @@ def renderables_to_prompt_toolkit(
     return FormattedText(fragments)
 
 
-def renderables_height(renderables: Sequence[RenderableType | None]) -> int:
+def renderables_height(
+    renderables: Sequence[RenderableType | None], *, width: int | None = None
+) -> int:
     """Return the number of rows occupied by adjacent live blocks."""
 
-    return len(_prompt_toolkit_rows(renderables))
+    return len(_prompt_toolkit_rows(renderables, width=width))
 
 
 def _prompt_toolkit_rows(
     renderables: Sequence[RenderableType | None],
+    *,
+    width: int | None = None,
 ) -> list[list[tuple[str, str]]]:
     rows: list[list[tuple[str, str]]] = []
     for renderable in renderables:
@@ -134,7 +139,7 @@ def _prompt_toolkit_rows(
             continue
         block_rows: list[list[tuple[str, str]]] = [[]]
         has_content = False
-        for segment in render_segments(renderable):
+        for segment in render_segments(renderable, width=width):
             if segment.control or not segment.text:
                 continue
             has_content = True
@@ -153,13 +158,19 @@ def _prompt_toolkit_rows(
 
 
 def write_renderable(
-    renderable: RenderableType | None, *, hide_cursor: bool = True
+    renderable: RenderableType | None,
+    *,
+    hide_cursor: bool = True,
+    width: int | None = None,
 ) -> None:
-    write_renderables([renderable], hide_cursor=hide_cursor)
+    write_renderables([renderable], hide_cursor=hide_cursor, width=width)
 
 
 def write_renderables(
-    renderables: Sequence[RenderableType | None], *, hide_cursor: bool = True
+    renderables: Sequence[RenderableType | None],
+    *,
+    hide_cursor: bool = True,
+    width: int | None = None,
 ) -> None:
     pending = [renderable for renderable in renderables if renderable is not None]
     if not pending:
@@ -167,7 +178,7 @@ def write_renderables(
     if hide_cursor:
         sys.stdout.write("\x1b[?25l")
     try:
-        sys.stdout.write(renderables_output(pending))
+        sys.stdout.write(renderables_output(pending, width=width))
         sys.stdout.flush()
     finally:
         if hide_cursor:
@@ -175,20 +186,22 @@ def write_renderables(
             sys.stdout.flush()
 
 
-def renderables_output(renderables: Sequence[RenderableType | None]) -> str:
+def renderables_output(
+    renderables: Sequence[RenderableType | None], *, width: int | None = None
+) -> str:
     """Render stable terminal blocks into one ANSI-encoded write."""
 
     return "".join(
-        _renderable_output(renderable)
+        _renderable_output(renderable, width=width)
         for renderable in renderables
         if renderable is not None
     )
 
 
-def _renderable_output(renderable: RenderableType) -> str:
+def _renderable_output(renderable: RenderableType, *, width: int | None = None) -> str:
     output = "".join(
         _styled_segment_output(segment)
-        for segment in render_segments(renderable)
+        for segment in render_segments(renderable, width=width)
         if not segment.control
     )
     return output if not output or output.endswith("\n") else f"{output}\n"

@@ -755,13 +755,12 @@ messages use the terminal's default foreground and explicitly clear dim styling
 in both stable and live output. An empty prompt shows the muted
 placeholder `Ask or describe a task`; the
 placeholder disappears as soon as the buffer contains text and is never part of
-the submitted message. A submitted input that starts a root Run paints its
-control bar through the full terminal width. Steer and quick-command control
-bars instead use the same output width as execution and command output: the
-lesser of the available width and `TOOLANG_PROGRESS_MAX_WIDTH`. On wider
-terminals, the terminal background visible to their right distinguishes these
-interactions from a new root Run. Quick-command result, help, table, and
-reopened-output content align to the same output boundary.
+the submitted message. Root, Steer, and quick-command control bars use the same
+output width as execution and command output: the lesser of the available
+width and `TOOLANG_PROGRESS_MAX_WIDTH`. Quick-command result, help, table, and
+reopened-output content align to the same output boundary. The editable input,
+Queue, and status bars use `TOOLANG_INPUTBOX_MAX_WIDTH`, falling back to the
+progress limit when unset; see [Chat](chat.md).
 
 Steer bars keep their original purple accent regardless of adoption. Pending
 bars have one aggregate dim row below them, including its marker:

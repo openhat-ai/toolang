@@ -9,6 +9,16 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Added
 
+- `too chat` and `too talk` accept `TOOLANG_INPUTBOX_MAX_WIDTH`, a positive
+  terminal-cell width limit for the input area — Chat's Input, Queue, and
+  status bars and Talk's input and footer — independent of message output.
+  When unset it falls back to `TOOLANG_PROGRESS_MAX_WIDTH` (120 columns by
+  default), and both limits narrow to the terminal; an empty, non-numeric, or
+  nonpositive value fails before interactive startup with an error naming the
+  variable. Message output and submitted controls keep the progress width,
+  while scripted Chat, one-shot Talk sends, and the Talk directory ignore the
+  setting.
+
 - Commands that prepare State now report waiting on a held State lock,
   showing `Waiting for root State...`, `Waiting for home State...`, or
   `Waiting for agent <name> State...` and reporting when the lock becomes
@@ -463,6 +473,16 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   direct conversation's `agent:alice ↔ agent:bob` participants. (#708)
 
 ### Fixed
+
+- `too chat` and `too talk` pass the invoking process's
+  `TOOLANG_PROGRESS_MAX_WIDTH` and `TOOLANG_INPUTBOX_MAX_WIDTH` into new tmux
+  panes — including unset values, preserving the fallback — so a tmux server's
+  stale environment no longer overrides them.
+
+- `too chat` and `too talk` keep native terminal scrollback stable through
+  terminal resizes: the live input no longer drifts across repeated resizes,
+  and Chat's Input, Queue, and status bars now follow the input area width and
+  no longer fill the terminal.
 
 - Interactive Text now ends each agent message block at its last visible
   Markdown row: trailing empty rows, including a fenced code block's bottom

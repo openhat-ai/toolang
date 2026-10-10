@@ -31,7 +31,13 @@ class TerminalOutput(DummyOutput):
 
 @asynccontextmanager
 async def talk_app(
-    tmp_path, *, conversation=None, human="human:bryan", read_only=False
+    tmp_path,
+    *,
+    conversation=None,
+    human="human:bryan",
+    read_only=False,
+    max_width=120,
+    inputbox_max_width=None,
 ):
     output = TerminalOutput()
     conversation = conversation or conversation_record(
@@ -48,6 +54,8 @@ async def talk_app(
             tmp_path,
             LIGHT_TERMINAL_SURFACES,
             read_only=read_only,
+            max_width=max_width,
+            inputbox_max_width=inputbox_max_width,
         )
         app.connection = "Connected"
         with set_app(app.app):
@@ -57,12 +65,18 @@ async def talk_app(
                 await app.app.cancel_and_wait_for_background_tasks()
 
 
-def test_input_and_footer_share_message_width_after_resize_and_clear(tmp_path):
+@pytest.mark.parametrize("max_width", [72, 120])
+@pytest.mark.parametrize("inputbox_max_width", [None, 48, 160])
+def test_input_and_footer_share_input_width_after_resize_and_clear(
+    tmp_path, max_width, inputbox_max_width
+):
     async def scenario():
-        async with talk_app(tmp_path) as (ui, output):
+        async with talk_app(
+            tmp_path, max_width=max_width, inputbox_max_width=inputbox_max_width
+        ) as (ui, output):
             for columns in (200, 60, 180):
                 output.columns = columns
-                width = min(columns, 120)
+                width = min(columns, inputbox_max_width or max_width)
                 for draft in ("", "hello", "x" * 170, ""):
                     ui.prompt.replace_input(draft)
                     ui.app.render_counter += 1
