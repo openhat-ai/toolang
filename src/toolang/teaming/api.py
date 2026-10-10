@@ -15,7 +15,6 @@ from toolang.common.sse import SSESendDeadline
 from toolang.execution.activity import ActivityReader
 from toolang.execution.errors import SnapshotLimitError
 from toolang.execution.errors import StreamOverflowError
-from .event_backend import EventBackend
 from .events import HubScope
 from .subscriptions import HubSubscription
 
@@ -135,7 +134,7 @@ def create_app(
     async def health() -> dict[str, bool]:
         if not lifecycle.ready or lifecycle.failed:
             raise HTTPException(503, "Hub maintenance is not ready")
-        await client._backend.ping()
+        await client.backend.ping()
         return {"ok": True}
 
     async def event_subscription(
@@ -147,7 +146,7 @@ def create_app(
         subscription = None
         try:
             subscription = HubSubscription(
-                EventBackend(client._backend), HubScope(agent, thread, run), after
+                client.backend.events, HubScope(agent, thread, run), after
             )
             await subscription.prepare()
         except ScopeUnavailable as exc:
@@ -223,6 +222,6 @@ def create_app(
     from .activity_api import activity_router
 
     app.include_router(
-        activity_router(client._backend, roster=roster, local_reader=local_activity)
+        activity_router(client.backend, roster=roster, local_reader=local_activity)
     )
     return app

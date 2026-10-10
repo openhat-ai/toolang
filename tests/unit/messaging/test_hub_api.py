@@ -13,7 +13,7 @@ import pytest
 from tests.unit.messaging.test_protocol import CONFIG, client
 from toolang.teaming.api import create_app
 from toolang.teaming.agent_client import AgentClient
-from toolang.teaming.keys import convo_key
+from toolang.teaming.backend.valkey.keys import convo_key
 from toolang.teaming.client import HubClient
 from toolang.teaming.errors import BackendUnavailable, MessagingError, SendUnconfirmed
 from toolang.teaming.schemas import HubConnection, Message
@@ -58,7 +58,7 @@ def test_hub_rejects_missing_initialized_data_without_recreating_it(operation):
                 transport=httpx.ASGITransport(app), base_url="http://hub"
             ) as http,
         ):
-            raw = human._backend._client
+            raw = human.backend._client
             await raw.flushdb()
             if operation == "health":
                 response = await http.get("/healthz")
@@ -183,7 +183,7 @@ def test_local_access_validation_and_backend_readiness(owner):
                     await http.get("/msg/conversations/gc_00000000/messages?" + query)
                 ).status_code == 400
             assert await human.history("gc_00000000") == []
-            human._backend.ping = AsyncMock(side_effect=BackendUnavailable("offline"))
+            human.backend.ping = AsyncMock(side_effect=BackendUnavailable("offline"))
             response = await http.get("/healthz")
             assert response.status_code == 503
             assert response.json()["code"] == "backend_unavailable"
@@ -239,7 +239,7 @@ def test_history_preserves_corrupt_records_and_full_cursors():
             app.router.lifespan_context(app),
             HubClient(CONNECTION, transport=httpx.ASGITransport(app)) as hub,
         ):
-            raw = human._backend._client
+            raw = human.backend._client
             key = convo_key("gc_00000000", "messages")
             await raw.xadd(key, {"data": "broken"}, id="100-9")
             await raw.xadd(key, {"other": "no data"}, id="100-10")
@@ -325,13 +325,13 @@ def test_lost_send_response_reports_preallocated_id_without_retry(
 def test_backend_uncertain_send_keeps_uuid_over_http():
     async def scenario():
         human = client(FakeServer(server_type="valkey"), CONNECTION.human)
-        original = human._backend.append
+        original = human.backend.append
 
         async def lose_ack(*args, **kwargs):
             await original(*args, **kwargs)
             raise SendUnconfirmed("ack lost")
 
-        human._backend.append = lose_ack
+        human.backend.append = lose_ack
         app = create_app(human)
         async with (
             app.router.lifespan_context(app),

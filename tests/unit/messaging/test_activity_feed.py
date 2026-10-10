@@ -47,7 +47,7 @@ def test_slow_source_independent_updates_roster_and_reconnect(monkeypatch):
     async def scenario():
         server = FakeServer(server_type="valkey")
         async with client(server, "human:owner") as human:
-            backend = human._backend
+            backend = human.backend
             for name in gates:
                 await backend.register(
                     human.actor, agent=name, token=name, endpoint="http://source"
@@ -69,7 +69,7 @@ def test_slow_source_independent_updates_roster_and_reconnect(monkeypatch):
                     await checkpoint(second, other)
                     assert sorted(other.snapshots) == sorted(gates)
                     assert other.snapshots["agent:alice"].revision == 2
-                from toolang.teaming.keys import TEAM
+                from toolang.teaming.backend.valkey.keys import TEAM
 
                 await backend._call("HDEL", TEAM, "agent:bob")
                 async with asyncio.timeout(2):
@@ -95,7 +95,6 @@ def test_live_frames_advance_independently_of_cache_without_regression(
 ):
     import json
     import httpx
-    from toolang.teaming.activity import ActivityBackend
 
     async def scenario():
         consumed = asyncio.Event()
@@ -122,8 +121,8 @@ def test_live_frames_advance_independently_of_cache_without_regression(
 
         server = FakeServer(server_type="valkey")
         async with client(server, "human:owner") as human:
-            backend = ActivityBackend(human._backend)
-            await human._backend.register(
+            backend = human.backend.activity
+            await human.backend.register(
                 human.actor, agent=page.agent, token="lease", endpoint="http://agent"
             )
             # A REST reader or independent publication observed the same revision later.
@@ -132,11 +131,11 @@ def test_live_frames_advance_independently_of_cache_without_regression(
             )
             lease = await backend.lease(page.agent)
             if token != "lease":
-                await human._backend.lease(page.agent, "lease", 0)
-                await human._backend.register(
+                await human.backend.release_lease(page.agent, "lease")
+                await human.backend.register(
                     human.actor, agent=page.agent, token=token, endpoint="http://agent"
                 )
-            reader = HubActivity(human._backend)
+            reader = HubActivity(human.backend)
             feed = HubActivityFeed(reader, ActivityQuery())
             feed.replace(
                 page.agent,

@@ -10,9 +10,9 @@ import json
 from .ids import dm_id
 
 from .backend import Backend
+from .backend.factory import create_backend
 from .discovery import host_token as host_token
 from .types import RENEW_SECONDS as RENEW_SECONDS
-from .types import LEASE_SECONDS
 from .config import BackendConfig
 from .errors import ConversationAccessDenied, LeaseLost, MessagingError
 from .schemas import (
@@ -48,7 +48,9 @@ class MessagingClient:
         self.token = token if token is not None else host_token()
         if who.kind == "agent" and (not isinstance(self.token, str) or not self.token):
             raise MessagingError("Agent lease token must be nonempty text")
-        self._backend = backend or Backend(config)
+        self.backend: Backend = (
+            backend if backend is not None else create_backend(config)
+        )
 
     @contextmanager
     def session(self):
@@ -68,16 +70,16 @@ class MessagingClient:
         await self.close()
 
     async def close(self) -> None:
-        await self._backend.close()
+        await self.backend.close()
 
     async def check_backend(self) -> None:
-        await self._backend.ping()
-        await self._backend.initialize()
+        await self.backend.ping()
+        await self.backend.initialize()
 
     async def register_human(self) -> None:
         """Ensure the human and system membership exist without changing custom conversations."""
         target(self.actor, kind="human")
-        await self._backend.register(self.actor)
+        await self.backend.register(self.actor)
 
     @property
     def _lease(self) -> str:
@@ -86,29 +88,29 @@ class MessagingClient:
     async def register(self, owner: str, *, endpoint: str = "") -> None:
         target(self.actor, kind="agent")
         target(owner, kind="human")
-        await self._backend.register(
+        await self.backend.register(
             owner, agent=self.actor, token=self.token, endpoint=endpoint
         )
 
     async def renew(self) -> None:
-        if not await self._backend.lease(self.actor, self.token, LEASE_SECONDS):
+        if not await self.backend.renew_lease(self.actor, self.token):
             raise LeaseLost(f"Agent lease lost for {self.actor}")
 
     async def unregister(self) -> None:
-        await self._backend.lease(self.actor, self.token, 0)
+        await self.backend.release_lease(self.actor, self.token)
 
     async def agents(self) -> dict[str, str]:
         return {
             name: info["owner"]
-            for name, info in (await self._backend.participants()).items()
+            for name, info in (await self.backend.participants()).items()
             if target(name).kind == "agent"
         }
 
     async def team(self) -> list[TeamMember]:
-        return await self._backend.team()
+        return await self.backend.team()
 
     async def conversation(self, conversation: str) -> Conversation:
-        info = await self._backend.conversation(conversation, self.actor)
+        info = await self.backend.conversation(conversation, self.actor)
         if info is None:
             raise MessagingError(f"Unknown conversation: {conversation}")
         return info
@@ -118,7 +120,7 @@ class MessagingClient:
     ) -> Resolution:
         if kind == "name":
             matches = []
-            for ref in await self._backend.named(value):
+            for ref in await self.backend.named(value):
                 try:
                     info = await self.conversation(ref)
                 except ConversationAccessDenied:
@@ -161,14 +163,14 @@ class MessagingClient:
         a, b = pair
         direct_pair(a, b)
         for member in pair:
-            if not await self._backend.known_participant(member):
+            if not await self.backend.known_participant(member):
                 raise MessagingError(f"Unknown participant: {member}")
         ref = dm_id(a, b)
-        info = await self._backend.conversation(ref, self.actor, pair=pair)
+        info = await self.backend.conversation(ref, self.actor, pair=pair)
         if not info and self.actor not in pair:
             raise MessagingError("No conversation exists between these participants")
         if create and not info:
-            await self._backend.create_dm(self.actor, (a, b), token=self._lease)
+            await self.backend.create_dm(self.actor, (a, b), token=self._lease)
             info = await self.conversation(ref)
         return Resolution(ref, tuple(sorted(pair)), info is not None)
 
@@ -176,13 +178,11 @@ class MessagingClient:
         self, name: str | None = None, *, participants: list[str] | None = None
     ) -> Conversation:
         if participants is None:
-            ref = await self._backend.create_gc(
-                self.actor, token=self._lease, name=name
-            )
+            ref = await self.backend.create_gc(self.actor, token=self._lease, name=name)
         else:
             if len(participants) != 2:
                 raise MessagingError("A DM requires exactly two distinct participants")
-            ref = await self._backend.create_dm(
+            ref = await self.backend.create_dm(
                 self.actor,
                 (participants[0], participants[1]),
                 token=self._lease,
@@ -193,13 +193,13 @@ class MessagingClient:
     async def rename_conversation(
         self, conversation: str, name: str | None, *, revision: int
     ) -> Conversation:
-        await self._backend.rename(
+        await self.backend.rename(
             conversation, self.actor, token=self._lease, name=name, revision=revision
         )
         return await self.conversation(conversation)
 
     async def join_conversation(self, conversation: str) -> dict[str, Any]:
-        await self._backend.member(
+        await self.backend.member(
             conversation, self.actor, token=self._lease, join=True
         )
         return {
@@ -208,7 +208,7 @@ class MessagingClient:
         }
 
     async def leave_conversation(self, conversation: str) -> dict[str, Any]:
-        await self._backend.member(
+        await self.backend.member(
             conversation, self.actor, token=self._lease, join=False
         )
         return {"conversation": conversation}
@@ -217,7 +217,7 @@ class MessagingClient:
         self, *, include_preview: bool = False
     ) -> list[ConversationSummary]:
         result = []
-        for info, latest in await self._backend.contacts(self.actor):
+        for info, latest in await self.backend.contacts(self.actor):
             ref = info.id
             item: ConversationSummary = dict(
                 conversation=ref,
@@ -231,9 +231,7 @@ class MessagingClient:
                 preview: MessagePreview | None = None
                 if latest:
                     try:
-                        fields = dict(
-                            zip(latest[0][1][::2], latest[0][1][1::2], strict=True)
-                        )
+                        fields = latest[0][1]
                         message = Message.decode(fields["data"])
                         preview = {"sender": message.sender, "body": message.body[:160]}
                     except (MessagingError, KeyError):
@@ -251,7 +249,7 @@ class MessagingClient:
     async def statistics(
         self, conversation: str | None = None
     ) -> dict[str, int | str | None]:
-        return await self._backend.statistics(self.actor, conversation)
+        return await self.backend.statistics(self.actor, conversation)
 
     async def send(
         self,
@@ -285,7 +283,7 @@ class MessagingClient:
                 if resolved.conversation.startswith("dm_")
                 else (),
             )
-        sid = await self._backend.append(
+        sid = await self.backend.append(
             ref, self.actor, message.encode(), token=self._lease, pair=pair
         )
         return {"conversation": ref, "stream_id": sid, "message": message.data()}
@@ -297,7 +295,7 @@ class MessagingClient:
         if not 1 <= count <= 1000:
             raise MessagingError("Read count must be between 1 and 1000")
         await self.conversation(conversation)
-        return await self._backend.messages(
+        return await self.backend.messages(
             conversation, self.actor, start=f"({after}", finish="+", count=count
         )
 
@@ -309,7 +307,7 @@ class MessagingClient:
         await self.conversation(conversation)
         return list(
             reversed(
-                await self._backend.messages(
+                await self.backend.messages(
                     conversation,
                     self.actor,
                     start="+",
@@ -325,7 +323,7 @@ class MessagingClient:
         await self.conversation(conversation)
         if cursor == "0-0":
             return None
-        first = await self._backend.messages(
+        first = await self.backend.messages(
             conversation, self.actor, start="-", finish="+", count=1
         )
         if not first:

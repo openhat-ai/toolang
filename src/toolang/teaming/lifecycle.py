@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 class HubLifecycle:
     def __init__(self, client: MessagingClient, *, roster: Roster | None = None):
         self.client, self.roster = client, roster
-        self.presence = PresenceWorker(client._backend)
+        self.presence = PresenceWorker(client.backend)
         self.tasks: list[asyncio.Task] = []
         self.ready = False
         self.failed = False

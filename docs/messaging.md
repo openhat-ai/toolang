@@ -262,6 +262,13 @@ mutation. A changed snapshot is reread within a fixed retry bound; uncertain
 transport failures never replay writes. A pending Talk DM is local state with no
 persisted creation time or revision.
 
+Storage interfaces live in `teaming/backend/protocol.py`; the factory selects
+`backend/valkey/`, which owns all keys, commands, Lua, and driver errors. Services
+use the `Backend` contract and its `events` and `activity` capabilities, sharing
+one connection lifetime owned by Hub. Activity federation and subscription logic
+remain outside the driver. The interface exposes explicit lease renewal/release
+and normalized message field maps, without raw driver commands.
+
 Conversation lists read metadata, membership, and previews in batches of at most
 128 IDs. Each batch applies visibility atomically. Listing remains linear in the
 directory size; ID and participant-pair lookup are constant in directory size.

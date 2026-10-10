@@ -19,7 +19,13 @@ from tests.support.chat_tui_pty import ChatTuiPtySession
 from toolang.teaming.agent_client import AgentClient
 from toolang.teaming.client import HubClient
 from toolang.teaming.ids import dm_id
-from toolang.teaming.keys import CONVOS, PRESENCE, STATS, TEAM_EVENTS, convo_key
+from toolang.teaming.backend.valkey.keys import (
+    CONVOS,
+    PRESENCE,
+    STATS,
+    TEAM_EVENTS,
+    convo_key,
+)
 from toolang.teaming.schemas import Message
 
 pytestmark = pytest.mark.live_valkey

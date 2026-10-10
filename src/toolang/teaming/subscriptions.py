@@ -30,7 +30,8 @@ from .errors import (
     MessagingError,
     ScopeUnavailable,
 )
-from .event_backend import EventBackend, MANIFEST
+from .backend import EventBackend
+from .records import MANIFEST
 from .events import (
     HubCursor,
     HubScope,

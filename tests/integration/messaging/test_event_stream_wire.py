@@ -23,11 +23,10 @@ from toolang.base.types.message import TextPart
 from toolang.execution.schemas import StreamFrame
 from toolang.execution.activity import ActivityQuery, ActivityReader
 from toolang.execution.types import ThreadPrefix
-from toolang.teaming.backend import Backend
+from toolang.teaming.backend.valkey import ValkeyBackend
 from toolang.teaming.agent_client import AgentClient, AgentEventClient
 from toolang.teaming.client import HubClient
 from toolang.teaming.errors import BackendUnavailable
-from toolang.teaming.event_backend import EventBackend
 from toolang.teaming.errors import EventRecoveryRequired
 from toolang.teaming.events import HubScope
 from toolang.teaming.exporter import EventExporter
@@ -186,8 +185,8 @@ def test_agents_reconnect_through_hub_without_direct_backend_access(valkey, tmp_
         (home / "agent.too").write_text("flow example(_: Text):\n  let result = Done\n")
 
     async def scenario():
-        driver = Backend(valkey)
-        service = EventBackend(driver)
+        driver = ValkeyBackend(valkey)
+        service = driver.events
         async with httpx.AsyncClient(timeout=15, trust_env=False) as http:
 
             async def local_run(name):
@@ -314,7 +313,7 @@ def test_hub_event_fanout_recovery_and_top_once(
             source="flow example:\n  let result = Done\n",
             responses=[],
         )
-        driver = Backend(valkey)
+        driver = ValkeyBackend(valkey)
         async with (
             harness,
             httpx.AsyncClient(
@@ -325,7 +324,7 @@ def test_hub_event_fanout_recovery_and_top_once(
             ) as http,
         ):
             await driver.register("human:owner", agent="agent:alice", token="lease")
-            service = EventBackend(driver)
+            service = driver.events
             exporter = EventExporter(
                 harness.executor.stream,
                 harness.store.db_path,
@@ -428,7 +427,7 @@ def test_hub_event_fanout_recovery_and_top_once(
                     assert watching.cursor != before
                 # A committed generation replacement remains recoverable after its
                 # control is trimmed from the event stream.
-                import toolang.teaming.event_backend as event_backend
+                import toolang.teaming.backend.valkey.events as event_backend
 
                 monkeypatch.setattr(event_backend, "MAX_STREAM_EVENTS", 1)
                 await exporter.recover("source_gap")
@@ -519,8 +518,8 @@ def test_resident_shutdown_drains_or_bounds_backend_outage(
         )
 
     async def scenario():
-        driver = Backend(valkey)
-        service = EventBackend(driver)
+        driver = ValkeyBackend(valkey)
+        service = driver.events
         connection = running_hub.connection()
         endpoint = f"http://127.0.0.1:{port}"
         try:

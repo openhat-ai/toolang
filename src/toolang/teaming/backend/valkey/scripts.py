@@ -5,8 +5,8 @@ provided by the caller; all validation precedes mutations because Lua cannot
 roll back an error after a write.
 """
 
-from .ids import GC_EPOCH_SECONDS, GC_LIMIT
-from .types import (
+from ...ids import GC_EPOCH_SECONDS, GC_LIMIT
+from ...types import (
     LEASE_SECONDS,
     MAX_SAFE_INTEGER,
     MESSAGE_RETENTION,

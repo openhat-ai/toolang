@@ -354,7 +354,8 @@ with these module boundaries (paths relative to `teaming/`):
 
 | Module | Responsibility |
 | --- | --- |
-| `backend.py` | Valkey driver, due-member query, and atomic expiry/state/event operations; no scheduling |
+| `backend/protocol.py` | Driver-independent storage interfaces; no commands, keys, Lua, or scheduling |
+| `backend/valkey/` | Valkey driver, due-member query, and atomic expiry/state/event operations |
 | `presence.py` (new) | `PresenceWorker` with a bounded `reconcile_once()` and cancellable `run()`; uses an injected backend, owns no connection pool or HTTP state |
 | `lifecycle.py` (new) | Own shared client/backend lifetime and presence/optional roster tasks, startup readiness, failure observation, and cleanup; keep it specific to Hub services |
 | `api.py` | Wire lifespan and routes, expose lifecycle health; no polling loop or detached tasks |
@@ -510,11 +511,11 @@ Paths below are relative to `src/toolang/`:
 | Touchpoints | Work |
 | --- | --- |
 | `common/ids.py` | Expose/reuse pure codec helpers, preserve thread/run outputs |
-| `teaming/{schemas,backend,messaging,types}.py` | Records, IDs, name resolution, atomic writes, schema guard |
+| `teaming/{schemas,messaging,types}.py`, `teaming/backend/` | Records, IDs, name resolution, atomic writes, schema guard |
 | `teaming/{messaging_api,client,agent_client}.py`, `plugin/toolsets/msg.py` | Conversation contracts and client-local presence projection |
 | `teaming/{events,api,agent_api,roster}.py`, team-owned subscription module | Feed, replay, visibility, lease operations, and lifespan wiring |
 | New `teaming/presence.py`, `teaming/lifecycle.py` | Bounded expiry worker and shared Hub task/resource ownership under the lifecycle contract above |
-| `teaming/{event_backend,activity,subscriptions}.py` | Shared deadline/token checks; preserve execution protocol |
+| `teaming/backend/valkey/{events,activity}.py`, `teaming/{activity,subscriptions}.py` | Shared deadline/token checks; preserve execution protocol |
 | `execution/schemas.py`, `cli/common/activity_view.py` | Remove last-seen fields/display and observed-time fallback; preserve Top subscription/refresh behavior |
 | `cli/toolang/commands/talk/`, `cli/common/tmux.py`, `work/messaging.py` | Team/conversation directory, usage hints, IDs, labels, receipts, window/checkpoint vocabulary; preserve running-Hub discovery through `cli/common/messaging.py` |
 

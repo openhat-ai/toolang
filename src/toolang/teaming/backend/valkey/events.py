@@ -4,25 +4,25 @@ from __future__ import annotations
 
 from hashlib import sha256
 import json
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
-from .backend import Backend
+if TYPE_CHECKING:
+    from .backend import ValkeyBackend
 from .keys import PREFIX, TEAM, PRESENCE
-from .storage_scripts import LEASE_CHECK
-from .errors import MessagingError, EventProtocolError, EventRecoveryRequired
-from .events import (
+from .scripts import LEASE_CHECK
+from ...errors import MessagingError, EventProtocolError, EventRecoveryRequired
+from ...events import (
     HubCursor,
     MAX_STREAM_BYTES,
     MAX_STREAM_EVENTS,
     encode,
 )
-from .records import MAX_BYTES, MAX_ENTITIES
-from .schemas import stream_id, target
+from ...records import MANIFEST, MAX_BYTES, MAX_ENTITIES
+from ...schemas import stream_id, target
 
 EVENTS = f"{PREFIX}:events"
 META, STREAM, AGENTS = f"{EVENTS}:meta", f"{EVENTS}:stream", f"{EVENTS}:agents"
-MANIFEST = '["manifest"]'
 
 
 def generation_key(agent: str, generation: str) -> str:
@@ -258,15 +258,15 @@ def _hash(values: Any) -> dict[str, str]:
     return dict(zip(values[::2], values[1::2], strict=True))
 
 
-class EventBackend:
-    def __init__(self, backend: Backend) -> None:
+class ValkeyEvents:
+    def __init__(self, backend: ValkeyBackend) -> None:
         self.backend = backend
 
     async def _eval(self, script: str, keys: list[str], args: list[Any]) -> Any:
         try:
             return await self.backend._eval(script, keys, args)
         except MessagingError as exc:
-            from .errors import BackendUnavailable
+            from ...errors import BackendUnavailable
 
             if isinstance(exc, BackendUnavailable):
                 raise
@@ -276,7 +276,7 @@ class EventBackend:
         try:
             return await self.backend._call(command, *args)
         except MessagingError as exc:
-            from .errors import BackendUnavailable
+            from ...errors import BackendUnavailable
 
             if isinstance(exc, BackendUnavailable):
                 raise

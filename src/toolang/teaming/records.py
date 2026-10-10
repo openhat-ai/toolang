@@ -29,6 +29,9 @@ from .errors import EventProtocolError, EventRecoveryRequired
 from .events import PARTS, encode
 
 
+MANIFEST = '["manifest"]'
+
+
 class HubRecord(BaseModel):
     """Private discovery and process identity for a root's local Hub."""
 

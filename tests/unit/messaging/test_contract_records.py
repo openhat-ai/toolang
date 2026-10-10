@@ -8,7 +8,7 @@ import pytest
 
 from tests.unit.messaging.test_protocol import client, snapshot
 from toolang.teaming.errors import StorageIntegrityError
-from toolang.teaming.keys import CONVOS
+from toolang.teaming.backend.valkey.keys import CONVOS
 
 
 @pytest.mark.parametrize(
@@ -23,7 +23,7 @@ def test_invalid_conversation_record_rejects_membership_without_writes(field, va
         ):
             await alice.register(human.actor)
             conversation = await human.create_conversation("Original")
-            raw = human._backend._client
+            raw = human.backend._client
             record = json.loads(await raw.hget(CONVOS, conversation.id))
             record[field] = value
             await raw.hset(CONVOS, conversation.id, json.dumps(record))
@@ -36,8 +36,8 @@ def test_invalid_conversation_record_rejects_membership_without_writes(field, va
 
 
 def test_changed_record_is_revalidated_before_commit(monkeypatch):
-    from toolang.teaming import storage_scripts
-    from toolang.teaming.keys import TEAM_EVENTS, convo_key
+    from toolang.teaming.backend.valkey import scripts
+    from toolang.teaming.backend.valkey.keys import TEAM_EVENTS, convo_key
 
     async def scenario():
         server = FakeServer(server_type="valkey")
@@ -47,21 +47,21 @@ def test_changed_record_is_revalidated_before_commit(monkeypatch):
         ):
             await alice.register(human.actor)
             convo = await human.create_conversation("Original")
-            raw = human._backend._client
+            raw = human.backend._client
             events = await raw.xlen(TEAM_EVENTS)
-            evaluate = alice._backend._eval
+            evaluate = alice.backend._eval
             changed = False
 
             async def corrupt_after_validation(script, keys, args):
                 nonlocal changed
-                if script == storage_scripts.EDIT and not changed:
+                if script == scripts.EDIT and not changed:
                     changed = True
                     record = json.loads(await raw.hget(CONVOS, convo.id))
                     record["name"] = " invalid "
                     await raw.hset(CONVOS, convo.id, json.dumps(record))
                 return await evaluate(script, keys, args)
 
-            monkeypatch.setattr(alice._backend, "_eval", corrupt_after_validation)
+            monkeypatch.setattr(alice.backend, "_eval", corrupt_after_validation)
             with pytest.raises(StorageIntegrityError):
                 await alice.join_conversation(convo.id)
             assert changed
@@ -72,22 +72,22 @@ def test_changed_record_is_revalidated_before_commit(monkeypatch):
 
 
 def test_team_read_revalidates_a_concurrently_added_member(monkeypatch):
-    from toolang.teaming import storage_scripts
-    from toolang.teaming.keys import TEAM
+    from toolang.teaming.backend.valkey import scripts
+    from toolang.teaming.backend.valkey.keys import TEAM
 
     async def scenario():
         async with client(FakeServer(server_type="valkey"), "human:owner") as human:
-            evaluate = human._backend._eval
+            evaluate = human.backend._eval
             changed = False
 
             async def add_after_validation(script, keys, args):
                 nonlocal changed
-                if script == storage_scripts.READ and not changed:
+                if script == scripts.READ and not changed:
                     changed = True
-                    await human._backend._client.hset(TEAM, "agent:bad", "{}")
+                    await human.backend._client.hset(TEAM, "agent:bad", "{}")
                 return await evaluate(script, keys, args)
 
-            monkeypatch.setattr(human._backend, "_eval", add_after_validation)
+            monkeypatch.setattr(human.backend, "_eval", add_after_validation)
             with pytest.raises(StorageIntegrityError):
                 await human.team()
 
@@ -95,20 +95,20 @@ def test_team_read_revalidates_a_concurrently_added_member(monkeypatch):
 
 
 def test_roster_is_a_team_subset_and_cas_preserves_json_semantics():
-    from toolang.teaming.keys import ROSTER, TEAM
+    from toolang.teaming.backend.valkey.keys import ROSTER, TEAM
     from toolang.teaming.roster import Roster
 
     async def scenario():
         async with client(FakeServer(server_type="valkey"), "human:owner") as human:
             found = {"agent:alice"}
             roster = Roster(
-                human._backend,
+                human.backend,
                 root="root-中文",
                 owner=human.actor,
                 discover=lambda: found,
             )
             await roster.scan()
-            raw = human._backend._client
+            raw = human.backend._client
             # Whitespace, key ordering and Unicode escaping do not change a record.
             await raw.hset(
                 ROSTER,
@@ -153,11 +153,11 @@ def test_persisted_conversation_cannot_represent_a_pending_dm(changes):
 
 @pytest.mark.parametrize("fields", [{"unexpected": "missing data"}, {"data": "{}"}])
 def test_event_without_a_valid_envelope_rejects_creation_without_writes(fields):
-    from toolang.teaming.keys import TEAM_EVENTS
+    from toolang.teaming.backend.valkey.keys import TEAM_EVENTS
 
     async def scenario():
         async with client(FakeServer(server_type="valkey"), "human:owner") as human:
-            raw = human._backend._client
+            raw = human.backend._client
             await raw.xadd(TEAM_EVENTS, fields)
             before = await snapshot(raw)
             with pytest.raises(StorageIntegrityError):

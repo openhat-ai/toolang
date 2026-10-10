@@ -26,7 +26,7 @@ from toolang.plugin.toolsets.loading import tools_from_toolsets
 from toolang.plugin.toolsets.msg import MsgToolset
 from toolang.plugin.types import LoadedPlugin
 from toolang.teaming.agent_client import AgentClient, AgentEventClient
-from toolang.teaming.keys import TEAM, PRESENCE
+from toolang.teaming.backend.valkey.keys import TEAM, PRESENCE
 from toolang.teaming.client import HubClient
 from toolang.teaming.events import HubScope
 from toolang.teaming.stream_client import HubStreamState

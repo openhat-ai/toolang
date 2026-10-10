@@ -14,7 +14,7 @@ from tests.integration.messaging.test_valkey import (
 )
 from toolang.teaming.agent_client import AgentClient
 from toolang.teaming.errors import StorageIntegrityError
-from toolang.teaming.keys import PRESENCE, STATS
+from toolang.teaming.backend.valkey.keys import PRESENCE, STATS
 from toolang.teaming.messaging import MessagingClient
 
 pytestmark = pytest.mark.live_valkey

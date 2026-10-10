@@ -38,8 +38,8 @@ from toolang.cli.common.terminal_surfaces import (
 )
 from toolang.cli.common.input_history import InputHistoryStore
 from toolang.teaming.messaging import MessagingClient
-from toolang.teaming.backend import Backend
-from toolang.teaming.keys import convo_key
+from toolang.teaming.backend.valkey import ValkeyBackend
+from toolang.teaming.backend.valkey.keys import convo_key
 from toolang.teaming.config import BackendConfig
 from toolang.teaming.errors import SendUnconfirmed
 from toolang.teaming.schemas import Message
@@ -76,7 +76,7 @@ def messaging_cli(tmp_path, monkeypatch):
         return MessagingClient(
             config,
             actor=actor,
-            backend=Backend(
+            backend=ValkeyBackend(
                 config, client=FakeAsyncValkey(server=server, decode_responses=True)
             ),
         )
@@ -258,7 +258,7 @@ def test_directory_shows_presence_previews_and_does_not_create_conversations(
             await alice.unregister()
             own = (await human.resolve("agent:alice", create=True)).conversation
             # Inject ordered Stream IDs and a malformed record through the backend fixture.
-            raw = human._backend._client
+            raw = human.backend._client
             for group, sid, data in (
                 (
                     "gc_00000000",
@@ -739,7 +739,7 @@ def test_messaging_commands_work_without_config_file(
         return MessagingClient(
             config,
             actor=actor,
-            backend=Backend(
+            backend=ValkeyBackend(
                 config, client=FakeAsyncValkey(server=server, decode_responses=True)
             ),
         )
@@ -768,7 +768,7 @@ def test_opening_empty_dm_writes_only_on_first_send(
         assert isinstance(ui.conversation, PendingDM)
         assert not hasattr(ui.conversation, "created_at")
         async with messaging_cli() as human:
-            raw = human._backend._client
+            raw = human.backend._client
             before = await snapshot(raw)
             assert not (await human.resolve("alice")).exists
             assert all(

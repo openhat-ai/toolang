@@ -15,7 +15,7 @@ from tests.integration.messaging.test_valkey import (
     running_hub as running_hub,
 )
 from tests.support.chat_tui_pty import ChatTuiPtySession
-from toolang.teaming.backend import Backend
+from toolang.teaming.backend.valkey import ValkeyBackend
 
 pytestmark = pytest.mark.live_valkey
 
@@ -31,7 +31,7 @@ def test_top_hub_modes_and_source_recovery(valkey, running_hub, tmp_path):
     )
 
     async def scenario():
-        driver = Backend(valkey)
+        driver = ValkeyBackend(valkey)
         try:
             async with asyncio.timeout(10):
                 while not (tmp_path / "activity-endpoint.json").exists():
@@ -54,9 +54,9 @@ def test_top_hub_modes_and_source_recovery(valkey, running_hub, tmp_path):
 
             async def heartbeat():
                 while True:
-                    await driver.lease("agent:alice", "wire", 15)
-                    await driver.lease("agent:alice", "new", 15)
-                    await driver.lease("agent:bob", "idle", 15)
+                    await driver.renew_lease("agent:alice", "wire")
+                    await driver.renew_lease("agent:alice", "new")
+                    await driver.renew_lease("agent:bob", "idle")
                     await asyncio.sleep(3)
 
             beating = asyncio.create_task(heartbeat())
@@ -125,7 +125,7 @@ def test_top_hub_modes_and_source_recovery(valkey, running_hub, tmp_path):
                 for field in ("model", "tool", "cost"):
                     assert live["stats"][field] == local["stats"][field]
                 assert live["paths"]
-                assert await driver.lease("agent:alice", "wire", 0)
+                assert await driver.release_lease("agent:alice", "wire")
                 session.data.clear()
                 await asyncio.to_thread(session.wait_for, "1/2 online")
                 async with asyncio.timeout(3):
@@ -203,7 +203,7 @@ def test_hub_reconciles_removed_and_recreated_agent(valkey, running_hub, tmp_pat
     from toolang.common.layout import AgentLayout
     from toolang.execution.schemas import ActivitySnapshot
     from toolang.teaming.agent_client import AgentClient
-    from toolang.teaming.backend import PREFIX
+    from toolang.teaming.backend.valkey.keys import PREFIX
     from toolang.teaming.errors import EventRecoveryRequired
 
     async def scenario():
@@ -240,7 +240,7 @@ def test_hub_reconciles_removed_and_recreated_agent(valkey, running_hub, tmp_pat
                     if not response.json():
                         break
                     await asyncio.sleep(0.2)
-            driver = Backend(valkey)
+            driver = ValkeyBackend(valkey)
             try:
                 assert await driver._call("TTL", f"{PREFIX}:activity:agent:alice") == -1
             finally:

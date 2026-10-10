@@ -2,7 +2,7 @@
 
 import base64
 
-from .schemas import conversation_id
+from ...schemas import conversation_id
 
 PREFIX = "too:teaming:v1"
 TEAM = f"{PREFIX}:team"

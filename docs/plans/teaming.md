@@ -26,7 +26,8 @@ Paths are relative to `src/toolang/`; create modules only when needed.
 
 | Owner | Responsibility |
 | --- | --- |
-| `teaming/backend.py` | Sole Redis/Valkey driver boundary: connections, keys, commands, scripts, errors. |
+| `teaming/backend/` | Independent storage protocols and factory; services consume `Backend`, `EventBackend`, and `ActivityBackend`. |
+| `teaming/backend/valkey/` | Concrete connection, keys, commands, scripts, and driver error translation. |
 | `teaming/messaging.py` | Targets, conversations, membership, messages, history, receipts. |
 | `teaming/coord.py` | Reserved coordination boundary. |
 | `teaming/events.py` | Cross-agent event import/export. |
@@ -201,7 +202,7 @@ agent canonical stream -> teaming exporter -> Hub API -> backend Stream -> Hub c
 ```
 
 `teaming/events.py` owns the asynchronous exporter, registered before agent work
-starts; `teaming/backend.py` remains the only driver boundary. Export locally
+starts; `teaming/backend/valkey/` remains the only driver boundary. Export locally
 originated canonical events once, preserving actual run IDs and source cursors.
 Client-specific prefill is not republished as new canonical execution. Hub imports
 never re-export, and disabling teaming removes only this optional outlet.

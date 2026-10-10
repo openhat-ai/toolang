@@ -5,8 +5,6 @@ from typing import Annotated, Any, TypeVar
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import TypeAdapter, ValidationError
 
-from .event_backend import EventBackend
-from .activity import ActivityBackend
 from toolang.execution.schemas import ActivitySnapshot
 from .errors import EventRecoveryRequired
 from .messaging import MessagingClient
@@ -51,7 +49,7 @@ async def _body(request: Request, adapter: TypeAdapter[T]) -> T:
 
 def agent_router(human: MessagingClient, *, roster: Roster | None = None) -> APIRouter:
     router = APIRouter(prefix="/agents/{agent}", tags=["agents"])
-    events = EventBackend(human._backend)
+    events = human.backend.events
 
     def agent_client(
         agent: str,
@@ -61,7 +59,7 @@ def agent_router(human: MessagingClient, *, roster: Roster | None = None) -> API
     ) -> MessagingClient:
         target(agent, kind="agent")
         return MessagingClient(
-            human.config, actor=agent, token=lease, backend=human._backend
+            human.config, actor=agent, token=lease, backend=human.backend
         )
 
     Client = Annotated[MessagingClient, Depends(agent_client)]
@@ -101,7 +99,7 @@ def agent_router(human: MessagingClient, *, roster: Roster | None = None) -> API
         pages = await _body(request, TypeAdapter(list[ActivitySnapshot]))
         if not pages or any(page.agent != client.actor for page in pages):
             raise HTTPException(400, "Activity identity mismatch")
-        await ActivityBackend(client._backend).save(client.actor, client.token, pages)
+        await client.backend.activity.save(client.actor, client.token, pages)
         await client.renew()
         return {"ok": True}
 

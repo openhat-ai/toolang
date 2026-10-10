@@ -16,8 +16,8 @@ from toolang.base.types.message import Message as ModelMessage
 from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.common.layout import AgentLayout
 from toolang.teaming.messaging import MessagingClient
-from toolang.teaming.backend import Backend
-from toolang.teaming.keys import convo_key
+from toolang.teaming.backend.valkey import ValkeyBackend
+from toolang.teaming.backend.valkey.keys import convo_key
 from toolang.teaming.config import BackendConfig, TeamingHomeConfig, TeamingRootConfig
 from toolang.plugin.toolsets.msg import MsgToolset
 from toolang.plugin.toolsets.loading import tools_from_toolsets
@@ -32,7 +32,7 @@ def make_client(server, actor="agent:alice"):
     return MessagingClient(
         CONFIG,
         actor=actor,
-        backend=Backend(
+        backend=ValkeyBackend(
             CONFIG, client=FakeAsyncValkey(server=server, decode_responses=True)
         ),
     )

@@ -1,4 +1,4 @@
-"""The only Redis/Valkey driver boundary for teaming."""
+"""Valkey implementation of the teaming storage contract."""
 
 from __future__ import annotations
 
@@ -12,8 +12,8 @@ from valkey.asyncio.retry import Retry
 from valkey.backoff import NoBackoff
 from valkey.exceptions import ConnectionError, TimeoutError, ValkeyError
 
-from .config import BackendConfig
-from .errors import (
+from ...config import BackendConfig
+from ...errors import (
     BackendUnavailable,
     ConversationAccessDenied,
     LeaseLost,
@@ -32,8 +32,8 @@ from .keys import (
     convo_key,
     name_key,
 )
-from .ids import dm_id, gc_id
-from .schemas import (
+from ...ids import dm_id, gc_id
+from ...schemas import (
     Conversation,
     TeamMember,
     ConversationRecord,
@@ -45,8 +45,10 @@ from .schemas import (
     participant,
     target,
 )
-from . import storage_scripts as scripts
-from .types import SNAPSHOT_RETRIES, STORAGE_BATCH_SIZE
+from . import scripts
+from .activity import ValkeyActivity
+from .events import ValkeyEvents
+from ...types import SNAPSHOT_RETRIES, STORAGE_BATCH_SIZE
 
 
 class _SnapshotChanged(Exception):
@@ -57,9 +59,11 @@ def _json(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
 
-class Backend:
+class ValkeyBackend:
     def __init__(self, config: BackendConfig, *, client: Valkey | None = None):
         self._initialized = False
+        self.events = ValkeyEvents(self)
+        self.activity = ValkeyActivity(self)
         try:
             self._client = (
                 client
@@ -371,13 +375,17 @@ class Backend:
             [convo_key(system, "members")],
         )
 
-    async def lease(self, agent: str, token: str, seconds: int) -> bool:
+    async def renew_lease(self, agent: str, token: str) -> bool:
         return bool(
             await self._operation(
-                scripts.PRESENCE,
-                dict(
-                    action="renew" if seconds else "release", agent=agent, token=token
-                ),
+                scripts.PRESENCE, dict(action="renew", agent=agent, token=token)
+            )
+        )
+
+    async def release_lease(self, agent: str, token: str) -> bool:
+        return bool(
+            await self._operation(
+                scripts.PRESENCE, dict(action="release", agent=agent, token=token)
             )
         )
 
@@ -412,7 +420,9 @@ class Backend:
     async def conversation_ids(self) -> list[str]:
         return await self._operation(scripts.READ, {"action": "ids"})
 
-    async def contacts(self, actor: str) -> list[tuple[Conversation, list]]:
+    async def contacts(
+        self, actor: str
+    ) -> list[tuple[Conversation, list[tuple[str, dict[str, str]]]]]:
         ids = await self.conversation_ids()
         result = []
         for start in range(0, len(ids), STORAGE_BATCH_SIZE):
@@ -430,7 +440,10 @@ class Backend:
             )
             for info, members, latest in rows:
                 result.append(
-                    (Conversation(**info, participants=tuple(sorted(members))), latest)
+                    (
+                        Conversation(**info, participants=tuple(sorted(members))),
+                        self._messages(latest),
+                    )
                 )
         return result
 
@@ -587,6 +600,10 @@ class Backend:
             ),
             self._conversation_keys(conversation),
         )
+        return self._messages(rows)
+
+    @staticmethod
+    def _messages(rows: list) -> list[tuple[str, dict[str, str]]]:
         return [
             (sid, dict(zip(fields[::2], fields[1::2], strict=True)))
             for sid, fields in rows

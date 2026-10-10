@@ -30,7 +30,7 @@ def team_router(get_client: Callable) -> APIRouter:
     async def events(
         client: Client, after: Annotated[str | None, Depends(event_cursor)]
     ) -> AsyncIterator[ServerSentEvent]:
-        feed = TeamEvents(client._backend)
+        feed = TeamEvents(client.backend)
         try:
             async for frame in feed.frames(client, after):
                 yield ServerSentEvent(event=frame.event, id=frame.id, data=frame.data)

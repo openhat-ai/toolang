@@ -185,7 +185,7 @@ def serve(root: Path, config: TeamingRootConfig, *, port: int) -> int:
                     on_ready=publish_ready,
                     local_activity=local_activity,
                     roster=Roster(
-                        client._backend,
+                        client.backend,
                         root=str(root.resolve()),
                         owner=config.human,
                         discover=lambda: agent_roster(root),

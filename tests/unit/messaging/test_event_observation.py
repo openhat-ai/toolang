@@ -11,14 +11,14 @@ from tests.support.execution_harness import ExecutionHarness
 from toolang.base.types.message import TextPart
 from toolang.execution.schemas import StreamFrame
 from toolang.execution.types import ThreadPrefix
-from toolang.teaming.backend import Backend
+from toolang.teaming.backend.valkey import ValkeyBackend
 from toolang.teaming.config import BackendConfig
 from toolang.teaming.errors import (
     BackendUnavailable,
     EventProtocolError,
     EventRecoveryRequired,
 )
-from toolang.teaming.event_backend import EventBackend, META, STREAM
+from toolang.teaming.backend.valkey.events import META, STREAM
 from toolang.teaming.events import (
     HubCursor,
     HubScope,
@@ -29,7 +29,7 @@ from toolang.teaming.subscriptions import HubSubscription
 
 
 def backend(server):
-    return Backend(
+    return ValkeyBackend(
         BackendConfig("redis://test"),
         client=FakeAsyncValkey(server=server, decode_responses=True),
     )
@@ -70,7 +70,7 @@ def test_real_execution_exports_final_and_resumes_hub_scope(tmp_path, recover):
         async with harness:
             await driver.initialize()
             await driver.register("human:owner", agent="agent:alice", token="lease")
-            service = EventBackend(driver)
+            service = driver.events
             exporter = EventExporter(
                 harness.executor.stream,
                 harness.store.db_path,
@@ -120,7 +120,7 @@ def test_uncertain_event_commit_is_deduplicated_and_lease_fences(tmp_path, monke
         async with harness:
             await driver.initialize()
             await driver.register("human:owner", agent="agent:alice", token="lease")
-            service = EventBackend(driver)
+            service = driver.events
             exporter = EventExporter(
                 harness.executor.stream,
                 harness.store.db_path,
@@ -151,7 +151,7 @@ def test_uncertain_event_commit_is_deduplicated_and_lease_fences(tmp_path, monke
                     if values["kind"] == "event"
                 ]
                 assert lost and len(sources) == len(set(sources))
-                await driver.lease("agent:alice", "lease", 0)
+                await driver.release_lease("agent:alice", "lease")
                 await run(harness)
                 with pytest.raises(EventRecoveryRequired, match="lease"):
                     await publish(exporter)
@@ -165,7 +165,7 @@ def test_uncertain_event_commit_is_deduplicated_and_lease_fences(tmp_path, monke
 def test_partial_dataset_fails_closed_without_touching_messaging():
     async def scenario():
         driver = backend(FakeServer(server_type="valkey"))
-        service = EventBackend(driver)
+        service = driver.events
         await driver.initialize()
         await driver.register("human:owner")
         meta = await service.initialize()
@@ -186,7 +186,7 @@ def test_old_epoch_cursor_above_new_tail_replaces_instead_of_rejecting():
         driver = backend(FakeServer(server_type="valkey"))
         await driver.initialize()
         await driver.register("human:owner")
-        service = EventBackend(driver)
+        service = driver.events
         scope = HubScope()
         sub = HubSubscription(
             service, scope, str(HubCursor(uuid4().hex, (999999999999999999999, 5)))
@@ -244,7 +244,8 @@ def test_multi_origin_prefix_failure_keeps_committed_state_and_cursor():
 def test_staging_retries_and_activation_receipts_survive_switch(
     tmp_path, monkeypatch, interrupt
 ):
-    from toolang.teaming.event_backend import MANIFEST, generation_key
+    from toolang.teaming.backend.valkey.events import generation_key
+    from toolang.teaming.records import MANIFEST
 
     harness = ExecutionHarness.create(
         tmp_path, source="flow example:\n  let result = Done\n", responses=[]
@@ -255,7 +256,7 @@ def test_staging_retries_and_activation_receipts_survive_switch(
         async with harness:
             await driver.initialize()
             await driver.register("human:owner", agent="agent:alice", token="lease")
-            service = EventBackend(driver)
+            service = driver.events
             exporter = EventExporter(
                 harness.executor.stream,
                 harness.store.db_path,
@@ -325,7 +326,7 @@ def test_snapshot_retries_selected_mutation_and_generation_switch(
         async with harness:
             await driver.initialize()
             await driver.register("human:owner", agent="agent:alice", token="lease")
-            service = EventBackend(driver)
+            service = driver.events
             exporter = EventExporter(
                 harness.executor.stream,
                 harness.store.db_path,
@@ -380,7 +381,7 @@ def test_idle_execution_feed_reset_is_detected_and_recovered(tmp_path):
         async with harness:
             await driver.initialize()
             await driver.register("human:owner", agent="agent:alice", token="lease")
-            service = EventBackend(driver)
+            service = driver.events
             exporter = EventExporter(
                 harness.executor.stream,
                 harness.store.db_path,
@@ -420,7 +421,8 @@ def test_idle_execution_feed_reset_is_detected_and_recovered(tmp_path):
 def test_hub_filters_and_cursor_errors_have_flat_http_contract(tmp_path):
     import httpx
     from toolang.teaming.api import create_app
-    from toolang.teaming.event_backend import AGENTS, MANIFEST, generation_key
+    from toolang.teaming.backend.valkey.events import AGENTS, generation_key
+    from toolang.teaming.records import MANIFEST
     from toolang.teaming.messaging import MessagingClient
 
     async def scenario():
@@ -454,7 +456,7 @@ def test_hub_filters_and_cursor_errors_have_flat_http_contract(tmp_path):
                 response.status_code == 404
                 and response.json()["code"] == "scope_unavailable"
             )
-            meta = await EventBackend(driver).initialize()
+            meta = await driver.events.initialize()
             response = await http.get(
                 "/events/stream",
                 params={"after": str(HubCursor(meta["epoch"], (1, 0)))},
@@ -515,7 +517,7 @@ def test_retry_admission_clears_old_result_and_source_begin(tmp_path):
         async with harness:
             await driver.initialize()
             await driver.register("human:owner", agent="agent:alice", token="lease")
-            service = EventBackend(driver)
+            service = driver.events
             exporter = EventExporter(
                 harness.executor.stream,
                 harness.store.db_path,
@@ -574,7 +576,7 @@ def test_multi_origin_cached_replay_preserves_global_order_and_identity(tmp_path
     async def scenario():
         driver = backend(FakeServer(server_type="valkey"))
         async with harness:
-            service = EventBackend(driver)
+            service = driver.events
             exporters = []
             for name in ("alice", "bob"):
                 await driver.initialize()
@@ -690,7 +692,7 @@ def test_teaming_keeps_lease_through_final_export_drain(tmp_path, monkeypatch, b
                 get_agent_state=lambda: harness.state,
                 client=client,
             )
-            lifecycle = TeamingLoop(messaging, EventBackend(driver))
+            lifecycle = TeamingLoop(messaging, driver.events)
             observed = []
             original = lifecycle.exporter.publish
             entered, release = asyncio.Event(), asyncio.Event()
@@ -731,7 +733,7 @@ def test_teaming_keeps_lease_through_final_export_drain(tmp_path, monkeypatch, b
                 assert len(observed) == 1
             assert lifecycle.exporter.highwater == harness.executor.stream.tail
             assert not await inspector.online(client.actor)
-            service = EventBackend(inspector)
+            service = inspector.events
             origin = (await service.capture(client.actor))[1][client.actor]
             projection = await service.projection(client.actor, origin["generation"])
             assert any(
@@ -770,7 +772,7 @@ def test_teaming_close_bounds_unresponsive_lease_release(tmp_path, monkeypatch):
                     get_agent_state=lambda: harness.state,
                     client=client,
                 ),
-                EventBackend(driver),
+                driver.events,
             )
             closed = False
             close = client.close
@@ -1141,7 +1143,7 @@ def test_recovery_bounds_records_work_before_it_consumes_the_snapshot_budget(
     ],
 )
 def test_malformed_stored_projection_is_a_protocol_failure(stored):
-    from toolang.teaming.event_backend import generation_key
+    from toolang.teaming.backend.valkey.events import generation_key
 
     async def scenario():
         driver = backend(FakeServer(server_type="valkey"))
@@ -1153,7 +1155,7 @@ def test_malformed_stored_projection_is_a_protocol_failure(stored):
                 stored,
             )
             with pytest.raises(EventProtocolError):
-                await EventBackend(driver).projection("agent:alice", "generation")
+                await driver.events.projection("agent:alice", "generation")
         finally:
             await driver.close()
 
@@ -1220,7 +1222,7 @@ def test_hub_recovery_ignores_inherited_sse_ids(replacement):
 
 
 def test_stale_exporter_cannot_remove_the_new_owners_staging(tmp_path, monkeypatch):
-    from toolang.teaming.event_backend import generation_key
+    from toolang.teaming.backend.valkey.events import generation_key
 
     harness = ExecutionHarness.create(
         tmp_path, source="flow example:\n  let result = Done\n", responses=[]
@@ -1228,7 +1230,7 @@ def test_stale_exporter_cannot_remove_the_new_owners_staging(tmp_path, monkeypat
 
     async def scenario():
         driver = backend(FakeServer(server_type="valkey"))
-        service = EventBackend(driver)
+        service = driver.events
         async with harness:
             old = EventExporter(
                 harness.executor.stream,
@@ -1248,7 +1250,7 @@ def test_stale_exporter_cannot_remove_the_new_owners_staging(tmp_path, monkeypat
                 await driver.initialize()
                 await driver.register("human:owner", agent="agent:alice", token="old")
                 await old.recover("initial")
-                await driver.lease("agent:alice", "old", 0)
+                await driver.release_lease("agent:alice", "old")
                 await driver.initialize()
                 await driver.register("human:owner", agent="agent:alice", token="new")
                 stage = service.stage
@@ -1357,7 +1359,8 @@ def test_projection_rejects_invalid_tree_structure(damage):
 def test_invalid_recovery_metadata_is_a_backend_error(damage):
     import httpx
     from toolang.teaming.api import create_app
-    from toolang.teaming.event_backend import AGENTS, MANIFEST, generation_key
+    from toolang.teaming.backend.valkey.events import AGENTS, generation_key
+    from toolang.teaming.records import MANIFEST
     from toolang.teaming.records import field
     from toolang.teaming.messaging import MessagingClient
 
@@ -1374,7 +1377,7 @@ def test_invalid_recovery_metadata_is_a_backend_error(damage):
                 base_url="http://hub",
             ) as http,
         ):
-            await EventBackend(driver).initialize()
+            await driver.events.initialize()
             origin = {"v": 1, "generation": "g"}
             manifest = {"v": 1, "count": 0, "baseline": "0-0"}
             entities = {}
@@ -1412,9 +1415,7 @@ def test_invalid_recovery_metadata_is_a_backend_error(damage):
                 "/events/stream",
                 params={
                     "after": str(
-                        HubCursor(
-                            (await EventBackend(driver).initialize())["epoch"], (0, 0)
-                        )
+                        HubCursor((await driver.events.initialize())["epoch"], (0, 0))
                     )
                 }
                 if damage == "floor"
