@@ -208,6 +208,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Changed
 
+- `too top` Header `Runs` now counts every Activity-eligible run before
+  filters, including completed runs, showing `0` when empty and `-` when
+  unavailable, while active, failed, and `idle` summaries stay in Table
+  ACTIVITY.
+
 - `too top` shows only function-key hints in its Status bar — F1 Help, F4
   Filter, F5 View, F6 Sort, F7 Activity, F8 Stats, and F10 Quit — so `F5`
   cycles the Agent, Thread, Run, and Tree levels, `F10` exits like `q` and
