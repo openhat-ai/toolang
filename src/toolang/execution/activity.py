@@ -86,7 +86,8 @@ class ActivityReader:
         self.path, self.agent = path, agent
         self._lock = threading.Lock()
         self._cache: OrderedDict[
-            tuple[ActivityQuery, bool | None], tuple[float, list[ActivitySnapshot]]
+            tuple[ActivityQuery, bool | None],
+            tuple[float, list[ActivitySnapshot], float | None],
         ] = OrderedDict()
         self._listeners: dict[
             tuple[ActivityQuery, bool | None],
@@ -209,12 +210,17 @@ class ActivityReader:
             if boundary is None:
                 raise ValueError("Activity metadata is unavailable")
             revision = boundary["revision"]
+            _, online, execution_now = _execution_clock(conn, boundary, clock, live)
+            # Checkpoints advance without a record revision. Offline projections
+            # must use the latest durable duration boundary, including Total.
+            frozen_clock = None if online else execution_now
             key = query, live
             cached = self._cache.get(key)
             if (
                 cached
                 and (cached[1][0].revision, cached[1][0].session)
                 == (revision, boundary["session"])
+                and cached[2] == frozen_clock
                 and cached[1][0].observed is not None
                 and cached[1][0].observed <= clock < cached[0]
             ):
@@ -243,7 +249,6 @@ class ActivityReader:
                 if query.window is not None:
                     # Structure and lifetime totals are unchanged. Recalculate
                     # just the moving range over indexed facts, once per scope.
-                    _, _, execution_now = _execution_clock(conn, boundary, clock, live)
                     moving: dict[str, ActivityMetrics] = {}
                     for page in pages:
                         for scope, owner in [
@@ -277,7 +282,7 @@ class ActivityReader:
             start = query.start(clock)
             if query.window is None and start is not None and start > clock:
                 expiry = min(expiry, start)
-            self._cache[key] = expiry, pages
+            self._cache[key] = expiry, pages, frozen_clock
             self._cache.move_to_end(key)
             while len(self._cache) > 8:
                 self._cache.popitem(last=False)

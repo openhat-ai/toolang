@@ -145,3 +145,56 @@ def test_details_reports_matching_counts_for_the_selected_level():
     render(state)
     text = "\n".join(line.plain for line in details(state, state.rows(), console, 180))
     assert "Runs: 2/2 matched  Loaded: 2/2" in text
+
+
+def test_large_history_formats_only_visible_table_rows(monkeypatch):
+    from toolang.cli.common import activity_dashboard
+    from tests.unit.cli.test_activity_view import node
+
+    snapshot = page()
+    snapshot.paths = []
+    snapshot.roots = [
+        node(f"run_{i:08}", root=f"run_{i:08}", status="succeeded") for i in range(1000)
+    ]
+    state = Activity(None, view="execution")
+    feed(state, snapshot)
+    state.selected = (snapshot.agent, snapshot.roots[-1].id)
+    calls = 0
+    original = activity_dashboard.cost
+
+    def cost(metrics):
+        nonlocal calls
+        calls += 1
+        return original(metrics)
+
+    monkeypatch.setattr(activity_dashboard, "cost", cost)
+    lines = render(state, height=24)
+    assert any("run_00000999" in line for line in lines)
+    assert calls <= 24, "Offscreen rows must not incur terminal formatting work"
+    # Redirected/single snapshots still include all rows.
+    once = state.render(width=180, height=24, once=True)
+    output = io.StringIO()
+    Console(file=output, width=180, color_system=None).print(once)
+    assert sum("run_" in line for line in output.getvalue().splitlines()) == 1000
+
+
+@pytest.mark.parametrize("stale,reconnecting", [(True, False), (False, True)])
+def test_header_does_not_claim_idle_from_stale_counts(stale, reconnecting):
+    snapshot = page()
+    snapshot.active = snapshot.failed = 0
+    snapshot.stale = stale
+    state = Activity(None)
+    feed(state, snapshot)
+    state.reconnecting = reconnecting
+    lines = render(state)
+    assert "idle" not in lines[1]
+
+
+def test_three_line_terminal_keeps_identity_headings_and_status():
+    state = Activity(None)
+    feed(state, page())
+    lines = render(state, height=3)
+    assert len(lines) == 3
+    assert lines[0].startswith("Team")
+    assert lines[1].startswith("AGENT")
+    assert "q Quit" in lines[2]

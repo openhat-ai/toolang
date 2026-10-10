@@ -70,7 +70,12 @@ def header(state: Activity, width: int) -> list[Text]:
     lines = [
         ends(title, Text(datetime.now().strftime("%H:%M:%S"), style="bold"), width)
     ]
-    complete = state.ready and not updating and all(page.complete for page in snapshots)
+    complete = (
+        state.ready
+        and not updating
+        and not state.reconnecting
+        and all(page.complete and not page.stale for page in snapshots)
+    )
     groups = [
         [
             (
@@ -421,7 +426,6 @@ def render(state: Activity, *, width: int, height: int, once: bool) -> Group:
     rows = state.rows()
     state._selection(rows)
     top = header(state, width)
-    heading, body = table(state, rows, width, once)
     console = Console(width=width)
     detail = details(state, rows, console, width)
     if state.help:
@@ -437,12 +441,13 @@ def render(state: Activity, *, width: int, height: int, once: bool) -> Group:
         ]
         detail = [line for text in detail for line in text.wrap(console, width)]
     if once:
+        heading, body = table(state, rows, width, once)
         return Group(
             *top, heading, *(body or [Text("No matching activity", style="dim")])
         )
     footer = status_bar(state, width)
     # Keep the identity, headings and key bar even when the terminal becomes tiny.
-    top = top[: max(0, height - 3)]
+    top = top[: max(1, height - 3)]
     available = max(0, height - len(top) - 2)
     detail_size = min(len(detail), max(0, available // 2 - 1)) if detail else 0
     state.details_page_size = max(1, detail_size)
@@ -462,9 +467,11 @@ def render(state: Activity, *, width: int, height: int, once: bool) -> Group:
         ]
     state.page_size = max(1, available - len(panel))
     state._selection(rows)
-    body = body[state.offset : state.offset + state.page_size] or [
-        Text("No matching activity", style="dim")
-    ]
+    # Format the viewport only; long history must not delay every key press.
+    heading, body = table(
+        state, rows[state.offset : state.offset + state.page_size], width, once
+    )
+    body = body or [Text("No matching activity", style="dim")]
     body = body[: max(0, available - len(panel))]
     blank = [Text("")] * max(0, height - len(top) - 1 - len(body) - len(panel) - 1)
     return Group(*top, heading, *body, *blank, *panel, footer)

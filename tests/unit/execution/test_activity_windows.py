@@ -119,3 +119,26 @@ def test_rolling_ticks_reuse_structure_and_bound_duration_queries(
             assert metrics.time == 45
         finally:
             conn.set_progress_handler(None, 0)
+
+
+@pytest.mark.parametrize("since", ["session", "all", "60s", at(10)])
+def test_offline_checkpoint_updates_stats_and_total_without_new_events(tmp_path, since):
+    with closing(RunStore(tmp_path / "runs.db")) as store:
+        statistics.start_session(store, "one", at(0))
+        root(store)
+        statistics.checkpoint(store, "one", at(20))
+        reader = ActivityReader(store.db_path, "agent:alice")
+        query = ActivityQuery(since, None)
+        first = reader.pages(query, now=clock(30), live=False)[0]
+        assert first.total.time == 20
+        statistics.checkpoint(store, "one", at(40))
+        later = reader.pages(query, now=clock(50), live=False)[0]
+        assert first.revision == later.revision
+        expected = 30 if since == at(10) else 40
+        for stats, total in [
+            (later.stats, later.total),
+            *((node.stats, node.total) for node in later.threads + later.roots),
+        ]:
+            assert stats.time == expected and total.time == 40
+        # Neither value grows without another durable checkpoint.
+        assert reader.pages(query, now=clock(55), live=False)[0].total.time == 40
