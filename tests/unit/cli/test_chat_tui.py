@@ -3150,6 +3150,30 @@ def test_chat_header_stacks_without_clipping_in_a_narrow_terminal(width: int) ->
     assert _CONTAINER_ID[:12] not in rendered
 
 
+@pytest.mark.parametrize("width", [16, 18])
+def test_chat_header_keeps_metadata_when_label_and_value_columns_cannot_fit(
+    width: int,
+) -> None:
+    rendered = _render_text(
+        blocks.HeaderBlock(
+            executor_metadata=ChatExecutorMetadata(
+                sandbox_driver="host",
+                sandbox_detail=_HOST_DESCRIPTION,
+                endpoint="http://runtime.test:7001",
+                version="0.3.9",
+                workspaces=("lab", "toolang"),
+            ),
+            version_label="v0.3.9",
+        ).render(),
+        width=width,
+    )
+    assert all(get_cwidth(line) <= width for line in rendered.splitlines())
+    unwrapped = rendered.replace("\n", "").replace("│", "").replace(" ", "")
+    assert "runtimev0.3.9·http://runtime.test:7001" in unwrapped
+    assert "sandbox" + _HOST_SANDBOX_VALUE.replace(" ", "") in unwrapped
+    assert "workspaceslab,toolang" in unwrapped
+
+
 @pytest.mark.parametrize(
     "version, expected",
     [

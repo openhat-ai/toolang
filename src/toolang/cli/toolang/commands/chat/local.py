@@ -86,8 +86,6 @@ class _CallbackTracer(RunTracer):
 class LocalChatSession:
     """Expose the chat-client contract over one process-local executor."""
 
-    executor_metadata: ChatExecutorMetadata
-
     def __init__(
         self,
         layout: AgentLayout,
@@ -153,6 +151,22 @@ class LocalChatSession:
         except Exception:
             self.close()
             raise
+
+    @property
+    def executor_metadata(self) -> ChatExecutorMetadata:
+        """Inspect banner details after the TUI has initialized its workdir."""
+
+        setup = self.setup_watcher.current()
+        state = self.state_watcher.current()
+        return ChatExecutorMetadata(
+            sandbox_driver="host",
+            sandbox_detail=host_sandbox_description(),
+            workspaces=tuple(
+                item.name
+                for item in workspace_inspection(setup, state, workdir=None).items
+                if item.available
+            ),
+        )
 
     def list_models(
         self,
@@ -520,15 +534,6 @@ class LocalChatSession:
             self.setup_watcher.refresh(),
         )
         validate_agent_ceiling(setup, state, AgentCeiling())
-        self.executor_metadata = ChatExecutorMetadata(
-            sandbox_driver="host",
-            sandbox_detail=host_sandbox_description(),
-            workspaces=tuple(
-                item.name
-                for item in workspace_inspection(setup, state, workdir=None).items
-                if item.available
-            ),
-        )
         self._surface = self._current_session_setting(setup=setup, state=state)
         if self._stop_signal is None:
             raise RuntimeError("local chat event loop was not initialized")

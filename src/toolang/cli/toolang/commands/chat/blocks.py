@@ -673,24 +673,37 @@ class HeaderBlock:
         console: Console,
         options: ConsoleOptions,
     ) -> RenderResult:
-        details = Table.grid(padding=(0, _HEADER_FIELD_GAP))
-        details.add_column(no_wrap=True)
-        details.add_column(no_wrap=False, overflow="fold")
         runtime_value = _header_runtime_value(self.executor_metadata)
-        details.add_row(Text("runtime", style="dim"), runtime_value)
         sandbox_value = _header_sandbox_value(self.executor_metadata)
-        details.add_row(Text("sandbox", style="dim"), sandbox_value)
         workspaces = self.executor_metadata.workspaces
         workspace_value = (
             "unavailable" if workspaces is None else ", ".join(workspaces) or "none"
         )
-        details.add_row(Text("workspaces", style="dim"), Text(workspace_value))
+        fields = (
+            ("runtime", runtime_value),
+            ("sandbox", sandbox_value),
+            ("workspaces", Text(workspace_value)),
+        )
+        key_width = max(display_width(key) for key, _value in fields)
+        content_width = options.max_width - 2 - 2 * _HEADER_HORIZONTAL_PADDING
+        if content_width <= key_width + _HEADER_FIELD_GAP:
+            details = Table.grid(padding=0)
+            details.add_column(no_wrap=False, overflow="fold")
+            for key, value in fields:
+                details.add_row(Text(key, style="dim"))
+                details.add_row(value)
+        else:
+            details = Table.grid(padding=(0, _HEADER_FIELD_GAP))
+            details.add_column(no_wrap=True)
+            details.add_column(no_wrap=False, overflow="fold")
+            for key, value in fields:
+                details.add_row(Text(key, style="dim"), value)
 
         logo_text = toolang_logo_text()
         logo = toolang_logo(console)
         logo_width = max(display_width(line) for line in logo_text.splitlines())
         details_width = (
-            display_width("workspaces")
+            key_width
             + _HEADER_FIELD_GAP
             + max(
                 display_width(workspace_value),
