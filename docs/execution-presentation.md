@@ -93,11 +93,13 @@ Script prints one persistent context header to stderr when the root Run begins:
 ```
 
 The entire header is dim on the terminal's default background. `‣` marks the
-start, with the runnable at the left edge and model/reasoning at the right edge
-of the configured progress width, separated by at least two spaces. Narrow
-layouts put model/reasoning below the runnable, with two-cell indentation;
-long fields wrap without truncation. A one- or two-cell viewport drops the
-marker and indentation. Terminal controls are escaped as literal text.
+start, with the runnable at the left edge and model/reasoning ending two cells
+inside the available progress width, aligned with Step and Run footers. At
+least two spaces separate the fields. Narrow layouts put model/reasoning below
+the runnable, with two-cell indentation; long fields wrap without truncation.
+If fewer than three content cells remain, drop the marker and indentation;
+reduce the right inset only to retain one content cell. Terminal controls are
+escaped as literal text.
 
 The runnable uses the resolved root identity, displaying an unnamed entry as
 `agic:_` or `flow:_`. The model is the resolved initial run-level setting;
@@ -377,10 +379,11 @@ stable. Only the unfinished block remains live. The transition does not visibly
 change already-rendered text. At Part closure the remaining tail is committed,
 and Step closure does not repeat the final output.
 
-Markdown blocks fill the lesser of the available width and
-`TOOLANG_PROGRESS_MAX_WIDTH`. Tables stretch to that width and fold cell
+Markdown blocks reserve two cells at the right of the lesser of the available
+width and `TOOLANG_PROGRESS_MAX_WIDTH`, aligned with execution footers. After
+the row prefix, tables stretch to the remaining content width and fold cell
 overflow, list markers start at the row prefix, and quoted content keeps the
-two cells its `▌ ` bar does not use. Fenced code already fills the width as
+two cells its `▌ ` bar does not use. Fenced code fills the content width as
 one rectangular Code surface.
 
 Tool activity uses the persisted running description, replaced at completion.

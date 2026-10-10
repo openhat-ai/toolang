@@ -22,9 +22,9 @@ _STYLES: dict[ProgressTone, str] = {
     "warning": "yellow",
 }
 RUN_DIVIDER_WIDTH = 42
+PROGRESS_RIGHT_INSET = 2
 _DEFAULT_CODE_BACKGROUND = "bright_black"
 _DEFAULT_CODE_FOREGROUND = "bright_white"
-_FOOTER_RIGHT_INSET = 2
 
 
 def progress_block_renderable(
@@ -151,7 +151,7 @@ class _RunFooter:
         console: Console,
         options: ConsoleOptions,
     ) -> RenderResult:
-        width = max(1, min(options.max_width, self.max_width) - _FOOTER_RIGHT_INSET)
+        width = max(1, min(options.max_width, self.max_width) - PROGRESS_RIGHT_INSET)
         title = (
             f"{self.run_id}: {self.operation} {self.status}"
             if self.operation is not None
@@ -294,7 +294,7 @@ class _TwoEndedPlainRow:
         options: ConsoleOptions,
     ) -> RenderResult:
         style = _STYLES[self.row.tone]
-        width = max(1, min(options.max_width, self.max_width) - _FOOTER_RIGHT_INSET)
+        width = max(1, min(options.max_width, self.max_width) - PROGRESS_RIGHT_INSET)
         prefix, left = split_hanging_prefix(self.row.text)
         prefix_width = display_width(prefix)
         right = self.row.right_text
@@ -353,7 +353,7 @@ class _DividerRow:
         del console
         width = max(1, min(options.max_width, self.max_width))
         if self.row.right_status:
-            yield from self._footer(max(1, width - _FOOTER_RIGHT_INSET))
+            yield from self._footer(max(1, width - PROGRESS_RIGHT_INSET))
         else:
             yield from self._header(width)
 
@@ -569,7 +569,7 @@ class _MarkdownRow:
         console: Console,
         options: ConsoleOptions,
     ) -> RenderResult:
-        width = max(1, min(options.max_width, self.max_width))
+        width = max(1, min(options.max_width, self.max_width) - PROGRESS_RIGHT_INSET)
         prefix = self.row.prefix
         prefix_width = display_width(prefix)
         content_width = max(1, width - prefix_width)

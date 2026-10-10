@@ -13,7 +13,10 @@ from toolang.lang.types import display_runnable_ref
 
 from ..execution_progress.facts import elapsed_fact
 from ..execution_progress.formatting import display_width
-from ..execution_progress.rich_rendering import run_footer_renderable
+from ..execution_progress.rich_rendering import (
+    PROGRESS_RIGHT_INSET,
+    run_footer_renderable,
+)
 from ..execution_progress.state import Metrics
 from ..model_formatting import model_reasoning_value
 from .console import ProgressConsole
@@ -29,7 +32,7 @@ class RunContext:
     def __rich_console__(
         self, console: Console, options: ConsoleOptions
     ) -> RenderResult:
-        width = max(1, options.max_width)
+        width = max(1, options.max_width - PROGRESS_RIGHT_INSET)
         runnable = _context_text(
             display_runnable_ref(self.runnable, surface="chat")
             or "runnable unspecified"

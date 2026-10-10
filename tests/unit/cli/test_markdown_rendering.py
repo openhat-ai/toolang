@@ -1,5 +1,6 @@
 """Progress Markdown follows the progress layout for tables and lists."""
 
+import pytest
 from rich.console import Console
 
 from toolang.cli.common.execution_progress import ProgressBlock, ProgressRow
@@ -31,12 +32,16 @@ FOLDING_TABLE = (
 )
 
 
-def _render(source: str, *, width: int) -> str:
+def _render(
+    source: str, *, width: int, max_width: int | None = None, live: bool = False
+) -> str:
     row = ProgressRow(source, "normal", format="markdown", prefix=PREFIX)
     console = Console(width=width, force_terminal=True, _environ={})
     segments = console.render(
         progress_block_renderable(
-            ProgressBlock("model", (row,)), live=False, max_width=width
+            ProgressBlock("model", (row,)),
+            live=live,
+            max_width=width if max_width is None else max_width,
         )
     )
     return "".join(segment.text for segment in segments if not segment.control)
@@ -48,14 +53,14 @@ def _ruler(text: str) -> str:
 
 def test_narrow_markdown_table_fills_the_progress_width():
     text = _render(NARROW_TABLE, width=60)
-    assert display_width(_ruler(text)) == 60
-    assert all(display_width(line) <= 60 for line in text.splitlines())
+    assert display_width(_ruler(text)) == 58
+    assert all(display_width(line) <= 58 for line in text.splitlines())
 
 
 def test_wide_markdown_table_fills_the_progress_width():
     text = _render(WIDE_TABLE, width=60)
-    assert display_width(_ruler(text)) == 60
-    assert all(display_width(line) <= 60 for line in text.splitlines())
+    assert display_width(_ruler(text)) == 58
+    assert all(display_width(line) <= 58 for line in text.splitlines())
 
 
 def test_markdown_table_has_no_padding_outside_its_columns():
@@ -90,14 +95,38 @@ def test_block_quote_content_fills_the_progress_width():
     text = _render("Intro:\n\n> " + "x" * 100 + "\n", width=60)
     lines = text.splitlines()
     assert any(line.startswith(f"{CONTINUATION}▌ x") for line in lines)
-    assert max(display_width(line) for line in lines) == 60
+    assert max(display_width(line) for line in lines) == 58
 
 
 def test_nested_block_quotes_fill_the_progress_width():
     text = _render("Intro:\n\n> outer\n>\n> > " + "x" * 100 + "\n", width=60)
     lines = text.splitlines()
     assert any(line.startswith(f"{CONTINUATION}▌ ▌ x") for line in lines)
-    assert max(display_width(line) for line in lines) == 60
+    assert max(display_width(line) for line in lines) == 58
+
+
+@pytest.mark.parametrize("live", [False, True])
+@pytest.mark.parametrize(("width", "max_width"), [(24, 120), (80, 60)])
+@pytest.mark.parametrize(
+    "source",
+    [
+        "x" * 100,
+        "界" * 100,
+        "- " + "x" * 100,
+        "> " + "x" * 100,
+        NARROW_TABLE,
+        "```text\n" + "x" * 100 + "\n```",
+        "---",
+    ],
+    ids=["paragraph", "cjk", "list", "quote", "table", "code", "rule"],
+)
+def test_markdown_keeps_two_cells_at_the_effective_right_edge(
+    source, width, max_width, live
+):
+    text = _render(source, width=width, max_width=max_width, live=live)
+    assert max(display_width(line) for line in text.splitlines()) == (
+        min(width, max_width) - 2
+    )
 
 
 def test_nested_list_markers_add_two_cells_per_level():
