@@ -1,313 +1,235 @@
 # Top activity
 
-Current view and statistics contract.
-[Live updates and layout](top-live-layout.md) defines discovery, delivery and
-terminal rendering; [team observation](team-observation.md) defines canonical
-event recovery.
+Target semantics for the [dashboard revision](top-live-layout.md), including
+retained accounting/recovery rules. This definition does not claim the new UI,
+rolling Stats or direct local observation are already implemented.
 
-## Goal and terms
-
-One observer for `too top` (Hub) and `too alice top` (agent HTTP): identify current
-work, compare consumption, follow running paths, and obtain exact IDs for inspect.
-Success means equivalent local/Hub data, clear row statistics, and reliable
-recovery without repeated history aggregation. Execution controls, authentication,
-provider invoice reconciliation and additional summary-generating model calls
-are outside scope.
+## Terms and scope
 
 | Term | Meaning |
 | --- | --- |
-| View | Agent, Thread or Execution; determines the row object and its statistics. |
-| Layout | List or Tree, available in Execution view. Tree is not another view. |
-| Stats | Statistics range, from the selected start to the current observation. Default: `session`; CLI: `--since`. |
-| Recent | Rolling range for displaying recent work. Default: `30m`; CLI: `--recent`. |
-| ACTIVITY | Execution overview: root-run counts in Agent/Thread, current work or result in Execution, with status markers when needed. |
-| Active | Unfinished execution: pending, running, or last known unfinished with stale observation. Used by counts, Recent and `--active`. |
-| Running path | Path from a confirmed running root run through its steps and sub-runs to current execution. Tree retains these nodes and their required ancestors. |
-| RUN | Root run ID, repeated on every row of that root run's tree. |
-| STEP | The row's full run ID or step reference, including the root row: `r1`, `r1.1`, `r3`, `r3.2`. Placeholders use `-` in both columns. |
+| Level | Agent, Thread or Run; determines row objects and their statistics. |
+| Layout | List or Tree at Run level. Tree adds steps and child runs. |
+| Stats | Common consumption range; default `session`, configured by `--since`. |
+| Activity | Independent rolling eligibility range; default `30m`, configured by `--recent`. |
+| Active | Unfinished execution: pending/running or last known unfinished work with stale observation. |
+| Running path | Confirmed running execution and its required ancestors. |
+| RUN | Owning top-level run ID, repeated down its tree. |
+| STEP | Full row reference: `r1`, `r1.1`, child run `r3`, its step `r3.2`. |
 
-Use `agent`, `thread`, `root run`, `sub-run` and `step` consistently.
-A root run has no parent step; a sub-run does. Execution List shows root runs;
-Execution Tree also shows sub-runs and steps. Step references include their owning
-run and step path, e.g. `run_r1.1`. Use existing execution
-statuses everywhere: `pending / running / succeeded / failed / canceled`.
-Presence (`online / offline / unknown`) and observation
-(`syncing / stale`) are separate from execution status. `idle` means no active work.
+In the UI, Run means a run without a parent step; use **child run** when needed.
+Agent/Thread are ownership, never tree nodes. Existing execution states remain
+`pending / running / succeeded / failed / canceled`. Presence
+(`online / offline / unknown`) is separate from freshness/execution state.
+`idle` means no active work with complete counts.
 
-## Views and presentation
+## Views
 
-Default: Agent for `too top`, Thread for `too alice top`; Execution initially uses List.
-Fixed prefix: `AGENT MODEL TOOL IN CACHED OUT SPEND TIME`.
-Status appears in ACTIVITY when needed.
+Default to Agent for `too top`, Thread for `too alice top`; Run starts in List.
+Columns share the prefix `AGENT S MODEL TOOL IN CACHED OUT SPEND TIME+`.
+Single-agent mode omits AGENT and retains a Table row at Agent level.
 
-| View / key | Row object | Remaining columns | ACTIVITY |
-| --- | --- | --- | --- |
-| Agent / a | Agent | ACTIVITY | Counts across the agent's root runs, with presence/observation information when needed. |
-| Thread / t | Thread | THREAD, ACTIVITY | Counts across the thread's root runs. |
-| Execution / e | Run or step | THREAD, RUN, STEP, ACTIVITY | List shows root run progress/results; Tree adds steps and sub-runs on running paths. |
+| Level / layout | Remaining columns | Row and ACTIVITY |
+| --- | --- | --- |
+| Agent | ACTIVITY | Agent counts: `1 active · 4 failed`, or `idle`. |
+| Thread | THREAD, ACTIVITY | Thread counts using the same rule. |
+| Run / List | THREAD, RUN, ACTIVITY | One run's current work or terminal result. |
+| Run / Tree | THREAD, RUN, STEP, ACTIVITY | Run plus steps/child runs on running paths. |
 
-Agent/Thread ACTIVITY shows nonzero `N active` and `N failed` root-run counts,
-e.g. `1 active · 4 failed`; show `idle` when both are zero and coverage is complete.
-Counts use Recent-eligible root runs before filters; failures are failed root runs,
-not failed steps/sub-runs. Agent counts include all its threads. Thread counts
-remain in the header/details. Task titles, call summaries and latest results appear
-only in Execution view.
+`S` is agent presence on every row: `+` online, `-` offline, `?` unknown;
+include the legend in help. Offline ACTIVITY is `-` at every level and has no
+expanded paths; historical metrics remain available. Unknown/stale observation
+uses `-` for unfinished ACTIVITY and preserves known terminal results. Coverage/
+reconnect feedback belongs in Status bar/Details, not repeated in each cell.
+Hub disconnection makes presence unknown, not offline; Header must not present
+the last online count as current.
 
-Each Tree row displays its own run/step statistics; repeated RUN denotes root
-ownership, not the statistics object. STEP contains the complete record reference,
-so nested steps remain unambiguous without tree indentation. Selection/inspect use
-that reference directly. Example run IDs are shortened for readability; actual
-values use the stored run IDs, retaining the owning run ID in every step reference.
+Agent/Thread counts use Activity-eligible runs before filters; show nonzero active
+and failed counts. Failed means a failed top-level run, not a step/child run.
+Agent/Thread never show task summaries; incomplete counts cannot assert `idle`.
+Roster agents stay visible unless filtered. In team Thread/Run levels, agents
+without eligible work have a branchless placeholder with inapplicable fields
+`-`; single-agent mode instead shows an empty Table. Actual Agent rows show
+known metrics even without work.
+
+Each Tree row's metrics belong to its own run/step; RUN expresses ownership only.
+Example IDs are shortened; actual values retain full stored references:
 
 ```text
-Team · 2 online / 3 agents   Root runs 1 active · 0 failed   Threads 2   Updated 12:40:22
-Team Stats: MODEL 24  TOOL 46  IN 128.4k  CACHED 96.0k  OUT 12.8k  SPEND $1.28  TIME 12m30s
-View Execution / Tree   Stats session   Recent 30m   Sort activity   Refresh 0.1s
-
-AGENT MODEL TOOL     IN CACHED   OUT SPEND   TIME THREAD RUN STEP ACTIVITY
-alice    16   30  88.0k  64.0k  8.8k $0.88  8m00s t1     r1  r1   review_project
-alice    16   29  88.0k  64.0k  8.8k $0.88  7m59s t1     r1  r1.1 └─ map: files · 2/8 completed
-alice     2    3  11.0k   8.0k  1.1k $0.11    40s t1     r1  r3      └─ review_file
-alice     1    0   4.0k   3.0k   400 $0.04    32s t1     r1  r3.2       └─ model-name · Analyze configuration
-alice     4    8  22.0k  16.0k  2.2k $0.22  2m00s t1     r2  r2   succeeded · Configuration updated
-alice     4    8  18.4k  16.0k  1.8k $0.18  2m30s t2     r4  r4   succeeded · Documentation updated
-bob       -    -      -      -     -     -      - -      -   -    idle
-carol     -    -      -      -     -     -      - -      -   -    offline · last seen 5m ago
-
-                                                              (remaining body viewport)
-a Agent  t Thread  e Execution  F4 Filter  F5 Layout  F6 Sort  F7 Recent  F8 Stats  Enter Details  q Quit
+AGENT S MODEL TOOL  IN CACHED  OUT SPEND TIME+ THREAD RUN STEP ACTIVITY(30m)↓
+alice +    16   30 88k    64k 8.8k $0.88 8m00s t1     r1  r1   review_project
+alice +    16   29 88k    64k 8.8k $0.88 7m59s t1     r1  r1.1 └─ map: files · 2/8 completed
+alice +     2    3 11k     8k 1.1k $0.11   40s t1     r1  r3      └─ review_file
+alice +     1    0  4k     3k  400 $0.04   32s t1     r1  r3.2       └─ model-name · Analyze configuration
+alice +     4    8 22k    16k 2.2k $0.22 2m00s t1     r2  r2   succeeded · Configuration updated
 ```
 
-Each root run starts an independent tree at depth 0. Agent/thread are ownership
-columns, never tree nodes; branches appear only in ACTIVITY. Preserve recorded
-run/step parentage and step nesting: flow steps, sub-runs and model/tool steps are
-individually selectable, including parallel execution. Completed branches disappear;
-terminal root runs become one result row with no expansion control. Pending/stale
-root runs also stay single rows. Summarize pending sub-runs on their owning run.
+Branches appear only in ACTIVITY. Preserve recorded run/step parentage and step
+nesting, including parallel flow. Only confirmed running runs expand; pending,
+stale and terminal runs stay single rows. An async launch step that finishes
+before its child remains as a required ancestor with its terminal status;
+completed siblings disappear. Follow new paths except at manual folds; `[+]`
+means hidden running paths. A finished selected node maps to its nearest visible
+ancestor; run completion atomically replaces the tree with one result row.
 
-Attach each sub-run to its recorded parent step. An async launch step can finish
-while its sub-run continues: retain that step only as a required ancestor and mark
-its actual terminal status inline. It does not reopen completed sibling branches.
-Follow new running paths except at manual folds; `[+]` means hidden running paths.
-When a selected node finishes, select its nearest visible ancestor. Root completion
-atomically replaces its tree with the result row.
+Tree runs show runnable names, flow steps operation/progress, and model/tool steps
+their names/summaries; ancestors do not repeat descendant summaries. List shows a
+current-call summary; multiple calls use a count and representative summary in
+execution order. Use `pending`, `succeeded`, `failed` or `canceled` inline only
+when applicable, without a separate execution-state column.
 
-Use one ACTIVITY summary per row, without repeating agent names or normal
-online/running markers. In Tree, runs show runnable names, flow steps show operation
-and progress, and model/tool steps show their names and summaries; do not repeat
-descendant call summaries on ancestors. List summarizes current execution on each
-root row; with multiple current calls, show a count and representative summary in
-execution order. Use these markers only when applicable:
+Use concise plain-text results/errors, falling back to the runnable name for long
+or Markdown output. Full output belongs in Details. Strip `agent::` from runnable
+display names: `agent::agic:name` becomes `agic:name`, without changing identity
+or inspect targets. Preserve existing model previews and explicit tool summaries;
+no additional model calls. Color reinforces text rather than replacing it.
 
-| Situation | ACTIVITY example |
+## Stats and Activity
+
+All consumption metrics share one Stats range and the row's ownership:
+
+- MODEL/TOOL/IN/CACHED/OUT/SPEND include directly and transitively owned calls.
+- TIME+ is a run/step's own duration; Thread/Agent sums top-level run durations.
+  Never sum child durations or visible Tree rows into parents/Header totals.
+  Parallel runs can make accumulated time exceed elapsed wall time.
+- Header counts each agent once, independent of visible rows. Details exposes
+  selected-range `Stats` and lifetime `Total`, including at Agent level.
+
+| Stats value | Boundary at observation time T |
 | --- | --- |
-| Agent/thread root-run counts | `1 active`, `4 failed`, `1 active · 4 failed`, or `idle`. |
-| Current model/tool call | `model-name · Analyze configuration` / `fs.read · Read configuration`. |
-| Pending root run / sub-runs | `pending · review_project` / `review_project · 2 pending`. |
-| Terminal root run | `succeeded · Configuration updated`, `failed · Permission denied`, `canceled · review_project`. |
-| Incomplete observation | `syncing · counts incomplete` / `stale · review_project · last seen 5m ago`. |
+| `session` | Owning executor's current session start through T; when stopped, its latest recorded session. |
+| Duration, e.g. `1h`, `1d`, `1w` | Rolling interval from T minus duration through T; a day is 24 hours. |
+| Timezone-aware timestamp | Fixed start through T, preserved across executor restarts. |
+| `all` | All available history through T. |
 
-Run results use the root run's own status and a short plain-text summary/error.
-Use the runnable name for long or Markdown results; load full output in Details.
-Failed root-run counts never imply a failed agent/thread.
-Color may reinforce text, never replace it. Shared reconnect/sync information
-belongs in the header or agent summary. Preserve known terminal results; show
-`syncing` if recovery has not reconciled their descendants. Hub disconnection
-means unknown presence, not every agent offline. Freeze stale execution time at
-the last observation and restore running paths only after recovery.
+Durations stay relative in query identity and are evaluated by the source at each
+observation. Do not resolve them once at CLI startup or create a new subscription/
+cache entry per tick. Existing `--since DURATION` changes from fixed-start to
+rolling; use an explicit timestamp to retain fixed-start behavior. Missing session
+metadata remains unknown. TIME+ labels every range; Header's Stats setting
+explains the common range without per-column markers.
 
-Roster agents remain visible unless filtered out; directory reconciliation follows
-[the roster contract](top-live-layout.md#presence-and-roster). In Thread/Execution
-views, agents without eligible rows get a branchless placeholder with inapplicable metrics
-(`-`). Single-agent mode connects directly without Hub: put identity, presence
-and labeled Agent Stats in the header; omit AGENT and placeholders, retaining
-object metrics in Thread/Execution tables. Its Agent view is the header alone. Keep
-the header for empty/offline results; filtering Hub data to one agent does not
-change the layout.
+Calls count at step begin, tokens/spend settle at step end, and execution duration
+is clipped to Stats. A crossing call can contribute tokens/spend without a new-call
+count. Retries retain consumption and exclude waiting between attempts; rewind
+never refunds it and forked references never duplicate it. CACHED is cache-read
+input already included in IN; OUT is normalized output. SPEND shows an amount
+(`$1.28`), or `-` when unknown. Provenance/incomplete coverage goes in Details
+and relevant Status bar feedback. Unsettled usage is not fabricated as zero.
+Format tokens in compact decimal k/M/G units; Details retains exact values.
 
-Keep one line per row, clipping summaries. Enter opens scrollable Details above
-the fixed key bar: full IDs, inspect command, exact token counts, Stats/Total,
-coverage and result text. Narrow terminals hide MODEL/TOOL first and allow
-horizontal scrolling for the remaining columns. Switching view preserves Stats,
-Recent, filters, scroll and folds,
-mapping selection by ownership without adding an implicit filter. Disabling Tree
-selects the root run; reenabling restores the eligible selected descendant.
-Presentation changes reuse the subscription and never acquire an executor.
-
-## Stats and Recent
-
-Stats applies to the row object: agent, thread, run or step.
-MODEL/TOOL/IN/CACHED/OUT/SPEND include that object's directly and transitively
-owned calls.
-TIME is a run/step's own execution duration; thread/agent TIME sums root run
-durations. Never add nested durations or visible Tree rows to their parents.
-Parallel root runs can make TIME exceed executor Uptime. Header Stats counts
-each agent once and is independent of row visibility.
-
-All consumption metrics use the same Stats range:
-
-- `--since session`: owning executor's current session start, not observer start
-  or thread/run creation. Only executor restart resets it.
-- `--since TIMESTAMP|DURATION`: explicit start; a duration such as `1w` resolves
-  once to a fixed timestamp. Preserve it across executor restarts.
-- `--since all`: all available history.
-
-Keep TIME for session; use TIME* for any explicit override, including all.
-The header explains the common start for every metric and displays a timestamp
-with timezone, or all available history. Details label selected-range values
-`Stats` and lifetime values `Total`. Missing session metadata remains unknown.
-
-Calls count at step begin, tokens and spend settle at step end, and execution
-duration is clipped to Stats. A call crossing the start may add tokens/spend
-without a new-call count. Retries retain calls, tokens, spend and execution time;
-waiting between attempts is excluded. Rewind does not refund consumption; forked
-references do not duplicate it.
-Known execution wholly outside Stats contributes zero; missing coverage is unknown.
-CACHED is cache-read input already included in IN; OUT is normalized output.
-SPEND shows the amount alone, e.g. `$1.28`; unknown values show `-`. Header
-diagnostics and Details expose incomplete coverage and estimated accounting.
-An unsettled model call may have no tokens or spend yet.
+At each observation use exact timestamp boundaries: indexed facts for partial
+buckets and complete buckets for the interior. Expire counts, settled usage and
+interval portions as they leave a rolling range, even without record changes.
+Shared projections account for clock/window changes as well as revisions.
 
 ```text
-Run 10:50-11:10: Total $0.50 / 20m; $0.20 settled after 11:00.
-Stats since 11:00: SPEND $0.20, TIME* 10m.
-Stats all:         SPEND $0.50, TIME* 20m.
+At 11:10: a run lasted 10:50-11:10, spending $0.50; $0.20 settled at 11:05.
+Stats since 11:00: Spend $0.20, Time+ 10m.
+Stats 1h at 12:06: Spend $0.00, Time+ 4m (the 11:06-11:10 overlap).
 ```
 
-Recent selects all active root runs plus root runs/threads changed within its
-rolling range. Keep recently changed empty threads in Thread view. Presets:
-`5m / 30m / 1h / 1d / 1w / all`, default 30m; custom durations are accepted.
-Descendant execution changes advance root/thread last activity; retry and thread
-create/fork/rewind count, heartbeat/render/replay do not. Use persisted timestamps
-on reopen. Running paths remain visible regardless of age.
+Activity retains active runs plus runs/threads changed within its rolling range;
+keep recently changed empty threads at Thread level. Descendant execution, retry
+and thread create/fork/rewind advance activity; heartbeat/render/replay do not.
+Use persisted timestamps on reopen. Activity/filters/folds never alter a retained
+object's Stats; Stats never alters eligibility.
 
-Recent, filters and folds never change a retained object's Stats. Stats never
-changes row eligibility; preserve selection if value sorting moves rows. Replace
-new values, labels and any required recovery boundary atomically. Paginate root
-summaries and keep compact running paths, reporting loaded/available counts and
-coverage. Offline
-Hub data reports cached coverage; older history may require the source agent.
+Readable sources recompute windows from durable data. Unavailable sources retain
+explicitly stale coverage; never claim cached totals as a fresh rolling calculation
+or relabel another cached range. Frozen execution time must not accrue downtime.
+Pagination exposes loaded/matched/eligible counts only when useful in Status bar/
+Details, without inflating scope totals.
 
 ## Filtering, sorting and controls
 
-Two filters, combined with AND:
+Keep two AND-combined filters: `--filter TEXT` is a case-insensitive literal
+substring across IDs, names, states and summaries, including historical descendants;
+`--active` retains unfinished work and removes idle placeholders.
+Matches retain their owning run and running paths. Agent/thread matches include
+their runs or the matching empty object. Highlight/open matching running paths
+once; later manual folds prevail. Historical matches stay inspectable in Details
+without reopening completed paths. Query compact metadata within Activity and
+report coverage. Clearing text clears only that filter.
 
-| Option | Rule |
-| --- | --- |
-| `--filter TEXT` | Case-insensitive literal substring across IDs, names, execution status and ACTIVITY summaries, including historical descendants. |
-| `--active` | Active work only; omit idle placeholders. Offline unfinished work remains eligible. |
-
-A match selects its root run and preserves running paths. Agent/thread matches
-include their root runs or retain the matching empty object. Highlight and open
-matching running paths once; later manual folds prevail. Historical matches keep
-the root run without reopening completed paths; details expose matching IDs for
-inspect. Query compact indexed metadata within Recent and report coverage.
-Clearing text only clears that filter. Filters affect visibility, not Stats or
-summary scope; show matched/eligible object counts, counting root runs in Execution view.
-
-Three sort choices: `activity` (default: active first, then latest activity),
-`spend`, `time` (descending displayed value, unknown last). `cost` remains a CLI
-alias for `spend`. Sort agents, threads or whole root run trees according to the
-view, across agents. Never reorder Tree descendants. Placeholders follow real
-rows; full precision and stable IDs
-break ties. Preserve selected identity; clock ticks do not change activity order.
-Single-agent mode uses identical rules; its Agent header needs no sorting.
+Sort by `activity` (active first, then latest change), `spend` or `time`
+(descending full-precision values, unknown last). `cost` remains an alias for
+`spend`. Sort objects across agents, never tree descendants. Placeholders follow
+real rows; stable IDs break ties. Preserve selected identity as rows move; clock
+ticks alone do not change activity order. Show a downward arrow on the sorted
+ACTIVITY, SPEND or TIME+ heading; ACTIVITY includes its range: `ACTIVITY(30m)↓`.
 
 | Control | Action / CLI |
 | --- | --- |
-| a / t / e | View / `--view agent\|thread\|execution`. |
-| F4 | Text and Active filters / `--filter TEXT`, `--active`. |
-| F5 | List/Tree in Execution view / `--view execution --tree`. |
-| F6 | Sort / `--sort activity\|spend\|time`. |
-| F7 | Recent / `--recent DURATION`. |
-| F8 | Stats / `--since session\|TIMESTAMP\|DURATION\|all`. |
-| Left / Right | Collapse/expand running paths; Left on a leaf/collapsed row selects its visible parent, never agent/thread. |
-| Up / Down | Select a row. |
-| PgUp / PgDn | Scroll Details when open; otherwise page through rows. |
-| < / > | Scroll wide rows horizontally. |
-| Enter | Toggle Details. |
-| --refresh SECONDS | Screen refresh interval; default `0.1`, finite and positive. |
+| a / t / e | Agent / Thread / Run; preserve `--view agent\|thread\|execution` and the existing e shortcut. |
+| F4 | Edit text/Active filters; retain Ctrl-A toggling Active in the editor. |
+| F5 | List/Tree at Run level; preserve `--view execution --tree`. |
+| F6 | Cycle activity / spend / time. |
+| F7 | Cycle Activity: `5m / 30m / 1h / 1d / 1w / all`. |
+| F8 | Cycle Stats: `session / 1h / 1d / 1w / all`. |
+| Left / Right | Collapse/expand paths; Left on a leaf/folded row selects its visible parent. |
+| Up / Down, Ctrl-P / Ctrl-N | Select previous/next row; Details follows. |
+| PgUp / PgDn | Page Details when open, otherwise Table. |
+| < / > | Scroll Table horizontally. |
+| Enter / Esc | Toggle / close Details. |
+| F1 | Help, including presence legend and custom CLI window values. |
 | q / Ctrl-C | Exit without affecting execution. |
 
-View shortcuts are disabled while editing text. F5 is inactive outside Execution;
-`--tree` requires explicit `--view execution`. `--once` prints one snapshot.
+F7/F8 apply the next preset immediately without an editor/confirmation step; from
+a custom value, next press selects the first preset. Custom values remain available
+through `--recent` and `--since`. Keep `--refresh` and snapshots as defined in
+[delivery and redraw](top-live-layout.md#delivery-and-redraw).
+Level shortcuts are disabled during text editing; F5 is inactive outside Run.
+Switching level preserves settings, filters and folds, maps selection by ownership,
+and never adds an implicit filter. List selects the owning run; returning to Tree
+restores an eligible selected descendant. Display terminology changes do not
+remove existing CLI flags or accepted values.
 
-## Persistence and delivery
+## Persistence and reuse
+
+Retain execution's committed accounting contract:
 
 ```text
-executor -> transaction(records + usage + aggregates + cursor) -> commit
-         -> shared activity reader -> agent HTTP / Hub HTTP -> top data
+executor -> transaction(records + attempt usage + aggregates + cursor) -> commit
+         -> shared statistics/activity reader -> observation service -> top
          -> canonical stream -> execution subscribers / Hub event export
-top data -> scheduled render; local interaction -> immediate render
 ```
 
-Current `_emit_event_locked` commits structural records/cursors in
-`RunStore.write_transaction()` before canonical publication. Extend store
-transitions, including early step completion during control admission, within
-this boundary. The executor supplies session/attempt identity; execution owns
-aggregation. A genuine begin/end contributes once, even with duplicate events;
-retry reusing a StepRef gets a new attempt identity.
+Execution owns sessions/checkpoints, attempt facts, inclusive aggregates, time
+intervals and the activity index. Genuine begin/end contributes once; retry uses
+a new attempt identity. Token settlement/spend share the records transaction,
+including early completion. Preserve rollback safety, resumable legacy backfill
+and incomplete coverage for deleted/missing attempts. Observation never migrates
+stores. Close interrupted intervals at the durable checkpoint without inventing
+provider charges or downtime.
 
-| Persisted data | Purpose |
-| --- | --- |
-| Executor session, start/end/checkpoint | Default Stats, Uptime and recovery. |
-| Attempt usage with ownership, timestamps, counts/tokens/spend and coverage | Preserve consumption and attribution when retry deletes execution records. |
-| Agent/thread/run/step totals and minute count/token/spend buckets by session | Shared inclusive Stats for session/all or custom starts. |
-| Run/step attempt intervals, closed totals and open anchors | Duration without nested double counting or per-redraw writes. |
-| Activity index: parent, status, summary, last activity | Recent root runs, running paths and historical text matches. |
+Use existing minute buckets plus boundary facts and clipped intervals; no repeated
+full-history scans, per-viewer aggregation or copied output in usage facts. Writes
+remain proportional to affected ownership paths. Share projections and publish
+absolute revisions/values; consumers replace idempotently. Keep reads off the
+execution path and preserve [local subscriptions](local-subscriptions.md) and
+[Hub recovery](team-observation.md). Agent export remains Hub HTTP, without direct
+backend access. Service boundaries and local/offline source selection belong to
+[data ownership](top-live-layout.md#data-ownership).
 
-Write changes proportional to the affected ownership path, not history or viewers.
-Use minute buckets for whole minutes, indexed facts for boundary minutes, and
-attempt intervals for clipped TIME. Share query state and update affected totals;
-never aggregate full step records per refresh/subscriber or copy outputs into
-usage facts. Close crash-interrupted intervals at the last durable checkpoint
-and mark coverage incomplete; do not count downtime or invent provider charges.
+## Acceptance
 
-Publish absolute values/revisions at the same committed boundary as activity.
-Hub/top replace them idempotently rather than recounting events. Preserve the
-[agent subscription](local-subscriptions.md) and [Hub subscription](team-observation.md)
-recovery contracts. Aggregate writes participate in the records transaction;
-HTTP/SSE consumers and historical scans stay off the execution path. The exporter
-uses Hub HTTP; the agent does not access the Hub backend directly.
-
-One versioned, resumable migration backfills available records and deduplicates
-against concurrent live writes. Normal startup reads saved totals/indexes.
-Deleted legacy attempts and unknown session starts remain incomplete. Both HTTP
-sources expose the shared reader and coverage. Query changes replace the view
-at a complete snapshot; view/layout/sort changes reuse the subscription. Compact
-activity delivery excludes full prompts/outputs and token deltas. See
-[delivery and redraw](top-live-layout.md#delivery-and-redraw) for source ticks,
-per-agent replacements and the render schedule. CLI owns formatting, selection
-and sorting; full results are fetched only when Details is opened.
-
-## Touchpoints and acceptance
-
-Owners: `execution/activity.py` and `execution/statistics.py`;
-`execution/store.py`, `records.py`, executor lifecycle/persistence hooks and
-subscription adapters; `teaming/activity.py`, `teaming/activity_feed.py`, HTTP adapters;
-`cli/common/activity.py`, `cli/toolang/commands/top.py` and focused tests.
-Reuse execution summary helpers, Rich and prompt_toolkit.
+Likely files: `execution/activity.py`, `schemas.py`, statistics query helpers;
+`teaming` observation/HTTP adapters; `cli/common/activity.py`, `activity_view.py`
+and `cli/toolang/commands/top.py`. Reuse persistence unless a demonstrated query
+requirement needs an additive change. Do not redesign executor/accounting tables
+as part of presentation work.
 
 | Scenario | Pass condition |
 | --- | --- |
-| Sequential/parallel flow, async launch and completion | Run/step Tree nodes have their own IDs/statistics and recorded parentage; only required completed ancestors remain; one terminal root result. |
-| Views, layout, resize and single-agent mode | RUN repeats root ownership; STEP contains every row's full record reference, including the root; nested step inspect needs no indentation context; statistics remain row-scoped; Agent/Thread show root-run counts. |
-| Historical matches, Active and sorting | Matches remain inspectable without reopening finished paths; pending/stale stay marked; sorting preserves trees. |
-| Stats/Recent, aging, restarts and pagination | Independent ranges, correct TIME*, no lost active work, no statistic changes from visibility. |
-| Boundary calls, overlapping runs, unknown usage | Correct Stats/Total, duration clipping and coverage; no nested/global double counting. |
-| Mid-run attach, retry, rewind, fork and duplicates | Recovered totals equal committed consumption without loss or duplicates. |
-| Rollback, crash after commit and interrupted migration | Atomic writes, resumable deduplicated backfill, no normal-startup full history scan. |
-| Offline agent, Hub reconnect and incomplete recovery | No invented idle/failure/zero; stale time freezes and confirmed running paths recover. |
-| Multiple subscribers, large history and both HTTP sources | Shared compact reads; equivalent agent/Hub data without per-client history aggregation. |
+| Sequential/parallel flow and async launch | Correct IDs, ownership and row metrics; only running paths/required ancestors expand. |
+| Levels, empty agents, offline/unknown presence | Correct columns/counts; offline ACTIVITY is `-`; no false idle/running or fabricated metrics. |
+| Fixed/session/all/rolling Stats and independent Activity | Exact boundaries and idle expiry; visibility never changes totals; session resets only on executor restart. |
+| Crossing calls, overlapping runs, retry/rewind/fork | Correct Stats/Total without nested, duplicate or lost consumption. |
+| Filters, sorting, folds and completed matches | Stable selection, inspectable historical matches and preserved parentage. |
+| Rapid F7/F8 changes, delayed responses and reconnect | Immediate settings, no obsolete replacements, consistent Header/Table data. |
+| Multiple observers and large history | Shared bounded projections and indexed boundaries; no per-tick full-history scans. |
 
-Implementation decisions:
-
-- Model summaries use a bounded `preview:` of existing user content, with
-  instructions as fallback. Tools keep their explicit summaries; no extra model call.
-- Compact HTTP sends absolute `activity_page` frames and an atomic
-  `activity_checkpoint`; reconnect always takes a fresh snapshot. Pages contain
-  200 roots, with explicit coverage for the 4,000-node running-path and
-  10,000-thread projection limits. See [HTTP activity](../api.md#team-activity).
-
-Risks are migration size, missing legacy usage/model summaries, and atomic aggregate
-maintenance; acceptance checks cover these boundaries.
+Use deterministic clocks for boundary tests and compare local/Hub results at the
+same observation boundary. Risks are incomplete legacy usage and rolling-window
+cache invalidation; require explicit coverage and time-advancing tests.
