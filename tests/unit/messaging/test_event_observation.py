@@ -18,7 +18,7 @@ from toolang.teaming.errors import (
     EventProtocolError,
     EventRecoveryRequired,
 )
-from toolang.teaming.backend.valkey.events import META, STREAM
+from toolang.teaming.backend.valkey.keys import EVENT_META, EVENT_STREAM
 from toolang.teaming.events import (
     HubCursor,
     HubScope,
@@ -144,7 +144,7 @@ def test_uncertain_event_commit_is_deduplicated_and_lease_fences(tmp_path, monke
 
                 monkeypatch.setattr(service, "commit", uncertain)
                 await publish(exporter)
-                rows = await driver._call("XRANGE", STREAM, "-", "+")
+                rows = await driver._call("XRANGE", EVENT_STREAM, "-", "+")
                 sources = [
                     json.loads(values["data"])["source_cursor"]
                     for _, values in rows
@@ -170,7 +170,7 @@ def test_partial_dataset_fails_closed_without_touching_messaging():
         await driver.register("human:owner")
         meta = await service.initialize()
         assert (await service.initialize())["epoch"] == meta["epoch"]
-        await driver._call("HSET", META, "pending", "broken")
+        await driver._call("HSET", EVENT_META, "pending", "broken")
         with pytest.raises(EventProtocolError, match="incomplete dataset"):
             await service.capture()
         await driver.initialize()
@@ -244,7 +244,7 @@ def test_multi_origin_prefix_failure_keeps_committed_state_and_cursor():
 def test_staging_retries_and_activation_receipts_survive_switch(
     tmp_path, monkeypatch, interrupt
 ):
-    from toolang.teaming.backend.valkey.events import generation_key
+    from toolang.teaming.backend.valkey.keys import generation_key
     from toolang.teaming.records import MANIFEST
 
     harness = ExecutionHarness.create(
@@ -303,7 +303,7 @@ def test_staging_retries_and_activation_receipts_survive_switch(
                 )
                 controls = [
                     row
-                    for row in await driver._call("XRANGE", STREAM, "-", "+")
+                    for row in await driver._call("XRANGE", EVENT_STREAM, "-", "+")
                     if row[1]["kind"] == "recovered"
                 ]
                 assert len(controls) == 2 and intercepted
@@ -421,7 +421,7 @@ def test_idle_execution_feed_reset_is_detected_and_recovered(tmp_path):
 def test_hub_filters_and_cursor_errors_have_flat_http_contract(tmp_path):
     import httpx
     from toolang.teaming.api import create_app
-    from toolang.teaming.backend.valkey.events import AGENTS, generation_key
+    from toolang.teaming.backend.valkey.keys import EVENT_AGENTS, generation_key
     from toolang.teaming.records import MANIFEST
     from toolang.teaming.messaging import MessagingClient
 
@@ -465,7 +465,7 @@ def test_hub_filters_and_cursor_errors_have_flat_http_contract(tmp_path):
             assert response.json()["code"] == "invalid_request"
             await driver._call(
                 "HSET",
-                AGENTS,
+                EVENT_AGENTS,
                 "agent:alice",
                 json.dumps({"v": 1, "status": "complete"}),
             )
@@ -475,15 +475,18 @@ def test_hub_filters_and_cursor_errors_have_flat_http_contract(tmp_path):
                 )
                 assert response.status_code == 404
                 assert response.json()["code"] == "scope_unavailable"
-            await driver._call("HSET", META, "pending", "broken")
+            await driver._call("HSET", EVENT_META, "pending", "broken")
             response = await http.get("/events/stream")
             assert (
                 response.status_code == 503
                 and response.json()["code"] == "protocol_error"
             )
-            await driver._call("HDEL", META, "pending")
+            await driver._call("HDEL", EVENT_META, "pending")
             await driver._call(
-                "HSET", AGENTS, "agent:alice", json.dumps({"v": 1, "generation": "g"})
+                "HSET",
+                EVENT_AGENTS,
+                "agent:alice",
+                json.dumps({"v": 1, "generation": "g"}),
             )
             await driver._call(
                 "HSET",
@@ -1143,7 +1146,7 @@ def test_recovery_bounds_records_work_before_it_consumes_the_snapshot_budget(
     ],
 )
 def test_malformed_stored_projection_is_a_protocol_failure(stored):
-    from toolang.teaming.backend.valkey.events import generation_key
+    from toolang.teaming.backend.valkey.keys import generation_key
 
     async def scenario():
         driver = backend(FakeServer(server_type="valkey"))
@@ -1222,7 +1225,7 @@ def test_hub_recovery_ignores_inherited_sse_ids(replacement):
 
 
 def test_stale_exporter_cannot_remove_the_new_owners_staging(tmp_path, monkeypatch):
-    from toolang.teaming.backend.valkey.events import generation_key
+    from toolang.teaming.backend.valkey.keys import generation_key
 
     harness = ExecutionHarness.create(
         tmp_path, source="flow example:\n  let result = Done\n", responses=[]
@@ -1359,7 +1362,7 @@ def test_projection_rejects_invalid_tree_structure(damage):
 def test_invalid_recovery_metadata_is_a_backend_error(damage):
     import httpx
     from toolang.teaming.api import create_app
-    from toolang.teaming.backend.valkey.events import AGENTS, generation_key
+    from toolang.teaming.backend.valkey.keys import EVENT_AGENTS, generation_key
     from toolang.teaming.records import MANIFEST
     from toolang.teaming.records import field
     from toolang.teaming.messaging import MessagingClient
@@ -1400,7 +1403,7 @@ def test_invalid_recovery_metadata_is_a_backend_error(damage):
                     "event": {"type": "invalid"},
                 }
             manifest["count"] = len(entities)
-            await driver._call("HSET", AGENTS, "agent:alice", json.dumps(origin))
+            await driver._call("HSET", EVENT_AGENTS, "agent:alice", json.dumps(origin))
             await driver._call(
                 "HSET",
                 generation_key("agent:alice", "g"),

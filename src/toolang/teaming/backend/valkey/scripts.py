@@ -5,10 +5,10 @@ provided by the caller; all validation precedes mutations because Lua cannot
 roll back an error after a write.
 """
 
+from .lua import LEASE_CHECK, STREAM_ORDER
 from ...ids import GC_EPOCH_SECONDS, GC_LIMIT
 from ...types import (
     LEASE_SECONDS,
-    MAX_SAFE_INTEGER,
     MESSAGE_RETENTION,
     STORAGE_BATCH_SIZE,
     TEAM_EVENT_RETENTION,
@@ -88,36 +88,6 @@ end
 return cjson.encode({records=rows,members=sets,hashes=hashes,clock=redis.call('TIME'),system=system or cjson.null})
 """
 
-# Also used by execution/activity publication, with explicit team/presence keys.
-LEASE_CHECK = (
-    f"local max_safe_integer={MAX_SAFE_INTEGER}\n"
-    + """
-local function current_lease(team, presence, member)
-  local raw=redis.call('HGET',team,member)
-  local score=redis.call('ZSCORE',presence,member)
-  if not raw then
-    if score then error('integrity: orphan presence') end
-    return nil
-  end
-  local ok,record=pcall(cjson.decode,raw)
-  if not ok or type(record)~='table' then error('integrity: invalid team JSON') end
-  local lease=record.lease
-  if lease==nil then error('integrity: missing lease field') end
-  if (score and lease==cjson.null) or (not score and lease~=cjson.null) then
-    error('integrity: inconsistent presence')
-  end
-  if score then
-    local deadline=tonumber(score)
-    if not deadline or deadline<0 or deadline>max_safe_integer or deadline~=math.floor(deadline) then error('integrity: invalid presence deadline') end
-    if type(lease)~='table' or type(lease.token)~='string' or lease.token=='' or type(lease.endpoint)~='string' then error('integrity: invalid lease') end
-    for key,_ in pairs(lease) do if key~='token' and key~='endpoint' then error('integrity: unknown lease field') end end
-    local now=redis.call('TIME')
-    if tonumber(score)>tonumber(now[1])*1000+math.floor(tonumber(now[2])/1000) then return lease end
-  end
-  return nil
-end
-"""
-)
 
 COMMON = (
     _CONSTANTS
@@ -557,19 +527,11 @@ return 1
 
 REPLAY = (
     COMMON
+    + STREAM_ORDER
     + """
 local info=valid()
 local op=cjson.decode(ARGV[1])
 if op.actor then authorize(op.actor,op.token) end
-local function less(a,b)
-  local am,as=string.match(a,'^(%d+)%-(%d+)$')
-  local bm,bs=string.match(b,'^(%d+)%-(%d+)$')
-  if not am or not bm then fail('invalid event ID') end
-  if #am~=#bm then return #am<#bm end
-  if am~=bm then return am<bm end
-  if #as~=#bs then return #as<#bs end
-  return as<bs
-end
 if op.epoch~=epoch or less(info['last-generated-id'],op.after) then return {'resync'} end
 if tonumber(info['entries-added'])>tonumber(info.length) and less(op.after,info['first-entry'][1]) then return {'resync'} end
 local rows=redis.call('XRANGE',KEYS[7],'('..op.after,'+','COUNT',batch_size)

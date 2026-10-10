@@ -46,6 +46,7 @@ from ...schemas import (
     target,
 )
 from . import scripts
+from .lua import TEAM_GUARD
 from .activity import ValkeyActivity
 from .events import ValkeyEvents
 from ...types import SNAPSHOT_RETRIES, STORAGE_BATCH_SIZE
@@ -110,6 +111,29 @@ class ValkeyBackend:
     async def _eval(self, script: str, keys: list[str], args: list[object]) -> Any:
         return await self._call("EVAL", script, len(keys), *keys, *args)
 
+    async def _fenced_eval(
+        self, agent: str, script: str, keys: list[str], args: list[object]
+    ) -> Any:
+        """Validate a publisher record and fence the exact bytes before mutation.
+
+        The script still checks the current lease and deadline atomically. Retry
+        only a rejected snapshot, never an uncertain transport result.
+        """
+        target(agent, kind="agent")
+        for _ in range(SNAPSHOT_RETRIES):
+            raw = await self._call("HGET", TEAM, agent)
+            try:
+                if raw is not None:
+                    TeamRecord.decode(agent, raw)
+            except (ValueError, TypeError, MessagingError) as exc:
+                raise StorageIntegrityError("Invalid team record") from exc
+            checked = _json({"key": keys.index(TEAM) + 1, "member": agent, "raw": raw})
+            try:
+                return await self._eval(TEAM_GUARD + script, keys, [*args, checked])
+            except _SnapshotChanged:
+                continue
+        raise MessagingError("Teaming state changed repeatedly; retry the operation")
+
     async def initialize(self) -> None:
         epoch = uuid4().hex
         await self._eval(
@@ -169,21 +193,17 @@ class ValkeyBackend:
                 if kind == "system":
                     conversation_id(raw)
                     continue
-                model = {
-                    "team": TeamRecord,
-                    "conversation": ConversationRecord,
-                    "roster": RosterRecord,
-                    "event": TeamEvent,
-                }[kind].model_validate_json(raw)
+                model = (
+                    TeamRecord.decode(field, raw)
+                    if kind == "team"
+                    else {
+                        "conversation": ConversationRecord,
+                        "roster": RosterRecord,
+                        "event": TeamEvent,
+                    }[kind].model_validate_json(raw)
+                )
                 records[kind, field] = model
-                if isinstance(model, TeamRecord):
-                    who = participant(field)
-                    if who.kind == "human":
-                        if model.owner is not None or model.lease is not None:
-                            raise ValueError("Human records cannot own leases")
-                    elif model.owner is None:
-                        raise ValueError("Agent record requires an owner")
-                elif isinstance(model, ConversationRecord):
+                if isinstance(model, ConversationRecord):
                     if model.id != field:
                         raise ValueError("Conversation ID differs from its hash field")
                     if model.created_by is None and field != snapshot["system"]:

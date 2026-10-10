@@ -151,6 +151,18 @@ class TeamRecord(ProtocolModel):
 
     _timestamp = field_validator("created_at")(utc_timestamp)
 
+    @classmethod
+    def decode(cls, member: str, raw: str) -> TeamRecord:
+        """Validate a directory record together with its typed member identity."""
+        record = cls.model_validate_json(raw)
+        who = participant(member)
+        if who.kind == "human":
+            if record.owner is not None or record.lease is not None:
+                raise ValueError("Human records cannot own leases")
+        elif record.owner is None:
+            raise ValueError("Agent record requires an owner")
+        return record
+
     @field_validator("owner")
     @classmethod
     def human_owner(cls, value: str | None) -> str | None:

@@ -420,7 +420,13 @@ def test_teaming_services_depend_on_backend_contracts_not_storage_internals() ->
             if path.is_relative_to(SOURCE_ROOT / "teaming") and isinstance(
                 node, ast.Attribute
             ):
-                if node.attr in {"_call", "_eval", "_operation", "_client"}:
+                if node.attr in {
+                    "_call",
+                    "_eval",
+                    "_operation",
+                    "_fenced_eval",
+                    "_client",
+                }:
                     violations.append(f"{path.relative_to(SOURCE_ROOT)}:{node.lineno}")
     assert not violations, "Storage internals outside implementation: " + ", ".join(
         violations
