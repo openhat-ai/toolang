@@ -1,11 +1,16 @@
 """Real-terminal resize checks shared by Chat and Talk."""
 
 import json
+import fcntl
 import os
 from pathlib import Path
+import re
 import shlex
 import shutil
+import signal
+import struct
 import sys
+import termios
 import time
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
@@ -14,6 +19,42 @@ from libtmux import Server
 import pytest
 
 from tests import PROJECT_ROOT
+from tests.support.chat_tui_pty import ChatTuiPtySession
+
+
+@pytest.mark.skipif(os.name != "posix", reason="pseudo-terminal testing requires POSIX")
+@pytest.mark.parametrize("surface", ["chat", "talk"])
+def test_input_cursor_remains_a_beam_until_exit(tmp_path, surface):
+    session = ChatTuiPtySession.start(
+        "tests.system.cli.test_scrollback_resize", surface, tmp_path, "", "0"
+    )
+    cursor_shapes = re.compile(rb"\x1b\[([0-6]) q")
+    try:
+        placeholder = "Describe your task" if surface == "chat" else "Type a message"
+        session.wait_for(placeholder)
+        session.wait_for_bytes(b"\x1b[6 q")
+
+        session.data.clear()
+        session.send(b"\x0c")
+        session.wait_for_bytes(b"\x1b[6 q")
+        assert cursor_shapes.findall(session.data)[-1] == b"6"
+
+        session.send(b"draft\x01")
+        session.wait_for("draft")
+        session.data.clear()
+        fcntl.ioctl(
+            session.master, termios.TIOCSWINSZ, struct.pack("HHHH", 20, 40, 0, 0)
+        )
+        session.process.send_signal(signal.SIGWINCH)
+        session.wait_for_bytes(b"\x1b[6 q")
+        assert cursor_shapes.findall(session.data)[-1] == b"6"
+
+        session.data.clear()
+        session.send(b"\x11")
+        assert session.wait_for_exit() == 0, session.output
+        assert cursor_shapes.findall(session.data)[-1] == b"0"
+    finally:
+        session.close()
 
 
 @pytest.mark.skipif(shutil.which("tmux") is None, reason="tmux is not installed")
@@ -53,7 +94,7 @@ def test_repeated_resize_preserves_history_and_input_origin(
         pane = window.active_pane
         assert pane is not None
 
-        def snapshot(width, height=24, expected_draft=draft):
+        def snapshot(width, height=24, expected_draft=draft, expected_input_row=None):
             deadline = time.monotonic() + 10
             previous = None
             stable = 0
@@ -69,9 +110,9 @@ def test_repeated_resize_preserves_history_and_input_origin(
                     ):
                         lines = pane.capture_pane() or []
                         placeholder = (
-                            "Ask or describe"
+                            "Describe your task"
                             if surface == "chat"
-                            else "write a message"
+                            else "Type a message"
                         )
                         input_rows = (
                             [i for i, line in enumerate(lines) if placeholder in line]
@@ -90,7 +131,14 @@ def test_repeated_resize_preserves_history_and_input_origin(
                         )
                         current = (flags, input_rows)
                         stable = stable + 1 if current == previous else 0
-                        if len(input_rows) == 1 and stable >= 3:
+                        if (
+                            len(input_rows) == 1
+                            and stable >= 3
+                            and (
+                                expected_input_row is None
+                                or input_rows == [expected_input_row]
+                            )
+                        ):
                             return current
                         previous = current
                 time.sleep(0.03)
@@ -115,6 +163,11 @@ def test_repeated_resize_preserves_history_and_input_origin(
                 window.resize(width=width)
                 current = snapshot(width, expected_draft="")
             assert current == cleared
+        pane.send_keys("C-l", enter=False)
+        snapshot(200, expected_draft="", expected_input_row=1)
+        for width in (40, 120, 200):
+            window.resize(width=width)
+            snapshot(width, expected_draft="", expected_input_row=1)
         output = "\n".join(pane.cmd("capture-pane", "-p", "-S", "-").stdout)
         for index in range(40):
             assert output.count(f"history marker {index:02}") == 1

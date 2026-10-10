@@ -13,6 +13,7 @@ from prompt_toolkit.application.current import set_app
 from prompt_toolkit.data_structures import Size
 from prompt_toolkit.formatted_text import fragment_list_to_text
 from prompt_toolkit.input import DummyInput
+from prompt_toolkit.keys import Keys
 from prompt_toolkit.output import DummyOutput
 from rich.console import Console
 
@@ -137,6 +138,47 @@ def test_input_spacing_preserves_multiline_editing_in_short_terminals(tmp_path):
                     assert not ui.app.style.get_attrs_for_style_str(
                         screen.data_buffer[0][1].style
                     ).bgcolor
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("rows", [4, 5, 30])
+def test_clear_places_input_at_top_until_new_output(tmp_path, monkeypatch, rows):
+    async def scenario():
+        async with talk_app(tmp_path) as (ui, output):
+            output.rows = rows
+            ui.prompt.replace_input("draft")
+            binding = ui.app.key_bindings.get_bindings_for_keys((Keys.ControlL,))[0]
+            for columns in (120, 40, 160):
+                output.columns = columns
+                binding.handler(None)
+                ui.app.render_counter += 1
+                ui.app.renderer.render(ui.app, ui.app.layout)
+                screen = ui.app.renderer.last_rendered_screen
+                assert screen is not None
+                assert (
+                    ui.app.style.get_attrs_for_style_str(
+                        screen.data_buffer[0][1].style
+                    ).bgcolor
+                    == "e3e3e3"
+                )
+                assert ui.prompt.buffer.text == "draft"
+                assert ui._input_gap_rows() == 0
+            monkeypatch.setattr(
+                tui, "run_in_terminal", AsyncMock(side_effect=lambda action: action())
+            )
+            monkeypatch.setattr(
+                tui,
+                "terminal_console",
+                lambda *, width: Console(file=StringIO(), width=width),
+            )
+            await ui.show(
+                [("1-0", {"data": Message.create("agent:alice", "reply").encode()})]
+            )
+            assert ui._input_gap_rows() == int(rows >= 5)
+            binding.handler(None)
+            await ui.print_notice("notice")
+            assert ui._input_gap_rows() == int(rows >= 5)
 
     asyncio.run(scenario())
 

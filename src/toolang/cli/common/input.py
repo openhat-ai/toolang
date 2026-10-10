@@ -40,7 +40,7 @@ class InputBox:
         invalidate: Callable[[], None],
         *,
         normalize: Callable[[str], str] = str.strip,
-        placeholder: str = "Write a message",
+        placeholder: str = "Type a message",
         on_input: Callable[[], None] | None = None,
         history_store: InputHistoryStore | None = None,
         get_max_rows: Callable[[], int] | None = None,

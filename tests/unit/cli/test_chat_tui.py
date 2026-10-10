@@ -681,7 +681,7 @@ def test_chat_run_summary_block_shows_canceling_then_canceled() -> None:
     assert lines[0] == ""
     assert lines[1].startswith("▪︎ run_1 canceled  ")
     assert lines[1].endswith("3s")
-    assert rendering.display_len(lines[1]) == 80
+    assert rendering.display_len(lines[1]) == 78
     assert lines[2] == ""
 
 
@@ -905,7 +905,7 @@ def test_chat_root_footer_keeps_short_facts_inline() -> None:
     assert lines[0].startswith("▪︎ run_pmqv7gfc succeeded  ")
     assert lines[0].endswith("3s")
     assert "succeeded ·" not in lines[0]
-    assert rendering.display_len(lines[0]) == 80
+    assert rendering.display_len(lines[0]) == 78
 
 
 def test_chat_root_footer_wraps_every_facts_line_at_the_step_text_indent() -> None:
@@ -1544,7 +1544,7 @@ def test_chat_prompt_keeps_its_run_control_accent() -> None:
     assert isinstance(placeholder, ConditionalProcessor)
     assert isinstance(placeholder.processor, AfterInput)
     assert placeholder.processor.style == "class:input.placeholder"
-    assert placeholder.processor.text == "Ask or describe a task"
+    assert placeholder.processor.text == "Describe your task"
     assert placeholder.filter()
     assert widgets._chat_ui_palette()["input.placeholder"] == "bg:#1f1f1f dim"
 
@@ -2567,7 +2567,7 @@ def test_chat_queue_eight_entry_limit_adapts_to_available_height(
                 assert previews[10 - entry_count] in lines[top + 1]
                 assert "item 10" in lines[top + entry_count]
             panel_bottom = top + app.queue_panel.rows() - 1
-            assert "Ask or describe a task"[: columns - 5] in lines[panel_bottom + 2]
+            assert "Describe your task"[: columns - 5] in lines[panel_bottom + 2]
             assert lines[panel_bottom + 4].startswith(f"{widgets._STATUS_INSET}agic")
 
     asyncio.run(exercise())
@@ -2684,7 +2684,7 @@ def test_chat_delayed_cursor_reports_do_not_scroll_unused_terminal_rows(
                     screen = _render_chat_layout(app)
                     lines = _screen_lines(screen, output.columns)
                     assert output.scrolled_rows == 0
-                    assert any("Ask or describe" in line for line in lines)
+                    assert any("Describe your task" in line for line in lines)
 
                 if current_request is None:
                     renderer.erase()
@@ -3207,6 +3207,12 @@ def test_chat_slash_table_uses_neutral_headers_and_one_line_rows() -> None:
     assert any(line.rstrip().endswith(" *") or " *  " in line for line in table_lines)
     assert all(get_cwidth(line) <= 42 for line in table_lines)
     assert model_header.style is None or model_header.style.color is None
+
+
+def test_chat_header_leaves_two_empty_rows_before_initial_input_or_control() -> None:
+    header = blocks.HeaderBlock(executor_metadata=FakeClient().executor_metadata)
+    output = rendering.renderables_output([header.render()], width=120)
+    assert len(output) - len(output.rstrip("\n")) == 3
 
 
 def test_chat_header_uses_wide_runtime_layout() -> None:
@@ -5608,7 +5614,7 @@ def test_chat_initial_input_and_first_control_share_the_live_origin(
                 lines = _screen_lines(submitted, output.columns)
                 assert "hello" in lines[1]
                 assert any("Working" in line for line in lines)
-                assert "Ask or describe" in "\n".join(lines)
+                assert "Describe your task" in "\n".join(lines)
             await app.app.cancel_and_wait_for_background_tasks()
 
     asyncio.run(exercise())

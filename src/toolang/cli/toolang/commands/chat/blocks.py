@@ -664,7 +664,7 @@ class HeaderBlock:
     executor_metadata: ChatExecutorMetadata
 
     def render(self) -> RenderableType:
-        return Group(Text(), self, Text("\n"))
+        return Group(Text(), self, Text("\n\n"))
 
     def __rich_console__(
         self,

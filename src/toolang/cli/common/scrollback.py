@@ -128,6 +128,17 @@ class ScrollbackApplication(Application[None]):
 class ScrollbackRenderer(Renderer):
     """Keep cursor offsets and height reports tied to the current live origin."""
 
+    def clear(self) -> None:
+        """Preserve visible history and redraw the live area at the screen top."""
+        self.erase()
+        output = self.output
+        # Scroll the cleared live origin into history as one separator row.
+        output.write_raw("\r\n" * output.get_size().rows)
+        output.erase_screen()
+        output.cursor_goto(0, 0)
+        output.flush()
+        self.request_absolute_cursor_position()
+
     def reset(self, _scroll: bool = False, leave_alternate_screen: bool = True) -> None:
         super().reset(_scroll=_scroll, leave_alternate_screen=leave_alternate_screen)
         if not hasattr(self, "_cpr_requests"):

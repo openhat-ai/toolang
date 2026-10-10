@@ -378,7 +378,12 @@ def test_script_and_chat_share_aligned_execution_dividers(width: int) -> None:
     assert compact == f"Run{runnable}2.0s1runsucceededrun_childexec→flow:test1/10"
     if width == 72:
         assert [line[:2] for line in lines] == ["┌ ", "└ ", "- ", "──"]
-        assert all(display_width(line) == width for line in lines)
+        assert [display_width(line) for line in lines] == [
+            width,
+            width - 2,
+            width,
+            width,
+        ]
         assert lines[1].endswith("succeeded run_child")
 
 
@@ -737,7 +742,7 @@ def test_dynamic_run_dividers_align_and_preserve_complete_identity_when_narrow()
     assert wide_lines[0].startswith("┌ Run agic:summarize ───")
     assert wide_lines[1].startswith("└ 2.0s · 1 run · 1 model call ───")
     assert wide_lines[1].endswith("succeeded run_abc123")
-    assert all(display_width(line) == 72 for line in wide_lines)
+    assert [display_width(line) for line in wide_lines] == [72, 70]
 
     narrow = StringIO()
     ProgressConsole(narrow, width=32).apply(
@@ -1234,5 +1239,5 @@ def test_root_run_footer_grammar_is_unchanged() -> None:
     )
 
     assert stream.getvalue() == (
-        "▪︎ run_root123 succeeded     8.2s · 4 runs · 6 model calls · 2 tool calls\n"
+        "▪︎ run_root123 succeeded   8.2s · 4 runs · 6 model calls · 2 tool calls\n"
     )

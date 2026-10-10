@@ -64,13 +64,13 @@ status. Blank rows between entries and Input are intentional.
   ↳ First request
   ↳ Second request
 
-  Ask or describe a task
+  Describe your task
 ```
 
 ```text
   Working for 1m3s
                          2 queued          space to expand
-  Ask or describe a task
+  Describe your task
 ```
 
 When no queue exists, preserve current run-status/Input spacing. When no run

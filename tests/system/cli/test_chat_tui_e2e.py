@@ -80,7 +80,7 @@ runpy.run_module('tests.support.chat_tui_e2e', run_name='__main__')
                     lines = pane.capture_pane(escape_sequences=True) or []
                     if (
                         sum(bool(accent.match(line)) for line in lines) == 3
-                        and sum("Ask or describe" in line for line in lines) == 1
+                        and sum("Describe your task" in line for line in lines) == 1
                     ):
                         break
                 time.sleep(0.02)
@@ -102,7 +102,7 @@ def test_chat_tui_runs_one_local_exchange_in_a_pseudo_terminal(
             "workspaces",
             "lab",
             "embedded",
-            "Ask or describe a task",
+            "Describe your task",
             "agic:chat",
             "scripted",
         )
@@ -141,7 +141,7 @@ def test_chat_tui_runs_one_remote_exchange_in_a_pseudo_terminal(
             "runtime",
             "workspaces",
             "lab",
-            "Ask or describe a task",
+            "Describe your task",
             "agic:chat",
             "scripted",
         )
@@ -334,7 +334,7 @@ def test_chat_tui_keeps_multiple_steers_visible_until_their_step_finishes(
         "tests.system.cli.test_chat_tui_e2e", tmp_path, rows=12, columns=80
     )
     try:
-        session.wait_for("runtime", "Ask or describe a task")
+        session.wait_for("runtime", "Describe your task")
         session.send(b"start run\r")
         session.wait_for("Thinking")
         session.send(b"queued steer\r")
@@ -496,7 +496,7 @@ def test_chat_queue_removal_preserves_input_position_in_terminal(
             *,
             started: bool = False,
             completed: int = -1,
-            draft: str = "Ask or describe a task",
+            draft: str = "Describe your task",
         ) -> int:
             deadline = time.monotonic() + 10
             lines: list[str] = []
@@ -557,7 +557,7 @@ def test_chat_queue_removal_preserves_input_position_in_terminal(
                 draft = (
                     f"queued request {3 - remaining}"
                     if action == "edit"
-                    else "Ask or describe a task"
+                    else "Describe your task"
                 )
                 assert wait_for_layout(remaining, draft=draft) == previous_row
                 assert (
@@ -635,7 +635,7 @@ runpy.run_module('tests.support.chat_tui_e2e', run_name='__main__')
                     continue
                 lines = pane.capture_pane() or []
                 input_rows = [
-                    i for i, line in enumerate(lines) if "Ask or describe" in line
+                    i for i, line in enumerate(lines) if "Describe your task" in line
                 ]
                 queue_rows = [i for i, line in enumerate(lines) if "1 queued" in line]
                 session_rows = [
@@ -657,7 +657,7 @@ runpy.run_module('tests.support.chat_tui_e2e', run_name='__main__')
                         header_bottom = next(
                             i for i, line in enumerate(lines) if line.startswith("╰")
                         )
-                        if surface == header_bottom + 2:
+                        if surface == header_bottom + 3:
                             return lines
                         time.sleep(0.02)
                         continue
@@ -683,7 +683,7 @@ runpy.run_module('tests.support.chat_tui_e2e', run_name='__main__')
                 lines = pane.capture_pane() or []
                 if (
                     len(lines) >= 4
-                    and "Ask or describe" in lines[1]
+                    and "Describe your task" in lines[1]
                     and "agic:chat" in lines[3]
                     and not any("Working" in line for line in lines)
                 ):
@@ -695,7 +695,7 @@ runpy.run_module('tests.support.chat_tui_e2e', run_name='__main__')
 
         initial = wait_for_layout(queued=False, running=False, startup=True)
         initial_input_row = next(
-            i for i, line in enumerate(initial) if "Ask or describe" in line
+            i for i, line in enumerate(initial) if "Describe your task" in line
         )
         if clear_before_run:
             clear_and_wait_for_top_input()

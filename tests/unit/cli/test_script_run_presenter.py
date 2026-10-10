@@ -170,7 +170,7 @@ def test_non_tty_appends_only_finalized_model_progress() -> None:
     assert footer.startswith("▪︎ run_one succeeded  ")
     assert footer.endswith("2s · 1 model · ↑3.4k ↓86 ≈$0.01")
     assert "succeeded ·" not in footer
-    assert display_width(footer) == 120
+    assert display_width(footer) == 118
     assert "┌" not in output
     assert "└" not in output
     assert "2s · 1 model · ↑3.4k ↓86 ≈$0.01" in output
@@ -199,7 +199,7 @@ def test_run_footer_right_aligns_long_facts_and_indents_narrow_facts() -> None:
     assert wide_lines[0].startswith("▪︎ run_rm5pxy5e succeeded  ")
     assert wide_lines[0].endswith(facts[-1])
     assert "succeeded ·" not in wide_lines[0]
-    assert display_width(wide_lines[0]) == 120
+    assert display_width(wide_lines[0]) == 118
 
     narrow_stream = StringIO()
     ProgressConsole(narrow_stream, width=80).write_renderable(
@@ -570,9 +570,12 @@ def test_non_tty_finalized_progress_wraps_without_truncation() -> None:
     assert " ".join(line.strip().removeprefix("• ") for line in lines) == content
 
 
-def test_step_footer_aligns_facts_and_path_to_the_progress_width() -> None:
+@pytest.mark.parametrize(("width", "max_width"), [(40, 120), (120, 40)])
+def test_step_footer_aligns_facts_and_path_inside_the_progress_width(
+    width, max_width
+) -> None:
     stream = StringIO()
-    console = ProgressConsole(stream, width=40)
+    console = ProgressConsole(stream, width=width, max_width=max_width)
 
     console.apply(
         ProgressUpdate(
@@ -593,7 +596,7 @@ def test_step_footer_aligns_facts_and_path_to_the_progress_width() -> None:
     line = stream.getvalue().rstrip("\n")
     assert line.startswith("  完成 · 6 runs  ")
     assert line.endswith("run_root.2")
-    assert display_width(line) == 40
+    assert display_width(line) == 38
 
 
 def test_narrow_step_footer_wraps_facts_then_right_aligns_the_complete_path() -> None:
@@ -618,11 +621,11 @@ def test_narrow_step_footer_wraps_facts_then_right_aligns_the_complete_path() ->
     )
 
     lines = stream.getvalue().splitlines()
-    path_lines = lines[2:]
-    assert lines[:2] == ["  2.0s · 6 runs ·", "  12 model calls"]
+    path_lines = lines[3:]
+    assert lines[:3] == ["  2.0s · 6 runs", "  · 12 model", "  calls"]
     assert "".join(line.strip() for line in path_lines) == path
-    assert all(display_width(line) <= 18 for line in lines)
-    assert display_width(path_lines[-1]) == 18
+    assert all(display_width(line) <= 16 for line in lines)
+    assert display_width(path_lines[-1]) == 16
 
 
 def test_non_tty_prints_only_incrementally_committed_markdown() -> None:

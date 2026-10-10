@@ -472,9 +472,9 @@ A Flow Step that owns child execution may append one dim footer:
 ```
 
 Facts retain their two-cell indentation at the left, and the complete canonical
-StepPath is right-aligned to the available progress width. At least two cells
-separate the fields. When they do not fit together, facts wrap under the same
-indent and the untruncated StepPath follows on a right-aligned continuation
+StepPath is right-aligned two cells inside the available progress width. At
+least two cells separate the fields. When they do not fit together, facts wrap
+under the same indent and the untruncated StepPath follows on a right-aligned continuation
 line. Undefined facts are omitted, and a StepPath is not displayed by itself.
 Duration, execution counts, and usage are separate facts. Tokens and cost form
 one usage group, separated by a space. Counts form one
@@ -630,10 +630,10 @@ appending a separate result line:
 ```
 
 The U+220E END OF PROOF character marks the complete root Run; square brackets
-do not frame the footer. The Run caption stays at the left while facts align to
-the available width's right edge, separated by at least two spaces and no
-centered dot before the first fact. When both fields do not fit, the caption is
-followed by facts wrapped on two-cell-indented continuation lines.
+do not frame the footer. The Run caption stays at the left while facts end two
+cells before the available width's right edge. At least two spaces separate the
+fields, with no centered dot before the first fact. When both fields do not fit,
+the caption is followed by facts wrapped on two-cell-indented continuation lines.
 
 The marker, Run identity, operation, and status use normal intensity. A
 successful caption uses the terminal's default color; failed and canceled
@@ -753,7 +753,7 @@ background-cell treatment with their own accent, and the prompt uses the start
 accent. Control bars and the input box share Input background. Control-bar
 messages use the terminal's default foreground and explicitly clear dim styling
 in both stable and live output. An empty prompt shows the muted
-placeholder `Ask or describe a task`; the
+placeholder `Describe your task`; the
 placeholder disappears as soon as the buffer contains text and is never part of
 the submitted message. Root, Steer, and quick-command control bars use the same
 output width as execution and command output: the lesser of the available

@@ -164,7 +164,7 @@ def test_talk_restores_saved_drafts_and_input_history(
     async def inspect_ui(ui):
         restored.append(ui.prompt.buffer.text)
         assert ui.prompt.history.get_strings() == ["previous message"]
-        assert ui.prompt.placeholder == "write a message"
+        assert ui.prompt.placeholder == "Type a message"
         ui.prompt.replace_input("continued message")
         assert (state / "draft.txt").read_text() == "continued message"
 
