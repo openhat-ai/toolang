@@ -29,6 +29,8 @@ def test_header_height_and_separator_are_stable_across_updates(width):
     feed(state, snapshot)
     initial = render(state, width)
     heading = next(i for i, line in enumerate(initial) if line.startswith("AGENT"))
+    assert heading == 6
+    assert not initial[1].strip()
     assert not initial[heading - 1].strip()
     state.query = replace(state.query, text="review", active=True, since="1d")
     state.recent_label = "1w"
@@ -41,25 +43,95 @@ def test_header_height_and_separator_are_stable_across_updates(width):
     feed(state, snapshot)
     changed = render(state, width)
     assert state.snapshots[snapshot.agent].stats.model == 100000
-    assert "100000" in "\n".join(changed[:heading])
+    assert "100000" in "\n".join(render(state)[:heading])
     assert changed[heading].startswith("AGENT")
     assert not changed[heading - 1].strip()
 
 
 @pytest.mark.parametrize("width", [40, 80, 180])
-def test_header_reflow_aligns_values_within_each_metric_column(width):
-    from toolang.cli.common.activity_dashboard import header
+def test_header_keeps_two_compact_aligned_stat_rows_at_every_width(width):
+    from toolang.cli.common.activity_dashboard import clip, header
 
     state = Activity(None)
     feed(state, page())
-    columns = {}
-    for line in header(state, width):
-        for metric in re.finditer(
-            r"(Threads|Runs|Models|Tools|In|Cached|Out|Spend):\s+(\S+)", line.plain
-        ):
-            columns.setdefault(metric.start(), set()).add(metric.start(2))
-    assert len(columns) == (4 if width == 180 else 2)
-    assert all(len(starts) == 1 for starts in columns.values())
+    wide = header(state, 180)
+    narrow = header(state, width)
+    assert len(wide) == len(narrow) == 6
+    assert narrow[1].plain == narrow[5].plain == ""
+    assert narrow[4].plain.startswith("Period: session  Recent: 30m")
+    starts = []
+    for index in (2, 3):
+        assert narrow[index].plain == clip(wide[index], width).plain
+        assert wide[index].cell_len < 80
+        metrics = list(re.finditer(r"\w+:\s+(\S+)", wide[index].plain))
+        assert len(metrics) == 4
+        starts.append([(metric.start(), metric.start(1)) for metric in metrics])
+    assert starts[0] == starts[1]
+
+
+def test_single_agent_uptime_uses_session_start_and_ticks_without_new_events(
+    monkeypatch,
+):
+    from datetime import datetime
+    from types import SimpleNamespace
+
+    from toolang.cli.common import activity_dashboard
+
+    now = [1000]
+    monkeypatch.setattr(
+        activity_dashboard,
+        "datetime",
+        SimpleNamespace(now=lambda: datetime.fromtimestamp(now[0])),
+    )
+    state = Activity("agent:alice")
+    snapshot = page()
+    snapshot.session_start = 657
+    snapshot.observed = 900
+    snapshot.stats.time = 9999
+    feed(state, snapshot)
+    title = activity_dashboard.header(state, 120)[0]
+    assert title.plain.startswith("Agent uptime 5m43s")
+    console = Console()
+    assert not title.get_style_at_offset(console, 0).bold
+    assert not title.get_style_at_offset(console, 119).bold
+    now[0] += 1
+    state.key(Keys.F8)
+    assert activity_dashboard.header(state, 120)[0].plain.startswith(
+        "Agent uptime 5m44s"
+    )
+
+
+@pytest.mark.parametrize(
+    "status", ["offline", "unknown", "stale", "reconnecting", "no_session"]
+)
+def test_single_agent_does_not_invent_uptime(status):
+    from toolang.cli.common.activity_dashboard import header
+
+    state = Activity("agent:alice")
+    snapshot = page()
+    snapshot.session_start = 657
+    if status in {"offline", "unknown"}:
+        snapshot.presence = status
+    snapshot.stale = status == "stale"
+    if status == "no_session":
+        snapshot.session_start = None
+    feed(state, snapshot)
+    state.reconnecting = status == "reconnecting"
+    assert header(state, 120)[0].plain.startswith("Agent uptime -")
+
+
+def test_team_title_contains_presence_without_accumulated_time():
+    from toolang.cli.common.activity_dashboard import header
+
+    state = Activity(None)
+    snapshot = page()
+    snapshot.stats.time = 9999
+    feed(state, snapshot)
+    title = header(state, 120)[0]
+    assert title.plain.rstrip()[:-8].rstrip() == "Team 1/1 online"
+    console = Console()
+    assert not title.get_style_at_offset(console, 0).bold
+    assert not title.get_style_at_offset(console, 119).bold
 
 
 @pytest.mark.parametrize("agent", [None, "agent:alice"])
@@ -108,10 +180,10 @@ def test_status_bar_contains_only_function_key_hints_and_no_incomplete():
     for hint in (
         "F1Help",
         "F4Filter",
-        "F5View",
+        "F5Threads",
         "F6Sort",
-        "F7Activity",
-        "F8Stats",
+        "F7Recent",
+        "F8Period",
         "F10Quit",
     ):
         assert hint in bar.plain
@@ -131,14 +203,14 @@ def test_narrow_status_bar_keeps_complete_key_cells_and_quit(width):
     state = Activity(None)
     feed(state, page())
     bar = status_bar(state, width).plain
-    assert "F1Help" in bar and "F5View" in bar and "F10Quit" in bar
+    assert "F1Help" in bar and "F5Threads" in bar and "F10Quit" in bar
     assert set(bar.split()) <= {
         "F1Help",
         "F4Filter",
-        "F5View",
+        "F5Threads",
         "F6Sort",
-        "F7Activity",
-        "F8Stats",
+        "F7Recent",
+        "F8Period",
         "F10Quit",
     }
 
@@ -159,6 +231,7 @@ def test_long_filter_keeps_input_tail_and_cursor_visible(text):
 def test_f5_cycles_all_views_and_restores_tree_selection_without_resubscribing(
     other_thread,
 ):
+    from toolang.cli.common.activity_dashboard import status_bar
     from tests.unit.cli.test_activity_view import node
 
     state = Activity(None)
@@ -172,9 +245,15 @@ def test_f5_cycles_all_views_and_restores_tree_selection_without_resubscribing(
         snapshot.roots.append(root)
     feed(state, snapshot)
     query = state.query
-    for view, tree in (("thread", False), ("execution", False), ("execution", True)):
+    for view, tree, label in (
+        ("thread", False, "Threads"),
+        ("execution", False, "Runs"),
+        ("execution", True, "Tree"),
+    ):
+        assert f"F5{label}" in status_bar(state, 180).plain
         state.key(Keys.F5)
         assert (state.view, state.tree) == (view, tree)
+    assert "F5Agents" in status_bar(state, 180).plain
     state.selected = ("agent:alice", "run_child.2")
     for view in ("agent", "thread", "execution", "execution"):
         state.key(Keys.F5)
@@ -182,6 +261,20 @@ def test_f5_cycles_all_views_and_restores_tree_selection_without_resubscribing(
     assert state.tree and state.selected == ("agent:alice", "run_child.2")
     assert state.query == query and not state.dirty
     assert state.key(Keys.F10)
+
+
+def test_returning_to_tree_keeps_owning_run_when_selected_step_finished():
+    state = Activity(None, view="execution", tree=True, sort="time")
+    snapshot = page()
+    snapshot.roots[1].stats.time = 100
+    feed(state, snapshot)
+    state.selected = (snapshot.agent, "run_child.2")
+    state.key("t")
+    snapshot.paths = []
+    snapshot.roots[0].status = "succeeded"
+    feed(state, snapshot)
+    state.key("e")
+    assert state.selected == (snapshot.agent, "run_root")
 
 
 @pytest.mark.parametrize("width", [40, 80])
@@ -205,7 +298,11 @@ def test_narrow_table_keeps_columns_and_clips_without_horizontal_scrolling(width
 
 @pytest.mark.parametrize(
     "agent, title",
-    [(None, "Team"), ("agent:alice", "Agent alice"), ("agent:team", "Agent team")],
+    [
+        (None, "Team 1/1 online"),
+        ("agent:alice", "Agent uptime -"),
+        ("agent:team", "Agent uptime -"),
+    ],
 )
 def test_full_screen_identity_clock_settings_and_single_agent_row(agent, title):
     state = Activity(agent, view="agent")
@@ -215,7 +312,9 @@ def test_full_screen_identity_clock_settings_and_single_agent_row(agent, title):
     lines = render(state)
     assert len(lines) == 24 and lines[0].startswith(title + "  ")
     assert len(lines[0].rstrip()[-8:].split(":")) == 3
-    assert "Stats: session  Activity: 30m" in "\n".join(lines[:4])
+    assert lines[4].startswith("Period: session  Recent: 30m")
+    assert lines[6].startswith("AGENT")
+    assert lines[7].startswith(snapshot.agent.removeprefix("agent:"))
     assert "F10Quit" in lines[-1]
     assert len(state.rows()) == 1
     assert "Refresh" not in "\n".join(lines)
@@ -253,7 +352,7 @@ def test_window_change_hides_old_values_until_matching_checkpoint():
     feed(state, page())
     state.key(Keys.F8)
     before = "\n".join(render(state))
-    assert "Stats: 1h" in before and "Updating" in before and "$1.28" not in before
+    assert "Period: 1h" in before and "Updating" in before and "$1.28" not in before
     state.attach()
     replacement = page()
     replacement.since = "1h"
@@ -371,7 +470,7 @@ def test_header_keeps_stale_counts_unknown(stale, reconnecting):
     feed(state, snapshot)
     state.reconnecting = reconnecting
     lines = render(state)
-    assert re.findall(r"(?:Runs|Threads):\s+(\S+)", lines[1]) == ["-", "-"]
+    assert re.findall(r"(?:Runs|Threads):\s+(\S+)", lines[2]) == ["-", "-"]
 
 
 def test_three_line_terminal_keeps_identity_headings_and_status():

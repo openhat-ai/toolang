@@ -57,19 +57,25 @@ def header(state: Activity, width: int) -> list[Text]:
         if not updating
         else ActivityMetrics(model=None, tool=None, cost=None, time=None)
     )
-    scope = f"Agent {state.agent.removeprefix('agent:')}" if state.agent else "Team"
+    now = datetime.now()
     if state.agent:
-        status = presence(state, snapshots[0]) if snapshots else "unknown"
+        snapshot = state.snapshots.get(state.agent)
+        uptime = (
+            now.timestamp() - snapshot.session_start
+            if snapshot
+            and presence(state, snapshot) == "online"
+            and not snapshot.stale
+            and snapshot.session_start is not None
+            else None
+        )
+        title = Text(f"Agent uptime {elapsed(uptime)}")
     else:
         online = sum(page.presence == "online" for page in snapshots)
         unknown = state.reconnecting or any(
             page.presence == "unknown" for page in snapshots
         )
-        status = f"{'?' if unknown else online}/{len(snapshots)} online"
-    title = Text.assemble((scope, "bold"), f"  {status}  {elapsed(metrics.time)}")
-    lines = [
-        ends(title, Text(datetime.now().strftime("%H:%M:%S"), style="bold"), width)
-    ]
+        title = Text(f"Team {'?' if unknown else online}/{len(snapshots)} online")
+    lines = [ends(title, Text(now.strftime("%H:%M:%S")), width), Text("")]
     complete = (
         state.ready
         and not updating
@@ -96,35 +102,32 @@ def header(state: Activity, width: int) -> list[Text]:
             ("Spend", cost(metrics)),
         ],
     ]
-    # Fix the header geometry for each terminal width. Counts, filters and
-    # window changes must not move the table while the user is navigating it.
-    columns = 4 if width >= 112 else 2 if width >= 40 else 1
-    column_width = max(1, width // columns)
-    for group in groups:
-        for start in range(0, 4, columns):
-            line = Text()
-            for index in range(start, start + columns):
-                label, value = group[index]
-                label_width = max(
-                    len(row[position][0]) + 1
-                    for row in groups
-                    for position in range(index % columns, 4, columns)
-                )
-                item = Text.assemble(
-                    (f"{label}:".ljust(label_width), "cyan"), " ", (value, "bold")
-                )
-                line += clip(item, column_width, pad=True)
-            lines.append(line)
+    # Align compact columns across the two rows; never reflow on narrow screens.
+    label_widths = [max(len(row[i][0]) + 1 for row in groups) for i in range(4)]
+    fields = [
+        [
+            Text.assemble(
+                (f"{label}:".ljust(label_widths[i]), "cyan"), " ", (value, "bold")
+            )
+            for i, (label, value) in enumerate(group)
+        ]
+        for group in groups
+    ]
+    widths = [max(row[i].cell_len for row in fields) for i in range(4)]
+    for row in fields:
+        line = Text("  ").join(
+            clip(item, widths[i], pad=True) for i, item in enumerate(row)
+        )
+        lines.append(clip(line, width))
     settings = Text(
-        f"Stats: {state.query.since}  Activity: {state.recent_label}", style="dim"
-    )
-    filters = Text(
-        f"Filter: {clean(state.query.text) or '-'}  Active: {'on' if state.query.active else 'off'}"
-        if state.query.text or state.query.active
-        else "",
+        f"Period: {state.query.since}  Recent: {state.recent_label}",
         style="dim",
     )
-    lines += [ends(filters, settings, width), Text("")]
+    if state.query.text or state.query.active:
+        settings.append(
+            f"  Filter: {clean(state.query.text) or '-'}  Active: {'on' if state.query.active else 'off'}"
+        )
+    lines += [clip(settings, width), Text("")]
     return lines
 
 
@@ -132,7 +135,8 @@ def table(
     state: Activity, rows: list[Row], width: int, once: bool
 ) -> tuple[Text, list[Text]]:
     numeric = {"MODEL", "TOOL", "IN", "CACHED", "OUT", "SPEND", "TIME+"}
-    labels = ([] if state.agent else ["AGENT"]) + [
+    labels = [
+        "AGENT",
         "S",
         "MODEL",
         "TOOL",
@@ -380,13 +384,22 @@ def status_bar(state: Activity, width: int) -> Text:
         else ""
     )
     keys = Text(style="black on cyan")
+    next_view = (
+        "Threads"
+        if state.view == "agent"
+        else "Runs"
+        if state.view == "thread"
+        else "Agents"
+        if state.tree
+        else "Tree"
+    )
     hints = [
         ("F1", "Help", state.help),
         ("F4", "Filter", False),
-        ("F5", "View", False),
+        ("F5", next_view.ljust(7), False),
         ("F6", "Sort", False),
-        ("F7", "Activity", False),
-        ("F8", "Stats", False),
+        ("F7", "Recent", False),
+        ("F8", "Period", False),
     ]
     for key, label, selected in hints:
         if keys.cell_len + len(key + label) + 1 + len("F10Quit") > width:
@@ -417,10 +430,10 @@ def render(state: Activity, *, width: int, height: int, once: bool) -> Group:
             Text(line)
             for line in (
                 "S: + online  - offline  ? unknown. Run trees contain steps and child runs.",
-                "Stats controls all metrics; Activity controls visibility. CACHED is included in IN.",
+                "Period controls statistics; Recent controls activity visibility. CACHED is included in IN.",
                 "TIME+ accumulates execution, excluding downtime and nested durations.",
-                "F7/F8 cycle windows. Custom: --recent 2h --since 6h or a timezone-aware timestamp.",
-                "F5 cycles Agent / Thread / Run / Tree; a/t/e jump to a level.",
+                "F7 Recent / F8 Period cycle windows. Custom: --recent 2h --since 6h or a timezone-aware timestamp.",
+                "F5 names the next view: Agents / Threads / Runs / Tree; a/t/e jump to a level.",
                 "Up/Down, Ctrl-P/N or mouse wheel select. Left/Right fold.",
                 "Enter toggles Details; Esc closes. PgUp/PgDn page. F10, q or Ctrl-C quit.",
                 "Filter: Enter applies, Esc cancels, Ctrl-A toggles Active, Ctrl-U clears.",

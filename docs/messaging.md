@@ -251,12 +251,14 @@ Details sits above a fixed Status bar. `--refresh SECONDS` defaults to `0.1`;
 keys repaint immediately. Source updates carry committed activity and elapsed
 time independently for each agent. `--once` prints one snapshot.
 
-Stats defaults to the current/latest executor session. `--since DURATION` is a
+Period defaults to the current/latest executor session. `--since DURATION` is a
 rolling window; a timezone-aware timestamp selects a fixed start, and `all`
 includes available history. MODEL, TOOL, IN, CACHED, OUT, SPEND and TIME+ share
-that range; CACHED is cache-read input already included in IN. Activity
+that range; CACHED is cache-read input already included in IN. Recent
 (`--recent DURATION|all`, default `30m`) independently controls visibility.
-F5 cycles Agent/Thread/Run/Tree; F7/F8 cycle Activity/Stats. The status bar
+F5 displays the next view's name (Agents/Threads/Runs/Tree); F7 Recent and F8 Period
+cycle the corresponding Header ranges. Both modes show the AGENT column;
+the agent Header shows live session uptime independently of TIME+. The status bar
 shows only function keys; F10 exits, and existing letter/Enter shortcuts remain
 available through F1 Help. `--sort spend` accepts `cost` as an alias.
 Enter opens full IDs, exact usage and Markdown results; Ctrl-P/N selects rows,

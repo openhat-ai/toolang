@@ -9,8 +9,8 @@ View, statistics and accounting contract for the
 | --- | --- |
 | Level | Agent, Thread or Run; determines row objects and their statistics. |
 | Layout | List or Tree at Run level. Tree adds steps and child runs. |
-| Stats | Common consumption range; default `session`, configured by `--since`. |
-| Activity | Independent rolling eligibility range; default `30m`, configured by `--recent`. |
+| Period | Common statistics range; default `session`, configured by `--since`. |
+| Recent | Independent rolling activity range; default `30m`, configured by `--recent`. |
 | Active | Unfinished execution: pending/running or last known unfinished work with stale observation. |
 | Running path | Confirmed running execution and its required ancestors. |
 | RUN | Owning top-level run ID, repeated down its tree. |
@@ -26,7 +26,7 @@ Agent/Thread are ownership, never tree nodes. Existing execution states remain
 
 Default to Agent for `too top`, Thread for `too alice top`; Run starts in List.
 Columns share the prefix `AGENT S MODEL TOOL IN CACHED OUT SPEND TIME+`.
-Single-agent mode omits AGENT and retains a Table row at Agent level.
+Single-agent mode retains AGENT and a Table row at Agent level.
 
 | Level / layout | Remaining columns | Row and ACTIVITY |
 | --- | --- | --- |
@@ -83,9 +83,9 @@ display names: `agent::agic:name` becomes `agic:name`, without changing identity
 or inspect targets. Preserve existing model previews and explicit tool summaries;
 no additional model calls. Color reinforces text rather than replacing it.
 
-## Stats and Activity
+## Statistics and activity ranges
 
-All consumption metrics share one Stats range and the row's ownership:
+All consumption metrics share one Period and the row's ownership:
 
 - MODEL/TOOL/IN/CACHED/OUT/SPEND include directly and transitively owned calls.
 - TIME+ is a run/step's own duration; Thread/Agent sums top-level run durations.
@@ -94,7 +94,7 @@ All consumption metrics share one Stats range and the row's ownership:
 - Header counts each agent once, independent of visible rows. Details exposes
   selected-range `Stats` and lifetime `Total`, including at Agent level.
 
-| Stats value | Boundary at observation time T |
+| Period value | Boundary at observation time T |
 | --- | --- |
 | `session` | Owning executor's current session start through T; when stopped, its latest recorded session. |
 | Duration, e.g. `1h`, `1d`, `1w` | Rolling interval from T minus duration through T; a day is 24 hours. |
@@ -105,11 +105,11 @@ Durations stay relative in query identity and are evaluated by the source at eac
 observation. Do not resolve them once at CLI startup or create a new subscription/
 cache entry per tick. Existing `--since DURATION` changes from fixed-start to
 rolling; use an explicit timestamp to retain fixed-start behavior. Missing session
-metadata remains unknown. TIME+ labels every range; Header's Stats setting
+metadata remains unknown. TIME+ labels every range; Header's Period setting
 explains the common range without per-column markers.
 
 Calls count at step begin, tokens/spend settle at step end, and execution duration
-is clipped to Stats. A crossing call can contribute tokens/spend without a new-call
+is clipped to Period. A crossing call can contribute tokens/spend without a new-call
 count. Retries retain consumption and exclude waiting between attempts; rewind
 never refunds it and forked references never duplicate it. CACHED is cache-read
 input already included in IN; OUT is normalized output. SPEND shows an amount
@@ -124,15 +124,15 @@ Shared projections account for clock/window changes as well as revisions.
 
 ```text
 At 11:10: a run lasted 10:50-11:10, spending $0.50; $0.20 settled at 11:05.
-Stats since 11:00: Spend $0.20, Time+ 10m.
-Stats 1h at 12:06: Spend $0.00, Time+ 4m (the 11:06-11:10 overlap).
+Period since 11:00: Spend $0.20, Time+ 10m.
+Period 1h at 12:06: Spend $0.00, Time+ 4m (the 11:06-11:10 overlap).
 ```
 
-Activity retains active runs plus runs/threads changed within its rolling range;
+Recent retains active runs plus runs/threads changed within its rolling range;
 keep recently changed empty threads at Thread level. Descendant execution, retry
 and thread create/fork/rewind advance activity; heartbeat/render/replay do not.
-Use persisted timestamps on reopen. Activity/filters/folds never alter a retained
-object's Stats; Stats never alters eligibility.
+Use persisted timestamps on reopen. Recent/filters/folds never alter a retained
+object's statistics; Period never alters eligibility.
 
 Readable sources recompute windows from durable data. Unavailable sources retain
 explicitly stale coverage; never claim cached totals as a fresh rolling calculation
@@ -162,10 +162,10 @@ ACTIVITY, SPEND or TIME+ heading; ACTIVITY includes its range: `ACTIVITY(30m)↓
 | --- | --- |
 | a / t / e | Agent / Thread / Run; preserve `--view agent\|thread\|execution` and the existing e shortcut. |
 | F4 | Edit text/Active filters; retain Ctrl-A toggling Active in the editor. |
-| F5 | Cycle Agent / Thread / Run / Tree; preserve `--view execution --tree`. |
+| F5 | Show the next view's name: Agents / Threads / Runs / Tree; preserve `--view execution --tree`. |
 | F6 | Cycle activity / spend / time. |
-| F7 | Cycle Activity: `5m / 30m / 1h / 1d / 1w / all`. |
-| F8 | Cycle Stats: `session / 1h / 1d / 1w / all`. |
+| F7 Recent | Cycle activity visibility: `5m / 30m / 1h / 1d / 1w / all`. |
+| F8 Period | Cycle statistics: `session / 1h / 1d / 1w / all`. |
 | Left / Right | Collapse/expand paths; Left on a leaf/folded row selects its visible parent. |
 | Up / Down, Ctrl-P / Ctrl-N | Select previous/next row; Details follows. |
 | PgUp / PgDn | Page Details when open, otherwise Table. |
@@ -223,7 +223,7 @@ as part of presentation work.
 | --- | --- |
 | Sequential/parallel flow and async launch | Correct IDs, ownership and row metrics; only running paths/required ancestors expand. |
 | Levels, empty agents, offline/unknown presence | Correct columns/counts; offline ACTIVITY is `-`; no false idle/running or fabricated metrics. |
-| Fixed/session/all/rolling Stats and independent Activity | Exact boundaries and idle expiry; visibility never changes totals; session resets only on executor restart. |
+| Fixed/session/all/rolling Period and independent Recent | Exact boundaries and idle expiry; visibility never changes totals; session resets only on executor restart. |
 | Crossing calls, overlapping runs, retry/rewind/fork | Correct Stats/Total without nested, duplicate or lost consumption. |
 | Filters, sorting, folds and completed matches | Stable selection, inspectable historical matches and preserved parentage. |
 | Rapid F7/F8 changes, delayed responses and reconnect | Immediate settings, no obsolete replacements, consistent Header/Table data. |
