@@ -6,6 +6,10 @@ from fastapi import APIRouter, Depends, Query
 from .messaging import MessagingClient
 from .schemas import (
     Conversation,
+    ConversationSummary,
+    Targets,
+    GlobalStatistics,
+    ConversationStatistics,
     CreateConversationRequest,
     HistoryEntry,
     ResolveRequest,
@@ -23,7 +27,7 @@ def messaging_router(
     router = APIRouter(prefix=prefix, tags=["messaging"])
 
     @router.get("/targets")
-    async def targets(client: Client) -> dict[str, Any]:
+    async def targets(client: Client) -> Targets:
         return await client.targets()
 
     @router.get("/agents")
@@ -34,14 +38,16 @@ def messaging_router(
     async def conversations(
         client: Client,
         include_preview: Annotated[bool, Query()] = False,
-    ) -> list[dict[str, Any]]:
+    ) -> list[ConversationSummary]:
         return await client.contacts(include_preview=include_preview)
 
-    @router.get("/stats")
+    @router.get("/stats", response_model=GlobalStatistics)
     async def statistics(client: Client) -> dict[str, int | str | None]:
         return await client.statistics()
 
-    @router.get("/conversations/{conversation}/stats")
+    @router.get(
+        "/conversations/{conversation}/stats", response_model=ConversationStatistics
+    )
     async def conversation_statistics(
         conversation: str, client: Client
     ) -> dict[str, int | str | None]:

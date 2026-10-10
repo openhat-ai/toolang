@@ -8,6 +8,7 @@ from fastapi.sse import EventSourceResponse, ServerSentEvent
 
 from .errors import BackendUnavailable, LeaseLost, MessagingError, StorageIntegrityError
 from .messaging import MessagingClient
+from .schemas import TeamMember
 from .team_events import TeamEvents
 
 
@@ -16,7 +17,7 @@ def team_router(get_client: Callable) -> APIRouter:
     Client = Annotated[MessagingClient, Depends(get_client)]
 
     @router.get("")
-    async def team(client: Client) -> list[dict]:
+    async def team(client: Client) -> list[TeamMember]:
         return await client.team()
 
     def event_cursor(after: Annotated[str | None, Query()] = None) -> str | None:
@@ -29,7 +30,7 @@ def team_router(get_client: Callable) -> APIRouter:
     async def events(
         client: Client, after: Annotated[str | None, Depends(event_cursor)]
     ) -> AsyncIterator[ServerSentEvent]:
-        feed = TeamEvents(client._backend)
+        feed = TeamEvents(client.backend)
         try:
             async for frame in feed.frames(client, after):
                 yield ServerSentEvent(event=frame.event, id=frame.id, data=frame.data)

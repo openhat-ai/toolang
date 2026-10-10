@@ -13,7 +13,7 @@ from toolang.execution.activity import ActivityQuery, ActivityReader
 from toolang.execution import statistics
 from toolang.execution.store import RunStore
 from toolang.teaming.api import create_app
-from toolang.teaming.activity import ActivityBackend, HubActivity
+from toolang.teaming.activity import HubActivity
 from tests.unit.messaging.test_protocol import client
 from tests.unit.execution.test_activity import root, model, at, clock
 
@@ -79,14 +79,14 @@ def test_http_sources_share_absolute_stats_and_freeze_offline_cache(
                         )
                     ).status_code == 422
                     await alice.unregister()
-                    cached = await HubActivity(human._backend).read(
+                    cached = await HubActivity(human.backend).read(
                         ActivityQuery("all", None)
                     )
                     assert cached[0].stale and cached[0].presence == "offline"
                     assert cached[0].stats.cost == 0.5
                     assert cached[0].observed == federated["observed"]
                     assert not cached[0].paths
-                    unknown = await HubActivity(human._backend).read(
+                    unknown = await HubActivity(human.backend).read(
                         ActivityQuery(at(30), None)
                     )
                     assert not unknown[0].complete
@@ -110,7 +110,7 @@ def test_publication_fences_old_lease_and_does_not_regress_revision(tmp_path):
                 client(server, "agent:alice") as alice,
             ):
                 await alice.register("human:owner")
-                backend = ActivityBackend(human._backend)
+                backend = human.backend.activity
                 await backend.save(alice.actor, alice.token, pages)
                 old = pages[0].model_copy(update={"revision": 0, "observed": clock(5)})
                 await backend.save(alice.actor, alice.token, [old])
@@ -168,10 +168,10 @@ def test_offline_filtered_snapshot_keeps_historical_matches_and_scope_counts(tmp
                 client(server, "agent:alice") as alice,
             ):
                 await alice.register("human:owner")
-                backend = ActivityBackend(human._backend)
+                backend = human.backend.activity
                 await backend.save(alice.actor, alice.token, pages)
                 await alice.unregister()
-                cached = (await HubActivity(human._backend).read(query))[0]
+                cached = (await HubActivity(human.backend).read(query))[0]
                 assert [node.id for node in cached.roots] == ["run_root"]
                 assert cached.roots[0].matches == ["run_root.0"]
                 assert cached.active == 2 and cached.eligible == 2

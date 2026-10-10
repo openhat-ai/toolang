@@ -2,14 +2,15 @@
 
 import asyncio
 import json
+from random import Random
 from uuid import UUID
 
 from fakeredis import FakeAsyncValkey, FakeServer
 import pytest
 from valkey.exceptions import ConnectionError
 
-from toolang.teaming.backend import Backend
-from toolang.teaming.keys import (
+from toolang.teaming.backend.valkey import ValkeyBackend
+from toolang.teaming.backend.valkey.keys import (
     TEAM,
     PRESENCE,
     TEAM_EVENTS,
@@ -38,7 +39,7 @@ CONFIG = BackendConfig("redis://test")
 def client(server, actor, token=None):
     raw = FakeAsyncValkey(server=server, decode_responses=True)
     return MessagingClient(
-        CONFIG, actor=actor, token=token, backend=Backend(CONFIG, client=raw)
+        CONFIG, actor=actor, token=token, backend=ValkeyBackend(CONFIG, client=raw)
     )
 
 
@@ -167,14 +168,21 @@ def test_contacts_survive_membership_loss_while_loading_previews(monkeypatch):
             await alice.register(human.actor)
             leaving = await alice.create_conversation("Leaving")
             remaining = await alice.create_conversation("Remaining")
-            history = alice.history
+            evaluate = alice.backend._eval
+            changed = False
 
-            async def leave_before_history(conversation, **kwargs):
-                if conversation == leaving.id:
-                    await alice.leave_conversation(conversation)
-                return await history(conversation, **kwargs)
+            async def leave_before_read(script, keys, args):
+                nonlocal changed
+                if (
+                    not changed
+                    and '"checked"' in args[0]
+                    and '"action":"contacts"' in args[0]
+                ):
+                    changed = True
+                    await alice.leave_conversation(leaving.id)
+                return await evaluate(script, keys, args)
 
-            monkeypatch.setattr(alice, "history", leave_before_history)
+            monkeypatch.setattr(alice.backend, "_eval", leave_before_read)
             contacts = await alice.contacts(include_preview=True)
             ids = {row["conversation"] for row in contacts}
             assert leaving.id not in ids
@@ -200,7 +208,10 @@ def test_conversation_discovery_propagates_backend_errors(
             async def unavailable(_):
                 raise error("Permission lookup failed")
 
-            monkeypatch.setattr(alice, "conversation", unavailable)
+            if operation == "contacts":
+                monkeypatch.setattr(alice.backend, "contacts", unavailable)
+            else:
+                monkeypatch.setattr(alice, "conversation", unavailable)
             with pytest.raises(error):
                 if operation == "contacts":
                     await alice.contacts()
@@ -260,7 +271,7 @@ def test_presence_deadline_is_authority_and_reconciliation_is_atomic():
             client(server, "agent:alice", "new") as replacement,
         ):
             await alice.register("human:owner", endpoint="http://localhost:7001")
-            backend = human._backend
+            backend = human.backend
             info = await backend.lease_info("agent:alice")
             assert info["lease"]["token"] == "old"
             assert await raw.ttl(PRESENCE) == -1
@@ -313,7 +324,7 @@ def test_events_replay_retention_epoch_and_noop_operations():
         server = FakeServer(server_type="valkey")
         raw = FakeAsyncValkey(server=server, decode_responses=True)
         async with client(server, "human:owner") as human:
-            feed = TeamEvents(human._backend)
+            feed = TeamEvents(human.backend)
             checkpoint = await feed.checkpoint()
             convo = await human.create_conversation("Review")
             rows = await feed.replay(checkpoint)
@@ -394,7 +405,7 @@ def test_uncertain_send_is_not_retried_and_returns_recoverable_id(monkeypatch):
         raw = FakeAsyncValkey(server=server, decode_responses=True)
         async with client(server, "human:owner") as human:
             ref = (await human.create_conversation("Review")).id
-            original = human._backend._client.execute_command
+            original = human.backend._client.execute_command
             writes = []
 
             async def execute(*args, **kwargs):
@@ -404,7 +415,7 @@ def test_uncertain_send_is_not_retried_and_returns_recoverable_id(monkeypatch):
                     raise ConnectionError("reply lost after acceptance")
                 return await original(*args, **kwargs)
 
-            monkeypatch.setattr(human._backend._client, "execute_command", execute)
+            monkeypatch.setattr(human.backend._client, "execute_command", execute)
             with pytest.raises(SendUnconfirmed) as error:
                 await human.send(ref, body="only once")
             assert len(writes) == 1
@@ -422,13 +433,13 @@ def test_legacy_and_partial_datasets_are_never_initialized():
             raw = FakeAsyncValkey(decode_responses=True)
             await raw.execute_command("HSET", key, "old", "record")
             before = await snapshot(raw)
-            backend = Backend(CONFIG, client=raw)
+            backend = ValkeyBackend(CONFIG, client=raw)
             with pytest.raises(StorageIntegrityError):
                 await backend.initialize()
             assert await snapshot(raw) == before
             await backend.close()
         raw = FakeAsyncValkey(decode_responses=True)
-        backend = Backend(CONFIG, client=raw)
+        backend = ValkeyBackend(CONFIG, client=raw)
         await backend.initialize()
         await raw.delete(GC_ALLOCATOR)
         with pytest.raises(StorageIntegrityError):
@@ -443,7 +454,9 @@ def test_driver_never_retries_writes_even_with_url_retry_option():
     from valkey.exceptions import TimeoutError
 
     async def scenario():
-        backend = Backend(BackendConfig("redis://localhost?retry_on_timeout=true"))
+        backend = ValkeyBackend(
+            BackendConfig("redis://localhost?retry_on_timeout=true")
+        )
         connection = backend._client.connection_pool.make_connection()
         writes = []
 
@@ -474,7 +487,7 @@ def test_noncanonical_counters_cannot_partially_commit_first_send(field, value):
             client(server, "agent:alice") as alice,
         ):
             await alice.register(human.actor)
-            raw = human._backend._client
+            raw = human.backend._client
             await raw.hset(STATS, field, value)
             before = await snapshot(raw)
             with pytest.raises(MessagingError) as error:
@@ -504,7 +517,7 @@ def test_corrupt_metadata_cannot_be_renamed_or_sent(field, value):
     async def scenario():
         async with client(FakeServer(server_type="valkey"), "human:owner") as human:
             ref = (await human.create_conversation("Original")).id
-            raw = human._backend._client
+            raw = human.backend._client
             record = json.loads(await raw.execute_command("HGET", CONVOS, ref))
             record[field] = value
             await raw.execute_command("HSET", CONVOS, ref, json.dumps(record))
@@ -530,7 +543,7 @@ def test_first_send_failure_and_forced_dm_collision_leave_no_partial_state(monke
         ):
             await alice.register("human:owner")
             await bob.register("human:owner")
-            raw = human._backend._client
+            raw = human.backend._client
             alice_ref = dm_id(human.actor, alice.actor)
             await raw.set(convo_key(alice_ref, "messages"), "bad stream type")
             before = await snapshot(raw)
@@ -555,7 +568,7 @@ def test_gc_retry_after_lost_response_creates_another_distinct_conversation(
 
     async def scenario():
         async with client(FakeServer(server_type="valkey"), "human:owner") as human:
-            original = human._backend._operation
+            original = human.backend._operation
             accepted = []
 
             async def operation(script, op, extra=None):
@@ -566,7 +579,7 @@ def test_gc_retry_after_lost_response_creates_another_distinct_conversation(
                         raise BackendUnavailable("response lost after creation")
                 return result
 
-            monkeypatch.setattr(human._backend, "_operation", operation)
+            monkeypatch.setattr(human.backend, "_operation", operation)
             with pytest.raises(BackendUnavailable):
                 await human.create_conversation("Retry")
             second = await human.create_conversation("Retry")
@@ -578,21 +591,39 @@ def test_gc_retry_after_lost_response_creates_another_distinct_conversation(
     asyncio.run(scenario())
 
 
-def test_concurrent_initialization_preserves_one_system_gc_after_rename():
+def test_concurrent_initialization_preserves_one_system_gc_after_rename(monkeypatch):
+    # Fix the backoff sequence while exercising actual concurrent transactions.
+    monkeypatch.setattr("random.uniform", Random(0).uniform)
+
     async def scenario():
         server = FakeServer(server_type="valkey")
         clients = [client(server, f"human:h{i}") for i in range(10)]
+
+        def interleave_snapshots(backend):
+            capture = backend._snapshot
+
+            async def snapshot(op):
+                result = await capture(op)
+                # A real connection can yield between validation and commit.
+                # Force that interleaving even when the fake driver does not.
+                await asyncio.sleep(0)
+                return result
+
+            monkeypatch.setattr(backend, "_snapshot", snapshot)
+
+        for human in clients:
+            interleave_snapshots(human.backend)
         try:
             await asyncio.gather(*(human.__aenter__() for human in clients))
             systems = await asyncio.gather(
-                *(human._backend.system_conversation() for human in clients)
+                *(human.backend.system_conversation() for human in clients)
             )
             assert len(set(systems)) == 1
             human = clients[0]
             ref = systems[0]
             await human.rename_conversation(ref, "Renamed system", revision=1)
             await asyncio.gather(*(human.register_human() for human in clients))
-            assert await human._backend.system_conversation() == ref
+            assert await human.backend.system_conversation() == ref
             assert (await human.conversation(ref)).name == "Renamed system"
             assert (await human.statistics())["gc_count"] == 1
         finally:

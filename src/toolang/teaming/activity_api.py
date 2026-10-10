@@ -56,7 +56,7 @@ def activity_router(
     async def result(agent: str, ref: str) -> dict[str, str]:
         if agent not in await reader.agents():
             raise HTTPException(404, "Agent not found")
-        lease = await reader.backend.lease(agent)
+        lease = await reader.backend.activity.lease(agent)
         local = await reader.local_source(agent, lease)
         if local is not None:
             try:
@@ -75,7 +75,7 @@ def activity_router(
                     lease["endpoint"] + "/api/v1/activity/result", params={"ref": ref}
                 )
                 response.raise_for_status()
-                if lease != await reader.backend.lease(agent):
+                if lease != await reader.backend.activity.lease(agent):
                     raise HTTPException(409, "Agent restarted; reopen Details")
                 return {"text": response.json()["text"]}
         except httpx.HTTPStatusError as exc:

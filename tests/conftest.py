@@ -99,7 +99,7 @@ def valkey_lua_subcommands():
 @pytest.fixture
 def fixed_conversation_ids(monkeypatch):
     """Use predictable GC labels in UI/transport fixtures; test the real codec separately."""
-    from toolang.teaming import backend
+    from toolang.teaming.backend.valkey import backend
     from toolang.common.ids import encode_short_id
 
     monkeypatch.setattr(

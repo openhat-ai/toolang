@@ -92,13 +92,13 @@ def test_hub_and_local_share_rolling_offline_history_and_results(tmp_path, monke
             before = store.db_path.stat().st_mtime_ns
             server = FakeServer(server_type="valkey")
             async with client(server, "human:owner") as human:
-                await human._backend.register(
+                await human.backend.register(
                     human.actor,
                     agent="agent:alice",
                     token="lease",
                     endpoint="http://unused",
                 )
-                await human._backend.lease("agent:alice", "lease", 0)
+                await human.backend.release_lease("agent:alice", "lease")
                 app = create_app(
                     human,
                     local_activity=lambda agent: (

@@ -26,7 +26,6 @@ from toolang.teaming.errors import (
     EventProtocolError,
     SendUnconfirmed,
 )
-from toolang.teaming.event_backend import EventBackend
 from toolang.teaming.events import HubScope
 from toolang.teaming.exporter import EventExporter
 from toolang.teaming.records import HubRecord, MAX_BYTES
@@ -91,7 +90,7 @@ def test_agent_tools_without_hub_never_construct_backend(tmp_path):
         msg = MsgToolset({"root": str(tmp_path)})
         context = ToolContext(tmp_path / "alice", tmp_path / "room")
         with patch(
-            "toolang.teaming.backend.Backend.__init__",
+            "toolang.teaming.backend.valkey.ValkeyBackend.__init__",
             side_effect=AssertionError("agent opened backend"),
         ):
             with pytest.raises(BackendUnavailable, match="hub start"):
@@ -327,7 +326,7 @@ def test_event_publication_retries_exact_http_operation_and_recovers(tmp_path):
                 events = [op for op in commits if op["kind"] == "event"]
                 assert events[0] == events[1]
                 assert all("old_key" not in op for op in commits)
-                service = EventBackend(human._backend)
+                service = human.backend.events
                 before = await service.capture(alice.actor)
                 for extra in (
                     {"source": "bad"},

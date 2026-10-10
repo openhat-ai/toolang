@@ -23,11 +23,10 @@ from toolang.base.types.message import TextPart
 from toolang.execution.schemas import StreamFrame
 from toolang.execution.activity import ActivityQuery, ActivityReader
 from toolang.execution.types import ThreadPrefix
-from toolang.teaming.backend import Backend
+from toolang.teaming.backend.valkey import ValkeyBackend
 from toolang.teaming.agent_client import AgentClient, AgentEventClient
 from toolang.teaming.client import HubClient
 from toolang.teaming.errors import BackendUnavailable
-from toolang.teaming.event_backend import EventBackend
 from toolang.teaming.errors import EventRecoveryRequired
 from toolang.teaming.events import HubScope
 from toolang.teaming.exporter import EventExporter
@@ -76,7 +75,9 @@ def test_recovery_keeps_active_snapshot_and_live_suffix_after_slow_history(
         connection = running_hub.connection()
         async with (
             harness,
-            AgentClient(tmp_path, actor="agent:alice", token="recovery") as publisher,
+            AgentClient(
+                tmp_path, actor="agent:alice", token="recovery", managed=False
+            ) as publisher,
             httpx.AsyncClient(
                 base_url=connection.endpoint,
                 headers={"X-Toolang-Backend": connection.identity},
@@ -167,7 +168,11 @@ def test_agents_reconnect_through_hub_without_direct_backend_access(valkey, tmp_
 
     def cli(*args):
         result = subprocess.run(
-            [*command, *args], capture_output=True, text=True, timeout=40
+            [*command, *args],
+            capture_output=True,
+            text=True,
+            timeout=40,
+            env={**os.environ, "COLUMNS": "180"},
         )
         assert result.returncode == 0, result.stderr
         return result
@@ -186,8 +191,8 @@ def test_agents_reconnect_through_hub_without_direct_backend_access(valkey, tmp_
         (home / "agent.too").write_text("flow example(_: Text):\n  let result = Done\n")
 
     async def scenario():
-        driver = Backend(valkey)
-        service = EventBackend(driver)
+        driver = ValkeyBackend(valkey)
+        service = driver.events
         async with httpx.AsyncClient(timeout=15, trust_env=False) as http:
 
             async def local_run(name):
@@ -240,14 +245,17 @@ def test_agents_reconnect_through_hub_without_direct_backend_access(valkey, tmp_
                 # Redis/Valkey is live, but no Hub exists. Neither agent registers
                 # or publishes directly; both still execute and stream over HTTP.
                 runs = {name: await local_run(name) for name in agents}
-                assert await driver.participants() == {}
+                assert await driver._call("DBSIZE") == 0
                 # All local views work through the resident API without a Hub.
                 for options, labels in [
-                    ((), ("View Thread", "THREAD")),
-                    (("--view", "agent"), ("View Agent", "Agent Stats")),
+                    ((), ("Agent uptime", "alice", "THREAD")),
+                    (
+                        ("--view", "agent"),
+                        ("Agent uptime", "alice", "Models:", "Tools:"),
+                    ),
                     (
                         ("--view", "execution", "--tree", "--since", "all"),
-                        ("Layout Tree", "TIME*", runs["alice"]),
+                        ("RUN", "STEP", "TIME+", runs["alice"]),
                     ),
                     (("--active",), ("No matching activity",)),
                 ]:
@@ -257,7 +265,7 @@ def test_agents_reconnect_through_hub_without_direct_backend_access(valkey, tmp_
                     assert all(label in observed.stdout for label in labels), (
                         observed.stdout
                     )
-                    assert "AGENT" not in observed.stdout
+                    assert "AGENT" in observed.stdout
                 async with AgentClient(tmp_path, actor="agent:alice") as remote:
                     with pytest.raises(BackendUnavailable):
                         await remote.targets()
@@ -275,7 +283,7 @@ def test_agents_reconnect_through_hub_without_direct_backend_access(valkey, tmp_
                             receipt = await remote.send(
                                 "human:owner", body=name, run=run
                             )
-                            assert (await human.history(receipt["group"]))[0][
+                            assert (await human.history(receipt["conversation"]))[0][
                                 0
                             ] == receipt["stream_id"]
                     await asyncio.to_thread(cli, "hub", "stop")
@@ -314,7 +322,7 @@ def test_hub_event_fanout_recovery_and_top_once(
             source="flow example:\n  let result = Done\n",
             responses=[],
         )
-        driver = Backend(valkey)
+        driver = ValkeyBackend(valkey)
         async with (
             harness,
             httpx.AsyncClient(
@@ -324,8 +332,13 @@ def test_hub_event_fanout_recovery_and_top_once(
                 trust_env=False,
             ) as http,
         ):
-            await driver.register("human:owner", agent="agent:alice", token="lease")
-            service = EventBackend(driver)
+            registered = await http.put(
+                "/agents/agent:alice/lease",
+                headers={"X-Toolang-Agent-Lease": "lease"},
+                json={"managed": False},
+            )
+            registered.raise_for_status()
+            service = driver.events
             exporter = EventExporter(
                 harness.executor.stream,
                 harness.store.db_path,
@@ -428,7 +441,7 @@ def test_hub_event_fanout_recovery_and_top_once(
                     assert watching.cursor != before
                 # A committed generation replacement remains recoverable after its
                 # control is trimmed from the event stream.
-                import toolang.teaming.event_backend as event_backend
+                import toolang.teaming.backend.valkey.events as event_backend
 
                 monkeypatch.setattr(event_backend, "MAX_STREAM_EVENTS", 1)
                 await exporter.recover("source_gap")
@@ -470,15 +483,15 @@ def test_hub_event_fanout_recovery_and_top_once(
                         "toolang.cli.toolang.main", "--root", tmp_path, "top"
                     )
                     try:
-                        output = session.wait_for("alice", "online", "q Quit")
+                        output = session.wait_for("alice", "online", "F10Quit")
                         session.send(b"e")
-                        session.wait_for("Execution", "STEP", record.id)
+                        session.wait_for("RUN", record.id)
                         session.send(b"\x1b[15~")
-                        session.wait_for("Layout Tree")
+                        session.wait_for("STEP")
                         session.send(b"t")
-                        session.wait_for("View Thread")
+                        session.wait_for("THREAD")
                         session.send(b"a")
-                        session.wait_for("View Agent")
+                        session.wait_for("AGENT")
                         assert "Traceback" not in output
                         session.send(b"q")
                         assert session.wait_for_exit() == 0, session.output
@@ -515,12 +528,16 @@ def test_resident_shutdown_drains_or_bounds_backend_outage(
 
     def cli(*args):
         return subprocess.run(
-            [*command, *args], capture_output=True, text=True, timeout=40
+            [*command, *args],
+            capture_output=True,
+            text=True,
+            timeout=40,
+            env={**os.environ, "COLUMNS": "180"},
         )
 
     async def scenario():
-        driver = Backend(valkey)
-        service = EventBackend(driver)
+        driver = ValkeyBackend(valkey)
+        service = driver.events
         connection = running_hub.connection()
         endpoint = f"http://127.0.0.1:{port}"
         try:

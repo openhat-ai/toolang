@@ -1,8 +1,11 @@
-"""The only Redis/Valkey driver boundary for teaming."""
+"""Valkey implementation of the teaming storage contract."""
 
 from __future__ import annotations
 
+import asyncio
 import json
+import random
+from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
@@ -11,8 +14,8 @@ from valkey.asyncio.retry import Retry
 from valkey.backoff import NoBackoff
 from valkey.exceptions import ConnectionError, TimeoutError, ValkeyError
 
-from .config import BackendConfig
-from .errors import (
+from ...config import BackendConfig
+from ...errors import (
     BackendUnavailable,
     ConversationAccessDenied,
     LeaseLost,
@@ -24,34 +27,53 @@ from .errors import (
 from .keys import (
     BASE_KEYS,
     PREFIX,
-    CONVOS,
+    ROSTER,
     SYSTEM,
     TEAM,
     TEAM_EVENTS,
     convo_key,
     name_key,
 )
-from .ids import dm_id, gc_id
-from .schemas import (
+from ...ids import dm_id, gc_id
+from ...schemas import (
     Conversation,
+    TeamMember,
+    ConversationRecord,
+    RosterRecord,
+    TeamEvent,
+    TeamRecord,
     conversation_id,
     conversation_name,
     participant,
     target,
 )
-from . import storage_scripts as scripts
+from . import scripts
+from .lua import TEAM_GUARD
+from .activity import ValkeyActivity
+from .events import ValkeyEvents
+from ...types import SNAPSHOT_RETRIES, STORAGE_BATCH_SIZE
 
-LEASE_SECONDS = 15
-RETENTION = 10000
+
+class _SnapshotChanged(Exception):
+    """The atomic operation rejected a stale, previously validated read."""
 
 
 def _json(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
 
-class Backend:
+async def _snapshot_backoff(attempt: int) -> None:
+    """Desynchronize contenders after a rejected, definitely unwritten operation."""
+    if attempt + 1 < SNAPSHOT_RETRIES:
+        ceiling = min(0.1, 0.005 * 2**attempt)
+        await asyncio.sleep(random.uniform(ceiling / 2, ceiling))
+
+
+class ValkeyBackend:
     def __init__(self, config: BackendConfig, *, client: Valkey | None = None):
         self._initialized = False
+        self.events = ValkeyEvents(self)
+        self.activity = ValkeyActivity(self)
         try:
             self._client = (
                 client
@@ -83,6 +105,8 @@ class Backend:
         except (ConnectionError, TimeoutError) as exc:
             raise BackendUnavailable("Teaming backend is unavailable") from exc
         except ValkeyError as exc:
+            if "snapshot_changed" in str(exc):
+                raise _SnapshotChanged from exc
             if "integrity:" in str(exc):
                 raise StorageIntegrityError(str(exc)) from exc
             if "Agent lease lost" in str(exc):
@@ -96,19 +120,194 @@ class Backend:
     async def _eval(self, script: str, keys: list[str], args: list[object]) -> Any:
         return await self._call("EVAL", script, len(keys), *keys, *args)
 
+    async def _fenced_eval(
+        self, agent: str, script: str, keys: list[str], args: list[object]
+    ) -> Any:
+        """Validate a publisher record and fence the exact bytes before mutation.
+
+        The script still checks the current lease and deadline atomically. Retry
+        only a rejected snapshot, never an uncertain transport result.
+        """
+        target(agent, kind="agent")
+        for attempt in range(SNAPSHOT_RETRIES):
+            raw = await self._call("HGET", TEAM, agent)
+            try:
+                if raw is not None:
+                    TeamRecord.decode(agent, raw)
+            except (ValueError, TypeError, MessagingError) as exc:
+                raise StorageIntegrityError("Invalid team record") from exc
+            checked = _json({"key": keys.index(TEAM) + 1, "member": agent, "raw": raw})
+            try:
+                return await self._eval(TEAM_GUARD + script, keys, [*args, checked])
+            except _SnapshotChanged:
+                await _snapshot_backoff(attempt)
+        raise MessagingError("Teaming state changed repeatedly; retry the operation")
+
     async def initialize(self) -> None:
+        epoch = uuid4().hex
         await self._eval(
-            scripts.INITIALIZE, BASE_KEYS, [uuid4().hex, PREFIX, int(self._initialized)]
+            scripts.INITIALIZE,
+            BASE_KEYS,
+            [
+                _json(
+                    {
+                        "epoch": epoch,
+                        "initial_event": TeamEvent(
+                            v=1,
+                            epoch=epoch,
+                            type="stream.initialized",
+                            conversation=None,
+                            actor=None,
+                            payload={},
+                        ).model_dump_json(),
+                    }
+                ),
+                PREFIX,
+                int(self._initialized),
+            ],
         )
         self._initialized = True
+        await self._operation(scripts.READ, {})
+
+    async def _snapshot(self, op: dict) -> dict:
+        request = {
+            key: op[key]
+            for key in (
+                "actor",
+                "agent",
+                "owner",
+                "id",
+                "participants",
+                "conversations",
+            )
+            if key in op
+        }
+        request.update(
+            prefix=PREFIX,
+            action=op.get("action")
+            if op.get("action") in {"team", "roster", "contacts", "register"}
+            else "inspect",
+        )
+        snapshot = json.loads(
+            await self._eval(scripts.SNAPSHOT, BASE_KEYS, [_json(request)])
+        )
+        snapshot["members"] = dict(snapshot["members"])
+        try:
+            records = {}
+            for kind, key, field, raw in snapshot["records"]:
+                if raw is None:
+                    if kind == "event":
+                        raise ValueError("Missing team event data")
+                    continue
+                if kind == "system":
+                    conversation_id(raw)
+                    continue
+                model = (
+                    TeamRecord.decode(field, raw)
+                    if kind == "team"
+                    else {
+                        "conversation": ConversationRecord,
+                        "roster": RosterRecord,
+                        "event": TeamEvent,
+                    }[kind].model_validate_json(raw)
+                )
+                records[kind, field] = model
+                if isinstance(model, ConversationRecord):
+                    if model.id != field:
+                        raise ValueError("Conversation ID differs from its hash field")
+                    if model.created_by is None and field != snapshot["system"]:
+                        raise ValueError("Only the system conversation has no creator")
+                elif isinstance(model, RosterRecord):
+                    target(field, kind="agent")
+            for key, members in snapshot["members"].items():
+                for member in members:
+                    participant(member)
+                ref = key.removeprefix(PREFIX + ":convo:").removesuffix(":members")
+                record = records.get(("conversation", ref))
+                if (
+                    isinstance(record, ConversationRecord)
+                    and record.kind == "dm"
+                    and len(members) != 2
+                ):
+                    raise StorageIntegrityError("Invalid DM membership")
+            for (kind, member), _record in records.items():
+                if kind == "roster" and ("team", member) not in records:
+                    raise ValueError("Roster entry has no team member")
+        except StorageIntegrityError:
+            raise
+        except (ValueError, TypeError, KeyError, MessagingError) as exc:
+            raise StorageIntegrityError("Invalid teaming protocol record") from exc
+        return snapshot
 
     async def _operation(
         self, script: str, op: dict, extra: list[str] | None = None
     ) -> Any:
-        return await self._eval(script, [*BASE_KEYS, *(extra or [])], [_json(op)])
+        for attempt in range(SNAPSHOT_RETRIES):
+            snapshot = await self._snapshot(op)
+            seconds, micros = map(int, snapshot["clock"])
+            stamp = datetime.fromtimestamp(seconds, UTC).replace(microsecond=micros)
+            checked = {
+                **op,
+                "checked": snapshot["records"],
+                "checked_members": snapshot["members"],
+                "checked_hashes": snapshot["hashes"],
+                "timestamp": stamp.isoformat(timespec="milliseconds").replace(
+                    "+00:00", "Z"
+                ),
+            }
+            try:
+                return await self._eval(
+                    script, [*BASE_KEYS, *(extra or [])], [_json(checked)]
+                )
+            except _SnapshotChanged:
+                await _snapshot_backoff(attempt)
+        raise MessagingError("Teaming state changed repeatedly; retry the operation")
 
-    async def team(self) -> list[dict[str, Any]]:
+    async def team(self) -> list[TeamMember]:
         return list(json.loads(await self._operation(scripts.READ, {"action": "team"})))
+
+    async def roster(self) -> dict[str, dict]:
+        rows = await self._operation(scripts.READ, {"action": "roster"})
+        return {
+            member: json.loads(raw)
+            for member, raw in zip(rows[::2], rows[1::2], strict=True)
+        }
+
+    async def reconcile_roster(
+        self, agent: str, owner: str, previous: dict | None, updated: dict | None
+    ) -> bool:
+        target(agent, kind="agent")
+        target(owner, kind="human")
+        if previous is not None:
+            RosterRecord.model_validate(previous)
+        if updated is not None:
+            RosterRecord.model_validate(updated)
+        # Retain the stored bytes for CAS; JSON object ordering has no semantics.
+        raw = await self._call("HGET", ROSTER, agent)
+        try:
+            current = (
+                RosterRecord.model_validate_json(raw).model_dump()
+                if raw is not None
+                else None
+            )
+        except (ValueError, TypeError) as exc:
+            raise StorageIntegrityError("Invalid roster record") from exc
+        if current != previous:
+            return False
+        conversations = await self.conversation_ids() if updated is None else []
+        return bool(
+            await self._operation(
+                scripts.ROSTER,
+                dict(
+                    agent=agent,
+                    owner=owner,
+                    previous=raw or "",
+                    updated=_json(updated) if updated is not None else "",
+                    conversations=conversations,
+                ),
+                [convo_key(ref, "members") for ref in conversations],
+            )
+        )
 
     async def known_participant(self, member: str) -> bool:
         participant(member)
@@ -130,7 +329,11 @@ class Backend:
         rows = []
         for sid, values in result[1]:
             fields = dict(zip(values[::2], values[1::2], strict=True))
-            rows.append((sid, json.loads(fields["data"])))
+            try:
+                data = TeamEvent.model_validate_json(fields["data"]).model_dump()
+            except (ValueError, TypeError, KeyError, MessagingError) as exc:
+                raise StorageIntegrityError("Invalid team event record") from exc
+            rows.append((sid, data))
         return rows
 
     async def wait_team_events(self, after: str) -> None:
@@ -201,13 +404,17 @@ class Backend:
             [convo_key(system, "members")],
         )
 
-    async def lease(self, agent: str, token: str, seconds: int) -> bool:
+    async def renew_lease(self, agent: str, token: str) -> bool:
         return bool(
             await self._operation(
-                scripts.PRESENCE,
-                dict(
-                    action="renew" if seconds else "release", agent=agent, token=token
-                ),
+                scripts.PRESENCE, dict(action="renew", agent=agent, token=token)
+            )
+        )
+
+    async def release_lease(self, agent: str, token: str) -> bool:
+        return bool(
+            await self._operation(
+                scripts.PRESENCE, dict(action="release", agent=agent, token=token)
             )
         )
 
@@ -240,8 +447,34 @@ class Backend:
         ]
 
     async def conversation_ids(self) -> list[str]:
-        await self._operation(scripts.READ, {})
-        return await self._call("HKEYS", CONVOS)
+        return await self._operation(scripts.READ, {"action": "ids"})
+
+    async def contacts(
+        self, actor: str
+    ) -> list[tuple[Conversation, list[tuple[str, dict[str, str]]]]]:
+        ids = await self.conversation_ids()
+        result = []
+        for start in range(0, len(ids), STORAGE_BATCH_SIZE):
+            batch = ids[start : start + STORAGE_BATCH_SIZE]
+            rows = json.loads(
+                await self._operation(
+                    scripts.READ,
+                    {"action": "contacts", "actor": actor, "conversations": batch},
+                    [
+                        convo_key(ref, suffix)
+                        for ref in batch
+                        for suffix in ("members", "messages")
+                    ],
+                )
+            )
+            for info, members, latest in rows:
+                result.append(
+                    (
+                        Conversation(**info, participants=tuple(sorted(members))),
+                        self._messages(latest),
+                    )
+                )
+        return result
 
     async def named(self, name: str) -> list[str]:
         conversation_name(name)
@@ -396,6 +629,10 @@ class Backend:
             ),
             self._conversation_keys(conversation),
         )
+        return self._messages(rows)
+
+    @staticmethod
+    def _messages(rows: list) -> list[tuple[str, dict[str, str]]]:
         return [
             (sid, dict(zip(fields[::2], fields[1::2], strict=True)))
             for sid, fields in rows

@@ -1,6 +1,8 @@
 """Talk footer geometry, viewer identity, and connection-state transitions."""
 
 import asyncio
+
+from tests.support.conversations import conversation_record
 from unittest.mock import AsyncMock
 
 import httpx
@@ -17,7 +19,7 @@ from toolang.teaming.errors import (
     MessagingError,
     SendUnconfirmed,
 )
-from toolang.teaming.schemas import Conversation, HubConnection
+from toolang.teaming.schemas import HubConnection
 
 
 @pytest.mark.parametrize("width", [1, 2, 3, 4, 5, 8, 12, 20, 40, 60, 120])
@@ -115,7 +117,7 @@ def test_send_errors_keep_the_draft_and_show_returned_detail_without_retry(
 
 @pytest.mark.parametrize("name", ["gc_dev", "Development Team", "开发组"])
 def test_group_display_name_is_preserved(name):
-    conversation = Conversation("gc_00000001", "gc", ("human:bryan",), name=name)
+    conversation = conversation_record("gc_00000001", "gc", ("human:bryan",), name=name)
     assert fragment_list_to_text(conversation_status(conversation, "human:bryan")) == (
         f"#{name}(1)"
     )
@@ -125,7 +127,7 @@ def test_group_display_name_is_preserved(name):
     "conversation,expected",
     [
         (
-            Conversation(
+            conversation_record(
                 "dm_00000003",
                 "dm",
                 ("human:bryan", "agent:alice"),
@@ -133,7 +135,7 @@ def test_group_display_name_is_preserved(name):
             "@alice",
         ),
         (
-            Conversation(
+            conversation_record(
                 "dm_00000004",
                 "dm",
                 ("agent:bob", "agent:alice"),
@@ -141,7 +143,7 @@ def test_group_display_name_is_preserved(name):
             "@alice,bob",
         ),
         (
-            Conversation(
+            conversation_record(
                 "gc_00000001",
                 "gc",
                 ("human:bryan", "agent:alice", "agent:bob"),
@@ -150,14 +152,14 @@ def test_group_display_name_is_preserved(name):
             "#dev(3)",
         ),
         (
-            Conversation(
+            conversation_record(
                 "gc_00000001", "gc", ("human:bryan", "agent:alice"), name="dev"
             ),
             "#dev(2)",
         ),
-        (Conversation("gc_00000004", "gc", (), name="empty"), "#empty(0)"),
+        (conversation_record("gc_00000004", "gc", (), name="empty"), "#empty(0)"),
         (
-            Conversation("gc_00000005", "gc", ("agent:alice",), name="observed"),
+            conversation_record("gc_00000005", "gc", ("agent:alice",), name="observed"),
             "#observed(1)",
         ),
     ],

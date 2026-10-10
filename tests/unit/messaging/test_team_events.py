@@ -9,7 +9,7 @@ import pytest
 from tests.unit.messaging.test_protocol import client, snapshot
 from toolang.teaming.client import HubClient
 from toolang.teaming.errors import BackendUnavailable, LeaseLost, StorageIntegrityError
-from toolang.teaming.keys import TEAM_EVENTS, PREFIX, PRESENCE
+from toolang.teaming.backend.valkey.keys import TEAM_EVENTS, PREFIX, PRESENCE
 from toolang.teaming.team_events import TeamEvents
 
 
@@ -17,7 +17,7 @@ def test_subscribers_checkpoint_before_snapshot_and_replay_independently():
     async def scenario():
         server = FakeServer(server_type="valkey")
         async with client(server, "human:owner") as human:
-            feed = TeamEvents(human._backend)
+            feed = TeamEvents(human.backend)
             stream = feed.frames(human, None)
             checkpoint = await anext(stream)
             assert checkpoint.event == "checkpoint"
@@ -42,7 +42,7 @@ def test_filtered_events_advance_checkpoint_and_own_removal_remains_visible():
             client(server, "agent:alice") as alice,
         ):
             await alice.register("human:owner")
-            feed = TeamEvents(human._backend)
+            feed = TeamEvents(human.backend)
             cursor = await feed.checkpoint()
             private = await human.create_conversation("Private")
             stream = feed.frames(alice, cursor)
@@ -71,7 +71,7 @@ def test_visibility_backend_failure_does_not_skip_events(monkeypatch):
             client(server, "agent:alice") as alice,
         ):
             await alice.register(human.actor)
-            feed = TeamEvents(human._backend)
+            feed = TeamEvents(human.backend)
             cursor = await feed.checkpoint()
             conversation = await alice.create_conversation("Visible")
             lookup = alice.conversation
@@ -101,10 +101,10 @@ def test_visibility_backend_failure_does_not_skip_events(monkeypatch):
 def test_retention_gap_emits_resync_and_closes():
     async def scenario():
         async with client(FakeServer(server_type="valkey"), "human:owner") as human:
-            feed = TeamEvents(human._backend)
+            feed = TeamEvents(human.backend)
             cursor = await feed.checkpoint()
             await human.create_conversation("New")
-            await human._backend._client.xtrim(TEAM_EVENTS, maxlen=1, approximate=False)
+            await human.backend._client.xtrim(TEAM_EVENTS, maxlen=1, approximate=False)
             stream = feed.frames(human, cursor)
             assert (await anext(stream)).event == "resync_required"
             with pytest.raises(StopAsyncIteration):
@@ -123,10 +123,10 @@ def test_active_subscription_stops_when_its_lease_expires_or_is_replaced(replace
             client(server, "agent:alice", token="new") as replacement,
         ):
             await alice.register(human.actor)
-            stream = TeamEvents(human._backend).frames(alice, None)
+            stream = TeamEvents(human.backend).frames(alice, None)
             try:
                 assert (await anext(stream)).event == "checkpoint"
-                await human._backend._client.zadd(PRESENCE, {alice.actor: 0})
+                await human.backend._client.zadd(PRESENCE, {alice.actor: 0})
                 if replaced:
                     await replacement.register(human.actor)
                 await human.create_conversation("After lease loss")
@@ -142,9 +142,9 @@ def test_active_subscription_stops_when_its_lease_expires_or_is_replaced(replace
 def test_replay_rejects_noncanonical_conversation_ids_before_yielding(conversation):
     async def scenario():
         async with client(FakeServer(server_type="valkey"), "human:owner") as human:
-            feed = TeamEvents(human._backend)
+            feed = TeamEvents(human.backend)
             cursor = await feed.checkpoint()
-            raw = human._backend._client
+            raw = human.backend._client
             await raw.xadd(
                 TEAM_EVENTS,
                 {
@@ -171,14 +171,14 @@ def test_replay_rejects_noncanonical_conversation_ids_before_yielding(conversati
 def test_malformed_event_and_mixed_legacy_data_fail_without_writes():
     async def scenario():
         async with client(FakeServer(server_type="valkey"), "human:owner") as human:
-            raw = human._backend._client
+            raw = human.backend._client
             await raw.hset(PREFIX + ":participants", "legacy", "old")
             before = await snapshot(raw)
             with pytest.raises(StorageIntegrityError):
                 await human.check_backend()
             assert await snapshot(raw) == before
             await raw.delete(PREFIX + ":participants")
-            feed = TeamEvents(human._backend)
+            feed = TeamEvents(human.backend)
             cursor = await feed.checkpoint()
             epoch = cursor.split(".")[1]
             await raw.xadd(
@@ -214,7 +214,7 @@ def test_presence_snapshot_correction_is_local_and_never_writes(monkeypatch):
             client(server, "agent:alice") as alice,
         ):
             await alice.register("human:owner", endpoint="http://private")
-            raw = human._backend._client
+            raw = human.backend._client
             before = await snapshot(raw)
             rows = await human.team()
             deadline = next(

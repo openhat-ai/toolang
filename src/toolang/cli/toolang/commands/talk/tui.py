@@ -26,7 +26,13 @@ from toolang.cli.common.terminal_surfaces import TerminalSurfaces
 from toolang.common.files import atomic_write_text
 from toolang.teaming.client import HubClient
 from toolang.teaming.errors import BackendUnavailable, MessagingError
-from toolang.teaming.schemas import Conversation, Message, target
+from toolang.teaming.schemas import (
+    Conversation,
+    ConversationView,
+    Message,
+    TeamMember,
+    target,
+)
 
 from .rendering import display_text, message_block
 from .status import conversation_label, conversation_status, status_line
@@ -36,7 +42,7 @@ class TalkTui:
     def __init__(
         self,
         client: HubClient,
-        conversation: Conversation,
+        conversation: ConversationView,
         human: str,
         state: Path,
         surfaces: TerminalSurfaces,
@@ -50,7 +56,7 @@ class TalkTui:
         self.read_only = read_only
         self.conversation = conversation
         self.selection = selection
-        self.team: list[dict[str, Any]] = []
+        self.team: list[TeamMember] = []
         self.max_width = max_width
         self.draft = state / "draft.txt"
         self._draft_loaded = False

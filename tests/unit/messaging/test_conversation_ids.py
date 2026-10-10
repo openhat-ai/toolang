@@ -11,11 +11,17 @@ import pytest
 
 from tests.unit.messaging.test_protocol import CONFIG, client, snapshot
 from toolang.common.ids import scramble_id
-from toolang.teaming.backend import Backend
+from toolang.teaming.backend.valkey import ValkeyBackend
 from toolang.teaming.errors import MessagingError, StorageIntegrityError
 from toolang.teaming.ids import dm_id, gc_id, GC_EPOCH_SECONDS, GC_LIMIT
-from toolang.teaming.keys import CONVOS, GC_ALLOCATOR, STATS, SYSTEM, convo_key
-from toolang.teaming import storage_scripts
+from toolang.teaming.backend.valkey.keys import (
+    CONVOS,
+    GC_ALLOCATOR,
+    STATS,
+    SYSTEM,
+    convo_key,
+)
+from toolang.teaming.backend.valkey import scripts
 
 
 @pytest.mark.parametrize(
@@ -76,11 +82,11 @@ def test_backend_allocation_rollover_rollback_exhaustion_and_restart(monkeypatch
 
     async def scenario():
         raw = FakeAsyncValkey(decode_responses=True)
-        backend = Backend(CONFIG, client=raw)
+        backend = ValkeyBackend(CONFIG, client=raw)
         await backend.initialize()
 
         async def reserve():
-            return await backend._operation(storage_scripts.RESERVE, {})
+            return await backend._operation(scripts.RESERVE, {})
 
         reservations = await asyncio.gather(*(reserve() for _ in range(100)))
         assert sorted(reservations) == [[42, seq] for seq in range(100)]
@@ -94,9 +100,9 @@ def test_backend_allocation_rollover_rollback_exhaustion_and_restart(monkeypatch
         assert await snapshot(raw) == before
         clock[0] += 7200
         assert await reserve() == [43, 0]
-        restarted = Backend(CONFIG, client=raw)
+        restarted = ValkeyBackend(CONFIG, client=raw)
         await restarted.initialize()
-        assert await restarted._operation(storage_scripts.RESERVE, {}) == [43, 1]
+        assert await restarted._operation(scripts.RESERVE, {}) == [43, 1]
         clock[0] = GC_EPOCH_SECONDS + GC_LIMIT * 3600
         with pytest.raises(MessagingError, match="exhausted"):
             await reserve()
@@ -112,10 +118,12 @@ def test_gc_collision_budget_consumes_reservations_without_reusing_them(monkeypa
     async def scenario():
         server = FakeServer(server_type="valkey")
         async with client(server, "human:owner") as human:
-            system = await human._backend.system_conversation()
-            raw = human._backend._client
+            system = await human.backend.system_conversation()
+            raw = human.backend._client
             previous = int(await raw.execute_command("HGET", GC_ALLOCATOR, "last_seq"))
-            monkeypatch.setattr("toolang.teaming.backend.gc_id", lambda *_: system)
+            monkeypatch.setattr(
+                "toolang.teaming.backend.valkey.backend.gc_id", lambda *_: system
+            )
             with pytest.raises(MessagingError, match="128 conflicts"):
                 await human.create_conversation("conflict")
             assert (
@@ -136,11 +144,11 @@ def test_lookup_command_count_does_not_scale_with_directory_size(monkeypatch):
         ):
             await alice.register("human:owner")
             ref = (await human.send("alice", body="first"))["conversation"]
-            raw = human._backend._client
+            raw = human.backend._client
             system = await raw.execute_command("HGET", SYSTEM, "all")
             template = json.loads(await raw.execute_command("HGET", CONVOS, system))
-            observed = AsyncMock(wraps=human._backend._call)
-            monkeypatch.setattr(human._backend, "_call", observed)
+            observed = AsyncMock(wraps=human.backend._call)
+            monkeypatch.setattr(human.backend, "_call", observed)
             counts = []
             for total in (10, 10000):
                 async with raw.pipeline() as pipe:
@@ -161,7 +169,44 @@ def test_lookup_command_count_does_not_scale_with_directory_size(monkeypatch):
                     call.args[0] in {"EVAL", "HEXISTS"}
                     for call in observed.await_args_list
                 )
-            assert counts[0] == counts[1] == 4
+            assert counts[0] == counts[1] == 6
             assert await raw.scard(convo_key(ref, "members")) == 2
+
+    asyncio.run(scenario())
+
+
+def test_directory_reads_use_bounded_batches_and_keep_visibility(monkeypatch):
+    async def scenario():
+        server = FakeServer(server_type="valkey")
+        async with (
+            client(server, "human:owner") as human,
+            client(server, "agent:alice") as alice,
+        ):
+            await alice.register(human.actor)
+            raw = human.backend._client
+            system = await raw.hget(SYSTEM, "all")
+            template = json.loads(await raw.hget(CONVOS, system))
+            async with raw.pipeline() as pipe:
+                for seq in range(129):
+                    ref = gc_id(0, seq)
+                    pipe.hset(
+                        CONVOS,
+                        ref,
+                        json.dumps({**template, "id": ref, "created_by": human.actor}),
+                    )
+                    pipe.sadd(convo_key(ref, "members"), human.actor)
+                pipe.hincrby(STATS, "gc_count", 129)
+                await pipe.execute()
+            for reader, expected in ((human, 130), (alice, 1)):
+                observed = AsyncMock(wraps=reader.backend._call)
+                monkeypatch.setattr(reader.backend, "_call", observed)
+                assert len(await reader.contacts()) == expected
+                # One ID read and two bounded batches; independent of visible count.
+                assert observed.await_count == 6
+                batches = [
+                    json.loads(call.args[-1]).get("conversations", [])
+                    for call in observed.await_args_list
+                ]
+                assert max(map(len, batches)) == 128
 
     asyncio.run(scenario())

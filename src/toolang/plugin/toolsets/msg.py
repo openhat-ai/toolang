@@ -1,6 +1,7 @@
 """Model-facing messaging tools backed by the shared teaming service."""
 
 from collections.abc import Mapping
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
@@ -9,6 +10,7 @@ from toolang.base.types.tool import MsgToolContext, ToolContext
 from toolang.base.utils.function_tools import create_function_tool, tool
 from toolang.teaming.errors import MessagingError
 from toolang.teaming.agent_client import AgentClient
+from toolang.teaming.schemas import Targets
 
 
 class MsgToolset:
@@ -29,7 +31,7 @@ class MsgToolset:
         @tool(
             description="List registered agents/humans and accessible conversations with canonical targets, membership, presence, and the metadata revision required for renaming."
         )
-        async def targets(context: ToolContext | None = None) -> dict[str, Any]:
+        async def targets(context: ToolContext | None = None) -> Targets:
             assert context is not None
             async with self.connection(context) as client:
                 return await client.targets()
@@ -65,7 +67,9 @@ class MsgToolset:
         ) -> dict[str, Any]:
             assert context is not None
             async with self.connection(context) as client:
-                return await client.create_conversation(name, participants=participants)
+                return asdict(
+                    await client.create_conversation(name, participants=participants)
+                )
 
         @tool(
             description="Join a custom conversation by its canonical gc_ ID. Direct and system conversations cannot be edited."
@@ -98,8 +102,10 @@ class MsgToolset:
         ) -> dict[str, Any]:
             assert context is not None
             async with self.connection(context) as client:
-                return await client.rename_conversation(
-                    conversation, name, revision=revision
+                return asdict(
+                    await client.rename_conversation(
+                        conversation, name, revision=revision
+                    )
                 )
 
         @tool(
@@ -108,8 +114,6 @@ class MsgToolset:
         async def resolve(
             target: str, by_name: bool = False, context: ToolContext | None = None
         ) -> dict[str, Any]:
-            from dataclasses import asdict
-
             assert context is not None
             async with self.connection(context) as client:
                 return asdict(

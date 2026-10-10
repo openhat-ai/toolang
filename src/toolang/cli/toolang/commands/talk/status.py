@@ -3,12 +3,12 @@
 from prompt_toolkit.formatted_text import StyleAndTextTuples, fragment_list_to_text
 
 from toolang.cli.common.execution_progress.formatting import display_width, truncate
-from toolang.teaming.schemas import Conversation, target
+from toolang.teaming.schemas import ConversationView, target
 
 from .rendering import display_text
 
 
-def conversation_label(info: Conversation, viewer: str) -> str:
+def conversation_label(info: ConversationView, viewer: str) -> str:
     if info.kind == "gc":
         return "#" + display_text(info.label)
     if info.name:
@@ -17,7 +17,7 @@ def conversation_label(info: Conversation, viewer: str) -> str:
     return "@" + ",".join(target(member).name for member in others)
 
 
-def conversation_status(info: Conversation, viewer: str) -> StyleAndTextTuples:
+def conversation_status(info: ConversationView, viewer: str) -> StyleAndTextTuples:
     label = conversation_label(info, viewer)
     count = f"({len(info.participants)})" if info.kind == "gc" else ""
     return [

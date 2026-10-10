@@ -206,6 +206,7 @@ With `P = too:teaming:v1`, the messaging key spaces are:
 | Key | Type | Contents |
 | --- | --- | --- |
 | `P:team` | Hash | Typed member ID → display name, owner, creation time, private lease JSON |
+| `P:roster` | Hash | Agent ID → root ownership/discovery JSON (`root`, `managed`, `missing`) |
 | `P:team:presence` | ZSet | Agent ID → lease deadline in Unix milliseconds |
 | `P:team:events` | Stream | `data` → versioned team, conversation membership, or presence change JSON |
 | `P:convos` | Hash | Conversation ID → kind, name, creator, timestamps, revision JSON |
@@ -216,9 +217,32 @@ With `P = too:teaming:v1`, the messaging key spaces are:
 | `P:convo:id:gc` | Hash | Last allocated hourly tick and sequence |
 | `P:convo:stats` | Hash | DM count, GC count, accepted message count |
 | `P:convo:system` | Hash | `all` → system GC ID |
+| `P:activity:agent:N` | Hash | `default` / `query` → `{query: query hash, pages: ActivitySnapshot[]}` |
+| `P:events:meta` | Hash | Version, epoch, tail, retention floor, byte count, catalog revision; `pending` fences interrupted publication |
+| `P:events:stream` | Stream | `kind`, `agent`, `data` fields for execution events and recovery transitions |
+| `P:events:agents` | Hash | Agent ID → publication/recovery state, generation pointers, source cursor, last operation receipt |
+| `P:events:agent:N:G` | Hash | Encoded entity identity → versioned entity JSON; `["manifest"]` → generation bounds and baseline |
 
-`P:roster`, `P:activity:*`, and execution `P:events:*` retain their separate roles.
+`P:team` is the global member directory. `P:roster` is an optional agent-only
+subset that records which root manages discovery. It does not duplicate names,
+owners, leases, or online state. Humans have no roster entry; unscoped agent
+registration may have only a team entry. A scoped transient registration has
+`managed: false, missing: 0`; resident discovery uses `managed: true` and counts
+successful absent scans. Root claims cannot be adopted by another root.
+
+Discovery creates roster/team entries atomically. Cleanup after two absent scans
+and no live lease removes both entries and GC memberships, preserving DM
+membership and history. Expiry alone only changes presence. `P:activity:*` and
+execution `P:events:*` keep their separate roles.
 Raw leases stay private; team responses expose only public metadata and deadlines.
+
+Conversation names are nonunique secondary indexes; member pairs resolve DMs
+directly by ID. Membership sets and presence deadlines each have one authority.
+Global conversation/message counters change in the same transaction as their
+records; per-conversation message counts come from the Stream itself. Execution
+event metadata remains separate because its feed needs byte accounting and
+generation recovery. Activity retains two query slots per agent; active event
+generations persist, while staging generations expire after 60 seconds.
 
 `GET /team/events` returns an initial checkpoint before snapshots are loaded, then
 changes and checkpoints. Resume using `?after=t1.<epoch>.<stream-id>`. A trimmed,
@@ -234,10 +258,41 @@ entries. There is no separate event metadata key.
 
 Messaging routes use `/msg/conversations`, `/{id}`, and `/participants`,
 `/messages`, `/cursor`, `/stats` subresources. `GET /msg/stats` exposes human-only
-global totals. Conversation statistics use native Stream `entries-added` for
+global totals. Python `HubClient` and `AgentClient` creation, lookup, and rename
+methods all return a validated `Conversation`; use attributes such as `.id`
+and `.participants`, or `dataclasses.asdict()` when a dictionary is needed.
+Creation and rename no longer return untyped dictionaries. HTTP JSON fields and
+`msg` tool outputs keep their conversation record shape.
+
+Conversation statistics use native Stream `entries-added` for
 accepted appends and `length` for retained messages; trimming does not reduce
 lifetime totals. Empty message streams count as zero. Global conversation totals
 include the system GC.
+
+Python defines and validates persisted records and public responses. Lua performs
+atomic storage checks and combined writes, comparing validated snapshots before
+mutation. A changed snapshot is reread within a fixed retry bound; uncertain
+transport failures never replay writes. A pending Talk DM is local state with no
+persisted creation time or revision.
+
+Storage interfaces live in `teaming/backend/protocol.py`; the factory selects
+`backend/valkey/`, which owns all keys, commands, Lua, and driver errors. Services
+use the `Backend` contract and its `events` and `activity` capabilities, sharing
+one connection lifetime owned by Hub. Activity federation and subscription logic
+remain outside the driver. `activity_cache.py` owns publication boundaries, query
+identity, and offline selection. Within Valkey, `keys.py` owns storage addresses;
+`scripts.py`, `event_scripts.py`, and `activity_scripts.py` own atomic operations,
+sharing lease guards and exact Stream-ID ordering through `lua.py`. Team record
+validation is shared across messaging, activity, and execution publication in
+Python; Lua rechecks the validated bytes and the current lease before mutation.
+The interface exposes explicit lease renewal/release
+and normalized message field maps, without raw driver commands.
+
+Conversation lists read metadata, membership, and previews in batches of at most
+128 IDs. Each batch applies visibility atomically. Listing remains linear in the
+directory size; ID and participant-pair lookup are constant in directory size.
+GC allocation supports 1,048,576 reservations per backend per hour (about 291/s
+averaged over an hour); this is capacity, not a measured throughput claim.
 
 The [conversation contract](plans/conversation-ids.md) specifies record JSON,
 atomic writes, event payloads, ID capacity, and fresh-dataset rollout.

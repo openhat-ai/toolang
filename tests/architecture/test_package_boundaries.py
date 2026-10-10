@@ -385,10 +385,10 @@ def test_external_click_is_confined_to_the_editor() -> None:
 
 
 def test_backend_driver_is_confined_to_teaming_backend() -> None:
-    boundary = SOURCE_ROOT / "teaming" / "backend.py"
+    boundary = SOURCE_ROOT / "teaming" / "backend" / "valkey"
     violations = []
     for path in SOURCE_ROOT.rglob("*.py"):
-        if path == boundary:
+        if path.is_relative_to(boundary):
             continue
         for node in ast.walk(ast.parse(path.read_text(), filename=str(path))):
             if isinstance(node, ast.Import):
@@ -400,3 +400,34 @@ def test_backend_driver_is_confined_to_teaming_backend() -> None:
             if any(name.split(".")[0] in {"redis", "valkey"} for name in names):
                 violations.append(f"{path.relative_to(SOURCE_ROOT)}:{node.lineno}")
     assert not violations, "Driver imports outside backend: " + ", ".join(violations)
+
+
+def test_teaming_services_depend_on_backend_contracts_not_storage_internals() -> None:
+    backend = SOURCE_ROOT / "teaming" / "backend"
+    implementation = backend / "valkey"
+    violations = []
+    for path in SOURCE_ROOT.rglob("*.py"):
+        if path.is_relative_to(implementation) or path == backend / "factory.py":
+            continue
+        context = _module_context(path)
+        for node in ast.walk(ast.parse(path.read_text(), filename=str(path))):
+            if isinstance(node, ast.Import | ast.ImportFrom):
+                for target in _import_targets(node, context):
+                    if target.startswith("toolang.teaming.backend.valkey"):
+                        violations.append(
+                            f"{path.relative_to(SOURCE_ROOT)}:{node.lineno}"
+                        )
+            if path.is_relative_to(SOURCE_ROOT / "teaming") and isinstance(
+                node, ast.Attribute
+            ):
+                if node.attr in {
+                    "_call",
+                    "_eval",
+                    "_operation",
+                    "_fenced_eval",
+                    "_client",
+                }:
+                    violations.append(f"{path.relative_to(SOURCE_ROOT)}:{node.lineno}")
+    assert not violations, "Storage internals outside implementation: " + ", ".join(
+        violations
+    )

@@ -6,6 +6,7 @@ import logging
 
 from .backend import Backend
 from .errors import BackendUnavailable
+from .types import STORAGE_BATCH_SIZE
 
 logger = logging.getLogger(__name__)
 
@@ -36,4 +37,4 @@ class PresenceWorker:
                 delay = min(delay * 2, 5)
             else:
                 delay = 1.0
-                await self.wait(0 if count == 128 else 1)
+                await self.wait(0 if count == STORAGE_BATCH_SIZE else 1)

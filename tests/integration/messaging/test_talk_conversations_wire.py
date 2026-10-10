@@ -19,7 +19,13 @@ from tests.support.chat_tui_pty import ChatTuiPtySession
 from toolang.teaming.agent_client import AgentClient
 from toolang.teaming.client import HubClient
 from toolang.teaming.ids import dm_id
-from toolang.teaming.keys import CONVOS, PRESENCE, STATS, TEAM_EVENTS, convo_key
+from toolang.teaming.backend.valkey.keys import (
+    CONVOS,
+    PRESENCE,
+    STATS,
+    TEAM_EVENTS,
+    convo_key,
+)
 from toolang.teaming.schemas import Message
 
 pytestmark = pytest.mark.live_valkey
@@ -172,27 +178,27 @@ def test_open_talk_updates_composer_when_gc_membership_changes(
                 "--root",
                 tmp_path,
                 "talk",
-                conversation["id"],
+                conversation.id,
             )
             try:
                 await asyncio.to_thread(tui.wait_for, "Observers(1)")
                 assert "write a message" not in tui.output
-                await human.join_conversation(conversation["id"])
+                await human.join_conversation(conversation.id)
                 await asyncio.to_thread(tui.wait_for, "Observers(2)", "write a message")
                 tui.send(b"joined from another client\r")
                 async with asyncio.timeout(5):
-                    while not await human.history(conversation["id"]):
+                    while not await human.history(conversation.id):
                         await asyncio.sleep(0.05)
-                assert len(await human.history(conversation["id"])) == 1
-                await human.leave_conversation(conversation["id"])
+                assert len(await human.history(conversation.id)) == 1
+                await human.leave_conversation(conversation.id)
                 # A fresh marker lets the PTY wait for a render after the leave.
                 await alice.rename_conversation(
-                    conversation["id"], "Observer again", revision=1
+                    conversation.id, "Observer again", revision=1
                 )
                 await asyncio.to_thread(tui.wait_for, "Observer again(1)")
                 tui.send(b"cannot send after leaving\r\x11")
                 assert await asyncio.to_thread(tui.wait_for_exit) == 0, tui.output
-                assert len(await human.history(conversation["id"])) == 1
+                assert len(await human.history(conversation.id)) == 1
             finally:
                 tui.close()
 
@@ -220,18 +226,18 @@ def test_presence_expires_naturally_and_gc_names_remain_nonunique(
                 deadline = int(await raw.zscore(PRESENCE, alice.actor))
                 first = await human.create_conversation("Development")
                 second = await human.create_conversation("Development")
-                assert first["id"] != second["id"]
+                assert first.id != second.id
                 ambiguous = await http.post(
                     "/msg/resolve", json={"target": "Development", "kind": "name"}
                 )
                 assert ambiguous.status_code == 400
-                assert first["id"] in ambiguous.text and second["id"] in ambiguous.text
-                receipt = await human.send(first["id"], body="retained message")
-                await human.send(first["id"], body="last message")
+                assert first.id in ambiguous.text and second.id in ambiguous.text
+                receipt = await human.send(first.id, body="retained message")
+                await human.send(first.id, body="last message")
                 await raw.xtrim(
-                    convo_key(first["id"], "messages"), maxlen=1, approximate=False
+                    convo_key(first.id, "messages"), maxlen=1, approximate=False
                 )
-                stats = await human.statistics(first["id"])
+                stats = await human.statistics(first.id)
                 assert stats["messages_total"] == 2 and stats["messages_retained"] == 1
                 assert stats["last_message_stream_id"] != receipt["stream_id"]
                 async with asyncio.timeout(20):

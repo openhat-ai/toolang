@@ -92,9 +92,9 @@ At `2026-10-10T02:00:00Z`, tick `6770`, sequences `0, 1, 2` produce
 291.271 reservations/s with normal clock progression. At 1,000/s, a fresh bucket
 starting on the hour lasts about 17m 29s. Gaps, conflicts, and system allocation
 consume this budget; DMs do not. This is ID capacity, not measured throughput.
-Benchmark new GCs, new DMs, and DM reuse separately after implementation, recording
-concurrency, deployment/persistence settings, success rate, p50/p95 latency, and
-reservations consumed. Sustained 1,000 GC/s requires revisiting the format.
+Capacity and operation complexity are sufficient for this delivery; no creation
+throughput benchmark is required. Sustained 1,000 GC/s exceeds the accepted hourly
+budget and would require revisiting the format.
 
 ### Names and resolution
 
@@ -151,6 +151,24 @@ notices. No Stream deletion/recreation, arbitrary `XDEL`, or `XSETID` is added.
 Retain existing `P:events:*` for execution observation, `P:activity:<agent>`
 for activity caches, and `P:roster` for discovery/management records. Do not rename
 or move `P:roster` in this change.
+
+`P:team` owns global member identity/owner/lease metadata. `P:roster` is an optional
+agent-only subset for root ownership and discovery state: `{root, managed, missing}`.
+Humans have no roster entry; unscoped agents may exist only in team. Presence is
+independent. Roster discovery creates both records atomically, never adopts another
+root's claim, and removes both plus GC memberships only after confirmed absence
+and lease expiry. DM membership/history remain valid after directory removal.
+
+Python owns strict persisted/wire schemas and protocol rules; Lua owns atomic
+storage checks, lease authority, counters, allocation, and combined writes.
+Python validates a read snapshot; Lua compares exact values and memberships before
+mutation. Changed snapshots retry within a fixed bound; transport failures never
+replay uncertain writes. Constants come from Python definitions. Pending Talk DMs
+use a separate local model without fabricated persisted timestamps or revision.
+Conversation directories load bounded batches of 128, checking visibility and
+reading previews atomically in each batch. Direct-ID/pair lookup remains constant
+in directory size; whole-directory reads remain linear without a new index.
+
 
 ### Team JSON
 
@@ -336,7 +354,8 @@ with these module boundaries (paths relative to `teaming/`):
 
 | Module | Responsibility |
 | --- | --- |
-| `backend.py` | Valkey driver, due-member query, and atomic expiry/state/event operations; no scheduling |
+| `backend/protocol.py` | Driver-independent storage interfaces; no commands, keys, Lua, or scheduling |
+| `backend/valkey/` | Valkey driver, due-member query, and atomic expiry/state/event operations |
 | `presence.py` (new) | `PresenceWorker` with a bounded `reconcile_once()` and cancellable `run()`; uses an injected backend, owns no connection pool or HTTP state |
 | `lifecycle.py` (new) | Own shared client/backend lifetime and presence/optional roster tasks, startup readiness, failure observation, and cleanup; keep it specific to Hub services |
 | `api.py` | Wire lifespan and routes, expose lifecycle health; no polling loop or detached tasks |
@@ -492,11 +511,11 @@ Paths below are relative to `src/toolang/`:
 | Touchpoints | Work |
 | --- | --- |
 | `common/ids.py` | Expose/reuse pure codec helpers, preserve thread/run outputs |
-| `teaming/{schemas,backend,messaging,types}.py` | Records, IDs, name resolution, atomic writes, schema guard |
+| `teaming/{schemas,messaging,types}.py`, `teaming/backend/` | Records, IDs, name resolution, atomic writes, schema guard |
 | `teaming/{messaging_api,client,agent_client}.py`, `plugin/toolsets/msg.py` | Conversation contracts and client-local presence projection |
 | `teaming/{events,api,agent_api,roster}.py`, team-owned subscription module | Feed, replay, visibility, lease operations, and lifespan wiring |
 | New `teaming/presence.py`, `teaming/lifecycle.py` | Bounded expiry worker and shared Hub task/resource ownership under the lifecycle contract above |
-| `teaming/{event_backend,activity,subscriptions}.py` | Shared deadline/token checks; preserve execution protocol |
+| `teaming/backend/valkey/{events,activity}.py`, `teaming/{activity,subscriptions}.py` | Shared deadline/token checks; preserve execution protocol |
 | `execution/schemas.py`, `cli/common/activity_view.py` | Remove last-seen fields/display and observed-time fallback; preserve Top subscription/refresh behavior |
 | `cli/toolang/commands/talk/`, `cli/common/tmux.py`, `work/messaging.py` | Team/conversation directory, usage hints, IDs, labels, receipts, window/checkpoint vocabulary; preserve running-Hub discovery through `cli/common/messaging.py` |
 

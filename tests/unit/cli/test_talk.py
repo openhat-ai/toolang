@@ -1,6 +1,8 @@
 """Talk CLI literals, drafts, scrollback presentation, and tmux identities."""
 
 import asyncio
+
+from tests.support.conversations import conversation_record
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from hashlib import sha256
@@ -36,12 +38,12 @@ from toolang.cli.common.terminal_surfaces import (
 )
 from toolang.cli.common.input_history import InputHistoryStore
 from toolang.teaming.messaging import MessagingClient
-from toolang.teaming.backend import Backend
-from toolang.teaming.keys import convo_key
+from toolang.teaming.backend.valkey import ValkeyBackend
+from toolang.teaming.backend.valkey.keys import convo_key
 from toolang.teaming.config import BackendConfig
 from toolang.teaming.errors import SendUnconfirmed
 from toolang.teaming.schemas import Message
-from toolang.teaming.schemas import Conversation, HubConnection
+from toolang.teaming.schemas import HubConnection, PendingDM
 from toolang.teaming.api import create_app
 from toolang.teaming.client import HubClient
 
@@ -74,7 +76,7 @@ def messaging_cli(tmp_path, monkeypatch):
         return MessagingClient(
             config,
             actor=actor,
-            backend=Backend(
+            backend=ValkeyBackend(
                 config, client=FakeAsyncValkey(server=server, decode_responses=True)
             ),
         )
@@ -256,7 +258,7 @@ def test_directory_shows_presence_previews_and_does_not_create_conversations(
             await alice.unregister()
             own = (await human.resolve("agent:alice", create=True)).conversation
             # Inject ordered Stream IDs and a malformed record through the backend fixture.
-            raw = human._backend._client
+            raw = human.backend._client
             for group, sid, data in (
                 (
                     "gc_00000000",
@@ -326,7 +328,7 @@ def test_failed_send_preserves_draft_and_success_does_not_erase_new_typing(
             client = AsyncMock()
             ui = TalkTui(
                 client,
-                Conversation(
+                conversation_record(
                     "gc_00000000", "gc", ("human:bryan", "agent:alice"), name="all"
                 ),
                 "human:bryan",
@@ -683,7 +685,7 @@ def test_follow_reconnects_from_last_displayed_id_without_replaying_history(
             client.check_cursor.return_value = None
             ui = TalkTui(
                 client,
-                Conversation(
+                conversation_record(
                     "gc_00000000", "gc", ("human:bryan", "agent:alice"), name="all"
                 ),
                 "human:bryan",
@@ -737,7 +739,7 @@ def test_messaging_commands_work_without_config_file(
         return MessagingClient(
             config,
             actor=actor,
-            backend=Backend(
+            backend=ValkeyBackend(
                 config, client=FakeAsyncValkey(server=server, decode_responses=True)
             ),
         )
@@ -763,9 +765,10 @@ def test_opening_empty_dm_writes_only_on_first_send(
 
     async def inspect_ui(ui):
         assert ui.selection == "alice" and ui.conversation.kind == "dm"
-        assert ui.conversation.revision == 0 and ui.conversation.created_at is None
+        assert isinstance(ui.conversation, PendingDM)
+        assert not hasattr(ui.conversation, "created_at")
         async with messaging_cli() as human:
-            raw = human._backend._client
+            raw = human.backend._client
             before = await snapshot(raw)
             assert not (await human.resolve("alice")).exists
             assert all(
@@ -808,7 +811,7 @@ def test_empty_dm_follow_discovers_other_participants_first_send(tmp_path, monke
                 Resolution(ref, pair, False),
                 Resolution(ref, pair, True),
             ]
-            client.conversation.return_value = Conversation(
+            client.conversation.return_value = conversation_record(
                 ref, "dm", pair, name="New label", revision=1
             )
             client.history.return_value = [
@@ -821,7 +824,7 @@ def test_empty_dm_follow_discovers_other_participants_first_send(tmp_path, monke
             client.check_cursor.return_value = None
             ui = TalkTui(
                 client,
-                Conversation(ref, "dm", pair),
+                PendingDM(ref, pair),
                 "human:bryan",
                 tmp_path,
                 DARK_TERMINAL_SURFACES,

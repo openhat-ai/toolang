@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any, Self
+from typing import Any, Self, TypeVar, overload
 import time
 from urllib.parse import quote
 
 import httpx
+from pydantic import TypeAdapter
 
 from toolang.execution.errors import SnapshotLimitError
 from .errors import (
     BackendUnavailable,
+    ConversationAccessDenied,
     StorageIntegrityError,
     MessagingError,
     SendUnconfirmed,
@@ -20,12 +22,32 @@ from .errors import (
 )
 from .schemas import (
     Conversation,
+    ConversationSummary,
+    ConversationStatistics,
+    GlobalStatistics,
+    TeamMember,
+    Targets,
     HubConnection,
     Message,
     Resolution,
     conversation_id,
     stream_id,
 )
+
+
+T = TypeVar("T")
+_TEAM = TypeAdapter(list[TeamMember])
+_CONTACTS = TypeAdapter(list[ConversationSummary])
+_TARGETS = TypeAdapter(Targets)
+_GLOBAL_STATS = TypeAdapter(GlobalStatistics)
+_CONVO_STATS = TypeAdapter(ConversationStatistics)
+
+
+def _response(adapter: TypeAdapter[T], data: Any) -> T:
+    try:
+        return adapter.validate_python(data)
+    except (ValueError, TypeError, KeyError, MessagingError) as exc:
+        raise MessagingError("Invalid Hub response") from exc
 
 
 class HubClient:
@@ -123,6 +145,8 @@ class HubClient:
             raise SnapshotLimitError(str(detail))
         if code == "send_unconfirmed":
             raise SendUnconfirmed(f"Send unconfirmed for {message_id}: {detail}")
+        if code == "conversation_access_denied":
+            raise ConversationAccessDenied(str(detail))
         if code == "storage_integrity":
             raise StorageIntegrityError(str(detail))
         if code == "backend_unavailable":
@@ -139,29 +163,36 @@ class HubClient:
         return await self._request("GET", "/msg/agents")
 
     @staticmethod
-    def _presence(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def _presence(rows: list[TeamMember]) -> list[TeamMember]:
         now = time.time() * 1000
-        return [
-            {
-                **row,
-                "online": (row.get("deadline") is not None and row["deadline"] > now)
+        result = []
+        for row in rows:
+            local = row.copy()
+            deadline = row["deadline"]
+            local["online"] = (
+                (deadline is not None and deadline > now)
                 if row["member"].startswith("agent:")
-                else None,
-            }
-            for row in rows
-        ]
+                else None
+            )
+            result.append(local)
+        return result
 
-    async def team(self) -> list[dict[str, Any]]:
-        return self._presence(await self._request("GET", "/team"))
+    async def team(self) -> list[TeamMember]:
+        return self._presence(_response(_TEAM, await self._request("GET", "/team")))
 
-    async def targets(self) -> dict[str, Any]:
-        data = await self._request("GET", "/msg/targets")
+    async def targets(self) -> Targets:
+        data = _response(_TARGETS, await self._request("GET", "/msg/targets"))
         data["participants"] = self._presence(data["participants"])
         return data
 
-    async def contacts(self, *, include_preview: bool = False) -> list[dict[str, Any]]:
-        return await self._request(
-            "GET", "/msg/conversations", params={"include_preview": include_preview}
+    async def contacts(
+        self, *, include_preview: bool = False
+    ) -> list[ConversationSummary]:
+        return _response(
+            _CONTACTS,
+            await self._request(
+                "GET", "/msg/conversations", params={"include_preview": include_preview}
+            ),
         )
 
     async def resolve(
@@ -176,28 +207,40 @@ class HubClient:
             data["conversation"], tuple(data["participants"]), data["exists"]
         )
 
+    @staticmethod
+    def _decode_conversation(data: dict[str, Any]) -> Conversation:
+        try:
+            values: dict[str, Any] = {
+                **data,
+                "participants": tuple(data["participants"]),
+            }
+            return Conversation(**values)
+        except (ValueError, TypeError, KeyError, MessagingError) as exc:
+            raise MessagingError("Invalid Hub conversation response") from exc
+
     async def conversation(self, conversation: str) -> Conversation:
         data = await self._request("GET", self._conversation(conversation))
-        data["participants"] = tuple(data["participants"])
-        return Conversation(**data)
+        return self._decode_conversation(data)
 
     async def create_conversation(
         self, name: str | None = None, *, participants: list[str] | None = None
-    ) -> dict[str, Any]:
-        return await self._request(
+    ) -> Conversation:
+        data = await self._request(
             "POST",
             "/msg/conversations",
             json={"name": name, "participants": participants},
         )
+        return self._decode_conversation(data)
 
     async def rename_conversation(
         self, conversation: str, name: str | None, *, revision: int
-    ) -> dict[str, Any]:
-        return await self._request(
+    ) -> Conversation:
+        data = await self._request(
             "PATCH",
             self._conversation(conversation),
             json={"name": name, "revision": revision},
         )
+        return self._decode_conversation(data)
 
     async def join_conversation(self, conversation: str) -> dict[str, Any]:
         return await self._request(
@@ -209,12 +252,25 @@ class HubClient:
             "DELETE", self._conversation(conversation) + "/participants"
         )
 
-    async def statistics(self, conversation: str | None = None) -> dict[str, Any]:
-        return await self._request(
+    @overload
+    async def statistics(self, conversation: str) -> ConversationStatistics: ...
+
+    @overload
+    async def statistics(self, conversation: None = None) -> GlobalStatistics: ...
+
+    async def statistics(
+        self, conversation: str | None = None
+    ) -> GlobalStatistics | ConversationStatistics:
+        data = await self._request(
             "GET",
             self._conversation(conversation) + "/stats"
             if conversation
             else "/msg/stats",
+        )
+        return (
+            _response(_CONVO_STATS, data)
+            if conversation
+            else _response(_GLOBAL_STATS, data)
         )
 
     async def send(

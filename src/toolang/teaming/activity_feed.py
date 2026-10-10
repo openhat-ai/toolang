@@ -104,7 +104,7 @@ class HubActivityFeed:
                         task.cancel()
                         await asyncio.gather(task, return_exceptions=True)
                     for agent in sorted(agents):
-                        lease = await self.reader.backend.lease(agent)
+                        lease = await self.reader.backend.activity.lease(agent)
                         local = await self.reader.local_source(agent, lease)
                         source_key = {
                             **lease,
@@ -124,7 +124,9 @@ class HubActivityFeed:
                             or not lease.get("endpoint")
                             and local is None
                         ):
-                            pages = await self.reader.backend.cached(agent, self.query)
+                            pages = await self.reader.backend.activity.cached(
+                                agent, self.query
+                            )
                             await self.reader.decorate(agent, pages, lease, fresh=False)
                             self.replace(agent, pages)
                         if (
@@ -171,12 +173,16 @@ class HubActivityFeed:
                             if data["agents"] != [agent]:
                                 raise ValueError("Source activity identity mismatch")
                             batch, pages = pages, []
-                            saved = local is not None or await self.reader.backend.save(
-                                agent, lease["token"], batch
+                            saved = (
+                                local is not None
+                                or await self.reader.backend.activity.save(
+                                    agent, lease["token"], batch
+                                )
                             )
                             if (
                                 not saved
-                                and await self.reader.backend.lease(agent) != lease
+                                and await self.reader.backend.activity.lease(agent)
+                                != lease
                             ):
                                 return
                             # Another reader may have cached a later observation.

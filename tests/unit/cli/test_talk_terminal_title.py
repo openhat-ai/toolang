@@ -1,6 +1,8 @@
 """Talk publishes terminal identity without changing tmux ownership marks."""
 
 import asyncio
+
+from tests.support.conversations import conversation_record
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -8,7 +10,6 @@ import pytest
 from tests.unit.cli.test_talk_layout import talk_app
 from toolang.cli.common.execution_progress.formatting import display_width
 from toolang.cli.toolang.commands.talk import tui
-from toolang.teaming.schemas import Conversation
 
 
 @pytest.mark.parametrize("fails", [False, True])
@@ -17,11 +18,11 @@ from toolang.teaming.schemas import Conversation
     [
         (None, "#dev"),
         (
-            Conversation("dm_00000001", "dm", ("human:bryan", "agent:alice")),
+            conversation_record("dm_00000001", "dm", ("human:bryan", "agent:alice")),
             "@alice",
         ),
         (
-            Conversation("dm_00000001", "dm", ("agent:bob", "agent:alice")),
+            conversation_record("dm_00000001", "dm", ("agent:bob", "agent:alice")),
             "@alice,bob",
         ),
     ],
