@@ -7,7 +7,7 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ## [Unreleased]
 
-## [0.4.0a3] - 2026-10-10
+## [0.4.0a3] - 2026-10-11
 
 ### Added
 
