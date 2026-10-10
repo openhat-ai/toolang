@@ -10,11 +10,10 @@ import json
 from .ids import dm_id
 
 from .backend import Backend, LEASE_SECONDS
-from .keys import TEAM
 from .discovery import host_token as host_token
 from .types import RENEW_SECONDS as RENEW_SECONDS
 from .config import BackendConfig
-from .errors import LeaseLost, MessagingError
+from .errors import ConversationAccessDenied, LeaseLost, MessagingError
 from .schemas import (
     Conversation,
     Message,
@@ -117,10 +116,8 @@ class MessagingClient:
             for ref in await self._backend.named(value):
                 try:
                     info = await self.conversation(ref)
-                except MessagingError as exc:
-                    if "not a member" in str(exc):
-                        continue
-                    raise
+                except ConversationAccessDenied:
+                    continue
                 if info.name == value:
                     matches.append(info)
             if not matches:
@@ -159,7 +156,7 @@ class MessagingClient:
         a, b = pair
         direct_pair(a, b)
         for member in pair:
-            if not await self._backend._call("HEXISTS", TEAM, member):
+            if not await self._backend.known_participant(member):
                 raise MessagingError(f"Unknown participant: {member}")
         ref = dm_id(a, b)
         info = await self._backend.conversation(ref, self.actor, pair=pair)
@@ -216,11 +213,10 @@ class MessagingClient:
         for ref in await self._backend.conversation_ids():
             try:
                 info = await self.conversation(ref)
-            except MessagingError as exc:
-                if "not a member" in str(exc):
-                    continue
-                raise
-            latest = await self.history(ref, count=1)
+                latest = await self.history(ref, count=1)
+            except ConversationAccessDenied:
+                # Membership may change between metadata and preview reads.
+                continue
             item = dict(
                 conversation=ref,
                 name=info.name,

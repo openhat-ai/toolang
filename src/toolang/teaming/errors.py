@@ -11,6 +11,10 @@ class MessagingError(TeamingError):
     """Invalid messaging identity, destination, or operation."""
 
 
+class ConversationAccessDenied(MessagingError):
+    """The agent is not a participant in the requested conversation."""
+
+
 class BackendUnavailable(MessagingError):
     """The backend connection failed; reads may reconnect."""
 

@@ -14,13 +14,23 @@ from valkey.exceptions import ConnectionError, TimeoutError, ValkeyError
 from .config import BackendConfig
 from .errors import (
     BackendUnavailable,
+    ConversationAccessDenied,
     LeaseLost,
     MessagingError,
     SendUnconfirmed,
     TeamingError,
     StorageIntegrityError,
 )
-from .keys import BASE_KEYS, PREFIX, CONVOS, SYSTEM, convo_key, name_key
+from .keys import (
+    BASE_KEYS,
+    PREFIX,
+    CONVOS,
+    SYSTEM,
+    TEAM,
+    TEAM_EVENTS,
+    convo_key,
+    name_key,
+)
 from .ids import dm_id, gc_id
 from .schemas import (
     Conversation,
@@ -77,6 +87,10 @@ class Backend:
                 raise StorageIntegrityError(str(exc)) from exc
             if "Agent lease lost" in str(exc):
                 raise LeaseLost(str(exc)) from exc
+            if "conversation_access_denied:" in str(exc):
+                raise ConversationAccessDenied(
+                    "Agent is not a member of this conversation"
+                ) from exc
             raise MessagingError(str(exc)) from exc
 
     async def _eval(self, script: str, keys: list[str], args: list[object]) -> Any:
@@ -95,6 +109,35 @@ class Backend:
 
     async def team(self) -> list[dict[str, Any]]:
         return list(json.loads(await self._operation(scripts.READ, {"action": "team"})))
+
+    async def known_participant(self, member: str) -> bool:
+        participant(member)
+        return bool(await self._call("HEXISTS", TEAM, member))
+
+    async def team_event_position(self) -> tuple[str, str]:
+        epoch, tail = await self._operation(scripts.READ, {"action": "metadata"})
+        return epoch, tail
+
+    async def team_event_replay(
+        self, epoch: str, after: str, *, actor: str | None = None, token: str = ""
+    ) -> list[tuple[str, dict]] | None:
+        operation = dict(epoch=epoch, after=after)
+        if actor is not None:
+            operation.update(actor=actor, token=token)
+        result = await self._operation(scripts.REPLAY, operation)
+        if result[0] == "resync":
+            return None
+        rows = []
+        for sid, values in result[1]:
+            fields = dict(zip(values[::2], values[1::2], strict=True))
+            rows.append((sid, json.loads(fields["data"])))
+        return rows
+
+    async def wait_team_events(self, after: str) -> None:
+        # Blocking reads are wake-up hints; replay validates each batch atomically.
+        await self._call(
+            "XREAD", "COUNT", 1, "BLOCK", 1000, "STREAMS", TEAM_EVENTS, after
+        )
 
     async def participants(self) -> dict[str, dict[str, Any]]:
         return {

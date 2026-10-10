@@ -21,7 +21,11 @@ from toolang.teaming.keys import (
     name_key,
 )
 from toolang.teaming.ids import dm_id
-from toolang.teaming.errors import StorageIntegrityError
+from toolang.teaming.errors import (
+    BackendUnavailable,
+    ConversationAccessDenied,
+    StorageIntegrityError,
+)
 from toolang.teaming.team_events import TeamEvents
 from toolang.teaming.messaging import MessagingClient
 from toolang.teaming.config import BackendConfig
@@ -141,7 +145,7 @@ def test_lookup_is_read_only_and_first_send_creates_atomically():
             for action in (human.join_conversation, human.leave_conversation):
                 with pytest.raises(MessagingError, match="DM/system"):
                     await action(ref)
-            with pytest.raises(MessagingError, match="not a member"):
+            with pytest.raises(ConversationAccessDenied):
                 await bob.history(ref)
             private = (await alice.send("bob", body="private"))["conversation"]
             assert (await human.resolve("alice,bob")).conversation == private
@@ -149,6 +153,59 @@ def test_lookup_is_read_only_and_first_send_creates_atomically():
             with pytest.raises(MessagingError, match="read-only"):
                 await human.send(private, body="observer")
             assert len(await human.history(private)) == 1
+
+    asyncio.run(scenario())
+
+
+def test_contacts_survive_membership_loss_while_loading_previews(monkeypatch):
+    async def scenario():
+        server = FakeServer(server_type="valkey")
+        async with (
+            client(server, "human:owner") as human,
+            client(server, "agent:alice") as alice,
+        ):
+            await alice.register(human.actor)
+            leaving = await alice.create_conversation("Leaving")
+            remaining = await alice.create_conversation("Remaining")
+            history = alice.history
+
+            async def leave_before_history(conversation, **kwargs):
+                if conversation == leaving.id:
+                    await alice.leave_conversation(conversation)
+                return await history(conversation, **kwargs)
+
+            monkeypatch.setattr(alice, "history", leave_before_history)
+            contacts = await alice.contacts(include_preview=True)
+            ids = {row["conversation"] for row in contacts}
+            assert leaving.id not in ids
+            assert remaining.id in ids
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("operation", ["contacts", "name"])
+@pytest.mark.parametrize("error", [BackendUnavailable, StorageIntegrityError])
+def test_conversation_discovery_propagates_backend_errors(
+    monkeypatch, operation, error
+):
+    async def scenario():
+        server = FakeServer(server_type="valkey")
+        async with (
+            client(server, "human:owner") as human,
+            client(server, "agent:alice") as alice,
+        ):
+            await alice.register(human.actor)
+            await alice.create_conversation("Visible")
+
+            async def unavailable(_):
+                raise error("Permission lookup failed")
+
+            monkeypatch.setattr(alice, "conversation", unavailable)
+            with pytest.raises(error):
+                if operation == "contacts":
+                    await alice.contacts()
+                else:
+                    await alice.resolve("Visible", kind="name")
 
     asyncio.run(scenario())
 

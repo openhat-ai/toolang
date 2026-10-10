@@ -197,7 +197,7 @@ local function readable(id,actor,members)
   local value=record(id)
   if not value then error('Unknown conversation: '..id) end
   if value.kind=='dm' and redis.call('SCARD',members)~=2 then fail('invalid DM membership') end
-  if string.sub(actor,1,6)=='agent:' and redis.call('SISMEMBER',members,actor)==0 then error('Agent is not a member of this conversation') end
+  if string.sub(actor,1,6)=='agent:' and redis.call('SISMEMBER',members,actor)==0 then error('conversation_access_denied: Agent is not a member of this conversation') end
   return value
 end
 local function same_pair(members,pair)

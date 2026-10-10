@@ -11,7 +11,7 @@ from toolang.execution.schemas import ActivitySnapshot
 from .errors import EventRecoveryRequired
 from .messaging import MessagingClient
 from .messaging_api import messaging_router
-from .team_events import team_router
+from .team_api import team_router
 from .publication import validate_publication
 from .roster import Roster
 from .records import MAX_BYTES

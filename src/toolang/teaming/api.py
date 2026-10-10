@@ -33,7 +33,7 @@ from .messaging import MessagingClient
 from .schemas import target
 from .messaging_api import messaging_router
 from .lifecycle import HubLifecycle
-from .team_events import team_router
+from .team_api import team_router
 from .agent_api import agent_router
 from .roster import Roster
 
