@@ -154,7 +154,6 @@ class Activity:
         self.parents: dict[tuple[str, str], tuple[str, str]] = {}
         self.folded: set[tuple[str, str]] = set()
         self.offset = 0
-        self.horizontal = 0
         self.details = False
         self.result_key: tuple[str, str, str] | None = None
         self.result_text = ""
@@ -600,8 +599,6 @@ class Activity:
         elif key == Keys.Escape:
             self.details = False
             self.help = False
-        elif key in {"<", ">"}:
-            self.horizontal = max(0, self.horizontal + (16 if key == ">" else -16))
         else:
             rows = self.rows()
             self._selection(rows)

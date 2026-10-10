@@ -111,7 +111,11 @@ def header(state: Activity, width: int) -> list[Text]:
             line = Text()
             for index in range(start, start + columns):
                 label, value = group[index]
-                label_width = max(len(row[index][0]) + 1 for row in groups)
+                label_width = max(
+                    len(row[position][0]) + 1
+                    for row in groups
+                    for position in range(index % columns, 4, columns)
+                )
                 item = Text.assemble(
                     (f"{label}:".ljust(label_width), "cyan"), " ", (value, "bold")
                 )
@@ -134,10 +138,16 @@ def table(
     state: Activity, rows: list[Row], width: int, once: bool
 ) -> tuple[Text, list[Text]]:
     numeric = {"MODEL", "TOOL", "IN", "CACHED", "OUT", "SPEND", "TIME+"}
-    labels = ([] if state.agent else ["AGENT"]) + ["S"]
-    if width >= 110:
-        labels += ["MODEL", "TOOL"]
-    labels += ["IN", "CACHED", "OUT", "SPEND", "TIME+"]
+    labels = ([] if state.agent else ["AGENT"]) + [
+        "S",
+        "MODEL",
+        "TOOL",
+        "IN",
+        "CACHED",
+        "OUT",
+        "SPEND",
+        "TIME+",
+    ]
     if state.view != "agent":
         labels += ["THREAD"]
     if state.view == "execution":
@@ -192,15 +202,7 @@ def table(
             padding = " " * max(0, state.column_widths[label] - cell_len(value))
             cells.append(padding + value if label in numeric else value + padding)
         text = " ".join(cells) + " " + clean(activity)
-        skipped = index = 0
-        while index < len(text) and skipped < state.horizontal:
-            skipped += cell_len(text[index])
-            index += 1
-        return clip(
-            Text(" " * max(0, skipped - state.horizontal) + text[index:], style=style),
-            width,
-            pad=True,
-        )
+        return clip(Text(text, style=style), width, pad=True)
 
     heading = line(
         headings,
@@ -349,14 +351,29 @@ def details(
 
 def status_bar(state: Activity, width: int) -> Text:
     if state.editor:
-        return clip(
+        prefix = clip(Text("Filter: ", style="bold"), max(0, width - 1))
+        suffix = clip(
             Text(
-                f"Filter: {state.buffer}█  Active: {state.filter_active}"
-                + (f"  {state.error}" if state.error else ""),
-                style="bold",
+                f"  {state.error}"
+                if state.error
+                else f"  Active: {state.filter_active}",
+                style="red" if state.error else "bold",
             ),
-            width,
-            pad=True,
+            max(0, width - prefix.cell_len - 12),
+        )
+        value = state.buffer + "█"
+        start, used = len(value), 0
+        available = width - prefix.cell_len - suffix.cell_len
+        for char in reversed(value):
+            if used + cell_len(char) > available:
+                break
+            start -= 1
+            used += cell_len(char)
+        # A combining mark cannot retain a base character outside the viewport.
+        while start < len(value) and cell_len(value[start]) == 0:
+            start += 1
+        return clip(
+            prefix + Text(value[start:], style="bold") + suffix, width, pad=True
         )
     snapshots = list(state.snapshots.values())
     status = (
@@ -376,11 +393,14 @@ def status_bar(state: Activity, width: int) -> Text:
         ("F6", "Sort", False),
         ("F7", "Activity", False),
         ("F8", "Stats", False),
-        ("F10", "Quit", False),
     ]
     for key, label, selected in hints:
+        if keys.cell_len + len(key + label) + 1 + len("F10Quit") > width:
+            break
         keys.append(key, style="default on default")
         keys.append(label + " ", style="bold reverse" if selected else "")
+    keys.append("F10", style="default on default")
+    keys.append("Quit")
     if status and keys.cell_len + len(status) + 2 <= width:
         keys.append(" " * (width - keys.cell_len - len(status)))
         keys.append(status)
@@ -407,7 +427,7 @@ def render(state: Activity, *, width: int, height: int, once: bool) -> Group:
                 "TIME+ accumulates execution, excluding downtime and nested durations.",
                 "F7/F8 cycle windows. Custom: --recent 2h --since 6h or a timezone-aware timestamp.",
                 "F5 cycles Agent / Thread / Run / Tree; a/t/e jump to a level.",
-                "Up/Down, Ctrl-P/N or mouse wheel select. Left/Right fold. </> scroll columns.",
+                "Up/Down, Ctrl-P/N or mouse wheel select. Left/Right fold.",
                 "Enter toggles Details; Esc closes. PgUp/PgDn page. F10, q or Ctrl-C quit.",
                 "Filter: Enter applies, Esc cancels, Ctrl-A toggles Active, Ctrl-U clears.",
             )

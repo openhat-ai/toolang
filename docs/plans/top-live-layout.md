@@ -66,6 +66,8 @@ Agent team   offline  12m30s
   frequency or repeat settings as prose above Table.
 - Status bar uses htop-style function-key cells: normal key numbers followed by
   colored action labels. Show only Fn hints; retain other shortcuts in Help.
+  On narrow terminals, omit whole key cells as needed and retain F10 Quit.
+  Keep the filter input tail and cursor visible while editing long values.
   Keep `Connecting`, `Updating` and `Reconnecting` feedback; omit `Incomplete`.
   Coverage/freshness details belong in Details. The wall clock keeps an idle
   dashboard visibly current without inventing execution activity.
@@ -75,9 +77,9 @@ Agent team   offline  12m30s
 Use one width definition for headings and rows: numeric values/headings align
 right, ownership and ACTIVITY align left. Selection and heading fills span the
 viewport. Keep one physical line per row, hard-clipped at display-cell boundaries
-with **no ellipsis**, including wide/combining characters. Horizontal scrolling
-preserves full columns; Details preserves full values. Below 110 columns, hide
-MODEL/TOOL first. No grid boxes or wrapped Table rows.
+with **no ellipsis**, including wide/combining characters. Preserve column order
+at every width; crop the right edge without hiding columns or horizontal scrolling.
+Details preserves full values. No grid boxes or wrapped Table rows.
 [Views](top-activity.md#views) defines columns and branches.
 
 Details follows the selected object, using short dashboard labels:

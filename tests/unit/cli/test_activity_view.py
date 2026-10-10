@@ -219,15 +219,14 @@ def test_narrow_terminal_keeps_selected_row_and_footer_visible(details):
     feed(state, snapshot)
     state.selected = (snapshot.agent, snapshot.roots[-1].id)
     state.details = details
-    state.horizontal = 32
     output = io.StringIO()
     console = Console(file=output, width=80, height=24, color_system=None)
     console.print(state.render(width=80, height=24))
     lines = output.getvalue().splitlines()
     assert len(lines) <= 24
-    assert any(
-        "run_00000039" in line and "Selected:" not in line and "Inspect:" not in line
-        for line in lines
+    assert state.rows()[state.offset : state.offset + state.page_size][-1].key == (
+        snapshot.agent,
+        "run_00000039",
     )
     assert ("Inspect: too alice inspect run_00000039" in output.getvalue()) == details
     assert "F10Quit" in lines[-1]

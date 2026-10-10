@@ -1,6 +1,7 @@
 """Dashboard layout, pending windows, selection and styled result paging."""
 
 import io
+import re
 
 import pytest
 from prompt_toolkit.keys import Keys
@@ -33,10 +34,32 @@ def test_header_height_and_separator_are_stable_across_updates(width):
     state.recent_label = "1w"
     snapshot.stats.model = 100000
     snapshot.failed = 100
+    snapshot.since = state.query.since
+    snapshot.filter = state.query.text
+    snapshot.active_only = state.query.active
+    state.attach()
     feed(state, snapshot)
     changed = render(state, width)
+    assert state.snapshots[snapshot.agent].stats.model == 100000
+    assert "100000" in "\n".join(changed[:heading])
     assert changed[heading].startswith("AGENT")
     assert not changed[heading - 1].strip()
+
+
+@pytest.mark.parametrize("width", [40, 80, 180])
+def test_header_reflow_aligns_values_within_each_metric_column(width):
+    from toolang.cli.common.activity_dashboard import header
+
+    state = Activity(None)
+    feed(state, page())
+    columns = {}
+    for line in header(state, width):
+        for metric in re.finditer(
+            r"(Threads|Runs|Models|Tools|In|Cached|Out|Spend):\s+(\S+)", line.plain
+        ):
+            columns.setdefault(metric.start(), set()).add(metric.start(2))
+    assert len(columns) == (4 if width == 180 else 2)
+    assert all(len(starts) == 1 for starts in columns.values())
 
 
 def test_status_bar_contains_only_function_key_hints_and_no_incomplete():
@@ -66,6 +89,37 @@ def test_status_bar_contains_only_function_key_hints_and_no_incomplete():
     )
 
 
+@pytest.mark.parametrize("width", [40, 50, 80])
+def test_narrow_status_bar_keeps_complete_key_cells_and_quit(width):
+    from toolang.cli.common.activity_dashboard import status_bar
+
+    state = Activity(None)
+    feed(state, page())
+    bar = status_bar(state, width).plain
+    assert "F1Help" in bar and "F5View" in bar and "F10Quit" in bar
+    assert set(bar.split()) <= {
+        "F1Help",
+        "F4Filter",
+        "F5View",
+        "F6Sort",
+        "F7Activity",
+        "F8Stats",
+        "F10Quit",
+    }
+
+
+@pytest.mark.parametrize("text", ["configuration-source-" * 8, "配置e\u0301" * 80])
+def test_long_filter_keeps_input_tail_and_cursor_visible(text):
+    from toolang.cli.common.activity_dashboard import status_bar
+
+    state = Activity(None)
+    state.key(Keys.F4)
+    state.key(Keys.BracketedPaste, text + "last")
+    bar = status_bar(state, 40).plain
+    assert bar.startswith("Filter: ") and "last█" in bar
+    assert "Active:" in bar and cell_len(bar) == 40
+
+
 @pytest.mark.parametrize("other_thread", [False, True])
 def test_f5_cycles_all_views_and_restores_tree_selection_without_resubscribing(
     other_thread,
@@ -93,6 +147,25 @@ def test_f5_cycles_all_views_and_restores_tree_selection_without_resubscribing(
     assert state.tree and state.selected == ("agent:alice", "run_child.2")
     assert state.query == query and not state.dirty
     assert state.key(Keys.F10)
+
+
+@pytest.mark.parametrize("width", [40, 80])
+def test_narrow_table_keeps_columns_and_clips_without_horizontal_scrolling(width):
+    from toolang.cli.common.activity_dashboard import clip, table
+
+    state = Activity(None, view="execution", tree=True)
+    feed(state, page())
+    heading, rows = table(state, state.rows(), 220, False)
+    narrow_heading, narrow_rows = table(state, state.rows(), width, False)
+    assert "MODEL" in narrow_heading.plain and "TOOL" in narrow_heading.plain
+    assert narrow_heading.plain == clip(heading, width).plain
+    assert [row.plain for row in narrow_rows] == [
+        clip(row, width).plain for row in rows
+    ]
+    for key in (">", "<"):
+        state.key(key)
+        actual_heading, actual_rows = table(state, state.rows(), width, False)
+        assert actual_heading == narrow_heading and actual_rows == narrow_rows
 
 
 @pytest.mark.parametrize(

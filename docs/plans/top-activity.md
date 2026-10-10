@@ -169,7 +169,6 @@ ACTIVITY, SPEND or TIME+ heading; ACTIVITY includes its range: `ACTIVITY(30m)↓
 | Left / Right | Collapse/expand paths; Left on a leaf/folded row selects its visible parent. |
 | Up / Down, Ctrl-P / Ctrl-N | Select previous/next row; Details follows. |
 | PgUp / PgDn | Page Details when open, otherwise Table. |
-| < / > | Scroll Table horizontally. |
 | Enter / Esc | Toggle / close Details. |
 | F1 | Help, including presence legend and custom CLI window values. |
 | F10 / q / Ctrl-C | Exit without affecting execution. |
