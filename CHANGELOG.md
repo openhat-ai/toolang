@@ -9,6 +9,34 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Added
 
+- Conversations now use canonical IDs and optional names: direct messages use
+  `dm_` plus eight base32 characters derived from the two typed participant
+  names, custom conversations (GCs) use `gc_` plus eight backend-allocated
+  base32 characters, and either kind accepts an editable name of 1–128
+  characters, duplicates included, that a participant may set or clear against
+  the conversation's current revision. Human observers can read every
+  conversation while agents read only ones they joined, and the bundled `msg`
+  toolset gains `msg/resolve` (wire name `msg__resolve`) to resolve a
+  participant, canonical ID, or, with `by_name`, a conversation name, returning
+  candidate IDs when a name is ambiguous.
+
+- `too talk` with no target prints a one-shot `Team` and `Convos` directory and
+  exits, without requiring a TTY and without opening a session or tmux window:
+  `Team` lists visible agents and humans with canonical IDs, display names,
+  owners, and agent online state, while `Convos` lists accessible conversations
+  with separate ID and Name columns (an unnamed conversation shows an em dash),
+  kind, participants, and latest-message state.
+
+- The Hub serves the resumable team feed at
+  `GET /team/events?after=t1.<epoch>.<stream-id>`: an initial checkpoint
+  precedes snapshots, about 100,000 entries retain member, presence, and
+  conversation-membership changes, and a trimmed, ahead, or previous-epoch
+  cursor emits `resync_required` and closes for a cursorless reconnect.
+  Conversation statistics are exposed at `GET /msg/stats` (human-only global
+  totals including the system GC) and
+  `GET /msg/conversations/{conversation}/stats` (participants, lifetime and
+  retained messages, and the last stream ID).
+
 - `too top` and `too AGENT top` open a full-screen dashboard on the alternate
   screen, restoring the terminal on exit, with Header, Table, Details, and
   Status bar regions: Header shows the scope, the local clock, and the selected
@@ -179,6 +207,55 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   see `docs/messaging.md` for setup. (#708)
 
 ### Changed
+
+- **Breaking:** messaging stores canonical conversations instead of groups under
+  schema `2` of the `too:teaming:v1` backend space: `group:` IDs, the
+  `/msg/groups` routes, and the group record fields and aliases are replaced by
+  `dm_`/`gc_` IDs and `/msg/conversations` with `/{id}/participants`,
+  `/{id}/messages`, `/{id}/cursor`, and `/{id}/stats` subresources plus
+  revision-checked PATCH renames. Upgrade Hub and clients together on a fresh
+  Redis/Valkey dataset; missing or corrupt initialized conversation data fails
+  closed without resetting counters or rebuilding records, and old history,
+  drafts, and checkpoints are neither migrated nor imported.
+
+- **Breaking:** `too talk` accepts positional targets only: `alice` opens the
+  current human's DM with that agent and creates it only on the first accepted
+  send, showing empty history until then; `alice,bob` observes an existing
+  agent-agent DM read-only; and `dm_...` or `gc_...` opens that conversation
+  directly. `--dm`, `--group`, and `group:` targets are removed, bare names
+  always select agents, missing agent-agent DMs and unknown IDs fail without
+  creating anything, and the system GC is initially named `all` and opened by ID.
+
+- **Breaking (tool API):** the `msg` conversation tools are renamed:
+  `msg/create_group` becomes `msg/create_conversation`
+  (`msg__create_conversation`), which now creates a GC or explicitly creates or
+  reuses a two-participant DM, while `msg/join_group` and `msg/leave_group`
+  become `msg/join_conversation` (`msg__join_conversation`) and
+  `msg/leave_conversation` (`msg__leave_conversation`); the corresponding
+  `MessagingClient` and `HubClient` create, join, and leave methods use the
+  same new conversation names, and their `resolve` returns the conversation,
+  its participants, and whether it exists. Update tool calls, prompts, and
+  integrations to the new names.
+
+- Presence is now the backend lease deadline alone: a five-second heartbeat
+  renews the deadline to at least 15 seconds ahead, an expired deadline grants
+  no authority even before cleanup, readers compare deadlines with their own
+  clocks and correct only their local view, and the Hub reconciles up to 128
+  due agents per batch, checking once a second and draining additional full
+  batches with cooperative yields. The `last_seen` field is removed from activity
+  snapshots, responses, and displays, local messaging checkpoints move to
+  `v2-<backend-identity>.json`, and Talk state moves to `.runtime/talk-v2/`.
+
+- **Breaking:** the `too text` command is renamed to `too talk`, and its tmux
+  windows now share one `talk` session: a window is reused by canonical
+  conversation ID and connection context (root, backend, viewer, and Hub
+  endpoint) instead of one session per root, connection, or human, and a new
+  window is named by its canonical ID. Scripts and habits must switch to
+  `too talk`, while `TOOLANG_TMUX=0` still keeps Talk in the invoking terminal.
+  Talk also shows conversation identity: the footer shows the conversation, its
+  canonical ID, and the viewer's login, and publishes a compact label
+  (`@alice`, `@alice,bob`, or `#dev`) as the terminal title, cleared on exit.
+  (#719)
 
 - `too top --since DURATION` selects a rolling Stats window that is
   re-evaluated as time passes instead of one fixed at start; pass a
