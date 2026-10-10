@@ -474,6 +474,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Fixed
 
+- `too chat` and `too talk` pass the invoking process's
+  `TOOLANG_PROGRESS_MAX_WIDTH` and `TOOLANG_INPUTBOX_MAX_WIDTH` into new tmux
+  panes — including unset values, preserving the fallback — so a tmux server's
+  stale environment no longer overrides them.
+
 - `too chat` and `too talk` keep native terminal scrollback stable through
   terminal resizes: the live input no longer drifts across repeated resizes,
   and Chat's Input, Queue, and status bars now follow the input area width and
