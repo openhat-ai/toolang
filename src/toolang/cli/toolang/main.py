@@ -403,7 +403,7 @@ _registered_group(
 _registered_command(
     "talk",
     "toolang.cli.toolang.commands.talk:talk_command",
-    help="Talk to agents or groups",
+    help="Talk in direct or group conversations",
     context_settings={"allow_interspersed_args": False},
     rich_help_panel=TEAMING_COMMAND_PANEL,
 )

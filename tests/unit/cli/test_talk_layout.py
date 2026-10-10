@@ -33,11 +33,14 @@ async def talk_app(
 ):
     output = TerminalOutput()
     conversation = conversation or Conversation(
-        "group:dev", "group", (human, "agent:alice", "agent:bob")
+        "gc_00000001", "gc", (human, "agent:alice", "agent:bob"), name="dev"
     )
+    client = AsyncMock()
+    client.conversation.return_value = conversation
+    client.team.return_value = []
     with create_app_session(input=DummyInput(), output=output):
         app = tui.TalkTui(
-            AsyncMock(),
+            client,
             conversation,
             human,
             tmp_path,
@@ -174,19 +177,23 @@ def test_footer_keeps_identity_after_send_and_prioritizes_reconnection(tmp_path)
 @pytest.mark.parametrize(
     "conversation,read_only,label",
     [
-        (Conversation("group:all", "group", ("human:bryan",)), False, "#all(1)"),
         (
-            Conversation("group:design", "group", ("human:bryan",)),
+            Conversation("gc_00000000", "gc", ("human:bryan",), name="all"),
+            False,
+            "#all(1)",
+        ),
+        (
+            Conversation("gc_00000003", "gc", ("human:bryan",), name="design"),
             False,
             "#design(1)",
         ),
         (
-            Conversation("group:one", "direct", ("agent:alice", "human:bryan")),
+            Conversation("dm_00000001", "dm", ("agent:alice", "human:bryan")),
             False,
             "@alice",
         ),
         (
-            Conversation("group:two", "direct", ("agent:bob", "agent:alice")),
+            Conversation("dm_00000002", "dm", ("agent:bob", "agent:alice")),
             True,
             "@alice,bob",
         ),
@@ -217,3 +224,6 @@ def test_read_only_view_preserves_previous_draft(tmp_path):
             assert (tmp_path / "draft.txt").read_text() == "unsent message"
 
     asyncio.run(scenario())
+
+
+pytestmark = pytest.mark.usefixtures("fixed_conversation_ids")

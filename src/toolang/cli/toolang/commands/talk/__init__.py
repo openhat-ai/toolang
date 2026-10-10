@@ -18,6 +18,12 @@ from toolang.cli.common.messaging import settings
 from toolang.cli.common.tmux import resolve_launcher
 from toolang.teaming.client import HubClient
 from toolang.teaming.errors import TeamingError
+from toolang.teaming.schemas import (
+    Conversation,
+    Resolution,
+    conversation_id,
+    identifier,
+)
 
 
 def talk_identity(root: Path, connection: str, human: str) -> str:
@@ -28,46 +34,51 @@ def talk_command(
     ctx: typer.Context,
     target: Annotated[
         str | None,
-        typer.Argument(help="Agent name, group name, or canonical conversation ID"),
+        typer.Argument(
+            help="Agent name, two comma-separated agent names, or dm_/gc_ ID"
+        ),
     ] = None,
     body: Annotated[
         list[str] | None,
         typer.Argument(help="Literal message; omit to open interactive input"),
     ] = None,
-    dm: Annotated[
-        bool, typer.Option("--dm", help="Resolve target as an agent name")
-    ] = False,
-    group: Annotated[
-        bool, typer.Option("--group", help="Resolve target as a custom group name")
-    ] = False,
 ) -> None:
     if target is None:
-        if dm or group:
-            raise ClickException("A target is required with --dm or --group")
         from .directory import directory_command
 
         directory_command(ctx)
         return
     root = context_root(ctx)
-    if dm and group:
-        raise ClickException("Use only one of --dm or --group")
     words = list(body or [])
     if words[:1] == ["--"]:
         words.pop(0)
     try:
         config, human = settings(root)
 
-        async def resolve_or_send() -> str:
+        try:
+            conversation_id(target)
+        except TeamingError:
+            for name in target.split(","):
+                identifier(name)
+
+        async def resolve_or_send() -> Resolution:
             async with HubClient(config) as client:
-                resolved = await client.resolve(
-                    target, kind="dm" if dm else "group" if group else None
-                )
+                resolved = await client.resolve(target)
                 if words:
-                    receipt = await client.send(resolved, body=" ".join(words))
-                    typer.echo(f"Sent {receipt['message']['id']} to {resolved}")
+                    receipt = await client.send(
+                        resolved.conversation,
+                        body=" ".join(words),
+                        participants=list(resolved.participants)
+                        if resolved.conversation.startswith("dm_")
+                        else None,
+                    )
+                    typer.echo(
+                        f"Sent {receipt['message']['id']} to {resolved.conversation}"
+                    )
                 return resolved
 
-        resolved = asyncio.run(resolve_or_send())
+        selection = asyncio.run(resolve_or_send())
+        resolved = selection.conversation
         if words:
             return
         if not sys.stdin.isatty() or not sys.stdout.isatty():
@@ -95,7 +106,7 @@ def talk_command(
                 "--root",
                 str(root),
                 "talk",
-                resolved,
+                resolved if selection.exists else target,
             ]
             if not launcher.place_chat(
                 thread_id=resolved, argv=argv, directory=str(Path.cwd())
@@ -108,7 +119,7 @@ def talk_command(
         state = (
             root
             / ".runtime"
-            / "text"
+            / "talk-v2"
             / identity
             / sha256(resolved.encode()).hexdigest()[:20]
         )
@@ -117,7 +128,11 @@ def talk_command(
 
         async def interactive() -> None:
             async with HubClient(config) as client:
-                info = await client.conversation(resolved)
+                info = (
+                    await client.conversation(resolved)
+                    if selection.exists
+                    else Conversation(resolved, "dm", selection.participants)
+                )
                 await TalkTui(
                     client,
                     info,
@@ -126,6 +141,7 @@ def talk_command(
                     surfaces,
                     read_only=not info.allows_sender(human),
                     max_width=max_width,
+                    selection=None if selection.exists else target,
                 ).run()
 
         asyncio.run(interactive())

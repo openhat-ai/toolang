@@ -975,7 +975,6 @@ class ActivitySnapshot(BaseModel):
     session: str | None = None
     session_start: float | None = None
     observed: float | None
-    last_seen: float | None = None
     home_missing: bool = False
     since: str
     recent: float | None

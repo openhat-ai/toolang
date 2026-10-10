@@ -63,17 +63,19 @@ def test_agent_messaging_uses_hub_authority_and_context(tmp_path):
                 "agent:alice": CONNECTION.human,
                 "agent:bob": CONNECTION.human,
             }
-            await alice.create_group("dev")
-            await bob.join_group("group:dev")
+            await alice.create_conversation("dev")
+            await bob.join_conversation("gc_00000001")
             sent = await alice.send(
-                "group:dev", body="hello", thread="thread_1", run="run_1"
+                "gc_00000001", body="hello", thread="thread_1", run="run_1"
             )
             assert sent["message"]["origin"] == {"thread": "thread_1", "run": "run_1"}
             assert sent["message"]["sender"] == "agent:alice"
-            assert await bob.read("group:dev") == await alice.history("group:dev")
-            assert await bob.check_cursor("group:dev", sent["stream_id"]) is None
-            await bob.leave_group("group:dev")
-            assert all(row["group"] != "group:dev" for row in await bob.contacts())
+            assert await bob.read("gc_00000001") == await alice.history("gc_00000001")
+            assert await bob.check_cursor("gc_00000001", sent["stream_id"]) is None
+            await bob.leave_conversation("gc_00000001")
+            assert all(
+                row["conversation"] != "gc_00000001" for row in await bob.contacts()
+            )
             await alice.renew()
             await alice.unregister()
             with pytest.raises(EventRecoveryRequired, match="lease lost"):
@@ -200,11 +202,11 @@ def test_message_checkpoints_are_separate_after_backend_switch(tmp_path, monkeyp
             for current in range(2):
                 await alice.register(CONNECTION.human)
                 receipt = await humans[current].send(
-                    "group:all", body=f"dataset {current}"
+                    "gc_00000000", body=f"dataset {current}"
                 )
                 await loop.poll()
                 assert (
-                    loop.saved["group:all"]["messages"][-1]["id"]
+                    loop.saved["gc_00000000"]["messages"][-1]["id"]
                     == receipt["message"]["id"]
                 )
                 paths.append(loop.path)
@@ -238,8 +240,8 @@ def test_agent_send_lost_http_ack_is_not_retried(tmp_path):
         ):
             await alice.register(CONNECTION.human)
             with pytest.raises(SendUnconfirmed):
-                await alice.send("group:all", body="only once")
-            assert writes == 1 and len(await human.history("group:all")) == 1
+                await alice.send("gc_00000000", body="only once")
+            assert writes == 1 and len(await human.history("gc_00000000")) == 1
 
     asyncio.run(scenario())
 
@@ -384,3 +386,6 @@ def test_agent_api_rejects_bad_identity_lease_and_publications(tmp_path):
                 ).status_code == 400
 
     asyncio.run(scenario())
+
+
+pytestmark = pytest.mark.usefixtures("fixed_conversation_ids")

@@ -1,6 +1,7 @@
 """Opt-in wire and terminal checks; never touch the user's Valkey or tmux."""
 
 import asyncio
+import json
 from contextlib import suppress
 from pathlib import Path
 import shutil
@@ -20,10 +21,10 @@ from rich.text import Text
 
 from toolang.cli.common.tmux import Launcher
 from toolang.teaming.messaging import MessagingClient
-from toolang.teaming.backend import online_key
+from toolang.teaming.keys import PRESENCE, TEAM
 from toolang.teaming.client import HubClient
 from toolang.teaming.config import BackendConfig
-from toolang.teaming.errors import MessagingError
+from toolang.teaming.errors import MessagingError, StorageIntegrityError
 from valkey.asyncio import Valkey
 from toolang.teaming.schemas import Message
 from toolang.up.hub import HubProcess
@@ -83,26 +84,23 @@ def test_standard_backend_registration_streams_and_expiry(valkey):
                 alice.register("human:owner"), bob.register("human:owner")
             )
             groups = await asyncio.gather(
-                alice.resolve("agent:bob"), bob.resolve("agent:alice")
+                alice.resolve("agent:bob", create=True),
+                bob.resolve("agent:alice", create=True),
             )
             assert groups[0] == groups[1]
-            group = groups[0]
+            group = groups[0].conversation
             receipt = await alice.send(group, run="run_wire", body="hello")
             assert await alice.read(group) == await bob.read(group)
             assert (
                 Message.decode((await bob.history(group))[0][1]["data"]).id
                 == receipt["message"]["id"]
             )
-            await raw.pexpire(online_key("agent:alice"), 10)
-            for _ in range(100):
-                if not await raw.exists(online_key("agent:alice")):
-                    break
-                await asyncio.sleep(0.01)
-            assert not await raw.exists(online_key("agent:alice"))
+            await raw.zadd(PRESENCE, {"agent:alice": 1})
+            assert not await alice._backend.online("agent:alice")
             with pytest.raises(MessagingError, match="lease lost"):
                 await alice.send(group, body="stale")
             own = (await human.send("agent:alice", body="queued while offline"))[
-                "group"
+                "conversation"
             ]
             async with MessagingClient(
                 valkey, actor="agent:alice", token="new"
@@ -110,13 +108,18 @@ def test_standard_backend_registration_streams_and_expiry(valkey):
                 await replacement.register("human:owner")
                 assert len(await replacement.history(own)) == 1
                 await alice.unregister()
-                assert await raw.hget(online_key("agent:alice"), "token") == "new"
-                await replacement.create_group("dev")
-                await bob.join_group("group:dev")
-                await bob.send("group:dev", body="joined")
-                await bob.leave_group("group:dev")
+                assert (
+                    json.loads(await raw.execute_command("HGET", TEAM, "agent:alice"))[
+                        "lease"
+                    ]["token"]
+                    == "new"
+                )
+                dev = (await replacement.create_conversation("dev")).id
+                await bob.join_conversation(dev)
+                await bob.send(dev, body="joined")
+                await bob.leave_conversation(dev)
                 with pytest.raises(MessagingError, match="not a member"):
-                    await bob.read("group:dev")
+                    await bob.read(dev)
 
     asyncio.run(scenario())
 
@@ -149,7 +152,7 @@ def running_hub(valkey, tmp_path):
         hub.stop(force=True)
 
 
-def test_hub_recovers_after_backend_data_loss(valkey, running_hub):
+def test_hub_fails_closed_after_backend_data_loss(valkey, running_hub):
     original = running_hub.current()
 
     async def scenario():
@@ -157,15 +160,15 @@ def test_hub_recovers_after_backend_data_loss(valkey, running_hub):
             Valkey.from_url(valkey.url, decode_responses=True) as raw,
             HubClient(running_hub.connection()) as client,
         ):
-            await client.send("group:all", body="before reset")
+            system = next(
+                c["conversation"] for c in await client.contacts() if c["name"] == "all"
+            )
+            await client.send(system, body="before reset")
             # Only the fixture's isolated Unix-socket backend is cleared.
             await raw.flushdb()
-            await client.create_group("recovered")
-            receipt = await client.send("group:all", body="after reset")
-            rows = await client.history("group:all")
-            assert len(rows) == 1
-            assert Message.decode(rows[0][1]["data"]).id == receipt["message"]["id"]
-            assert (await client.conversation("group:all")).members == ("human:owner",)
+            with pytest.raises(StorageIntegrityError):
+                await client.create_conversation("must not recreate storage")
+            assert await raw.dbsize() == 0
 
     asyncio.run(scenario())
     assert running_hub.current() == original
@@ -204,19 +207,29 @@ def test_hub_cli_lifecycle_and_backend_independence(valkey, tmp_path):
         result = run("hub", "status")
         assert result.returncode == 0 and "Hub running" in result.stdout
         assert run("hub", "start", "--port", str(port)).returncode != 0
-        assert run("talk", "all", "via Hub").returncode == 0
+
+        async def system_id():
+            async with HubClient(hub.connection()) as client:
+                return next(
+                    c["conversation"]
+                    for c in await client.contacts()
+                    if c["name"] == "all"
+                )
+
+        system = asyncio.run(system_id())
+        assert run("talk", system, "via Hub").returncode == 0
         assert run("hub", "stop").returncode == 0
         assert "Hub stopped" in run("hub", "status").stdout
-        assert run("talk", "all", "requires Hub").returncode != 0
+        assert run("talk", system, "requires Hub").returncode != 0
 
         async def verify():
             async with MessagingClient(valkey, actor="agent:alice") as agent:
                 await agent.renew()
-                rows = await agent.history("group:all")
+                rows = await agent.history(system)
                 assert len(rows) == 1
                 assert Message.decode(rows[0][1]["data"]).body == "via Hub"
                 # Agent messaging still works after Hub has stopped.
-                await agent.send("group:all", body="without Hub")
+                await agent.send(system, body="without Hub")
 
         asyncio.run(verify())
     finally:
@@ -233,10 +246,11 @@ def test_real_talk_terminal_sends_reads_and_reuses_tmux(valkey, tmp_path, runnin
             MessagingClient(valkey, actor="human:owner") as human,
         ):
             await agent.register("human:owner")
-            await human.create_group("dev")
-            await human.send("group:dev", body="retained greeting")
+            dev = (await human.create_conversation("dev")).id
+            await human.send(dev, body="retained greeting")
+            return dev, await human._backend.system_conversation()
 
-    asyncio.run(register())
+    dev, system = asyncio.run(register())
     (tmp_path / "config.toml").write_text(
         f'[teaming]\nhuman = "owner"\n[teaming.backend]\nurl = "{valkey.url}"\n'
     )
@@ -279,14 +293,12 @@ def test_real_talk_terminal_sends_reads_and_reuses_tmux(valkey, tmp_path, runnin
                 "--root",
                 str(tmp_path),
                 "talk",
-                "group:dev",
+                dev,
             ]
             from toolang.cli.common.errors import TmuxPlacementError
 
             with suppress(TmuxPlacementError):
-                launcher.place_chat(
-                    thread_id="group:dev", argv=argv, directory=str(tmp_path)
-                )
+                launcher.place_chat(thread_id=dev, argv=argv, directory=str(tmp_path))
             session = next(s for s in tmux.sessions if s.session_name == "talk")
             window = session.windows[0]
             target = window.panes[0]
@@ -309,16 +321,14 @@ def test_real_talk_terminal_sends_reads_and_reuses_tmux(valkey, tmp_path, runnin
                         (
                             line
                             for line in reversed(target.capture_pane())
-                            if "group:dev" in line and "owner" in line
+                            if dev in line and "owner" in line
                         ),
                         "",
                     )
                     if len(footer.rstrip()) == min(width, 120) - 2:
                         break
                     time.sleep(0.02)
-                assert footer.startswith("  #dev(1)") and "group:dev" in footer, (
-                    screen()
-                )
+                assert footer.startswith("  #dev(1)") and dev in footer, screen()
                 assert len(footer.rstrip()) == min(width, 120) - 2
                 target.send_keys("resize draft", enter=False)
                 for _ in range(300):
@@ -366,7 +376,7 @@ def test_real_talk_terminal_sends_reads_and_reuses_tmux(valkey, tmp_path, runnin
                 async with MessagingClient(valkey, actor="human:owner") as client:
                     messages = [
                         Message.decode(fields["data"])
-                        for _, fields in await client.history("group:dev")
+                        for _, fields in await client.history(dev)
                     ]
                     assert [m.body for m in messages] == [
                         "retained greeting",
@@ -375,15 +385,13 @@ def test_real_talk_terminal_sends_reads_and_reuses_tmux(valkey, tmp_path, runnin
 
             asyncio.run(check())
             with suppress(TmuxPlacementError):
-                launcher.place_chat(
-                    thread_id="group:dev", argv=argv, directory=str(tmp_path)
-                )
+                launcher.place_chat(thread_id=dev, argv=argv, directory=str(tmp_path))
             assert len(session.windows) == 1 and len(window.panes) == 1
-            # Another group owns a separate live draft and input history.
+            # Another conversation owns a separate live draft and input history.
             with suppress(TmuxPlacementError):
                 launcher.place_chat(
-                    thread_id="group:all",
-                    argv=[*argv[:-1], "group:all"],
+                    thread_id=system,
+                    argv=[*argv[:-1], system],
                     directory=str(tmp_path),
                 )
             assert len(session.windows) == 2
@@ -395,7 +403,7 @@ def test_real_talk_terminal_sends_reads_and_reuses_tmux(valkey, tmp_path, runnin
                 ):
                     await alice.register("human:owner")
                     await bob.register("human:owner")
-                    group = await alice.resolve("agent:bob")
+                    group = (await alice.resolve("agent:bob", create=True)).conversation
                     for agent in (alice, bob):
                         await agent.send(group, body="agent greeting")
                     return group

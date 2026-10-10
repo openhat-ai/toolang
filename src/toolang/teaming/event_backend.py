@@ -7,7 +7,9 @@ import json
 from typing import Any
 from uuid import uuid4
 
-from .backend import Backend, PREFIX, PARTICIPANTS, online_key
+from .backend import Backend
+from .keys import PREFIX, TEAM, PRESENCE
+from .storage_scripts import LEASE_CHECK
 from .errors import MessagingError, EventProtocolError, EventRecoveryRequired
 from .events import (
     HubCursor,
@@ -28,7 +30,9 @@ def generation_key(agent: str, generation: str) -> str:
 
 
 # Stream ID components are decimal strings, including values beyond Lua's exact integers.
-_COMMON = """
+_COMMON = (
+    LEASE_CHECK
+    + """
 local function expect(key, expected)
   local actual = redis.call('TYPE', key).ok
   if actual ~= 'none' and actual ~= expected then error('protocol_error: key type') end
@@ -74,6 +78,7 @@ local function append(kind,agent,data)
   return sid
 end
 """
+)
 _INIT = (
     _COMMON
     + """
@@ -128,7 +133,8 @@ valid()
 expect(KEYS[4],'hash'); expect(KEYS[5],'hash'); expect(KEYS[6],'hash')
 local op = cjson.decode(ARGV[4])
 if epoch ~= op.epoch then return {'reset'} end
-if redis.call('HGET',KEYS[4],'token') ~= op.token then return {'lease'} end
+local lease=current_lease(KEYS[4],KEYS[#KEYS],op.agent)
+if not lease or lease.token~=op.token then return {'lease'} end
 local raw = redis.call('HGET',KEYS[3],op.agent)
 local agent = raw and cjson.decode(raw) or {v=1,revision=0,status='incomplete',floor='0-0'}
 if agent.v ~= 1 then error('protocol_error: origin version') end
@@ -206,7 +212,8 @@ valid()
 expect(KEYS[4],'hash'); expect(KEYS[5],'hash'); expect(KEYS[6],'hash')
 local op=cjson.decode(ARGV[4])
 if epoch ~= op.epoch then return {'reset'} end
-if redis.call('HGET',KEYS[4],'token') ~= op.token then return {'lease'} end
+local lease=current_lease(KEYS[4],KEYS[#KEYS],op.agent)
+if not lease or lease.token~=op.token then return {'lease'} end
 local raw=redis.call('HGET',KEYS[3],op.agent)
 if not raw then return {'recover'} end
 local agent=cjson.decode(raw)
@@ -234,7 +241,8 @@ _ABANDON = (
     + """
 valid()
 expect(KEYS[4],'hash'); expect(KEYS[5],'hash')
-if redis.call('HGET',KEYS[4],'token') ~= ARGV[1] then return {'lease'} end
+local lease=current_lease(KEYS[4],KEYS[#KEYS],ARGV[2])
+if not lease or lease.token~=ARGV[1] then return {'lease'} end
 local raw = redis.call('HGET',KEYS[3],ARGV[2])
 local agent = raw and cjson.decode(raw) or {}
 if raw and agent.v ~= 1 then error('protocol_error: origin version') end
@@ -281,7 +289,7 @@ class EventBackend:
         self, agent: str | None = None
     ) -> tuple[dict[str, str], dict[str, Any], dict[str, str]]:
         meta, agents, participants = await self._eval(
-            _CAPTURE, [META, STREAM, AGENTS, PARTICIPANTS], [agent or ""]
+            _CAPTURE, [META, STREAM, AGENTS, TEAM], [agent or ""]
         )
         try:
             origins = {key: json.loads(value) for key, value in _hash(agents).items()}
@@ -289,7 +297,12 @@ class EventBackend:
                 if value.get("v") != 1:
                     raise ValueError("Origin schema version")
                 stream_id(value.get("floor", "0-0"))
-            return _hash(meta), origins, _hash(participants)
+            public = {}
+            for member, raw in _hash(participants).items():
+                info = json.loads(raw)
+                info.pop("lease", None)
+                public[member] = json.dumps(info)
+            return _hash(meta), origins, public
         except (ValueError, TypeError, AttributeError, MessagingError) as exc:
             raise EventProtocolError("Invalid origin metadata") from exc
 
@@ -325,7 +338,8 @@ class EventBackend:
                 return result
 
     async def online_token(self, agent: str) -> str | None:
-        return await self._command("HGET", online_key(agent), "token")
+        lease = (await self.backend.lease_info(agent))["lease"]
+        return lease["token"] if lease else None
 
     async def commit(self, op: dict[str, Any]) -> str:
         op = {
@@ -339,9 +353,10 @@ class EventBackend:
             META,
             STREAM,
             AGENTS,
-            online_key(op["agent"]),
+            TEAM,
             generation_key(op["agent"], op["generation"]),
             op.get("old_key") or generation_key(op["agent"], op["generation"]),
+            PRESENCE,
         ]
         response = await self._eval(
             _WRITE,
@@ -365,7 +380,7 @@ class EventBackend:
         key = generation_key(op["agent"], op["generation"])
         response = await self._eval(
             _STAGE,
-            [META, STREAM, AGENTS, online_key(op["agent"]), key, key],
+            [META, STREAM, AGENTS, TEAM, key, key, PRESENCE],
             ["", MAX_STREAM_EVENTS, MAX_STREAM_BYTES, raw],
         )
         self._result(response)
@@ -379,8 +394,9 @@ class EventBackend:
                 META,
                 STREAM,
                 AGENTS,
-                online_key(agent),
+                TEAM,
                 generation_key(agent, generation),
+                PRESENCE,
             ],
             [token, agent, generation],
         )

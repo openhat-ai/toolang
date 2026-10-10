@@ -13,7 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from .errors import MessagingError
 
-TargetKind = Literal["agent", "human", "group"]
+TargetKind = Literal["agent", "human"]
 _STREAM_ID = re.compile(r"[0-9]+-[0-9]+\Z")
 
 
@@ -46,18 +46,15 @@ def target(value: str, *, kind: TargetKind | None = None) -> Target:
     if not isinstance(value, str):
         raise MessagingError("Target must be text")
     prefix, sep, name = value.partition(":")
-    if not sep or prefix not in {"agent", "human", "group"}:
-        raise MessagingError(f"Invalid target: {value}; use agent:, human:, or group:")
+    if not sep or prefix not in {"agent", "human"}:
+        raise MessagingError(f"Invalid target: {value}; use agent: or human:")
     if kind is not None and prefix != kind:
         raise MessagingError(f"Expected a {kind} target: {value}")
     return Target(cast(TargetKind, prefix), identifier(name))
 
 
 def participant(value: str) -> Target:
-    result = target(value)
-    if result.kind == "group":
-        raise MessagingError("A group is not a participant")
-    return result
+    return target(value)
 
 
 def direct_pair(a: str, b: str) -> str:
@@ -70,22 +67,54 @@ def direct_pair(a: str, b: str) -> str:
     )
 
 
+def conversation_id(value: str) -> str:
+    if not isinstance(value, str) or not re.fullmatch(
+        r"(?:dm|gc)_[0123456789abcdefghjkmnpqrstvwxyz]{8}", value
+    ):
+        raise MessagingError("Invalid conversation ID")
+    return value
+
+
+def conversation_name(value: str | None) -> str | None:
+    if value is not None and (
+        not isinstance(value, str)
+        or not 1 <= len(value) <= 128
+        or not value.strip()
+        or value != value.strip()
+        or any(unicodedata.category(c).startswith("C") for c in value)
+    ):
+        raise MessagingError(
+            "Conversation name must be 1–128 characters without controls or surrounding whitespace"
+        )
+    return value
+
+
 @dataclass(frozen=True)
 class Conversation:
     id: str
-    kind: Literal["group", "direct"]
-    members: tuple[str, ...]
-    display_name: str | None = None
-    system: bool = False
+    kind: Literal["gc", "dm"]
+    participants: tuple[str, ...]
+    name: str | None = None
+    created_by: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+    revision: int = 0
 
     @property
     def label(self) -> str:
-        return self.display_name or (
-            " ↔ ".join(self.members) if self.kind == "direct" else target(self.id).name
+        return self.name or (
+            " ↔ ".join(self.participants) if self.kind == "dm" else self.id
         )
 
     def allows_sender(self, sender: str) -> bool:
-        return sender in self.members
+        return sender in self.participants
+
+
+@dataclass(frozen=True)
+class Resolution:
+    conversation: str
+    participants: tuple[str, ...]
+    exists: bool
 
 
 def stream_id(value: str) -> tuple[int, int]:
@@ -157,16 +186,24 @@ class HubRequest(BaseModel):
 
 class ResolveRequest(HubRequest):
     target: str
-    kind: Literal["dm", "group"] | None = None
+    kind: Literal["name"] | None = None
+    create: bool = False
 
 
-class CreateGroupRequest(HubRequest):
-    name: str
+class CreateConversationRequest(HubRequest):
+    name: str | None = None
+    participants: list[str] | None = None
+
+
+class RenameConversationRequest(HubRequest):
+    name: str | None
+    revision: int = Field(ge=1)
 
 
 class SendRequest(HubRequest):
     id: str
     target: str
+    participants: list[str] | None = None
     body: str
     in_reply_to: str | None = None
 

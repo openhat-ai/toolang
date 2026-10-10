@@ -6,33 +6,13 @@ import asyncio
 from collections.abc import Callable
 import json
 import logging
-from datetime import datetime, timezone
 
-from .backend import Backend, GROUPS, PARTICIPANTS, PREFIX, ROSTER, online_key
-from .errors import MessagingError
+from .backend import Backend
+from .keys import ROSTER, convo_key
+from .storage_scripts import ROSTER as RECONCILE
+from .errors import MessagingError, StorageIntegrityError
 
 logger = logging.getLogger(__name__)
-
-# Recheck the lease and saved roster atomically before removing membership.
-_RECONCILE = """
-local old=redis.call('HGET',KEYS[1],ARGV[1]) or ''
-if old~=ARGV[2] then return 0 end
-if ARGV[3]=='' then
-  if redis.call('EXISTS',KEYS[3])==1 then return 0 end
-  local groups=redis.call('HGETALL',KEYS[4])
-  for i=1,#groups,2 do
-    if cjson.decode(groups[i+1]).kind=='group' then
-      redis.call('SREM',ARGV[4]..':msg:group:'..string.sub(groups[i],7)..':members',ARGV[1])
-    end
-  end
-  redis.call('HDEL',KEYS[1],ARGV[1])
-  redis.call('HDEL',KEYS[2],ARGV[1])
-else
-  redis.call('HSET',KEYS[1],ARGV[1],ARGV[3])
-  redis.call('HSETNX',KEYS[2],ARGV[1],ARGV[5])
-end
-return 1
-"""
 
 
 class Roster:
@@ -65,25 +45,18 @@ class Roster:
         def encode(value: dict | None) -> str:
             return json.dumps(value, separators=(",", ":")) if value is not None else ""
 
+        conversations = await self.backend.conversation_ids() if updated is None else []
         return bool(
-            await self.backend._eval(
-                _RECONCILE,
-                [ROSTER, PARTICIPANTS, online_key(agent), GROUPS],
-                [
-                    agent,
-                    encode(previous),
-                    encode(updated),
-                    PREFIX,
-                    json.dumps(
-                        {
-                            "display_name": agent.removeprefix("agent:"),
-                            "owner": self.owner,
-                            "created_at": datetime.now(timezone.utc)
-                            .isoformat()
-                            .replace("+00:00", "Z"),
-                        }
-                    ),
-                ],
+            await self.backend._operation(
+                RECONCILE,
+                dict(
+                    agent=agent,
+                    owner=self.owner,
+                    previous=encode(previous),
+                    updated=encode(updated),
+                    conversations=conversations,
+                ),
+                [convo_key(ref, "members") for ref in conversations],
             )
         )
 
@@ -131,6 +104,8 @@ class Roster:
             await asyncio.sleep(5)
             try:
                 await self.scan()
+            except StorageIntegrityError:
+                raise
             except Exception:
                 logger.warning(
                     "Agent roster scan unavailable; retaining previous state",

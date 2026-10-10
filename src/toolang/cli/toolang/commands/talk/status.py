@@ -9,15 +9,17 @@ from .rendering import display_text
 
 
 def conversation_label(info: Conversation, viewer: str) -> str:
-    if info.kind == "group":
+    if info.kind == "gc":
         return "#" + display_text(info.label)
-    others = sorted(member for member in info.members if member != viewer)
+    if info.name:
+        return "@" + display_text(info.name)
+    others = sorted(member for member in info.participants if member != viewer)
     return "@" + ",".join(target(member).name for member in others)
 
 
 def conversation_status(info: Conversation, viewer: str) -> StyleAndTextTuples:
     label = conversation_label(info, viewer)
-    count = f"({len(info.members)})" if info.kind == "group" else ""
+    count = f"({len(info.participants)})" if info.kind == "gc" else ""
     return [
         (
             "class:status" if info.allows_sender(viewer) else "class:status dim",

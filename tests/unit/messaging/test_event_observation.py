@@ -68,6 +68,7 @@ def test_real_execution_exports_final_and_resumes_hub_scope(tmp_path, recover):
     async def scenario():
         driver = backend(FakeServer(server_type="valkey"))
         async with harness:
+            await driver.initialize()
             await driver.register("human:owner", agent="agent:alice", token="lease")
             service = EventBackend(driver)
             exporter = EventExporter(
@@ -117,6 +118,7 @@ def test_uncertain_event_commit_is_deduplicated_and_lease_fences(tmp_path, monke
     async def scenario():
         driver = backend(FakeServer(server_type="valkey"))
         async with harness:
+            await driver.initialize()
             await driver.register("human:owner", agent="agent:alice", token="lease")
             service = EventBackend(driver)
             exporter = EventExporter(
@@ -164,12 +166,14 @@ def test_partial_dataset_fails_closed_without_touching_messaging():
     async def scenario():
         driver = backend(FakeServer(server_type="valkey"))
         service = EventBackend(driver)
+        await driver.initialize()
         await driver.register("human:owner")
         meta = await service.initialize()
         assert (await service.initialize())["epoch"] == meta["epoch"]
         await driver._call("HSET", META, "pending", "broken")
         with pytest.raises(EventProtocolError, match="incomplete dataset"):
             await service.capture()
+        await driver.initialize()
         await driver.register("human:other")
         assert "human:other" in await driver.participants()
         await driver.close()
@@ -180,6 +184,7 @@ def test_partial_dataset_fails_closed_without_touching_messaging():
 def test_old_epoch_cursor_above_new_tail_replaces_instead_of_rejecting():
     async def scenario():
         driver = backend(FakeServer(server_type="valkey"))
+        await driver.initialize()
         await driver.register("human:owner")
         service = EventBackend(driver)
         scope = HubScope()
@@ -248,6 +253,7 @@ def test_staging_retries_and_activation_receipts_survive_switch(
     async def scenario():
         driver = backend(FakeServer(server_type="valkey"))
         async with harness:
+            await driver.initialize()
             await driver.register("human:owner", agent="agent:alice", token="lease")
             service = EventBackend(driver)
             exporter = EventExporter(
@@ -317,6 +323,7 @@ def test_snapshot_retries_selected_mutation_and_generation_switch(
     async def scenario():
         driver = backend(FakeServer(server_type="valkey"))
         async with harness:
+            await driver.initialize()
             await driver.register("human:owner", agent="agent:alice", token="lease")
             service = EventBackend(driver)
             exporter = EventExporter(
@@ -361,7 +368,7 @@ def test_snapshot_retries_selected_mutation_and_generation_switch(
     asyncio.run(scenario())
 
 
-def test_idle_backend_reset_is_detected_and_recovered(tmp_path):
+def test_idle_execution_feed_reset_is_detected_and_recovered(tmp_path):
     from contextlib import suppress
 
     harness = ExecutionHarness.create(
@@ -371,6 +378,7 @@ def test_idle_backend_reset_is_detected_and_recovered(tmp_path):
     async def scenario():
         driver = backend(FakeServer(server_type="valkey"))
         async with harness:
+            await driver.initialize()
             await driver.register("human:owner", agent="agent:alice", token="lease")
             service = EventBackend(driver)
             exporter = EventExporter(
@@ -386,8 +394,11 @@ def test_idle_backend_reset_is_detected_and_recovered(tmp_path):
                     while not exporter.generation:
                         await asyncio.sleep(0.01)
                 old = exporter.epoch
-                await driver._call("FLUSHDB")
+                await driver._call(
+                    "DEL", *(await driver._call("KEYS", "too:teaming:v1:events:*"))
+                )
                 # The lifecycle restores its registration independently.
+                await driver.initialize()
                 await driver.register("human:owner", agent="agent:alice", token="lease")
                 async with asyncio.timeout(4):
                     while exporter.epoch == old:
@@ -502,6 +513,7 @@ def test_retry_admission_clears_old_result_and_source_begin(tmp_path):
     async def scenario():
         driver = backend(FakeServer(server_type="valkey"))
         async with harness:
+            await driver.initialize()
             await driver.register("human:owner", agent="agent:alice", token="lease")
             service = EventBackend(driver)
             exporter = EventExporter(
@@ -565,6 +577,7 @@ def test_multi_origin_cached_replay_preserves_global_order_and_identity(tmp_path
             service = EventBackend(driver)
             exporters = []
             for name in ("alice", "bob"):
+                await driver.initialize()
                 await driver.register("human:owner", agent=f"agent:{name}", token=name)
                 exporter = EventExporter(
                     harness.executor.stream,
@@ -651,7 +664,6 @@ def test_teaming_keeps_lease_through_final_export_drain(tmp_path, monkeypatch, b
     from toolang.work.messaging import MessagingLoop
     from toolang.work.teaming import TeamingLoop
     from toolang.teaming.messaging import MessagingClient
-    from toolang.teaming.backend import online_key
 
     harness = ExecutionHarness.create(
         tmp_path, source="flow example:\n  let result = Done\n", responses=[]
@@ -661,6 +673,7 @@ def test_teaming_keeps_lease_through_final_export_drain(tmp_path, monkeypatch, b
         server = FakeServer(server_type="valkey")
         driver = backend(server)
         inspector = backend(server)
+        await driver.initialize()
         async with harness:
             client = MessagingClient(
                 BackendConfig("redis://test"),
@@ -686,10 +699,9 @@ def test_teaming_keeps_lease_through_final_export_drain(tmp_path, monkeypatch, b
                 if backlog:
                     entered.set()
                     await release.wait()
-                assert (
-                    await inspector._call("HGET", online_key(client.actor), "token")
-                    == "lease"
-                )
+                assert (await inspector.lease_info(client.actor))["lease"][
+                    "token"
+                ] == "lease"
                 await original(frame)
                 observed.append(frame.event.type)
 
@@ -1233,9 +1245,11 @@ def test_stale_exporter_cannot_remove_the_new_owners_staging(tmp_path, monkeypat
                 token="new",
             )
             try:
+                await driver.initialize()
                 await driver.register("human:owner", agent="agent:alice", token="old")
                 await old.recover("initial")
                 await driver.lease("agent:alice", "old", 0)
+                await driver.initialize()
                 await driver.register("human:owner", agent="agent:alice", token="new")
                 stage = service.stage
 

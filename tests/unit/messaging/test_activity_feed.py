@@ -69,9 +69,9 @@ def test_slow_source_independent_updates_roster_and_reconnect(monkeypatch):
                     await checkpoint(second, other)
                     assert sorted(other.snapshots) == sorted(gates)
                     assert other.snapshots["agent:alice"].revision == 2
-                from toolang.teaming.backend import PARTICIPANTS
+                from toolang.teaming.keys import TEAM
 
-                await backend._call("HDEL", PARTICIPANTS, "agent:bob")
+                await backend._call("HDEL", TEAM, "agent:bob")
                 async with asyncio.timeout(2):
                     while "agent:bob" in state.snapshots:
                         event, data = await anext(frames)

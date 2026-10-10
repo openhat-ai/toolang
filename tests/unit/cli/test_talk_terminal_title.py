@@ -17,11 +17,11 @@ from toolang.teaming.schemas import Conversation
     [
         (None, "#dev"),
         (
-            Conversation("group:pair", "direct", ("human:bryan", "agent:alice")),
+            Conversation("dm_00000001", "dm", ("human:bryan", "agent:alice")),
             "@alice",
         ),
         (
-            Conversation("group:pair", "direct", ("agent:bob", "agent:alice")),
+            Conversation("dm_00000001", "dm", ("agent:bob", "agent:alice")),
             "@alice,bob",
         ),
     ],
@@ -92,3 +92,6 @@ def test_title_sanitizes_controls_and_terminal_failures_are_nonfatal(
             assert not ui.write_title("Talk")
 
     asyncio.run(scenario())
+
+
+pytestmark = pytest.mark.usefixtures("fixed_conversation_ids")

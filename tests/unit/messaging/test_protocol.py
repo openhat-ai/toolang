@@ -2,13 +2,27 @@
 
 import asyncio
 import json
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from fakeredis import FakeAsyncValkey, FakeServer
 import pytest
 from valkey.exceptions import ConnectionError
 
-from toolang.teaming.backend import Backend, DIRECT, PARTICIPANTS, group_key, online_key
+from toolang.teaming.backend import Backend
+from toolang.teaming.keys import (
+    TEAM,
+    PRESENCE,
+    TEAM_EVENTS,
+    CONVOS,
+    STATS,
+    GC_ALLOCATOR,
+    SCHEMA,
+    convo_key,
+    name_key,
+)
+from toolang.teaming.ids import dm_id
+from toolang.teaming.errors import StorageIntegrityError
+from toolang.teaming.team_events import TeamEvents
 from toolang.teaming.messaging import MessagingClient
 from toolang.teaming.config import BackendConfig
 from toolang.teaming.errors import MessagingError, SendUnconfirmed
@@ -29,7 +43,7 @@ def client(server, actor, token=None):
 )
 def test_readable_identifiers_preserve_exact_spelling(name):
     assert identifier(name) == name
-    for kind in ("agent", "human", "group"):
+    for kind in ("agent", "human"):
         assert target(f"{kind}:{name}").id == f"{kind}:{name}"
     assert direct_pair("agent:alice", "human:alice") == '["agent:alice","human:alice"]'
     assert direct_pair("human:中文", "agent:alice") == direct_pair(
@@ -75,57 +89,71 @@ def test_message_validation():
     assert stream_id("100-10") > stream_id("100-9")
 
 
-def test_direct_messages_are_unique_immutable_and_only_allow_participants():
+async def snapshot(raw):
+    return {key: await raw.dump(key) for key in await raw.keys("*")}
+
+
+def test_lookup_is_read_only_and_first_send_creates_atomically():
     async def scenario():
         server = FakeServer(server_type="valkey")
+        raw = FakeAsyncValkey(server=server, decode_responses=True)
         async with (
+            client(server, "human:owner") as human,
             client(server, "agent:alice") as alice,
             client(server, "agent:bob") as bob,
-            client(server, "human:owner") as human,
         ):
             await alice.register("human:owner")
             await bob.register("human:owner")
-            groups = await asyncio.gather(
-                *(
-                    alice.resolve("agent:bob") if i % 2 else bob.resolve("agent:alice")
-                    for i in range(20)
+            before = await snapshot(raw)
+            missing = await human.resolve("alice")
+            assert not missing.exists
+            assert missing.conversation == dm_id("human:owner", "agent:alice")
+            with pytest.raises(MessagingError, match="No conversation exists"):
+                await human.resolve("alice,bob")
+            with pytest.raises(MessagingError, match="Unknown conversation"):
+                await human.resolve(missing.conversation)
+            with pytest.raises(MessagingError, match="nonparticipants"):
+                await human.create_conversation(
+                    participants=["agent:alice", "agent:bob"]
                 )
+            with pytest.raises(MessagingError, match="nonblank"):
+                await human.send("alice", body=" ")
+            assert await snapshot(raw) == before
+            receipts = await asyncio.gather(
+                *(human.send("alice", body=str(i)) for i in range(20))
             )
-            assert len(set(groups)) == 1
-            group = groups[0]
-            info = await human.conversation(group)
-            assert info.kind == "direct" and info.members == (
-                "agent:alice",
-                "agent:bob",
+            ref = missing.conversation
+            assert {r["conversation"] for r in receipts} == {ref}
+            assert (await human.resolve("alice")).exists
+            assert len(await alice.history(ref)) == 20
+            assert await human.statistics() == dict(
+                conversations_total=2, dm_count=1, gc_count=1, messages_total=20
             )
-            with pytest.raises(MessagingError, match="read-only"):
-                await human.send(group, body="cannot join")
-            for actor in (alice, human):
-                with pytest.raises(MessagingError, match="direct/system"):
-                    await actor.join_group(group)
-                with pytest.raises(MessagingError, match="direct/system"):
-                    await actor.leave_group(group)
-            first = await alice.send(
-                group, body="hello", run="r", in_reply_to=str(uuid4())
-            )
-            await bob.send(group, body="reply", in_reply_to=first["message"]["id"])
-            assert first["message"]["origin"] == {"thread": None, "run": "r"}
-            assert len(await human.history(group)) == 2
-            own = await human.resolve("agent:alice")
-            assert own != group and await alice.resolve("human:owner") == own
-            await human.send(own, body="owner message")
-            assert len(await alice.history(own)) == 1
+            assert (await human.statistics(ref))["messages_total"] == 20
+            rows = await raw.xrange(TEAM_EVENTS)
+            additions = [
+                json.loads(fields["data"])
+                for _, fields in rows
+                if json.loads(fields["data"]).get("conversation") == ref
+            ]
+            assert len(additions) == 2
+            assert {r["type"] for r in additions} == {"conversation.member_added"}
+            for action in (human.join_conversation, human.leave_conversation):
+                with pytest.raises(MessagingError, match="DM/system"):
+                    await action(ref)
             with pytest.raises(MessagingError, match="not a member"):
-                await bob.history(own)
-            with pytest.raises(MessagingError):
-                await alice.resolve("agent:alice")
-            raw = FakeAsyncValkey(server=server, decode_responses=True)
-            assert await raw.execute_command("HLEN", DIRECT) == 2
+                await bob.history(ref)
+            private = (await alice.send("bob", body="private"))["conversation"]
+            assert (await human.resolve("alice,bob")).conversation == private
+            assert (await human.resolve("bob,alice")).conversation == private
+            with pytest.raises(MessagingError, match="read-only"):
+                await human.send(private, body="observer")
+            assert len(await human.history(private)) == 1
 
     asyncio.run(scenario())
 
 
-def test_membership_survives_registration_and_is_only_changed_explicitly():
+def test_gc_membership_duplicate_names_and_revision_checked_rename():
     async def scenario():
         server = FakeServer(server_type="valkey")
         async with (
@@ -133,199 +161,223 @@ def test_membership_survives_registration_and_is_only_changed_explicitly():
             client(server, "agent:alice") as alice,
         ):
             await alice.register("human:owner")
-            await human.create_group("dev")
+            first = await human.create_conversation("Development")
+            second = await human.create_conversation("Development")
+            assert first.id != second.id and first.name == second.name
+            with pytest.raises(MessagingError, match="Ambiguous"):
+                await human.resolve("Development", kind="name")
             with pytest.raises(MessagingError, match="not a member"):
-                await alice.send("group:dev", body="not joined")
-            await alice.join_group("group:dev")
-            await alice.send("group:dev", body="joined")
-            await alice.unregister()
-            await alice.register("human:owner")
-            assert "agent:alice" in (await human.conversation("group:dev")).members
-            await alice.leave_group("group:dev")
-            await alice.register("human:owner")
-            assert "agent:alice" not in (await human.conversation("group:dev")).members
-            assert {g["group"] for g in await alice.contacts()} == {"group:all"}
-            with pytest.raises(MessagingError, match="exists"):
-                await human.create_group("dev")
-            for method in (human.join_group, human.leave_group):
-                with pytest.raises(MessagingError, match="direct/system"):
-                    await method("group:all")
-            with pytest.raises(MessagingError, match="reserved"):
-                await human.create_group("all")
+                await alice.send(first.id, body="not joined")
+            await alice.join_conversation(first.id)
+            await alice.send(first.id, body="hello")
+            renamed = await alice.rename_conversation(first.id, "Review", revision=1)
+            assert renamed.revision == 2
+            assert renamed.created_at == first.created_at
+            with pytest.raises(MessagingError, match="revision conflict"):
+                await human.rename_conversation(first.id, "stale", revision=1)
+            same = await human.rename_conversation(first.id, "Review", revision=2)
+            assert same == renamed
+            assert (
+                await human.resolve("Development", kind="name")
+            ).conversation == second.id
+            assert (await human.resolve("Review", kind="name")).conversation == first.id
+            cleared = await human.rename_conversation(first.id, None, revision=2)
+            assert cleared.name is None and cleared.revision == 3
+            await alice.leave_conversation(first.id)
+            await human.leave_conversation(first.id)
+            assert (await human.conversation(first.id)).participants == ()
+            await human.join_conversation(first.id)
+            assert (await human.conversation(first.id)).participants == ("human:owner",)
+            assert (await human.statistics())["gc_count"] == 3
 
     asyncio.run(scenario())
 
 
-def test_lease_token_protects_writes_renewal_release_and_owner():
+def test_presence_deadline_is_authority_and_reconciliation_is_atomic():
     async def scenario():
         server = FakeServer(server_type="valkey")
         raw = FakeAsyncValkey(server=server, decode_responses=True)
         async with (
-            client(server, "agent:alice", "old") as old,
-            client(server, "agent:alice", "new") as replacement,
             client(server, "human:owner") as human,
+            client(server, "agent:alice", "old") as alice,
+            client(server, "agent:alice", "new") as replacement,
         ):
-            await old.register("human:owner", endpoint="http://localhost:7001")
-            assert 0 < await raw.ttl(online_key("agent:alice")) <= 30
-            assert (
-                await raw.execute_command("HGET", online_key("agent:alice"), "endpoint")
-                == "http://localhost:7001"
-            )
+            await alice.register("human:owner", endpoint="http://localhost:7001")
+            backend = human._backend
+            info = await backend.lease_info("agent:alice")
+            assert info["lease"]["token"] == "old"
+            assert await raw.ttl(PRESENCE) == -1
+            before = await raw.execute_command("HGET", TEAM, "agent:alice")
+            events = await raw.execute_command("XLEN", TEAM_EVENTS)
+            deadline = await raw.zscore(PRESENCE, "agent:alice")
+            await alice.renew()
+            assert await raw.execute_command("HGET", TEAM, "agent:alice") == before
+            assert await raw.execute_command("XLEN", TEAM_EVENTS) == events
+            assert await raw.zscore(PRESENCE, "agent:alice") >= deadline
             with pytest.raises(MessagingError, match="already online"):
                 await replacement.register("human:owner")
-            with pytest.raises(MessagingError, match="owner mismatch"):
-                await old.register("human:other")
-            assert not await raw.execute_command("HEXISTS", PARTICIPANTS, "human:other")
-            await human.create_group("dev")
-            await raw.delete(online_key("agent:alice"))
-            await human.send("agent:alice", body="available offline")
-            await replacement.register("human:owner")
-            for operation in (
-                old.renew(),
-                old.send("group:all", body="stale"),
-                old.create_group("stale"),
-                old.join_group("group:dev"),
-                old.leave_group("group:dev"),
+            await raw.zadd(PRESENCE, {"agent:alice": 1})
+            assert not await backend.online("agent:alice")
+            for action in (
+                alice.renew(),
+                alice.send("human:owner", body="expired"),
+                alice.create_conversation("expired"),
             ):
                 with pytest.raises(MessagingError, match="lease lost"):
-                    await operation
-            await old.unregister()
-            assert (
-                await raw.execute_command("HGET", online_key("agent:alice"), "token")
-                == "new"
+                    await action
+            await replacement.register("human:owner")
+            kinds = [
+                json.loads(row["data"])["type"]
+                for _, row in (await raw.xrevrange(TEAM_EVENTS, count=2))
+            ][::-1]
+            assert kinds == ["presence.offline", "presence.online"]
+            await alice.unregister()
+            assert (await backend.lease_info("agent:alice"))["lease"]["token"] == "new"
+            await raw.zadd(PRESENCE, {"agent:alice": 1})
+            start = await raw.execute_command("XLEN", TEAM_EVENTS)
+            changed = await asyncio.gather(
+                *(backend.expire_presence("agent:alice") for _ in range(8))
             )
-            await replacement.send("group:all", body="current")
-            await replacement.renew()
-            await replacement.unregister()
-            assert not await raw.exists(online_key("agent:alice"))
+            assert sum(changed) == 1
+            assert await raw.execute_command("XLEN", TEAM_EVENTS) == start + 1
+            assert (
+                json.loads(await raw.execute_command("HGET", TEAM, "agent:alice"))[
+                    "lease"
+                ]
+                is None
+            )
+            assert "lease" not in json.dumps(await human.team())
 
     asyncio.run(scenario())
 
 
-def test_independent_readers_retention_and_ambiguous_targets():
+def test_events_replay_retention_epoch_and_noop_operations():
     async def scenario():
         server = FakeServer(server_type="valkey")
         raw = FakeAsyncValkey(server=server, decode_responses=True)
-        async with (
-            client(server, "human:alice") as human,
-            client(server, "agent:alice") as alice,
-        ):
-            await alice.register("human:alice")
-            await human.create_group("alice")
-            with pytest.raises(MessagingError, match="Ambiguous"):
-                await human.resolve("alice")
-            assert await human.resolve("alice", kind="dm") == await human.resolve(
-                "agent:alice"
-            )
-            assert await human.resolve("alice", kind="group") == "group:alice"
-            assert await human.resolve("all") == "group:all"
-            with pytest.raises(MessagingError, match="Unknown"):
-                await human.resolve("missing")
-            key = group_key("group:all", "messages")
-            for sid in ("100-9", "100-10", "101-0"):
-                await raw.xadd(
-                    key, {"data": Message.create("human:alice", sid).encode()}, id=sid
-                )
-            first = await human.read("group:all", after="100-9", count=1)
-            second = await alice.read("group:all", after="100-9", count=1)
-            assert first == second and first[0][0] == "100-10"
-            assert [sid for sid, _ in await human.history("group:all", count=2)] == [
-                "100-10",
-                "101-0",
-            ]
-            await raw.xtrim(key, maxlen=1, approximate=False)
-            assert "no longer retained" in (
-                await human.check_cursor("group:all", "100-10") or ""
-            )
-            with pytest.raises(MessagingError, match="precedes"):
-                await human.check_cursor("group:all", "102-0")
-            await raw.delete(key)
-            assert "missing" in (await human.check_cursor("group:all", "101-0") or "")
+        async with client(server, "human:owner") as human:
+            feed = TeamEvents(human._backend)
+            checkpoint = await feed.checkpoint()
+            convo = await human.create_conversation("Review")
+            rows = await feed.replay(checkpoint)
+            assert rows and len(rows) == 1
+            assert rows[0][1]["type"] == "conversation.member_added"
+            assert await feed.replay(checkpoint) == rows
+            tail = await feed.checkpoint()
+            await human.rename_conversation(convo.id, "Renamed", revision=1)
+            await human.send(convo.id, body="message")
+            await human.join_conversation(convo.id)
+            assert await feed.checkpoint() == tail
+            assert await feed.replay(tail) == []
+            wrong = "t1." + "0" * 32 + "." + tail.split(".")[-1]
+            assert await feed.replay(wrong) is None
+            await raw.xtrim(TEAM_EVENTS, maxlen=1, approximate=False)
+            assert await feed.replay(checkpoint) is None
+            assert await feed.replay(tail) == []
+            await raw.delete(TEAM_EVENTS)
+            with pytest.raises(StorageIntegrityError):
+                await human.check_backend()
 
     asyncio.run(scenario())
 
 
-def test_target_previews_are_optional_bounded_and_membership_filtered():
+def test_collision_and_corrupt_keys_fail_before_any_mutation(monkeypatch):
     async def scenario():
         server = FakeServer(server_type="valkey")
         raw = FakeAsyncValkey(server=server, decode_responses=True)
         async with (
             client(server, "human:owner") as human,
             client(server, "agent:alice") as alice,
-            client(server, "agent:bob") as bob,
-            client(server, "agent:carol") as carol,
         ):
-            for agent in (alice, bob, carol):
-                await agent.register("human:owner")
-            private = (await bob.send("agent:carol", body="private"))["group"]
-            own = (await human.send("agent:alice", body="x" * 300))["group"]
-            await raw.xadd(group_key("group:all", "messages"), {"data": "malformed"})
-            assert all("preview" not in g for g in await alice.contacts())
-            groups = {g["group"]: g for g in await alice.contacts(include_preview=True)}
-            assert set(groups) == {"group:all", own}
-            assert groups["group:all"]["preview"] is None
-            assert groups[own]["preview"] == {
-                "sender": "human:owner",
-                "body": "x" * 160,
-            }
-            assert private in {g["group"] for g in await human.contacts()}
-            targets = await alice.targets()
-            assert {p["target"] for p in targets["participants"]} == {
-                "human:owner",
-                "agent:bob",
-                "agent:carol",
-            }
+            await alice.register("human:owner")
+            ref = (await human.send("alice", body="hello"))["conversation"]
+            await raw.execute_command("SREM", convo_key(ref, "members"), "agent:alice")
+            before = await snapshot(raw)
+            with pytest.raises(MessagingError, match="collision|membership"):
+                await human.resolve("alice")
+            assert await snapshot(raw) == before
+            await raw.execute_command("SADD", convo_key(ref, "members"), "agent:alice")
+            await raw.set(name_key("bad"), "wrong type")
+            before = await snapshot(raw)
+            with pytest.raises(StorageIntegrityError):
+                await human.rename_conversation(ref, "bad", revision=1)
+            assert await snapshot(raw) == before
+            await raw.execute_command("HDEL", STATS, "messages_total")
+            with pytest.raises(StorageIntegrityError):
+                await human.send(ref, body="no partial append")
+            assert await raw.execute_command("XLEN", convo_key(ref, "messages")) == 1
+
+    asyncio.run(scenario())
+
+
+def test_statistics_count_appends_despite_retention_and_filter_access():
+    async def scenario():
+        server = FakeServer(server_type="valkey")
+        raw = FakeAsyncValkey(server=server, decode_responses=True)
+        async with (
+            client(server, "human:owner") as human,
+            client(server, "agent:alice") as alice,
+        ):
+            await alice.register("human:owner")
+            ref = (await human.send("alice", body="one"))["conversation"]
+            await human.send(ref, body="two")
+            await raw.xtrim(convo_key(ref, "messages"), maxlen=1, approximate=False)
+            stats = await alice.statistics(ref)
+            assert stats["messages_total"] == 2 and stats["messages_retained"] == 1
+            assert (await human.statistics())["messages_total"] == 2
+            with pytest.raises(MessagingError, match="human observer"):
+                await alice.statistics()
 
     asyncio.run(scenario())
 
 
 def test_uncertain_send_is_not_retried_and_returns_recoverable_id(monkeypatch):
     async def scenario():
-        raw = FakeAsyncValkey(decode_responses=True)
-        async with MessagingClient(
-            CONFIG, actor="human:owner", backend=Backend(CONFIG, client=raw)
-        ) as human:
-            original = raw.execute_command
+        server = FakeServer(server_type="valkey")
+        raw = FakeAsyncValkey(server=server, decode_responses=True)
+        async with client(server, "human:owner") as human:
+            ref = (await human.create_conversation("Review")).id
+            original = human._backend._client.execute_command
             writes = []
 
             async def execute(*args, **kwargs):
-                if args[0] == "EVAL" and "XADD" in args[1]:
+                if args[0] == "EVAL" and '"action":"send"' in str(args[-1]):
                     writes.append(args)
                     await original(*args, **kwargs)
                     raise ConnectionError("reply lost after acceptance")
                 return await original(*args, **kwargs)
 
-            monkeypatch.setattr(raw, "execute_command", execute)
+            monkeypatch.setattr(human._backend._client, "execute_command", execute)
             with pytest.raises(SendUnconfirmed) as error:
-                await human.send("group:all", body="only once")
+                await human.send(ref, body="only once")
             assert len(writes) == 1
-            entries = await human.history("group:all")
+            entries = await human.history(ref)
             assert len(entries) == 1
             assert json.loads(entries[0][1]["data"])["id"] in str(error.value)
+            assert await raw.execute_command("XLEN", convo_key(ref, "messages")) == 1
 
     asyncio.run(scenario())
 
 
-def test_creation_rejects_orphan_stream_collision_and_wrong_key_types():
-    from toolang.teaming.backend import GROUPS
-
+def test_legacy_and_partial_datasets_are_never_initialized():
     async def scenario():
-        server = FakeServer(server_type="valkey")
-        raw = FakeAsyncValkey(server=server, decode_responses=True)
-        async with client(server, "human:owner") as human:
-            await raw.xadd(group_key("group:orphan", "messages"), {"data": "old"})
-            with pytest.raises(MessagingError, match="already exists"):
-                await human.create_group("orphan")
-            assert not await raw.execute_command("HEXISTS", GROUPS, "group:orphan")
-            await raw.set(group_key("group:bad", "members"), "wrong-type")
-            with pytest.raises(MessagingError, match="key type"):
-                await human.create_group("bad")
-            assert not await raw.execute_command("HEXISTS", GROUPS, "group:bad")
-            await human.create_group("empty")
-            await human.leave_group("group:empty")
-            assert (await human.conversation("group:empty")).members == ()
-            await human.join_group("group:empty")
-            assert (await human.conversation("group:empty")).members == ("human:owner",)
+        for key in ("too:teaming:v1:participants", "too:teaming:v1:msg:groups", CONVOS):
+            raw = FakeAsyncValkey(decode_responses=True)
+            await raw.execute_command("HSET", key, "old", "record")
+            before = await snapshot(raw)
+            backend = Backend(CONFIG, client=raw)
+            with pytest.raises(StorageIntegrityError):
+                await backend.initialize()
+            assert await snapshot(raw) == before
+            await backend.close()
+        raw = FakeAsyncValkey(decode_responses=True)
+        backend = Backend(CONFIG, client=raw)
+        await backend.initialize()
+        await raw.delete(GC_ALLOCATOR)
+        with pytest.raises(StorageIntegrityError):
+            await backend.initialize()
+        assert await raw.get(SCHEMA) == "2" and not await raw.exists(GC_ALLOCATOR)
+        await backend.close()
 
     asyncio.run(scenario())
 
@@ -358,3 +410,114 @@ def test_driver_never_retries_writes_even_with_url_retry_option():
 def test_agent_cannot_use_an_empty_token_to_bypass_lease_checks():
     with pytest.raises(MessagingError, match="lease token"):
         MessagingClient(CONFIG, actor="agent:alice", token="")
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("created_by", None),
+        ("revision", "1"),
+        ("revision", 0),
+        ("created_at", "bad"),
+        ("unexpected", True),
+    ],
+)
+def test_corrupt_metadata_cannot_be_renamed_or_sent(field, value):
+    async def scenario():
+        async with client(FakeServer(server_type="valkey"), "human:owner") as human:
+            ref = (await human.create_conversation("Original")).id
+            raw = human._backend._client
+            record = json.loads(await raw.execute_command("HGET", CONVOS, ref))
+            record[field] = value
+            await raw.execute_command("HSET", CONVOS, ref, json.dumps(record))
+            before = await snapshot(raw)
+            for operation in (
+                human.send(ref, body="rejected"),
+                human.rename_conversation(ref, "rejected", revision=1),
+            ):
+                with pytest.raises(StorageIntegrityError):
+                    await operation
+                assert await snapshot(raw) == before
+
+    asyncio.run(scenario())
+
+
+def test_first_send_failure_and_forced_dm_collision_leave_no_partial_state(monkeypatch):
+    async def scenario():
+        server = FakeServer(server_type="valkey")
+        async with (
+            client(server, "human:owner") as human,
+            client(server, "agent:alice") as alice,
+            client(server, "agent:bob") as bob,
+        ):
+            await alice.register("human:owner")
+            await bob.register("human:owner")
+            raw = human._backend._client
+            alice_ref = dm_id(human.actor, alice.actor)
+            await raw.set(convo_key(alice_ref, "messages"), "bad stream type")
+            before = await snapshot(raw)
+            with pytest.raises(StorageIntegrityError):
+                await human.send("alice", body="cannot create")
+            assert await snapshot(raw) == before
+            await raw.delete(convo_key(alice_ref, "messages"))
+            await human.send("alice", body="accepted")
+            monkeypatch.setattr("toolang.teaming.messaging.dm_id", lambda *_: alice_ref)
+            before = await snapshot(raw)
+            with pytest.raises(MessagingError, match="collision"):
+                await human.resolve("bob")
+            assert await snapshot(raw) == before
+
+    asyncio.run(scenario())
+
+
+def test_gc_retry_after_lost_response_creates_another_distinct_conversation(
+    monkeypatch,
+):
+    from toolang.teaming.errors import BackendUnavailable
+
+    async def scenario():
+        async with client(FakeServer(server_type="valkey"), "human:owner") as human:
+            original = human._backend._operation
+            accepted = []
+
+            async def operation(script, op, extra=None):
+                result = await original(script, op, extra)
+                if op.get("action") == "create":
+                    accepted.append(result)
+                    if len(accepted) == 1:
+                        raise BackendUnavailable("response lost after creation")
+                return result
+
+            monkeypatch.setattr(human._backend, "_operation", operation)
+            with pytest.raises(BackendUnavailable):
+                await human.create_conversation("Retry")
+            second = await human.create_conversation("Retry")
+            assert second.id != accepted[0]
+            assert (await human.statistics())["gc_count"] == 3
+            with pytest.raises(MessagingError, match="Ambiguous"):
+                await human.resolve("Retry", kind="name")
+
+    asyncio.run(scenario())
+
+
+def test_concurrent_initialization_preserves_one_system_gc_after_rename():
+    async def scenario():
+        server = FakeServer(server_type="valkey")
+        clients = [client(server, f"human:h{i}") for i in range(10)]
+        try:
+            await asyncio.gather(*(human.__aenter__() for human in clients))
+            systems = await asyncio.gather(
+                *(human._backend.system_conversation() for human in clients)
+            )
+            assert len(set(systems)) == 1
+            human = clients[0]
+            ref = systems[0]
+            await human.rename_conversation(ref, "Renamed system", revision=1)
+            await asyncio.gather(*(human.register_human() for human in clients))
+            assert await human._backend.system_conversation() == ref
+            assert (await human.conversation(ref)).name == "Renamed system"
+            assert (await human.statistics())["gc_count"] == 1
+        finally:
+            await asyncio.gather(*(human.close() for human in clients))
+
+    asyncio.run(scenario())

@@ -9,7 +9,8 @@ import pytest
 from toolang.teaming.activity import ActivityBackend, HubActivity
 from toolang.execution.activity import ActivityQuery
 from toolang.execution.schemas import ActivitySnapshot
-from toolang.teaming.backend import LAST_SEEN, PREFIX, group_key, online_key
+from toolang.teaming.keys import PREFIX, PRESENCE, convo_key
+from toolang.teaming.ids import dm_id
 from toolang.teaming.roster import Roster
 from tests.unit.messaging.test_protocol import client
 
@@ -30,16 +31,14 @@ def test_roster_tracks_discovery_without_inventing_online_or_observations():
             snapshot = (await reader.read(ActivityQuery()))[0]
             assert snapshot.agent == "agent:alice"
             assert snapshot.presence == "offline"
-            assert snapshot.observed is None and snapshot.last_seen is None
+            assert (
+                snapshot.observed is None and "last_seen" not in snapshot.model_dump()
+            )
             assert snapshot.stats.cost is None and snapshot.stats.input_tokens is None
             await roster.register("agent:alice", "lease", "", True)
             assert await human._backend.online("agent:alice")
-            assert (
-                float(await human._backend._call("HGET", LAST_SEEN, "agent:alice")) > 0
-            )
-            assert (
-                0 < await human._backend._call("TTL", online_key("agent:alice")) <= 15
-            )
+            assert await human._backend._call("ZSCORE", PRESENCE, "agent:alice") > 0
+            assert await human._backend._call("TTL", PRESENCE) == -1
             found.clear()
             await roster.scan()
             await roster.scan()
@@ -65,9 +64,9 @@ def test_removal_clears_ordinary_membership_and_preserves_history_and_dms():
                 discover=lambda: set(found),
             )
             await roster.register("agent:alice", "lease-one", "", True)
-            await human.send("group:all", body="Shared history survives deletion")
+            await human.send("gc_00000000", body="Shared history survives deletion")
             await human.send("agent:alice", body="Old direct history")
-            old_direct = await backend.direct(human.actor, "agent:alice")
+            old_direct = dm_id(human.actor, "agent:alice")
             assert old_direct is not None
             await ActivityBackend(backend).save(
                 "agent:alice",
@@ -89,17 +88,22 @@ def test_removal_clears_ordinary_membership_and_preserves_history_and_dms():
             await roster.scan()
             assert "agent:alice" not in await roster.agents()
             assert "agent:alice" not in await backend.participants()
-            assert "agent:alice" not in await backend.members("group:all")
-            assert await backend._call("XLEN", group_key("group:all", "messages")) == 1
+            assert (
+                "agent:alice"
+                not in (await human.conversation("gc_00000000")).participants
+            )
+            assert (
+                await backend._call("XLEN", convo_key("gc_00000000", "messages")) == 1
+            )
             assert await backend._call("TTL", f"{PREFIX}:activity:agent:alice") == -1
-            assert await backend.direct(human.actor, "agent:alice") == old_direct
-            assert "agent:alice" in await backend.members(old_direct)
+            assert dm_id(human.actor, "agent:alice") == old_direct
+            assert "agent:alice" in (await human.conversation(old_direct)).participants
             found.add("agent:alice")
             await roster.scan()
             await roster.register("agent:alice", "lease-two", "", True)
             await human.send("agent:alice", body="Continue the direct conversation")
-            assert await backend.direct(human.actor, "agent:alice") == old_direct
-            assert await backend._call("XLEN", group_key(old_direct, "messages")) == 2
+            assert dm_id(human.actor, "agent:alice") == old_direct
+            assert await backend._call("XLEN", convo_key(old_direct, "messages")) == 2
             assert not await backend.lease("agent:alice", "lease-one", 15)
             page = (
                 await ActivityBackend(backend).cached("agent:alice", ActivityQuery())
@@ -145,3 +149,6 @@ def test_failed_scans_restart_and_foreign_roots_do_not_delete_agents():
             assert not await restarted.agents()
 
     asyncio.run(scenario())
+
+
+pytestmark = pytest.mark.usefixtures("fixed_conversation_ids")

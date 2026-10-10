@@ -37,3 +37,7 @@ class ScopeUnavailable(ValueError):
 
 class ForgottenTree(ValueError):
     """Reattach at the previous checkpoint before applying this retry."""
+
+
+class StorageIntegrityError(MessagingError):
+    """The conversation dataset is incomplete or malformed; never reset it."""

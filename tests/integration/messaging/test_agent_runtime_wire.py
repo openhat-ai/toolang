@@ -26,7 +26,7 @@ from toolang.plugin.toolsets.loading import tools_from_toolsets
 from toolang.plugin.toolsets.msg import MsgToolset
 from toolang.plugin.types import LoadedPlugin
 from toolang.teaming.agent_client import AgentClient, AgentEventClient
-from toolang.teaming.backend import online_key
+from toolang.teaming.keys import TEAM, PRESENCE
 from toolang.teaming.client import HubClient
 from toolang.teaming.events import HubScope
 from toolang.teaming.stream_client import HubStreamState
@@ -41,6 +41,12 @@ def test_inflight_message_survives_hub_restart_and_scoped_fanout(
     valkey, running_hub, tmp_path, fault
 ):
     async def scenario():
+        async with HubClient(running_hub.connection()) as directory:
+            system = next(
+                c["conversation"]
+                for c in await directory.contacts()
+                if c["name"] == "all"
+            )
         gate = AsyncGate()
         msg = MsgToolset({"root": str(tmp_path)})
         tools = tools_from_toolsets(
@@ -59,7 +65,7 @@ def test_inflight_message_survives_hub_restart_and_scoped_fanout(
                                 "reply",
                                 "reply",
                                 "msg__send",
-                                {"target": "group:all", "body": "handled once"},
+                                {"target": system, "body": "handled once"},
                             ),
                         )
                     ),
@@ -101,7 +107,7 @@ def test_inflight_message_survives_hub_restart_and_scoped_fanout(
                 async with asyncio.timeout(15):
                     while not lifecycle.exporter.generation:
                         await asyncio.sleep(0.05)
-                source = await human.send("group:all", body="please handle this")
+                source = await human.send(system, body="please handle this")
                 await asyncio.wait_for(gate.wait_until_entered(), 10)
                 runs = harness.store.list_runs()
                 assert len(runs) == 1
@@ -150,10 +156,7 @@ def test_inflight_message_survives_hub_restart_and_scoped_fanout(
                 )
                 await asyncio.to_thread(running_hub.stop)
                 if fault == "lease_loss":
-                    await raw.pexpire(online_key(client.actor), 1)
-                    async with asyncio.timeout(5):
-                        while await raw.exists(online_key(client.actor)):
-                            await asyncio.sleep(0.01)
+                    await raw.zadd(PRESENCE, {client.actor: 1})
                 if fault == "backend_switch":
                     (tmp_path / "config.toml").write_text(
                         f'[teaming]\nhuman = "owner"\n[teaming.backend]\nurl = "{valkey.url}?db=1"\n'
@@ -185,15 +188,18 @@ def test_inflight_message_survives_hub_restart_and_scoped_fanout(
                 async with asyncio.timeout(25):
                     current = second if fault == "backend_switch" else raw
                     while (
-                        await current.hget(online_key(client.actor), "token")
-                        != client.token
-                    ):
+                        json.loads(
+                            await current.execute_command("HGET", TEAM, client.actor)
+                            or '{"lease": null}'
+                        ).get("lease")
+                        or {}
+                    ).get("token") != client.token:
                         await asyncio.sleep(0.05)
                 gate.release()
                 async with asyncio.timeout(15):
                     while True:
                         saved = (
-                            json.loads(checkpoint.read_text()).get("group:all", {})
+                            json.loads(checkpoint.read_text()).get(system, {})
                             if checkpoint.exists()
                             else {}
                         )
@@ -205,14 +211,19 @@ def test_inflight_message_survives_hub_restart_and_scoped_fanout(
                 if fault == "backend_switch":
                     assert saved["result"]["replies"] == []
                     async with HubClient(running_hub.connection()) as replacement:
-                        assert await replacement.history("group:all") == []
+                        new_system = next(
+                            c["conversation"]
+                            for c in await replacement.contacts()
+                            if c["name"] == "all"
+                        )
+                        assert await replacement.history(new_system) == []
                 else:
                     assert len(saved["result"]["replies"]) == 1
                     assert saved["result"]["replies"][0]["message"]["origin"] == {
                         "thread": active.thread.id,
                         "run": active.id,
                     }
-                    assert len(await human.history("group:all")) == 2
+                    assert len(await human.history(system)) == 2
                 await caught_up()
                 resumed = await asyncio.gather(
                     *(

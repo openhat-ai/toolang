@@ -42,11 +42,14 @@ class TalkTui:
         *,
         read_only: bool,
         max_width: int = DEFAULT_MAX_PROGRESS_WIDTH,
+        selection: str | None = None,
     ):
-        self.client, self.group, self.human = client, conversation.id, human
+        self.client, self.conversation_id, self.human = client, conversation.id, human
         self.surfaces = surfaces
         self.read_only = read_only
         self.conversation = conversation
+        self.selection = selection
+        self.team: list[dict[str, Any]] = []
         self.max_width = max_width
         self.draft = state / "draft.txt"
         self.connection = "Connecting…"
@@ -180,7 +183,7 @@ class TalkTui:
         return status_line(
             conversation_status(self.conversation, self.human),
             right,
-            center=self.group,
+            center=self.conversation_id,
             width=self.content_width(),
         )
 
@@ -199,11 +202,18 @@ class TalkTui:
         self.status = ""
         self.invalidate()
         try:
-            await self.client.send(self.group, body=body)
+            await self.client.send(
+                self.conversation_id,
+                body=body,
+                participants=list(self.conversation.participants)
+                if self.selection
+                else None,
+            )
         except MessagingError as exc:
             self.status = str(exc)
             await self.print_notice(str(exc))
         else:
+            self.selection = None
             self.connection = "Connected"
             self.prompt.accept_submission(body)
             self.save_draft()
@@ -246,8 +256,22 @@ class TalkTui:
         last_gap = None
         while True:
             try:
+                self.team = await self.client.team()
+                if self.selection:
+                    resolved = await self.client.resolve(self.selection)
+                    if not resolved.exists:
+                        self.connection = "Connected"
+                        self.invalidate()
+                        await asyncio.sleep(0.5)
+                        continue
+                    self.selection = None
+                info = await self.client.conversation(self.conversation_id)
+                if info != self.conversation:
+                    self.conversation = info
+                    self.write_title(conversation_label(info, self.human))
+                    self.invalidate()
                 if not initialized:
-                    entries = await self.client.history(self.group)
+                    entries = await self.client.history(self.conversation_id)
                     if len(entries) == 200:
                         await self.print_notice(
                             "Showing the latest 200 retained messages"
@@ -255,12 +279,14 @@ class TalkTui:
                     await self.show(entries)
                     initialized = True
                 else:
-                    gap = await self.client.check_cursor(self.group, self.cursor)
+                    gap = await self.client.check_cursor(
+                        self.conversation_id, self.cursor
+                    )
                     if gap and gap != last_gap:
                         await self.print_notice(gap)
                     last_gap = gap
                     await self.show(
-                        await self.client.read(self.group, after=self.cursor)
+                        await self.client.read(self.conversation_id, after=self.cursor)
                     )
                 if self.connection != "Connected":
                     self.connection = "Connected"

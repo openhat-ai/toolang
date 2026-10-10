@@ -88,6 +88,7 @@ class AgentClient(HubClient):
         in_reply_to: str | None = None,
         run: str | None = None,
         thread: str | None = None,
+        participants: list[str] | None = None,
     ) -> dict[str, Any]:
         message = Message.create(
             self.actor, body, in_reply_to, {"thread": thread, "run": run}
@@ -99,6 +100,7 @@ class AgentClient(HubClient):
             json={
                 "id": message.id,
                 "target": destination,
+                "participants": participants,
                 "body": message.body,
                 "in_reply_to": message.in_reply_to,
                 "thread": thread,
