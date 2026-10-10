@@ -50,7 +50,6 @@ async def watch(
         sort=sort,
         query=query,
         recent_label=recent_label,
-        refresh=refresh,
         surfaces=resolve_terminal_surfaces(
             output_stream=cast(TextIO, console.file), probe=not once
         ),

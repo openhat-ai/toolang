@@ -180,7 +180,7 @@ def test_single_agent_header_and_tree_columns_at_narrow_width():
 
 
 def test_duration_start_stays_relative_and_stats_does_not_change_activity():
-    assert since("1h", now=3600) == "1h"
+    assert since("1h") == "1h"
     state = Activity(None, query=ActivityQuery())
     for _ in range(4):
         state.key(Keys.F8)

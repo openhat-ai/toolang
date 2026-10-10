@@ -284,7 +284,12 @@ def details(
         values.append(
             Text(f"Inspect: too {row.agent.removeprefix('agent:')} inspect {row.id}")
         )
-    values.append(Text(clean(row.activity)))
+    description = row.activity
+    if row.node and row.node.kind != "thread":
+        description = row.node.title.removeprefix("agent::")
+        if row.node.kind == "step" and row.node.summary:
+            description += " · " + row.node.summary
+    values.append(Text(clean(description)))
     values.append(
         Text(
             "Stats: "
@@ -422,7 +427,6 @@ def render(state: Activity, *, width: int, height: int, once: bool) -> Group:
         return Group(status_bar(state, width))
     if not once and height == 2:
         return Group(header(state, width)[0], status_bar(state, width))
-    state.width = width
     rows = state.rows()
     state._selection(rows)
     top = header(state, width)

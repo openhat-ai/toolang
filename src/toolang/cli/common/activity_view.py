@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from datetime import datetime
 import re
-import time
 from typing import Literal, cast
 
 from prompt_toolkit.keys import Keys
@@ -22,7 +21,7 @@ RECENT = ("5m", "30m", "1h", "1d", "1w", "all")
 SINCE = ("session", "1h", "1d", "1w", "all")
 
 
-def since(value: str, *, now: float | None = None) -> str:
+def since(value: str) -> str:
     query = ActivityQuery(value)
     if value in {"session", "all"} or query.window is not None:
         return value
@@ -57,16 +56,14 @@ def tokens(value: int | None) -> str:
     return str(value)
 
 
-def metrics_text(
-    metrics: ActivityMetrics, time_label: str = "TIME+", *, exact: bool = False
-) -> str:
+def metrics_text(metrics: ActivityMetrics, *, exact: bool = False) -> str:
     number = (
         (lambda value: str(value) if value is not None else "-") if exact else tokens
     )
     return (
         f"MODEL {metrics.model if metrics.model is not None else '-'}  TOOL {metrics.tool if metrics.tool is not None else '-'}"
         f"  IN {number(metrics.input_tokens)}  CACHED {number(metrics.cached_tokens)}  OUT {number(metrics.output_tokens)}"
-        f"  SPEND {cost(metrics)}  {time_label} {elapsed(metrics.time)}"
+        f"  SPEND {cost(metrics)}  TIME+ {elapsed(metrics.time)}"
     )
 
 
@@ -131,7 +128,6 @@ class Activity:
         sort: Sort = "activity",
         query: ActivityQuery | None = None,
         recent_label: str = "30m",
-        refresh: float = 0.1,
         surfaces: TerminalSurfaces = DARK_TERMINAL_SURFACES,
     ) -> None:
         self.surfaces = surfaces
@@ -141,16 +137,12 @@ class Activity:
         self.view: View = view or ("thread" if agent else "agent")
         self.tree = tree
         self.sort = "spend" if sort == "cost" else sort
-        self.refresh = refresh
         self.column_widths: dict[str, int] = {}
-        self.received: float | None = None
         self.help = False
         self.query = query or ActivityQuery()
         self.recent_label = recent_label
         self.display_query = self.query
-        self.display_recent = recent_label
         self.attached_query = self.query
-        self.attached_recent = recent_label
         self.selection_ancestors: list[tuple[str, str]] = []
         self.open_matches = False
         self.snapshots: dict[str, ActivitySnapshot] = {}
@@ -174,13 +166,11 @@ class Activity:
         self.buffer = ""
         self.error = ""
         self.page_size = 15
-        self.width = 140
         self.dirty = False
 
     def attach(self) -> None:
         self.pending.clear()
         self.attached_query = self.query
-        self.attached_recent = self.recent_label
 
     def feed(self, event: str, data: dict) -> bool:
         if event == "activity_roster":
@@ -193,7 +183,6 @@ class Activity:
             self.pending = {
                 agent: page for agent, page in self.pending.items() if agent in agents
             }
-            self.received = time.time()
             self._selection(self.rows())
             return True
         if event == "activity_page":
@@ -232,10 +221,8 @@ class Activity:
             else:
                 self.snapshots.update(self.pending)
             self.pending = {}
-            self.received = time.time()
             self.ready = True
             self.display_query = self.attached_query
-            self.display_recent = self.attached_recent
             if self.open_matches:
                 self.rows()
                 for agent, snapshot in self.snapshots.items():

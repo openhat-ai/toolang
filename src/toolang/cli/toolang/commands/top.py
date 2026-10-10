@@ -9,8 +9,8 @@ import typer
 from typer._click.exceptions import ClickException
 
 from toolang.cli.common.activity import watch
-from toolang.cli.common.activity_view import duration, since as stats_since
-from toolang.execution.activity import ActivityQuery, ActivityReader
+from toolang.cli.common.activity_view import since as stats_since
+from toolang.execution.activity import ActivityQuery, ActivityReader, duration
 from toolang.teaming.observation import LocalObservation, Presence
 from toolang.cli.common.context import (
     cli_context,

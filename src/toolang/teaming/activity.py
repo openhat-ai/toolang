@@ -22,7 +22,7 @@ from toolang.execution.activity import ActivityQuery, ActivityReader
 from toolang.execution.schemas import ActivityMetrics, ActivitySnapshot
 from .backend import Backend, PREFIX, LAST_SEEN, online_key
 from .roster import Roster
-from .observation import LocalObservation, query_params
+from .observation import HttpObservation, LocalObservation
 
 if TYPE_CHECKING:
     from .activity_feed import HubActivityFeed
@@ -333,15 +333,9 @@ class HubActivity:
                         fresh = False
                         if lease.get("endpoint"):
                             try:
-                                response = await http.get(
-                                    lease["endpoint"] + "/api/v1/activity/batch",
-                                    params=query_params(query),
-                                )
-                                response.raise_for_status()
-                                pages = [
-                                    ActivitySnapshot.model_validate(value)
-                                    for value in response.json()
-                                ]
+                                pages = await HttpObservation(
+                                    http, agent=agent, endpoint=lease["endpoint"]
+                                ).read(query)
                                 if not pages or any(
                                     page.agent != agent for page in pages
                                 ):

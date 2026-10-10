@@ -217,3 +217,41 @@ def test_result_reload_waits_for_recovered_checkpoint(reconnecting):
     state.feed("activity_checkpoint", {"agents": [snapshot.agent]})
     assert state.result_key == (None if reconnecting else key)
     assert state.selected == key[:2]
+
+
+@pytest.mark.parametrize("offline", [False, True])
+def test_run_details_describe_selected_run_independently_of_table(offline):
+    from toolang.cli.common.activity_dashboard import details
+
+    snapshot = page()
+    snapshot.roots[0].title = "agent::flow:review_project"
+    if offline:
+        snapshot.presence = "offline"
+        snapshot.roots[0].status = "succeeded"
+        snapshot.roots[0].summary = "Configuration updated"
+    state = Activity("agent:alice", view="execution")
+    feed(state, snapshot)
+    state.selected = (snapshot.agent, "run_root")
+    state.details = True
+    rows = state.rows()
+    text = "\n".join(line.plain for line in details(state, rows, Console(), 180))
+    assert "flow:review_project" in text
+    assert "agent::" not in text
+    assert rows[0].activity == ("-" if offline else "run_child.2")
+
+
+def test_step_details_do_not_inherit_table_tree_prefixes():
+    from toolang.cli.common.activity_dashboard import details
+
+    snapshot = page()
+    snapshot.paths[-1].title = "model-name"
+    snapshot.paths[-1].summary = "Analyze configuration"
+    state = Activity("agent:alice", view="execution", tree=True)
+    feed(state, snapshot)
+    state.selected = (snapshot.agent, "run_child.2")
+    state.details = True
+    rows = state.rows()
+    assert "└─" in next(row.activity for row in rows if row.key == state.selected)
+    text = "\n".join(line.plain for line in details(state, rows, Console(), 180))
+    assert "model-name · Analyze configuration" in text
+    assert "└─" not in text
