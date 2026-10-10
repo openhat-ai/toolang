@@ -439,7 +439,7 @@ _registered_group(
 _registered_command(
     "chat",
     "toolang.cli.toolang.commands.chat:chat_command",
-    help="Start an interactive chat",
+    help="Open a chat",
     cls=_ChatCommand,
     rich_help_panel=WORK_COMMAND_PANEL,
 )
