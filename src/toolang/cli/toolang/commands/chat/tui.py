@@ -238,6 +238,7 @@ class ChatTuiApp:
         client: ChatClient,
         agent_name: str | None = None,
         progress_max_width: int = DEFAULT_MAX_PROGRESS_WIDTH,
+        inputbox_max_width: int | None = None,
         surfaces: TerminalSurfaces = DARK_TERMINAL_SURFACES,
         marks: ChatMarks | None = None,
     ) -> None:
@@ -249,6 +250,7 @@ class ChatTuiApp:
                 client=client,
                 agent_name=agent_name,
                 progress_max_width=progress_max_width,
+                inputbox_max_width=inputbox_max_width,
                 surfaces=surfaces,
                 marks=marks,
             ).run_loop()
@@ -263,6 +265,7 @@ class ChatTuiApp:
         client: ChatClient,
         agent_name: str | None = None,
         progress_max_width: int = DEFAULT_MAX_PROGRESS_WIDTH,
+        inputbox_max_width: int | None = None,
         surfaces: TerminalSurfaces = DARK_TERMINAL_SURFACES,
         marks: ChatMarks | None = None,
     ) -> None:
@@ -304,6 +307,9 @@ class ChatTuiApp:
         self._footer_row_floor = 0
         self._run_status_collapsed = True
         self.progress_max_width = progress_max_width
+        self.inputbox_max_width = (
+            progress_max_width if inputbox_max_width is None else inputbox_max_width
+        )
         self.surfaces = surfaces
         self.presenter = ChatRunPresenter(
             max_width=progress_max_width,
@@ -315,7 +321,7 @@ class ChatTuiApp:
         self.queue_panel = widgets.QueuePanel(
             lambda: [item.source for item in self.queue],
             get_max_rows=self._available_queue_rows,
-            get_width=self.content_width,
+            get_width=self.input_width,
         )
         runnable_label, model_label, workspace_label = self._status_labels()
         self.status_bar = widgets.StatusBar(
@@ -323,10 +329,10 @@ class ChatTuiApp:
             model_label,
             self.agent_name,
             workspace_label,
-            get_width=self.content_width,
+            get_width=self.input_width,
         )
         self.run_status_bar = widgets.RunStatusBar(
-            get_rows=self._run_status_rows, get_width=self.content_width
+            get_rows=self._run_status_rows, get_width=self.input_width
         )
         self.prompt = widgets.PromptBox(
             self._handle_prompt_event,
@@ -334,7 +340,7 @@ class ChatTuiApp:
             on_input=self._clear_status_error,
             history_store=self.input_history,
             get_max_rows=self._available_input_rows,
-            get_width=self.content_width,
+            get_width=self.input_width,
         )
         keys = KeyBindings()
         self.prompt.bind(keys)
@@ -349,23 +355,21 @@ class ChatTuiApp:
                 self.queue_panel.container(),
                 self.prompt.container(),
                 self.status_bar.container(),
-            ]
+            ],
+            width=self.input_width,
         )
         body = HSplit(
             [
-                DynamicContainer(self._live_blocks_container),
-                input_area,
+                VSplit(
+                    [DynamicContainer(self._live_blocks_container)],
+                    align=HorizontalAlign.LEFT,
+                    height=self._live_area_height,
+                ),
+                VSplit([input_area], align=HorizontalAlign.LEFT),
             ],
-            width=self.content_width,
         )
         self.app = ScrollbackApplication(
-            layout=Layout(
-                VSplit(
-                    [body],
-                    align=HorizontalAlign.LEFT,
-                ),
-                focused_element=self.prompt.buffer,
-            ),
+            layout=Layout(body, focused_element=self.prompt.buffer),
             key_bindings=keys,
             style=Style.from_dict(widgets._chat_ui_palette(surfaces)),
             full_screen=False,
@@ -402,10 +406,14 @@ class ChatTuiApp:
     def content_width(self) -> int:
         return max(1, min(self.app.output.get_size().columns, self.progress_max_width))
 
+    def input_width(self) -> int:
+        return max(1, min(self.app.output.get_size().columns, self.inputbox_max_width))
+
     def _live_blocks_container(self) -> Window:
         return Window(
             FormattedTextControl(self._live_fragments),
             height=self._live_area_height,
+            width=self.content_width,
             wrap_lines=False,
             always_hide_cursor=True,
         )

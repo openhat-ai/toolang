@@ -14,6 +14,7 @@ from typer._click.exceptions import ClickException
 from toolang.cli.common.context import context_root
 from toolang.cli.common.errors import TmuxPlacementError
 from toolang.cli.common.execution_progress.config import resolve_progress_max_width
+from toolang.cli.common.input import resolve_inputbox_max_width
 from toolang.cli.common.messaging import settings
 from toolang.cli.common.tmux import resolve_launcher
 from toolang.teaming.client import HubClient
@@ -124,6 +125,7 @@ def talk_command(
             / sha256(resolved.encode()).hexdigest()[:20]
         )
         max_width = resolve_progress_max_width(os.environ)
+        inputbox_max_width = resolve_inputbox_max_width(os.environ, fallback=max_width)
         surfaces = resolve_terminal_surfaces()
 
         async def interactive() -> None:
@@ -141,6 +143,7 @@ def talk_command(
                     surfaces,
                     read_only=not info.allows_sender(human),
                     max_width=max_width,
+                    inputbox_max_width=inputbox_max_width,
                     selection=None if selection.exists else target,
                 ).run()
 

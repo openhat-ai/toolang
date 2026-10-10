@@ -159,7 +159,9 @@ def _render_chat_layout(app: tui.ChatTuiApp) -> Screen:
 
 
 @asynccontextmanager
-async def _queue_test_app() -> AsyncIterator[tuple[tui.ChatTuiApp, _TerminalOutput]]:
+async def _queue_test_app(
+    *, progress_max_width: int = 120, inputbox_max_width: int | None = None
+) -> AsyncIterator[tuple[tui.ChatTuiApp, _TerminalOutput]]:
     output = _TerminalOutput()
     with create_app_session(input=DummyInput(), output=output):
         app = tui.ChatTuiApp(
@@ -167,6 +169,8 @@ async def _queue_test_app() -> AsyncIterator[tuple[tui.ChatTuiApp, _TerminalOutp
             setting=FakeClient().initial_setting(),
             input_history=None,
             client=FakeClient(),
+            progress_max_width=progress_max_width,
+            inputbox_max_width=inputbox_max_width,
         )
         app.active_run_id = "run_busy"
         app._set_status_running(True)
@@ -2835,21 +2839,26 @@ def test_chat_input_reclaims_height_when_queue_empties() -> None:
 
 
 @pytest.mark.parametrize("max_width", [60, 120])
+@pytest.mark.parametrize("inputbox_max_width", [None, 40, 160])
 @pytest.mark.parametrize("expanded", [False, True])
-def test_chat_widgets_share_output_width_after_resize(
-    monkeypatch: pytest.MonkeyPatch, expanded: bool, max_width: int
+def test_chat_input_area_uses_its_own_width_after_resize(
+    monkeypatch: pytest.MonkeyPatch,
+    expanded: bool,
+    max_width: int,
+    inputbox_max_width: int | None,
 ) -> None:
     async def exercise() -> None:
-        async with _queue_test_app() as (app, output):
+        async with _queue_test_app(
+            progress_max_width=max_width, inputbox_max_width=inputbox_max_width
+        ) as (app, output):
             # An exported shell size can differ from the actual terminal output.
             monkeypatch.setenv("COLUMNS", "120")
-            app.progress_max_width = max_width
             app.prompt.replace_input("x" * 79)
             app.queue_panel.expanded = expanded
 
             for columns in (40, 82, 100, 160):
                 output.columns = columns
-                width = min(columns, max_width)
+                width = min(columns, inputbox_max_width or max_width)
                 screen = _render_chat_layout(app)
                 lines = _screen_lines(screen, columns)
                 input_width = width - 4
@@ -2898,11 +2907,15 @@ def test_chat_resize_during_layout_uses_a_consistent_frame_size(monkeypatch):
 
 
 @pytest.mark.parametrize("max_width", [60, 120])
-def test_chat_live_and_committed_controls_share_input_width(monkeypatch, max_width):
+@pytest.mark.parametrize("inputbox_max_width", [40, 160])
+def test_chat_live_and_committed_controls_keep_output_width(
+    monkeypatch, max_width, inputbox_max_width
+):
     async def exercise():
-        async with _queue_test_app() as (app, output):
+        async with _queue_test_app(
+            progress_max_width=max_width, inputbox_max_width=inputbox_max_width
+        ) as (app, output):
             monkeypatch.setenv("COLUMNS", "200")
-            app.progress_max_width = max_width
             block = blocks.RunControlBlock.create("submitted words " * 18)
             app.unfinalized_blocks = [block]
             written = []

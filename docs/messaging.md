@@ -142,8 +142,12 @@ Hub configuration and conversation metadata.
 Messages use terminal scrollback. Agent messages share Chat's Markdown renderer.
 Their names and markers share a stable ANSI color and a header above the body;
 a faint dashed rule separates agent messages. Human messages are literal text.
-The input, footer, and messages share the content limit of 120 cells by default,
-configurable with `TOOLANG_PROGRESS_MAX_WIDTH` and capped by the terminal width.
+Messages use `TOOLANG_PROGRESS_MAX_WIDTH`, defaulting to 120 terminal cells.
+`TOOLANG_INPUTBOX_MAX_WIDTH` independently limits the input and footer; when
+unset, it falls back to the progress limit. Both settings accept positive
+integers and are capped by the terminal width. Empty or invalid values are
+configuration errors. The input-only setting does not affect the directory or
+one-shot sends.
 
 ## Terminal titles and tmux
 

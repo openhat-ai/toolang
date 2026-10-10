@@ -49,6 +49,7 @@ class TalkTui:
         *,
         read_only: bool,
         max_width: int = DEFAULT_MAX_PROGRESS_WIDTH,
+        inputbox_max_width: int | None = None,
         selection: str | None = None,
     ):
         self.client, self.conversation_id, self.human = client, conversation.id, human
@@ -58,6 +59,9 @@ class TalkTui:
         self.selection = selection
         self.team: list[TeamMember] = []
         self.max_width = max_width
+        self.inputbox_max_width = (
+            max_width if inputbox_max_width is None else inputbox_max_width
+        )
         self.draft = state / "draft.txt"
         self._draft_loaded = False
         self.connection = "Connecting…"
@@ -73,7 +77,7 @@ class TalkTui:
             get_max_rows=lambda: max(
                 3, self.app.output.get_size().rows - 1 - self._input_gap_rows()
             ),
-            get_width=self.content_width,
+            get_width=self.input_width,
         )
         self.restore_draft()
         keys = KeyBindings()
@@ -133,7 +137,7 @@ class TalkTui:
                     [
                         HSplit(
                             [composer, self.footer],
-                            width=self.content_width,
+                            width=self.input_width,
                         ),
                     ],
                     align=HorizontalAlign.LEFT,
@@ -171,6 +175,9 @@ class TalkTui:
     def content_width(self) -> int:
         return max(1, min(self.app.output.get_size().columns, self.max_width))
 
+    def input_width(self) -> int:
+        return max(1, min(self.app.output.get_size().columns, self.inputbox_max_width))
+
     def _input_gap_rows(self) -> int:
         # Keep the three-row input and footer usable in very short terminals.
         return int(self.app.output.get_size().rows >= 5)
@@ -180,7 +187,7 @@ class TalkTui:
         if not error and self.connection not in {"Connected", "Connecting…"}:
             error = self.connection
         if error:
-            return [*error_status_line(display_text(error), width=self.content_width())]
+            return [*error_status_line(display_text(error), width=self.input_width())]
         right = (
             target(self.human).name
             if self.connection == "Connected"
@@ -190,7 +197,7 @@ class TalkTui:
             conversation_status(self.conversation, self.human),
             right,
             center=self.conversation_id,
-            width=self.content_width(),
+            width=self.input_width(),
         )
 
     def save_draft(self) -> None:

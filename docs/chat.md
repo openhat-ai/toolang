@@ -105,9 +105,19 @@ Chat and Talk retain native terminal scrollback during resize. Repainting keeps
 the live input from drifting across repeated resizes; the terminal may still
 reflow historical rows or retain rows it scrolled before notifying the application.
 
-Input, Queue, and both status bars share the output width, capped at 120 columns
-by default and narrowed to fit the terminal. A non-empty Queue appears expanded
-above Input without taking focus and directly joins it without a separator row.
+Input, Queue, and both status bars share one width limit. Set
+`TOOLANG_INPUTBOX_MAX_WIDTH` to a positive integer to control this entire input
+area independently from message output. When unset, it uses
+`TOOLANG_PROGRESS_MAX_WIDTH` (120 columns by default). Both limits narrow to fit
+the terminal; empty or invalid configured values are errors. For example:
+
+```sh
+TOOLANG_PROGRESS_MAX_WIDTH=120 TOOLANG_INPUTBOX_MAX_WIDTH=80 too chat
+```
+
+Submitted controls and message output retain the progress width. A non-empty
+Queue appears expanded above Input without taking focus and directly joins it
+without a separator row.
 The areas retain distinct backgrounds. Queue accents its leading cell with Steer's
 magenta, so a left accent bar runs beside the summary and entries much as
 Input's cyan accent frames the prompt. Expanded Queue has a left-aligned

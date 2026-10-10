@@ -107,8 +107,9 @@ def messaging_cli(tmp_path, monkeypatch):
     ],
 )
 def test_send_body_is_literal_and_exits_on_ack(
-    tmp_path, capsys, messaging_cli, words, expected
+    tmp_path, capsys, monkeypatch, messaging_cli, words, expected
 ):
+    monkeypatch.setenv("TOOLANG_INPUTBOX_MAX_WIDTH", "invalid")
     result = cli.main(["--root", str(tmp_path), "talk", "alice", *words])
     assert result == 0
     assert "Sent " in capsys.readouterr().out
@@ -126,8 +127,9 @@ def test_send_body_is_literal_and_exits_on_ack(
 
 
 def test_directory_lists_conversations_and_interactive_requires_tty(
-    tmp_path, capsys, messaging_cli
+    tmp_path, capsys, monkeypatch, messaging_cli
 ):
+    monkeypatch.setenv("TOOLANG_INPUTBOX_MAX_WIDTH", "invalid")
     assert cli.main(["--root", str(tmp_path), "talk"]) == 0
     output = capsys.readouterr().out
     assert "gc_00000001" in output and "alice" in output and "gc_00000000" in output
@@ -689,11 +691,34 @@ def test_message_marker_shares_name_row_and_name_aligns_with_body(identity, send
     assert background == (not agent)
 
 
+def test_interactive_talk_rejects_invalid_input_width_before_tui_start(
+    tmp_path, monkeypatch, capsys, messaging_cli
+):
+    monkeypatch.setenv("TOOLANG_INPUTBOX_MAX_WIDTH", "0")
+    monkeypatch.setattr(talk.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(talk.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(talk, "resolve_launcher", lambda **_kwargs: None)
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("TUI must not start with invalid input width")
+
+    monkeypatch.setattr(TalkTui, "__init__", forbidden)
+    assert cli.main(["--root", str(tmp_path), "talk", "gc_00000000"]) == 1
+    assert "TOOLANG_INPUTBOX_MAX_WIDTH must be a positive integer" in (
+        capsys.readouterr().err
+    )
+
+
 @pytest.mark.parametrize("configured_width", [None, "72"])
+@pytest.mark.parametrize("inputbox_max_width", [None, "48", "160"])
 @pytest.mark.parametrize("sender", ["bryan", "alice"])
 def test_interactive_messages_use_chat_width_after_resize(
-    tmp_path, monkeypatch, messaging_cli, configured_width, sender
+    tmp_path, monkeypatch, messaging_cli, configured_width, sender, inputbox_max_width
 ):
+    if inputbox_max_width is None:
+        monkeypatch.delenv("TOOLANG_INPUTBOX_MAX_WIDTH", raising=False)
+    else:
+        monkeypatch.setenv("TOOLANG_INPUTBOX_MAX_WIDTH", inputbox_max_width)
     if configured_width is None:
         monkeypatch.delenv("TOOLANG_PROGRESS_MAX_WIDTH", raising=False)
     else:
@@ -725,6 +750,9 @@ def test_interactive_messages_use_chat_width_after_resize(
             await ui.show([("1-0", {"data": message.encode()})])
             lines = output.getvalue().splitlines()
             limit = min(columns, int(configured_width or "120"))
+            assert ui.input_width() == min(
+                columns, int(inputbox_max_width or configured_width or "120")
+            )
             assert all(len(line) <= limit for line in lines)
             assert output.getvalue().split().count("word") == 90
             header = lines[0]

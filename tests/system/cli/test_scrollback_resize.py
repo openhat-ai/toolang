@@ -19,15 +19,15 @@ from tests import PROJECT_ROOT
 @pytest.mark.skipif(shutil.which("tmux") is None, reason="tmux is not installed")
 @pytest.mark.parametrize("surface", ["chat", "talk"])
 @pytest.mark.parametrize(
-    "draft",
-    ["", "draft" + " " * 80, "中文" * 30],
-    ids=["empty", "trailing-spaces", "wide-text"],
+    "draft,inputbox_max_width",
+    [("", None), ("draft" + " " * 80, 60), ("中文" * 30, 160)],
+    ids=["empty-default-width", "trailing-spaces-narrow-input", "wide-text-wide-input"],
 )
 @pytest.mark.parametrize(
     "resize_height", [False, True], ids=["width", "width-and-height"]
 )
 def test_repeated_resize_preserves_history_and_input_origin(
-    tmp_path, surface, draft, resize_height
+    tmp_path, surface, draft, resize_height, inputbox_max_width
 ):
     server = Server(socket_name=f"toolang-resize-{uuid4().hex}", config_file=os.devnull)
     try:
@@ -42,6 +42,7 @@ def test_repeated_resize_preserves_history_and_input_origin(
                     surface,
                     str(tmp_path),
                     draft,
+                    str(inputbox_max_width or 0),
                 ]
             ),
             x=200,
@@ -121,7 +122,7 @@ def test_repeated_resize_preserves_history_and_input_origin(
         server.kill()
 
 
-def _run(surface: str, root: Path, draft: str) -> None:
+def _run(surface: str, root: Path, draft: str, inputbox_max_width: int | None) -> None:
     print("\n".join(f"history marker {i:02}" for i in range(40)), flush=True)
 
     def attach(ui):
@@ -155,6 +156,7 @@ def _run(surface: str, root: Path, draft: str) -> None:
         original_init = ChatTuiApp.__init__
 
         def init(self, *args, **kwargs):
+            kwargs["inputbox_max_width"] = inputbox_max_width
             original_init(self, *args, **kwargs)
             attach(self)
 
@@ -176,6 +178,7 @@ def _run(surface: str, root: Path, draft: str) -> None:
             root,
             DARK_TERMINAL_SURFACES,
             read_only=False,
+            inputbox_max_width=inputbox_max_width,
         )
         ui.connection = "Connected"
         attach(ui)
@@ -183,4 +186,4 @@ def _run(surface: str, root: Path, draft: str) -> None:
 
 
 if __name__ == "__main__":
-    _run(sys.argv[1], Path(sys.argv[2]), sys.argv[3])
+    _run(sys.argv[1], Path(sys.argv[2]), sys.argv[3], int(sys.argv[4]) or None)

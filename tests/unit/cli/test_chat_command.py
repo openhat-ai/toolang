@@ -725,9 +725,11 @@ def test_chat_invocation_defaults_initialize_the_session(
     )
 
 
+@pytest.mark.parametrize("inputbox_max_width", [None, "40", "160"])
 def test_prompt_toolkit_resolves_surfaces_before_starting_the_tui(
     tmp_path: Path,
     monkeypatch: Any,
+    inputbox_max_width: str | None,
 ) -> None:
     layout = AgentLayout.resident(tmp_path, "alice")
     client = _Client()
@@ -736,6 +738,8 @@ def test_prompt_toolkit_resolves_surfaces_before_starting_the_tui(
         "TOOLANG_COLOR_SCHEME": "#102030,#203040,#304050",
         "TOOLANG_PROGRESS_MAX_WIDTH": "72",
     }
+    if inputbox_max_width is not None:
+        environ["TOOLANG_INPUTBOX_MAX_WIDTH"] = inputbox_max_width
     surfaces = TerminalSurfaces("#102030", "#203040", "#304050", "#405060")
     calls: list[str] = []
     captured: dict[str, object] = {}
@@ -773,36 +777,52 @@ def test_prompt_toolkit_resolves_surfaces_before_starting_the_tui(
     assert calls == ["resolve", "run"]
     assert captured["surfaces"] is surfaces
     assert captured["progress_max_width"] == 72
+    assert captured["inputbox_max_width"] == int(inputbox_max_width or "72")
     assert captured["thread_id"] == "term_existing"
     assert captured["setting"] is setting
     assert captured["client"] is client
 
 
-def test_prompt_toolkit_reports_invalid_color_scheme_before_tui_start(
+@pytest.mark.parametrize(
+    "name,value,message",
+    [
+        (
+            "TOOLANG_COLOR_SCHEME",
+            "#111111,#222222",
+            "three #RRGGBB colors in input,queue,code order",
+        ),
+        (
+            "TOOLANG_INPUTBOX_MAX_WIDTH",
+            "0",
+            "TOOLANG_INPUTBOX_MAX_WIDTH must be a positive integer",
+        ),
+    ],
+)
+def test_prompt_toolkit_reports_invalid_configuration_before_tui_start(
     tmp_path: Path,
     monkeypatch: Any,
+    name: str,
+    value: str,
+    message: str,
 ) -> None:
     layout = AgentLayout.resident(tmp_path, "alice")
     monkeypatch.setattr(chat, "context_layout", lambda _ctx: layout)
     monkeypatch.setattr(
         chat,
         "load_runtime_environ",
-        lambda _layout, *, base_environ: {
-            **base_environ,
-            "TOOLANG_COLOR_SCHEME": "#111111,#222222",
-        },
+        lambda _layout, *, base_environ: {name: value},
     )
     monkeypatch.setattr(
         chat.ChatTuiApp,
         "run",
         lambda **_kwargs: (_ for _ in ()).throw(
-            AssertionError("TUI must not start with invalid colors")
+            AssertionError("TUI must not start with invalid configuration")
         ),
     )
 
     with pytest.raises(
         ClickException,
-        match="three #RRGGBB colors in input,queue,code order",
+        match=message,
     ):
         chat._chat_interactive_prompt_toolkit(
             object(),  # type: ignore[arg-type]
@@ -810,6 +830,32 @@ def test_prompt_toolkit_reports_invalid_color_scheme_before_tui_start(
             setting=_Client().initial_setting(),
             client=_Client(),
         )
+
+
+def test_scripted_chat_ignores_the_inputbox_width_setting(monkeypatch):
+    @contextmanager
+    def runtime(*_args, **_kwargs):
+        yield _Client()
+
+    captured = {}
+    monkeypatch.setattr(chat, "_chat_runtime", runtime)
+    monkeypatch.setattr(chat, "context_layout", lambda _ctx: _Layout())
+    monkeypatch.setattr(chat.sys.stdin, "isatty", lambda: False)
+    monkeypatch.setattr(
+        chat,
+        "load_runtime_environ",
+        lambda *_args, **_kwargs: {"TOOLANG_INPUTBOX_MAX_WIDTH": "invalid"},
+    )
+    monkeypatch.setattr(
+        chat,
+        "_chat_interactive_scripted_local",
+        lambda **kwargs: captured.update(kwargs),
+    )
+    chat._chat_interactive(
+        object(),  # type: ignore[arg-type]
+        thread_id=None,
+    )
+    assert captured["progress_max_width"] == 120
 
 
 def test_chat_default_options_build_session_override_without_warning(

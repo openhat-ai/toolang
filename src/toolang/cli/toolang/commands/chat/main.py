@@ -57,6 +57,7 @@ from toolang.cli.common.execution_progress.config import (
 )
 from toolang.cli.common.execution_progress.formatting import wrap_display
 from toolang.cli.common.human_values import parts_response_text
+from toolang.cli.common.input import resolve_inputbox_max_width
 from toolang.common.typer.options import BARE_VALUE
 from toolang.cli.common.terminal_surfaces import resolve_terminal_surfaces
 from toolang.cli.common.tmux import (
@@ -403,16 +404,18 @@ def _chat_interactive_prompt_toolkit(
     marks: ChatMarks | None = None,
 ) -> None:
     environ = load_runtime_environ(context_layout(ctx), base_environ=os.environ)
+    progress_max_width = user_call(resolve_progress_max_width, environ)
+    inputbox_max_width = user_call(
+        resolve_inputbox_max_width, environ, fallback=progress_max_width
+    )
     ChatTuiApp.run(
         thread_id=thread_id,
         setting=setting,
         agent_name=context_layout(ctx).name,
         input_history=_chat_input_history_store(ctx),
         client=client,
-        progress_max_width=user_call(
-            resolve_progress_max_width,
-            environ,
-        ),
+        progress_max_width=progress_max_width,
+        inputbox_max_width=inputbox_max_width,
         surfaces=user_call(resolve_terminal_surfaces, environment=environ),
         marks=marks,
     )

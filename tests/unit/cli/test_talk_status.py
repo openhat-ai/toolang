@@ -221,14 +221,21 @@ def test_long_ids_are_shown_whole_or_hidden_without_overlapping_login(width):
 
 
 @pytest.mark.parametrize("human", ["human:alice", "human:bryan"])
-def test_footer_uses_viewer_identity_and_survives_configured_width(tmp_path, human):
+@pytest.mark.parametrize("inputbox_max_width", [None, 48, 160])
+def test_footer_uses_viewer_identity_and_survives_configured_width(
+    tmp_path, human, inputbox_max_width
+):
     async def scenario():
-        async with talk_app(tmp_path, human=human) as (ui, output):
-            ui.max_width = 72
+        async with talk_app(
+            tmp_path,
+            human=human,
+            max_width=72,
+            inputbox_max_width=inputbox_max_width,
+        ) as (ui, output):
             for columns in (200, 60, 180):
                 output.columns = columns
                 footer = fragment_list_to_text(ui.status_text())
-                width = min(columns, 72)
+                width = min(columns, inputbox_max_width or 72)
                 assert footer.startswith("  #dev(3)")
                 assert footer.endswith(human.split(":")[1] + "  ")
                 assert "from " not in footer
