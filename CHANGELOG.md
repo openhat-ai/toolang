@@ -474,6 +474,10 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Fixed
 
+- `too chat` and `too talk` show a steady beam cursor in their input area,
+  so it no longer obscures the placeholder or draft text, and restore the
+  terminal's default cursor shape on exit.
+
 - `too chat` and `too talk` align their live output: execution progress
   footers and two-ended rows end two cells before the available progress
   width's right edge, Chat's banner is followed by two blank rows before
