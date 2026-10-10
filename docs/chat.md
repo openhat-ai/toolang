@@ -373,8 +373,8 @@ blocks further submissions until Chat restarts; read-only commands and exit
 remain available. Chat never retries a submission or falls back to embedded
 execution after selecting the remote runtime.
 
-The startup banner has no frame caption. Its three metadata rows are always
-`runtime`, `sandbox`, then `workspaces`:
+The startup banner caption is `Chat <client-version>`. Its three metadata rows
+are always `runtime`, `sandbox`, then `workspaces`:
 
 ```text
 runtime     v0.3.8
@@ -398,7 +398,8 @@ status bar continues to show the current workspace as it changes. Use
 `too AGENT workspace list` to inspect current workspace mappings and availability.
 
 Sandbox driver and environment use a dim ` · ` separator. The banner preserves its
-padding and folds long metadata values in narrow terminals. Two blank rows
+padding and folds long metadata values in narrow terminals. An overlong caption
+moves inside the panel; very narrow terminals omit decoration. Two blank rows
 separate its bottom border from both the initial input box and the first
 submitted run control bar. The input placeholder is `Describe your task`.
 Chat requests a blinking block cursor and resets the cursor shape to the

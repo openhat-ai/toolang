@@ -18,13 +18,22 @@ from toolang.cli.common.input import resolve_inputbox_max_width
 from toolang.cli.common.messaging import settings
 from toolang.cli.common.tmux import resolve_launcher
 from toolang.teaming.client import HubClient
-from toolang.teaming.errors import TeamingError
+from toolang.teaming.errors import TeamingError, MessagingError
+from toolang.common.version import toolang_version
 from toolang.teaming.schemas import (
     PendingDM,
     Resolution,
     conversation_id,
     identifier,
 )
+
+
+async def _hub_version(client: HubClient) -> str:
+    try:
+        async with asyncio.timeout(2):
+            return (await client.info()).version
+    except (MessagingError, TimeoutError):
+        return "unknown"
 
 
 def talk_identity(root: Path, connection: str, human: str) -> str:
@@ -146,6 +155,8 @@ def talk_command(
                     state,
                     surfaces,
                     read_only=not info.allows_sender(human),
+                    client_version=toolang_version(),
+                    hub_version=await _hub_version(client),
                     max_width=max_width,
                     inputbox_max_width=inputbox_max_width,
                     selection=None if selection.exists else target,

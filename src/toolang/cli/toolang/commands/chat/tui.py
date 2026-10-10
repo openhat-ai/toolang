@@ -51,6 +51,7 @@ from toolang.execution.events import (
 from toolang.execution.runnables import parse_runnable_ref
 from toolang.lang.types import display_runnable_ref
 from toolang.common.errors import ToolangError
+from toolang.common.version import toolang_version
 from toolang.execution.types import SessionSetting
 
 from toolang.cli.common.execution_progress.config import DEFAULT_MAX_PROGRESS_WIDTH
@@ -565,6 +566,7 @@ class ChatTuiApp:
         rendering.write_renderable(
             blocks.HeaderBlock(
                 executor_metadata=self.client.executor_metadata,
+                client_version=toolang_version(),
             ).render(),
             hide_cursor=False,
             width=self.content_width(),

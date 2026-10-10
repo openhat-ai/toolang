@@ -51,7 +51,7 @@ def test_hub_uses_injected_contracts_for_lifespan_messages_activity_and_events()
         client = MessagingClient(
             BackendConfig("redis://unused"), actor="human:owner", backend=backend
         )
-        app = create_app(client)
+        app = create_app(client, version="0.4.0-test")
         async with (
             app.router.lifespan_context(app),
             httpx.AsyncClient(

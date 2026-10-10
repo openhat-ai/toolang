@@ -15,6 +15,7 @@ import psutil
 import uvicorn
 
 from toolang.common.layout import AgentLayout
+from toolang.common.version import toolang_version
 from toolang.execution.activity import ActivityReader
 from toolang.teaming.api import create_app
 from toolang.teaming.config import TeamingRootConfig
@@ -182,6 +183,7 @@ def serve(root: Path, config: TeamingRootConfig, *, port: int) -> int:
                 client = MessagingClient(config.backend, actor=config.human)
                 app = create_app(
                     client,
+                    version=toolang_version(),
                     on_ready=publish_ready,
                     local_activity=local_activity,
                     roster=Roster(

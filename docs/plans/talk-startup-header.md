@@ -1,6 +1,6 @@
 # Chat and Talk startup headers
 
-Status: Proposed; awaiting confirmation of the complete definition.
+Status: Approved in PR #746; implementation requested on 2026-10-10.
 
 ## Goal and examples
 

@@ -193,8 +193,10 @@ import json, os, sys, time
 from pathlib import Path
 from toolang.cli.common.execution_progress.config import resolve_progress_max_width
 from toolang.cli.common.input import resolve_inputbox_max_width
+from toolang.common.files import atomic_write_text
 progress = resolve_progress_max_width(os.environ)
-Path(sys.argv[1]).write_text(json.dumps({
+# File existence signals that the complete result is ready for the parent.
+atomic_write_text(Path(sys.argv[1]), json.dumps({
     "progress": progress,
     "input": resolve_inputbox_max_width(os.environ, fallback=progress),
     "private": os.environ.get("TOOLANG_TEST_PRIVATE"),

@@ -36,6 +36,7 @@ from toolang.teaming.schemas import (
 )
 
 from .rendering import display_text, message_block
+from .header import startup_header
 from .status import conversation_label, conversation_status, status_line
 
 
@@ -49,11 +50,19 @@ class TalkTui:
         surfaces: TerminalSurfaces,
         *,
         read_only: bool,
+        client_version: str = "unknown",
+        hub_version: str = "unknown",
         max_width: int = DEFAULT_MAX_PROGRESS_WIDTH,
         inputbox_max_width: int | None = None,
         selection: str | None = None,
     ):
         self.client, self.conversation_id, self.human = client, conversation.id, human
+        self.header = startup_header(
+            client_version=client_version,
+            hub_version=hub_version,
+            conversation=conversation,
+            human=human,
+        )
         self.surfaces = surfaces
         self.read_only = read_only
         self.conversation = conversation
@@ -345,6 +354,9 @@ class TalkTui:
             await asyncio.sleep(delay)
 
     async def run(self) -> None:
+        console = terminal_console(width=self.content_width())
+        console.print(self.header)
+        console.print()
         title_written = self.write_title(
             conversation_label(self.conversation, self.human)
         )

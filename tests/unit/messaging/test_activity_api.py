@@ -37,7 +37,7 @@ def test_http_sources_share_absolute_stats_and_freeze_offline_cache(
                 client(server, "agent:alice") as alice,
             ):
                 await alice.register("human:owner", endpoint="http://agent")
-                hub = create_app(human)
+                hub = create_app(human, version="0.4.0-test")
                 async with (
                     hub.router.lifespan_context(hub),
                     original(

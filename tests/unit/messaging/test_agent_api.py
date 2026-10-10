@@ -50,7 +50,7 @@ def agent(app, root, actor="agent:alice", token="lease", transport=None):
 def test_agent_messaging_uses_hub_authority_and_context(tmp_path):
     async def scenario():
         human = client(FakeServer(server_type="valkey"), CONNECTION.human)
-        app = create_app(human)
+        app = create_app(human, version="0.4.0-test")
         async with (
             app.router.lifespan_context(app),
             agent(app, tmp_path) as alice,
@@ -102,7 +102,7 @@ def test_agent_tools_without_hub_never_construct_backend(tmp_path):
 def test_msg_targets_expose_current_revision_for_renaming(tmp_path, monkeypatch):
     async def scenario():
         human = client(FakeServer(server_type="valkey"), CONNECTION.human)
-        app = create_app(human)
+        app = create_app(human, version="0.4.0-test")
         async with (
             app.router.lifespan_context(app),
             agent(app, tmp_path) as alice,
@@ -140,7 +140,7 @@ def test_agent_discovery_pins_batch_identity_and_refreshes_connections(tmp_path)
     async def scenario():
         current = CONNECTION
         human = client(FakeServer(server_type="valkey"), CONNECTION.human)
-        app = create_app(human)
+        app = create_app(human, version="0.4.0-test")
 
         async def handle(request):
             return await httpx.ASGITransport(app).handle_async_request(request)
@@ -165,7 +165,7 @@ def test_agent_discovery_pins_batch_identity_and_refreshes_connections(tmp_path)
             with alice.session() as identity:
                 human.config = BackendConfig("redis://second")
                 current = replace(current, identity=human.config.identity)
-                app = create_app(human)
+                app = create_app(human, version="0.4.0-test")
                 save()
                 assert identity == CONNECTION.identity
                 with pytest.raises(BackendUnavailable, match="identity changed"):
@@ -202,7 +202,7 @@ def test_message_checkpoints_are_separate_after_backend_switch(tmp_path, monkeyp
         ]
         for index, human in enumerate(humans):
             human.config = BackendConfig(f"redis://dataset-{index}")
-        apps = [create_app(human) for human in humans]
+        apps = [create_app(human, version="0.4.0-test") for human in humans]
         current = 0
 
         async def handle(request):
@@ -258,7 +258,7 @@ def test_message_checkpoints_are_separate_after_backend_switch(tmp_path, monkeyp
 def test_agent_send_lost_http_ack_is_not_retried(tmp_path):
     async def scenario():
         human = client(FakeServer(server_type="valkey"), CONNECTION.human)
-        app = create_app(human)
+        app = create_app(human, version="0.4.0-test")
         writes = 0
 
         async def handle(request):
@@ -289,7 +289,7 @@ def test_event_publication_retries_exact_http_operation_and_recovers(tmp_path):
 
     async def scenario():
         human = client(FakeServer(server_type="valkey"), CONNECTION.human)
-        app = create_app(human)
+        app = create_app(human, version="0.4.0-test")
         lost = False
         commits = []
 
@@ -377,7 +377,7 @@ def test_event_publication_retries_exact_http_operation_and_recovers(tmp_path):
 def test_agent_api_rejects_bad_identity_lease_and_publications(tmp_path):
     async def scenario():
         human = client(FakeServer(server_type="valkey"), CONNECTION.human)
-        app = create_app(human)
+        app = create_app(human, version="0.4.0-test")
         async with app.router.lifespan_context(app), agent(app, tmp_path) as alice:
             await alice.register(CONNECTION.human)
             publisher = AgentEventClient(alice)

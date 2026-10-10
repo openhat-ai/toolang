@@ -430,7 +430,7 @@ def test_hub_filters_and_cursor_errors_have_flat_http_contract(tmp_path):
         client = MessagingClient(
             BackendConfig("redis://test"), actor="human:owner", backend=driver
         )
-        app = create_app(client)
+        app = create_app(client, version="0.4.0-test")
         async with (
             app.router.lifespan_context(app),
             httpx.AsyncClient(
@@ -1372,7 +1372,7 @@ def test_invalid_recovery_metadata_is_a_backend_error(damage):
         client = MessagingClient(
             BackendConfig("redis://test"), actor="human:owner", backend=driver
         )
-        app = create_app(client)
+        app = create_app(client, version="0.4.0-test")
         async with (
             app.router.lifespan_context(app),
             httpx.AsyncClient(

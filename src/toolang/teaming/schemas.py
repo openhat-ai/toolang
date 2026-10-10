@@ -104,6 +104,20 @@ class ProtocolModel(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
 
 
+class HubInfo(BaseModel):
+    """Presentation metadata supplied by the connected Hub process."""
+
+    model_config = ConfigDict(extra="ignore", strict=True, frozen=True)
+    version: str
+
+    @field_validator("version")
+    @classmethod
+    def valid_version(cls, value: str) -> str:
+        if not value or value != value.strip() or not value.isprintable():
+            raise ValueError("Hub version must be a nonempty printable label")
+        return value
+
+
 def utc_timestamp(value: str) -> str:
     if not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z", value):
         raise ValueError("Expected a UTC RFC 3339 timestamp")
