@@ -4166,7 +4166,7 @@ def test_running_roaming_inspection_preserves_runtime_workspaces(
 
     assert result == 0, output.err
     assert requests[-1] == "/api/v1/workspaces"
-    assert len(requests) == (6 if command == ("info",) else 1)
+    assert len(requests) == 6
 
 
 @pytest.mark.parametrize("command", ["models", "providers", "tools"])

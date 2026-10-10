@@ -546,3 +546,41 @@ def test_teaming_consumers_share_scoped_configuration(tmp_path, monkeypatch, ena
         == BackendConfig("redis://localhost:6379/0")
     )
     assert resolved.human == setup.teaming.root.human
+
+
+def test_loaded_progress_observer_can_read_the_published_models(tmp_path, monkeypatch):
+    watcher, counts = _watcher(monkeypatch, tmp_path)
+    setup = asyncio.run(watcher.refresh())
+    observations = []
+    blocked = []
+    with ThreadPoolExecutor(max_workers=1) as pool:
+
+        def progress(event):
+            if event.status == "ok":
+                reading = pool.submit(setup.models)
+                try:
+                    observations.append(reading.result(timeout=2))
+                except TimeoutError:
+                    blocked.append(True)
+
+        models = setup.models(progress=progress)
+    assert not blocked, "Loaded progress must follow publication of the resource"
+    assert observations == [models]
+    assert observations[0] is models
+    assert counts["adapters"] == 1
+
+
+def test_interrupted_completion_observer_keeps_published_setup_resources(
+    tmp_path, monkeypatch
+):
+    watcher, counts = _watcher(monkeypatch, tmp_path)
+    setup = asyncio.run(watcher.refresh())
+
+    def progress(event):
+        if event.status == "ok":
+            raise KeyboardInterrupt()
+
+    with pytest.raises(KeyboardInterrupt):
+        setup.models(progress=progress)
+    assert setup.models()
+    assert counts["adapters"] == 1

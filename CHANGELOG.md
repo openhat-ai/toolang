@@ -12,7 +12,7 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 - Commands that load agent setup or attach to a running agent now report
   staged progress while they block instead of appearing stalled, covering
   setup, models, tools, model-catalog discovery, capability materialization,
-  workspace inspection, and runtime readiness and management-lock waits, with
+  and runtime readiness and management-lock waits, with
   statuses such as `Loading setup...`, `Loading models...`, `Discovering model
   catalogs...`, and `Waiting for agent API...`.
 

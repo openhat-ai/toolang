@@ -138,20 +138,19 @@ class _LazyValues:
                 if not owner:
                     return cast(T, future.result())
                 value = loader()
+                with self.lock:
+                    self.values[key] = value
+                    if self.loading.get(key) is future:
+                        self.loading.pop(key, None)
+                future.set_result(value)
+                return value
         except BaseException as error:
-            if owner:
+            if owner and not future.done():
                 with self.lock:
                     if self.loading.get(key) is future:
                         self.loading.pop(key, None)
                 future.set_exception(error)
             raise
-
-        with self.lock:
-            self.values[key] = value
-            if self.loading.get(key) is future:
-                self.loading.pop(key, None)
-        future.set_result(value)
-        return value
 
 
 @dataclass(frozen=True, slots=True)

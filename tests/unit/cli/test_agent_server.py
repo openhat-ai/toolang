@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -44,6 +45,10 @@ class _Progress:
 
     def close(self) -> None:
         self.finished += 1
+
+    @contextmanager
+    def suspended(self):
+        yield
 
     def failure_message(
         self,
@@ -969,3 +974,72 @@ def test_persistent_acquisition_waits_for_http_after_running_report(
                 pytest.fail("unready runtime acquired")
         assert probes == [f"{ref.endpoint}/healthz"]
     assert SandboxState.load(layout.sandbox_state) == SandboxState("host", ref)
+
+
+def test_startup_warning_suspends_the_lock_wait_presenter(tmp_path, monkeypatch):
+    from io import StringIO
+
+    from toolang.base.types.progress import ProgressEvent
+    from toolang.cli.common.progress import CliProgress
+
+    class TTYBuffer(StringIO):
+        def isatty(self):
+            return True
+
+        def fileno(self):
+            raise OSError()
+
+    layout = AgentLayout.resident(tmp_path, "alice")
+    _set_status(monkeypatch, layout, _status(value="stopped"))
+    stream = TTYBuffer()
+    presenter = CliProgress(stream=stream, _reveal_seconds=60)
+    monkeypatch.setattr(agent_server, "make_cli_progress", lambda **_kwargs: presenter)
+
+    @contextmanager
+    def waited_lock(_layout, *, progress):
+        progress(
+            ProgressEvent(
+                "lock", "runtime", "start", "Waiting for agent management...", "running"
+            )
+        )
+        presenter._cancel_reveal()
+        presenter._reveal_live()
+        progress(
+            ProgressEvent(
+                "lock", "runtime", "start", "Agent management available", "ok"
+            )
+        )
+        assert presenter._live_display is not None
+        yield
+
+    monkeypatch.setattr(agent_server.sandbox_runtime, "management_lock", waited_lock)
+    monkeypatch.setattr(
+        agent_server.sandbox_runtime, "resolve_selection", lambda *a, **k: "docker"
+    )
+    launch = SimpleNamespace(sandbox="docker", dev_artifact=None)
+    monkeypatch.setattr(
+        agent_server, "_resolve_inactive_launch", lambda *a, **k: launch
+    )
+    observed = []
+
+    def warn(_launch):
+        observed.append(presenter._live_display is None)
+        print("Development package warning", file=stream)
+
+    monkeypatch.setattr(agent_server, "warn_development_package_source", warn)
+    handle = agent_server.sandbox_runtime.SandboxHandle(
+        cast(Any, None),
+        SandboxState("docker", SandboxRef("container", "http://localhost:7001")),
+    )
+
+    async def start(*_args, **_kwargs):
+        assert presenter._live_display is not None
+        return handle
+
+    monkeypatch.setattr(agent_server.sandbox_runtime, "launch", start)
+    with agent_server.acquire_agent_server(
+        layout, sandbox="docker", ui_base_url="https://ui.test"
+    ):
+        assert presenter._live_display is None
+    assert observed == [True]
+    assert stream.getvalue().count("Development package warning") == 1

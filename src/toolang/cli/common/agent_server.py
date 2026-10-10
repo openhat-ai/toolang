@@ -201,7 +201,8 @@ def _prepare_agent_server(
         workspace_additions=workspace_additions,
         temporary_port=temporary,
     )
-    warn_development_package_source(launch)
+    with progress.suspended():
+        warn_development_package_source(launch)
 
     try:
         handle = asyncio.run(sandbox_runtime.launch(launch, progress=progress.sink))
