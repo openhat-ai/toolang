@@ -228,8 +228,6 @@ def start(
         int | None,
         typer.Option("--port", metavar="PORT", help="Bind the agent API to this port"),
     ] = None,
-    workspace: WorkspaceOptions = None,
-    workdir: WorkdirOption = None,
     dev: Annotated[
         Path | None,
         typer.Option("--dev", metavar="[PATH]", help=DEVELOPMENT_WHEEL_HELP),
@@ -270,8 +268,6 @@ def start(
                 endpoint_host=endpoint_host,
                 dev=dev,
                 background=True,
-                workspace_options=workspace,
-                workdir=single_workdir(workdir),
             )
             with progress.suspended():
                 warn_development_package_source(launch.startup)

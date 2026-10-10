@@ -2,12 +2,6 @@
 
 from __future__ import annotations
 
-from toolang.cli.common.workspaces import (
-    WorkspaceOptions,
-    WorkdirOption,
-    NoAutoWorkspaceOption,
-    inspect_workspaces,
-)
 
 from toolang.cli.common.context import context_layout
 
@@ -60,12 +54,8 @@ def list_tools(
     human: Annotated[
         bool, typer.Option("--human", help="Display a table (default)")
     ] = False,
-    workspace: WorkspaceOptions = None,
-    workdir: WorkdirOption = None,
-    no_auto_workspace: NoAutoWorkspaceOption = False,
 ) -> None:
     check_output_options(human=human, json_=json_)
-    inspect_workspaces(ctx, workspace, workdir, no_auto=no_auto_workspace)
     agent = context_agent(ctx)
     setup = asyncio.run(
         load_setup(

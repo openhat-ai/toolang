@@ -5,12 +5,6 @@ import asyncio
 from pathlib import Path
 from typing import Annotated
 import typer
-from toolang.cli.common.workspaces import (
-    WorkspaceOptions,
-    WorkdirOption,
-    NoAutoWorkspaceOption,
-    inspect_workspaces,
-)
 from toolang.cli.common.context import (
     context_layout,
     context_agent,
@@ -63,12 +57,8 @@ def models_command(
     human: Annotated[
         bool, typer.Option("--human", help="Display a table (default)")
     ] = False,
-    workspace: WorkspaceOptions = None,
-    workdir: WorkdirOption = None,
-    no_auto_workspace: NoAutoWorkspaceOption = False,
 ) -> None:
     check_output_options(human=human, json_=json_)
-    inspect_workspaces(ctx, workspace, workdir, no_auto=no_auto_workspace)
     setup = _setup(ctx, model_catalog=model_catalog)
     models = setup.models() if all_ else setup.models_effective()
     selected = user_call(filter_models, models, query)
@@ -102,12 +92,8 @@ def providers_command(
     human: Annotated[
         bool, typer.Option("--human", help="Display a table (default)")
     ] = False,
-    workspace: WorkspaceOptions = None,
-    workdir: WorkdirOption = None,
-    no_auto_workspace: NoAutoWorkspaceOption = False,
 ) -> None:
     check_output_options(human=human, json_=json_)
-    inspect_workspaces(ctx, workspace, workdir, no_auto=no_auto_workspace)
     setup = _setup(ctx, model_catalog=model_catalog)
     providers = setup.providers() if all_ else setup.providers_effective()
     records = [provider_record(provider) for provider in providers]

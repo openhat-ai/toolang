@@ -50,44 +50,56 @@ or settings from the resident `~/.toolang` root.
 
 ## Temporary workspaces
 
-Script calls automatically add srcdir as a workspace and select it as workdir.
-Chat and hosting commands do not add it automatically, including for roaming
-agents. `-w` and `-d` are available in all three placements:
+Script calls automatically add srcdir as a workspace when no `-w` is supplied.
+`run`, `serve`, and `chat` accept `-w` and `-d` in all three placements. `serve`
+and `chat` do not add srcdir automatically, including for roaming agents.
+`start` reads workspace grants from agent configuration; use
+`too AGENT workspace add DIR` or edit `[workspaces]` before starting it.
 
 ```sh
-./aide.too whats_for
-./aide.too whats_for -w another_dir -w .
-./aide.too whats_for --workdir project=../project
-./aide.too whats_for --workdir repo://src
-./aide.too whats_for --no-auto-workspace
+too aide.too whats_for
+too aide.too whats_for -w another_dir -w .
+too aide.too whats_for --workdir project=../project
+too aide.too whats_for --workdir repo://src
 ```
 
 `-w` / `--workspace [NAME=]<DIR>` adds a temporary grant and can be repeated.
 `-d / --workdir [NAME=]<DIR>` adds a grant and selects its root. `--workdir NAME://[SUBDIR]`
 selects an existing grant without adding access. Only one `--workdir` is allowed.
-Any `-w` or `--workdir` suppresses automatic srcdir inclusion; configured grants and
-`lab` remain. `--no-auto-workspace` disables automatic inclusion for script calls
-and their inspection commands. Without an explicit selection, the last usable
-workspace wins.
+Only `-w` suppresses automatic srcdir inclusion; `-d` does not. Configured grants
+and `lab` remain. Initial workdir selection uses `-d`, then the last `-w`, then
+the automatic srcdir grant. Without an invocation selection, the last usable
+workspace wins. `start` uses that configured default and has no workdir override.
 
 Names are inferred from the directory basename and normalized to kebab case:
 `project.v2` becomes `project-v2`. For `.` and `..`, the resolved directory supplies
-the name. Duplicate names fail; use `NAME=PATH` to choose another name. Split only
+the name. Duplicate names fail; use `NAME=PATH` to choose another name. An explicit
+`-d` with the automatic source grant's name and path reuses that grant. Split only
 at the first `=`; `=./foo=bar` infers a name for the path `./foo=bar`.
 
 Grants are fixed for each accepted Run and inherited by its children. Guest startup
 resolves relative configuration paths on the host and mounts the resulting
 snapshots. Restart the guest to refresh those captured configuration files. An existing
 server cannot be rebound to different local directories; stop it before changing
-its grants. Use `--workdir NAME://SUBDIR` to select an existing server workspace.
+its grants. Chat can select an existing server workspace with
+`--workdir NAME://SUBDIR`. A Script without `-w` still requests its source grant,
+including when `-d` selects a URI. A server started by Chat remains running after
+Chat exits, together with its temporary grants; they are not written to config.
 
-`too ./aide.too info` and `too ./aide.too workspace list` show configuration and
-workspace information. `info` does not accept workspace or workdir options and
-does not add the source directory as a temporary workspace. Workspace listing
-uses a running server's grants and default workdir; without a server it prepares
-local State and reports the inspection invocation's workdir.
+`too ./aide.too workspace list` reads source-local workspace configuration and
+shows configured names, resolved paths, and local directory availability. It
+does not query the running server or include temporary grants, implicit `lab`,
+or a workdir. Resident and visiting targets list their layout configuration.
+`too ./aide.too info` retains runtime workspace information when a server is
+running. `info`, `workspace list`, `tools`, `models`, and `providers` do not accept
+workspace or workdir options or add the source directory.
 Persistent workspace edits update source-local TOML;
 visiting agents accept temporary grants only.
+
+`--no-auto-workspace` has been removed. Use explicit `-w` options to replace the
+automatic source grant. There is no option to suppress it without specifying a
+temporary workspace. A former `start -d` subdirectory override has no config
+equivalent; choose the workdir in Chat or use `serve -d` for foreground hosting.
 
 ## File inputs
 

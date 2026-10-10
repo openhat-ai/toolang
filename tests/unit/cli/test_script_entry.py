@@ -76,6 +76,53 @@ def test_mixed_workdir_aliases_are_rejected(monkeypatch, capsys):
     assert "--workdir may only be specified once" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize("explicit_run", [False, True])
+@pytest.mark.parametrize("before_runnable", [False, True])
+def test_script_rejects_removed_no_auto_workspace(
+    explicit_run, before_runnable, monkeypatch, capsys
+):
+    path = _source("agic explain():\n  Explain.\n")
+    monkeypatch.setattr(
+        script,
+        "_run",
+        lambda *_args, **_kwargs: pytest.fail("must reject removed option"),
+    )
+    args = (
+        ["--no-auto-workspace", "explain"]
+        if before_runnable
+        else ["explain", "--no-auto-workspace"]
+    )
+    assert cli.main([*(["run"] if explicit_run else []), path, *args]) == 2
+    assert "No such option: --no-auto-workspace" in strip_ansi(capsys.readouterr().err)
+
+
+@pytest.mark.parametrize("explicit_run", [False, True])
+def test_script_merges_workspace_options_around_runnable(explicit_run, monkeypatch):
+    path = _source("agic explain():\n  Explain.\n")
+    captured = {}
+    monkeypatch.setattr(
+        script, "_run", lambda *_args, **kwargs: captured.update(kwargs) or 0
+    )
+    assert (
+        cli.main(
+            [
+                *(["run"] if explicit_run else []),
+                path,
+                "-w",
+                "one=.",
+                "explain",
+                "--workspace",
+                "two=.",
+                "-d",
+                "one://",
+            ]
+        )
+        == 0
+    )
+    assert captured["workspace_options"] == ("one=.", "two=.")
+    assert captured["workdir"] == "one://"
+
+
 @pytest.mark.parametrize(
     "directory", [".", "existing", "new/nested", "hello world/你好"]
 )

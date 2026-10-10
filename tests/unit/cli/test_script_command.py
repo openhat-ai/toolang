@@ -683,7 +683,6 @@ def _assert_common_options(output: str) -> None:
         "--sandbox",
         "--allow",
         "--limit",
-        "--no-auto-workspace",
         "--dev",
         "--help",
     )
@@ -691,6 +690,7 @@ def _assert_common_options(output: str) -> None:
     assert positions == sorted(positions)
     assert "-o" in panel and "-q" in panel
     assert "--dev [PATH]" in panel
+    assert "--no-auto-workspace" not in panel
     assert "Use a local Toolang wheel [bare: .]" in panel
 
 

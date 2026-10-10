@@ -51,8 +51,40 @@ def test_script_default_and_explicit_replacement(layout, tmp_path):
     explicit = resolve_workspaces(layout, procdir=procdir, srcdir=srcdir, paths=["."])
     assert explicit.additions == {"caller": str(procdir)}
     assert explicit.workdir == "caller://"
-    disabled = resolve_workspaces(layout, procdir=procdir, srcdir=srcdir, no_auto=True)
-    assert disabled.additions == {} and disabled.workdir is None
+
+
+@pytest.mark.parametrize("explicit_workspaces", [False, True])
+@pytest.mark.parametrize("workdir", [None, "project=project", "repo://src"])
+def test_script_workspace_fallback_depends_only_on_workspace_option(
+    layout, tmp_path, explicit_workspaces, workdir
+):
+    source = tmp_path / "source"
+    source.mkdir()
+    project = tmp_path / "project"
+    project.mkdir()
+    paths = ["one=project", "two=project"] if explicit_workspaces else []
+
+    selected = resolve_workspaces(
+        layout, procdir=tmp_path, paths=paths, workdir=workdir, srcdir=source
+    )
+
+    expected = (
+        {"one": str(project), "two": str(project)}
+        if explicit_workspaces
+        else {"source": str(source)}
+    )
+    if workdir == "project=project":
+        expected["project"] = str(project)
+    assert selected.additions == expected
+    assert selected.workdir == (
+        "project://"
+        if workdir == "project=project"
+        else "repo://src"
+        if workdir is not None
+        else "two://"
+        if explicit_workspaces
+        else "source://"
+    )
 
 
 def test_uri_selection_and_last_workspace_fallback(layout, tmp_path):
@@ -121,10 +153,32 @@ def test_existing_server_grant_can_be_selected_without_adding(layout, tmp_path):
         layout,
         procdir=tmp_path,
         workdir="repo://src",
-        srcdir=tmp_path,
     )
     assert selected.additions == {}
     assert selected.workdir == "repo://src"
+
+
+def test_script_workdir_can_select_automatic_source_without_duplicate_grant(
+    layout, tmp_path
+):
+    source = tmp_path / "source"
+    source.mkdir()
+    selected = resolve_workspaces(
+        layout, procdir=tmp_path, srcdir=source, workdir="source"
+    )
+    assert selected.additions == {"source": str(source)}
+    assert selected.workdir == "source://"
+
+
+def test_script_workdir_cannot_rebind_automatic_source_name(layout, tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    other = tmp_path / "other"
+    other.mkdir()
+    with pytest.raises(ValueError, match="workspace name 'source' conflicts"):
+        resolve_workspaces(
+            layout, procdir=tmp_path, srcdir=source, workdir="source=other"
+        )
 
 
 def test_repeated_workdir_is_rejected(layout, tmp_path):
@@ -211,7 +265,7 @@ def test_running_inspection_uses_server_state_without_local_preparation(
     layout, tmp_path, monkeypatch
 ):
     from toolang.cli.common.client import RuntimeClient
-    from toolang.cli.common.workspaces import inspect_workspace_selection
+    from toolang.cli.common.workspaces import running_workspace_inspection
     from toolang.up.process import AgentProcess, AgentStatus
     from toolang.state import prepare
 
@@ -249,22 +303,15 @@ def test_running_inspection_uses_server_state_without_local_preparation(
         }
 
     monkeypatch.setattr(RuntimeClient, "get", get)
-    selection = resolve_workspaces(layout, procdir=tmp_path, workdir="repo://src")
-    result = inspect_workspace_selection(layout, selection)
+    result = running_workspace_inspection(layout, workdir="repo://src")
+    assert result is not None
     assert result.workdir == "repo://src"
     assert result.items[-1].available
     assert requests == ["/api/v1/workspaces?workdir=repo%3A%2F%2Fsrc"]
 
 
-def test_offline_inspection_rejects_unknown_uri_and_configured_name_collision(
-    layout, tmp_path
-):
-    from toolang.cli.common.workspaces import inspect_workspace_selection
-
-    selection = resolve_workspaces(layout, procdir=tmp_path, workdir="missing://")
-    with pytest.raises(ToolangError, match="workspace is not available"):
-        inspect_workspace_selection(layout, selection)
+def test_temporary_workspace_cannot_replace_configured_name(layout, tmp_path):
     layout.config.write_text(f'[workspaces]\nrepo = "{tmp_path}"\n')
     selection = resolve_workspaces(layout, procdir=tmp_path, paths=[f"repo={tmp_path}"])
     with pytest.raises(ValueError, match="temporary workspace name already exists"):
-        inspect_workspace_selection(layout, selection)
+        prepare_agent_state(layout, workspace_additions=selection.additions)

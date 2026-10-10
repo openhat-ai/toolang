@@ -88,15 +88,21 @@ from toolang.base.protocols.tool import Tool
 runner = CliRunner()
 
 
-def test_workspace_list_includes_implicit_lab(tmp_path: Path) -> None:
+def test_workspace_list_excludes_implicit_lab_and_does_not_prepare_state(
+    tmp_path: Path,
+) -> None:
     root = tmp_path / "toolang-root"
     _create_agent(root)
 
     result = _invoke(root, "alice", "workspace", "list")
 
     assert result.exit_code == 0, result.stderr
-    assert "lab" in result.stdout
+    assert "lab" not in result.stdout
     assert "AVAILABLE" in result.stdout
+    assert "Workdir:" not in result.stdout
+    layout = AgentLayout.resident(root, "alice")
+    assert not layout.agent_state.exists()
+    assert not (layout.home / "lab").exists()
 
 
 def test_workspace_commands_preserve_config_and_never_delete_data(
@@ -147,6 +153,39 @@ def test_workspace_list_reports_unavailable_copied_paths(tmp_path: Path) -> None
     assert "repo" in result.stdout
     assert str(unavailable) in result.stdout
     assert "no" in result.stdout
+
+
+def test_roaming_workspace_list_reads_only_source_local_config(
+    tmp_path, monkeypatch, capsys
+):
+    from dulwich.repo import Repo
+
+    monkeypatch.chdir(tmp_path)
+    Repo.init(tmp_path).close()
+    (tmp_path / "toolang.toml").write_text('[workspaces]\nancestor = "."\n')
+    source_dir = tmp_path / "scripts"
+    source_dir.mkdir()
+    source = source_dir / "demo.too"
+    source.write_text("invalid program ???")
+    (source_dir / "toolang.toml").write_text(
+        '[workspaces]\nproject = ".."\nmissing = "./absent"\n'
+    )
+    monkeypatch.setattr(
+        agents.AgentProcess,
+        "status",
+        lambda *args, **kwargs: pytest.fail(
+            "configuration listing must not inspect runtime"
+        ),
+    )
+
+    assert cli.main([str(source), "workspace", "list"]) == 0
+    output = capsys.readouterr().out
+    assert str(tmp_path) in output
+    assert str(source_dir / "absent") in output
+    assert output.index("project") < output.index("missing")
+    assert "ancestor" not in output
+    assert "lab" not in output
+    assert "Workdir:" not in output
 
 
 def test_local_agent_clone_copies_workspace_config_unchanged(tmp_path: Path) -> None:
@@ -3982,57 +4021,77 @@ def test_tools_help_and_missing_agent_need_no_setup(
     assert not (tmp_path / "agents" / "missing").exists()
 
 
-def test_workspace_list_shows_default_workdir_and_running_grants(tmp_path, monkeypatch):
-    import toolang.cli.common.workspaces as workspace_commands
-    from toolang.state.schemas import WorkspaceInfo, WorkspaceInspection
-
+@pytest.mark.parametrize("running", [False, True])
+def test_workspace_list_reads_config_independently_of_runtime(
+    tmp_path, monkeypatch, running
+):
     root = tmp_path / "toolang-root"
     _create_agent(root)
     layout = AgentLayout.resident(root, "alice")
     project = tmp_path / "project"
     project.mkdir()
-    temporary = tmp_path / "temporary"
-    temporary.mkdir()
+    layout.program.write_text("invalid program ???")
     layout.config.write_text(f'[workspaces]\nproject = "{project}"\n')
     monkeypatch.setattr(
-        workspace_commands,
-        "running_workspace_inspection",
-        lambda _layout, **kwargs: WorkspaceInspection(
-            revision="a" * 64,
-            items=(
-                WorkspaceInfo(
-                    name="lab", path=str(layout.home / "lab"), available=True
-                ),
-                WorkspaceInfo(name="temporary", path=str(temporary), available=True),
-            ),
-            workdir="temporary://",
+        agents.AgentProcess,
+        "status",
+        lambda self, **kwargs: (
+            agents.AgentStatus(
+                name="alice",
+                status="running",
+                endpoint="http://runtime.test",
+                api_url=None,
+                webui_url=None,
+                sandbox="docker",
+            )
+            if running
+            else None
+        ),
+    )
+    monkeypatch.setattr(
+        "toolang.cli.common.client.RuntimeClient.get",
+        lambda *args, **kwargs: pytest.fail(
+            "configuration listing must not query a server"
         ),
     )
 
     result = _invoke(root, "alice", "workspace", "list")
 
     assert result.exit_code == 0, result.stderr
-    assert "Workdir: temporary://" in result.stdout
-    assert str(project) not in result.stdout
-    assert "temporary" in result.stdout
-    assert str(temporary) in result.stdout
+    assert str(project) in result.stdout
+    assert "Workdir:" not in result.stdout
+    assert not layout.agent_state.exists()
 
 
-@pytest.mark.parametrize("option", ["--workdir", "--workspace", "--no-auto-workspace"])
-def test_agent_info_rejects_execution_workspace_options(tmp_path, monkeypatch, option):
+@pytest.mark.parametrize(
+    "command",
+    [
+        ("info",),
+        ("tools",),
+        ("models",),
+        ("providers",),
+        ("start",),
+        ("workspace", "list"),
+    ],
+)
+@pytest.mark.parametrize(
+    "option", ["-d", "--workdir", "-w", "--workspace", "--no-auto-workspace"]
+)
+def test_non_execution_commands_reject_workspace_options(
+    tmp_path, monkeypatch, command, option
+):
     _create_agent(tmp_path)
     monkeypatch.setattr(agent_commands, "SetupWatcher", _EmptySetupWatcher)
 
     value = () if option == "--no-auto-workspace" else (str(tmp_path),)
-    result = _invoke(tmp_path, "alice", "info", option, *value)
+    result = _invoke(tmp_path, "alice", *command, option, *value)
 
     assert result.exit_code == 2
     assert f"No such option: {option}" in strip_ansi(result.stderr)
 
 
-@pytest.mark.parametrize("command", [("workspace", "list"), ("info",)])
 def test_running_roaming_inspection_preserves_runtime_workspaces(
-    tmp_path, monkeypatch, capsys, command
+    tmp_path, monkeypatch, capsys
 ):
     from toolang.cli.common.client import RuntimeClient
 
@@ -4064,7 +4123,7 @@ def test_running_roaming_inspection_preserves_runtime_workspaces(
         }
 
     monkeypatch.setattr(RuntimeClient, "get", get)
-    result = cli.main([str(source), *command])
+    result = cli.main([str(source), "info"])
     output = capsys.readouterr()
 
     assert result == 0, output.err
@@ -4072,7 +4131,7 @@ def test_running_roaming_inspection_preserves_runtime_workspaces(
 
 
 @pytest.mark.parametrize("command", ["models", "providers", "tools"])
-def test_setup_inspection_does_not_require_valid_program_for_workspace_options(
+def test_setup_inspection_does_not_require_valid_program(
     tmp_path, monkeypatch, command
 ):
     import toolang.cli.toolang.commands.model_catalog as model_commands
@@ -4086,7 +4145,7 @@ def test_setup_inspection_does_not_require_valid_program_for_workspace_options(
 
     monkeypatch.setattr(model_commands, "load_setup", load_setup)
     monkeypatch.setattr(plugin_commands, "load_setup", load_setup)
-    result = _invoke(tmp_path, "alice", command, "-w", str(tmp_path))
+    result = _invoke(tmp_path, "alice", command)
 
     assert result.exit_code == 0, result.stderr
     assert not layout.agent_state.exists()

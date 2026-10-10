@@ -47,7 +47,6 @@ from ...common.context import load_runtime_environ
 from ...common.workspaces import (
     WorkspaceOptions,
     WorkdirOption,
-    NoAutoWorkspaceOption,
     resolve_workspaces,
     single_workdir,
 )
@@ -448,7 +447,6 @@ def _runnable_command(
         ] = None,
         allow: AllowOptions = None,
         limit: LimitOptions = None,
-        no_auto_workspace: NoAutoWorkspaceOption = False,
         dev: Annotated[
             Path | None,
             typer.Option("--dev", metavar="[PATH]", help=DEVELOPMENT_WHEEL_HELP),
@@ -474,9 +472,6 @@ def _runnable_command(
         selected_workdir = single_workdir(
             [*(inherited.get("workdir") or ()), *(workdir or ())]
         )
-        no_auto_workspace = no_auto_workspace or inherited.get(
-            "no_auto_workspace", False
-        )
         override, input, raw_named = _collect_call(
             runnable, items=tuple(items or ()), stdin=stdin
         )
@@ -497,7 +492,6 @@ def _runnable_command(
             quiet=quiet,
             workspace_options=tuple(workspace),
             workdir=selected_workdir,
-            no_auto_workspace=no_auto_workspace,
         )
 
     kind = runnable.kind if runnable is not None else "runnable"
@@ -673,7 +667,6 @@ def _run(
     quiet: bool,
     workspace_options: tuple[str, ...] = (),
     workdir: str | None = None,
-    no_auto_workspace: bool = False,
 ) -> int:
     from toolang.common.ids import IdIssuer
     from toolang.execution.store import RunStore
@@ -699,7 +692,6 @@ def _run(
             paths=workspace_options,
             workdir=workdir,
             srcdir=source_path.resolve().parent,
-            no_auto=no_auto_workspace,
         )
         session_override = _script_session_override(
             model_body=model_body,
@@ -714,11 +706,7 @@ def _run(
             sandbox=sandbox,
             dev=dev,
             show_progress=not quiet,
-            workspace_additions=(
-                None
-                if workdir and "://" in workdir and not workspaces.additions
-                else workspaces.additions
-            ),
+            workspace_additions=workspaces.additions,
         ) as server:
             if server is None:
                 store = RunStore(layout.run_store)

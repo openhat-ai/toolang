@@ -40,13 +40,6 @@ WorkdirOption = Annotated[
         help="Set workdir; a path also adds a workspace",
     ),
 ]
-NoAutoWorkspaceOption = Annotated[
-    bool,
-    typer.Option(
-        "--no-auto-workspace",
-        help="Skip the automatic source workspace",
-    ),
-]
 _URI = re.compile(r"^[^/=]+://")
 
 
@@ -54,7 +47,6 @@ _URI = re.compile(r"^[^/=]+://")
 class InvocationWorkspaces:
     additions: Mapping[str, str]
     workdir: str | None
-    automatic: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "additions", MappingProxyType(dict(self.additions)))
@@ -67,7 +59,6 @@ def resolve_workspaces(
     paths: Sequence[str] = (),
     workdir: str | Sequence[str] | None = None,
     srcdir: Path | None = None,
-    no_auto: bool = False,
 ) -> InvocationWorkspaces:
     """Parse local grants; defer named workspaces to the selected runtime's State."""
     workdir = single_workdir(workdir)
@@ -93,6 +84,10 @@ def resolve_workspaces(
                 resolved.name if candidate.name in {"", ".", ".."} else candidate.name
             )
         if name in origins:
+            if origins[name] == "automatic source workspace" and additions[name] == str(
+                resolved
+            ):
+                return workspace_uri(name)
             raise ValueError(
                 f"workspace name {name!r} conflicts: {origins[name]} and {origin}; use NAME=PATH"
             )
@@ -101,9 +96,10 @@ def resolve_workspaces(
         return workspace_uri(name)
 
     selected = None
-    automatic = False
     for value in paths:
         selected = add(value, f"-w {value}")
+    if not paths and srcdir is not None:
+        selected = add(f"={srcdir}", "automatic source workspace")
     if workdir is not None:
         if _URI.match(workdir):
             parse_cwd(workdir)
@@ -112,38 +108,7 @@ def resolve_workspaces(
             selected = workdir
         else:
             selected = add(workdir, f"--workdir {workdir}")
-    elif not paths and srcdir is not None and not no_auto:
-        selected = add(f"={srcdir}", "automatic source workspace")
-        automatic = True
-    return InvocationWorkspaces(additions, selected, automatic=automatic)
-
-
-def inspect_workspaces(
-    ctx: typer.Context,
-    paths: Sequence[str] | None,
-    workdir: str | Sequence[str] | None,
-    *,
-    no_auto: bool = False,
-) -> InvocationWorkspaces | None:
-    """Validate optional inspection grants without changing global inspection."""
-    from .context import context_agent, context_layout, user_call
-
-    if context_agent(ctx) is None and not paths and workdir is None:
-        return None
-    if context_agent(ctx) is None:
-        raise typer.BadParameter("workspace options require an agent target")
-    layout = context_layout(ctx)
-    return user_call(
-        resolve_workspaces,
-        layout,
-        procdir=Path.cwd(),
-        paths=paths or (),
-        workdir=workdir,
-        srcdir=layout.program.resolve().parent
-        if layout.placement == "roaming"
-        else None,
-        no_auto=no_auto,
-    )
+    return InvocationWorkspaces(additions, selected)
 
 
 def single_workdir(values: str | Sequence[str] | None) -> str | None:
@@ -174,41 +139,3 @@ def running_workspace_inspection(
     return WorkspaceInspection.model_validate(
         RuntimeClient(status.endpoint).get("/api/v1/workspaces" + query)
     )
-
-
-def inspect_workspace_selection(
-    layout: AgentLayout, selection: InvocationWorkspaces
-) -> WorkspaceInspection:
-    """Inspect live runtime grants, or prepare a standalone host State."""
-    inspection = running_workspace_inspection(
-        layout, workdir=None if selection.automatic else selection.workdir
-    )
-    if inspection is not None:
-        validate_running_workspace_additions(inspection, selection)
-        return inspection
-
-    from toolang.state.prepare import prepare_agent_state
-    from toolang.setup import AgentSetup
-    from toolang.execution.executor.resources import (
-        default_workspace_workdir,
-        workspace_inspection,
-    )
-
-    state = prepare_agent_state(layout, workspace_additions=selection.additions)
-    setup = AgentSetup(layout=layout, envs={})
-    workdir = default_workspace_workdir(setup, state, workdir=selection.workdir)
-    return workspace_inspection(setup, state, workdir=workdir)
-
-
-def validate_running_workspace_additions(
-    inspection: WorkspaceInspection, selection: InvocationWorkspaces
-) -> None:
-    # Inspection defaults belong to the running agent; source-directory defaults
-    # only apply when preparing a standalone host State.
-    if selection.automatic:
-        return
-    bindings = {item.name: item.path for item in inspection.items}
-    if any(bindings.get(name) != path for name, path in selection.additions.items()):
-        raise ValueError(
-            "workspace bindings differ from the running server; stop it before adding local directories"
-        )
