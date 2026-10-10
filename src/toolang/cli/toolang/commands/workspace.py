@@ -12,7 +12,12 @@ from toolang.cli.common.parameters import PathType, TextType
 
 from toolang.state.config import ConfiguredWorkspaces
 from toolang.common.layout import AgentLayout
-from ...common.context import context_layout, require_prefix_agent, user_call
+from ...common.context import (
+    cli_context,
+    context_layout,
+    require_prefix_agent,
+    user_call,
+)
 from ...common.output import echo_table
 from ...common.routing import RequiredPrefixAgentCommand, RequiredPrefixAgentGroup
 
@@ -79,11 +84,12 @@ def add_workspace(
 def list_workspaces(ctx: typer.Context) -> None:
     require_prefix_agent(ctx)
     layout = context_layout(ctx)
-    config_path = (
-        layout.program.resolve(strict=True).parent / "toolang.toml"
-        if layout.placement == "roaming"
-        else layout.config
-    )
+    if layout.placement == "roaming":
+        source = cli_context(ctx).source
+        assert source is not None
+        config_path = source.parent / "toolang.toml"
+    else:
+        config_path = layout.config
     workspaces = user_call(ConfiguredWorkspaces(config_path).list)
     echo_table(
         ("NAME", "PATH", "AVAILABLE"),

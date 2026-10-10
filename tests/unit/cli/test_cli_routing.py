@@ -961,8 +961,10 @@ def test_cli_routes_roaming_agent_command_to_its_exact_layout(
     source.write_text("agic demo:\n  Reply directly.\n", encoding="utf-8")
     captured: dict[str, object] = {}
 
-    def fake_run_app(args: list[str], layout: AgentLayout) -> int:
-        captured.update(args=args, layout=layout)
+    def fake_run_app(
+        args: list[str], layout: AgentLayout, selected_source: Path
+    ) -> int:
+        captured.update(args=args, layout=layout, source=selected_source)
         return 9
 
     result = dispatch_roaming(
@@ -975,6 +977,7 @@ def test_cli_routes_roaming_agent_command_to_its_exact_layout(
     assert captured == {
         "args": ["info", source.stem] if arguments == ["info"] else arguments,
         "layout": AgentLayout.roaming(source),
+        "source": source,
     }
 
 

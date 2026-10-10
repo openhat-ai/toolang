@@ -155,8 +155,13 @@ def test_workspace_list_reports_unavailable_copied_paths(tmp_path: Path) -> None
     assert "no" in result.stdout
 
 
+@pytest.mark.parametrize(
+    "project_state", ["fresh", "invalid-ancestor", "conflicting-cache", "linked-cache"]
+)
+@pytest.mark.parametrize("symlink", [False, True])
+@pytest.mark.parametrize("separator", [[], ["--"]])
 def test_roaming_workspace_list_reads_only_source_local_config(
-    tmp_path, monkeypatch, capsys
+    tmp_path, monkeypatch, capsys, project_state, symlink, separator
 ):
     from dulwich.repo import Repo
 
@@ -170,6 +175,20 @@ def test_roaming_workspace_list_reads_only_source_local_config(
     (source_dir / "toolang.toml").write_text(
         '[workspaces]\nproject = ".."\nmissing = "./absent"\n'
     )
+    if project_state == "linked-cache":
+        cache = tmp_path / "external-cache"
+        cache.mkdir()
+        (source_dir / ".toolang").symlink_to(cache, target_is_directory=True)
+    layout = AgentLayout.roaming(source)
+    if project_state == "invalid-ancestor":
+        (tmp_path / "toolang.toml").write_text("invalid TOML [")
+    elif project_state == "conflicting-cache":
+        layout.home.mkdir(parents=True)
+        layout.config.write_text("existing snapshot")
+    target = source
+    if symlink:
+        target = tmp_path / "alias.too"
+        target.symlink_to(source)
     monkeypatch.setattr(
         agents.AgentProcess,
         "status",
@@ -178,7 +197,7 @@ def test_roaming_workspace_list_reads_only_source_local_config(
         ),
     )
 
-    assert cli.main([str(source), "workspace", "list"]) == 0
+    assert cli.main([str(target), "workspace", *separator, "list"]) == 0
     output = capsys.readouterr().out
     assert str(tmp_path) in output
     assert str(source_dir / "absent") in output
@@ -186,6 +205,21 @@ def test_roaming_workspace_list_reads_only_source_local_config(
     assert "ancestor" not in output
     assert "lab" not in output
     assert "Workdir:" not in output
+    if project_state == "conflicting-cache":
+        assert layout.config.read_text() == "existing snapshot"
+        assert not layout.program.exists()
+    elif project_state == "linked-cache":
+        assert not tuple(layout.root.iterdir())
+    else:
+        assert not layout.root.exists()
+
+
+def test_roaming_workspace_list_rejects_missing_source(tmp_path, capsys):
+    source = tmp_path / "missing.too"
+
+    assert cli.main([str(source), "workspace", "list"]) == 1
+    assert "agent program not found" in capsys.readouterr().err
+    assert not AgentLayout.roaming(source).root.exists()
 
 
 def test_local_agent_clone_copies_workspace_config_unchanged(tmp_path: Path) -> None:

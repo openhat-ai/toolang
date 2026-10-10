@@ -94,23 +94,12 @@ credential behavior remains unchanged.
 
 ## Workspace selection
 
-| Option | Meaning |
-| --- | --- |
-| `-w, --workspace [NAME=]<DIR>` | Add a temporary workspace; repeatable. |
-| `-d, --workdir [NAME=]<DIR>` | Add a workspace and select its root. |
-| `-d, --workdir <URI>` | Select an existing workspace/subdirectory without adding access. |
-| `--no-auto-workspace` | Skip automatic source inclusion for `.too` execution and its inspection commands. |
-
-`-w` and `-d` work in all placements through execution, Chat, hosting, and
-inspection entry points. Other execution modes do not automatically add srcdir;
-this is an invocation rule, not a property of every roaming command.
+[Workspace CLI options](workspace-cli-options.md) defines the current command
+option scope, source-directory fallback, and invocation workdir precedence.
 
 Build grants in order: implicit `lab`, configured entries, invocation additions.
-A local `.too` call with neither `-w` nor `-d` appends srcdir and selects it unless
-`--no-auto-workspace` is set. Either explicit option suppresses only that automatic
-addition. Without an explicit selection, the last usable workspace wins. `-d`
-always selects its target regardless of its position among `-w` options. Reject
-more than one `-d`/`--workdir`, including mixed aliases. Invocation workdir takes
+Without an invocation selection, the last usable workspace wins. Reject more
+than one `-d`/`--workdir`, including mixed aliases. Invocation workdir takes
 precedence over thread history for that call.
 
 Paths resolve from procdir and must name existing directories. Split at the first
@@ -122,8 +111,9 @@ always means a path. Never guess from filesystem/workspace existence.
 Infer names from complete directory basenames, normalized to kebab case:
 `project.v2` becomes `project-v2`. For `.`/`..`, use the resolved basename; automatic
 srcdir already names the real source directory. Reject unnameable paths and name
-collisions with configured, implicit, or invocation grants, even for equal paths.
-The user supplies a different name; never invent suffixes. Different names may
+collisions with configured, implicit, or invocation grants, except for the
+automatic-source reuse defined by the workspace CLI plan. The user supplies a
+different name; never invent suffixes. Different names may
 alias one root, with one guest mount. Preserve nested-root semantics.
 
 ```sh
@@ -156,11 +146,11 @@ when sources disappear. Reject unowned entries instead of replacing them.
 Project relocation must not reuse stale path bindings. Deleting generated state
 loses local history, caches, logs, and lab output, not authored configuration.
 
-`info`, `models`, `providers`, `tools`, and `workspace list` use the selected
-placement's layout. `info` and workspace inspection show configuration/catalog
-origins, invocation grants/workdir, and runtime location as appropriate. Report
-running-server grants separately from the current invocation. Preserve targetless
-global inspection. Inspection does not start a model Run or expose credentials.
+`info`, `models`, `providers`, and `tools` use the selected placement's layout.
+`info` shows configuration/catalog origins and runtime workspace information.
+`workspace list` follows the authored-configuration contract in
+[Workspace CLI options](workspace-cli-options.md). Preserve targetless global
+inspection. Inspection does not start a model Run or expose credentials.
 Persistent workspace edits preserve comments, use paths relative to the authored
 config, and never modify shared ancestors or generated projections.
 
@@ -199,7 +189,7 @@ starts with `<entry:LINE>`, followed by its authored comment. Chat displays
 
 Script options are ordered `-q`, `-o <FILE>`, `--model <MODEL>`, `-w [NAME=]<DIR>`,
 `-d [NAME=]<DIR>|<URI>`, `--sandbox <SANDBOX>`, `--allow <RESOURCE>=<QUERY>`,
-`--limit <LIMIT>=<VALUE>`, `--no-auto-workspace`, `--dev [PATH]`, `-h`.
+`--limit <LIMIT>=<VALUE>`, `--dev [PATH]`, `-h`.
 Keep descriptions short; help never executes or reads stdin.
 
 ## Acceptance and implementation boundaries

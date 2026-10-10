@@ -25,7 +25,8 @@ grant again with an identical `-d` path reuses that grant.
 shows configured names, resolved paths, and local directory availability. It
 does not add `lab`, temporary bindings, or an initial workdir, prepare execution
 State, or query a running service. Roaming targets read source-local
-`toolang.toml`; resident and visiting targets read their layout configuration.
+`toolang.toml` without loading ancestor configuration or creating project caches;
+resident and visiting targets read their layout configuration.
 
 Keep `start`'s existing default-workdir selection from configured workspaces.
 Do not introduce a workdir configuration field or change Chat/server lifetimes,
@@ -46,7 +47,8 @@ runtime inspection APIs, sandbox mounts, or workspace add/remove behavior.
   the precedence above. Options before/after the runnable behave identically.
 - `serve` and `chat` accept explicit directories without an automatic source grant.
 - Configuration listing is unchanged by server status and works with invalid
-  program source, absent directories, and source-local relative paths.
+  program source, absent directories, and source-local relative paths. Roaming
+  listing tolerates invalid ancestor configuration and conflicting project caches.
 - Existing workspace management and runtime inspection tests continue to pass;
   default lint, formatting, type checks, and offline tests pass.
 

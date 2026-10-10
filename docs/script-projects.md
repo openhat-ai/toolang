@@ -51,8 +51,8 @@ or settings from the resident `~/.toolang` root.
 ## Temporary workspaces
 
 Script calls automatically add srcdir as a workspace when no `-w` is supplied.
-`run`, `serve`, and `chat` accept `-w` and `-d` in all three placements. `serve`
-and `chat` do not add srcdir automatically, including for roaming agents.
+Script `run` accepts `-w` and `-d`. `serve` and `chat` accept them in all three
+placements without adding srcdir automatically, including for roaming agents.
 `start` reads workspace grants from agent configuration; use
 `too AGENT workspace add DIR` or edit `[workspaces]` before starting it.
 
@@ -87,8 +87,9 @@ including when `-d` selects a URI. A server started by Chat remains running afte
 Chat exits, together with its temporary grants; they are not written to config.
 
 `too ./aide.too workspace list` reads source-local workspace configuration and
-shows configured names, resolved paths, and local directory availability. It
-does not query the running server or include temporary grants, implicit `lab`,
+shows configured names, resolved paths, and local directory availability without
+loading ancestor configuration or creating project caches. It does not query
+the running server or include temporary grants, implicit `lab`,
 or a workdir. Resident and visiting targets list their layout configuration.
 `too ./aide.too info` retains runtime workspace information when a server is
 running. `info`, `workspace list`, `tools`, `models`, and `providers` do not accept

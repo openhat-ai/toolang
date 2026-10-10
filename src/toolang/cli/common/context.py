@@ -26,6 +26,7 @@ class CliContext:
     root: Path
     agent: str | None = None
     layout: AgentLayout | None = None
+    source: Path | None = None
 
 
 ModelCatalogOption = Annotated[
