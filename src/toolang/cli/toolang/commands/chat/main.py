@@ -57,7 +57,6 @@ from toolang.cli.common.execution_progress.config import (
 )
 from toolang.cli.common.execution_progress.formatting import wrap_display
 from toolang.cli.common.human_values import parts_response_text
-from toolang.cli.common.output import shorten_home_path
 from toolang.common.typer.options import BARE_VALUE
 from toolang.cli.common.terminal_surfaces import resolve_terminal_surfaces
 from toolang.cli.common.tmux import (
@@ -395,13 +394,6 @@ def _chat_input_history_store(ctx: typer.Context) -> ChatInputHistoryStore | Non
     return ChatInputHistoryStore(layout.runtime / "chat-input-history.jsonl")
 
 
-def _chat_home_label(ctx: typer.Context) -> str:
-    try:
-        return shorten_home_path(context_layout(ctx).home)
-    except Exception:
-        return "agent home"
-
-
 def _chat_interactive_prompt_toolkit(
     ctx: typer.Context,
     *,
@@ -414,7 +406,6 @@ def _chat_interactive_prompt_toolkit(
     ChatTuiApp.run(
         thread_id=thread_id,
         setting=setting,
-        home=_chat_home_label(ctx),
         agent_name=context_layout(ctx).name,
         input_history=_chat_input_history_store(ctx),
         client=client,

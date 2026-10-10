@@ -28,7 +28,10 @@ from toolang.execution.runnables import (
     runnable_binding_defaults,
     resolve_runnable_reference,
 )
-from toolang.execution.executor.resources import validate_agent_ceiling
+from toolang.execution.executor.resources import (
+    validate_agent_ceiling,
+    workspace_inspection,
+)
 from toolang.plugin.models.query import filter_models, first_model_ref
 from toolang.plugin.models.resolution import (
     model_reasoning_effort_applicable,
@@ -83,8 +86,6 @@ class _CallbackTracer(RunTracer):
 class LocalChatSession:
     """Expose the chat-client contract over one process-local executor."""
 
-    executor_metadata: ChatExecutorMetadata
-
     def __init__(
         self,
         layout: AgentLayout,
@@ -100,10 +101,6 @@ class LocalChatSession:
     ) -> None:
         self._invocation_workdir = workdir
         self.layout = layout
-        self.executor_metadata = ChatExecutorMetadata(
-            sandbox_selector="host",
-            sandbox_detail=host_sandbox_description(),
-        )
         self.store = RunStore(layout.run_store)
         self.history = RunHistory(self.store)
         self.ids = IdIssuer(layout.id_state, agent_name=layout.name)
@@ -154,6 +151,22 @@ class LocalChatSession:
         except Exception:
             self.close()
             raise
+
+    @property
+    def executor_metadata(self) -> ChatExecutorMetadata:
+        """Inspect banner details after the TUI has initialized its workdir."""
+
+        setup = self.setup_watcher.current()
+        state = self.state_watcher.current()
+        return ChatExecutorMetadata(
+            sandbox_driver="host",
+            sandbox_detail=host_sandbox_description(),
+            workspaces=tuple(
+                item.name
+                for item in workspace_inspection(setup, state, workdir=None).items
+                if item.available
+            ),
+        )
 
     def list_models(
         self,

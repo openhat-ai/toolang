@@ -28,6 +28,8 @@ def _session(thread_payload: object, *, status: int = 200) -> remote.RemoteChatS
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/healthz":
             return httpx.Response(200, json={"ok": True})
+        if request.url.path == "/api/v1/workspaces":
+            return httpx.Response(200, json={"items": []})
         if request.url.path == "/api/v1/profile":
             return httpx.Response(200, json=_profile())
         if request.url.path == "/api/v1/runs/defaults":
@@ -91,6 +93,8 @@ def test_remote_thread_title_survives_a_transport_failure() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/healthz":
             return httpx.Response(200, json={"ok": True})
+        if request.url.path == "/api/v1/workspaces":
+            return httpx.Response(200, json={"items": []})
         if request.url.path == "/api/v1/profile":
             return httpx.Response(200, json=_profile())
         if request.url.path == "/api/v1/runs/defaults":

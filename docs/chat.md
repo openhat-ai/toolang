@@ -355,30 +355,38 @@ blocks further submissions until Chat restarts; read-only commands and exit
 remain available. Chat never retries a submission or falls back to embedded
 execution after selecting the remote runtime.
 
-The startup banner keeps the TUI process, executor, and sandbox identities
-separate. Its metadata order is always `Toolang`, `executor`, `sandbox`, then
-`home`:
+The startup banner identifies the client with a `Toolang Chat <version>` frame
+caption. Its three metadata rows are always `runtime`, `sandbox`, then
+`workspaces`:
 
 ```text
-Toolang   v0.2.7-87-g69439a4e*
-executor  http://localhost:7001 · v0.2.7-88-gc73484a9
-sandbox   docker:python:3.13-slim · 5741cca76066
-home      ~/.toolang/agents/eve
+runtime     v0.3.8 · http://localhost:7001
+sandbox     docker · python:3.13-slim
+workspaces  lab, toolang
 ```
 
-Host execution renders a plugin-supplied operating
-system identity such as `sandbox  host · macOS 27.0 arm64`. Remote
-endpoints are terminal hyperlinks. A remote executor version is omitted only
-when it exactly matches the known, clean TUI version; matching dirty versions
-and `unknown` remain visible because they do not prove identical source.
-Adjacent identity values use a dim ` · ` separator, and every form keeps the
-same panel padding.
+The runtime version always precedes its linked endpoint, including when it
+matches the client version, is dirty, or is `unknown`. Known versions have one
+`v` prefix. Host execution uses the same sandbox format, for example
+`sandbox  host · macOS 27.0 arm64`. Docker shows the complete image name and tag
+or digest. Container IDs and agent-home paths are omitted from the banner;
+the runtime profile still exposes its container identity.
 
-The sandbox description is optional runtime-profile presentation metadata. Its
-absence or a `null` value does not block Chat: host execution uses the local host
-sandbox plugin description, and Docker continues to use the reported container
-instance. Profile readers ignore unknown additive fields, allowing the TUI and
-executor to use different source releases without coupling their deployment.
+The workspace names are a startup snapshot from the connected runtime's
+`GET /api/v1/workspaces`. Only available workspaces are listed, in response
+order, without filesystem paths. An empty list renders `none`; failed or
+malformed inspection renders `unavailable` without blocking Chat. The existing
+status bar continues to show the current workspace as it changes. Use
+`too AGENT workspace list` to inspect current workspace mappings and availability.
+
+Adjacent identity values use a dim ` · ` separator. The banner preserves its
+padding and folds long metadata values in narrow terminals.
+
+The host sandbox description remains optional runtime-profile presentation
+metadata. A missing or `null` value uses the local host sandbox plugin's
+fallback description. Docker uses the reported image selector for display and
+still validates the runtime's container identity. Profile and workspace readers
+ignore unknown additive fields so presentation metadata can evolve independently.
 
 The chat TUI keeps only live mutable blocks in its live area. Stable blocks
 move into terminal scrollback progressively instead of waiting for the whole

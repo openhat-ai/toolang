@@ -468,6 +468,7 @@ agic chat(_: Part[]) -> Part[]:
         lambda: "macOS 27.0 arm64",
     )
 
+    assert not (harness.setup.layout.home / "lab").exists()
     session = local.LocalChatSession(
         harness.setup.layout,
     )
@@ -481,9 +482,12 @@ agic chat(_: Part[]) -> Part[]:
         event_threads.append(threading.get_ident())
 
     try:
+        # Match TUI startup: initialize the session workdir before printing its header.
+        assert session.initial_workdir(None) == "lab://"
         assert session.executor_metadata == ChatExecutorMetadata(
-            sandbox_selector="host",
+            sandbox_driver="host",
             sandbox_detail="macOS 27.0 arm64",
+            workspaces=("lab",),
         )
         absolute_workspace = harness.setup.layout.home / "lab" / "absolute"
         absolute_workspace.mkdir(parents=True)

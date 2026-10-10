@@ -208,6 +208,17 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Changed
 
+- Chat's startup banner now describes the connected runtime and its
+  workspaces instead of the executor and agent home. Its caption reads
+  `Toolang Chat <version>`, and its rows are `runtime` (always
+  `<version> · <linked endpoint>`, with a single `v` prefix on known
+  versions), `sandbox` (`<driver> · <environment>`; Docker shows its image
+  selector instead of a container ID), and `workspaces` (the runtime's
+  available logical names from `GET /api/v1/workspaces` in response order,
+  `none` when the list is empty, `unavailable` when inspection fails, and
+  never filesystem paths). The `home` row is removed, and the status bar still
+  shows the current workspace.
+
 - `too top` keeps a fixed six-line Header at every width: a first line with
   the team's online count or the agent's live session uptime in place of
   accumulated execution time, the local clock, two aligned statistics rows, and
