@@ -21,51 +21,54 @@ are always present; optional Details sits above the fixed bottom Status bar and
 reduces the Table viewport. Scrolling belongs to a region, never terminal scrollback.
 `--once` and non-TTY output remain single snapshots.
 
-Header has a fixed height for each terminal width, including a blank separator
-before Table. Use three aligned content lines and a settings line at normal
-widths. Put the current local clock at the upper right, and Stats/Activity settings
-at the lower right:
+Header has six lines at every width: identity/clock, blank, two compact statistics
+rows, settings, blank before Table. Keep the local clock at the upper right;
+identity and clock use normal weight. Put Period/Recent settings directly below
+statistics at the left:
 
 ```text
-Team         1/2 online  12m30s                                                      19:08:51
-Threads: 1         Runs:   1 active      Models: 24       Tools: 46
-In:      128k      Cached: 96k           Out:    12k      Spend: $1.28
-                                                              Stats: session  Activity: 30m
+Team 1/2 online                                                                    19:08:51
+
+Threads: 1     Runs:   1    Models: 24   Tools: 46
+In:      128k  Cached: 96k  Out:    12k  Spend: $1.28
+Period: session  Recent: 30m
 
 AGENT S MODEL TOOL   IN CACHED OUT SPEND  TIME+ THREAD RUN ACTIVITY(30m)↓
 alice +    24   46 128k    96k 12k $1.28 12m30s t1     r1  review_project
 bob   -     -    -    -      -   -     -      - -      -   -
 
                                                                 (remaining Table viewport)
-F1Help F4Filter F5View F6Sort F7Activity F8Stats F10Quit
+F1Help F4Filter F5Tree F6Sort F7Recent F8Period F10Quit
 ```
 
-Settings always occupy their reserved line, with active filters on the left.
-Single-agent mode replaces the first-line identity/presence prefix and omits the
-AGENT column:
+Append active filters to the settings line. Both modes retain the AGENT column.
+Single-agent mode replaces the first-line team summary:
 
 ```text
-Agent alice  online   12m30s
-Agent team   offline  12m30s
+Agent uptime 5m43s
 ```
 
-- `Team` means Hub scope; `Agent NAME` means one named agent. Identify scope
-  once, without repeating it in statistics labels or ACTIVITY.
-- First-line duration is accumulated execution time for Stats, with the same
-  meaning as TIME+, not process uptime.
+- `Team` means Hub scope; `Agent` means the agent named in Table. Do not repeat
+  agent names in statistics labels or ACTIVITY.
+- Team shows online/total agents. Agent uptime is wall time since the current
+  executor session started, independent of Period and TIME+. Tick while online
+  and fresh; show `-` for offline, stale, reconnecting or missing session data.
+  Do not repeat accumulated execution time in the first line.
 - Header metrics cover the whole observation scope, independent of view,
-  selection, filters and folds. Threads and Runs describe Activity-eligible work
-  before filters; Runs shows active/failed counts, or `idle` when both are zero.
-- Statistics groups share four column starts; align labels and values within
-  each column. Use subdued labels, emphasized values and fixed column widths.
-  On narrow terminals, reflow at column boundaries; only terminal resize changes
-  Header height, never counts, filters or settings.
+  selection, filters and folds. Threads and Runs count Activity-eligible work
+  before filters, including completed Runs; show `0` when empty and `-` when
+  unavailable. Active/failed counts and `idle` belong in Table ACTIVITY.
+- Statistics groups share four compact column starts; align labels and values
+  within each column. Use subdued labels and emphasized values. Keep both rows
+  on one physical line each; crop at the right edge without ellipses or reflow.
 - Settings update immediately after input. Show active filters compactly in
   Header only when set. Sort belongs on the sorted column heading; level/layout
   is apparent from columns. Do not display refresh
   frequency or repeat settings as prose above Table.
 - Status bar uses htop-style function-key cells: normal key numbers followed by
   colored action labels. Show only Fn hints; retain other shortcuts in Help.
+  F5 names the next view: Agents, Threads, Runs or Tree. F7 Recent and F8 Period
+  match Header labels and cycle activity visibility and statistics ranges.
   On narrow terminals, omit whole key cells as needed and retain F10 Quit.
   Keep the filter input tail and cursor visible while editing long values.
   Keep `Connecting`, `Updating` and `Reconnecting` feedback; omit `Incomplete`.
@@ -146,8 +149,8 @@ top team  -> Hub HTTP                    -> teaming observation service
 Execution and source clock/window changes asynchronously replace complete local
 projections; scheduled paints use the latest data. Structural changes publish
 promptly; source clock updates occur once per second. Window expiry updates
-values/eligibility even without execution events. The CLI clock is only for Header;
-it never extrapolates execution time.
+values/eligibility even without execution events. The CLI clock drives Header's
+clock and live session uptime; it never extrapolates accumulated execution time.
 
 `--refresh SECONDS` remains finite and positive, default `0.1`. Coalesce data
 updates at render deadlines; navigation, setting changes and resize repaint

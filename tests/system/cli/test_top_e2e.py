@@ -25,7 +25,7 @@ def test_top_captures_wheel_in_alternate_screen_and_restores_terminal(tmp_path):
         "tests.support.top_tui_e2e", tmp_path, columns=180
     )
     try:
-        session.wait_for("THREAD", "1 active")
+        session.wait_for("THREAD", "$0.25")
         session.wait_for_bytes(b"\x1b[?1049h")
         session.wait_for_bytes(b"\x1b[?1000h", timeout=1)
         session.wait_for_bytes(b"\x1b[?1006h", timeout=1)
@@ -54,7 +54,7 @@ def test_top_escape_cancels_editor_without_another_key(tmp_path):
         "tests.support.top_tui_e2e", tmp_path, columns=160
     )
     try:
-        session.wait_for("THREAD", "1 active")
+        session.wait_for("THREAD", "$0.25")
         session.send(b"\x1b[14~")  # F4
         session.wait_for("Filter:", "Active: False")
         session.send(b"\x01")
@@ -79,15 +79,15 @@ def test_top_pastes_filter_and_cycles_stats(tmp_path):
         "tests.support.top_tui_e2e", tmp_path, columns=160
     )
     try:
-        session.wait_for("THREAD", "1 active")
+        session.wait_for("THREAD", "$0.25")
         session.send(b"\x1b[14~\x1b[200~math__double\x1b[201~")
         session.wait_for("Filter: math__double")
         session.send(b"\r")
         session.wait_for("math__double", "F4Filter")
         session.send(b"\x1b[19~")  # F8 applies the next preset immediately.
-        session.wait_for("Stats: 1h", "TIME+")
+        session.wait_for("Period: 1h", "TIME+")
         session.send(b"\x1b[19~" * 3)
-        session.wait_for("Stats: all")
+        session.wait_for("Period: all")
         session.send(b"q")
         assert session.wait_for_exit() == 0
     finally:
@@ -104,7 +104,7 @@ def test_top_live_tree_views_ranges_and_completion(
         "tests.support.top_tui_e2e", tmp_path, columns=columns, rows=24
     )
     try:
-        session.wait_for("THREAD", "1 active", "$0.25")
+        session.wait_for("THREAD", "$0.25")
         endpoint = json.loads((tmp_path / "activity-endpoint.json").read_text())[
             "endpoint"
         ]
@@ -163,9 +163,9 @@ def test_top_live_tree_views_ranges_and_completion(
             session.send(b"\x1b[17~")
             session.wait_for("TIME+↓")
             session.send(b"\x1b[18~" * 4)
-            session.wait_for("Activity: all")
+            session.wait_for("Recent: all")
             session.send(b"\x1b[19~" * 4)
-            session.wait_for("Stats: all", "TIME+")
+            session.wait_for("Period: all", "TIME+")
 
             (tmp_path / "release-tool").touch()
             deadline = time.monotonic() + 10
@@ -185,8 +185,9 @@ def test_top_live_tree_views_ranges_and_completion(
                 session.wait_for(model["id"])
             (tmp_path / "release-model").touch()
             session.data.clear()
+            session.send(b"t")
             session.wait_for("idle")
-            session.send(b"\r")
+            session.send(b"e\r")
             session.wait_for("Status: succeeded", "flow:review")
             final = snapshot()
             assert not final["paths"]
@@ -206,7 +207,7 @@ def test_keys_repaint_without_waiting_for_long_refresh(tmp_path, monkeypatch):
         "tests.support.top_tui_e2e", tmp_path, columns=180
     )
     try:
-        session.wait_for("THREAD", "1 active", timeout=15)
+        session.wait_for("THREAD", "$0.25", timeout=15)
         # Begin just after a full frame; a scheduled-only key update would take 5s.
         session.data.clear()
         start = time.monotonic()
@@ -235,7 +236,7 @@ def test_ctrl_selection_during_slow_details_and_terminal_restore(
         "tests.support.top_tui_e2e", tmp_path, columns=180
     )
     try:
-        session.wait_for("THREAD", "1 active")
+        session.wait_for("THREAD", "$0.25")
         session.wait_for_bytes(b"\x1b[?1049h")
         endpoint = json.loads((tmp_path / "activity-endpoint.json").read_text())[
             "endpoint"
@@ -312,23 +313,25 @@ def test_top_terminal_grid_resize_and_markdown_pages(tmp_path, local):
             lines = screen(
                 lambda lines: (
                     len(lines) == height
-                    and lines[0].startswith("Agent alice ")
+                    and lines[0].startswith("Agent uptime ")
                     and len(lines[0]) == width
                     and re.search(r"\d{2}:\d{2}:\d{2}$", lines[0])
                     and "F1Help" in lines[-1]
                     and "F10Quit" in lines[-1]
-                    and sum(line.startswith("S ") for line in lines) == 1
-                    and sum(line.startswith("+ ") for line in lines) == 1
+                    and sum(line.startswith("AGENT ") for line in lines) == 1
+                    and sum(line.startswith("alice + ") for line in lines) == 1
                 )
             )
             assert "…" not in "\n".join(lines)
             heading_index = next(
-                i for i, line in enumerate(lines) if line.startswith("S ")
+                i for i, line in enumerate(lines) if line.startswith("AGENT ")
             )
+            assert heading_index == 6 and not lines[1].strip()
+            assert lines[4].startswith("Period: session  Recent: 30m")
             assert not lines[heading_index - 1].strip()
             # Numeric headings and values share their right edge.
-            heading = next(line for line in lines if line.startswith("S "))
-            row = next(line for line in lines if line.startswith("+ "))
+            heading = next(line for line in lines if line.startswith("AGENT "))
+            row = next(line for line in lines if line.startswith("alice + "))
             model_end = heading.index("MODEL") + len("MODEL")
             assert row[model_end - 1 : model_end] == "2"
             if "SPEND" in heading:
@@ -354,14 +357,16 @@ def test_top_terminal_grid_resize_and_markdown_pages(tmp_path, local):
             lambda lines: any("Item 0: 中文 e\u0301" in line for line in lines)
         )
         # Paging moves only Details; the selected run and table stay in place.
-        table = [line[line.index("term_") :] for line in lines if line.startswith("+ ")]
+        table = [
+            line[line.index("term_") :] for line in lines if line.startswith("alice + ")
+        ]
         for _ in range(12):
             pane.send_keys("PageDown", enter=False)
         lines = screen(lambda lines: any("answer = 42" in line for line in lines))
         assert any("Finished." in line for line in lines)
         assert "F1Help" in lines[-1]
         assert [
-            line[line.index("term_") :] for line in lines if line.startswith("+ ")
+            line[line.index("term_") :] for line in lines if line.startswith("alice + ")
         ] == table
         assert not any("```" in line for line in lines)
         pane.send_keys("C-p", enter=False)
@@ -400,7 +405,8 @@ def test_offline_agent_top_recovers_when_history_becomes_available(tmp_path, nam
         columns=180,
     )
     try:
-        session.wait_for(f"Agent {name}  offline", "No matching activity")
+        initial = session.wait_for("Agent uptime -", "AGENT", name)
+        assert re.search(rf"(?m)^{re.escape(name)}\s+-\s+-", initial)
         assert not layout.run_store.exists(), "Observation must not create history"
         # Simulate committed history arriving while this read-only client stays open.
         with closing(RunStore(layout.run_store)) as store:
@@ -415,7 +421,7 @@ def test_offline_agent_top_recovers_when_history_becomes_available(tmp_path, nam
             )
             statistics.checkpoint(store, "one", at(120), end=True)
         session.data.clear()
-        session.wait_for(f"Agent {name}  offline  2m00s", "$0.50", "run_root")
+        session.wait_for("Agent uptime -", name, "2m00s", "$0.50", "run_root")
         session.send(b"\r")
         session.wait_for("Saved result", f"Inspect: too {name} inspect run_root")
         session.send(b"q")

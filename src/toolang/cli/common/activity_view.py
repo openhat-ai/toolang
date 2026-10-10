@@ -151,6 +151,7 @@ class Activity:
         self.reconnecting = False
         self.selected: tuple[str, str] | None = None
         self.tree_selected: tuple[str, str] | None = None
+        self.tree_root: tuple[str, str] | None = None
         self.parents: dict[tuple[str, str], tuple[str, str]] = {}
         self.folded: set[tuple[str, str]] = set()
         self.offset = 0
@@ -412,7 +413,6 @@ class Activity:
                     groups.append(rows)
             if (
                 not any(group[0].agent == agent for group in groups)
-                and not self.agent
                 and not self.display_query.active
                 and agent_match
             ):
@@ -456,6 +456,7 @@ class Activity:
         if current:
             if self.view == "execution":
                 self.tree_selected = current.key
+                self.tree_root = current.agent, current.root
             ref = (
                 current.agent
                 if view == "agent"
@@ -482,6 +483,15 @@ class Activity:
                 ),
                 None,
             )
+            if remembered is None:
+                remembered = next(
+                    (
+                        node
+                        for node in snapshot.roots
+                        if (current.agent, node.id) == self.tree_root
+                    ),
+                    None,
+                )
             ref = (
                 remembered.thread
                 if remembered and view == "thread"

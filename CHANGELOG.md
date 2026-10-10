@@ -40,9 +40,9 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 - `too top` and `too AGENT top` open a full-screen dashboard on the alternate
   screen, restoring the terminal on exit, with Header, Table, Details, and
   Status bar regions: Header shows the scope, the local clock, and the selected
-  Stats and Activity windows, Table adds an `S` presence column (`+` online,
+  Period and Recent windows, Table adds an `S` presence column (`+` online,
   `-` offline, `?` unknown), Details renders on-demand result text as Markdown,
-  and F7/F8 cycle the Activity and Stats windows.
+  and F7/F8 cycle the Recent and Period windows.
 
 - `too AGENT top` reads the selected agent's local run store, so it needs no
   running agent, Hub, or Redis/Valkey and keeps retained history readable while
@@ -208,12 +208,25 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Changed
 
+- `too top` keeps a fixed six-line Header at every width: a first line with
+  the team's online count or the agent's live session uptime in place of
+  accumulated execution time, the local clock, two aligned statistics rows, and
+  a `Period`/`Recent` settings line, so counts, filters, and windows never
+  reflow it. The former Stats and Activity windows are renamed `Period` (F8,
+  statistics range) and `Recent` (F7, activity visibility), the Table keeps the
+  `AGENT` column in both scopes, and the Status bar's `F5` names the next view.
+
+- `too top` Header `Runs` now counts every Activity-eligible run before
+  filters, including completed runs, showing `0` when empty and `-` when
+  unavailable, while active, failed, and `idle` summaries stay in Table
+  ACTIVITY.
+
 - `too top` shows only function-key hints in its Status bar — F1 Help, F4
-  Filter, F5 View, F6 Sort, F7 Activity, F8 Stats, and F10 Quit — so `F5`
-  cycles the Agent, Thread, Run, and Tree levels, `F10` exits like `q` and
-  Ctrl-C, and letter and Enter shortcuts remain available through Help; the
-  Status bar no longer shows `Incomplete`, whose coverage and freshness
-  detail stays in Details.
+  Filter, F5 naming the next view, F6 Sort, F7 Recent, F8 Period, and F10
+  Quit — so `F5` cycles the Agent, Thread, Run, and Tree levels, `F10` exits
+  like `q` and Ctrl-C, and letter and Enter shortcuts remain available through
+  Help; the Status bar no longer shows `Incomplete`, whose coverage and
+  freshness detail stays in Details.
 
 - `too top` keeps a fixed Header height for each terminal width, so changing
   counts, filters, and windows no longer moves the Table while navigating,

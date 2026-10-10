@@ -172,9 +172,9 @@ def test_single_agent_header_and_tree_columns_at_narrow_width():
     console = Console(file=output, width=160, color_system=None)
     console.print(state.render(width=160, once=True))
     text = output.getvalue()
-    assert "Agent alice" in text and "RUN" in text and "STEP" in text
+    assert "Agent uptime -" in text and "RUN" in text and "STEP" in text
     assert "run_child.2" in text
-    assert "AGENT" not in text
+    assert "AGENT" in text
     state.key("a")
     assert len(state.rows()) == 1
 
@@ -243,7 +243,7 @@ def test_header_keeps_unavailable_statistics_unknown():
     output = io.StringIO()
     Console(file=output, width=160).print(state.render(width=160, once=True))
     text = output.getvalue()
-    assert "Team  1/1 online  -" in text
+    assert "Team 1/1 online" in text
     assert "Models: -" in text and "Tools: -" in text and "Spend: -" in text
     assert "$0.00" not in text
 
@@ -280,10 +280,10 @@ def test_header_scope_totals_do_not_change_with_views_or_tree_rows():
         Console(file=output, width=240).print(state.render(width=240, once=True))
         return output.getvalue()
 
-    initial = rendered().splitlines()[1:3]
+    initial = rendered().splitlines()[2:4]
     assert "Threads: 4" in initial[0]
     assert "Spend: $1.28" in initial[1]
     for key in ("a", "e", Keys.F5):
         state.key(key)
-        assert rendered().splitlines()[1:3] == initial
+        assert rendered().splitlines()[2:4] == initial
         assert "matched/eligible" not in rendered()
