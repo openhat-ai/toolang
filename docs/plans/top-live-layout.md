@@ -21,8 +21,10 @@ are always present; optional Details sits above the fixed bottom Status bar and
 reduces the Table viewport. Scrolling belongs to a region, never terminal scrollback.
 `--once` and non-TTY output remain single snapshots.
 
-Header has three aligned lines. Put the current local clock at the upper right,
-and Stats/Activity settings at the lower right:
+Header has a fixed height for each terminal width, including a blank separator
+before Table. Use three aligned content lines and a settings line at normal
+widths. Put the current local clock at the upper right, and Stats/Activity settings
+at the lower right:
 
 ```text
 Team         1/2 online  12m30s                                                      19:08:51
@@ -35,12 +37,12 @@ alice +    24   46 128k    96k 12k $1.28 12m30s t1     r1  review_project
 bob   -     -    -    -      -   -     -      - -      -   -
 
                                                                 (remaining Table viewport)
-a Agent  t Thread  e Run  F4 Filter  F5 Tree  F6 Sort  F7 Activity  F8 Stats  Enter Details  q Quit
+F1Help F4Filter F5View F6Sort F7Activity F8Stats F10Quit
 ```
 
-The example gives settings an extra line for width; when space permits, align
-them at the right of the third line. Single-agent mode replaces the first-line
-identity/presence prefix and omits the AGENT column:
+Settings always occupy their reserved line, with active filters on the left.
+Single-agent mode replaces the first-line identity/presence prefix and omits the
+AGENT column:
 
 ```text
 Agent alice  online   12m30s
@@ -55,17 +57,18 @@ Agent team   offline  12m30s
   selection, filters and folds. Threads and Runs describe Activity-eligible work
   before filters; Runs shows active/failed counts, or `idle` when both are zero.
 - Statistics groups share four column starts; align labels and values within
-  each column. Use subdued labels, emphasized values and reserved widths so
-  normal digit changes do not move adjacent columns. On narrow terminals,
-  reflow groups at column boundaries and right-align settings on a final line.
+  each column. Use subdued labels, emphasized values and fixed column widths.
+  On narrow terminals, reflow at column boundaries; only terminal resize changes
+  Header height, never counts, filters or settings.
 - Settings update immediately after input. Show active filters compactly in
   Header only when set. Sort belongs on the sorted column heading; level/layout
-  is apparent from columns and highlighted controls. Do not display refresh
+  is apparent from columns. Do not display refresh
   frequency or repeat settings as prose above Table.
-- Status bar contains concise key hints and relevant `Updating`, `Reconnecting`
-  or `Incomplete` feedback. Coverage/freshness details belong in Details, not
-  permanent diagnostic paragraphs. The wall clock keeps an idle dashboard
-  visibly current without inventing execution activity.
+- Status bar uses htop-style function-key cells: normal key numbers followed by
+  colored action labels. Show only Fn hints; retain other shortcuts in Help.
+  Keep `Connecting`, `Updating` and `Reconnecting` feedback; omit `Incomplete`.
+  Coverage/freshness details belong in Details. The wall clock keeps an idle
+  dashboard visibly current without inventing execution activity.
 
 ## Table and Details
 
@@ -97,8 +100,10 @@ Result:
   preserving lists and fenced code across pages. Cache rendered lines by result
   revision and panel width, not per repaint. Reuse the theme; results may wrap.
 - Enter toggles Details; Esc closes it. Up/Down and Ctrl-P/Ctrl-N change Table
-  selection even with Details open. Changed selection resets Details scroll;
-  PgUp/PgDn scrolls Details when open, otherwise Table.
+  selection even with Details open. Mouse wheel also moves Table selection.
+  Capture wheel events while on the alternate screen and restore mouse reporting
+  on exit; do not clear the terminal's existing shell history. Changed selection
+  resets Details scroll; PgUp/PgDn scrolls Details when open, otherwise Table.
 - Cap Details at half the available content height, leaving Table headings and
   a selected row visible when height permits. Status bar never scrolls.
 - Load full results asynchronously only while Details is open, on selected

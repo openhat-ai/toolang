@@ -20,6 +20,35 @@ from tests.support.chat_tui_pty import ChatTuiPtySession
 pytestmark = pytest.mark.skipif(os.name != "posix", reason="requires a PTY")
 
 
+def test_top_captures_wheel_in_alternate_screen_and_restores_terminal(tmp_path):
+    session = ChatTuiPtySession.start(
+        "tests.support.top_tui_e2e", tmp_path, columns=180
+    )
+    try:
+        session.wait_for("THREAD", "1 active")
+        session.wait_for_bytes(b"\x1b[?1049h")
+        session.wait_for_bytes(b"\x1b[?1000h", timeout=1)
+        session.wait_for_bytes(b"\x1b[?1006h", timeout=1)
+        session.send(b"e\r")
+        session.wait_for("Status: running")
+        session.data.clear()
+        session.send(b"\x1b[<65;10;10M")
+        session.wait_for("Status: succeeded", timeout=1)
+        session.data.clear()
+        session.send(b"\x1b[<64;10;10M")
+        session.wait_for("Status: running", timeout=1)
+        session.data.clear()
+        session.send(b"\x1b[Ma**")  # Legacy X10 wheel down.
+        session.wait_for("Status: succeeded", timeout=1)
+        session.send(b"\x1b[21~")  # F10
+        assert session.wait_for_exit() == 0
+        session.wait_for_bytes(b"\x1b[?1000l")
+        session.wait_for_bytes(b"\x1b[?1006l")
+        session.wait_for_bytes(b"\x1b[?1049l")
+    finally:
+        session.close()
+
+
 def test_top_escape_cancels_editor_without_another_key(tmp_path):
     session = ChatTuiPtySession.start(
         "tests.support.top_tui_e2e", tmp_path, columns=160
@@ -27,18 +56,18 @@ def test_top_escape_cancels_editor_without_another_key(tmp_path):
     try:
         session.wait_for("THREAD", "1 active")
         session.send(b"\x1b[14~")  # F4
-        session.wait_for("Filter:", "Esc Cancel")
+        session.wait_for("Filter:", "Active: False")
         session.send(b"\x01")
         session.wait_for("Active: True")
         session.data.clear()
         session.send(b"\x1b")
-        session.wait_for("F4 Filter", timeout=3)
+        session.wait_for("F4Filter", timeout=3)
         session.send(b"\x1b[14~")
         session.data.clear()
         session.wait_for("Active: False")
         session.send(b"\x1b")
         session.data.clear()
-        session.wait_for("F4 Filter")
+        session.wait_for("F4Filter")
         session.send(b"q")
         assert session.wait_for_exit() == 0
     finally:
@@ -54,7 +83,7 @@ def test_top_pastes_filter_and_cycles_stats(tmp_path):
         session.send(b"\x1b[14~\x1b[200~math__double\x1b[201~")
         session.wait_for("Filter: math__double")
         session.send(b"\r")
-        session.wait_for("math__double", "F4 Filter")
+        session.wait_for("math__double", "F4Filter")
         session.send(b"\x1b[19~")  # F8 applies the next preset immediately.
         session.wait_for("Stats: 1h", "TIME+")
         session.send(b"\x1b[19~" * 3)
@@ -187,7 +216,7 @@ def test_keys_repaint_without_waiting_for_long_refresh(tmp_path, monkeypatch):
         session.wait_for("Filter:", timeout=1)
         session.send(b"\x1b")
         session.data.clear()
-        session.wait_for("F4 Filter", timeout=1)
+        session.wait_for("F4Filter", timeout=1)
         session.send(b"q")
         assert session.wait_for_exit() == 0
     finally:
@@ -272,6 +301,10 @@ def test_top_terminal_grid_resize_and_markdown_pages(tmp_path, local):
             pytest.fail("Top did not redraw:\n" + "\n".join(lines))
 
         screen(lambda lines: "1 active" in "\n".join(lines))
+        flags = (
+            "#{alternate_on} #{mouse_standard_flag} #{mouse_sgr_flag} #{history_size}"
+        )
+        assert pane.display_message(flags, get_text=True) == ["1 1 1 0"]
         for width, height in ((160, 30), (80, 24), (40, 15), (160, 30)):
             window.resize(width=width, height=height)
             lines = screen(
@@ -280,17 +313,22 @@ def test_top_terminal_grid_resize_and_markdown_pages(tmp_path, local):
                     and lines[0].startswith("Agent alice ")
                     and len(lines[0]) == width
                     and re.search(r"\d{2}:\d{2}:\d{2}$", lines[0])
-                    and "q Quit" in lines[-1]
+                    and "F1Help" in lines[-1]
                     and sum(line.startswith("S ") for line in lines) == 1
                     and sum(line.startswith("+ ") for line in lines) == 1
                 )
             )
             assert "…" not in "\n".join(lines)
+            heading_index = next(
+                i for i, line in enumerate(lines) if line.startswith("S ")
+            )
+            assert not lines[heading_index - 1].strip()
             # Numeric headings and values share their right edge.
             heading = next(line for line in lines if line.startswith("S "))
             row = next(line for line in lines if line.startswith("+ "))
             spend_end = heading.index("SPEND") + len("SPEND")
             assert row[spend_end - 5 : spend_end] == "$0.25"
+        assert pane.display_message(flags, get_text=True) == ["1 1 1 0"]
 
         pane.send_keys("e", enter=False)
         screen(lambda lines: any(" RUN " in line for line in lines))
@@ -315,7 +353,7 @@ def test_top_terminal_grid_resize_and_markdown_pages(tmp_path, local):
             pane.send_keys("PageDown", enter=False)
         lines = screen(lambda lines: any("answer = 42" in line for line in lines))
         assert any("Finished." in line for line in lines)
-        assert "q Quit" in lines[-1]
+        assert "F1Help" in lines[-1]
         assert [
             line[line.index("term_") :] for line in lines if line.startswith("+ ")
         ] == table

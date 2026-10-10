@@ -158,6 +158,9 @@ async def watch(
             ):
                 output = create_output(stdout=cast(TextIO, console.file))
                 output.enable_bracketed_paste()
+                # Capture wheel events on the alternate screen without requesting
+                # mouse motion, which would cause unnecessary dashboard repaints.
+                output.write_raw("\x1b[?1000h\x1b[?1006h")
                 output.flush()
                 task = asyncio.create_task(observe())
                 task.add_done_callback(lambda _: redraw.set())
@@ -251,6 +254,7 @@ async def watch(
                     if flush_handle is not None:
                         flush_handle.cancel()
                     output.disable_bracketed_paste()
+                    output.write_raw("\x1b[?1000l\x1b[?1006l")
                     output.flush()
                     stop.set()
                     if result_task:

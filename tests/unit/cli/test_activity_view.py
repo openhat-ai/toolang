@@ -230,7 +230,7 @@ def test_narrow_terminal_keeps_selected_row_and_footer_visible(details):
         for line in lines
     )
     assert ("Inspect: too alice inspect run_00000039" in output.getvalue()) == details
-    assert "q Quit" in lines[-1]
+    assert "F10Quit" in lines[-1]
 
 
 def test_header_keeps_unavailable_statistics_unknown():

@@ -162,7 +162,7 @@ ACTIVITY, SPEND or TIME+ heading; ACTIVITY includes its range: `ACTIVITY(30m)↓
 | --- | --- |
 | a / t / e | Agent / Thread / Run; preserve `--view agent\|thread\|execution` and the existing e shortcut. |
 | F4 | Edit text/Active filters; retain Ctrl-A toggling Active in the editor. |
-| F5 | List/Tree at Run level; preserve `--view execution --tree`. |
+| F5 | Cycle Agent / Thread / Run / Tree; preserve `--view execution --tree`. |
 | F6 | Cycle activity / spend / time. |
 | F7 | Cycle Activity: `5m / 30m / 1h / 1d / 1w / all`. |
 | F8 | Cycle Stats: `session / 1h / 1d / 1w / all`. |
@@ -172,13 +172,14 @@ ACTIVITY, SPEND or TIME+ heading; ACTIVITY includes its range: `ACTIVITY(30m)↓
 | < / > | Scroll Table horizontally. |
 | Enter / Esc | Toggle / close Details. |
 | F1 | Help, including presence legend and custom CLI window values. |
-| q / Ctrl-C | Exit without affecting execution. |
+| F10 / q / Ctrl-C | Exit without affecting execution. |
 
 F7/F8 apply the next preset immediately without an editor/confirmation step; from
 a custom value, next press selects the first preset. Custom values remain available
 through `--recent` and `--since`. Keep `--refresh` and snapshots as defined in
 [delivery and redraw](top-live-layout.md#delivery-and-redraw).
-Level shortcuts are disabled during text editing; F5 is inactive outside Run.
+Level shortcuts are disabled during text editing. Only Fn shortcuts are shown in
+Status bar; a/t/e and other shortcuts remain available through Help.
 Switching level preserves settings, filters and folds, maps selection by ownership,
 and never adds an implicit filter. List selects the owning run; returning to Tree
 restores an eligible selected descendant. Display terminology changes do not

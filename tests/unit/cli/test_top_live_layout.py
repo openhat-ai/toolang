@@ -53,7 +53,7 @@ def test_numbers_align_with_headers_and_footer_stays_at_bottom():
         < header.index("OUT")
         < header.index("SPEND")
     )
-    assert len(lines) == 30 and "q Quit" in lines[-1]
+    assert len(lines) == 30 and "F10Quit" in lines[-1]
     before = header.index("SPEND")
     snapshot.stats.model = 999
     feed(state, snapshot)
@@ -97,7 +97,7 @@ def test_narrow_details_can_reach_every_field_and_result_line():
             state.render(width=80, height=18)
         )
         lines = output.getvalue().splitlines()
-        assert len(lines) == 18 and "q Quit" in lines[-1]
+        assert len(lines) == 18 and "F10Quit" in lines[-1]
         seen.append(output.getvalue())
         state.key(Keys.PageDown)
     text = "\n".join(seen)

@@ -19,6 +19,82 @@ def render(state, width=180, height=24):
     return stream.getvalue().splitlines()
 
 
+@pytest.mark.parametrize("width", [40, 80, 180])
+def test_header_height_and_separator_are_stable_across_updates(width):
+    from dataclasses import replace
+
+    state = Activity(None)
+    snapshot = page()
+    feed(state, snapshot)
+    initial = render(state, width)
+    heading = next(i for i, line in enumerate(initial) if line.startswith("AGENT"))
+    assert not initial[heading - 1].strip()
+    state.query = replace(state.query, text="review", active=True, since="1d")
+    state.recent_label = "1w"
+    snapshot.stats.model = 100000
+    snapshot.failed = 100
+    feed(state, snapshot)
+    changed = render(state, width)
+    assert changed[heading].startswith("AGENT")
+    assert not changed[heading - 1].strip()
+
+
+def test_status_bar_contains_only_function_key_hints_and_no_incomplete():
+    from toolang.cli.common.activity_dashboard import status_bar
+
+    state = Activity(None)
+    snapshot = page()
+    snapshot.complete = False
+    feed(state, snapshot)
+    bar = status_bar(state, 180)
+    for hint in (
+        "F1Help",
+        "F4Filter",
+        "F5View",
+        "F6Sort",
+        "F7Activity",
+        "F8Stats",
+        "F10Quit",
+    ):
+        assert hint in bar.plain
+    for hidden in ("a Agent", "t Thread", "e Run", "Enter", "q Quit", "Incomplete"):
+        assert hidden not in bar.plain
+    console = Console()
+    assert (
+        bar.get_style_at_offset(console, 0).bgcolor
+        != bar.get_style_at_offset(console, 2).bgcolor
+    )
+
+
+@pytest.mark.parametrize("other_thread", [False, True])
+def test_f5_cycles_all_views_and_restores_tree_selection_without_resubscribing(
+    other_thread,
+):
+    from tests.unit.cli.test_activity_view import node
+
+    state = Activity(None)
+    snapshot = page()
+    if other_thread:
+        thread = node("term_other", kind="thread", thread="term_other")
+        thread.changed = 200
+        root = node("run_other", root="run_other", thread="term_other")
+        root.changed = 200
+        snapshot.threads.append(thread)
+        snapshot.roots.append(root)
+    feed(state, snapshot)
+    query = state.query
+    for view, tree in (("thread", False), ("execution", False), ("execution", True)):
+        state.key(Keys.F5)
+        assert (state.view, state.tree) == (view, tree)
+    state.selected = ("agent:alice", "run_child.2")
+    for view in ("agent", "thread", "execution", "execution"):
+        state.key(Keys.F5)
+        assert state.view == view
+    assert state.tree and state.selected == ("agent:alice", "run_child.2")
+    assert state.query == query and not state.dirty
+    assert state.key(Keys.F10)
+
+
 @pytest.mark.parametrize(
     "agent, title",
     [(None, "Team"), ("agent:alice", "Agent alice"), ("agent:team", "Agent team")],
@@ -32,7 +108,7 @@ def test_full_screen_identity_clock_settings_and_single_agent_row(agent, title):
     assert len(lines) == 24 and lines[0].startswith(title + "  ")
     assert len(lines[0].rstrip()[-8:].split(":")) == 3
     assert "Stats: session  Activity: 30m" in "\n".join(lines[:4])
-    assert "q Quit" in lines[-1]
+    assert "F10Quit" in lines[-1]
     assert len(state.rows()) == 1
     assert "Refresh" not in "\n".join(lines)
 
@@ -197,7 +273,7 @@ def test_three_line_terminal_keeps_identity_headings_and_status():
     assert len(lines) == 3
     assert lines[0].startswith("Team")
     assert lines[1].startswith("AGENT")
-    assert "q Quit" in lines[2]
+    assert "F10Quit" in lines[2]
 
 
 @pytest.mark.parametrize("reconnecting", [False, True])

@@ -208,6 +208,18 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Changed
 
+- `too top` shows only function-key hints in its Status bar — F1 Help, F4
+  Filter, F5 View, F6 Sort, F7 Activity, F8 Stats, and F10 Quit — so `F5`
+  cycles the Agent, Thread, Run, and Tree levels, `F10` exits like `q` and
+  Ctrl-C, and letter and Enter shortcuts remain available through Help; the
+  Status bar no longer shows `Incomplete`, whose coverage and freshness
+  detail stays in Details.
+
+- `too top` keeps a fixed Header height for each terminal width, so changing
+  counts, filters, and windows no longer moves the Table while navigating,
+  and the mouse wheel moves the Table selection with mouse reporting
+  released on exit.
+
 - **Breaking:** messaging stores canonical conversations instead of groups under
   schema `2` of the `too:teaming:v1` backend space: `group:` IDs, the
   `/msg/groups` routes, and the group record fields and aliases are replaced by
