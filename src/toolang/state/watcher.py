@@ -13,6 +13,7 @@ from weakref import WeakValueDictionary
 from watchfiles import Change, awatch
 
 from toolang.common.layout import AgentLayout
+from toolang.common.progress import ProgressSink
 from .config import normalize_cap_overrides
 from .state import AgentState
 from .errors import StateDiagnostic, StatePreparationError
@@ -50,6 +51,7 @@ class _CheckRequest:
     invalidated_root: frozenset[str]
     invalidated_home: frozenset[str]
     future: asyncio.Future[StateRefresh]
+    progress: ProgressSink | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -153,15 +155,21 @@ class StateWatcher:
             else self._remember(load_agent_state(self.layout, revision))
         )
 
-    async def refresh(self, *, force: bool = False) -> AgentState:
+    async def refresh(
+        self, *, force: bool = False, progress: ProgressSink | None = None
+    ) -> AgentState:
         """Request one serialized check and wait until that check completes."""
 
-        return (await self._request_check(requested=True, force=force)).state
+        return (
+            await self._request_check(requested=True, force=force, progress=progress)
+        ).state
 
-    async def refresh_result(self, *, force: bool = False) -> StateRefresh:
+    async def refresh_result(
+        self, *, force: bool = False, progress: ProgressSink | None = None
+    ) -> StateRefresh:
         """Return one serialized check with diagnostics from that exact check."""
 
-        return await self._request_check(requested=True, force=force)
+        return await self._request_check(requested=True, force=force, progress=progress)
 
     async def sync(self) -> StateSyncResult:
         """Check once; callers keep authored sources unchanged until return."""
@@ -201,6 +209,7 @@ class StateWatcher:
         force: bool = False,
         invalidated_root: frozenset[str] = frozenset(),
         invalidated_home: frozenset[str] = frozenset(),
+        progress: ProgressSink | None = None,
     ) -> StateRefresh:
         loop = asyncio.get_running_loop()
         task = self._check_task
@@ -214,6 +223,7 @@ class StateWatcher:
                 invalidated_root=invalidated_root,
                 invalidated_home=invalidated_home,
                 future=future,
+                progress=progress,
             )
         )
         if task is None or task.done():
@@ -239,6 +249,7 @@ class StateWatcher:
                         force=request.force,
                         invalidated_root=request.invalidated_root,
                         invalidated_home=request.invalidated_home,
+                        progress=request.progress,
                     )
                 except asyncio.CancelledError:
                     request.future.cancel()
@@ -261,6 +272,7 @@ class StateWatcher:
         force: bool = False,
         invalidated_root: frozenset[str] = frozenset(),
         invalidated_home: frozenset[str] = frozenset(),
+        progress: ProgressSink | None = None,
     ) -> StateRefresh:
         """Run the sole candidate check and publication path."""
 
@@ -323,6 +335,7 @@ class StateWatcher:
                 allow_overrides=self._allow_overrides,
                 previous=self._state,
                 workspace_additions=self._workspace_additions,
+                progress=progress,
             )
             loaded_root_source = load_layer_source(
                 self.layout,

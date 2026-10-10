@@ -88,8 +88,12 @@ def test_local_script_saves_only_to_an_explicit_destination(
         def current(self):
             return setup
 
-        async def refresh(self):
-            return setup
+        async def refresh(self, *, progress=None):
+            from toolang.setup.progress import setup_progress
+
+            assert (progress is None) is quiet
+            with setup_progress(progress, target=layout.name, resource="setup"):
+                return setup
 
     monkeypatch.setattr("toolang.setup.SetupWatcher", _SetupWatcher)
     publication = harness.state
@@ -106,7 +110,7 @@ def test_local_script_saves_only_to_an_explicit_destination(
         def current(self):
             return publication
 
-        async def refresh(self):
+        async def refresh(self, *, progress=None):
             return publication
 
         async def refresh_result(self):
@@ -160,9 +164,13 @@ def test_local_script_saves_only_to_an_explicit_destination(
         assert "▪︎ run_" in output.err
         assert "\x1b[" not in output.err
     if not quiet:
-        header = output.err.splitlines()[0]
+        header = next(line for line in output.err.splitlines() if line.startswith("‣"))
         expected_runnable = "agic:echo" if entry == "echo" else "agic:_"
         assert header.startswith(f"‣ {expected_runnable} ")
+        assert output.err.index("Loading setup...") < output.err.index(
+            "Loading models..."
+        )
+        assert output.err.index("Loaded tools") < output.err.index(header)
         assert header.endswith("test/scripted · auto")
         assert output.err.count("‣") == 1
         assert "test/scripted · auto\n\n• done" in output.err
@@ -239,7 +247,7 @@ def test_template_helpers_bind_arguments(
         def current(self):
             return setup
 
-        async def refresh(self):
+        async def refresh(self, *, progress=None):
             return setup
 
     monkeypatch.setattr("toolang.setup.SetupWatcher", _SetupWatcher)
@@ -308,7 +316,7 @@ def test_local_script_renders_composite_flow_progress(
         def current(self):
             return setup
 
-        async def refresh(self):
+        async def refresh(self, *, progress=None):
             return setup
 
     monkeypatch.setattr("toolang.setup.SetupWatcher", _SetupWatcher)
@@ -395,10 +403,10 @@ def test_local_script_context_uses_resolved_input_overrides(
         responses=[ModelCallResult(message=Message.assistant("resolved result"))],
     )
 
-    async def setup(_watcher):
+    async def setup(_watcher, *, progress=None):
         return harness.setup
 
-    async def state(_watcher):
+    async def state(_watcher, *, progress=None):
         return harness.state
 
     async def state_result(_watcher):
@@ -466,7 +474,7 @@ flow parent() -> Text:
     )
     stopped = asyncio.Event()
 
-    async def setup(_watcher):
+    async def setup(_watcher, *, progress=None):
         return harness.setup
 
     async def changes(_root, *, stop_event, **_kwargs):

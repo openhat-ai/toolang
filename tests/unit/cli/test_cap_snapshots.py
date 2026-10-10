@@ -1,73 +1,43 @@
-"""CLI capability lookups consume materialized State layers."""
-
-from pathlib import Path
+"""Cap authoring uses its catalog before publishing the resulting State."""
 
 import pytest
 
-from toolang.cli.caps.commands import _named_entry
 from toolang.common.layout import AgentLayout
 from toolang.state import state as cap_state
 
 
 @pytest.mark.parametrize("scope", ["root", "home"])
-def test_named_cap_keeps_snapshot_content_after_source_edit(
-    tmp_path, monkeypatch, scope
+@pytest.mark.parametrize("command", ["new", "edit"])
+def test_authoring_does_not_resolve_unrelated_caps(
+    tmp_path, monkeypatch, capsys, scope, command
 ):
-    layout = AgentLayout.resident(tmp_path, "alice")
-    base = layout.home if scope == "home" else layout.root
-    (base / "psyches").mkdir(parents=True)
-    source = base / "psyches" / "note.md"
-    source.write_text("Original body.\n")
-    monkeypatch.setattr(
-        cap_state,
-        "list_entries",
-        lambda *args, **kwargs: pytest.fail("must read State"),
-    )
-    entry = _named_entry(
-        layout.root,
-        layout.name,
-        scope=scope,
-        kind="psyche",
-        name="note",
-        source_form="authored",
-    )
-    source.write_text("Changed body.\n")
-    assert Path(entry.path).is_absolute()
-    assert entry.read_text() == "Original body.\n"
-    assert entry.source.path == source.relative_to(layout.root).as_posix()
-    if scope == "root":
-        assert not layout.home.exists()
+    from toolang.cli.toolang.main import main
 
-
-def test_named_configured_cap_reuses_materialized_resolution(tmp_path, monkeypatch):
     layout = AgentLayout.resident(tmp_path, "alice")
     layout.home.mkdir(parents=True)
-    layout.config.write_text('[prompts]\nrewrite = { ref = "acme/rewrite" }\n')
-    monkeypatch.setattr(cap_state, "_github_repo_default_branch", lambda *_: "main")
-    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda *_: True)
-    calls = []
-
-    def materialize(*, relative_entry_path, **kwargs):
-        calls.append(kwargs)
-        return {str(relative_entry_path): b"Remote body.\n"}
-
-    monkeypatch.setattr(cap_state, "_remote_materialized_files", materialize)
+    layout.program.write_text("invalid Toolang!!!")
+    base = layout.home if scope == "home" else layout.root
+    (base / "prompts").mkdir()
+    source = base / "prompts" / "note.md"
+    source.write_text("Original body.\n")
+    (base / "config.toml").write_text('[prompts]\nremote = { ref = "acme/remote" }\n')
     monkeypatch.setattr(
         cap_state,
-        "list_entries",
-        lambda *args, **kwargs: pytest.fail("must read State"),
+        "_github_repo_default_branch",
+        lambda *_: pytest.fail("authoring must not fetch unrelated sources"),
     )
-    for _ in range(2):
-        entry = _named_entry(
-            layout.root,
-            layout.name,
-            scope="home",
-            kind="prompt",
-            name="rewrite",
-            source_form="configured",
-        )
-        assert entry.read_text() == "Remote body.\n"
-    assert len(calls) == 1
+    opened = []
+    monkeypatch.setattr(
+        "toolang.cli.caps.commands.edit_markdown", lambda text: opened.append(text)
+    )
+    target = ["alice"] if scope == "home" else []
+    name = "note" if command == "edit" else "another"
+    assert main(["--root", str(tmp_path), *target, "prompt", command, name]) == 0
+    assert "No changes" in capsys.readouterr().out
+    assert len(opened) == 1
+    if command == "edit":
+        assert opened == ["Original body.\n"]
+    assert not layout.agent_state.exists()
 
 
 @pytest.mark.parametrize("scope", ["root", "home"])
@@ -151,3 +121,27 @@ def test_root_add_does_not_resolve_unrelated_configured_caps(
     assert added is not None
     assert f"Prompt rewrite added: {added.ref}" in output.out
     assert ConfiguredCaps(config).get("prompt", "stale") is not None
+
+
+@pytest.mark.parametrize("command", ["new", "edit"])
+def test_authored_change_is_saved_before_state_publication_failure(
+    tmp_path, monkeypatch, capsys, command
+):
+    from toolang.cli.toolang.main import main
+
+    layout = AgentLayout.resident(tmp_path, "alice")
+    layout.home.mkdir(parents=True)
+    layout.program.write_text("invalid Toolang!!!")
+    (layout.home / "prompts").mkdir()
+    source = layout.home / "prompts" / "note.md"
+    if command == "edit":
+        source.write_text("Original body.\n")
+    monkeypatch.setattr(
+        "toolang.cli.caps.commands.edit_markdown", lambda _: "Saved body.\n"
+    )
+    result = main(["--root", str(tmp_path), "alice", "prompt", command, "note"])
+    output = capsys.readouterr()
+    assert result == 1
+    assert source.read_text() == "Saved body.\n"
+    assert "change was saved" in output.err
+    assert "State" in output.err

@@ -8,11 +8,9 @@ from contextlib import contextmanager
 import os
 from pathlib import Path
 import sys
-import time
 
 from toolang.base.errors import ToolangError
 from toolang.base.types.model import ModelOverride
-from toolang.common.files import file_write_lock
 from toolang.common.layout import AgentLayout
 from toolang.common.version import development_source
 from toolang.plugin.catalogs.models_dev.path import MODEL_CATALOG_ENV
@@ -31,6 +29,7 @@ from .policy import (
 )
 from .ports import agent_port
 from .progress import (
+    CliProgress,
     make_cli_progress,
     runtime_startup_failure_message,
 )
@@ -61,7 +60,10 @@ def acquire_agent_server(
 
     # Share the management lock with start/serve/stop, releasing it before caller work.
     try:
-        with file_write_lock(layout.sandbox_state.with_suffix(".lock")):
+        with (
+            make_cli_progress(enabled=show_progress) as progress,
+            sandbox_runtime.management_lock(layout, progress=progress.sink),
+        ):
             acquired = _prepare_agent_server(
                 layout,
                 sandbox=sandbox,
@@ -69,7 +71,7 @@ def acquire_agent_server(
                 model_catalog=model_catalog,
                 ui_base_url=ui_base_url,
                 base_environ=base_environ,
-                show_progress=show_progress,
+                progress=progress,
                 compact_override=compact_override,
                 workspace_additions=workspace_additions,
                 temporary=temporary,
@@ -138,7 +140,7 @@ def _prepare_agent_server(
     model_catalog: Path | None,
     ui_base_url: str,
     base_environ: Mapping[str, str] | None,
-    show_progress: bool,
+    progress: CliProgress,
     compact_override: ModelOverride | None,
     workspace_additions: Mapping[str, str] | None,
     temporary: bool,
@@ -151,20 +153,12 @@ def _prepare_agent_server(
             raise AgentServerAcquisitionError(
                 f"agent {layout.name} is {status.status}; wait for it to become ready"
             )
-        deadline = time.monotonic() + AGENT_READY_TIMEOUT_SEC
-        while status is not None and status.status in {"preparing", "starting"}:
-            if time.monotonic() >= deadline:
-                raise AgentServerAcquisitionError(
-                    f"agent {layout.name} did not become ready; see {layout.runtime_log}"
-                )
-            time.sleep(0.1)
-            status = agents.AgentProcess(layout).status(
-                ui_base_url=ui_base_url, check_health=True
-            )
-        if status is None or status.status != "running":
-            raise AgentServerAcquisitionError(
-                f"agent {layout.name} stopped before becoming ready; see {layout.runtime_log}"
-            )
+        status = agents.AgentProcess(layout).wait_ready(
+            status,
+            ui_base_url=ui_base_url,
+            timeout=AGENT_READY_TIMEOUT_SEC,
+            progress=progress.sink,
+        )
     if status is not None and status.status == "running":
         if workspace_additions is not None:
             captured = agents.AgentProcess(layout).state() or {}
@@ -207,12 +201,11 @@ def _prepare_agent_server(
         workspace_additions=workspace_additions,
         temporary_port=temporary,
     )
-    warn_development_package_source(launch)
+    with progress.suspended():
+        warn_development_package_source(launch)
 
-    progress = make_cli_progress(enabled=show_progress)
     try:
-        with progress:
-            handle = asyncio.run(sandbox_runtime.launch(launch, progress=progress.sink))
+        handle = asyncio.run(sandbox_runtime.launch(launch, progress=progress.sink))
     except KeyboardInterrupt:
         raise
     except (

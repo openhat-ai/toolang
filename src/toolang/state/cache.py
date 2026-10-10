@@ -15,6 +15,7 @@ from typing import Literal, cast
 from uuid import uuid4
 
 from toolang.common.layout import AgentLayout
+from toolang.common.progress import ProgressSink, emit_progress
 
 from ..common.immutable import freeze_mapping
 from ..lang.ast import Program, program_from_data
@@ -368,26 +369,68 @@ def validate_agent_revision(layout: AgentLayout, revision: str) -> None:
 
 
 @contextmanager
-def layer_lock(layout: AgentLayout, scope: LayerScope) -> Iterator[None]:
+def layer_lock(
+    layout: AgentLayout, scope: LayerScope, *, progress: ProgressSink | None = None
+) -> Iterator[None]:
     """Serialize preparation writers for one State layer."""
 
-    with _file_lock(layer_lock_path(layout, scope)):
+    with _file_lock(
+        layer_lock_path(layout, scope), label=f"{scope} State", progress=progress
+    ):
         yield
 
 
 @contextmanager
-def _agent_check_lock(layout: AgentLayout) -> Iterator[None]:
+def _agent_check_lock(
+    layout: AgentLayout, *, progress: ProgressSink | None = None
+) -> Iterator[None]:
     """Serialize one agent's complete check and publication across processes."""
 
-    with _file_lock(_agent_check_lock_path(layout)):
+    with _file_lock(
+        _agent_check_lock_path(layout),
+        label=f"agent {layout.name} State",
+        progress=progress,
+    ):
         yield
 
 
 @contextmanager
-def _file_lock(path: Path) -> Iterator[None]:
+def _file_lock(
+    path: Path, *, label: str, progress: ProgressSink | None
+) -> Iterator[None]:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a+b") as lock_file:
-        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            emit_progress(
+                progress,
+                id=f"state-lock:{path}",
+                kind="prepare",
+                stage="materialize",
+                label=f"Waiting for {label}...",
+                status="running",
+            )
+            try:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            except BaseException:
+                emit_progress(
+                    progress,
+                    id=f"state-lock:{path}",
+                    kind="prepare",
+                    stage="materialize",
+                    label=f"Failed to acquire {label}",
+                    status="failed",
+                )
+                raise
+            emit_progress(
+                progress,
+                id=f"state-lock:{path}",
+                kind="prepare",
+                stage="materialize",
+                label=f"{label.capitalize()} available",
+                status="ok",
+            )
         try:
             yield
         finally:

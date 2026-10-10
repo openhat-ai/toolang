@@ -14,6 +14,8 @@ from toolang.base.protocols.model import ModelAdapter, ModelCatalog
 from toolang.base.types.model import ModelCatalogSnapshot, ModelOverride
 from toolang.base.types.policy import AgentCeiling, RunDefaults, RunLimits
 from toolang.common.layout import AgentLayout
+from toolang.common.progress import ProgressSink
+from .progress import setup_progress
 from .teaming import TeamingSetup, resolve_teaming_setup
 from toolang.plugin.config import merge_plugin_configs
 from toolang.common.config_sources import ConfigSource, config_sources
@@ -29,11 +31,7 @@ from toolang.plugin.catalogs.models_dev.catalog import (
 from toolang.plugin.catalogs.models_dev.path import resolve_model_catalog_path
 from toolang.plugin.models.config import validate_models_config
 from toolang.plugin.models.resolution import resolve_model_reasoning
-from toolang.plugin.toolsets.collections import ToolCollection
-from toolang.plugin.toolsets.loading import (
-    load_toolsets_with_sources,
-    tools_from_toolsets,
-)
+from .tools import capture_toolset_loader, materialize_tools
 from toolang.setup.routes import RouteAdapter, resolve_catalog_providers
 
 from .revisions import (
@@ -161,12 +159,15 @@ class SetupWatcher:
 
         return self._diagnostics
 
-    async def refresh(self) -> AgentSetup:
+    async def refresh(self, *, progress: ProgressSink | None = None) -> AgentSetup:
         """Run one serialized candidate check and return the last valid Setup."""
 
         async with self._refresh_lock:
             try:
-                return await self._perform_refresh()
+                with setup_progress(
+                    progress, target=self.layout.name, resource="setup"
+                ):
+                    return await self._perform_refresh(progress=progress)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -180,7 +181,7 @@ class SetupWatcher:
                 )
                 return self._setup
 
-    async def _perform_refresh(self) -> AgentSetup:
+    async def _perform_refresh(self, *, progress: ProgressSink | None) -> AgentSetup:
         inputs = self._load_inputs()
         configs = inputs.configs
         config_value = tuple(project_setup_config(config) for config in configs)
@@ -218,7 +219,7 @@ class SetupWatcher:
         models_dev = catalogs.get("models_dev")
         if not isinstance(models_dev, ModelsDevModelCatalog):
             raise RuntimeError("models_dev catalog plugin is not installed")
-        load = await self._load_sources(models_dev, catalogs)
+        load = await self._load_sources(models_dev, catalogs, progress=progress)
         source_revisions = (
             ("models_dev", load.source.content_revision),
             *((name, revision) for name, revision, _snapshot in load.additional),
@@ -331,26 +332,34 @@ class SetupWatcher:
         self,
         models_dev: ModelsDevModelCatalog,
         catalogs: Mapping[str, ModelCatalog],
+        *,
+        progress: ProgressSink | None,
     ) -> _CatalogLoad:
         """Capture validated source snapshots for watcher revision detection."""
 
-        _observation, source = await asyncio.to_thread(models_dev.capture)
-        static = await asyncio.to_thread(source.snapshot)
-        ordered = _ordered_additional_catalogs(catalogs)
-        probes = await asyncio.gather(*(catalog.snapshot() for catalog in ordered))
-        additional = tuple(
-            await asyncio.gather(
-                *(
-                    self._probe_revision(catalog.name, assemble_catalog(probe))
-                    for catalog, probe in zip(ordered, probes, strict=True)
+        with setup_progress(
+            progress,
+            target=self.layout.name,
+            resource="model catalogs",
+            stage="discover",
+        ):
+            _observation, source = await asyncio.to_thread(models_dev.capture)
+            static = await asyncio.to_thread(source.snapshot)
+            ordered = _ordered_additional_catalogs(catalogs)
+            probes = await asyncio.gather(*(catalog.snapshot() for catalog in ordered))
+            additional = tuple(
+                await asyncio.gather(
+                    *(
+                        self._probe_revision(catalog.name, assemble_catalog(probe))
+                        for catalog, probe in zip(ordered, probes, strict=True)
+                    )
                 )
             )
-        )
-        return _CatalogLoad(
-            source=source,
-            static=static,
-            additional=additional,
-        )
+            return _CatalogLoad(
+                source=source,
+                static=static,
+                additional=additional,
+            )
 
     async def _probe_revision(
         self,
@@ -450,7 +459,6 @@ def _build_setup(
 
     captured_envs = dict(envs)
     adapter_config = {name: dict(value) for name, value in adapter_configs.items()}
-    toolset_config = {name: dict(value) for name, value in toolset_configs.items()}
     catalog_config = {name: dict(value) for name, value in catalog_configs.items()}
     # Hold one generation's input snapshots until its first successful model
     # materialization, then release them so only the resolved records and view
@@ -462,9 +470,6 @@ def _build_setup(
 
     def load_catalog_plugins() -> Mapping[str, ModelCatalog]:
         return MappingProxyType(load_model_catalogs(catalog_config))
-
-    def load_toolset_plugins():
-        return MappingProxyType(load_toolsets_with_sources(config=toolset_config))
 
     def load_model_data(setup: AgentSetup) -> _ModelData:
         merged = merge_catalog_snapshots(tuple(source_snapshots))
@@ -508,9 +513,6 @@ def _build_setup(
         source_snapshots.clear()
         return data
 
-    def load_tool_collection(plugins) -> ToolCollection:
-        return ToolCollection.from_tools(tools_from_toolsets(plugins))
-
     return AgentSetup(
         layout=layout,
         envs=captured_envs,
@@ -522,9 +524,9 @@ def _build_setup(
         teaming=teaming,
         catalog_sources=catalog_sources,
         _load_models=load_model_data,
-        _load_tools=load_tool_collection,
+        _load_tools=materialize_tools,
         _allowed_tools=allow.tools,
-        _load_toolset_plugins=load_toolset_plugins,
+        _load_toolset_plugins=capture_toolset_loader(toolset_configs),
         _load_adapters=load_adapters,
         _load_catalogs=load_catalog_plugins,
     )
@@ -577,6 +579,7 @@ async def load_setup(
     sandbox: str = "host",
     agent_context: bool = True,
     validate_defaults: bool = True,
+    progress: ProgressSink | None = None,
 ) -> AgentSetup:
     """Build one setup version once, without a running watcher."""
 
@@ -587,4 +590,4 @@ async def load_setup(
         agent_context=agent_context,
         validate_defaults=validate_defaults,
     )
-    return await watcher.refresh()
+    return await watcher.refresh(progress=progress)

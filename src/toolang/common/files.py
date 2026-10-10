@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 import fcntl
 import os
@@ -29,20 +29,40 @@ def file_lock_path(path: Path) -> Path:
 
 
 @contextmanager
-def file_write_lock(path: Path, *, inherit_owner: bool = False) -> Iterator[None]:
+def file_write_lock(
+    path: Path,
+    *,
+    inherit_owner: bool = False,
+    on_wait: Callable[[], None] | None = None,
+) -> Iterator[None]:
     """Lock across processes, optionally retaining the parent owner as root."""
 
     key = path.resolve(strict=False)
     with _LOCK_STATES_MUTEX:
         state = _LOCK_STATES.setdefault(key, _LockState())
-    with state.mutex:
+
+    def waiting() -> None:
+        if on_wait is not None:
+            try:
+                on_wait()
+            except Exception:
+                pass
+
+    if not state.mutex.acquire(blocking=False):
+        waiting()
+        state.mutex.acquire()
+    try:
         if state.depth == 0:
             _prepare_directory(path.parent, inherit_owner=inherit_owner)
             state.handle = path.open("a+b")
             try:
                 if inherit_owner:
                     _inherit_owner(state.handle.fileno(), path.parent)
-                fcntl.flock(state.handle.fileno(), fcntl.LOCK_EX)
+                try:
+                    fcntl.flock(state.handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    waiting()
+                    fcntl.flock(state.handle.fileno(), fcntl.LOCK_EX)
             except BaseException:
                 state.handle.close()
                 state.handle = None
@@ -57,6 +77,8 @@ def file_write_lock(path: Path, *, inherit_owner: bool = False) -> Iterator[None
                 fcntl.flock(state.handle.fileno(), fcntl.LOCK_UN)
                 state.handle.close()
                 state.handle = None
+    finally:
+        state.mutex.release()
 
 
 def atomic_write_text(path: Path, content: str, *, inherit_owner: bool = False) -> None:

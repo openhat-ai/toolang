@@ -74,7 +74,7 @@ COMMAND_SPECS: Mapping[str, CommandSpec] = {
             "before",
             "after",
             placements=_ALL_PLACEMENTS,
-            prepare="program",
+            prepare="layout",
         ),
         _command(
             "home", "none", "before", placements=_ALL_PLACEMENTS, prepare="program"
@@ -311,7 +311,9 @@ def dispatch_visiting(
     return run_app(
         [
             *global_args,
-            *_selected_command_args(body, position, target=layout.name),
+            *_selected_command_args(
+                body, position, target=selector if command == "info" else layout.name
+            ),
         ],
         layout,
     )

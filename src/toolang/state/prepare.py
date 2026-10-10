@@ -96,7 +96,7 @@ def prepare_agent_state(
     _require_agent_home(layout)
     ensure_scratch_workspace(layout.home)
     overrides = normalize_cap_overrides(allow_overrides)
-    with _agent_check_lock(layout):
+    with _agent_check_lock(layout, progress=progress):
         root, home = prepare_root_home(
             layout,
             force=force,
@@ -284,7 +284,7 @@ def prepare_root(
     )
     if current is not None:
         return current
-    with layer_lock(layout, "root"):
+    with layer_lock(layout, "root", progress=progress):
         source = scan_root_source(layout.root)
         current = _matching_root(
             layout,
@@ -339,7 +339,7 @@ def prepare_home(
     )
     if current is not None:
         return current
-    with layer_lock(layout, "home"):
+    with layer_lock(layout, "home", progress=progress):
         source = scan_home_source(layout.root, layout.name)
         current = _matching_home(
             layout,

@@ -13,6 +13,7 @@ import typer
 from ...common.context import context_agent, context_root
 from ...common.output import echo_collection_summary, echo_table
 from ...common.records import check_output_options, echo_records
+from ...common.progress import make_cli_progress
 from tq import Query
 from ...common.context import user_call
 from toolang.base.utils.tools import is_internal_toolset_name
@@ -21,7 +22,7 @@ from toolang.plugin.loading import list_plugin_infos
 from toolang.plugin.toolsets.collections import (
     tool_record,
 )
-from toolang.setup.watcher import load_setup
+from toolang.setup.tools import load_tool_setup
 
 channel_app = typer.Typer(
     help="List installed channels",
@@ -57,19 +58,20 @@ def list_tools(
 ) -> None:
     check_output_options(human=human, json_=json_)
     agent = context_agent(ctx)
-    setup = asyncio.run(
-        load_setup(
-            (
-                context_layout(ctx)
-                if agent is not None
-                else AgentLayout.resident(context_root(ctx), "default")
-            ),
-            agent_context=agent is not None,
-            validate_defaults=False,
+    with make_cli_progress() as progress:
+        setup = asyncio.run(
+            load_tool_setup(
+                (
+                    context_layout(ctx)
+                    if agent is not None
+                    else AgentLayout.resident(context_root(ctx), "default")
+                ),
+                agent_context=agent is not None,
+                progress=progress.sink,
+            )
         )
-    )
-    tools = setup.tools(all=all_)
-    allowed = setup.tools()
+        tools = setup.tools(all=all_, progress=progress.sink)
+        allowed = setup.tools(progress=progress.sink)
     records = [
         tool_record(view, allowed=view.model_name in allowed)
         for view in tools.query()

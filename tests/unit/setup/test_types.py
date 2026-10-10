@@ -294,3 +294,40 @@ def test_guest_workspace_roots_include_configured_tmp_mount(
         "lab": lab_guest,
         "tmp": tmp_guest,
     }
+
+
+def test_failed_load_can_be_retried_from_its_terminal_progress_callback():
+    calls = 0
+    retries = []
+    blocked = []
+
+    def load_models(_setup):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise ValueError("rejected catalog")
+        return _ModelData((), (), (), ())
+
+    setup = AgentSetup(
+        layout=AgentLayout.resident(Path("/toolang"), "alice"),
+        envs={},
+        _load_models=load_models,
+    )
+    with ThreadPoolExecutor(max_workers=1) as pool:
+
+        def progress(event):
+            if event.status == "failed":
+                retry = pool.submit(setup.models)
+                try:
+                    retries.append(retry.result(timeout=1))
+                except TimeoutError:
+                    blocked.append(True)
+
+        with pytest.raises(ValueError, match="rejected catalog"):
+            setup.models(progress=progress)
+    assert not blocked, (
+        "Failure must release the in-flight load before notifying observers"
+    )
+    assert retries == [()]
+    assert setup.models() is retries[0]
+    assert calls == 2

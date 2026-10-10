@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Callable, Mapping, Sequence
-from contextlib import suppress
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 import os
 import threading
 import time
-from typing import Protocol, runtime_checkable
+from typing import Literal, Protocol, runtime_checkable
 from urllib.error import URLError
 from urllib.request import urlopen
 from uuid import uuid4
@@ -175,8 +175,45 @@ async def launch(
 
     lock_path = spec.serve.layout.sandbox_state.with_suffix(".lock")
     async with _task_lock(lock_path):
-        with file_write_lock(lock_path):
+        with management_lock(spec.serve.layout, progress=progress):
             return await _launch_locked(spec, progress=progress)
+
+
+@contextmanager
+def management_lock(
+    layout: AgentLayout,
+    *,
+    stage: Literal["start", "stop"] = "start",
+    progress: ProgressSink | None = None,
+) -> Iterator[None]:
+    """Show contention while retaining the shared, reentrant lifecycle lock."""
+    waiting = False
+    item_id = f"runtime:{layout.name}:lock"
+
+    def on_wait() -> None:
+        nonlocal waiting
+        waiting = True
+        emit_progress(
+            progress,
+            id=item_id,
+            kind="runtime",
+            stage=stage,
+            label="Waiting for agent management...",
+            status="running",
+            detail=layout.name,
+        )
+
+    with file_write_lock(layout.sandbox_state.with_suffix(".lock"), on_wait=on_wait):
+        if waiting:
+            emit_progress(
+                progress,
+                id=item_id,
+                kind="runtime",
+                stage=stage,
+                label="Agent management available",
+                status="ok",
+            )
+        yield
 
 
 async def _launch_locked(
@@ -215,6 +252,7 @@ async def _launch_locked(
                 prepare_agent_state,
                 spec.serve.layout,
                 workspace_additions=spec.serve.workspace_additions,
+                progress=progress,
             )
             workspace_mounts, workspace_mapping = prepare_workspace_mounts(
                 spec.serve.layout.home, hosted_home, workspaces=state.workspaces
@@ -579,7 +617,7 @@ async def stop(
 
     lock_path = layout.sandbox_state.with_suffix(".lock")
     async with _task_lock(lock_path):
-        with file_write_lock(lock_path):
+        with management_lock(layout, stage="stop", progress=progress):
             _reject_legacy_state(layout)
             state = SandboxState.load(layout.sandbox_state)
             if state is None:
@@ -610,7 +648,7 @@ async def stop_handle(
 
     lock_path = layout.sandbox_state.with_suffix(".lock")
     async with _task_lock(lock_path):
-        with file_write_lock(lock_path):
+        with management_lock(layout, stage="stop", progress=progress):
             _reject_legacy_state(layout)
             current = SandboxState.load(layout.sandbox_state)
             if current is None:

@@ -66,6 +66,7 @@ if TYPE_CHECKING:
     from toolang.execution.store import RunStore
     from toolang.execution.types import RunOverride, SessionSetting
     from toolang.state.state import AgentState
+    from ...common.progress import CliProgress
 
 Runnable = AgicDecl | FlowDecl
 _LINE_INPUT_MARKER = "\ue002"
@@ -725,22 +726,23 @@ def _run(
                         progress=progress.sink,
                         workspace_additions=workspaces.additions,
                     )
-                result = asyncio.run(
-                    _execute(
-                        layout=layout,
-                        state=state,
-                        store=store,
-                        ids=ids,
-                        run_id=run_id,
-                        sandbox="host",
-                        runnable=runnable_ref,
-                        override=override,
-                        input=input,
-                        raw_named=raw_named,
-                        session_override=session_override,
-                        quiet=quiet,
+                    result = asyncio.run(
+                        _execute(
+                            layout=layout,
+                            state=state,
+                            store=store,
+                            ids=ids,
+                            run_id=run_id,
+                            sandbox="host",
+                            runnable=runnable_ref,
+                            override=override,
+                            input=input,
+                            raw_named=raw_named,
+                            session_override=session_override,
+                            quiet=quiet,
+                            progress=progress,
+                        )
                     )
-                )
             else:
                 log_path = layout.runtime_log
                 result = asyncio.run(
@@ -1163,6 +1165,7 @@ async def _execute(
     raw_named: CallInput[str],
     session_override: RunOverride,
     quiet: bool,
+    progress: CliProgress | None = None,
 ) -> RunRecord:
     from toolang.base.types.policy import RunBindings
     from toolang.execution.calls import resolve_spec
@@ -1209,13 +1212,12 @@ async def _execute(
         initial_state=state,
         workspace_additions=state.workspace_additions,
     )
-    setup = await setup_watcher.refresh()
-    state = await state_watcher.refresh()
-    fallback_model = (
-        first_model_ref(setup.models_effective())
-        if setup.defaults.model is None
-        else None
-    )
+    sink = progress.sink if progress is not None else None
+    setup = await setup_watcher.refresh(progress=sink)
+    state = await state_watcher.refresh(progress=sink)
+    models = setup.models_effective(progress=sink)
+    setup.tools(progress=sink)
+    fallback_model = first_model_ref(models) if setup.defaults.model is None else None
     executor = RunExecutor(
         store,
         ids,
@@ -1240,6 +1242,8 @@ async def _execute(
         ),
     )
     executor.validate(spec)
+    if progress is not None:
+        progress.close()
     progress_width = None if quiet else resolve_progress_max_width(environ)
     surfaces = (
         None

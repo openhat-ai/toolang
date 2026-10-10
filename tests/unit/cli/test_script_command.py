@@ -574,7 +574,7 @@ def test_script_validates_before_creating_a_thread(
         responses=[],
     )
 
-    async def current_setup(_watcher):
+    async def current_setup(_watcher, *, progress=None):
         return harness.setup
 
     monkeypatch.setattr("toolang.setup.SetupWatcher.refresh", current_setup)
@@ -2240,10 +2240,10 @@ def test_script_passes_resolved_surfaces_before_starting_run(
     else:
         harness = ExecutionHarness.create(tmp_path, source=_SOURCE, responses=[])
 
-        async def current_setup(_watcher):
+        async def current_setup(_watcher, *, progress=None):
             return harness.setup
 
-        async def current_state(_watcher):
+        async def current_state(_watcher, *, progress=None):
             return harness.state
 
         def run(_executor, spec, *, run_id, tracer):
@@ -2266,3 +2266,52 @@ def test_script_passes_resolved_surfaces_before_starting_run(
                 )
         finally:
             harness.store.close()
+
+
+def test_embedded_script_forwards_progress_to_its_final_state_check(
+    tmp_path, monkeypatch
+):
+    from toolang.cli.common.progress import CliProgress
+
+    class ReachedValidation(Exception):
+        pass
+
+    harness = ExecutionHarness.create(tmp_path, source=_SOURCE, responses=[])
+    observed = []
+    progress = CliProgress(stream=StringIO())
+
+    async def current_setup(_watcher, *, progress=None):
+        return harness.setup
+
+    async def current_state(_watcher, *, progress=None):
+        observed.append(progress)
+        return harness.state
+
+    def validate(*args, **kwargs):
+        raise ReachedValidation
+
+    monkeypatch.setattr("toolang.setup.SetupWatcher.refresh", current_setup)
+    monkeypatch.setattr("toolang.state.watcher.StateWatcher.refresh", current_state)
+    monkeypatch.setattr("toolang.execution.executor.RunExecutor.validate", validate)
+    try:
+        with progress, pytest.raises(ReachedValidation):
+            asyncio.run(
+                script._execute(
+                    layout=harness.setup.layout,
+                    state=harness.state,
+                    store=harness.store,
+                    ids=harness.ids,
+                    run_id="run_test",
+                    sandbox="host",
+                    runnable="agic:demo",
+                    override=RunOverride(),
+                    input=CallInput({"_": "hello"}),
+                    raw_named=CallInput({"count": "1"}),
+                    session_override=RunOverride(),
+                    quiet=False,
+                    progress=progress,
+                )
+            )
+    finally:
+        harness.store.close()
+    assert observed == [progress.sink]

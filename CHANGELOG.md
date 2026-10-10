@@ -9,6 +9,18 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Added
 
+- Commands that prepare State now report waiting on a held State lock,
+  showing `Waiting for root State...`, `Waiting for home State...`, or
+  `Waiting for agent <name> State...` and reporting when the lock becomes
+  available instead of appearing stalled.
+
+- Commands that load agent setup or attach to a running agent now report
+  staged progress while they block instead of appearing stalled, covering
+  setup, models, tools, model-catalog discovery, capability materialization,
+  and runtime readiness and management-lock waits, with
+  statuses such as `Loading setup...`, `Loading models...`, `Discovering model
+  catalogs...`, and `Waiting for agent API...`.
+
 - Conversations now use canonical IDs and optional names: direct messages use
   `dm_` plus eight base32 characters derived from the two typed participant
   names, custom conversations (GCs) use `gc_` plus eight backend-allocated
@@ -209,6 +221,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   see `docs/messaging.md` for setup. (#708)
 
 ### Changed
+
+- `too info AGENT` and `too AGENT info` read a running agent's models, tools,
+  caps, chores, tasks, and workspaces from its runtime API instead of loading
+  the local setup, and reject `--catalog` while the agent is running; stop the
+  agent to change the catalog.
 
 - **Breaking:** workspace selection options are now accepted only where a
   command executes with caller-selected directories (`serve`, `chat`, and
@@ -446,6 +463,21 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   direct conversation's `agent:alice ↔ agent:bob` participants. (#708)
 
 ### Fixed
+
+- `too info` prepares only the selected target's layout and materializes a
+  roaming `.too` source or visiting remote agent only when the target is not
+  running, so a running roaming or visiting agent is inspected without
+  projecting or fetching its source.
+
+- Cap `new` and `edit` commands read the authored catalog without preparing
+  State first, so they no longer fetch unrelated configured caps before the
+  editor opens, and changes are published only after being saved; a failed
+  publication now reports that the change was saved but agent State could not
+  be published.
+
+- `too tools` resolves tool policy through a tool-only Setup view that loads
+  no model catalogs or adapters, so an invalid or unavailable model catalog
+  no longer breaks tool listing.
 
 - A malformed stored conversation record now rejects membership changes without
   partial writes, and losing membership in one conversation during a polling

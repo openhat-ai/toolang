@@ -21,7 +21,6 @@ from toolang.catalog.types import CAP_KINDS, CapKind
 from toolang.state import state as cap_state
 from toolang.state.prepare import (
     inspect_root_caps,
-    load_state_caps,
     prepare_agent_state,
 )
 from ..common.context import context_agent, context_layout, context_root, user_call
@@ -306,13 +305,8 @@ def _make_new_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
     ) -> None:
         scope, agent_name = _target_scope(ctx)
         selected_agent = context_agent(ctx)
-        if _local_entry_exists(
-            context_root(ctx),
-            agent_name,
-            scope=scope,
-            kind=kind,
-            name=name,
-        ):
+        authored = _authored_caps(context_root(ctx), agent_name, scope)
+        if user_call(authored.get, kind, name) is not None:
             raise ClickException(f"{title} {name} already exists")
         text = edit_markdown(
             templates.render_template(kind, template, name=name, agent_name=agent_name),
@@ -345,18 +339,12 @@ def _make_edit_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
     ) -> None:
         scope, agent_name = _target_scope(ctx)
         selected_agent = context_agent(ctx)
-        try:
-            existing = _named_entry(
-                context_root(ctx),
-                agent_name,
-                scope=scope,
-                kind=kind,
-                name=name,
-                source_form="authored",
-            )
-            text = existing.read_text()
-        except FileNotFoundError as exc:
-            raise ClickException(f"{title} {name} not found") from exc
+        existing = user_call(
+            _authored_caps(context_root(ctx), agent_name, scope).get, kind, name
+        )
+        if existing is None:
+            raise ClickException(f"{title} {name} not found")
+        text = existing.content
         updated_text = edit_markdown(text)
         if updated_text is None or updated_text == text:
             typer.echo("No changes")
@@ -550,57 +538,6 @@ def _allowed_cap_keys(
     return frozenset((cap.kind, cap.name) for cap in entries)
 
 
-def _named_entry(
-    toolang_root: Path,
-    agent_name: str,
-    *,
-    scope: MutableScope,
-    kind: EntryKind,
-    name: str,
-    source_origin: Literal["local", "remote"] | None = None,
-    source_form: cap_state.CapForm | None = None,
-) -> "StateCap":
-    entries = _scope_cap_entries(toolang_root, agent_name, scope=scope, kind=kind)
-    for entry in entries:
-        if entry.kind != kind or entry.name != name:
-            continue
-        if source_origin is not None and entry.source.origin != source_origin:
-            continue
-        if source_form is not None and entry.source.form != source_form:
-            continue
-        return entry
-    raise ClickException(f"{kind.title()} {name} not found")
-
-
-def _local_entry_exists(
-    toolang_root: Path,
-    agent_name: str,
-    *,
-    scope: MutableScope,
-    kind: EntryKind,
-    name: str,
-) -> bool:
-    return any(
-        entry.kind == kind and entry.name == name and entry.source.form == "authored"
-        for entry in _scope_cap_entries(
-            toolang_root, agent_name, scope=scope, kind=kind
-        )
-    )
-
-
-def _scope_cap_entries(
-    toolang_root: Path, agent_name: str, *, scope: MutableScope, kind: EntryKind
-) -> tuple["StateCap", ...]:
-    layout = AgentLayout.resident(toolang_root, agent_name)
-    if scope == "root":
-        if not toolang_root.exists():
-            return ()
-        entries, _ = user_call(inspect_root_caps, layout, kinds={kind})
-        return entries
-    state = user_call(prepare_agent_state, layout)
-    return load_state_caps(layout, state, scope=scope)
-
-
 def _cap_directory(
     toolang_root: Path,
     agent_name: str,
@@ -639,11 +576,16 @@ def _refresh_agent_state(
     *,
     progress: "CliProgress | None" = None,
 ) -> None:
-    if progress is not None:
-        _prepare_agent_state_with_progress(toolang_root, agent_name, progress)
-        return
-    with _make_cap_write_progress() as owned_progress:
-        _prepare_agent_state_with_progress(toolang_root, agent_name, owned_progress)
+    try:
+        if progress is not None:
+            _prepare_agent_state_with_progress(toolang_root, agent_name, progress)
+            return
+        with _make_cap_write_progress() as owned_progress:
+            _prepare_agent_state_with_progress(toolang_root, agent_name, owned_progress)
+    except Exception as exc:
+        raise ClickException(
+            f"The change was saved, but agent State could not be published: {exc}"
+        ) from exc
 
 
 def _prepare_agent_state_with_progress(

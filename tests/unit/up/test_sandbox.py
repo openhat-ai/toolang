@@ -547,7 +547,19 @@ def test_launch_delegates_complete_spec_and_stop_releases_state(
         in request.mounts
     )
     assert sandbox.SandboxState.load(spec.serve.layout.sandbox_state) == handle.state
-    assert [(event.kind, event.stage, event.status) for event in events] == [
+    assert [
+        (event.stage, event.status) for event in events if event.kind == "prepare"
+    ] == [
+        ("materialize", "running"),
+        ("materialize", "ok"),
+        ("materialize", "running"),
+        ("materialize", "ok"),
+    ]
+    assert [
+        (event.kind, event.stage, event.status)
+        for event in events
+        if event.kind == "runtime"
+    ] == [
         ("runtime", "create", "running"),
         ("runtime", "create", "running"),
         ("runtime", "create", "running"),
@@ -555,7 +567,7 @@ def test_launch_delegates_complete_spec_and_stop_releases_state(
         ("runtime", "start", "running"),
         ("runtime", "start", "ok"),
     ]
-    assert len({event.id for event in events}) == 1
+    assert len({event.id for event in events if event.kind == "runtime"}) == 1
 
     assert asyncio.run(sandbox.stop(spec.serve.layout, force=True)) is True
     assert ("stop", handle.state.ref, True) in implementation.calls
@@ -722,7 +734,7 @@ def test_guest_failure_progress_wins_the_early_exit_diagnostic_race(
     assert ("Failed to check Toolang", "failed") in activities
     assert not any("Waiting for the agent API" in label for label, _ in activities)
     assert activities[-1] == ("Failed to check Toolang", "failed")
-    assert len({event.id for event in events}) == 1
+    assert len({event.id for event in events if event.kind == "runtime"}) == 1
 
 
 def test_readiness_cleanup_failure_preserves_sandbox_state(
@@ -1204,3 +1216,66 @@ def test_guest_workspace_config_retains_its_host_origin(tmp_path, monkeypatch, l
     assert config_mount is not None and config_mount.read_only
     captured = json.loads(request.envs["TOOLANG_WORKSPACE_MOUNTS"])
     assert guest_config["workspaces"] == {"repo": captured["repo"][0]}
+
+
+def test_management_lock_reports_waiting_before_the_lock_is_available(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    from toolang.common.files import file_write_lock
+
+    layout = AgentLayout.resident(tmp_path, "alice")
+    waiting = Event()
+    events = []
+
+    def progress(event):
+        events.append(event)
+        if event.status == "running":
+            waiting.set()
+
+    def acquire():
+        with sandbox.management_lock(layout, progress=progress):
+            assert events[-1].status == "ok"
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        with file_write_lock(layout.sandbox_state.with_suffix(".lock")):
+            future = pool.submit(acquire)
+            assert waiting.wait(timeout=2)
+            assert [event.status for event in events] == ["running"]
+            assert events[0].label == "Waiting for agent management..."
+        future.result(timeout=2)
+    assert [event.status for event in events] == ["running", "ok"]
+
+
+@pytest.mark.parametrize("owned_handle", [False, True])
+def test_shutdown_reports_management_lock_contention(tmp_path, owned_handle):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+    from toolang.common.files import file_write_lock
+
+    layout = AgentLayout.resident(tmp_path, "alice")
+    waiting = Event()
+    events = []
+
+    def progress(event):
+        events.append(event)
+        if event.status == "running":
+            waiting.set()
+
+    def stop():
+        if owned_handle:
+            handle = sandbox.SandboxHandle(
+                FakeSandbox(),
+                sandbox.SandboxState("fake", SandboxRef("test", "http://localhost:1")),
+            )
+            return asyncio.run(sandbox.stop_handle(layout, handle, progress=progress))
+        return asyncio.run(sandbox.stop(layout, progress=progress))
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        with file_write_lock(layout.sandbox_state.with_suffix(".lock")):
+            future = pool.submit(stop)
+            assert waiting.wait(timeout=1), "Shutdown blocked without progress"
+            assert not future.done()
+        assert future.result(timeout=2) is False
+    assert [event.status for event in events] == ["running", "ok"]
+    assert {event.stage for event in events} == {"stop"}

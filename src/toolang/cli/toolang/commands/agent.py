@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from toolang.cli.common.workspaces import running_workspace_inspection
-
 import asyncio
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 import shutil
@@ -18,12 +17,16 @@ from toolang.cli.common.parameters import TextType
 from toolang.catalog.job import AuthoredJobs
 from toolang.catalog.agent import LocalAgents
 from toolang.common.layout import AgentLayout
+from toolang.common.progress import ProgressSink
 from toolang.common.time import format_duration
 from toolang.up import process as agents
 from toolang.catalog import templates
 from toolang.setup import AgentSetup, SetupWatcher
 from toolang.state.prepare import prepare_agent_state
 from toolang.state.state import AgentState
+from toolang.state.schemas import WorkspaceInspection
+from ...common.client import RuntimeClient
+from ...common.errors import RuntimeClientError
 from ...common.context import (
     ModelCatalogOption,
     cli_context,
@@ -171,23 +174,39 @@ def info_agent(
     agent_name = require_runtime_agent(ctx, agent)
     selected_layout = cli_context(ctx).layout
     layout = selected_layout or AgentLayout.resident(context_root(ctx), agent_name)
+    agent_name = layout.name
     process = agents.AgentProcess(layout)
     status = user_call(process.status, ui_base_url=ui_base_url())
-    if status is None:
+    if status is None and layout.placement == "resident":
         raise ClickException(f"Agent {agent_name} not found")
     try:
         runtime_state = process.state() or {}
         runtime_identity = agents.runtime_identity_row(runtime_state, layout=layout)
     except (OSError, ValueError):
         runtime_state, runtime_identity = {}, None
-    state = _prepare_state(layout)
-    model_catalog = resolve_model_catalog_option(model_catalog)
-    watcher = (
-        SetupWatcher(layout, model_catalog=model_catalog)
-        if model_catalog is not None
-        else SetupWatcher(layout)
-    )
-    setup = asyncio.run(watcher.refresh())
+    if status is not None and status.status == "running":
+        if model_catalog is not None:
+            raise ClickException("--catalog only applies when the agent is not running")
+        if status.endpoint is None:
+            raise ClickException("running agent has no endpoint")
+        try:
+            with make_cli_progress() as progress:
+                resources = _running_resources(
+                    RuntimeClient(status.endpoint), progress=progress.sink
+                )
+        except (OSError, RuntimeClientError, ValueError) as exc:
+            raise ClickException(str(exc)) from exc
+    else:
+        resources = _local_resources(
+            layout,
+            model_catalog=resolve_model_catalog_option(model_catalog),
+            source=cli_context(ctx).source,
+            selector=agent if layout.placement == "visiting" else None,
+        )
+        if status is None:
+            status = user_call(process.status, ui_base_url=ui_base_url())
+            if status is None:
+                raise ClickException(f"Agent {agent_name} not found")
     started_at = runtime_value(runtime_state.get("started_at"))
     status_value = "not running" if status.status == "stopped" else status.status
     if status.status == "running" and started_at != "-":
@@ -197,18 +216,9 @@ def info_agent(
     message = runtime_value(status.message)
     if status.status not in {"running", "stopped"} and message != "-":
         status_value = f"{status_value}: {message}"
-    workspace_names = tuple(setup.workspace_grants(state.workspaces))
-    if status.status == "running":
-        inspection = user_call(running_workspace_inspection, layout)
-        if inspection is not None:
-            workspace_names = tuple(item.name for item in inspection.items)
     rows = [
         ("Home", shorten_home_path(layout.home)),
-        ("Tools", _tools_summary(setup)),
-        ("Models", _models_summary(setup)),
-        ("Caps", _caps_summary(state)),
-        ("Jobs", _jobs_summary(layout)),
-        ("Workspaces", ", ".join(workspace_names)),
+        *resources,
         ("Status", status_value),
     ]
     if status.status == "stopped":
@@ -233,22 +243,25 @@ def _caps_summary(state: AgentState) -> str:
         "services": sum(item.kind == "service" for item in caps),
         "prompts": sum(item.kind == "prompt" for item in caps),
     }
-    singular = {
-        "psyches": "psyche",
-        "skills": "skill",
-        "services": "service",
-        "prompts": "prompt",
-    }
-    return ", ".join(
-        f"{count} {singular[label] if count == 1 else label}"
-        for label, count in counts.items()
-    )
+    return _cap_counts_summary(counts)
 
 
-def _prepare_state(layout: AgentLayout) -> AgentState:
+def _local_resources(
+    layout: AgentLayout,
+    *,
+    model_catalog: Path | None,
+    source: Path | None = None,
+    selector: str | None = None,
+) -> list[tuple[str, str]]:
     progress = make_cli_progress()
     try:
         with progress:
+            if source is not None:
+                user_call(agents.materialize_roaming_program, source)
+            elif selector is not None:
+                user_call(
+                    agents.resolve_visiting_layout, selector, progress=progress.sink
+                )
             state = cast(
                 AgentState,
                 user_call(
@@ -257,11 +270,85 @@ def _prepare_state(layout: AgentLayout) -> AgentState:
                     progress=progress.sink,
                 ),
             )
-            return state
+            watcher = (
+                SetupWatcher(layout, model_catalog=model_catalog)
+                if model_catalog is not None
+                else SetupWatcher(layout)
+            )
+            setup = asyncio.run(watcher.refresh(progress=progress.sink))
+            return [
+                ("Tools", _tools_summary(setup, progress=progress.sink)),
+                ("Models", _models_summary(setup, progress=progress.sink)),
+                ("Caps", _caps_summary(state)),
+                ("Jobs", _jobs_summary(layout)),
+                ("Workspaces", ", ".join(setup.workspace_grants(state.workspaces))),
+            ]
     except Exception as exc:
         if progress.failure_stage is not None:
             raise ClickException(progress.failure_message(exc)) from exc
         raise
+
+
+def _running_resources(
+    client: RuntimeClient, *, progress: ProgressSink | None = None
+) -> list[tuple[str, str]]:
+    """Inspect the executor's published resources, including its startup overrides."""
+    resources = client.inspect_resources(progress=progress)
+    models = _resource_items(resources["models"], "models")
+    tools = _resource_items(resources["tools"], "tools")
+    caps = resources["caps"]
+    if not isinstance(caps, Mapping):
+        raise ValueError("runtime returned invalid caps")
+    cap_counts = {
+        kind: len(_resource_list(caps.get(kind), kind))
+        for kind in ("psyches", "skills", "services", "prompts")
+    }
+    chores = _resource_list(resources["chores"], "chores")
+    tasks = _resource_list(resources["tasks"], "tasks")
+    workspaces = WorkspaceInspection.model_validate(resources["workspaces"])
+    return [
+        (
+            "Tools",
+            f"{_count(len(tools), 'tool')}, {_count(len(_resource_groups(tools, 'toolset')), 'toolset')}",
+        ),
+        (
+            "Models",
+            f"{_count(len(models), 'model')}, {_count(len(_resource_groups(models, 'provider')), 'provider')}",
+        ),
+        ("Caps", _cap_counts_summary(cap_counts)),
+        ("Jobs", f"{_count(len(chores), 'chore')}, {_count(len(tasks), 'task')}"),
+        ("Workspaces", ", ".join(item.name for item in workspaces.items)),
+    ]
+
+
+def _resource_items(value: object, label: str) -> list[dict[str, object]]:
+    if not isinstance(value, dict):
+        raise ValueError(f"runtime returned invalid {label}")
+    return _resource_list(cast(dict[str, object], value).get("items"), label)
+
+
+def _resource_list(value: object, label: str) -> list[dict[str, object]]:
+    if not isinstance(value, list) or any(not isinstance(item, dict) for item in value):
+        raise ValueError(f"runtime returned invalid {label}")
+    return cast(list[dict[str, object]], value)
+
+
+def _resource_groups(items: list[dict[str, object]], field: str) -> set[str]:
+    values = [item.get(field) for item in items]
+    if any(not isinstance(value, str) or not value for value in values):
+        raise ValueError(f"runtime returned invalid {field}")
+    return set(cast(list[str], values))
+
+
+def _count(value: int, singular: str) -> str:
+    return f"{value} {singular if value == 1 else singular + 's'}"
+
+
+def _cap_counts_summary(counts: Mapping[str, int]) -> str:
+    return ", ".join(
+        _count(counts[kind + "s"], kind)
+        for kind in ("psyche", "skill", "service", "prompt")
+    )
 
 
 def _jobs_summary(layout: AgentLayout) -> str:
@@ -274,17 +361,17 @@ def _jobs_summary(layout: AgentLayout) -> str:
     )
 
 
-def _models_summary(setup: AgentSetup) -> str:
-    model_count = len(setup.models_effective())
-    provider_count = len(setup.providers_effective())
+def _models_summary(setup: AgentSetup, *, progress: ProgressSink | None = None) -> str:
+    model_count = len(setup.models_effective(progress=progress))
+    provider_count = len(setup.providers_effective(progress=progress))
     return (
         f"{model_count} {'model' if model_count == 1 else 'models'}, "
         f"{provider_count} {'provider' if provider_count == 1 else 'providers'}"
     )
 
 
-def _tools_summary(setup: AgentSetup) -> str:
-    tools = setup.tools()
+def _tools_summary(setup: AgentSetup, *, progress: ProgressSink | None = None) -> str:
+    tools = setup.tools(progress=progress)
     set_count = len({ref.partition("/")[0] for ref in tools.refs()})
     return (
         f"{len(tools)} {'tool' if len(tools) == 1 else 'tools'}, "
