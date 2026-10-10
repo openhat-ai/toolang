@@ -173,7 +173,7 @@ Talk publishes the compact label (`@alice`, `@alice,bob`, or `#dev`) through OSC
 and clears it on exit. iTerm2 and tmux can display it according to terminal settings.
 The title is a display label; the footer retains the canonical ID for copying.
 
-All Talk windows in one tmux server use the single session named `talk`. Windows
+All Talk windows in one tmux server use the single session named `talks`. Windows
 are reused by canonical conversation ID and connection context, including root,
 backend, viewer, and Hub endpoint. Manual window renaming does not affect lookup.
 A new window starts with the canonical ID as its name. Existing windows and shells
@@ -181,7 +181,7 @@ are preserved. `TOOLANG_TMUX=0` keeps Talk in the invoking terminal.
 
 | Option | Scope | Value |
 | --- | --- | --- |
-| `@toolang_talk` | Session | `talk` |
+| `@toolang_talk` | Session | `talks` |
 | `@toolang_convo` | Window | Canonical conversation ID |
 | `@toolang_context` | Window | Connection-context hash |
 | `@toolang_pad` | Pane | `talk` |

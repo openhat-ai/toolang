@@ -432,7 +432,7 @@ def test_new_chat_creates_a_window_even_in_the_agent_session(
     assert server.switched == []
     assert server.created == []
     assert len(session.opened) == 1
-    assert "created chat pane" in capsys.readouterr().out
+    assert "created pane" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize("same_session", [True, False])
@@ -463,7 +463,7 @@ def test_place_chat_reuses_or_creates_pad_and_enters_target(
     out = capsys.readouterr().out
     verb = "located" if live_pad else "created"
     assert out == (
-        f"{verb} chat pane {window.panes[-1].pane_id} in renamed-agent:renamed-thread\n"
+        f"{verb} pane {window.panes[-1].pane_id} in renamed-agent:renamed-thread\n"
     )
 
 
@@ -476,7 +476,7 @@ def test_place_chat_reports_creation_error_here(
         _place(monkeypatch, launcher)
     error.value.show()
     assert error.value.exit_code == 1
-    assert "failed to create chat pane: eve refused" in capsys.readouterr().err
+    assert "failed to create pane: eve refused" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("level", ["session", "window", "pane"])
@@ -502,7 +502,7 @@ def test_mark_failure_does_not_report_creation_failure(
 
     monkeypatch.setattr(target_class, "set_option", refuse)
     launcher = _launcher(server, FakePane(session_id="$9"))
-    with pytest.raises(ClickException, match="^failed to mark chat pane:") as error:
+    with pytest.raises(ClickException, match="^failed to mark pane:") as error:
         _place(monkeypatch, launcher, thread_id="term_x")
 
     assert "metadata refused" in str(error.value)
@@ -541,7 +541,7 @@ def test_failed_selection_keeps_prepared_target_and_reports_location(
     verb = "located" if live_pad else "created"
     assert captured.out == ""
     assert captured.err == (
-        f"Error: {verb} chat pane {window.panes[-1].pane_id} in eve:term_x; "
+        f"Error: {verb} pane {window.panes[-1].pane_id} in eve:term_x; "
         "failed to switch: selection refused\n"
     )
 
@@ -585,7 +585,7 @@ def test_place_chat_displays_window_or_pane_creation_failure(
 
     captured = capsys.readouterr()
     assert captured.out == ""
-    assert "failed to create chat pane: no space for a new pane" in captured.err
+    assert "failed to create pane: no space for a new pane" in captured.err
     assert not window.pads and not session.opened
 
 
@@ -848,7 +848,7 @@ def test_talk_placement_shares_one_session_across_conversations_and_contexts(
 ):
     from dataclasses import replace
 
-    chat_session = FakeSession("$0", "talk" if existing_talk else "alice")
+    chat_session = FakeSession("$0", "talks" if existing_talk else "alice")
     chat_session.options[tmux.SESSION_AGENT] = "alice"
     original = chat_session.add_window(FakeWindow("@original"))
     server = FakeServer([chat_session])
@@ -857,7 +857,7 @@ def test_talk_placement_shares_one_session_across_conversations_and_contexts(
         session_mark="@toolang_talk",
         window_mark="@toolang_convo",
         pad_kind="talk",
-        shared_session="talk",
+        shared_session="talks",
     )
     arguments: dict[str, Any] = dict(
         thread_id="gc_00000001", argv=["too", "talk", "gc_00000001"], directory="/tmp"
@@ -865,8 +865,8 @@ def test_talk_placement_shares_one_session_across_conversations_and_contexts(
     assert launcher.place_chat(**arguments) is False
     assert len(server.created) == (0 if existing_talk else 1)
     session = server.sessions[-1]
-    assert session.session_name == "talk"
-    assert session.options["@toolang_talk"] == "talk"
+    assert session.session_name == "talks"
+    assert session.options["@toolang_talk"] == "talks"
     window = session.windows[-1]
     assert window.options["@toolang_convo"] == "gc_00000001"
     assert window.options[tmux.MARK_CONTEXT] == "root-url-human"
@@ -887,9 +887,9 @@ def test_talk_placement_shares_one_session_across_conversations_and_contexts(
 
 
 def test_chat_does_not_adopt_a_talk_session_with_the_same_display_name():
-    session = FakeSession("$0", "talk")
-    session.options["@toolang_talk"] = "talk"
-    launcher = _launcher(FakeServer([session]), FakePane(session_id="$9"), "talk")
+    session = FakeSession("$0", "talks")
+    session.options["@toolang_talk"] = "talks"
+    launcher = _launcher(FakeServer([session]), FakePane(session_id="$9"), "talks")
     assert launcher.agent_session() is None
     assert tmux.SESSION_AGENT not in session.options
 
@@ -897,7 +897,7 @@ def test_chat_does_not_adopt_a_talk_session_with_the_same_display_name():
 def test_talk_started_from_shell_in_conversation_window_stays_reusable():
     from dataclasses import replace
 
-    session = FakeSession("$0", "talk")
+    session = FakeSession("$0", "talks")
     window = session.add_window(FakeWindow("@conversation"))
     window.options.update(
         {"@toolang_convo": "gc_00000001", tmux.MARK_CONTEXT: "root-backend-human"}
@@ -913,7 +913,7 @@ def test_talk_started_from_shell_in_conversation_window_stays_reusable():
         session_mark="@toolang_talk",
         window_mark="@toolang_convo",
         pad_kind="talk",
-        shared_session="talk",
+        shared_session="talks",
     )
     arguments: dict[str, Any] = dict(
         thread_id="gc_00000001", argv=["too", "talk", "gc_00000001"], directory="/tmp"

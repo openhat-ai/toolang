@@ -399,7 +399,7 @@ class Launcher:
                     session.set_option(DETACH_ON_DESTROY, "off")
                     window = session.active_window
                     if window is None:
-                        raise TmuxPlacementError("Created session has no chat window")
+                        raise TmuxPlacementError("Created session has no window")
                 else:
                     window = session.new_window(
                         start_directory=directory, window_shell=command, attach=False
@@ -414,7 +414,7 @@ class Launcher:
             operation = "mark"
             pad.set_option(MARK_PAD, self.pad_kind)
         except Exception as exc:
-            raise TmuxPlacementError(f"failed to {operation} chat pane: {exc}") from exc
+            raise TmuxPlacementError(f"failed to {operation} pane: {exc}") from exc
 
         self._enter_target(window, pad, action=action)
         return False
@@ -443,7 +443,7 @@ class Launcher:
         command = shlex.join(["env", *unset, f"{ENABLED_ENV}=0", *assignments, *argv])
         script = (
             'if ! tmux set-option -p -t "$TMUX_PANE" remain-on-exit failed; then '
-            "printf '%s\\n' 'Could not configure chat pane; press Enter to close.' >&2; "
+            "printf '%s\\n' 'Could not configure pane; press Enter to close.' >&2; "
             "read -r reply; exit 1; fi; "
             f"exec {command}"
         )
@@ -454,12 +454,12 @@ class Launcher:
         try:
             session = window.session
             notice = (
-                f"{action} chat pane {pane.pane_id} in "
+                f"{action} pane {pane.pane_id} in "
                 f"{session.session_name}:{window.window_name}"
             )
         except Exception as exc:
             raise TmuxPlacementError(
-                f"Could not inspect prepared tmux chat target: {exc}"
+                f"Could not inspect prepared tmux target: {exc}"
             ) from exc
         try:
             self.select_target(window, pane=pane)

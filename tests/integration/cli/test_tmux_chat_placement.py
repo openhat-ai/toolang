@@ -182,7 +182,7 @@ def test_new_pane_uses_caller_widths_instead_of_stale_tmux_environment(
     if surface == "talk":
         launcher = replace(
             launcher,
-            shared_session="talk",
+            shared_session="talks",
             session_mark="@toolang_talk",
             window_mark="@toolang_convo",
             pad_kind="talk",
@@ -230,7 +230,7 @@ def test_talk_conversations_and_contexts_share_one_named_session(
         agent="root-backend-alice",
         _server=cast(Any, server),
         _pane=cast(Any, origin.active_pane),
-        shared_session="talk",
+        shared_session="talks",
         session_mark="@toolang_talk",
         window_mark="@toolang_convo",
         pad_kind="talk",
@@ -238,7 +238,8 @@ def test_talk_conversations_and_contexts_share_one_named_session(
     arguments: dict[str, Any] = dict(argv=["sleep", "60"], directory=str(tmp_path))
     with control_client(server, origin):
         assert not launcher.place_chat(thread_id="gc_00000001", **arguments)
-        session = next(s for s in server.sessions if s.session_name == "talk")
+        session = next(s for s in server.sessions if s.session_name == "talks")
+        assert session.show_option("@toolang_talk") == "talks"
         first = session.windows[0]
         first.rename_window("custom name")
         assert not launcher.place_chat(thread_id="gc_00000001", **arguments)
@@ -252,7 +253,7 @@ def test_talk_conversations_and_contexts_share_one_named_session(
         assert not other.place_chat(thread_id="gc_00000001", **arguments)
         assert not other.place_chat(thread_id="gc_00000001", **arguments)
         assert len(session.windows) == 3
-        assert {s.session_name for s in server.sessions} == {"origin", "talk"}
+        assert {s.session_name for s in server.sessions} == {"origin", "talks"}
 
 
 def test_talk_reopens_from_a_shell_left_in_its_conversation_window(
@@ -260,7 +261,7 @@ def test_talk_reopens_from_a_shell_left_in_its_conversation_window(
     tmp_path: Path,
 ):
     session = server.new_session(
-        session_name="talk", attach=False, window_command="sleep 60"
+        session_name="talks", attach=False, window_command="sleep 60"
     )
     window = session.active_window
     shell = window.panes[0]
@@ -270,7 +271,7 @@ def test_talk_reopens_from_a_shell_left_in_its_conversation_window(
         agent="root-backend-human",
         _server=cast(Any, server),
         _pane=cast(Any, shell),
-        shared_session="talk",
+        shared_session="talks",
         session_mark="@toolang_talk",
         window_mark="@toolang_convo",
         pad_kind="talk",
@@ -449,8 +450,8 @@ time.sleep(60)
         ]
         assert ("%session-changed" in events(client)) is not same_session
         notice = capsys.readouterr().out.strip()
-        assert notice.startswith("created chat pane ")
-        address, location = notice.removeprefix("created chat pane ").split(" in ", 1)
+        assert notice.startswith("created pane ")
+        address, location = notice.removeprefix("created pane ").split(" in ", 1)
         assert location == f"{target_session.session_name}:{target_window.window_name}"
         assert tmux(server, "display-message", "-p", "-t", address, "#{pane_id}") == [
             target_pane.pane_id
@@ -524,7 +525,7 @@ def test_failed_child_retains_error_and_explicit_retry_reuses_pane(
         wait_for_pane_exit(server, pane.pane_id)
         assert len(tmux(server, "list-panes", "-a")) == count
         assert capsys.readouterr().out == (
-            f"reused chat pane {pane.pane_id} in {agent.session_name}:{window.window_name}\n"
+            f"reused pane {pane.pane_id} in {agent.session_name}:{window.window_name}\n"
         )
 
 

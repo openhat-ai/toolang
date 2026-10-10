@@ -604,13 +604,13 @@ share a session, the pane process cannot reliably identify which supplied the
 input. Window and pane selections themselves are shared tmux state.
 
 Targets are created detached and selected after preparation. The invoking
-terminal prints `located chat pane %6 in b:term_emrcwvjn` for an existing chat,
-`created chat pane %6 in b:term_emrcwvjn` for a new pane, or
-`reused chat pane %6 in b:term_emrcwvjn` for a retry. Names reflect the current
+terminal prints `located pane %6 in b:term_emrcwvjn` for an existing chat,
+`created pane %6 in b:term_emrcwvjn` for a new pane, or
+`reused pane %6 in b:term_emrcwvjn` for a retry. Names reflect the current
 session and window; `%6` can be passed to a pane command such as
 `tmux select-pane -t %6`. Starting Chat in the current pane prints no notice.
 A navigation failure appends `; failed to switch: <reason>` to the notice.
-Creation failures use `failed to create chat pane: <reason>`.
+Creation failures use `failed to create pane: <reason>`.
 Lookup, creation, and navigation failures are reported here with a nonzero exit
 status. A failed lookup never means the target is absent.
 A navigation failure keeps the target and does not start a duplicate local chat.

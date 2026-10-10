@@ -111,7 +111,7 @@ def talk_command(
                 session_mark="@toolang_talk",
                 window_mark="@toolang_convo",
                 pad_kind="talk",
-                shared_session="talk",
+                shared_session="talks",
             )
             argv = [
                 sys.executable,
