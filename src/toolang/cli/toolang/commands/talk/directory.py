@@ -50,8 +50,14 @@ def directory_command(ctx: typer.Context) -> None:
             if target(row["member"]).kind == "agent"
         }
         directory = Table(title="Team", title_justify="left", box=None, padding=(0, 1))
-        for heading in ("Agent", "Presence"):
-            directory.add_column(heading, no_wrap=True, overflow="ellipsis")
+        # Reserve the status column and four cells of table padding.
+        directory.add_column(
+            "Agent",
+            max_width=max(1, console.width - 8 - 4),
+            no_wrap=True,
+            overflow="ellipsis",
+        )
+        directory.add_column("Presence", width=8, no_wrap=True)
         for name, row in sorted(agents.items()):
             presence = (
                 "—"
@@ -65,6 +71,16 @@ def directory_command(ctx: typer.Context) -> None:
         if not agents:
             console.print("No agents.")
         console.print()
+        now = datetime.now().astimezone()
+        times = {
+            row["latest"]: _message_time(row["latest"], now)
+            for row in conversations
+            if row["latest"]
+        }
+        time_width = max(map(len, times.values()), default=0)
+        # Reserve the ID, column padding, and a timestamp with a readable preview.
+        metadata_width = max(11, console.width - 11 - 8 - max(14, time_width + 12))
+        name_width = min(24, metadata_width // 2, metadata_width - 7)
         table = Table(
             title="Conversations",
             title_justify="left",
@@ -75,24 +91,17 @@ def directory_command(ctx: typer.Context) -> None:
         table.add_column("ID", min_width=11, no_wrap=True)
         table.add_column(
             "Name",
-            max_width=min(24, max(4, console.width // 5)),
+            max_width=name_width,
             no_wrap=True,
             overflow="ellipsis",
         )
         table.add_column(
             "Members",
-            max_width=min(32, max(7, console.width // 4)),
+            max_width=min(32, metadata_width - name_width),
             no_wrap=True,
             overflow="ellipsis",
         )
         table.add_column("Latest message", ratio=1, no_wrap=True, overflow="ellipsis")
-        now = datetime.now().astimezone()
-        times = {
-            row["latest"]: _message_time(row["latest"], now)
-            for row in conversations
-            if row["latest"]
-        }
-        time_width = max(map(len, times.values()), default=0)
         for row in conversations:
             participants = Text()
             for member in sorted(row["participants"]):

@@ -304,7 +304,7 @@ def test_directory_shows_presence_previews_and_does_not_create_conversations(
     asyncio.run(unchanged())
 
 
-@pytest.mark.parametrize("width", [80, 120, 240])
+@pytest.mark.parametrize("width", [60, 80, 120, 240])
 def test_directory_keeps_sections_and_long_rows_aligned(tmp_path, monkeypatch, width):
     class Clock(datetime):
         @classmethod
@@ -403,6 +403,7 @@ def test_directory_keeps_sections_and_long_rows_aligned(tmp_path, monkeypatch, w
     for line, stamp in zip(lines[2:5], ("09:10", "10-09 09:10", "2025-10-10 09:10")):
         assert cell_len(line[: line.index(stamp)]) == latest_column
         message_columns.append(cell_len(line[: line.index("bob:")]))
+        assert "bob: hello" in line
         name = line.split("alice", 1)[0].split(maxsplit=1)[1].strip()
         # Check terminal cells, including double-width Unicode names.
         assert cell_len(name) <= 24 and name.endswith("…")
@@ -410,6 +411,40 @@ def test_directory_keeps_sections_and_long_rows_aligned(tmp_path, monkeypatch, w
         assert members.endswith("…")
     assert len(set(message_columns)) == 1
     assert "—" in lines[-1]
+
+
+@pytest.mark.parametrize("width", [24, 40, 80, 120])
+@pytest.mark.parametrize("name", ["long-agent-" * 24, "开发助手" * 32])
+def test_directory_keeps_presence_readable_with_long_agent_names(
+    tmp_path, monkeypatch, width, name
+):
+    client = AsyncMock()
+    client.__aenter__.return_value = client
+    client.team.return_value = [
+        {"member": f"agent:{name}", "online": True},
+        {"member": "agent:bob", "online": False},
+    ]
+    client.contacts.return_value = []
+    monkeypatch.setattr(directory, "HubClient", lambda config: client)
+    monkeypatch.setattr(directory, "settings", lambda root: (None, "human:bryan"))
+    output = StringIO()
+    monkeypatch.setattr(
+        directory,
+        "Console",
+        lambda **kwargs: Console(file=output, width=width, color_system=None, **kwargs),
+    )
+
+    assert cli.main(["--root", str(tmp_path), "talk"]) == 0
+    team = output.getvalue().strip().split("\n\n")[1].splitlines()
+    assert len(team) == 4
+    assert team[1].split() == ["Agent", "Presence"]
+    assert team[2].split() == ["bob", "offline"]
+    assert team[3].rstrip().endswith("online")
+    assert "…" in team[3]
+    presence_column = team[1].index("Presence")
+    assert cell_len(team[2][: team[2].index("offline")]) == presence_column
+    assert cell_len(team[3][: team[3].index("online")]) == presence_column
+    assert all(cell_len(line) <= width for line in team)
 
 
 def test_directory_with_only_humans_shows_no_agents(
