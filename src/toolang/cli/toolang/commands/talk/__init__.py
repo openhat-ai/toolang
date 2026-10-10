@@ -37,10 +37,7 @@ def talk_command(
         str | None,
         typer.Argument(
             metavar="conversation",
-            help=(
-                "Conversation ID or shorthand (alice, alice,bob). "
-                "Omit to list conversations"
-            ),
+            help="Conversation ID or shorthand. Omit to list conversations",
         ),
     ] = None,
     body: Annotated[
