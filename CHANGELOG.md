@@ -7,6 +7,8 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ## [Unreleased]
 
+## [0.4.0a3] - 2026-10-11
+
 ### Added
 
 - `too talk` opens with a startup panel captioned `Talk <client-version>`,
@@ -919,7 +921,8 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 - The formatter normalizes `exec` statements consistently with other flow
   statements. (#676)
 
-[Unreleased]: https://github.com/openhat-ai/toolang/compare/v0.4.0a2...HEAD
+[Unreleased]: https://github.com/openhat-ai/toolang/compare/v0.4.0a3...HEAD
+[0.4.0a3]: https://github.com/openhat-ai/toolang/compare/v0.4.0a2...v0.4.0a3
 [0.4.0a2]: https://github.com/openhat-ai/toolang/compare/v0.4.0a1...v0.4.0a2
 [0.4.0a1]: https://github.com/openhat-ai/toolang/compare/v0.3.6...v0.4.0a1
 [0.3.6]: https://github.com/openhat-ai/toolang/compare/v0.3.5...v0.3.6
