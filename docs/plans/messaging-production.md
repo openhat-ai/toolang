@@ -1,4 +1,5 @@
-# Production messaging
+# Messaging contracts
 
-Superseded by the approved [teaming plan](teaming.md), which incorporates and
-revises PR #708. See [messaging usage](../messaging.md) for the implemented behavior.
+The [teaming plan](teaming.md) defines conversation data and Hub APIs.
+The [Talk contract](talk-status-bar.md) defines the interactive interface.
+See [messaging usage](../messaging.md) for setup and commands.

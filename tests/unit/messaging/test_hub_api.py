@@ -196,7 +196,7 @@ def test_startup_failure_closes_service_without_publishing_readiness():
 @pytest.mark.parametrize(
     "changes", [{"identity": "another-backend"}, {"human": "human:another"}]
 )
-def test_hub_config_switch_rejects_stale_text_before_any_storage_access(changes):
+def test_hub_config_switch_rejects_stale_talk_before_any_storage_access(changes):
     async def scenario():
         human = client(FakeServer(server_type="valkey"), CONNECTION.human)
         app = create_app(human)
@@ -210,7 +210,7 @@ def test_hub_config_switch_rejects_stale_text_before_any_storage_access(changes)
             human.register_human = AsyncMock(
                 side_effect=AssertionError("storage touched")
             )
-            with pytest.raises(MessagingError, match="identity changed; reopen Text"):
+            with pytest.raises(MessagingError, match="identity changed; reopen Talk"):
                 await hub.send("group:all", body="must not reach another dataset")
             human.register_human.assert_not_awaited()
 

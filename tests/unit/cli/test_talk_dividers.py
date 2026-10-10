@@ -8,7 +8,7 @@ from toolang.cli.common.terminal_surfaces import (
     DARK_TERMINAL_SURFACES,
     LIGHT_TERMINAL_SURFACES,
 )
-from toolang.cli.toolang.commands.text.rendering import message_block
+from toolang.cli.toolang.commands.talk.rendering import message_block
 from toolang.teaming.schemas import Message
 
 
@@ -24,7 +24,6 @@ def test_agent_rule_is_above_name_and_flush_right_with_preserved_body_spacing(
             message_block(
                 Message.create("agent:alice", "First.\n\nLast."),
                 "agent:alice" if own_message else "human:bryan",
-                set(),
                 width,
                 surfaces,
             )
@@ -71,7 +70,6 @@ def test_rule_precedes_full_wrapped_names_within_terminal_cell_width(
     block = message_block(
         Message.create(sender, "body"),
         sender if own_message else "human:bryan",
-        set(),
         width,
         LIGHT_TERMINAL_SURFACES,
     )
@@ -91,7 +89,6 @@ def test_human_headers_have_no_rule(own_message):
     block = message_block(
         Message.create("human:bryan", "body"),
         "human:bryan" if own_message else "human:visitor",
-        set(),
         60,
         LIGHT_TERMINAL_SURFACES,
     )
@@ -106,7 +103,6 @@ def test_left_message_body_uses_full_available_width(sender, width):
     block = message_block(
         Message.create(sender, body),
         "human:bryan",
-        set(),
         width,
         LIGHT_TERMINAL_SURFACES,
     )
@@ -119,7 +115,6 @@ def test_short_left_human_bubble_fills_available_width():
     block = message_block(
         Message.create("human:visitor", "short"),
         "human:bryan",
-        set(),
         60,
         LIGHT_TERMINAL_SURFACES,
     )

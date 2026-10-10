@@ -37,6 +37,8 @@ from toolang.cli.common.errors import TmuxPlacementError
 MARK_AGENT = "@toolang_agent"
 MARK_THREAD = "@toolang_thread"
 MARK_PAD = "@toolang_pad"
+# Shared sessions keep the caller's identity on each window instead.
+MARK_CONTEXT = "@toolang_context"
 
 # One value per scope: the agent belongs to the session, the thread to the window
 # that shows it, and the pad to the pane it runs in. The scopes stay separate
@@ -340,7 +342,7 @@ class Launcher:
     session_mark: str = SESSION_AGENT
     window_mark: str = MARK_THREAD
     pad_kind: str = PAD_CHAT
-    session_name: str | None = None
+    shared_session: str | None = None
 
     def place_chat(
         self, *, thread_id: str, argv: Sequence[str], directory: str
@@ -358,12 +360,17 @@ class Launcher:
                 if pad is not None and self.is_current_pane(pad.pane_id):
                     return True
                 if pad is None:
-                    # The exact thread window can use the invoking shell pane.
+                    # Chat publishes and clears its own inline pane marks.
+                    # Shared-session views need a launcher-managed child pane.
                     current = next(
                         (p for p in window.panes if self.is_current_pane(p.pane_id)),
                         None,
                     )
-                    if current is not None and not _identity_option(current, MARK_PAD):
+                    if (
+                        self.shared_session is None
+                        and current is not None
+                        and not _identity_option(current, MARK_PAD)
+                    ):
                         return True
                     pad = self.chat_pad(window, dead=True)
                     if pad is not None:
@@ -397,6 +404,8 @@ class Launcher:
                     )
                 operation = "mark"
                 window.set_option(self.window_mark, thread_id)
+                if self.shared_session is not None:
+                    window.set_option(MARK_CONTEXT, self.agent)
                 window.rename_window(thread_id)
                 pad = window.panes[0]
                 action = "created"
@@ -444,26 +453,31 @@ class Launcher:
         print(notice)
 
     def agent_session(self) -> TmuxSession | None:
-        """The agent's session: its ``@toolang_agent`` mark first, name second.
+        """The fixed shared session, or the agent's session by mark then name.
 
-        A name only identifies a session nobody else owns, so a name that a
-        different agent already marked is not adopted. Determining the session
-        records the mark on it, so the next lookup reads the mark instead of the
-        name.
+        Agent sessions adopt only unowned names and record their identity for
+        subsequent lookups. Shared sessions reuse their exact name regardless
+        of the caller's identity.
         """
 
         sessions = self._server.sessions
+        if self.shared_session is not None:
+            for session in sessions:
+                if session.session_name == self.shared_session:
+                    self._own(session)
+                    return session
+            return None
         for session in sessions:
             if _identity_option(session, self.session_mark) == self.agent:
                 return session
         if self.session_mark != SESSION_AGENT:
             return None
-        name = sanitize_session_name(self.session_name or self.agent)
+        name = sanitize_session_name(self.agent)
         for session in sessions:
             if _text(getattr(session, "session_name", None)) != name:
                 continue
             if _identity_option(session, self.session_mark) or _identity_option(
-                session, "@toolang_text"
+                session, "@toolang_talk"
             ):
                 continue
             self._own(session)
@@ -483,12 +497,16 @@ class Launcher:
     def thread_window(self, session: TmuxSession, thread_id: str) -> TmuxWindow | None:
         """The newest window in ``session`` marked with ``thread_id``.
 
-        The marks are the index: no thread data is read to answer this.
+        Shared sessions also match the caller's context. The marks are the
+        index: no thread data is read to answer this.
         """
 
         found: TmuxWindow | None = None
         for window in session.windows:
-            if _identity_option(window, self.window_mark) == thread_id:
+            if _identity_option(window, self.window_mark) == thread_id and (
+                self.shared_session is None
+                or _identity_option(window, MARK_CONTEXT) == self.agent
+            ):
                 found = window
         return found
 
@@ -536,9 +554,11 @@ class Launcher:
         return True
 
     def _available_name(self) -> str:
-        """The agent's session name, suffixed when a foreign session took it."""
+        """The shared name verbatim, or an available name for the agent."""
 
-        base = sanitize_session_name(self.session_name or self.agent)
+        if self.shared_session is not None:
+            return self.shared_session
+        base = sanitize_session_name(self.agent)
         taken = {
             _text(getattr(item, "session_name", None)) for item in self._server.sessions
         }
@@ -550,12 +570,12 @@ class Launcher:
         return f"{base}-{index}"
 
     def _own(self, session: TmuxSession) -> None:
-        """Record ``@toolang_agent`` on a session that does not carry it yet."""
+        """Mark a session with its shared name or agent identity."""
 
         if _identity_option(session, self.session_mark):
             return
         try:
-            session.set_option(self.session_mark, self.agent)
+            session.set_option(self.session_mark, self.shared_session or self.agent)
         except Exception as exc:
             raise TmuxPlacementError(
                 f"Could not mark tmux agent session: {exc}"

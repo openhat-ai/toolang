@@ -1,4 +1,4 @@
-"""Text's bounded input, footer, and scrollback rendering."""
+"""Talk's bounded input, footer, and scrollback rendering."""
 
 import asyncio
 from contextlib import asynccontextmanager
@@ -15,8 +15,8 @@ from prompt_toolkit.output import DummyOutput
 from rich.console import Console
 
 from toolang.cli.common.terminal_surfaces import LIGHT_TERMINAL_SURFACES
-from toolang.cli.toolang.commands.text import tui
-from toolang.teaming.schemas import Message
+from toolang.cli.toolang.commands.talk import tui
+from toolang.teaming.schemas import Conversation, Message
 
 
 class TerminalOutput(DummyOutput):
@@ -28,20 +28,23 @@ class TerminalOutput(DummyOutput):
 
 
 @asynccontextmanager
-async def text_app(
-    tmp_path, *, group="group:conversation", label="agent:alice", read_only=False
+async def talk_app(
+    tmp_path, *, conversation=None, human="human:bryan", read_only=False
 ):
     output = TerminalOutput()
+    conversation = conversation or Conversation(
+        "group:dev", "group", (human, "agent:alice", "agent:bob")
+    )
     with create_app_session(input=DummyInput(), output=output):
-        app = tui.TextTui(
+        app = tui.TalkTui(
             AsyncMock(),
-            group,
-            "human:bryan",
+            conversation,
+            human,
             tmp_path,
             LIGHT_TERMINAL_SURFACES,
             read_only=read_only,
-            label=label,
         )
+        app.connection = "Connected"
         with set_app(app.app):
             try:
                 yield app, output
@@ -51,7 +54,7 @@ async def text_app(
 
 def test_input_and_footer_share_message_width_after_resize_and_clear(tmp_path):
     async def scenario():
-        async with text_app(tmp_path) as (ui, output):
+        async with talk_app(tmp_path) as (ui, output):
             for columns in (200, 60, 180):
                 output.columns = columns
                 width = min(columns, 120)
@@ -82,15 +85,16 @@ def test_input_and_footer_share_message_width_after_resize_and_clear(tmp_path):
                         for column in range(columns)
                     ).rstrip()
                     assert len(footer) <= width
-                    assert "alice" in footer and "dm_alice" not in footer
-                    assert "Ctrl+Q quit" in footer
+                    assert footer.startswith("  #dev(3)")
+                    assert footer.endswith("bryan")
+                    assert len(footer) == width - 2
 
     asyncio.run(scenario())
 
 
 def test_input_spacing_preserves_multiline_editing_in_short_terminals(tmp_path):
     async def scenario():
-        async with text_app(tmp_path) as (ui, output):
+        async with talk_app(tmp_path) as (ui, output):
             draft = "one\ntwo\nthree\nfour\nfive\nsix"
             ui.prompt.replace_input(draft)
             for rows in (30, 8, 5, 4, 30):
@@ -107,7 +111,7 @@ def test_input_spacing_preserves_multiline_editing_in_short_terminals(tmp_path):
                 ]
                 assert not any("Window too small" in line for line in lines)
                 assert any("six" in line for line in lines)
-                assert any("Ctrl+Q quit" in line for line in lines)
+                assert any("bryan" in line for line in lines)
                 assert ui.prompt.buffer.text == draft
                 if rows >= 5:
                     assert not lines[0].strip()
@@ -120,7 +124,7 @@ def test_input_spacing_preserves_multiline_editing_in_short_terminals(tmp_path):
 
 def test_history_batch_uses_one_scrollback_write(tmp_path, monkeypatch):
     async def scenario():
-        async with text_app(tmp_path) as (ui, _output):
+        async with talk_app(tmp_path) as (ui, _output):
             output = StringIO()
             monkeypatch.setattr(
                 tui,
@@ -129,7 +133,6 @@ def test_history_batch_uses_one_scrollback_write(tmp_path, monkeypatch):
             )
             write = AsyncMock(side_effect=lambda action: action())
             monkeypatch.setattr(tui, "run_in_terminal", write)
-            ui.agents = {"alice"}
             entries = [
                 (f"1-{index}", {"data": Message.create("agent:alice", body).encode()})
                 for index, body in enumerate(("first message", "second message"))
@@ -144,50 +147,61 @@ def test_history_batch_uses_one_scrollback_write(tmp_path, monkeypatch):
     asyncio.run(scenario())
 
 
-def test_footer_expires_sent_status_and_prioritizes_reconnection(tmp_path, monkeypatch):
+def test_footer_keeps_identity_after_send_and_prioritizes_reconnection(tmp_path):
     async def scenario():
-        async with text_app(tmp_path) as (ui, output):
-            monkeypatch.setattr(tui, "monotonic", lambda: 100.0)
+        async with talk_app(tmp_path) as (ui, output):
             ui.prompt.replace_input("hello")
             await ui.send("hello")
 
             def footer():
                 return fragment_list_to_text(ui.status_text())
 
-            assert "agent:alice · Connected · Sent" in footer()
-            assert "Enter send" in footer()
-            monkeypatch.setattr(tui, "monotonic", lambda: 102.0)
-            assert "Sent" not in footer()
-            assert "Connected" in footer()
+            assert footer().endswith("bryan  ")
+            assert "from " not in footer()
+            assert "Connected" not in footer() and "Sent" not in footer()
+            assert "Enter" not in footer() and "Ctrl" not in footer()
             ui.connection = "Reconnecting…"
-            assert "Reconnecting…" in footer() and "Sent" not in footer()
+            assert footer().rstrip() == "! Reconnecting…"
+            assert "bryan" not in footer() and "Sent" not in footer()
+            assert "#dev" not in footer()
             for width in (1, 12, 29, 30, 60):
                 output.columns = width
                 assert len(footer()) <= width
-                if width >= 30:
-                    assert "Ctrl+Q quit" in footer()
 
     asyncio.run(scenario())
 
 
 @pytest.mark.parametrize(
-    "group,label,read_only",
+    "conversation,read_only,label",
     [
-        ("group:all", "all", False),
-        ("group:dev", "dev", False),
-        ("group:one", "agent:alice ↔ human:bryan", False),
-        ("group:two", "agent:alice ↔ agent:bob", True),
+        (Conversation("group:all", "group", ("human:bryan",)), False, "#all(1)"),
+        (
+            Conversation("group:design", "group", ("human:bryan",)),
+            False,
+            "#design(1)",
+        ),
+        (
+            Conversation("group:one", "direct", ("agent:alice", "human:bryan")),
+            False,
+            "@alice",
+        ),
+        (
+            Conversation("group:two", "direct", ("agent:bob", "agent:alice")),
+            True,
+            "@alice,bob",
+        ),
     ],
 )
-def test_footer_identifies_conversation_kind(tmp_path, group, label, read_only):
+def test_footer_identifies_conversation_kind(tmp_path, conversation, read_only, label):
     async def scenario():
-        async with text_app(
-            tmp_path, group=group, label=label, read_only=read_only
+        async with talk_app(
+            tmp_path, conversation=conversation, read_only=read_only
         ) as (ui, _):
             footer = fragment_list_to_text(ui.status_text())
-            assert footer.startswith(label + " · ")
-            assert ("Read-only" in footer) == read_only
-            assert ("Enter send" in footer) == (not read_only)
+            assert footer.startswith("  " + label)
+            assert footer.endswith("bryan  ")
+            assert "from " not in footer and "read-only" not in footer
+            assert "Ctrl" not in footer
 
     asyncio.run(scenario())
 
@@ -196,7 +210,7 @@ def test_read_only_view_preserves_previous_draft(tmp_path):
     (tmp_path / "draft.txt").write_text("unsent message")
 
     async def scenario():
-        async with text_app(tmp_path, group="group:private", read_only=True) as (ui, _):
+        async with talk_app(tmp_path, read_only=True) as (ui, _):
             assert not ui.prompt.buffer.text
             await ui.send("accidental send")
             ui.save_draft()

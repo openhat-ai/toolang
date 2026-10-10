@@ -20,11 +20,11 @@ from toolang.teaming.client import HubClient
 from toolang.teaming.errors import TeamingError
 
 
-def text_identity(root: Path, connection: str, human: str) -> str:
+def talk_identity(root: Path, connection: str, human: str) -> str:
     return sha256(f"{root.resolve()}\0{connection}\0{human}".encode()).hexdigest()[:20]
 
 
-def text_command(
+def talk_command(
     ctx: typer.Context,
     target: Annotated[
         str | None,
@@ -72,17 +72,21 @@ def text_command(
             return
         if not sys.stdin.isatty() or not sys.stdout.isatty():
             raise ClickException(
-                "Interactive text requires a TTY; provide a message to send and exit"
+                "Interactive Talk requires a TTY; provide a message to send and exit"
             )
-        identity = text_identity(root, config.identity, human)
-        launcher = resolve_launcher(agent=identity)
+        identity = talk_identity(root, config.identity, human)
+        # A running window pins its Hub endpoint; drafts belong to the dataset.
+        window_context = sha256(f"{identity}\0{config.endpoint}".encode()).hexdigest()[
+            :20
+        ]
+        launcher = resolve_launcher(agent=window_context)
         if launcher is not None:
             launcher = replace(
                 launcher,
-                session_mark="@toolang_text",
-                window_mark="@toolang_group",
-                pad_kind="text",
-                session_name=f"text-{human}",
+                session_mark="@toolang_talk",
+                window_mark="@toolang_convo",
+                pad_kind="talk",
+                shared_session="talk",
             )
             argv = [
                 sys.executable,
@@ -90,16 +94,17 @@ def text_command(
                 "toolang.cli.toolang.main",
                 "--root",
                 str(root),
-                "text",
+                "talk",
                 resolved,
             ]
             if not launcher.place_chat(
                 thread_id=resolved, argv=argv, directory=str(Path.cwd())
             ):
                 return
-        from .tui import TextTui
+        from .tui import TalkTui
         from toolang.cli.common.terminal_surfaces import resolve_terminal_surfaces
 
+        # Persist drafts and input history per dataset, viewer, and conversation.
         state = (
             root
             / ".runtime"
@@ -113,14 +118,13 @@ def text_command(
         async def interactive() -> None:
             async with HubClient(config) as client:
                 info = await client.conversation(resolved)
-                await TextTui(
+                await TalkTui(
                     client,
-                    resolved,
+                    info,
                     human,
                     state,
                     surfaces,
                     read_only=not info.allows_sender(human),
-                    label=info.label,
                     max_width=max_width,
                 ).run()
 

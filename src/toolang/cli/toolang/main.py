@@ -79,7 +79,7 @@ _INSPECTION_PANEL_COMMAND_ORDER = (
     "inspect",
 )
 _SCRIPT_PANEL_COMMAND_ORDER = ("init", "run")
-_TEAMING_PANEL_COMMAND_ORDER = ("hub", "text", "top")
+_TEAMING_PANEL_COMMAND_ORDER = ("hub", "talk", "top")
 # Root-hidden run and thread commands stay discoverable in target help.
 _TARGET_HELP_COMMANDS = frozenset(
     (*_RUN_PANEL_COMMAND_ORDER, *_THREAD_PANEL_COMMAND_ORDER)
@@ -401,9 +401,9 @@ _registered_group(
 )
 
 _registered_command(
-    "text",
-    "toolang.cli.toolang.commands.text:text_command",
-    help="Text agents or groups",
+    "talk",
+    "toolang.cli.toolang.commands.talk:talk_command",
+    help="Talk to agents or groups",
     context_settings={"allow_interspersed_args": False},
     rich_help_panel=TEAMING_COMMAND_PANEL,
 )
@@ -735,7 +735,7 @@ def _prog_name(argv0: str) -> str:
 
 
 def _routing_residents(argv: Sequence[str]) -> frozenset[str]:
-    root_args, _body = extract_root_args(argv, literal_commands={"text"})
+    root_args, _body = extract_root_args(argv, literal_commands={"talk"})
     root = resolve_root(explicit_root(root_args))
     return frozenset(LocalAgents(root / "agents").list())
 

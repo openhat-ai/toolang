@@ -81,12 +81,12 @@ def test_invalid_home_api_settings_report_source(tmp_path, config):
         agent_port(layout, None, environ={})
 
 
-def test_root_api_settings_rejected_and_text_requires_running_hub(tmp_path, capsys):
+def test_root_api_settings_rejected_and_talk_requires_running_hub(tmp_path, capsys):
     layout = AgentLayout.resident(tmp_path, "alice")
     (tmp_path / "config.toml").write_text("[api]\nport = 7001\n")
     with pytest.raises(ValueError, match="agent home scope"):
         agent_port(layout, None, environ={})
-    assert cli.main(["--root", str(tmp_path), "text"]) != 0
+    assert cli.main(["--root", str(tmp_path), "talk"]) != 0
     assert "too hub start" in capsys.readouterr().err
     assert cli.main(["--root", str(tmp_path), "hub", "status"]) == 0
     assert "Hub stopped" in capsys.readouterr().out

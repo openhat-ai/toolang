@@ -123,8 +123,8 @@ too new <agent>                       # Create a local agent
 too clone <ref> <agent>               # Clone an agent
 too <agent> chat                      # Chat with an agent
 too hub start                        # Start the messaging Hub; requires Redis/Valkey
-too text <target> [message...]        # Open a conversation or send a message
-too text                              # List messaging conversations
+too talk <target> [message...]        # Open a conversation or send a message
+too talk                             # List messaging conversations
 too [agent] home                      # Open a shell in agent home
 too serve <ref>                       # Run an agent in the foreground
 too start <agent>                     # Start an agent in the background

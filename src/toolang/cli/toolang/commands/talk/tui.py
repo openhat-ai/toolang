@@ -1,12 +1,13 @@
 """Live input and retained/live messages on the terminal's normal screen."""
 
 import asyncio
+import os
 from pathlib import Path
-from time import monotonic
 from typing import Any
 
 from prompt_toolkit.application import Application, run_in_terminal
 from prompt_toolkit.filters import Condition, has_focus
+from prompt_toolkit.formatted_text import StyleAndTextTuples
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.layout import HSplit, HorizontalAlign, Layout, VSplit, Window
 from prompt_toolkit.layout.controls import FormattedTextControl
@@ -15,46 +16,46 @@ from rich.text import Text
 
 from toolang.cli.common.console import terminal_console
 from toolang.cli.common.execution_progress.config import DEFAULT_MAX_PROGRESS_WIDTH
-from toolang.cli.common.execution_progress.formatting import display_width, truncate
+from toolang.cli.common.execution_progress.formatting import truncate
 from toolang.cli.common.input import InputBox
 from toolang.cli.common.input_history import InputHistoryStore
 from toolang.cli.common.scrollback import ScrollbackRenderer
+from toolang.cli.common.status import error_status_line
 from toolang.cli.common.terminal_surfaces import TerminalSurfaces
 from toolang.common.files import atomic_write_text
 from toolang.teaming.client import HubClient
-from toolang.teaming.errors import BackendUnavailable, MessagingError, SendUnconfirmed
-from toolang.teaming.schemas import Message
+from toolang.teaming.errors import BackendUnavailable, MessagingError
+from toolang.teaming.schemas import Conversation, Message, target
 
 from .rendering import display_text, message_block
+from .status import conversation_label, conversation_status, status_line
 
 
-class TextTui:
+class TalkTui:
     def __init__(
         self,
         client: HubClient,
-        group: str,
+        conversation: Conversation,
         human: str,
         state: Path,
         surfaces: TerminalSurfaces,
         *,
         read_only: bool,
-        label: str | None = None,
         max_width: int = DEFAULT_MAX_PROGRESS_WIDTH,
     ):
-        self.client, self.group, self.human = client, group, human
+        self.client, self.group, self.human = client, conversation.id, human
         self.surfaces = surfaces
         self.read_only = read_only
-        self.label = label or group
+        self.conversation = conversation
         self.max_width = max_width
         self.draft = state / "draft.txt"
         self.connection = "Connecting…"
         self.status = ""
-        self.sent_until = 0.0
         self.pending = False
         self.cursor = "0-0"
-        self.agents: set[str] = set()
         self.prompt = InputBox(
             self.invalidate,
+            placeholder="write a message",
             history_store=InputHistoryStore(state / "input.jsonl"),
             on_input=self.save_draft,
             normalize=lambda text: text,
@@ -140,8 +141,9 @@ class TextTui:
                     "input": f"bg:{surfaces.input_background}",
                     "input.placeholder": "dim",
                     "control.run": "bg:ansibrightcyan",
-                    "status": "dim",
-                    "status.warning": "ansiyellow",
+                    "status": "nodim",
+                    "status.error.marker": "fg:ansired",
+                    "status.error": "fg:ansired",
                 }
             ),
         )
@@ -164,37 +166,23 @@ class TextTui:
         # Keep the three-row input and footer usable in very short terminals.
         return int(self.app.output.get_size().rows >= 5)
 
-    def status_text(self) -> list[tuple[str, str]]:
-        status = self.status
-        if status == "Sent" and (
-            monotonic() >= self.sent_until or self.connection != "Connected"
-        ):
-            status = ""
-        state = self.connection + (f" · {status}" if status else "")
-        if self.read_only:
-            state = f"Read-only · {state}"
-        label = self.label
-        left = " ".join(display_text(f" {label} · {state}").split())
-        width = self.content_width()
-        hint = (
-            "Ctrl+Q quit"
-            if self.read_only
-            else "Enter send · Ctrl+J newline · Ctrl+Q quit"
+    def status_text(self) -> StyleAndTextTuples:
+        error = self.status
+        if not error and self.connection not in {"Connected", "Connecting…"}:
+            error = self.connection
+        if error:
+            return [*error_status_line(display_text(error), width=self.content_width())]
+        right = (
+            target(self.human).name
+            if self.connection == "Connected"
+            else self.connection
         )
-        if display_width(left) + display_width(hint) + 2 > width:
-            hint = "Ctrl+Q quit" if width >= 30 else ""
-        left = truncate(left, max(1, width - display_width(hint) - (2 if hint else 0)))
-        gap = " " * max(0, width - display_width(left) - display_width(hint))
-        warning = self.connection in {"Reconnecting…", "Stopped"} or status not in {
-            "",
-            "Sending…",
-            "Sent",
-        }
-        return [
-            ("class:status.warning" if warning else "class:status", left),
-            ("", gap),
-            ("class:status", hint),
-        ]
+        return status_line(
+            conversation_status(self.conversation, self.human),
+            right,
+            center=self.group,
+            width=self.content_width(),
+        )
 
     def save_draft(self) -> None:
         if self.read_only:
@@ -208,21 +196,15 @@ class TextTui:
     async def send(self, body: str) -> None:
         if self.read_only:
             return
-        self.status = "Sending…"
+        self.status = ""
         self.invalidate()
         try:
             await self.client.send(self.group, body=body)
         except MessagingError as exc:
-            self.status = (
-                "Send not confirmed"
-                if isinstance(exc, SendUnconfirmed)
-                else "Send failed"
-            )
+            self.status = str(exc)
             await self.print_notice(str(exc))
         else:
             self.connection = "Connected"
-            self.status = "Sent"
-            self.sent_until = monotonic() + 2
             self.prompt.accept_submission(body)
             self.save_draft()
         finally:
@@ -252,9 +234,7 @@ class TextTui:
                     )
                 else:
                     console.print(
-                        message_block(
-                            message, self.human, self.agents, width, self.surfaces
-                        )
+                        message_block(message, self.human, width, self.surfaces)
                     )
 
         await run_in_terminal(write)
@@ -262,19 +242,10 @@ class TextTui:
 
     async def follow(self) -> None:
         initialized = False
-        reconnecting = False
         delay = 0.5
-        refresh_at = 0.0
         last_gap = None
         while True:
             try:
-                if (
-                    not initialized
-                    or reconnecting
-                    or asyncio.get_running_loop().time() >= refresh_at
-                ):
-                    self.agents = set(await self.client.agents())
-                    refresh_at = asyncio.get_running_loop().time() + 10
                 if not initialized:
                     entries = await self.client.history(self.group)
                     if len(entries) == 200:
@@ -294,11 +265,10 @@ class TextTui:
                 if self.connection != "Connected":
                     self.connection = "Connected"
                     self.invalidate()
-                reconnecting, delay = False, 0.5
+                delay = 0.5
             except BackendUnavailable:
                 self.connection = "Reconnecting…"
                 self.invalidate()
-                reconnecting = True
                 delay = min(delay * 2, 5)
             except MessagingError as exc:
                 self.connection = "Stopped"
@@ -309,7 +279,29 @@ class TextTui:
             await asyncio.sleep(delay)
 
     async def run(self) -> None:
-        await self.app.run_async(
-            pre_run=lambda: self.app.create_background_task(self.follow())
+        title_written = self.write_title(
+            conversation_label(self.conversation, self.human)
         )
-        self.save_draft()
+        try:
+            await self.app.run_async(
+                pre_run=lambda: self.app.create_background_task(self.follow())
+            )
+        finally:
+            if title_written:
+                self.write_title("")
+            self.save_draft()
+
+    def write_title(self, title: str) -> bool:
+        try:
+            if not (
+                os.isatty(self.app.output.fileno())
+                and os.isatty(self.app.input.fileno())
+            ):
+                return False
+            title = truncate(" ".join(display_text(title).split()), 120)
+            # OSC 0 updates iTerm2 tabs/windows and tmux pane_title, as Chat does.
+            self.app.output.write_raw(f"\x1b]0;{title}\x07")
+            self.app.output.flush()
+        except (OSError, ValueError, NotImplementedError):
+            return False
+        return True

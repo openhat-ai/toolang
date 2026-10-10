@@ -75,7 +75,7 @@ def directory_command(ctx: typer.Context) -> None:
         console = Console(markup=False)
         console.print(table)
         console.print(
-            Text("● online  ○ offline · Open: too text <target>", style="dim")
+            Text("● online  ○ offline · Open: too talk <target>", style="dim")
         )
     except (TeamingError, ValueError, OSError) as exc:
         raise ClickException(str(exc)) from exc
