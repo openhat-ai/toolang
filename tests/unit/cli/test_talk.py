@@ -132,7 +132,8 @@ def test_directory_lists_conversations_and_interactive_requires_tty(
     monkeypatch.setenv("TOOLANG_INPUTBOX_MAX_WIDTH", "invalid")
     assert cli.main(["--root", str(tmp_path), "talk"]) == 0
     output = capsys.readouterr().out
-    assert "gc_00000001" in output and "alice" in output and "gc_00000000" in output
+    assert "gc_00000001" in output and "gc_00000000" in output
+    assert "CONVERSATION" in output and "2 conversations" in output
     assert cli.main(["--root", str(tmp_path), "talk", "alice"]) == 1
     assert "TTY" in capsys.readouterr().err
     assert cli.main(["--root", str(tmp_path), "team"]) != 0
@@ -247,10 +248,15 @@ def test_human_observer_sees_both_agents_left_without_a_composer(
         assert cli.main(["--root", str(tmp_path), "talk", group]) == 0
 
 
-def test_directory_shows_presence_previews_and_does_not_create_conversations(
+def test_directory_shows_previews_without_loading_agents_or_creating_conversations(
     tmp_path, capsys, messaging_cli, monkeypatch
 ):
     monkeypatch.setenv("COLUMNS", "240")
+    monkeypatch.setattr(
+        HubClient,
+        "team",
+        AsyncMock(side_effect=AssertionError("Unexpected team lookup")),
+    )
 
     async def prepare():
         pair = await agent_pair(messaging_cli)
@@ -293,11 +299,14 @@ def test_directory_shows_presence_previews_and_does_not_create_conversations(
         "gc_00000001",
         "gc_00000000",
     ]
-    assert "Team" in output and "Conversations" in output and "Name" in output
-    assert "alice · bob" in output
+    assert "CONVERSATION" in output and "NAME" in output
+    assert (
+        "Team" not in output and "Presence" not in output and "too talk" not in output
+    )
+    assert "alice,bob" in output
     assert "agent:" not in output and "human:" not in output
     assert "bob: hello world" in output and "\x1b" not in output
-    assert "Message unavailable" in output and "too talk <id>" in output
+    assert "Message unavailable" in output and "4 conversations" in output
 
     async def unchanged():
         async with messaging_cli() as client:
@@ -306,59 +315,50 @@ def test_directory_shows_presence_previews_and_does_not_create_conversations(
     asyncio.run(unchanged())
 
 
-@pytest.mark.parametrize("agent,body", [("bob", "hello"), ("bobcat", "ok")])
-def test_directory_uses_available_space_for_members(agent, body):
-    timestamp = datetime(2026, 10, 10, 9, 10, tzinfo=timezone.utc)
-    output = render_directory(
-        conversations=[
-            {
-                "conversation": "gc_00000000",
-                "name": "all",
-                "participants": ["agent:alice", f"agent:{agent}", "human:bryan"],
-                "latest": f"{int(timestamp.timestamp() * 1000)}-0",
-                "preview": {"sender": "human:bryan", "body": body},
-            }
-        ],
-        width=60,
-    )
-    row = next(line for line in output.splitlines() if "gc_00000000" in line)
-    assert f"alice · {agent} · bryan" in row and f"bryan: {body}" in row
-    assert cell_len(row) <= 60
-
-
-def render_directory(*, conversations=(), team=(), width=120):
+def render_directory(*, conversations=(), width=120):
     output = StringIO()
     directory._print_directory(
         Console(file=output, width=width, color_system=None, markup=False),
         list(conversations),
-        list(team),
         now=datetime(2026, 10, 10, 12, tzinfo=timezone.utc),
     )
     return output.getvalue()
 
 
+@pytest.mark.parametrize(
+    "participants,expected",
+    [
+        ([], "-"),
+        (["agent:alice"], "alice"),
+        (["human:bryan", "agent:alice"], "alice,bryan"),
+        (["agent:bob", "human:bryan", "agent:alice"], "alice,bob,… (3)"),
+        (
+            ["agent:bob", "human:bryan", "agent:alice", "human:carol", "human:dan"],
+            "alice,bob,… (5)",
+        ),
+    ],
+)
+def test_directory_summarizes_three_or_more_members(participants, expected):
+    rendered = render_directory(
+        conversations=[
+            {
+                "conversation": "gc_abcd1234",
+                "name": None,
+                "participants": participants,
+                "latest": None,
+            }
+        ]
+    )
+    header, row, blank, summary = rendered.splitlines()
+    assert header.split() == ["CONVERSATION", "NAME", "MEMBERS", "UPDATED", "MESSAGE"]
+    assert row[header.index("MEMBERS") : header.index("UPDATED")].strip() == expected
+    assert blank == "" and summary == "1 conversation"
+    assert max(map(cell_len, rendered.splitlines())) < 120
+    assert not any(character in rendered for character in "│─┌┐└┘·")
+
+
 @pytest.mark.parametrize("width", [60, 80, 120, 240])
-def test_directory_keeps_sections_and_long_rows_aligned(width):
-    team = [
-        {
-            "member": "agent:alice",
-            "display_name": "alice",
-            "owner": "human:bryan",
-            "online": True,
-        },
-        {
-            "member": "agent:bob",
-            "display_name": "bob",
-            "owner": "human:bryan",
-            "online": False,
-        },
-        {
-            "member": "human:bryan",
-            "display_name": "bryan",
-            "owner": None,
-            "online": None,
-        },
-    ]
+def test_directory_keeps_timestamps_and_messages_aligned(width):
     times = ["2026-10-10T09:10", "2026-10-09T09:10", "2025-10-10T09:10"]
     conversations = [
         {
@@ -386,23 +386,14 @@ def test_directory_keeps_sections_and_long_rows_aligned(width):
         }
     ]
     rendered = render_directory(
-        conversations=list(reversed(conversations)), team=team, width=width
+        conversations=list(reversed(conversations)), width=width
     )
-    sections = rendered.strip().split("\n\n")
-    assert len(sections) == 3
-    usage, team, conversations = sections
-    assert "too talk alice" in usage and "too talk <id>" in usage
-    assert [line.split() for line in team.splitlines()] == [
-        ["Team"],
-        ["Agent", "Presence"],
-        ["alice", "online"],
-        ["bob", "offline"],
-    ]
-    lines = conversations.splitlines()
-    assert lines[0].strip() == "Conversations"
-    assert lines[1].split() == ["ID", "Name", "Members", "Latest", "message"], rendered
-    assert len(lines) == 6
-    assert [line.split()[0] for line in lines[2:]] == [
+    table, summary = rendered.strip().split("\n\n")
+    lines = table.splitlines()
+    assert summary == "4 conversations"
+    assert lines[0].split() == ["CONVERSATION", "NAME", "MEMBERS", "UPDATED", "MESSAGE"]
+    assert len(lines) == 5
+    assert [line.split()[0] for line in lines[1:]] == [
         "gc_00000000",
         "gc_00000001",
         "gc_00000002",
@@ -410,59 +401,46 @@ def test_directory_keeps_sections_and_long_rows_aligned(width):
     ]
     assert all(cell_len(line) <= width for line in rendered.splitlines())
     assert "agent:" not in rendered and "human:" not in rendered
-    assert "●" not in rendered and "○" not in rendered
     assert "\x1b" not in rendered
-    latest_column = lines[1].index("Latest message")
-    message_columns = []
-    for line, stamp in zip(lines[2:5], ("09:10", "10-09 09:10", "2025-10-10 09:10")):
-        assert cell_len(line[: line.index(stamp)]) == latest_column
-        message_columns.append(cell_len(line[: line.index("bob:")]))
-        assert "bob: hello" in line
+    time_end = lines[0].index("UPDATED") + len("UPDATED")
+    message_column = lines[0].index("MESSAGE")
+    for line, stamp in zip(lines[1:4], ("09:10", "10-09 09:10", "2025-10-10 09:10")):
+        assert cell_len(line[: line.index(stamp) + len(stamp)]) == time_end
+        assert cell_len(line[: line.index("bob:")]) == message_column
+        assert "alice,bob,… (5)" in line
         name = line.split("alice", 1)[0].split(maxsplit=1)[1].strip()
-        # Check terminal cells, including double-width Unicode names.
         assert cell_len(name) <= 24 and name.endswith("…")
-        members = line[line.index("alice") : line.index(stamp)].strip()
-        if width >= 120:
-            assert members == "alice · bob · bryan · caroline · daniel"
-        else:
-            assert members.endswith("…")
-    assert len(set(message_columns)) == 1
-    assert "—" in lines[-1]
+    assert lines[-1].rstrip().endswith("-")
 
 
-@pytest.mark.parametrize("width", [24, 40, 80, 120])
-@pytest.mark.parametrize(
-    "name", ["long-agent-" * 24, "开发助手" * 32], ids=["ascii", "wide"]
-)
-def test_directory_keeps_presence_readable_with_long_agent_names(width, name):
+@pytest.mark.parametrize("width", [24, 32, 40, 48, 60, 80, 120])
+@pytest.mark.parametrize("name", ["long-agent-" * 24, "开发助手" * 32])
+@pytest.mark.parametrize("member_count", [3, 12])
+def test_directory_preserves_ids_and_member_counts_in_narrow_terminals(
+    width, name, member_count
+):
+    timestamp = datetime(2025, 12, 31, 18, 5, tzinfo=timezone.utc)
     rendered = render_directory(
-        team=[
-            {"member": f"agent:{name}", "online": True},
-            {"member": "agent:bob", "online": False},
+        conversations=[
+            {
+                "conversation": "gc_abcd1234",
+                "name": None,
+                "participants": [f"agent:{name}"]
+                + [f"human:member{index}" for index in range(member_count - 1)],
+                "latest": f"{int(timestamp.timestamp() * 1000)}-0",
+                "preview": {"sender": "agent:alice", "body": "hello world"},
+            }
         ],
         width=width,
     )
-    team = rendered.strip().split("\n\n")[1].splitlines()
-    assert len(team) == 4
-    assert team[1].split() == ["Agent", "Presence"]
-    assert team[2].split() == ["bob", "offline"]
-    assert team[3].rstrip().endswith("online")
-    assert "…" in team[3]
-    presence_column = team[1].index("Presence")
-    assert cell_len(team[2][: team[2].index("offline")]) == presence_column
-    assert cell_len(team[3][: team[3].index("online")]) == presence_column
-    assert all(cell_len(line) <= width for line in team)
+    row = rendered.splitlines()[1]
+    assert row.split()[0] == "gc_abcd1234"
+    assert f"… ({member_count})" in row
+    assert all(cell_len(line) <= width for line in rendered.splitlines())
 
 
-@pytest.mark.parametrize(
-    "team",
-    [[], [{"member": "human:bryan", "online": None}]],
-    ids=["empty", "humans-only"],
-)
-def test_directory_empty_sections(team):
-    output = render_directory(team=team)
-    assert "No agents." in output and "No conversations." in output
-    assert "bryan" not in output
+def test_directory_empty_list():
+    assert render_directory() == "0 conversations\n"
 
 
 @pytest.mark.parametrize(

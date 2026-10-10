@@ -1,4 +1,4 @@
-"""List existing conversations and the targets used to open them."""
+"""List existing conversations and their latest messages."""
 
 import asyncio
 from datetime import datetime
@@ -13,13 +13,12 @@ from toolang.cli.common.context import context_root
 from toolang.cli.common.messaging import settings
 from toolang.teaming.client import HubClient
 from toolang.teaming.errors import TeamingError
-from toolang.teaming.schemas import ConversationSummary, TeamMember, stream_id, target
+from toolang.teaming.schemas import ConversationSummary, stream_id, target
 from .rendering import display_text
 
 
 _NAME_MAX_WIDTH = 24
-_PREVIEW_MIN_WIDTH = 12
-_CELL_PADDING = 1
+_PREVIEW_MIN_WIDTH = 9
 
 
 def _message_time(sid: str, now: datetime) -> str:
@@ -33,45 +32,21 @@ def _message_time(sid: str, now: datetime) -> str:
 def _print_directory(
     console: Console,
     conversations: list[ConversationSummary],
-    team: list[TeamMember],
     *,
     now: datetime,
 ) -> None:
     """Render a snapshot using the caller's console and local clock."""
-    console.print("DM: too talk alice · Observe agents: too talk alice,bob")
-    console.print("Open a listed DM or GC: too talk <id>")
-    console.print()
-    agents = {}
-    for row in team:
-        member = target(row["member"])
-        if member.kind == "agent":
-            agents[member.name] = row["online"]
-    directory = Table(
-        title="Team", title_justify="left", box=None, padding=(0, _CELL_PADDING)
-    )
-    presence_width = len("Presence")
-    directory.add_column(
-        "Agent",
-        max_width=max(1, console.width - presence_width - 2 * 2 * _CELL_PADDING),
-        no_wrap=True,
-        overflow="ellipsis",
-    )
-    directory.add_column("Presence", width=presence_width, no_wrap=True)
-    for name, online in sorted(agents.items()):
-        presence = "—" if online is None else "online" if online else "offline"
-        directory.add_row(Text(display_text(name)), presence)
-    console.print(directory)
-    if not agents:
-        console.print("No agents.")
-    console.print()
+    if not conversations:
+        console.print("0 conversations")
+        return
 
     times = {
         row["latest"]: _message_time(row["latest"], now)
         for row in conversations
         if row["latest"]
     }
-    time_width = max(map(len, times.values()), default=0)
     rows = []
+    member_suffixes = []
     for row in sorted(
         conversations,
         key=lambda row: (
@@ -79,67 +54,94 @@ def _print_directory(
             row["conversation"],
         ),
     ):
-        participants = Text()
-        for member in sorted(row["participants"]):
-            if participants:
-                participants.append(" · ", style="dim")
-            participants.append(display_text(target(member).name))
-        latest = Text("—", style="dim")
+        members = sorted(row["participants"])
+        participants = Text(
+            ",".join(display_text(target(member).name) for member in members[:2]) or "-"
+        )
+        suffix = f",… ({len(members)})" if len(members) >= 3 else ""
+        member_suffixes.append(suffix)
+        participants.append(suffix)
+        updated = Text("-", style="dim")
+        message = Text("-", style="dim")
         if row["latest"]:
-            latest = Text(times[row["latest"]].ljust(time_width), style="dim")
+            updated = Text(times[row["latest"]], style="dim")
             if preview := row.get("preview"):
                 sender = display_text(target(preview["sender"]).name)
                 body = " ".join(display_text(preview["body"]).split())
-                latest.append(f" {sender}: {body}", style="not dim")
+                message = Text(f"{sender}: {body}")
             else:
-                latest.append(" Message unavailable")
+                message = Text("Message unavailable", style="dim")
         rows.append(
             (
                 Text(row["conversation"]),
-                Text(" ".join(display_text(row["name"] or "—").split())),
+                Text(" ".join(display_text(row["name"] or "-").split())),
                 participants,
-                latest,
+                updated,
+                message,
             )
         )
 
-    headers = ("ID", "Name", "Members", "Latest message")
+    headers = ("CONVERSATION", "NAME", "MEMBERS", "UPDATED", "MESSAGE")
     content_widths = [
         max(len(header), max((row[index].cell_len for row in rows), default=0))
         for index, header in enumerate(headers)
     ]
-    id_width, name_width, members_width, latest_width = content_widths
+    id_width, name_width, members_width, time_width, message_width = content_widths
     name_width = min(_NAME_MAX_WIDTH, name_width)
+    members_min_width = max(len("MEMBERS"), max(map(len, member_suffixes)) + 1)
     # Protect timestamps and previews, then share the remaining space between
     # names and members. Short cells release their unused space to the other column.
-    padding_width = 2 * len(headers) * _CELL_PADDING
-    preview_width = min(
-        latest_width, max(len("Latest message"), time_width + _PREVIEW_MIN_WIDTH)
-    )
+    padding_width = len(headers) - 1
+    preview_width = min(message_width, _PREVIEW_MIN_WIDTH)
     metadata_width = max(
-        len("Name") + len("Members"),
-        console.width - id_width - padding_width - preview_width,
+        len("NAME") + members_min_width,
+        console.width - id_width - time_width - padding_width - preview_width,
     )
-    name_limit = min(name_width, max(len("Name"), metadata_width // 2))
-    members_limit = min(members_width, max(len("Members"), metadata_width - name_limit))
+    members_limit = min(
+        members_width, max(members_min_width, metadata_width - len("NAME"))
+    )
     name_limit = min(name_width, metadata_width - members_limit)
+    message_limit = max(
+        len("MESSAGE"),
+        console.width
+        - id_width
+        - name_limit
+        - members_limit
+        - time_width
+        - padding_width,
+    )
     table = Table(
-        title="Conversations",
-        title_justify="left",
         box=None,
-        padding=(0, _CELL_PADDING),
-        expand=True,
+        header_style="",
+        show_lines=False,
+        pad_edge=False,
+        collapse_padding=True,
     )
-    table.add_column("ID", min_width=id_width, no_wrap=True)
-    table.add_column("Name", max_width=name_limit, no_wrap=True, overflow="ellipsis")
+    # Rich may shrink fixed widths when the terminal is too narrow. Keep IDs
+    # and the pre-truncated member counts intact with explicit minimum widths.
+    table.add_column("CONVERSATION", min_width=id_width, no_wrap=True)
+    table.add_column("NAME", max_width=name_limit, no_wrap=True, overflow="ellipsis")
     table.add_column(
-        "Members", max_width=members_limit, no_wrap=True, overflow="ellipsis"
+        "MEMBERS",
+        min_width=members_limit,
+        max_width=members_limit,
+        no_wrap=True,
+        overflow="ellipsis",
     )
-    table.add_column("Latest message", ratio=1, no_wrap=True, overflow="ellipsis")
-    for row in rows:
+    table.add_column("UPDATED", width=time_width, justify="right", no_wrap=True)
+    table.add_column(
+        "MESSAGE", max_width=message_limit, no_wrap=True, overflow="ellipsis"
+    )
+    for row, suffix in zip(rows, member_suffixes):
+        if suffix and row[2].cell_len > members_limit:
+            names = Text(row[2].plain[: -len(suffix)])
+            names.truncate(max(1, members_limit - len(suffix)), overflow="crop")
+            row[2].plain = names.plain.rstrip(", ") + suffix
         table.add_row(*row)
     console.print(table)
-    if not conversations:
-        console.print("No conversations.")
+    console.print()
+    count = len(conversations)
+    console.print(f"{count} {'conversation' if count == 1 else 'conversations'}")
 
 
 def directory_command(ctx: typer.Context) -> None:
@@ -148,11 +150,11 @@ def directory_command(ctx: typer.Context) -> None:
 
         async def listing():
             async with HubClient(config) as client:
-                return await client.contacts(include_preview=True), await client.team()
+                return await client.contacts(include_preview=True)
 
-        conversations, team = asyncio.run(listing())
+        conversations = asyncio.run(listing())
         _print_directory(
-            Console(markup=False), conversations, team, now=datetime.now().astimezone()
+            Console(markup=False), conversations, now=datetime.now().astimezone()
         )
     except (TeamingError, ValueError, OSError) as exc:
         raise ClickException(str(exc)) from exc

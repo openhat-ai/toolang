@@ -55,7 +55,7 @@ def top_command(
         float, typer.Option(help="Screen refresh interval in seconds")
     ] = 0.1,
 ) -> None:
-    """Show team or selected agent activity"""
+    """Monitor agent activity"""
     if tree and view != "execution":
         raise ClickException("--tree requires --view execution")
     if not math.isfinite(refresh) or refresh <= 0:
