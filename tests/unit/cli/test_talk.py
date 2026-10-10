@@ -25,6 +25,7 @@ from prompt_toolkit.layout.controls import BufferControl
 from prompt_toolkit.output import DummyOutput
 from rich.console import Console
 from rich.color import Color, ColorType
+from rich.cells import cell_len
 
 from toolang.cli.toolang import main as cli
 from toolang.cli.toolang.commands import talk
@@ -290,9 +291,9 @@ def test_directory_shows_presence_previews_and_does_not_create_conversations(
         "gc_00000001",
         "gc_00000000",
     ]
-    assert "Team" in output and "Convos" in output and "Name" in output
-    assert "○agent:alice · ●agent:bob" in output
-    assert "●human:bryan" not in output and "○human:bryan" not in output
+    assert "Team" in output and "Conversations" in output and "Name" in output
+    assert "alice · bob" in output
+    assert "agent:" not in output and "human:" not in output
     assert "bob: hello world" in output and "\x1b" not in output
     assert "Message unavailable" in output and "too talk <id>" in output
 
@@ -301,6 +302,135 @@ def test_directory_shows_presence_previews_and_does_not_create_conversations(
             assert {g["conversation"] for g in await client.contacts()} == before
 
     asyncio.run(unchanged())
+
+
+@pytest.mark.parametrize("width", [80, 120, 240])
+def test_directory_keeps_sections_and_long_rows_aligned(tmp_path, monkeypatch, width):
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 10, 10, 12, tzinfo=timezone.utc)
+
+        def astimezone(self, tz=None):
+            return super().astimezone(tz or timezone.utc)
+
+    monkeypatch.setattr(directory, "datetime", Clock)
+    client = AsyncMock()
+    client.__aenter__.return_value = client
+    client.team.return_value = [
+        {
+            "member": "agent:alice",
+            "display_name": "alice",
+            "owner": "human:bryan",
+            "online": True,
+        },
+        {
+            "member": "agent:bob",
+            "display_name": "bob",
+            "owner": "human:bryan",
+            "online": False,
+        },
+        {
+            "member": "human:bryan",
+            "display_name": "bryan",
+            "owner": None,
+            "online": None,
+        },
+    ]
+    times = ["2026-10-10T09:10", "2026-10-09T09:10", "2025-10-10T09:10"]
+    client.contacts.return_value = [
+        {
+            "conversation": f"gc_0000000{index}",
+            "name": "开发讨论" * 16 if index == 0 else "Long conversation name " * 4,
+            "kind": "gc",
+            "participants": [
+                "agent:alice",
+                "agent:bob",
+                "human:bryan",
+                "human:caroline",
+                "human:daniel",
+            ],
+            "latest": f"{int(datetime.fromisoformat(stamp).replace(tzinfo=timezone.utc).timestamp() * 1000)}-0",
+            "preview": {"sender": "agent:bob", "body": "hello\x1b[2J\nworld " * 30},
+        }
+        for index, stamp in enumerate(times)
+    ] + [
+        {
+            "conversation": "dm_00000003",
+            "name": None,
+            "kind": "dm",
+            "participants": ["agent:alice", "human:bryan"],
+            "latest": None,
+        }
+    ]
+    monkeypatch.setattr(directory, "HubClient", lambda config: client)
+    monkeypatch.setattr(directory, "settings", lambda root: (None, "human:bryan"))
+    output = StringIO()
+    monkeypatch.setattr(
+        directory,
+        "Console",
+        lambda **kwargs: Console(file=output, width=width, color_system=None, **kwargs),
+    )
+
+    assert cli.main(["--root", str(tmp_path), "talk"]) == 0
+    rendered = output.getvalue()
+    sections = rendered.strip().split("\n\n")
+    assert len(sections) == 3
+    usage, team, conversations = sections
+    assert "too talk alice" in usage and "too talk <id>" in usage
+    assert [line.split() for line in team.splitlines()] == [
+        ["Team"],
+        ["Agent", "Presence"],
+        ["alice", "online"],
+        ["bob", "offline"],
+    ]
+    lines = conversations.splitlines()
+    assert lines[0].strip() == "Conversations"
+    assert lines[1].split() == ["ID", "Name", "Members", "Latest", "message"], rendered
+    assert len(lines) == 6
+    assert [line.split()[0] for line in lines[2:]] == [
+        "gc_00000000",
+        "gc_00000001",
+        "gc_00000002",
+        "dm_00000003",
+    ]
+    assert all(cell_len(line) <= width for line in rendered.splitlines())
+    assert "agent:" not in rendered and "human:" not in rendered
+    assert "●" not in rendered and "○" not in rendered
+    assert "\x1b" not in rendered
+    latest_column = lines[1].index("Latest message")
+    message_columns = []
+    for line, stamp in zip(lines[2:5], ("09:10", "10-09 09:10", "2025-10-10 09:10")):
+        assert cell_len(line[: line.index(stamp)]) == latest_column
+        message_columns.append(cell_len(line[: line.index("bob:")]))
+        name = line.split("alice", 1)[0].split(maxsplit=1)[1].strip()
+        # Check terminal cells, including double-width Unicode names.
+        assert cell_len(name) <= 24 and name.endswith("…")
+        members = line.split("alice", 1)[1].split(stamp, 1)[0].strip()
+        assert members.endswith("…")
+    assert len(set(message_columns)) == 1
+    assert "—" in lines[-1]
+
+
+def test_directory_with_only_humans_shows_no_agents(
+    tmp_path, monkeypatch, messaging_cli, capsys
+):
+    client = AsyncMock()
+    client.__aenter__.return_value = client
+    client.team.return_value = [
+        {
+            "member": "human:bryan",
+            "display_name": "bryan",
+            "owner": None,
+            "online": None,
+        }
+    ]
+    client.contacts.return_value = []
+    monkeypatch.setattr(directory, "HubClient", lambda config: client)
+    assert cli.main(["--root", str(tmp_path), "talk"]) == 0
+    output = capsys.readouterr().out
+    assert "No agents." in output and "No conversations." in output
+    assert "bryan" not in output
 
 
 @pytest.mark.parametrize(

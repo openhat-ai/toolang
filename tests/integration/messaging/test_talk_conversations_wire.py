@@ -95,7 +95,8 @@ def test_talk_empty_dm_first_send_peer_reply_and_observation(
             listing = await asyncio.to_thread(command)
             assert listing.returncode == 0, listing.stderr
             assert all(
-                word in listing.stdout for word in ("Team", "Convos", "alice", "bob")
+                word in listing.stdout
+                for word in ("Team", "Conversations", "alice", "bob")
             )
             assert direct not in listing.stdout
             missing = await asyncio.to_thread(command, "alice,bob")

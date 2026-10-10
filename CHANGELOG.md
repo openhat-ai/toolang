@@ -20,12 +20,14 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   participant, canonical ID, or, with `by_name`, a conversation name, returning
   candidate IDs when a name is ambiguous.
 
-- `too talk` with no target prints a one-shot `Team` and `Convos` directory and
-  exits, without requiring a TTY and without opening a session or tmux window:
-  `Team` lists visible agents and humans with canonical IDs, display names,
-  owners, and agent online state, while `Convos` lists accessible conversations
-  with separate ID and Name columns (an unnamed conversation shows an em dash),
-  kind, participants, and latest-message state.
+- `too talk` with no target prints usage lines first, then a `Team` list and a
+  `Conversations` table, and exits, without requiring a TTY and without opening
+  a session or tmux window: `Team` lists visible agents with their presence,
+  while `Conversations` lists accessible conversations with separate ID, Name,
+  Members, and Latest message columns; an unnamed conversation shows an em dash,
+  and a timestamp aligned across rows precedes the latest sender and preview.
+  Member and sender names omit their identity prefixes, and long names, member
+  lists, and previews are ellipsized so every row stays on one line.
 
 - The Hub serves the resumable team feed at
   `GET /team/events?after=t1.<epoch>.<stream-id>`: an initial checkpoint

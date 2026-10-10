@@ -13,7 +13,7 @@ from toolang.cli.common.context import context_root
 from toolang.cli.common.messaging import settings
 from toolang.teaming.client import HubClient
 from toolang.teaming.errors import TeamingError
-from toolang.teaming.schemas import stream_id
+from toolang.teaming.schemas import stream_id, target
 from .rendering import display_text
 
 
@@ -41,11 +41,18 @@ def directory_command(ctx: typer.Context) -> None:
             )
         )
         console = Console(markup=False)
-        members = {row["member"]: row for row in team}
-        directory = Table(title="Team", box=None, padding=(0, 1))
-        for heading in ("Member", "Name", "Owner", "Presence"):
-            directory.add_column(heading)
-        for member, row in sorted(members.items()):
+        console.print("DM: too talk alice · Observe agents: too talk alice,bob")
+        console.print("Open a listed DM or GC: too talk <id>")
+        console.print()
+        agents = {
+            target(row["member"]).name: row
+            for row in team
+            if target(row["member"]).kind == "agent"
+        }
+        directory = Table(title="Team", title_justify="left", box=None, padding=(0, 1))
+        for heading in ("Agent", "Presence"):
+            directory.add_column(heading, no_wrap=True, overflow="ellipsis")
+        for name, row in sorted(agents.items()):
             presence = (
                 "—"
                 if row["online"] is None
@@ -53,55 +60,62 @@ def directory_command(ctx: typer.Context) -> None:
                 if row["online"]
                 else "offline"
             )
-            directory.add_row(
-                *(
-                    Text(display_text(str(value)))
-                    for value in (
-                        member,
-                        row["display_name"],
-                        row["owner"] or "—",
-                        presence,
-                    )
-                )
-            )
+            directory.add_row(Text(display_text(name)), presence)
         console.print(directory)
-        if not members:
-            console.print("No team members.")
-        table = Table(title="Convos", box=None, padding=(0, 1))
-        for heading in ("ID", "Name", "Kind", "Participants", "Latest message"):
-            table.add_column(heading)
+        if not agents:
+            console.print("No agents.")
+        console.print()
+        table = Table(
+            title="Conversations",
+            title_justify="left",
+            box=None,
+            padding=(0, 1),
+            expand=True,
+        )
+        table.add_column("ID", min_width=11, no_wrap=True)
+        table.add_column(
+            "Name",
+            max_width=min(24, max(4, console.width // 5)),
+            no_wrap=True,
+            overflow="ellipsis",
+        )
+        table.add_column(
+            "Members",
+            max_width=min(32, max(7, console.width // 4)),
+            no_wrap=True,
+            overflow="ellipsis",
+        )
+        table.add_column("Latest message", ratio=1, no_wrap=True, overflow="ellipsis")
         now = datetime.now().astimezone()
+        times = {
+            row["latest"]: _message_time(row["latest"], now)
+            for row in conversations
+            if row["latest"]
+        }
+        time_width = max(map(len, times.values()), default=0)
         for row in conversations:
             participants = Text()
             for member in sorted(row["participants"]):
                 if participants:
                     participants.append(" · ", style="dim")
-                state = members.get(member, {}).get("online")
-                if state is not None:
-                    participants.append(
-                        "●" if state else "○", style="green" if state else "dim"
-                    )
-                participants.append(display_text(member))
+                participants.append(display_text(target(member).name))
             latest = Text("—", style="dim")
             if row["latest"]:
-                latest = Text(_message_time(row["latest"], now), style="dim")
+                latest = Text(times[row["latest"]].ljust(time_width), style="dim")
                 if preview := row.get("preview"):
-                    sender = display_text(preview["sender"])
+                    sender = display_text(target(preview["sender"]).name)
                     body = " ".join(display_text(preview["body"]).split())
                     latest.append(f" {sender}: {body}", style="not dim")
                 else:
                     latest.append(" Message unavailable")
             table.add_row(
                 Text(row["conversation"]),
-                Text(display_text(row["name"] or "—")),
-                Text(row["kind"]),
+                Text(" ".join(display_text(row["name"] or "—").split())),
                 participants,
                 latest,
             )
         console.print(table)
         if not conversations:
             console.print("No conversations.")
-        console.print("DM: too talk alice · Observe agents: too talk alice,bob")
-        console.print("Open a listed DM or GC: too talk <id> · ● online  ○ offline")
     except (TeamingError, ValueError, OSError) as exc:
         raise ClickException(str(exc)) from exc
