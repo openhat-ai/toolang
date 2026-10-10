@@ -1214,7 +1214,7 @@ async def _execute(
     )
     sink = progress.sink if progress is not None else None
     setup = await setup_watcher.refresh(progress=sink)
-    state = await state_watcher.refresh()
+    state = await state_watcher.refresh(progress=sink)
     models = setup.models_effective(progress=sink)
     setup.tools(progress=sink)
     fallback_model = first_model_ref(models) if setup.defaults.model is None else None

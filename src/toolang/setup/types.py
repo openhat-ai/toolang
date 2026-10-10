@@ -133,23 +133,32 @@ class _LazyValues:
                 future = Future()
                 self.loading[key] = future
 
-        try:
-            with setup_progress(progress, target=target, resource=resource):
-                if not owner:
-                    return cast(T, future.result())
-                value = loader()
-                with self.lock:
-                    self.values[key] = value
-                    if self.loading.get(key) is future:
-                        self.loading.pop(key, None)
-                future.set_result(value)
-                return value
-        except BaseException as error:
+        def reject(error: BaseException) -> None:
             if owner and not future.done():
                 with self.lock:
                     if self.loading.get(key) is future:
                         self.loading.pop(key, None)
                 future.set_exception(error)
+
+        try:
+            with setup_progress(progress, target=target, resource=resource):
+                try:
+                    if not owner:
+                        return cast(T, future.result())
+                    value = loader()
+                    with self.lock:
+                        self.values[key] = value
+                        if self.loading.get(key) is future:
+                            self.loading.pop(key, None)
+                    future.set_result(value)
+                    return value
+                except BaseException as error:
+                    # Terminal observers may retry; release this attempt first.
+                    reject(error)
+                    raise
+        except BaseException as error:
+            # Starting progress can itself be interrupted before the load begins.
+            reject(error)
             raise
 
 

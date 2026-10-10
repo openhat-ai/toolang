@@ -110,7 +110,7 @@ def test_local_script_saves_only_to_an_explicit_destination(
         def current(self):
             return publication
 
-        async def refresh(self):
+        async def refresh(self, *, progress=None):
             return publication
 
         async def refresh_result(self):
@@ -406,7 +406,7 @@ def test_local_script_context_uses_resolved_input_overrides(
     async def setup(_watcher, *, progress=None):
         return harness.setup
 
-    async def state(_watcher):
+    async def state(_watcher, *, progress=None):
         return harness.state
 
     async def state_result(_watcher):

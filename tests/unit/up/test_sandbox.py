@@ -1245,3 +1245,37 @@ def test_management_lock_reports_waiting_before_the_lock_is_available(tmp_path):
             assert events[0].label == "Waiting for agent management..."
         future.result(timeout=2)
     assert [event.status for event in events] == ["running", "ok"]
+
+
+@pytest.mark.parametrize("owned_handle", [False, True])
+def test_shutdown_reports_management_lock_contention(tmp_path, owned_handle):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+    from toolang.common.files import file_write_lock
+
+    layout = AgentLayout.resident(tmp_path, "alice")
+    waiting = Event()
+    events = []
+
+    def progress(event):
+        events.append(event)
+        if event.status == "running":
+            waiting.set()
+
+    def stop():
+        if owned_handle:
+            handle = sandbox.SandboxHandle(
+                FakeSandbox(),
+                sandbox.SandboxState("fake", SandboxRef("test", "http://localhost:1")),
+            )
+            return asyncio.run(sandbox.stop_handle(layout, handle, progress=progress))
+        return asyncio.run(sandbox.stop(layout, progress=progress))
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        with file_write_lock(layout.sandbox_state.with_suffix(".lock")):
+            future = pool.submit(stop)
+            assert waiting.wait(timeout=1), "Shutdown blocked without progress"
+            assert not future.done()
+        assert future.result(timeout=2) is False
+    assert [event.status for event in events] == ["running", "ok"]
+    assert {event.stage for event in events} == {"stop"}

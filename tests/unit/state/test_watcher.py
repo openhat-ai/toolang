@@ -783,3 +783,34 @@ def test_state_watcher_publishes_filtered_caps_once_per_revision_and_override(
 
     monkeypatch.setattr(state_collections, "cap_collection", fail_query)
     assert publication.caps_for("agent") == publication.caps_for("agent")
+
+
+def test_queued_refreshes_keep_progress_scoped_to_each_request(tmp_path, monkeypatch):
+    layout = AgentLayout.resident(tmp_path, "alice")
+    layout.home.mkdir(parents=True)
+    layout.program.write_text("flow run():\n  pass\n")
+    watcher = state_watcher.StateWatcher(layout)
+    original = state_watcher.prepare_agent_state
+    seen = []
+    first_events, second_events = [], []
+    first_sink, second_sink = first_events.append, second_events.append
+
+    def prepare(*args, **kwargs):
+        seen.append(kwargs.get("progress"))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(state_watcher, "prepare_agent_state", prepare)
+
+    async def scenario():
+        first, second = await asyncio.gather(
+            watcher.refresh(force=True, progress=first_sink),
+            watcher.refresh_result(force=True, progress=second_sink),
+        )
+        assert first.revision == second.state.revision
+        assert first_events and second_events
+        event_counts = (len(first_events), len(second_events))
+        await watcher.refresh(force=True)
+        assert (len(first_events), len(second_events)) == event_counts
+
+    asyncio.run(scenario())
+    assert seen == [first_sink, second_sink, None]

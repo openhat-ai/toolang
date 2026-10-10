@@ -11,7 +11,7 @@ from pathlib import Path
 import os
 import threading
 import time
-from typing import Protocol, runtime_checkable
+from typing import Literal, Protocol, runtime_checkable
 from urllib.error import URLError
 from urllib.request import urlopen
 from uuid import uuid4
@@ -181,7 +181,10 @@ async def launch(
 
 @contextmanager
 def management_lock(
-    layout: AgentLayout, *, progress: ProgressSink | None = None
+    layout: AgentLayout,
+    *,
+    stage: Literal["start", "stop"] = "start",
+    progress: ProgressSink | None = None,
 ) -> Iterator[None]:
     """Show contention while retaining the shared, reentrant lifecycle lock."""
     waiting = False
@@ -194,7 +197,7 @@ def management_lock(
             progress,
             id=item_id,
             kind="runtime",
-            stage="start",
+            stage=stage,
             label="Waiting for agent management...",
             status="running",
             detail=layout.name,
@@ -206,7 +209,7 @@ def management_lock(
                 progress,
                 id=item_id,
                 kind="runtime",
-                stage="start",
+                stage=stage,
                 label="Agent management available",
                 status="ok",
             )
@@ -614,7 +617,7 @@ async def stop(
 
     lock_path = layout.sandbox_state.with_suffix(".lock")
     async with _task_lock(lock_path):
-        with file_write_lock(lock_path):
+        with management_lock(layout, stage="stop", progress=progress):
             _reject_legacy_state(layout)
             state = SandboxState.load(layout.sandbox_state)
             if state is None:
@@ -645,7 +648,7 @@ async def stop_handle(
 
     lock_path = layout.sandbox_state.with_suffix(".lock")
     async with _task_lock(lock_path):
-        with file_write_lock(lock_path):
+        with management_lock(layout, stage="stop", progress=progress):
             _reject_legacy_state(layout)
             current = SandboxState.load(layout.sandbox_state)
             if current is None:
