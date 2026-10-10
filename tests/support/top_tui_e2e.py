@@ -63,7 +63,11 @@ flow review(_: Text) -> Text:
   run worker
 """,
         responses=[
-            ModelCallResult(message=Message.assistant("Already complete")),
+            ModelCallResult(
+                message=Message.assistant(
+                    os.environ.get("TOOLANG_TEST_RESULT", "Already complete")
+                )
+            ),
             ModelCallResult(
                 tool_calls=(ToolCall("tool-1", "call-1", tool.name, {"value": 3}),),
                 usage=ModelUsage(10, 5, reported_cost=0.25, reported_currency="USD"),

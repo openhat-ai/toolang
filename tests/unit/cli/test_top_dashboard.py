@@ -198,3 +198,22 @@ def test_three_line_terminal_keeps_identity_headings_and_status():
     assert lines[0].startswith("Team")
     assert lines[1].startswith("AGENT")
     assert "q Quit" in lines[2]
+
+
+@pytest.mark.parametrize("reconnecting", [False, True])
+def test_result_reload_waits_for_recovered_checkpoint(reconnecting):
+    state = Activity("agent:alice", view="execution")
+    snapshot = page()
+    feed(state, snapshot)
+    state.details = True
+    key = (snapshot.agent, "run_done", "succeeded")
+    state.selected = key[:2]
+    state.result_key = key
+    state.result_text = "Unavailable"
+    state.reconnecting = reconnecting
+    state.attach()
+    state.feed("activity_page", snapshot.model_dump())
+    assert state.result_key == key
+    state.feed("activity_checkpoint", {"agents": [snapshot.agent]})
+    assert state.result_key == (None if reconnecting else key)
+    assert state.selected == key[:2]

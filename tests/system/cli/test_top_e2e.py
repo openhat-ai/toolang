@@ -1,12 +1,20 @@
 """Top interaction over actual HTTP/SSE and a pseudo-terminal."""
 
+from contextlib import closing
 import json
 import os
+import re
+import shlex
+import shutil
+import sys
 import time
+from uuid import uuid4
 
 import httpx
+from libtmux import Server
 import pytest
 
+from tests import PROJECT_ROOT
 from tests.support.chat_tui_pty import ChatTuiPtySession
 
 pytestmark = pytest.mark.skipif(os.name != "posix", reason="requires a PTY")
@@ -218,5 +226,155 @@ def test_ctrl_selection_during_slow_details_and_terminal_restore(
         session.send(b"q")
         assert session.wait_for_exit() == 0
         session.wait_for_bytes(b"\x1b[?1049l")
+    finally:
+        session.close()
+
+
+@pytest.mark.skipif(shutil.which("tmux") is None, reason="tmux is not installed")
+@pytest.mark.parametrize("local", [False, True])
+def test_top_terminal_grid_resize_and_markdown_pages(tmp_path, local):
+    """Inspect the current screen, including reflow and Markdown beyond page one."""
+    result = (
+        "# Review result\n\n**Verified** configuration.\n\n"
+        + "\n".join(f"- Item {i}: 中文 e\u0301" for i in range(30))
+        + "\n\n```python\nanswer = 42\n```\n\nFinished."
+    )
+    server = Server(
+        socket_name=f"toolang-top-grid-{uuid4().hex}", config_file=os.devnull
+    )
+    try:
+        session = server.new_session(
+            session_name="top",
+            start_directory=PROJECT_ROOT,
+            window_command=shlex.join(
+                [sys.executable, "-m", "tests.support.top_tui_e2e", str(tmp_path)]
+            ),
+            x=160,
+            y=30,
+            environment={
+                "TERM": "xterm-256color",
+                "TOOLANG_TEST_LOCAL": "1" if local else "0",
+                "TOOLANG_TEST_RESULT": result,
+            },
+        )
+        window = session.active_window
+        pane = window.active_pane
+        assert pane is not None
+
+        def screen(predicate, timeout=10):
+            deadline = time.monotonic() + timeout
+            lines = []
+            while time.monotonic() < deadline:
+                lines = pane.capture_pane() or []
+                if predicate(lines):
+                    return lines
+                time.sleep(0.02)
+            pytest.fail("Top did not redraw:\n" + "\n".join(lines))
+
+        screen(lambda lines: "1 active" in "\n".join(lines))
+        for width, height in ((160, 30), (80, 24), (40, 15), (160, 30)):
+            window.resize(width=width, height=height)
+            lines = screen(
+                lambda lines: (
+                    len(lines) == height
+                    and lines[0].startswith("Agent alice ")
+                    and len(lines[0]) == width
+                    and re.search(r"\d{2}:\d{2}:\d{2}$", lines[0])
+                    and "q Quit" in lines[-1]
+                    and sum(line.startswith("S ") for line in lines) == 1
+                    and sum(line.startswith("+ ") for line in lines) == 1
+                )
+            )
+            assert "…" not in "\n".join(lines)
+            # Numeric headings and values share their right edge.
+            heading = next(line for line in lines if line.startswith("S "))
+            row = next(line for line in lines if line.startswith("+ "))
+            spend_end = heading.index("SPEND") + len("SPEND")
+            assert row[spend_end - 5 : spend_end] == "$0.25"
+
+        pane.send_keys("e", enter=False)
+        screen(lambda lines: any(" RUN " in line for line in lines))
+        pane.send_keys("C-n", enter=False)
+        pane.send_keys("Enter", enter=False)
+        lines = screen(
+            lambda lines: any(
+                (match := re.match(r"Details 1-\d+/(\d+)", line)) and int(match[1]) > 30
+                for line in lines
+            )
+        )
+        assert any("Review result" in line for line in lines)
+        assert "**Verified**" not in "\n".join(lines)
+        assert any("Verified configuration." in line for line in lines)
+        pane.send_keys("PageDown", enter=False)
+        lines = screen(
+            lambda lines: any("Item 0: 中文 e\u0301" in line for line in lines)
+        )
+        # Paging moves only Details; the selected run and table stay in place.
+        table = [line[line.index("term_") :] for line in lines if line.startswith("+ ")]
+        for _ in range(12):
+            pane.send_keys("PageDown", enter=False)
+        lines = screen(lambda lines: any("answer = 42" in line for line in lines))
+        assert any("Finished." in line for line in lines)
+        assert "q Quit" in lines[-1]
+        assert [
+            line[line.index("term_") :] for line in lines if line.startswith("+ ")
+        ] == table
+        assert not any("```" in line for line in lines)
+        pane.send_keys("C-p", enter=False)
+        lines = screen(lambda lines: any("Status: running" in line for line in lines))
+        assert any(line.startswith("Details 1-") for line in lines)
+        pane.send_keys("Escape", enter=False)
+        screen(lambda lines: not any(line.startswith("Details ") for line in lines))
+    finally:
+        server.kill()
+
+
+@pytest.mark.parametrize("name", ["alice", "team"])
+def test_offline_agent_top_recovers_when_history_becomes_available(tmp_path, name):
+    from toolang.common.layout import AgentLayout
+    from toolang.execution import statistics
+    from toolang.execution.store import RunStore
+    from toolang.execution.types import Output
+    from tests.support.execution_fixtures import project_run_end
+    from tests.unit.execution.test_activity import at, model, root
+
+    layout = AgentLayout.resident(tmp_path, name)
+    layout.home.mkdir(parents=True)
+    layout.program.write_text("agic main(_: Text) -> Text:\n  user: {{_}}\n")
+    session = ChatTuiPtySession.start(
+        "toolang.cli.toolang.main",
+        "--root",
+        tmp_path,
+        name,
+        "top",
+        "--since",
+        "all",
+        "--recent",
+        "all",
+        "--view",
+        "execution",
+        columns=180,
+    )
+    try:
+        session.wait_for(f"Agent {name}  offline", "No matching activity")
+        assert not layout.run_store.exists(), "Observation must not create history"
+        # Simulate committed history arriving while this read-only client stays open.
+        with closing(RunStore(layout.run_store)) as store:
+            statistics.start_session(store, "one", at(0))
+            root(store)
+            model(store)
+            project_run_end(
+                store,
+                run_id="run_root",
+                finished_at=at(120),
+                output=Output("# Saved result", "_"),
+            )
+            statistics.checkpoint(store, "one", at(120), end=True)
+        session.data.clear()
+        session.wait_for(f"Agent {name}  offline  2m00s", "$0.50", "run_root")
+        session.send(b"\r")
+        session.wait_for("Saved result", f"Inspect: too {name} inspect run_root")
+        session.send(b"q")
+        assert session.wait_for_exit() == 0
     finally:
         session.close()

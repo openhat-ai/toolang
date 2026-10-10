@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 import sys
+from urllib.parse import urlsplit
 
 import httpx
 import pytest
@@ -144,7 +145,34 @@ def test_top_hub_modes_and_source_recovery(valkey, running_hub, tmp_path):
                             break
                         await asyncio.sleep(0.1)
                 assert recovered["stats"]["model"] == 2
-                session.send(b"e\x1b[15~")
+                # Restart the actual Hub while the same terminal and agent keep
+                # running. Backend identity and committed counts must survive.
+                await asyncio.to_thread(running_hub.stop, force=True)
+                session.data.clear()
+                await asyncio.to_thread(session.wait_for, "Reconnecting")
+                session.send(b"e\x1b[B\r")
+                await asyncio.to_thread(session.wait_for, "Unavailable")
+                await asyncio.to_thread(
+                    running_hub.start,
+                    [
+                        sys.executable,
+                        "-m",
+                        "toolang.cli.toolang.main",
+                        "--root",
+                        str(tmp_path),
+                        "hub",
+                        "serve",
+                        "--port",
+                        str(urlsplit(connection.endpoint).port),
+                    ],
+                )
+                session.data.clear()
+                await asyncio.to_thread(session.wait_for, "2/2 online", "$0.25")
+                assert (await pages())["agent:alice"]["stats"]["model"] == 2
+                await asyncio.to_thread(session.wait_for, "\nAlready complete")
+                session.send(b"\x1b")
+                await asyncio.to_thread(session._read, timeout=0.2)
+                session.send(b"\x1b[Ae\x1b[15~")
                 await asyncio.to_thread(session.wait_for, "STEP", "math__double")
                 (tmp_path / "release-tool").touch()
                 await asyncio.to_thread(session.wait_for, "test/scripted", "preview:")

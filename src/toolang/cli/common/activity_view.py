@@ -249,6 +249,10 @@ class Activity:
                                 parent = self.parents[parent]
                                 self.folded.discard(parent)
                 self.open_matches = False
+            if self.reconnecting:
+                # Results may have failed or become obsolete while disconnected.
+                # Reload the selected reference after the recovered checkpoint.
+                self.result_key = None
             self.reconnecting = False
             self._selection(self.rows())
             return True

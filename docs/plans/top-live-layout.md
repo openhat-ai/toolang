@@ -102,9 +102,9 @@ Result:
 - Cap Details at half the available content height, leaving Table headings and
   a selected row visible when height permits. Status bar never scrolls.
 - Load full results asynchronously only while Details is open, on selected
-  reference or execution-status change. Cancel obsolete loads and reject stale
-  responses. Use `Result: Loading` / `Result: Unavailable` as applicable.
-  No token-delta feed or full output in compact activity frames.
+  reference, execution-status change or source recovery. Cancel obsolete loads
+  and reject stale responses. Use `Result: Loading` / `Result: Unavailable` as
+  applicable. No token-delta feed or full output in compact activity frames.
 
 ## Data ownership
 
