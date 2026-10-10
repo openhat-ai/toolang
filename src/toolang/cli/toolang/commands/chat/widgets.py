@@ -96,9 +96,11 @@ class QueuePanel:
         get_items: Callable[[], Sequence[str]],
         *,
         get_max_rows: Callable[[], int] | None = None,
+        get_width: Callable[[], int] | None = None,
     ) -> None:
         self.get_items = get_items
         self._get_max_rows = get_max_rows
+        self._get_width = get_width
         self._selected_index = 0
         self.expanded = True
         self.view = FormattedTextControl(self._render, focusable=True)
@@ -132,7 +134,7 @@ class QueuePanel:
         return fragments
 
     def width(self) -> int:
-        return max(0, self._terminal_width())
+        return max(0, (self._get_width or self._terminal_width)())
 
     def rows(self) -> int:
         count = len(self.get_items())
@@ -339,6 +341,7 @@ class PromptBox(InputBox):
         on_input: Callable[[], None] | None = None,
         history_store: ChatInputHistoryStore | None = None,
         get_max_rows: Callable[[], int] | None = None,
+        get_width: Callable[[], int] | None = None,
     ) -> None:
         self.emit = emit
         super().__init__(
@@ -348,6 +351,7 @@ class PromptBox(InputBox):
             on_input=on_input,
             history_store=history_store,
             get_max_rows=get_max_rows,
+            get_width=get_width,
         )
 
     def bind(self, keys: KeyBindings) -> None:
@@ -455,8 +459,14 @@ class PromptBox(InputBox):
 class RunStatusBar:
     """Two-row run activity surface above Queue and Input."""
 
-    def __init__(self, *, get_rows: Callable[[], int]) -> None:
+    def __init__(
+        self,
+        *,
+        get_rows: Callable[[], int],
+        get_width: Callable[[], int] | None = None,
+    ) -> None:
         self.rows = get_rows
+        self._get_width = get_width or (lambda: get_app().output.get_size().columns)
         self.running = False
         self._elapsed_seconds = 0
         self.view = FormattedTextControl(self._render)
@@ -500,7 +510,7 @@ class RunStatusBar:
         if not rows:
             return []
         cells = [("class:status", "\n")] if rows == 2 else []
-        width = get_app().output.get_size().columns
+        width = self._get_width()
         inset = _STATUS_INSET if width > 2 * len(_STATUS_INSET) else ""
         label = truncate(self._elapsed_label(), max(0, width - 2 * len(inset)))
         cells.extend((("class:status", inset), ("class:status.elapsed", label)))
@@ -516,7 +526,10 @@ class StatusBar:
         model_label: str,
         agent_label: str = "",
         workspace_label: str | None = None,
+        *,
+        get_width: Callable[[], int] | None = None,
     ) -> None:
+        self._get_width = get_width
         self.runnable_label = runnable_label
         self.model_label = model_label
         self.agent_label = agent_label
@@ -585,7 +598,7 @@ class StatusBar:
 
         left_cell = _STATUS_INSET if leading else ""
         inset_width = get_cwidth(left_cell) + get_cwidth(_STATUS_INSET)
-        terminal_width = self._terminal_width()
+        terminal_width = (self._get_width or self._terminal_width)()
         if terminal_width > inset_width:
             return left_cell, _STATUS_INSET, terminal_width - inset_width
         return "", "", terminal_width
@@ -597,7 +610,9 @@ class StatusBar:
 
     def _render(self) -> list[tuple[str, str]]:
         if self.error_message:
-            return error_status_line(self.error_message, width=self._terminal_width())
+            return error_status_line(
+                self.error_message, width=(self._get_width or self._terminal_width)()
+            )
 
         left_cell, right_cell, body_width = self._status_insets()
         full_left_label = _chat_runnable_label(self.runnable_label)

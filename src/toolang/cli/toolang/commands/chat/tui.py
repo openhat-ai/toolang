@@ -11,18 +11,24 @@ import threading
 from typing import TypeGuard, cast
 from uuid import uuid4
 
-from prompt_toolkit.application import Application
 from prompt_toolkit.filters import Condition, has_focus
 from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.input.ansi_escape_sequences import ANSI_SEQUENCES
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.key_binding.key_processor import KeyProcessor
 from prompt_toolkit.keys import Keys
-from prompt_toolkit.layout import HSplit, Layout, Window
+from prompt_toolkit.layout import (
+    HSplit,
+    HorizontalAlign,
+    Layout,
+    VSplit,
+    Window,
+)
 from prompt_toolkit.layout.containers import DynamicContainer
 from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.output.color_depth import ColorDepth
 from prompt_toolkit.patch_stdout import patch_stdout
+from toolang.cli.common.scrollback import ScrollbackApplication
 from toolang.cli.common.scrollback import ScrollbackRenderer as _ChatRenderer
 from prompt_toolkit.styles import Style
 from rich.console import Group, RenderableType
@@ -309,6 +315,7 @@ class ChatTuiApp:
         self.queue_panel = widgets.QueuePanel(
             lambda: [item.source for item in self.queue],
             get_max_rows=self._available_queue_rows,
+            get_width=self.content_width,
         )
         runnable_label, model_label, workspace_label = self._status_labels()
         self.status_bar = widgets.StatusBar(
@@ -316,14 +323,18 @@ class ChatTuiApp:
             model_label,
             self.agent_name,
             workspace_label,
+            get_width=self.content_width,
         )
-        self.run_status_bar = widgets.RunStatusBar(get_rows=self._run_status_rows)
+        self.run_status_bar = widgets.RunStatusBar(
+            get_rows=self._run_status_rows, get_width=self.content_width
+        )
         self.prompt = widgets.PromptBox(
             self._handle_prompt_event,
             self._invalidate_ui,
             on_input=self._clear_status_error,
             history_store=self.input_history,
             get_max_rows=self._available_input_rows,
+            get_width=self.content_width,
         )
         keys = KeyBindings()
         self.prompt.bind(keys)
@@ -344,11 +355,15 @@ class ChatTuiApp:
             [
                 DynamicContainer(self._live_blocks_container),
                 input_area,
-            ]
+            ],
+            width=self.content_width,
         )
-        self.app = Application(
+        self.app = ScrollbackApplication(
             layout=Layout(
-                body,
+                VSplit(
+                    [body],
+                    align=HorizontalAlign.LEFT,
+                ),
                 focused_element=self.prompt.buffer,
             ),
             key_bindings=keys,
@@ -384,6 +399,9 @@ class ChatTuiApp:
             ),
         )
 
+    def content_width(self) -> int:
+        return max(1, min(self.app.output.get_size().columns, self.progress_max_width))
+
     def _live_blocks_container(self) -> Window:
         return Window(
             FormattedTextControl(self._live_fragments),
@@ -403,15 +421,23 @@ class ChatTuiApp:
             if not isinstance(item, blocks.SteerFeedbackBlock)
         ]
         available = self._available_live_rows()
-        feedback_rows = rendering.renderables_height(feedback)
+        feedback_rows = rendering.renderables_height(
+            feedback, width=self.content_width()
+        )
         if feedback_rows > available:
             # Give the explanation priority over spacing in very short viewports.
             feedback = [replace(item, vertical_padding=False) for item in feedback]
-            feedback_rows = rendering.renderables_height(feedback)
+            feedback_rows = rendering.renderables_height(
+                feedback, width=self.content_width()
+            )
         fragments = rendering.renderables_to_prompt_toolkit(
-            other, max_rows=max(0, available - feedback_rows)
+            other,
+            max_rows=max(0, available - feedback_rows),
+            width=self.content_width(),
         )
-        tail = rendering.renderables_to_prompt_toolkit(feedback, max_rows=available)
+        tail = rendering.renderables_to_prompt_toolkit(
+            feedback, max_rows=available, width=self.content_width()
+        )
         if fragments and tail:
             fragments.append(("", "\n"))
         return FormattedText([*fragments, *tail])
@@ -437,12 +463,15 @@ class ChatTuiApp:
                 block.render()
                 for block in self.unfinalized_blocks
                 if isinstance(block, blocks.SteerFeedbackBlock)
-            ]
+            ],
+            width=self.content_width(),
         )
 
     def _live_area_height(self) -> int:
         return min(
-            rendering.renderables_height(self._live_renderables()),
+            rendering.renderables_height(
+                self._live_renderables(), width=self.content_width()
+            ),
             self._available_live_rows(),
         )
 
@@ -528,6 +557,7 @@ class ChatTuiApp:
                 executor_metadata=self.client.executor_metadata,
             ).render(),
             hide_cursor=False,
+            width=self.content_width(),
         )
         self.marks.start_background()
         self.marks.start(self.thread_id)
@@ -803,14 +833,15 @@ class ChatTuiApp:
         if self.app.is_running and pending:
             self._footer_row_floor = max(
                 0,
-                self._footer_row_floor - rendering.renderables_height(pending),
+                self._footer_row_floor
+                - rendering.renderables_height(pending, width=self.content_width()),
             )
             renderer = self.app.renderer
             renderer.erase(leave_alternate_screen=False)
             self._write_scrollback(pending)
             renderer.request_absolute_cursor_position()
         elif pending:
-            rendering.write_renderables(pending)
+            rendering.write_renderables(pending, width=self.content_width())
         del self._pending_scrollback[: len(pending)]
         self.app.invalidate()
 
@@ -818,7 +849,7 @@ class ChatTuiApp:
         self,
         renderables: Sequence[RenderableType | None],
     ) -> None:
-        value = rendering.renderables_output(renderables)
+        value = rendering.renderables_output(renderables, width=self.content_width())
         if not value:
             return
         output = self.app.output
@@ -837,7 +868,7 @@ class ChatTuiApp:
         if self.app.is_running:
             self._pending_scrollback.extend(renderables)
         else:
-            rendering.write_renderables(renderables)
+            rendering.write_renderables(renderables, width=self.content_width())
 
     def handle_ui_event(self, event: ChatUIEvent) -> bool:
         kind = event.type

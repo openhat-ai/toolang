@@ -11,10 +11,12 @@ from types import SimpleNamespace
 from typing import Any, Literal, cast
 
 import pytest
+from prompt_toolkit.application import Application
 from prompt_toolkit.application.current import create_app_session, set_app
 from prompt_toolkit.completion import CompleteEvent
 from prompt_toolkit.data_structures import Size
 from prompt_toolkit.document import Document
+from prompt_toolkit.formatted_text import fragment_list_to_text
 from prompt_toolkit.input import DummyInput
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.key_binding.key_processor import KeyPress
@@ -28,6 +30,7 @@ from prompt_toolkit.output.color_depth import ColorDepth
 from prompt_toolkit.renderer import CPR_Support
 from prompt_toolkit.styles import Attrs
 from prompt_toolkit.utils import get_cwidth
+from rich.cells import chop_cells
 from rich.color import Color, ColorType
 from rich.console import Console, Group, RenderableType
 from rich.segment import Segment
@@ -2384,7 +2387,11 @@ def test_chat_queue_removal_leaves_live_space_that_new_output_consumes(
             app.prompt.replace_input("keep draft")
             writes: list[Sequence[RenderableType | None]] = []
             monkeypatch.setattr(app, "_write_scrollback", writes.append)
-            monkeypatch.setattr(rendering, "write_renderables", writes.append)
+            monkeypatch.setattr(
+                rendering,
+                "write_renderables",
+                lambda values, **_kwargs: writes.append(values),
+            )
 
             def input_row() -> int:
                 lines = _screen_lines(_render_chat_layout(app), output.columns)
@@ -2438,20 +2445,21 @@ def test_chat_queue_layout_centers_count_and_joins_input(
                 app.app.layout.focus(app.queue_panel.view)
 
             screen = _render_chat_layout(app)
-            lines = _screen_lines(screen, columns)
+            width = min(columns, app.progress_max_width)
+            lines = _screen_lines(screen, width)
             summary_row = next(i for i, line in enumerate(lines) if "3 queued" in line)
             input_row = next(i for i, line in enumerate(lines) if "Keep typing" in line)
             panel_rows = 5 if expanded else 1
             panel_bottom = summary_row + panel_rows - 1
 
-            assert app.queue_panel.width() == columns
+            assert app.queue_panel.width() == width
             assert app.queue_panel.rows() == panel_rows
             assert input_row == panel_bottom + 2
             assert not lines[input_row - 1].strip()
             assert app._input_spacer_rows() > 0
             assert app._available_live_rows() == 30 - panel_rows - app.prompt.rows() - 3
-            assert get_cwidth(lines[panel_bottom]) == columns
-            assert get_cwidth(lines[input_row + 2].rstrip()) == columns - get_cwidth(
+            assert get_cwidth(lines[panel_bottom]) == width
+            assert get_cwidth(lines[input_row + 2].rstrip()) == width - get_cwidth(
                 widgets._STATUS_INSET
             )
             if expanded:
@@ -2687,6 +2695,44 @@ def test_chat_delayed_cursor_reports_do_not_scroll_unused_terminal_rows(
     asyncio.run(exercise())
 
 
+@pytest.mark.parametrize("report_before_signal", [False, True])
+def test_resize_notification_after_refresh_preserves_cursor_report(
+    monkeypatch, report_before_signal
+):
+    async def exercise():
+        async with _queue_test_app() as (app, output):
+            app.queue.clear()
+            app._finish_active_run()
+            _render_chat_layout(app)
+            renderer = app.app.renderer
+            assert isinstance(renderer, tui._ChatRenderer)
+            renderer.cpr_support = CPR_Support.SUPPORTED
+            queries = []
+
+            def unavailable():
+                raise NotImplementedError
+
+            monkeypatch.setattr(output, "get_rows_below_cursor_position", unavailable)
+            monkeypatch.setattr(output, "ask_for_cpr", lambda: queries.append(True))
+            monkeypatch.setattr(app.app, "_redraw", lambda: _render_chat_layout(app))
+            output.columns = 40
+            _render_chat_layout(app)
+            if report_before_signal:
+                renderer.report_absolute_cursor_row(18)
+                _render_chat_layout(app)
+            app.app._on_resize()
+            if not report_before_signal:
+                renderer.report_absolute_cursor_row(18)
+                _render_chat_layout(app)
+
+            assert queries == [True]
+            assert not renderer.waiting_for_cpr
+            assert renderer._min_available_height > 0
+            assert renderer._resize_bottom_gap is None
+
+    asyncio.run(exercise())
+
+
 @pytest.mark.parametrize("timeout", [False, True])
 @pytest.mark.parametrize("support", [CPR_Support.UNKNOWN, CPR_Support.SUPPORTED])
 def test_chat_renderer_ignores_obsolete_cursor_reports(
@@ -2788,28 +2834,91 @@ def test_chat_input_reclaims_height_when_queue_empties() -> None:
     asyncio.run(exercise())
 
 
+@pytest.mark.parametrize("max_width", [60, 120])
 @pytest.mark.parametrize("expanded", [False, True])
 def test_chat_widgets_share_output_width_after_resize(
-    monkeypatch: pytest.MonkeyPatch, expanded: bool
+    monkeypatch: pytest.MonkeyPatch, expanded: bool, max_width: int
 ) -> None:
     async def exercise() -> None:
         async with _queue_test_app() as (app, output):
             # An exported shell size can differ from the actual terminal output.
             monkeypatch.setenv("COLUMNS", "120")
+            app.progress_max_width = max_width
             app.prompt.replace_input("x" * 79)
             app.queue_panel.expanded = expanded
 
             for columns in (40, 82, 100, 160):
                 output.columns = columns
+                width = min(columns, max_width)
                 screen = _render_chat_layout(app)
                 lines = _screen_lines(screen, columns)
-                input_width = columns - 4
+                input_width = width - 4
                 assert app.prompt.rows() == (79 + input_width) // input_width + 2
-                assert app.queue_panel.width() == columns
-                assert lines[-1].endswith(f"openai/gpt-5{widgets._STATUS_INSET}")
-                assert get_cwidth(lines[-1].rstrip()) == columns - get_cwidth(
+                assert app.queue_panel.width() == width
+                assert lines[-1][:width].endswith(
+                    f"openai/gpt-5{widgets._STATUS_INSET}"
+                )
+                assert get_cwidth(lines[-1].rstrip()) == width - get_cwidth(
                     widgets._STATUS_INSET
                 )
+                assert app.app.style is not None
+                for row in range(screen.height):
+                    for column in range(width, columns):
+                        cell = screen.data_buffer[row][column]
+                        assert cell.char == " "
+                        assert not app.app.style.get_attrs_for_style_str(
+                            cell.style
+                        ).bgcolor
+
+    asyncio.run(exercise())
+
+
+def test_chat_resize_during_layout_uses_a_consistent_frame_size(monkeypatch):
+    async def exercise():
+        async with _queue_test_app() as (app, output):
+            app.prompt.replace_input("draft " * 12)
+            reads = []
+
+            def changing_size():
+                size = Size(rows=12, columns=80 if len(reads) % 2 == 0 else 81)
+                reads.append(size)
+                return size
+
+            monkeypatch.setattr(output, "get_size", changing_size)
+            for columns in (80, 81, 80):
+                screen = _render_chat_layout(app)
+                lines = _screen_lines(screen, columns)
+                assert not any("Window too small" in line for line in lines)
+                assert any("3 queued" in line for line in lines)
+                assert app.app.renderer._last_size == Size(rows=12, columns=columns)
+            assert len(reads) == 3
+            assert app.prompt.buffer.text == "draft " * 12
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("max_width", [60, 120])
+def test_chat_live_and_committed_controls_share_input_width(monkeypatch, max_width):
+    async def exercise():
+        async with _queue_test_app() as (app, output):
+            monkeypatch.setenv("COLUMNS", "200")
+            app.progress_max_width = max_width
+            block = blocks.RunControlBlock.create("submitted words " * 18)
+            app.unfinalized_blocks = [block]
+            written = []
+            monkeypatch.setattr(output, "write_raw", written.append)
+            for columns in (200, 80, 40):
+                output.columns = columns
+                width = min(columns, max_width)
+                app.app.render_counter += 1
+                live = fragment_list_to_text(app._live_fragments()).splitlines()
+                written.clear()
+                app._write_scrollback([block])
+                committed = Text.from_ansi("".join(written)).plain.splitlines()
+                assert live == committed
+                assert max(map(get_cwidth, live)) == width
+                assert all(get_cwidth(line) <= width for line in live)
+                assert app._live_area_height() == len(live)
 
     asyncio.run(exercise())
 
@@ -2840,13 +2949,20 @@ def test_chat_resize_erases_the_reflowed_live_origin(
             app.prompt.replace_input(draft)
             screen = _render_chat_layout(app)
             cursor = screen.get_cursor_position(app.app.layout.current_window)
-            # A terminal reflows the full-width painted Queue/Input rows before
-            # delivering SIGWINCH. The cursor's logical row also wraps.
-            # The two idle run-status rows have no painted background.
-            live_rows = app._live_area_height() + 2
-            wrapped_rows = (100 + columns - 1) // columns
-            reflowed_y = (
-                live_rows + (cursor.y - live_rows) * wrapped_rows + cursor.x // columns
+
+            # Background padding uses erase-character, so only actual text
+            # contributes to terminal reflow before SIGWINCH.
+            def text_row(y: int, end: int) -> str:
+                return "".join(
+                    screen.data_buffer[y][x].char for x in range(end)
+                ).rstrip()
+
+            reflowed_y = sum(
+                max(1, len(chop_cells(text_row(y, 100), columns)))
+                for y in range(cursor.y)
+            )
+            reflowed_y += max(
+                0, len(chop_cells(text_row(cursor.y, cursor.x + 1), columns)) - 1
             )
             physical_cursor = [cursor.x % columns, reflowed_y]
             erased_from: list[tuple[int, int]] = []
@@ -2872,13 +2988,16 @@ def test_chat_resize_erases_the_reflowed_live_origin(
             )
             output.columns = columns
             if refresh == "resize":
+                monkeypatch.setattr(
+                    app.app, "_redraw", lambda: _render_chat_layout(app)
+                )
                 app.app._on_resize()
             elif refresh == "render":
                 _render_chat_layout(app)
             else:
                 app.app.renderer.erase(leave_alternate_screen=False)
 
-            if columns == 100 and refresh == "render":
+            if columns == 100 and refresh != "erase":
                 assert erased_from == []
             else:
                 assert erased_from[0] == (0, 0)
@@ -5038,7 +5157,9 @@ def test_chat_tui_recovers_from_durable_terminal_truth(
     monkeypatch.setattr(
         tui.rendering,
         "write_renderables",
-        lambda values: rendered.extend(_render_text(value) for value in values),
+        lambda values, **_kwargs: rendered.extend(
+            _render_text(value) for value in values
+        ),
     )
     app = tui.ChatTuiApp(
         thread_id="term_remote",
@@ -5610,7 +5731,9 @@ def test_chat_tui_removes_live_block_before_writing_scrollback(
     block.update(_run_end(status="canceled"))
     app.unfinalized_blocks.append(block)
 
-    def write_renderables(renderables: Sequence[RenderableType | None]) -> None:
+    def write_renderables(
+        renderables: Sequence[RenderableType | None], **_kwargs: Any
+    ) -> None:
         del renderables
         assert block not in app.unfinalized_blocks
 
@@ -5731,7 +5854,7 @@ def test_chat_tui_adds_one_trailing_gap_to_summary_only_output(
     monkeypatch.setattr(
         tui.rendering,
         "write_renderables",
-        lambda renderables: written.extend(renderables),
+        lambda renderables, **_kwargs: written.extend(renderables),
     )
 
     app.handle_submit("/output first second")
@@ -5812,7 +5935,7 @@ def test_chat_tui_output_command_renders_durable_markdown(
     monkeypatch.setattr(
         tui.rendering,
         "write_renderables",
-        lambda renderables: written.extend(renderables),
+        lambda renderables, **_kwargs: written.extend(renderables),
     )
 
     app.handle_submit("/output run_saved")
@@ -7130,7 +7253,7 @@ def test_chat_run_status_fits_compact_elapsed_in_two_rows(
 ) -> None:
     output = _TerminalOutput()
     output.columns = columns
-    with set_app(tui.Application(input=DummyInput(), output=output)):
+    with set_app(Application(input=DummyInput(), output=output)):
         status = widgets.RunStatusBar(get_rows=lambda: 2)
         status.set_running(True)
         status.set_elapsed_seconds(seconds)
@@ -7320,7 +7443,7 @@ def test_chat_palette_reaches_live_committed_and_durable_output(
     monkeypatch.setattr(
         tui.rendering,
         "write_renderables",
-        lambda renderables: written.extend(renderables),
+        lambda renderables, **_kwargs: written.extend(renderables),
     )
     app.handle_submit("/output run_saved")
     assert len(written) == 1

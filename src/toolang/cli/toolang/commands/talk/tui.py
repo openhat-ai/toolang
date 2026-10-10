@@ -20,7 +20,7 @@ from toolang.cli.common.execution_progress.config import DEFAULT_MAX_PROGRESS_WI
 from toolang.cli.common.execution_progress.formatting import truncate
 from toolang.cli.common.input import InputBox
 from toolang.cli.common.input_history import InputHistoryStore
-from toolang.cli.common.scrollback import ScrollbackRenderer
+from toolang.cli.common.scrollback import ScrollbackApplication, ScrollbackRenderer
 from toolang.cli.common.status import error_status_line
 from toolang.cli.common.terminal_surfaces import TerminalSurfaces
 from toolang.common.files import atomic_write_text
@@ -127,7 +127,7 @@ class TalkTui:
             HSplit([Window(height=self._input_gap_rows), self.prompt.container()]),
             filter=Condition(lambda: not self.read_only),
         )
-        self.app: Application[None] = Application(
+        self.app: Application[None] = ScrollbackApplication(
             layout=Layout(
                 VSplit(
                     [

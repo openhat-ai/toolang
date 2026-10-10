@@ -73,8 +73,8 @@ newline, as does Shift+Enter when the terminal exposes it distinctly.
 
 Each submitted control keeps one blank row above and below its complete message,
 with two-cell text insets. Each bar accents the first cell of its first message
-line. Root input bars fill the terminal width and show the submitted
-runnable, model, and reasoning value in their bottom-right
+line. Root input bars share the output width (up to 120 columns by default) and show
+the submitted runnable, model, and reasoning value in their bottom-right
 padding, for example `agic:research · openai/gpt-5 · high`. This is the request
 snapshot, including queued overrides; later default changes do not alter it.
 Without a request model, the label reads `model unspecified`. Otherwise, the
@@ -101,9 +101,14 @@ dismisses transient status and never changes focus. Ctrl+L retains its global
 clear-display behavior when idle, and Ctrl+Q exits from either area. `/keys`
 groups Input, Queue, and global actions explicitly.
 
-A non-empty Queue appears expanded above Input without taking focus. It fills
-the terminal width and directly joins Input without a separator row. The areas
-retain distinct backgrounds. Queue accents its leading cell with Steer's
+Chat and Talk retain native terminal scrollback during resize. Repainting keeps
+the live input from drifting across repeated resizes; the terminal may still
+reflow historical rows or retain rows it scrolled before notifying the application.
+
+Input, Queue, and both status bars share the output width, capped at 120 columns
+by default and narrowed to fit the terminal. A non-empty Queue appears expanded
+above Input without taking focus and directly joins it without a separator row.
+The areas retain distinct backgrounds. Queue accents its leading cell with Steer's
 magenta, so a left accent bar runs beside the summary and entries much as
 Input's cyan accent frames the prompt. Expanded Queue has a left-aligned
 summary, a blank gap row, up to eight one-line previews, and a trailing blank
