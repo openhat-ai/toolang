@@ -226,7 +226,7 @@ def create_app(
 
     app.include_router(messaging_router(lambda: client, prefix="/msg"))
     app.include_router(agent_router(client, roster=roster))
-    from .activity import activity_router
+    from .activity_api import activity_router
 
     app.include_router(
         activity_router(client._backend, roster=roster, local_reader=local_activity)
