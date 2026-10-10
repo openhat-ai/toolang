@@ -21,6 +21,32 @@ from toolang.teaming.schemas import HubConnection, Message
 CONNECTION = HubConnection("http://hub", "human:owner", CONFIG.identity)
 
 
+@pytest.mark.parametrize(
+    "after",
+    [
+        "",
+        "bad",
+        "t1." + "0" * 32 + ".00-0",
+        pytest.param("t1." + "0" * 32 + "." + "1" * 5000 + "-0", id="oversized"),
+    ],
+)
+def test_team_subscription_rejects_invalid_cursor_before_sending_headers(after):
+    async def scenario():
+        human = client(FakeServer(server_type="valkey"), CONNECTION.human)
+        app = create_app(human)
+        async with (
+            app.router.lifespan_context(app),
+            httpx.AsyncClient(
+                transport=httpx.ASGITransport(app), base_url="http://hub"
+            ) as http,
+        ):
+            response = await http.get("/team/events", params={"after": after})
+            assert response.status_code == 400
+            assert response.json()["code"] == "messaging_error"
+
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize("operation", ["health", "create", "send", "directory"])
 def test_hub_rejects_missing_initialized_data_without_recreating_it(operation):
     async def scenario():

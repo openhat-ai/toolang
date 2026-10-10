@@ -166,7 +166,7 @@ OSC titles describe the displayed conversation.
 
 | Tool | Purpose |
 | --- | --- |
-| `msg/targets()` | Discover participants and joined conversations. |
+| `msg/targets()` | Discover participants and joined conversations, including current metadata revisions for renaming. |
 | `msg/send(target, body, in_reply_to?)` | Send immediately and return a receipt. |
 | `msg/create_conversation(name?, participants?)` | Create a GC containing the caller, or explicitly create/reuse a two-participant DM. |
 | `msg/rename_conversation(conversation, name, revision)` | Rename or clear the name with revision checking. |
@@ -224,8 +224,11 @@ changes and checkpoints. Resume using `?after=t1.<epoch>.<stream-id>`. A trimmed
 ahead, or previous-epoch cursor emits `resync_required` and closes; reconnect
 without a cursor and reload snapshots. Independent readers do not consume each
 other's events. Agents receive only visible conversation changes plus their own
-removal. Rename, messages, and heartbeat renewal emit no team events; clients
-refresh those snapshots themselves. The stream retains approximately 100,000
+removal; each replay batch rechecks their live lease. Invalid cursors return HTTP
+400. Failures after streaming starts emit `stream_error` and close without
+advancing past unread events; an expired or replaced lease uses
+`code: recovery_required`. Rename, messages, and heartbeat renewal emit no team
+events; clients refresh those snapshots themselves. The stream retains approximately 100,000
 entries. There is no separate event metadata key.
 
 Messaging routes use `/msg/conversations`, `/{id}`, and `/participants`,

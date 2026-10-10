@@ -64,6 +64,8 @@ local function timestamp()
 end
 local epoch=nil
 local function integer(value,minimum,maximum)
+  -- HINCRBY requires canonical decimal text; tonumber alone accepts 0.0/0e0.
+  if type(value)=='string' and value~='0' and not string.match(value,'^%-?[1-9][0-9]*$') then fail('invalid counter encoding') end
   local number=tonumber(value)
   if not number or number~=math.floor(number) or number<minimum or number>maximum then fail('invalid counter') end
   return number
@@ -109,7 +111,7 @@ local function validate_event(value)
   if kind~='stream.initialized' and type(payload.member)~='string' then fail('invalid event member') end
   if value.actor~=cjson.null and type(value.actor)~='string' then fail('invalid event actor') end
   if string.sub(kind,1,13)=='conversation.' then
-    if type(value.conversation)~='string' or not string.match(value.conversation,'^[dg][mc]_[0-9a-hjkmnp-tv-z]+$') or #value.conversation~=11 then fail('invalid event conversation') end
+    if type(value.conversation)~='string' or (string.sub(value.conversation,1,3)~='dm_' and string.sub(value.conversation,1,3)~='gc_') or not string.match(string.sub(value.conversation,4),'^[0-9a-hjkmnp-tv-z]+$') or #value.conversation~=11 then fail('invalid event conversation') end
   elseif value.conversation~=cjson.null then fail('unexpected event conversation') end
   if string.sub(kind,1,9)=='presence.' then
     integer(payload.effective_at_ms,0,9007199254740990)
@@ -495,6 +497,7 @@ REPLAY = (
     + """
 local info=valid()
 local op=cjson.decode(ARGV[1])
+if op.actor then authorize(op.actor,op.token) end
 local function less(a,b)
   local am,as=string.match(a,'^(%d+)%-(%d+)$')
   local bm,bs=string.match(b,'^(%d+)%-(%d+)$')

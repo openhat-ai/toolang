@@ -27,7 +27,7 @@ class MsgToolset:
 
     def tools(self) -> Mapping[str, Tool]:
         @tool(
-            description="List registered agents/humans and accessible conversations with canonical targets, membership, and presence."
+            description="List registered agents/humans and accessible conversations with canonical targets, membership, presence, and the metadata revision required for renaming."
         )
         async def targets(context: ToolContext | None = None) -> dict[str, Any]:
             assert context is not None

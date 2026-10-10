@@ -8,8 +8,8 @@ import pytest
 
 from tests.unit.messaging.test_protocol import client, snapshot
 from toolang.teaming.client import HubClient
-from toolang.teaming.errors import StorageIntegrityError
-from toolang.teaming.keys import TEAM_EVENTS, PREFIX
+from toolang.teaming.errors import BackendUnavailable, LeaseLost, StorageIntegrityError
+from toolang.teaming.keys import TEAM_EVENTS, PREFIX, PRESENCE
 from toolang.teaming.team_events import TeamEvents
 
 
@@ -63,6 +63,41 @@ def test_filtered_events_advance_checkpoint_and_own_removal_remains_visible():
     asyncio.run(scenario())
 
 
+def test_visibility_backend_failure_does_not_skip_events(monkeypatch):
+    async def scenario():
+        server = FakeServer(server_type="valkey")
+        async with (
+            client(server, "human:owner") as human,
+            client(server, "agent:alice") as alice,
+        ):
+            await alice.register(human.actor)
+            feed = TeamEvents(human._backend)
+            cursor = await feed.checkpoint()
+            conversation = await alice.create_conversation("Visible")
+            lookup = alice.conversation
+
+            async def unavailable(_):
+                raise BackendUnavailable("Temporary permission lookup outage")
+
+            monkeypatch.setattr(alice, "conversation", unavailable)
+            stream = feed.frames(alice, cursor)
+            try:
+                with pytest.raises(BackendUnavailable):
+                    await anext(stream)
+            finally:
+                await stream.aclose()
+            monkeypatch.setattr(alice, "conversation", lookup)
+            stream = feed.frames(alice, cursor)
+            try:
+                event = await anext(stream)
+                assert event.event == "change"
+                assert event.data["conversation"] == conversation.id
+            finally:
+                await stream.aclose()
+
+    asyncio.run(scenario())
+
+
 def test_retention_gap_emits_resync_and_closes():
     async def scenario():
         async with client(FakeServer(server_type="valkey"), "human:owner") as human:
@@ -74,6 +109,61 @@ def test_retention_gap_emits_resync_and_closes():
             assert (await anext(stream)).event == "resync_required"
             with pytest.raises(StopAsyncIteration):
                 await anext(stream)
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("replaced", [False, True])
+def test_active_subscription_stops_when_its_lease_expires_or_is_replaced(replaced):
+    async def scenario():
+        server = FakeServer(server_type="valkey")
+        async with (
+            client(server, "human:owner") as human,
+            client(server, "agent:alice", token="old") as alice,
+            client(server, "agent:alice", token="new") as replacement,
+        ):
+            await alice.register(human.actor)
+            stream = TeamEvents(human._backend).frames(alice, None)
+            try:
+                assert (await anext(stream)).event == "checkpoint"
+                await human._backend._client.zadd(PRESENCE, {alice.actor: 0})
+                if replaced:
+                    await replacement.register(human.actor)
+                await human.create_conversation("After lease loss")
+                with pytest.raises(LeaseLost):
+                    await anext(stream)
+            finally:
+                await stream.aclose()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("conversation", ["dc_00000000", "gm_00000000"])
+def test_replay_rejects_noncanonical_conversation_ids_before_yielding(conversation):
+    async def scenario():
+        async with client(FakeServer(server_type="valkey"), "human:owner") as human:
+            feed = TeamEvents(human._backend)
+            cursor = await feed.checkpoint()
+            raw = human._backend._client
+            await raw.xadd(
+                TEAM_EVENTS,
+                {
+                    "data": json.dumps(
+                        dict(
+                            v=1,
+                            epoch=cursor.split(".")[1],
+                            type="conversation.member_added",
+                            conversation=conversation,
+                            actor=human.actor,
+                            payload={"member": human.actor},
+                        )
+                    )
+                },
+            )
+            before = await snapshot(raw)
+            with pytest.raises(StorageIntegrityError):
+                await feed.replay(cursor)
+            assert await snapshot(raw) == before
 
     asyncio.run(scenario())
 

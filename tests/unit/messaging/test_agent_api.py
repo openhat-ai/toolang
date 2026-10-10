@@ -100,6 +100,43 @@ def test_agent_tools_without_hub_never_construct_backend(tmp_path):
     asyncio.run(scenario())
 
 
+def test_msg_targets_expose_current_revision_for_renaming(tmp_path, monkeypatch):
+    async def scenario():
+        human = client(FakeServer(server_type="valkey"), CONNECTION.human)
+        app = create_app(human)
+        async with (
+            app.router.lifespan_context(app),
+            agent(app, tmp_path) as alice,
+        ):
+            await alice.register(CONNECTION.human)
+            conversation = await human.create_conversation("Original")
+            await alice.join_conversation(conversation.id)
+            await human.rename_conversation(conversation.id, "Current", revision=1)
+            msg = MsgToolset({"root": str(tmp_path)})
+            monkeypatch.setattr(msg, "connection", lambda _: agent(app, tmp_path))
+            context = ToolContext(tmp_path / "alice", tmp_path / "room")
+            tools = msg.tools()
+            result = await tools["targets"].invoke({}, context)
+            row = next(
+                row
+                for row in result.output["conversations"]
+                if row["conversation"] == conversation.id
+            )
+            assert row["revision"] == 2
+            renamed = await tools["rename_conversation"].invoke(
+                {
+                    "conversation": row["conversation"],
+                    "name": "From the tool",
+                    "revision": row["revision"],
+                },
+                context,
+            )
+            assert renamed.output["revision"] == 3
+            assert (await human.conversation(conversation.id)).name == "From the tool"
+
+    asyncio.run(scenario())
+
+
 def test_agent_discovery_pins_batch_identity_and_refreshes_connections(tmp_path):
     async def scenario():
         current = CONNECTION

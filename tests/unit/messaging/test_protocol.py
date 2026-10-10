@@ -407,6 +407,27 @@ def test_driver_never_retries_writes_even_with_url_retry_option():
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("field", ["dm_count", "messages_total"])
+@pytest.mark.parametrize("value", ["0.0", "0e0", "00", "+0", "-0"])
+def test_noncanonical_counters_cannot_partially_commit_first_send(field, value):
+    async def scenario():
+        server = FakeServer(server_type="valkey")
+        async with (
+            client(server, "human:owner") as human,
+            client(server, "agent:alice") as alice,
+        ):
+            await alice.register(human.actor)
+            raw = human._backend._client
+            await raw.hset(STATS, field, value)
+            before = await snapshot(raw)
+            with pytest.raises(MessagingError) as error:
+                await human.send("alice", body="must not partially commit")
+            assert await snapshot(raw) == before
+            assert isinstance(error.value, StorageIntegrityError)
+
+    asyncio.run(scenario())
+
+
 def test_agent_cannot_use_an_empty_token_to_bypass_lease_checks():
     with pytest.raises(MessagingError, match="lease token"):
         MessagingClient(CONFIG, actor="agent:alice", token="")

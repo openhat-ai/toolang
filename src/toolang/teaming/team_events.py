@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, Query
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 
 from .backend import Backend
-from .errors import MessagingError, StorageIntegrityError
+from .errors import BackendUnavailable, LeaseLost, MessagingError, StorageIntegrityError
 from .keys import TEAM_EVENTS
 from .messaging import MessagingClient
 from .schemas import stream_id
@@ -28,7 +28,7 @@ class TeamEvents:
 
     @staticmethod
     def parse(cursor: str) -> tuple[str, str]:
-        match = re.fullmatch(r"t1\.([0-9a-f]{32})\.([0-9]+-[0-9]+)", cursor)
+        match = re.fullmatch(r"t1\.([0-9a-f]{32})\.([0-9]{1,20}-[0-9]{1,20})", cursor)
         if match is None:
             raise MessagingError("Invalid team event cursor")
         epoch, after = match.groups()
@@ -38,11 +38,14 @@ class TeamEvents:
             raise MessagingError("Invalid team event cursor")
         return epoch, after
 
-    async def replay(self, cursor: str) -> list[tuple[str, dict]] | None:
+    async def replay(
+        self, cursor: str, *, actor: str | None = None, token: str = ""
+    ) -> list[tuple[str, dict]] | None:
         epoch, after = self.parse(cursor)
-        result = await self.backend._operation(
-            storage_scripts.REPLAY, dict(epoch=epoch, after=after)
-        )
+        operation = dict(epoch=epoch, after=after)
+        if actor is not None:
+            operation.update(actor=actor, token=token)
+        result = await self.backend._operation(storage_scripts.REPLAY, operation)
         if result[0] == "resync":
             return None
         rows = []
@@ -67,7 +70,7 @@ class TeamEvents:
                 event="checkpoint", id=cursor, data={"cursor": cursor}
             )
         while True:
-            rows = await self.replay(cursor)
+            rows = await self.replay(cursor, actor=client.actor, token=client._lease)
             if rows is None:
                 yield ServerSentEvent(
                     event="resync_required",
@@ -87,7 +90,9 @@ class TeamEvents:
                             await client.conversation(conversation)
                         except StorageIntegrityError:
                             raise
-                        except MessagingError:
+                        except MessagingError as exc:
+                            if "not a member" not in str(exc):
+                                raise
                             visible = False
                 cursor = next_cursor
                 if visible and data["type"] != "stream.initialized":
@@ -108,14 +113,30 @@ def team_router(get_client: Callable) -> APIRouter:
     async def team(client: Client) -> list[dict]:
         return await client.team()
 
+    def event_cursor(after: Annotated[str | None, Query()] = None) -> str | None:
+        # Dependencies execute before the streaming response sends its headers.
+        if after is not None:
+            TeamEvents.parse(after)
+        return after
+
     @router.get("/events", response_class=EventSourceResponse)
     async def events(
-        client: Client, after: Annotated[str | None, Query()] = None
+        client: Client, after: Annotated[str | None, Depends(event_cursor)]
     ) -> AsyncIterator[ServerSentEvent]:
         feed = TeamEvents(client._backend)
-        if after:
-            feed.parse(after)
-        async for frame in feed.frames(client, after):
-            yield frame
+        try:
+            async for frame in feed.frames(client, after):
+                yield frame
+        except MessagingError as exc:
+            code = (
+                "recovery_required"
+                if isinstance(exc, LeaseLost)
+                else "storage_integrity"
+                if isinstance(exc, StorageIntegrityError)
+                else "backend_unavailable"
+                if isinstance(exc, BackendUnavailable)
+                else "messaging_error"
+            )
+            yield ServerSentEvent(event="stream_error", data={"code": code})
 
     return router

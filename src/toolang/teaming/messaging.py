@@ -225,6 +225,7 @@ class MessagingClient:
                 conversation=ref,
                 name=info.name,
                 kind=info.kind,
+                revision=info.revision,
                 participants=list(info.participants),
                 latest=latest[0][0] if latest else None,
             )
