@@ -337,29 +337,29 @@ class SetupWatcher:
     ) -> _CatalogLoad:
         """Capture validated source snapshots for watcher revision detection."""
 
-        _observation, source = await asyncio.to_thread(models_dev.capture)
-        static = await asyncio.to_thread(source.snapshot)
-        ordered = _ordered_additional_catalogs(catalogs)
         with setup_progress(
             progress,
             target=self.layout.name,
             resource="model catalogs",
             stage="discover",
         ):
+            _observation, source = await asyncio.to_thread(models_dev.capture)
+            static = await asyncio.to_thread(source.snapshot)
+            ordered = _ordered_additional_catalogs(catalogs)
             probes = await asyncio.gather(*(catalog.snapshot() for catalog in ordered))
-        additional = tuple(
-            await asyncio.gather(
-                *(
-                    self._probe_revision(catalog.name, assemble_catalog(probe))
-                    for catalog, probe in zip(ordered, probes, strict=True)
+            additional = tuple(
+                await asyncio.gather(
+                    *(
+                        self._probe_revision(catalog.name, assemble_catalog(probe))
+                        for catalog, probe in zip(ordered, probes, strict=True)
+                    )
                 )
             )
-        )
-        return _CatalogLoad(
-            source=source,
-            static=static,
-            additional=additional,
-        )
+            return _CatalogLoad(
+                source=source,
+                static=static,
+                additional=additional,
+            )
 
     async def _probe_revision(
         self,

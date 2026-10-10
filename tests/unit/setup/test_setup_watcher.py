@@ -210,6 +210,57 @@ def test_failed_setup_refresh_reports_progress(
         asyncio.run(watcher.refresh(progress=events.append))
     assert events[0].status == "running"
     assert events[-1].status == "failed"
+    assert [event.status for event in events if event.stage == "discover"] == [
+        "running",
+        "failed",
+    ]
+
+
+@pytest.mark.parametrize("step", ["capture", "snapshot", "fingerprint"])
+def test_catalog_discovery_progress_covers_every_source_step(
+    tmp_path, monkeypatch, step
+):
+    from toolang.plugin.catalogs.models_dev.catalog import ModelCatalogSource
+
+    watcher, _counts = _watcher(monkeypatch, tmp_path, dynamic=_DynamicCatalog())
+    events = []
+    owner, name = {
+        "capture": (ModelsDevModelCatalog, "capture"),
+        "snapshot": (ModelCatalogSource, "snapshot"),
+        "fingerprint": (watcher_module, "source_content_revision"),
+    }[step]
+    original = getattr(owner, name)
+    observed = []
+
+    def load(*args, **kwargs):
+        observed.append([event.status for event in events if event.stage == "discover"])
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(owner, name, load)
+    asyncio.run(watcher.refresh(progress=events.append))
+    assert observed == [["running"]]
+    assert [event.status for event in events if event.stage == "discover"] == [
+        "running",
+        "ok",
+    ]
+
+
+def test_failed_catalog_fingerprint_does_not_report_discovery_success(
+    tmp_path, monkeypatch
+):
+    watcher, _counts = _watcher(monkeypatch, tmp_path, dynamic=_DynamicCatalog())
+    events = []
+
+    def fail(_snapshot):
+        raise ValueError("catalog fingerprint failed")
+
+    monkeypatch.setattr(watcher_module, "source_content_revision", fail)
+    with pytest.raises(ValueError, match="catalog fingerprint failed"):
+        asyncio.run(watcher.refresh(progress=events.append))
+    assert [event.status for event in events if event.stage == "discover"] == [
+        "running",
+        "failed",
+    ]
 
 
 def test_refresh_publishes_without_loading_adapters_tools_or_routes(
