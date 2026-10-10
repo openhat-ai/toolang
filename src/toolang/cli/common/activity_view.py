@@ -154,7 +154,6 @@ class Activity:
         self.parents: dict[tuple[str, str], tuple[str, str]] = {}
         self.folded: set[tuple[str, str]] = set()
         self.offset = 0
-        self.horizontal = 0
         self.details = False
         self.result_key: tuple[str, str, str] | None = None
         self.result_text = ""
@@ -474,10 +473,26 @@ class Activity:
                 if row.agent == current.agent
                 and (not current.thread or row.thread == current.thread)
             ]
-            selected = next(
-                (row for row in candidates if row.key == self.tree_selected), None
+            snapshot = self.snapshots[current.agent]
+            remembered = next(
+                (
+                    node
+                    for node in [*snapshot.roots, *snapshot.paths]
+                    if (current.agent, node.id) == self.tree_selected
+                ),
+                None,
             )
-            if selected and view == "execution" and self.tree:
+            ref = (
+                remembered.thread
+                if remembered and view == "thread"
+                else remembered.id
+                if remembered and self.tree
+                else remembered.root
+                if remembered
+                else None
+            )
+            selected = next((row for row in candidates if row.id == ref), None)
+            if selected and view != "agent":
                 self.selected = selected.key
             elif self.selected not in {row.key for row in visible} and candidates:
                 self.selected = candidates[0].key
@@ -485,9 +500,21 @@ class Activity:
 
     def key(self, key: str | Keys, data: str = "") -> bool:
         """Return True to exit; query edits set dirty for one subscription replacement."""
+        if key == Keys.Vt100MouseEvent:
+            # SGR wheel reports, with the legacy X10 fallback for older terminals.
+            match = re.fullmatch(r"\x1b\[<(64|65);\d+;\d+M", data)
+            if match:
+                button = int(match[1])
+            elif data.startswith("\x1b[M") and len(data) == 6:
+                button = ord(data[3]) - 32
+            else:
+                return False
+            if self.editor or button not in {64, 65}:
+                return False
+            key = Keys.Up if button == 64 else Keys.Down
         if not self.editor and key in {Keys.ControlP, Keys.ControlN}:
             key = Keys.Up if key == Keys.ControlP else Keys.Down
-        if key == Keys.ControlC:
+        if key in {Keys.ControlC, Keys.F10}:
             return True
         if self.editor:
             if key == Keys.BracketedPaste:
@@ -522,16 +549,21 @@ class Activity:
             self.help = not self.help
         elif key in {"a", "t", "e"}:
             self._view(cast(View, {"a": "agent", "t": "thread", "e": "execution"}[key]))
-        elif key == Keys.F5 and self.view == "execution":
-            current = next(
-                (row for row in self.rows() if row.key == self.selected), None
-            )
-            self.tree = not self.tree
-            if current and not self.tree:
-                self.tree_selected = current.key
-                self.selected = current.agent, current.root
-            elif self.tree_selected:
-                self.selected = self.tree_selected
+        elif key == Keys.F5:
+            if self.view == "agent":
+                self._view("thread")
+            elif self.view == "thread":
+                self.tree = False
+                self._view("execution")
+            elif self.tree:
+                self._view("agent")
+            else:
+                self.tree = True
+                previous = next(
+                    (row for row in self.rows() if row.key == self.tree_selected), None
+                )
+                if previous and self.selected == (previous.agent, previous.root):
+                    self.selected = previous.key
         elif key == Keys.F6:
             self.sort = {"activity": "spend", "spend": "time", "time": "activity"}[
                 self.sort
@@ -567,8 +599,6 @@ class Activity:
         elif key == Keys.Escape:
             self.details = False
             self.help = False
-        elif key in {"<", ">"}:
-            self.horizontal = max(0, self.horizontal + (16 if key == ">" else -16))
         else:
             rows = self.rows()
             self._selection(rows)

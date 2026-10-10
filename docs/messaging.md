@@ -256,7 +256,9 @@ rolling window; a timezone-aware timestamp selects a fixed start, and `all`
 includes available history. MODEL, TOOL, IN, CACHED, OUT, SPEND and TIME+ share
 that range; CACHED is cache-read input already included in IN. Activity
 (`--recent DURATION|all`, default `30m`) independently controls visibility.
-F7/F8 cycle Activity/Stats. `--sort spend` accepts `cost` as an alias.
+F5 cycles Agent/Thread/Run/Tree; F7/F8 cycle Activity/Stats. The status bar
+shows only function keys; F10 exits, and existing letter/Enter shortcuts remain
+available through F1 Help. `--sort spend` accepts `cost` as an alias.
 Enter opens full IDs, exact usage and Markdown results; Ctrl-P/N selects rows,
 and PgUp/PgDn pages Details. Unavailable historical usage remains unknown.
 

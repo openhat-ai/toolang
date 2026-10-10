@@ -102,54 +102,35 @@ def header(state: Activity, width: int) -> list[Text]:
             ("Spend", cost(metrics)),
         ],
     ]
-    columns = []
-    for index in range(4):
-        label_width = max(len(row[index][0]) + 1 for row in groups)
-        size = max(
-            16, *(label_width + 1 + cell_len(row[index][1]) + 2 for row in groups)
-        )
-        key = f"summary:{index}"
-        state.column_widths[key] = max(state.column_widths.get(key, 0), size)
-        columns.append((label_width, state.column_widths[key]))
-    # Both groups use the same wrapping boundaries and column starts.
-    spans = []
-    start, used = 0, 0
-    for index, (_, size) in enumerate(columns):
-        if index > start and used + size > width:
-            spans.append((start, index))
-            start, used = index, 0
-        used += size
-    spans.append((start, 4))
+    # Fix the header geometry for each terminal width. Counts, filters and
+    # window changes must not move the table while the user is navigating it.
+    columns = 4 if width >= 112 else 2 if width >= 40 else 1
+    column_width = max(1, width // columns)
     for group in groups:
-        for start, end in spans:
+        for start in range(0, 4, columns):
             line = Text()
-            for index in range(start, end):
+            for index in range(start, start + columns):
                 label, value = group[index]
-                label_width, size = columns[index]
+                label_width = max(
+                    len(row[position][0]) + 1
+                    for row in groups
+                    for position in range(index % columns, 4, columns)
+                )
                 item = Text.assemble(
                     (f"{label}:".ljust(label_width), "cyan"), " ", (value, "bold")
                 )
-                item.pad_right(max(0, size - item.cell_len))
-                line += item
-            line.rstrip()
-            lines.append(clip(line, width))
+                line += clip(item, column_width, pad=True)
+            lines.append(line)
     settings = Text(
         f"Stats: {state.query.since}  Activity: {state.recent_label}", style="dim"
     )
-    if lines[-1].cell_len + settings.cell_len + 2 <= width:
-        lines[-1] = ends(lines[-1], settings, width)
-    else:
-        lines.append(ends(Text(), settings, width))
-    if state.query.text or state.query.active:
-        lines.append(
-            clip(
-                Text(
-                    f"Filter: {clean(state.query.text) or '-'}  Active: {'on' if state.query.active else 'off'}",
-                    style="dim",
-                ),
-                width,
-            )
-        )
+    filters = Text(
+        f"Filter: {clean(state.query.text) or '-'}  Active: {'on' if state.query.active else 'off'}"
+        if state.query.text or state.query.active
+        else "",
+        style="dim",
+    )
+    lines += [ends(filters, settings, width), Text("")]
     return lines
 
 
@@ -157,10 +138,16 @@ def table(
     state: Activity, rows: list[Row], width: int, once: bool
 ) -> tuple[Text, list[Text]]:
     numeric = {"MODEL", "TOOL", "IN", "CACHED", "OUT", "SPEND", "TIME+"}
-    labels = ([] if state.agent else ["AGENT"]) + ["S"]
-    if width >= 110:
-        labels += ["MODEL", "TOOL"]
-    labels += ["IN", "CACHED", "OUT", "SPEND", "TIME+"]
+    labels = ([] if state.agent else ["AGENT"]) + [
+        "S",
+        "MODEL",
+        "TOOL",
+        "IN",
+        "CACHED",
+        "OUT",
+        "SPEND",
+        "TIME+",
+    ]
     if state.view != "agent":
         labels += ["THREAD"]
     if state.view == "execution":
@@ -215,15 +202,7 @@ def table(
             padding = " " * max(0, state.column_widths[label] - cell_len(value))
             cells.append(padding + value if label in numeric else value + padding)
         text = " ".join(cells) + " " + clean(activity)
-        skipped = index = 0
-        while index < len(text) and skipped < state.horizontal:
-            skipped += cell_len(text[index])
-            index += 1
-        return clip(
-            Text(" " * max(0, skipped - state.horizontal) + text[index:], style=style),
-            width,
-            pad=True,
-        )
+        return clip(Text(text, style=style), width, pad=True)
 
     heading = line(
         headings,
@@ -372,14 +351,29 @@ def details(
 
 def status_bar(state: Activity, width: int) -> Text:
     if state.editor:
-        return clip(
+        prefix = clip(Text("Filter: ", style="bold"), max(0, width - 1))
+        suffix = clip(
             Text(
-                f"Filter: {state.buffer}█  Active: {state.filter_active}  Enter Apply  Esc Cancel  Ctrl-A Active  Ctrl-U Clear"
-                + (f"  {state.error}" if state.error else ""),
-                style="bold",
+                f"  {state.error}"
+                if state.error
+                else f"  Active: {state.filter_active}",
+                style="red" if state.error else "bold",
             ),
-            width,
-            pad=True,
+            max(0, width - prefix.cell_len - 12),
+        )
+        value = state.buffer + "█"
+        start, used = len(value), 0
+        available = width - prefix.cell_len - suffix.cell_len
+        for char in reversed(value):
+            if used + cell_len(char) > available:
+                break
+            start -= 1
+            used += cell_len(char)
+        # A combining mark cannot retain a base character outside the viewport.
+        while start < len(value) and cell_len(value[start]) == 0:
+            start += 1
+        return clip(
+            prefix + Text(value[start:], style="bold") + suffix, width, pad=True
         )
     snapshots = list(state.snapshots.values())
     status = (
@@ -389,36 +383,28 @@ def status_bar(state: Activity, width: int) -> Text:
         if state.reconnecting
         else "Updating"
         if any(not current(state, page) for page in snapshots)
-        else "Incomplete"
-        if any(
-            p.stale
-            or not p.complete
-            or not p.stats.complete
-            or not p.stats.tokens_complete
-            or p.stats.partial
-            for p in snapshots
-        )
         else ""
     )
     keys = Text(style="black on cyan")
     hints = [
-        ("a Agent", state.view == "agent"),
-        ("t Thread", state.view == "thread"),
-        ("e Run", state.view == "execution"),
-        ("F4 Filter", False),
-        ("F5 Tree", state.tree and state.view == "execution"),
-        ("F6 Sort", False),
-        ("F7 Activity", False),
-        ("F8 Stats", False),
-        ("Enter Details", state.details),
-        ("F1 Help", state.help),
+        ("F1", "Help", state.help),
+        ("F4", "Filter", False),
+        ("F5", "View", False),
+        ("F6", "Sort", False),
+        ("F7", "Activity", False),
+        ("F8", "Stats", False),
     ]
-    suffix = Text((status + "  " if status else "") + "q Quit", style="black on cyan")
-    for hint, selected in hints:
-        if keys.cell_len + cell_len(hint) + suffix.cell_len + 4 > width:
+    for key, label, selected in hints:
+        if keys.cell_len + len(key + label) + 1 + len("F10Quit") > width:
             break
-        keys.append(hint + "  ", style="bold reverse" if selected else "")
-    return ends(keys, suffix, width)
+        keys.append(key, style="default on default")
+        keys.append(label + " ", style="bold reverse" if selected else "")
+    keys.append("F10", style="default on default")
+    keys.append("Quit")
+    if status and keys.cell_len + len(status) + 2 <= width:
+        keys.append(" " * (width - keys.cell_len - len(status)))
+        keys.append(status)
+    return clip(keys, width, pad=True)
 
 
 def render(state: Activity, *, width: int, height: int, once: bool) -> Group:
@@ -440,7 +426,10 @@ def render(state: Activity, *, width: int, height: int, once: bool) -> Group:
                 "Stats controls all metrics; Activity controls visibility. CACHED is included in IN.",
                 "TIME+ accumulates execution, excluding downtime and nested durations.",
                 "F7/F8 cycle windows. Custom: --recent 2h --since 6h or a timezone-aware timestamp.",
-                "Up/Down or Ctrl-P/N select. Left/Right fold. </> scroll columns. PgUp/PgDn page.",
+                "F5 cycles Agent / Thread / Run / Tree; a/t/e jump to a level.",
+                "Up/Down, Ctrl-P/N or mouse wheel select. Left/Right fold.",
+                "Enter toggles Details; Esc closes. PgUp/PgDn page. F10, q or Ctrl-C quit.",
+                "Filter: Enter applies, Esc cancels, Ctrl-A toggles Active, Ctrl-U clears.",
             )
         ]
         detail = [line for text in detail for line in text.wrap(console, width)]
