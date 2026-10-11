@@ -15,7 +15,7 @@ Chat uses the same runtime units as the rest of Toolang:
 | `run` | One handling attempt inside that thread |
 | `step` | One execution unit inside the run |
 
-One terminal `ChatInput` resolves to either one `QuickCommand` or one aggregate
+One terminal `ChatInput` resolves to either one `ChatCommand` or one aggregate
 `RunOverride` paired with `CallInput[str]`. Only the runnable-input branch
 creates a run control and a run in an existing thread. A client creates the
 thread explicitly before the first run.
@@ -436,7 +436,7 @@ A submitted command likewise owns an immutable scrollback interaction.
 Its summary states the concrete effect or result without a generic `Success:`
 or `Result:` prefix; usage and errors retain explicit `Usage:` and `Error:`
 labels. Setting commands refresh the status bar after committing the new
-session value, but the status bar is not their confirmation channel. Slash
+session value, but the status bar is not their confirmation channel. Command
 summary and detail rows align with other output using a two-space indent and no
 leading marker column.
 

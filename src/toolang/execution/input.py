@@ -65,18 +65,18 @@ def parse_call(source: str) -> tuple[RunOverride, CallInput[str]]:
     return override, parse_input(call_input)
 
 
-def parse_run_directive(line: str) -> tuple[RunOverride, CallInput[str]]:
+def parse_slash_directive(line: str) -> tuple[RunOverride, CallInput[str]]:
     """Parse one slash run directive without capturing primary input."""
 
     try:
-        parsed = _try_parse_run_directive(line)
+        parsed = _try_parse_slash_directive(line)
     except ToolangError as error:
         raise ValueError(str(error)) from error
     if parsed is None:
-        raise ValueError("line is not a run override")
+        raise ValueError("line is not a slash directive")
     override, named, header = parsed
     if header is not None and header.form is not None:
-        raise ValueError("run override parsing does not accept attached call input")
+        raise ValueError("slash directive parsing does not accept attached call input")
     return override, named
 
 
@@ -92,7 +92,7 @@ def parse_setting_override(command: str, body: str) -> RunOverride:
     if command == "model":
         return RunOverride(model=parse_model_body(body))
     if command in {"runnable", "agic", "flow"}:
-        override, named = _runnable_override(command, tokens)
+        override, named = _session_runnable_override(command, tokens)
         if named:
             raise ValueError(f":{command} does not accept named runnable input")
         return override
@@ -126,7 +126,7 @@ def parse_run_prefix(
         if line.text.startswith(":") and not line.text.startswith("::"):
             raise ValueError("colon commands cannot be used in a run submission")
         try:
-            parsed = _try_parse_run_directive(line.text)
+            parsed = _try_parse_slash_directive(line.text)
         except ToolangError as error:
             raise ValueError(str(error)) from error
         if parsed is None:
@@ -213,7 +213,7 @@ def merge_run_overrides(overrides: Sequence[RunOverride]) -> RunOverride:
     )
 
 
-def _try_parse_run_directive(
+def _try_parse_slash_directive(
     line: str,
 ) -> tuple[RunOverride, CallInput[str], CallInputHeader | None] | None:
     if not line.startswith("/") or line.startswith("//"):
@@ -246,7 +246,7 @@ def _try_parse_run_directive(
     return RunOverride(runnable=name), _named_inputs(tokens), header
 
 
-def _runnable_override(
+def _session_runnable_override(
     name: str,
     tokens: Sequence[str],
 ) -> tuple[RunOverride, CallInput[str]]:

@@ -1,15 +1,15 @@
-# Refine Chat Slash Command Output
+# Refine Chat Command Output
 
 ## Status
 
 Approved in the 2026-09-02 design discussion. This definition extends the
-implemented Chat slash-command and resource-table plans. It is authoritative
+implemented Chat command and resource-table plans. It is authoritative
 where help structure, resource collection scope, command names, width, or
 spacing differs from those plans.
 
 ## Goal
 
-Make slash-command output concise, instructional, and visually scannable. The
+Make command output concise, instructional, and visually scannable. The
 main help should act as the entry point, focused help should show users how to
 complete a command, and inspection results should state whether they describe
 the session-allowed collection or every available resource.
@@ -27,7 +27,7 @@ the session-allowed collection or every available resource.
   query option.
 - The current model, agic, or flow is marked with a protected ` *` suffix.
 - `/output [RUN]` shows the given or latest run output; `/show` remains an alias.
-- Every slash result honors the configured execution-output maximum width,
+- Every command result honors the configured execution-output maximum width,
   distinguishes structural text with styling, and has exactly one trailing
   scrollback separation line.
 - Local, remote, and scripted Chat have equivalent text semantics.
@@ -36,11 +36,11 @@ the session-allowed collection or every available resource.
 
 In scope:
 
-- slash registry metadata, main help, and focused help;
+- command registry metadata, main help, and focused help;
 - `/models [-a] [QUERY]`, `/tools [-a] [QUERY]`, and
   `/caps [-a] [QUERY]` collection selection and summaries;
 - `/agics`, `/flows`, and `/output`;
-- slash text, table, and run-output rendering width, styling, and spacing;
+- command text, table, and run-output rendering width, styling, and spacing;
 - Chat documentation plus offline regression tests.
 
 Out of scope:
@@ -48,70 +48,28 @@ Out of scope:
 - queue panel behavior or presentation;
 - Enter, Meta-Enter, queue-selection, or editing shortcuts;
 - `/keys` content;
-- removing or changing the existing `/queue` and `/steer` commands;
+- changing queue and steering keyboard interactions;
 - collection query syntax or public HTTP resource-list behavior.
 
 ## Command Help
 
-The registry separately owns the canonical name, argument form, description,
-aliases, category, visibility in main help, and optional focused help. Aliases
-remain dispatchable but are never presented as peer commands.
+`/help` explains the distinction between commands and run directives, then
+groups session settings, inspection commands, other commands, and run directives.
+`/?` is its alias; `:?` limits help to session settings. The current spellings
+and input forms are maintained in [Input Syntax](../input-syntax.md).
 
-`/help` has no introductory prose. All rows share one command-column width and
-one argument-column width across the complete result:
+The command registry owns each command's prefix, name, argument form,
+description, aliases, category, and optional focused help. Alias rows are
+subordinate to the canonical command. Command help shares aligned command and
+argument columns across the result.
 
-```text
-Session commands:
+A required command without its body returns focused help: usage, purpose,
+necessary fields, and examples. `:runnable`, `:agic`, and `:flow` share runnable
+selection help; `:model`, `:allow`, and `:limit` use their corresponding bodies.
+`:workdir` without a body queries the current session directory.
 
-  /model      [MODEL] [effort=VALUE]  Set the session model or effort
-  /runnable   RUNNABLE                Switch the session runnable
-  /agic       AGIC                    Switch the session agic
-  /flow       FLOW                    Switch the session flow
-  /allow      FIELD=QUERY...          Set session resource ceilings
-  /limit      FIELD=VALUE...          Set session run limits
-
-Inspection commands:
-
-  /models     [-a] [QUERY]            List allowed models (-a: all available)
-  /tools      [-a] [QUERY]            List allowed tools (-a: all available)
-  /caps       [-a] [QUERY]            List allowed capabilities (-a: all available)
-  /agics                              List available agics
-  /flows                              List available flows
-  /output     [RUN]                   Show output from the given or latest run (alias: /show)
-
-Other commands:
-
-  /help                               Show this help (alias: /?)
-  /exit                               Exit Chat (alias: /quit)
-  /keys                               Show keyboard shortcuts
-
-To list one-run colon directives, type :?.
-```
-
-`/queue` and `/steer` stay registered but are omitted until the queue workflow
-is redesigned. `/keys` continues to return its existing content.
-
-A required command invoked without its body returns focused help. Focused help
-contains only aligned usage, one purpose sentence, necessary field names, and
-examples. `/runnable`, `/agic`, and `/flow` share one focused result:
-
-```text
-/runnable RUNNABLE
-/agic     AGIC
-/flow     FLOW
-
-Switch the session runnable
-
-Examples:
-  /runnable flow:review
-  /runnable agic:chat
-  /runnable default
-  /agic chat
-  /flow review
-```
-
-`/model`, `/allow`, and `/limit` use the same shape with their own examples.
-The unchanged `/steer` command may retain its existing one-line usage result.
+Queue and steering interactions follow the keyboard contract in [Chat](../chat.md).
+`/keys` lists those shortcuts.
 
 ## Inspection Collections
 
@@ -147,7 +105,7 @@ flow identity suffix is exactly ` *`; truncation preserves the complete suffix.
 loads the latest result in the current thread. Its divider says `RUN_ID output`.
 `/show` remains a compatibility alias and produces the canonical behavior.
 
-Slash control bars, prose, focused help, tables, and durable output use the
+Command control bars, prose, focused help, tables, and durable output use the
 configured execution maximum width as well as the physical terminal width.
 Prose wraps by display width. Table headers and rows remain one physical line
 and elide cells using the existing table priorities.
@@ -157,15 +115,15 @@ and labels such as `Examples:` are emphasized, and the table separator remains
 dim. Success, usage, warning, and error text retains semantic wording so color
 is not the only signal.
 
-Slash content does not append its own trailing blank rows. The scrollback
-writer adds exactly one separation row after every submitted slash result, so
-a summary-only usage result has the same ending as other slash output.
+Command content does not append its own trailing blank rows. The scrollback
+writer adds exactly one separation row after every submitted command result, so
+a summary-only usage result has the same ending as other command output.
 
 ## Design Touchpoints
 
 Likely files:
 
-- `src/toolang/cli/toolang/commands/chat/slashes.py`
+- `src/toolang/cli/toolang/commands/chat/commands.py`
 - `src/toolang/cli/toolang/commands/chat/blocks.py`
 - `src/toolang/cli/toolang/commands/chat/tui.py`
 - `src/toolang/cli/toolang/commands/chat/main.py`
@@ -173,14 +131,14 @@ Likely files:
 - `docs/input-syntax.md`
 - `docs/chat.md`
 - `docs/execution-presentation.md`
-- Chat slash, TUI, local, remote, and scripted tests
+- Chat command, TUI, local, remote, and scripted tests
 
 ## Acceptance Tests
 
 - Main help exactly preserves group order, global column alignment, aliases,
-  hidden queue commands, and the `:?` footer.
+  command/directive descriptions, and the session-help `:?` footer.
 - Bare model, runnable-kind, allow, and limit commands return their focused help;
-  existing queue and steer behavior is unchanged.
+  keyboard queue and steer behavior is unchanged.
 - Default resource inspection covers unrestricted, narrowed, empty, and
   query-matched allowed collections.
 - `-a` covers unrestricted, narrowed, empty, and query-matched available
@@ -191,7 +149,7 @@ Likely files:
   ` *` at narrow widths.
 - `/output`, its latest-run form, and `/show` return a divider ending in
   ` output`.
-- TUI and scripted slash text fit configured narrow and wide maximums; narrow
+- TUI and scripted command text fit configured narrow and wide maximums; narrow
   help retains every command description and alias, tables never wrap, Unicode
   display widths remain correct, and exact rendered output has one trailing
   separation row.

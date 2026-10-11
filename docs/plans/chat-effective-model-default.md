@@ -21,8 +21,8 @@ label only when no models are available.
   3. a fresh request for the first ordered model;
   4. `None` only when the effective collection is empty.
 - Apply the rule at Chat initialization, after a session model ceiling changes,
-  and when `/model default` is requested.
-- Add one-run `:model unset`, which removes the inherited model binding without
+  and when `:model default` is requested.
+- Add one-run `/model unset`, which removes the inherited model binding without
   changing the allowed model collection or the Chat session.
 - Remove `/model none` and `:model none` immediately. Keep `models=none` for an
   empty allow collection, `effort=none` as a reasoning value, and
@@ -41,9 +41,9 @@ match.
   reconciliation.
 - `src/toolang/cli/toolang/commands/chat/local.py` and `remote.py`: initialization
   and ordered model-list integration.
-- `src/toolang/cli/toolang/commands/chat/slashes.py`: `/allow`, `/model default`,
+- `src/toolang/cli/toolang/commands/chat/commands.py`: `:allow`, `:model default`,
   removed session `none`, feedback, and status presentation.
-- `src/toolang/execution/policy.py`: model identity grammar and one-run `unset`.
+- `src/toolang/execution/input.py`: model identity grammar and one-run `unset`.
 - `src/toolang/api/routers/agent.py`: query-relative model default projection.
 
 ## Acceptance Tests
@@ -58,7 +58,7 @@ match.
    ordered fallback with no explicit reasoning parameters.
 4. Expanding an empty model ceiling selects a concrete effective default.
 5. Local and remote Chat produce the same selection and list ordering.
-6. `:model unset` clears only the current run binding. `/model unset`,
+6. `/model unset` clears only the current run binding. `:model unset`,
    `/model none`, and `:model none` are rejected.
 7. `models=none`, `effort=none`, and `--default model=none` retain their existing
    meanings.

@@ -28,7 +28,7 @@ from toolang.execution.input import (
 from toolang.execution.types import RunOverride, SessionSetting
 
 from .base import AppContext, ChatClient, ChatResult, as_text, friendly_error
-from .input import QuickCommand
+from .input import ChatCommand
 from .policy import (
     materialize_runnable_list_ref,
     validate_model_reasoning_request,
@@ -130,14 +130,14 @@ class CommandSpec:
         )
 
 
-def handle(app: AppContext, quick: QuickCommand) -> CommandOutcome | None:
+def handle(app: AppContext, submission: ChatCommand) -> CommandOutcome | None:
     """Dispatch one registered, structurally parsed command."""
 
-    command = quick.name
-    argument = quick.tail or ""
-    spec = _COMMAND_BY_KEY.get((quick.prefix, command))
+    command = submission.name
+    argument = submission.tail or ""
+    spec = _COMMAND_BY_KEY.get((submission.prefix, command))
     if spec is None:
-        raise KeyError(f"unregistered command: {quick.prefix}{command}")
+        raise KeyError(f"unregistered command: {submission.prefix}{command}")
     if spec.argument == "required" and not argument:
         return (
             CommandOutcome("usage", spec.focused_help)
@@ -145,7 +145,9 @@ def handle(app: AppContext, quick: QuickCommand) -> CommandOutcome | None:
             else _usage(spec)
         )
     if spec.argument == "none" and argument:
-        return error_outcome(f"{quick.prefix}{command} does not accept an argument")
+        return error_outcome(
+            f"{submission.prefix}{command} does not accept an argument"
+        )
 
     try:
         return spec.run(app, command, argument)

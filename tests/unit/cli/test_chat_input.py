@@ -5,11 +5,11 @@ import pytest
 from toolang.base.errors import ToolangError
 from toolang.base.types.message import TextPart
 from toolang.cli.toolang.commands.chat.input import (
-    QuickCommand,
+    ChatCommand,
     command_name,
     normalize_chat_input,
     parse_chat_input,
-    run_override_error,
+    run_directive_error,
 )
 from toolang.execution.input import COLON_COMMAND_NAMES, SLASH_COMMAND_NAMES, parse_call
 from toolang.execution.types import ModelOverride, RunOverride
@@ -19,7 +19,7 @@ from toolang.lang.input import CallInput, resolve_input_parts, resolve_runnable_
 
 @pytest.mark.parametrize("name", sorted(SLASH_COMMAND_NAMES))
 def test_slash_commands_are_standalone(name: str) -> None:
-    assert parse_chat_input(f"/{name}") == QuickCommand(name)
+    assert parse_chat_input(f"/{name}") == ChatCommand(name)
     with pytest.raises(ValueError, match="cannot be combined"):
         parse_chat_input(f"/{name}\nInput")
     with pytest.raises(ValueError, match="standalone Chat command"):
@@ -28,7 +28,7 @@ def test_slash_commands_are_standalone(name: str) -> None:
 
 @pytest.mark.parametrize("name", sorted(COLON_COMMAND_NAMES))
 def test_colon_commands_are_session_interactions(name: str) -> None:
-    assert parse_chat_input(f":{name}") == QuickCommand(name, prefix=":")
+    assert parse_chat_input(f":{name}") == ChatCommand(name, prefix=":")
     with pytest.raises(ValueError, match="cannot be combined"):
         parse_chat_input(f":{name}\nInput")
     with pytest.raises(ValueError, match="colon commands"):
@@ -271,16 +271,16 @@ def test_signature_rejections_follow_parsing(kind, signature, tail, message) -> 
         )
 
 
-def test_run_override_errors_add_contextual_help_guidance() -> None:
-    assert run_override_error("/", "missing") == (
+def test_run_directive_errors_add_contextual_help_guidance() -> None:
+    assert run_directive_error("/", "missing") == (
         "Enter a directive name immediately after / · See /help for help"
     )
-    assert run_override_error("/unknown value", "invalid") == (
+    assert run_directive_error("/unknown value", "invalid") == (
         "invalid · See /help for help"
     )
-    assert run_override_error(
+    assert run_directive_error(
         "/model effort=high", "run override prefix requires primary or named input"
     ) == ("Include primary or named input after run overrides · See /help for help")
-    assert run_override_error("/model effort=extreme\nhello", "invalid effort.") == (
+    assert run_directive_error("/model effort=extreme\nhello", "invalid effort.") == (
         "invalid effort · See /help for help"
     )

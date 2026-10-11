@@ -95,26 +95,15 @@ shared UI framework or a migration of non-Chat execution owners.
 
 ### `RunRequest`
 
-Add an immutable caller request containing:
+Use the self-contained execution request defined in
+[`execution/schemas.py`](../../src/toolang/execution/schemas.py) and documented
+in [API](../api.md). Call sites resolve surface/session defaults and submitted
+`RunOverride` values before building the request. Authored runnable input uses
+`CallInput[str]`; model, runnable, policy, and workdir values are snapshotted.
 
-- `thread`: existing thread ID;
-- `commands`: per-run `RunOverride` values;
-- `input`: parsed `RunnableInputRaw`;
-- `session_commands`: captured session `RunOverride` values;
-- `runnable_fallbacks`: ordered, explicit call-site candidates;
-- `request_id`: caller-issued globally unique request identifier.
-
-The request stays above execution resolution. It contains authored input and
-policy, but no setup/state snapshots, include callback, resolved resources, or
-transport representation. Terminal Chat passes `("agic:chat", "default")` so
-a same-named flow does not change its established agic fallback behavior. The
-client selects the first candidate present in the same state snapshot used for
-resolution. This expresses call-site policy without reading state twice or
-asking the execution layer to invent a default.
-
-Place this caller-facing value with the execution protocol schemas. It may
-depend on language and execution value types, but not on stores, watchers,
-runtime services, API schemas, or event emitters.
+The request does not contain mutable session state, fallback-selection policy,
+setup/state snapshots, include callbacks, or transport objects. Protocol schemas
+must not depend on stores, watchers, runtime services, or event emitters.
 
 ### `RunHandle`
 

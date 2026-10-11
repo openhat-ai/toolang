@@ -74,13 +74,13 @@ from .base import (
 from .blocks import MutableBlock
 from .history import ChatInputHistoryStore
 from .input import (
-    QuickCommand,
-    is_runnable_input,
+    ChatCommand,
+    is_run_submission,
     is_command_input,
     normalize_chat_input,
     parse_chat_input,
     command_name,
-    run_override_error,
+    run_directive_error,
 )
 from .presenter import ChatRunPresenter
 from .remote import RemoteChatError, RemoteChatSession
@@ -372,13 +372,13 @@ def _chat_interactive_scripted_local(
             else:
                 error = chat_friendly_error(str(exc))
                 typer.echo(
-                    run_override_error(source, error)
+                    run_directive_error(source, error)
                     if source.startswith("/")
                     else error,
                     err=True,
                 )
             continue
-        if isinstance(chat_input, QuickCommand):
+        if isinstance(chat_input, ChatCommand):
             if not chat_commands.is_registered(
                 chat_input.name, prefix=chat_input.prefix
             ):
@@ -395,7 +395,7 @@ def _chat_interactive_scripted_local(
             if context.exit_requested:
                 return
             continue
-        if not is_runnable_input(chat_input):
+        if not is_run_submission(chat_input):
             raise AssertionError("unknown chat input value")
         override, runnable_input = chat_input
         errors: list[str] = []

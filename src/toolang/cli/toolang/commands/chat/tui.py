@@ -87,13 +87,13 @@ from .base import (
 from .events import ChatUIEvent
 from .history import ChatInputHistoryStore
 from .input import (
-    QuickCommand,
-    is_runnable_input,
+    ChatCommand,
+    is_run_submission,
     is_command_input,
     normalize_chat_input,
     parse_chat_input,
     command_name,
-    run_override_error,
+    run_directive_error,
 )
 from .policy import validate_model_reasoning_request
 from .presenter import ChatRunPresenter
@@ -1002,14 +1002,14 @@ class ChatTuiApp:
                 return False
             error = friendly_error(str(exc))
             self.status_bar.set_error(
-                run_override_error(source, error) if source.startswith("/") else error
+                run_directive_error(source, error) if source.startswith("/") else error
             )
             return False
         if self.submission_blocked is not None and not _blocked_input_allowed(
             chat_input
         ):
             return False
-        if isinstance(chat_input, QuickCommand):
+        if isinstance(chat_input, ChatCommand):
             if not commands.is_registered(chat_input.name, prefix=chat_input.prefix):
                 self.status_bar.set_error(
                     commands.unrecognized_diagnostic(
@@ -1021,7 +1021,7 @@ class ChatTuiApp:
             if outcome is not None:
                 self._write_command_outcome(source, outcome)
             return True
-        if not is_runnable_input(chat_input):
+        if not is_run_submission(chat_input):
             raise AssertionError("unknown chat input value")
         override, runnable_input = chat_input
         try:
@@ -1313,7 +1313,7 @@ def _is_run_state(value: object) -> TypeGuard[ChatRunState]:
 
 
 def _blocked_input_allowed(value: object) -> bool:
-    if not isinstance(value, QuickCommand):
+    if not isinstance(value, ChatCommand):
         return False
     if value.prefix == ":" and value.name != "?":
         return value.tail is None

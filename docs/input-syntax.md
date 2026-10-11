@@ -3,6 +3,19 @@
 This document defines runnable input, Chat session settings and run overrides,
 shared `Content` syntax, and runnable-boundary coercion.
 
+## Terminology
+
+A **command** is one standalone Chat interaction. A **run directive** describes
+one run submission. Commands use slash or colon syntax; run directives use
+slash, dollar, or at syntax. A **root runnable call** selects the submitted
+run's target; a **prompt call** expands Content inside its input.
+
+Code names follow these roles: `ChatCommand` is a parsed command,
+`CommandSpec` is its registry entry, and `CommandOutcome` is its result.
+`RunOverride` and `CallInput` are parsed execution values, not command categories.
+`PromptInvocation` records resolved prompt-call provenance. Parameter, argument,
+and primary-input terms follow [Call Input](./call-input.md#terminology).
+
 ## Input Layers
 
 The layers are independent values with separate parsers:
@@ -11,7 +24,7 @@ The layers are independent values with separate parsers:
 CallInput[T] = {"_": Input?, argumentName: Argument, ...}
 RunnableInput = CallInput[Value]
 
-ChatInput = QuickCommand | RunOverride + CallInput[str]
+ChatInput = ChatCommand | tuple[RunOverride, CallInput[str]]
 ```
 
 - `CallInput[str]` contains source text under `_` and argument names. Prompt,
@@ -20,7 +33,7 @@ ChatInput = QuickCommand | RunOverride + CallInput[str]
 - `SessionSetting` holds Chat defaults for subsequent runs: model, runnable,
   workdir, resource ceilings, and limits.
 - `RunOverride` supplies changes for one run; it never updates the session.
-- `QuickCommand` represents a standalone slash or colon command and occupies
+- `ChatCommand` represents a standalone slash or colon command and occupies
   the complete submission.
 - **Run directives** describe one submitted run: **slash directives** specify
   overrides or a root runnable call, **dollar directives** expand prompts, and
@@ -30,7 +43,7 @@ ChatInput = QuickCommand | RunOverride + CallInput[str]
   explicit empty values when their types accept them.
 
 Script, task, and chore surfaces parse the run-only pair of `RunOverride` and
-`CallInput[str]`; they do not parse `QuickCommand`. Agic, flow, and prompt
+`CallInput[str]`; they do not parse `ChatCommand`. Agic, flow, and prompt
 bodies are `Content` sources rather than caller-input envelopes.
 
 Parsing and resolution are separate. Parsing produces `RunOverride` and
@@ -287,10 +300,8 @@ input. Runnable input may contain prompt calls, but prompt input and prompt
 results cannot contain another prompt call. The capture form is not persisted
 with prompt provenance.
 
-Slash-prefixed prompt calls are not supported. In terminal Chat, a leading
-slash selects an interaction or runnable; within already captured `Content` it
-is ordinary text. Shell commands must single-quote dollar-prefixed input, for
-example:
+Prompt calls use dollar directives. Shell commands must single-quote
+dollar-prefixed input, for example:
 
 ```sh
 too run review.too main -- '$review focus=security'

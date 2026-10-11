@@ -3,7 +3,7 @@
 This document defines the public CLI and local agent HTTP API.
 
 Interactive CLI, TUI, and WebUI surfaces may parse the `ChatInput` forms
-defined by [input-syntax.md](./input-syntax.md). Quick commands remain local to
+defined by [input-syntax.md](./input-syntax.md). Commands remain local to
 the interaction surface. Execution surfaces resolve `RunOverride` and
 `CallInput[str]` values into the structured run request described here.
 
@@ -402,7 +402,8 @@ runnable-level scalar values override root values; repeated `--workspace`,
 may appear only once across both levels. Quiet mode is enabled at
 either level. `--help` describes the level where it appears.
 
-Script mode parses policy prefixes but does not accept chat quick commands.
+Script mode parses run directives and root runnable calls; standalone Chat
+commands are not accepted.
 
 Behavior:
 

@@ -12,12 +12,12 @@ surface colors defined by `terminal-adaptive-chat-surfaces.md`.
 
 ## Verified Current Behavior
 
-- A submitted root-run input, a steer input, and each quick-command input use
+- A submitted root-run input, a steer input, and each command input use
   the same three-row-minimum control-bar geometry. Root-run and steer bars use
-  the full terminal width. Quick-command bars use the lesser of the terminal
+  the full terminal width. Command bars use the lesser of the terminal
   width and the configured progress maximum, which is still full width when
   the terminal is no wider than that maximum.
-- The identical right edge makes a steer or quick command look like the start
+- The identical right edge makes a steer or command look like the start
   of another root Run when the transcript is scanned from the right.
 - The status bar reserves column zero for a dim idle marker or an animated
   running spinner. The runnable begins in column two. While running, the
@@ -35,7 +35,7 @@ and make running state legible without a decorative animation. The feature
 succeeds when:
 
 - a submitted input that starts a new root Run targets the terminal width;
-- steer and quick-command control bars use the same configured output width as
+- steer and command control bars use the same configured output width as
   execution and command output, which produces a visible right-side distinction
   whenever that output width is narrower than the terminal;
 - the status runnable begins in column zero with no marker or spinner;
@@ -56,7 +56,7 @@ A root-run submission retains the existing full-width Input surface:
 The surface reaches the right edge and marks the beginning of a new root Run.
 The bottom editable prompt remains full width and is not transcript history.
 
-Steer and quick-command inputs retain their existing accents, Input
+Steer and command inputs retain their existing accents, Input
 background, vertical padding, message alignment, and wrapping. Their surface
 uses the same width as ordinary output:
 
@@ -76,8 +76,7 @@ max(1, min(available_width, configured_progress_max_width))
 existing output-width rule: on a terminal wider than the configured maximum,
 the terminal background remains visible to the right; on a terminal no wider
 than the maximum, the bar may use the full available width. No artificial
-one-cell gutter is added. Long messages wrap within this output width. A quick-
-command control bar aligns with its associated result, help, table, or reopened
+one-cell gutter is added. Long messages wrap within this output width. A command control bar aligns with its associated result, help, table, or reopened
 output. A steer bar uses the same output width even though it has no result body.
 
 Rejected root-run submissions are not control bars and keep their current
@@ -132,7 +131,7 @@ that suffix is elided last so the line never exceeds the available width.
 In scope:
 
 - `src/toolang/cli/toolang/commands/chat/blocks.py`: distinguish full-width
-  root-run bars from auxiliary steer and quick-command control widths while
+  root-run bars from auxiliary steer and command control widths while
   preserving adaptive Input backgrounds and wrapping;
 - `src/toolang/cli/toolang/commands/chat/widgets.py`: remove status markers and
   spinner state, compose the new left-aligned status text, and compact duration
@@ -152,11 +151,11 @@ In scope:
 
 Out of scope:
 
-- root-run creation, steering, quick-command parsing, or execution semantics;
+- root-run creation, steering, command parsing, or execution semantics;
 - control-bar colors, accents, height, padding, text alignment, or Input surface
   resolution;
 - prompt-box and queue-panel geometry;
-- quick-command result-body, help, table, or reopened-output width;
+- command result-body, help, table, or reopened-output width;
 - active/default runnable selection and session setting behavior;
 - model selection, status error content or styling, execution progress, root
   Run footers, and transcript persistence; and
@@ -169,10 +168,9 @@ Out of scope:
 2. A `RunSteerBlock` uses
    `min(available width, configured progress maximum)` in live and stable
    rendering.
-3. Every quick-command block variant uses the same output width for its
+3. Every command block variant uses the same output width for its
    submitted command rows and associated content.
-4. On a terminal wider than the configured progress maximum, steer and quick-
-   command bars end at that maximum while root-run submission remains full
+4. On a terminal wider than the configured progress maximum, steer and command bars end at that maximum while root-run submission remains full
    width; on a narrower terminal, auxiliary bars may use the full width.
 5. Multiline and wide-character messages wrap without overflow or content loss
    under the distinct root and auxiliary widths.

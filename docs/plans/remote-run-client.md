@@ -116,46 +116,15 @@ resolver values and owns no watcher, store, relay, or transport behavior.
 
 ## Authored Run Wire Contract
 
-Add strict API payloads that represent `RunRequest` without exposing local
-runtime objects. `POST /api/v1/runs/authored/stream` accepts:
+The current wire schema is defined by
+[`execution/schemas.py`](../../src/toolang/execution/schemas.py) and
+[API](../api.md). Local and remote clients submit the same materialized
+`RunRequest`; command parsing and session defaults stay at the call site.
 
-```json
-{
-  "thread": "term_example",
-  "request_id": "term_0123456789abcdef",
-  "commands": [
-    {"group": "limit", "field": "tokens", "value": 4000}
-  ],
-  "input": {
-    "primary": "Summarize\n@notes.md",
-    "named": [
-      {"name": "audience", "source": "maintainers"}
-    ]
-  },
-  "session_commands": [
-    {"group": "default", "field": "model", "value": "openai/gpt-5"}
-  ],
-  "runnable_fallbacks": ["agic:chat", "default"]
-}
-```
-
-The wire rules are:
-
-- `thread` and `request_id` are required canonical nonempty strings;
-- `commands` and `session_commands` are ordered arrays and default to empty;
-- each command uses the existing `RunOverride` groups and fields;
-- allow values are selector arrays or `null`, default values are strings or
-  `null`, integer limits are integers or `null`, and cost is canonical decimal
-  text or `null` so JSON conversion does not lose precision;
-- `input.primary` is text or `null`; `input.named` is an ordered array of unique
-  `{name, source}` entries and defaults to empty;
-- `runnable_fallbacks` is a required nonempty ordered array of unique canonical
-  strings;
-- unknown fields and invalid group/field/value combinations return `422`.
-
-The API reconstructs the existing immutable `RunOverride`, `RunnableInputRaw`,
-and `RunRequest` values before resolution. No second request vocabulary enters
-the executor.
+Authored runnable input is a flat `CallInput[str]` mapping. Primary input uses
+`_`; named arguments use their own keys. JSON transports that mapping directly.
+The server validates the request before resolving it into runtime values; it
+does not reconstruct Chat commands or mutable session settings.
 
 ## Run And Event Streaming
 

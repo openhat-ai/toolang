@@ -190,7 +190,7 @@ def _run_context(runnable: str, model: str, reasoning: str, width: int) -> str:
     return truncate(" · ".join(truncate(v, w) for v, w in zip(fields, widths)), width)
 
 
-def _slash_control_lines(
+def _command_control_lines(
     message: str,
     *,
     input_background: str,
@@ -597,7 +597,7 @@ class CommandResultBlock:
             inline_code_background=self.inline_code_background,
         ).render()
         lines = [
-            *_slash_control_lines(
+            *_command_control_lines(
                 self.message,
                 input_background=self.input_background,
                 width=width,
@@ -711,14 +711,14 @@ class CommandBlock:
         options: ConsoleOptions,
     ) -> RenderResult:
         width = max(1, min(options.max_width, self.max_width))
-        lines = _slash_control_lines(
+        lines = _command_control_lines(
             self.message,
             input_background=self.input_background,
             width=width,
         )
         for index, line in enumerate(self.body):
             styled = self._summary_line(line) if index == 0 else self._body_line(line)
-            lines.extend(_wrap_slash_text(console, styled, width=width))
+            lines.extend(_wrap_command_text(console, styled, width=width))
         yield from console.render(Group(*lines), options.update_width(width))
 
     def _summary_line(self, line: str) -> Text:
@@ -844,13 +844,13 @@ class CommandTableBlock:
         options: ConsoleOptions,
     ) -> RenderResult:
         width = max(1, min(options.max_width, self.max_width))
-        lines: list[RenderableType] = _slash_control_lines(
+        lines: list[RenderableType] = _command_control_lines(
             self.message,
             input_background=self.input_background,
             width=width,
         )
         lines.extend(
-            _wrap_slash_text(console, Text(f"  {self.table.summary}"), width=width)
+            _wrap_command_text(console, Text(f"  {self.table.summary}"), width=width)
         )
         if self.table.rows:
             lines.extend((Text(), _CommandTableRows(self.table)))
@@ -876,7 +876,7 @@ class CommandHelpBlock:
     ) -> RenderResult:
         width = max(1, min(options.max_width, self.max_width))
         inset = min(2, max(0, width - 1))
-        lines: list[RenderableType] = _slash_control_lines(
+        lines: list[RenderableType] = _command_control_lines(
             self.message,
             input_background=self.input_background,
             width=width,
@@ -889,11 +889,11 @@ class CommandHelpBlock:
             if "alias:" in styled.plain:
                 start = styled.plain.index("alias:")
                 styled.stylize("dim", max(0, start - 1))
-            lines.extend(_wrap_slash_text(console, styled, width=width))
+            lines.extend(_wrap_command_text(console, styled, width=width))
         yield from console.render(Group(*lines), options.update_width(width))
 
 
-def _wrap_slash_text(console: Console, text: Text, *, width: int) -> list[Text]:
+def _wrap_command_text(console: Console, text: Text, *, width: int) -> list[Text]:
     """Preserve each logical line's inset on every wrapped physical line."""
     if not text.plain.strip():
         return [Text()]

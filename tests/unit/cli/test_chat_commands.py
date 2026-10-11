@@ -21,8 +21,8 @@ from toolang.execution.types import (
 from toolang.cli.toolang.commands.chat import shortcuts, commands
 from toolang.cli.toolang.commands.chat.base import ChatResult
 from toolang.cli.toolang.commands.chat.input import (
-    QuickCommand,
-    is_runnable_input,
+    ChatCommand,
+    is_run_submission,
     parse_chat_input,
 )
 from toolang.cli.toolang.commands.chat.policy import (
@@ -298,7 +298,7 @@ def test_unrecognized_slash_names_return_status_guidance(
 def test_command_with_unexpected_body_returns_error() -> None:
     app = _App()
 
-    result = _outcome(commands.handle(app, QuickCommand("help", "unexpected")))
+    result = _outcome(commands.handle(app, ChatCommand("help", "unexpected")))
 
     assert result.kind == "error"
     assert commands.outcome_lines(result) == (
@@ -306,11 +306,11 @@ def test_command_with_unexpected_body_returns_error() -> None:
     )
 
 
-def test_quick_help_and_exit_are_declarative_commands() -> None:
+def test_command_help_and_exit_are_declarative_commands() -> None:
     app = _App()
 
-    help_result = _outcome(commands.handle(app, QuickCommand("?")))
-    exit_result = commands.handle(app, QuickCommand("quit"))
+    help_result = _outcome(commands.handle(app, ChatCommand("?")))
+    exit_result = commands.handle(app, ChatCommand("quit"))
 
     help_lines = commands.outcome_lines(help_result)
     assert help_result.kind == "result"
@@ -393,13 +393,13 @@ def test_run_directive_help_covers_all_operations_and_input_forms() -> None:
 
     example = lines[lines.index("Example") + 1 :]
     parsed = parse_chat_input("\n".join(line.removeprefix("  ") for line in example))
-    assert is_runnable_input(parsed)
+    assert is_run_submission(parsed)
     assert parsed[0].model is not None and parsed[0].model.max_output == 8192
     assert parsed[1]["_"] == "Review this change."
 
 
 def test_keys_help_uses_the_binding_metadata_without_a_title() -> None:
-    result = _outcome(commands.handle(_App(), QuickCommand("keys")))
+    result = _outcome(commands.handle(_App(), ChatCommand("keys")))
     lines = commands.outcome_lines(result)
 
     assert result.kind == "result"
@@ -422,7 +422,7 @@ def test_keys_help_uses_the_binding_metadata_without_a_title() -> None:
 def test_required_command_without_body_returns_focused_help(name: str) -> None:
     app = _App()
     app.client.error = AssertionError("client must not be called")
-    result = _outcome(commands.handle(app, QuickCommand(name, prefix=":")))
+    result = _outcome(commands.handle(app, ChatCommand(name, prefix=":")))
     assert result.kind == "usage"
     lines = commands.outcome_lines(result)
     canonical = "runnable" if name == "agic" else name
@@ -437,10 +437,10 @@ def test_required_command_without_body_returns_focused_help(name: str) -> None:
 
 @pytest.mark.parametrize("name", ("runnable", "agic", "flow"))
 def test_runnable_commands_share_focused_help(name: str) -> None:
-    result = _outcome(commands.handle(_App(), QuickCommand(name, prefix=":")))
+    result = _outcome(commands.handle(_App(), ChatCommand(name, prefix=":")))
 
     assert commands.outcome_lines(result) == commands.outcome_lines(
-        _outcome(commands.handle(_App(), QuickCommand("runnable", prefix=":")))
+        _outcome(commands.handle(_App(), ChatCommand("runnable", prefix=":")))
     )
 
 
@@ -449,7 +449,7 @@ def test_model_identity_and_effort_update_independently() -> None:
 
     selected = _outcome(
         commands.handle(
-            app, QuickCommand("model", "openai/gpt-5 effort=high", prefix=":")
+            app, ChatCommand("model", "openai/gpt-5 effort=high", prefix=":")
         )
     )
     assert app.setting.model == ModelRequest(
@@ -460,20 +460,20 @@ def test_model_identity_and_effort_update_independently() -> None:
         "Model set to openai/gpt-5 · effort=high",
     )
 
-    commands.handle(app, QuickCommand("model", "effort=low", prefix=":"))
+    commands.handle(app, ChatCommand("model", "effort=low", prefix=":"))
     assert app.setting.model == ModelRequest(
         "openai/gpt-5",
         reasoning=Reasoning(effort="low"),
     )
 
-    commands.handle(app, QuickCommand("model", "effort=4096", prefix=":"))
+    commands.handle(app, ChatCommand("model", "effort=4096", prefix=":"))
     assert app.setting.model == ModelRequest(
         "openai/gpt-5",
         reasoning=Reasoning(budget_tokens=4096),
     )
 
     automatic = _outcome(
-        commands.handle(app, QuickCommand("model", "effort=auto", prefix=":"))
+        commands.handle(app, ChatCommand("model", "effort=auto", prefix=":"))
     )
     assert app.setting.model == ModelRequest("openai/gpt-5")
     assert commands.outcome_lines(automatic) == (
@@ -487,7 +487,7 @@ def test_model_rejects_known_unsupported_effort_without_changing_session() -> No
     previous = app.setting
 
     result = _outcome(
-        commands.handle(app, QuickCommand("model", "effort=medium", prefix=":"))
+        commands.handle(app, ChatCommand("model", "effort=medium", prefix=":"))
     )
 
     assert result.kind == "error"
@@ -511,7 +511,7 @@ def test_model_defers_effort_validation_when_metadata_is_unavailable() -> None:
     )
 
     result = _outcome(
-        commands.handle(app, QuickCommand("model", "effort=medium", prefix=":"))
+        commands.handle(app, ChatCommand("model", "effort=medium", prefix=":"))
     )
 
     assert result.kind == "success"
@@ -523,7 +523,7 @@ def test_model_defers_effort_validation_when_metadata_is_unavailable() -> None:
 def test_model_none_is_rejected_without_loading_resources() -> None:
     app = _App()
 
-    result = _outcome(commands.handle(app, QuickCommand("model", "none", prefix=":")))
+    result = _outcome(commands.handle(app, ChatCommand("model", "none", prefix=":")))
 
     assert result.kind == "error"
     assert commands.outcome_lines(result) == (
@@ -538,7 +538,7 @@ def test_model_none_is_rejected_without_loading_resources() -> None:
 def test_model_unset_is_rejected_as_a_session_command() -> None:
     app = _App()
 
-    result = _outcome(commands.handle(app, QuickCommand("model", "unset", prefix=":")))
+    result = _outcome(commands.handle(app, ChatCommand("model", "unset", prefix=":")))
 
     assert result.kind == "error"
     assert commands.outcome_lines(result) == (
@@ -551,7 +551,7 @@ def test_model_unset_is_rejected_as_a_session_command() -> None:
 def test_runnable_argument_updates_setting_and_refreshes_status() -> None:
     app = _App()
 
-    result = _outcome(commands.handle(app, QuickCommand("flow", "review", prefix=":")))
+    result = _outcome(commands.handle(app, ChatCommand("flow", "review", prefix=":")))
 
     assert result.kind == "success"
     assert commands.outcome_lines(result) == ("Runnable set to flow:review",)
@@ -565,11 +565,11 @@ def test_allow_and_limit_report_effective_updates_and_refresh_status() -> None:
     allowed = _outcome(
         commands.handle(
             app,
-            QuickCommand("allow", "models=openai/* tools=shell/*", prefix=":"),
+            ChatCommand("allow", "models=openai/* tools=shell/*", prefix=":"),
         )
     )
     limited = _outcome(
-        commands.handle(app, QuickCommand("limit", "tokens=2000 time=none", prefix=":"))
+        commands.handle(app, ChatCommand("limit", "tokens=2000 time=none", prefix=":"))
     )
 
     assert commands.outcome_lines(allowed) == ("Allowed 1 model, 1 tool",)
@@ -596,7 +596,7 @@ def test_allow_selects_a_fallback_for_an_excluded_model_and_reports_it() -> None
     )
 
     result = _outcome(
-        commands.handle(app, QuickCommand("allow", "models=openrouter/*", prefix=":"))
+        commands.handle(app, ChatCommand("allow", "models=openrouter/*", prefix=":"))
     )
 
     assert app.setting.model == ModelRequest("openrouter/openai/o3")
@@ -622,7 +622,7 @@ def test_allow_preserves_parameters_for_an_allowed_model() -> None:
     app.setting = SessionSetting(model=selected, runnable="agic:chat")
 
     result = _outcome(
-        commands.handle(app, QuickCommand("allow", "models=openai/*", prefix=":"))
+        commands.handle(app, ChatCommand("allow", "models=openai/*", prefix=":"))
     )
 
     assert app.setting.model == selected
@@ -635,14 +635,14 @@ def test_workdir_sets_or_resets_only_the_session_workdir() -> None:
     app.setting = replace(app.setting, workdir="repo://src", workdir_base=None)
 
     changed = _outcome(
-        commands.handle(app, QuickCommand("workdir", "../tests", prefix=":"))
+        commands.handle(app, ChatCommand("workdir", "../tests", prefix=":"))
     )
     assert app.setting.workdir == "../tests"
     assert app.setting.workdir_base == "repo://src"
     assert commands.outcome_lines(changed) == ("Workdir set to ../tests",)
 
     reset = _outcome(
-        commands.handle(app, QuickCommand("workdir", "default", prefix=":"))
+        commands.handle(app, ChatCommand("workdir", "default", prefix=":"))
     )
     assert app.setting.workdir is None
     assert app.setting.workdir_base is None
@@ -695,7 +695,7 @@ def test_allow_none_clears_the_model_and_reports_an_empty_collection() -> None:
     app = _App()
 
     result = _outcome(
-        commands.handle(app, QuickCommand("allow", "models=none", prefix=":"))
+        commands.handle(app, ChatCommand("allow", "models=none", prefix=":"))
     )
 
     assert app.setting.model is None
@@ -719,7 +719,7 @@ def test_explicit_model_outside_allow_is_atomic() -> None:
     previous = app.setting
 
     result = _outcome(
-        commands.handle(app, QuickCommand("model", "openai/gpt-5", prefix=":"))
+        commands.handle(app, ChatCommand("model", "openai/gpt-5", prefix=":"))
     )
 
     assert result.kind == "error"
@@ -738,7 +738,7 @@ def test_default_model_uses_the_query_relative_fallback() -> None:
         allow=AgentCeiling(models=("openrouter/*",)),
     )
     result = _outcome(
-        commands.handle(app, QuickCommand("model", "default effort=high", prefix=":"))
+        commands.handle(app, ChatCommand("model", "default effort=high", prefix=":"))
     )
 
     assert result.kind == "success"
@@ -777,7 +777,7 @@ def test_resource_commands_forward_the_whole_query_and_return_tables(
 ) -> None:
     app = _App()
 
-    result = _outcome(commands.handle(app, QuickCommand(command, query)))
+    result = _outcome(commands.handle(app, ChatCommand(command, query)))
 
     assert result.kind == "result"
     assert isinstance(result.content, commands.CommandTable)
@@ -789,7 +789,7 @@ def test_resource_commands_forward_the_whole_query_and_return_tables(
 def test_models_table_formats_prices_efforts_and_default_marker() -> None:
     app = _App()
 
-    result = _outcome(commands.handle(app, QuickCommand("models")))
+    result = _outcome(commands.handle(app, ChatCommand("models")))
 
     assert commands.outcome_lines(result) == (
         "2 models allowed.",
@@ -813,7 +813,7 @@ def test_models_table_distinguishes_zero_and_missing_prices() -> None:
         },
     )
 
-    result = _outcome(commands.handle(app, QuickCommand("models")))
+    result = _outcome(commands.handle(app, ChatCommand("models")))
 
     assert isinstance(result.content, commands.CommandTable)
     assert result.content.rows == (("openai/gpt-5 *", "$ 0.00 /      -", "-"),)
@@ -856,21 +856,21 @@ def test_tools_table_hides_private_toolsets_after_query() -> None:
         },
     )
 
-    result = _outcome(commands.handle(app, QuickCommand("tools")))
+    result = _outcome(commands.handle(app, ChatCommand("tools")))
 
     assert isinstance(result.content, commands.CommandTable)
     assert result.content.summary == "3 tools allowed."
     assert all(not row[0].startswith("_internal/") for row in result.content.rows)
     assert any(row[0] == "filesystem/_private" for row in result.content.rows)
 
-    hidden_only = _outcome(commands.handle(app, QuickCommand("tools", "_internal/*")))
+    hidden_only = _outcome(commands.handle(app, ChatCommand("tools", "_internal/*")))
     assert commands.outcome_lines(hidden_only) == ("0 tools matched out of 3 allowed.",)
 
 
 def test_caps_table_uses_form_and_display_summary() -> None:
     app = _App()
 
-    result = _outcome(commands.handle(app, QuickCommand("caps", "skill/*")))
+    result = _outcome(commands.handle(app, ChatCommand("caps", "skill/*")))
 
     assert isinstance(result.content, commands.CommandTable)
     assert result.content.headers == ("CAP", "SCOPE", "FORM", "DESCRIPTION")
@@ -882,7 +882,7 @@ def test_caps_table_uses_form_and_display_summary() -> None:
 def test_resource_command_without_matches_is_a_result() -> None:
     app = _App()
 
-    result = _outcome(commands.handle(app, QuickCommand("models", "missing/*")))
+    result = _outcome(commands.handle(app, ChatCommand("models", "missing/*")))
 
     assert result.kind == "result"
     assert commands.outcome_lines(result) == ("0 models matched out of 2 allowed.",)
@@ -903,9 +903,9 @@ def test_resource_commands_default_to_session_allowed_collections() -> None:
         ),
     )
 
-    models = _outcome(commands.handle(app, QuickCommand("models")))
-    tools = _outcome(commands.handle(app, QuickCommand("tools")))
-    caps = _outcome(commands.handle(app, QuickCommand("caps")))
+    models = _outcome(commands.handle(app, ChatCommand("models")))
+    tools = _outcome(commands.handle(app, ChatCommand("tools")))
+    caps = _outcome(commands.handle(app, ChatCommand("caps")))
 
     assert isinstance(models.content, commands.CommandTable)
     assert models.content.summary == "1 model allowed."
@@ -932,9 +932,9 @@ def test_resource_queries_intersect_instead_of_union_with_session_allow() -> Non
         ),
     )
 
-    models = _outcome(commands.handle(app, QuickCommand("models", "openai/*")))
-    tools = _outcome(commands.handle(app, QuickCommand("tools", "shell/*")))
-    caps = _outcome(commands.handle(app, QuickCommand("caps", "prompt/*")))
+    models = _outcome(commands.handle(app, ChatCommand("models", "openai/*")))
+    tools = _outcome(commands.handle(app, ChatCommand("tools", "shell/*")))
+    caps = _outcome(commands.handle(app, ChatCommand("caps", "prompt/*")))
 
     assert commands.outcome_lines(models) == ("0 models matched out of 1 allowed.",)
     assert commands.outcome_lines(tools) == ("0 tools matched out of 1 allowed.",)
@@ -956,9 +956,9 @@ def test_all_resource_tables_show_allowed_state_and_available_denominator() -> N
         ),
     )
 
-    models = _outcome(commands.handle(app, QuickCommand("models", "-a")))
-    tools = _outcome(commands.handle(app, QuickCommand("tools", "-a shell/*")))
-    caps = _outcome(commands.handle(app, QuickCommand("caps", "-a")))
+    models = _outcome(commands.handle(app, ChatCommand("models", "-a")))
+    tools = _outcome(commands.handle(app, ChatCommand("tools", "-a shell/*")))
+    caps = _outcome(commands.handle(app, ChatCommand("caps", "-a")))
 
     assert isinstance(models.content, commands.CommandTable)
     assert models.content.summary == "2 models available."
@@ -993,7 +993,7 @@ def test_all_resource_tables_show_allowed_state_and_available_denominator() -> N
 
 @pytest.mark.parametrize("command", ("models", "tools", "caps"))
 def test_empty_resource_queries_show_only_the_summary(command: str) -> None:
-    result = _outcome(commands.handle(_App(), QuickCommand(command, "-a missing/*")))
+    result = _outcome(commands.handle(_App(), ChatCommand(command, "-a missing/*")))
     assert isinstance(result.content, commands.CommandText)
     assert result.content.summary.endswith("matched out of 2 available.")
     assert commands.outcome_lines(result, width=60) == (result.content.summary,)
@@ -1003,9 +1003,9 @@ def test_agics_and_flows_list_available_items_and_mark_the_current_kind() -> Non
     app = _App()
     app.setting = replace(app.setting, runnable="flow:review")
 
-    agics = _outcome(commands.handle(app, QuickCommand("agics")))
-    flows = _outcome(commands.handle(app, QuickCommand("flows")))
-    rejected = _outcome(commands.handle(app, QuickCommand("flows", "review")))
+    agics = _outcome(commands.handle(app, ChatCommand("agics")))
+    flows = _outcome(commands.handle(app, ChatCommand("flows")))
+    rejected = _outcome(commands.handle(app, ChatCommand("flows", "review")))
 
     assert isinstance(agics.content, commands.CommandTable)
     assert agics.content.summary == "1 agic available."
@@ -1019,12 +1019,12 @@ def test_agics_and_flows_list_available_items_and_mark_the_current_kind() -> Non
     )
 
 
-def test_quick_output_and_show_load_an_explicit_or_latest_durable_result() -> None:
+def test_command_output_and_show_load_an_explicit_or_latest_durable_result() -> None:
     app = _App()
 
-    explicit = _outcome(commands.handle(app, QuickCommand("output", "run_saved")))
-    latest = _outcome(commands.handle(app, QuickCommand("output")))
-    alias = _outcome(commands.handle(app, QuickCommand("show")))
+    explicit = _outcome(commands.handle(app, ChatCommand("output", "run_saved")))
+    latest = _outcome(commands.handle(app, ChatCommand("output")))
+    alias = _outcome(commands.handle(app, ChatCommand("show")))
 
     assert isinstance(explicit.content, commands.CommandRunResult)
     assert isinstance(latest.content, commands.CommandRunResult)
@@ -1042,15 +1042,15 @@ def test_quick_output_and_show_load_an_explicit_or_latest_durable_result() -> No
 def test_queue_and_steer_commands_are_not_registered(command: str) -> None:
     assert not commands.is_registered(command)
     with pytest.raises(KeyError, match="unregistered command"):
-        commands.handle(_App(), QuickCommand(command))
+        commands.handle(_App(), ChatCommand(command))
 
 
-def test_quick_client_errors_return_scrollback_errors() -> None:
+def test_command_client_errors_return_scrollback_errors() -> None:
     app = _App()
     app.client.error = ToolangError("unavailable")
 
     result = _outcome(
-        commands.handle(app, QuickCommand("model", "openai/gpt-5", prefix=":"))
+        commands.handle(app, ChatCommand("model", "openai/gpt-5", prefix=":"))
     )
 
     assert result.kind == "error"
@@ -1063,7 +1063,7 @@ def test_model_output_limit_is_applied_and_reported(identity: str) -> None:
     app = _App()
     result = _outcome(
         commands.handle(
-            app, QuickCommand("model", f"{identity}max_output=8192", prefix=":")
+            app, ChatCommand("model", f"{identity}max_output=8192", prefix=":")
         )
     )
     assert app.setting.model is not None
@@ -1092,13 +1092,13 @@ def test_runnable_lists_show_qualified_calls_for_builtin_collisions(kind) -> Non
         "items": [{"name": "help"}, {"name": "model"}, {"name": "cd"}]
     }
     app.setting = replace(app.setting, runnable=f"{kind}:help")
-    outcome = _outcome(commands.handle(app, QuickCommand(kind + "s")))
+    outcome = _outcome(commands.handle(app, ChatCommand(kind + "s")))
     assert isinstance(outcome.content, commands.CommandTable)
     assert outcome.content.rows == ((f"/{kind}:help *",), (f"/{kind}:model",), ("cd",))
 
 
 def test_session_help_contains_only_colon_commands() -> None:
-    outcome = _outcome(commands.handle(_App(), QuickCommand("?", prefix=":")))
+    outcome = _outcome(commands.handle(_App(), ChatCommand("?", prefix=":")))
     assert isinstance(outcome.content, commands.CommandHelp)
     assert all(
         row.command.startswith(":")

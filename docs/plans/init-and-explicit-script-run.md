@@ -126,7 +126,7 @@ and authorized model routes.
   execution, output, progress, and exit codes. Show the actual invocation spelling
   in help and errors. Keep path-first invocation and existing shebangs.
 - Resolve explicit `run` before agent routing. Preserve every token after FILE,
-  including command-like runnable names, option values, colon overrides, and `--`.
+  including command-like runnable names, option values, run override directives, and `--`.
   Support the native `--` boundary before FILE, including dash-prefixed filenames.
 - Reject global `--root` / `-r` overrides as in existing Script invocation. Explicit
   `run` has no target-first alias. `too AGENT run` must not start an agent and must
@@ -205,7 +205,7 @@ The existing source cache schema transition is the only storage change.
    four follow-up commands and descriptions for both executable names and quoted paths.
 2. Explicit and shorthand Script invocations execute the template with an offline
    model fixture and preserve input, named parameters, options, `--`, stdin,
-   colon overrides, local/remote results, and exit status. Cover command-like
+   run override directives, local/remote results, and exit status. Cover command-like
    runnable names, unsupported targets, root overrides, and exact filenames.
    Execute the template's named rewrite and composite polish examples with an
    offline model fixture, checking named-parameter and intermediate-result binding.

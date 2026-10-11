@@ -16,7 +16,7 @@ from toolang.lang.input import CallInput
 
 
 @dataclass(frozen=True, slots=True)
-class QuickCommand:
+class ChatCommand:
     """One immediate terminal-chat command."""
 
     name: str
@@ -24,7 +24,7 @@ class QuickCommand:
     prefix: Literal["/", ":"] = "/"
 
 
-ChatInput: TypeAlias = QuickCommand | tuple[RunOverride, CallInput[str]]
+ChatInput: TypeAlias = ChatCommand | tuple[RunOverride, CallInput[str]]
 
 _LEADING_BLANK_LINES_RE = re.compile(r"\A(?:[ \t]*(?:\r\n|\n))+")
 _TRAILING_BLANK_LINES_RE = re.compile(r"(?:(?:\r\n|\n)[ \t]*)+\Z")
@@ -52,7 +52,7 @@ def parse_chat_input(chat_input: str) -> ChatInput:
         name, tail = _command_parts(first)
         if first.startswith(":") and name not in COLON_COMMAND_NAMES:
             raise ValueError(f"unknown colon command: :{name}")
-        return QuickCommand(name, tail, ":" if first.startswith(":") else "/")
+        return ChatCommand(name, tail, ":" if first.startswith(":") else "/")
 
     override, runnable_input = parse_call(body)
     if not runnable_input and override.runnable is None:
@@ -60,10 +60,10 @@ def parse_chat_input(chat_input: str) -> ChatInput:
     return override, runnable_input
 
 
-def is_runnable_input(
+def is_run_submission(
     value: ChatInput,
 ) -> TypeGuard[tuple[RunOverride, CallInput[str]]]:
-    """Return whether a chat input contains one runnable invocation."""
+    """Return whether parsed Chat input describes one run submission."""
 
     return (
         isinstance(value, tuple)
@@ -96,7 +96,7 @@ def _command_parts(line: str) -> tuple[str, str | None]:
     return head[1:], tail[0].strip(" \t") or None if tail else None
 
 
-def run_override_error(source: str, message: str) -> str:
+def run_directive_error(source: str, message: str) -> str:
     """Add concise Chat guidance to one rejected run directive."""
 
     first = source.splitlines()[0].strip()
@@ -112,11 +112,11 @@ def run_override_error(source: str, message: str) -> str:
 
 __all__ = [
     "ChatInput",
-    "QuickCommand",
+    "ChatCommand",
     "command_name",
     "is_command_input",
-    "is_runnable_input",
+    "is_run_submission",
     "normalize_chat_input",
     "parse_chat_input",
-    "run_override_error",
+    "run_directive_error",
 ]

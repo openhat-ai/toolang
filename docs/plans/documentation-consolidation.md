@@ -158,7 +158,7 @@ evaluation README and data retain their separate evidence role described above.
 | `program.md` | Keep as program semantics; own declarations, modules, signatures/defaults, documentation binding, structs and instruction composition. Link normative syntax/CST upstream and detailed flow/cap/input rules to their owners. |
 | `flow-syntax.md` | Keep the filename; present flow evaluation, bindings, collection shapes and statement contracts. Link grammar productions upstream; remove migration essays and state current bridge requirements accurately. |
 | `call-input.md` | Keep; flat input, Content evaluation, prompt expansion, coercion, absence/null distinctions and shared colon RunOverride syntax. Policy resolution belongs in `execution.md`. |
-| `input-syntax.md` | Merge input and shared colon syntax into `call-input.md`, policy precedence/ceilings into `execution.md`, and slash/session interaction into `chat.md`. |
+| `input-syntax.md` | Keep command and run-directive grammar; link to `call-input.md` for input forms, `execution.md` for policy, and `chat.md` for session behavior. |
 | `toolang-authoring-conventions.md` | Split semantic rules into program/flow/input owners and formatter guarantees into `source-commands.md`; verify unique style guidance exists on the website, then replace the full guide with a minimal destination pointer for the existing frozen-plan backlink. Complete any missing website handoff first. |
 | `script-projects.md` | Keep; script discovery, configuration precedence, placement, workspace and attachment resolution contracts. Remove first-script walkthroughs. |
 | `source-commands.md` | Keep; parse/check, format and highlight contracts, diagnostic semantics, exit behavior and source/tooling test links. |
@@ -177,7 +177,7 @@ evaluation README and data retain their separate evidence role described above.
 | `executor.md` | Merge verified invariants into `execution.md`; replace copied Python signatures with source links. |
 | `run-step-records.md` | Keep; durable references, record/projection distinctions, output provenance and current persistence compatibility. |
 | `ids.md` | Merge public ID/reference rules into `run-step-records.md`, job identity into `tasks.md`; link to allocator code for private encoding details. |
-| `chat.md` | Keep; Chat orchestration, slash/session state, queue/thread ownership, local/remote lifecycle and recovery contracts. Link to shared input, policy, API and presentation owners. |
+| `chat.md` | Keep; Chat orchestration, command/session state, queue/thread ownership, local/remote lifecycle and recovery contracts. Link to shared input, policy, API and presentation owners. |
 | `execution-presentation.md` | Keep; current shared output behavior and projection boundaries. Reduce exhaustive screen permutations to representative examples and test links. |
 | `chat-tui-execution-presentation-draft.md` | Remove after transferring any unique, implemented behavior to `chat.md` or `execution-presentation.md`. Do not transfer proposals. |
 | `execution-transcript.md` | Remove the obsolete compatibility page and retired presentation vocabulary; use `execution-presentation.md`. |
@@ -260,9 +260,9 @@ boundaries again against the implementation baseline.
    without reproducing the document directory.
 2. Each retained document has one purpose and one owner for its detailed rules.
    No duplicate glossary, API schema, CLI flag catalog or lifecycle definition
-   competes with that owner. Shared colon override syntax is in `call-input.md`;
+   competes with that owner. Shared run-directive syntax is in `input-syntax.md`;
    policy precedence, defaults, ceilings and limit scope are in `execution.md`;
-   Chat-only slash/session transitions are in `chat.md`. Merges reduce
+   Chat command/session transitions are in `chat.md`. Merges reduce
    repetition rather than just length. Product tutorials are not recreated.
    Syntax/CST rules link upstream; semantic defaults/validation remain owned by
    Toolang; complete authoring conventions are owned by the website. Formatter

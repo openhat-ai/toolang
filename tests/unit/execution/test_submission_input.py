@@ -6,7 +6,7 @@ from toolang.base.types.model import ModelOverride
 from toolang.execution.input import (
     parse_call,
     parse_run_prefix,
-    parse_run_directive,
+    parse_slash_directive,
     parse_setting_override,
 )
 from toolang.execution.types import AllowOverride, LimitOverride, RunOverride
@@ -49,15 +49,15 @@ from toolang.lang.input import CallInput
         ),
     ],
 )
-def test_parse_run_directive_forms(source: str, expected: RunOverride) -> None:
-    override, named = parse_run_directive(source)
+def test_parse_slash_directive_forms(source: str, expected: RunOverride) -> None:
+    override, named = parse_slash_directive(source)
 
     assert override == expected
     assert named == {}
 
 
-def test_runnable_override_returns_named_input_sources() -> None:
-    override, named = parse_run_directive(
+def test_root_runnable_call_returns_named_input_sources() -> None:
+    override, named = parse_slash_directive(
         '/agic:review focus="security review" count=2'
     )
 
@@ -93,8 +93,8 @@ def test_prefix_merges_allow_lines_and_multiple_fields() -> None:
         ("/allow unknown=value", "unknown allow field"),
         ("/limit tokens=-1", "non-negative"),
         ("/limit tokens=1 tokens=2", "duplicate limit field"),
-        (":default model=openai/gpt-5", "not a run override"),
-        (":models openai/*", "not a run override"),
+        (":default model=openai/gpt-5", "not a slash directive"),
+        (":models openai/*", "not a slash directive"),
     ],
 )
 def test_invalid_or_removed_override_forms_are_rejected(
@@ -102,11 +102,11 @@ def test_invalid_or_removed_override_forms_are_rejected(
     message: str,
 ) -> None:
     with pytest.raises(ValueError, match=message):
-        parse_run_directive(source)
+        parse_slash_directive(source)
 
 
 def test_slash_and_colon_share_the_same_setting_body_parser() -> None:
-    override, _named = parse_run_directive("/model openai/gpt-5 effort=high")
+    override, _named = parse_slash_directive("/model openai/gpt-5 effort=high")
 
     assert parse_setting_override("model", "openai/gpt-5 effort=high") == override
     assert parse_setting_override(

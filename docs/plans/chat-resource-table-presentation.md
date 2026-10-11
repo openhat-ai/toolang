@@ -47,7 +47,7 @@ Out of scope:
 - `too models` and other non-Chat tables;
 - model price calculation or accounting changes;
 - adding, removing, or renaming resources;
-- generic styling changes to non-table slash results or other status fields.
+- generic styling changes to non-table command results or other status fields.
 
 ## Shared Table Contract
 
@@ -158,7 +158,7 @@ values.
 
 Applicability comes from an exact lookup of the selected model in the immutable
 model collection. Chat may cache that model's list metadata and reuse metadata
-already obtained by `/model` or `/models`; it must not enumerate the full model
+already obtained by `/models`; it must not enumerate the full model
 collection merely to render status. Failure to obtain display metadata does not
 block Chat startup or a setting update and leaves the effort segment absent.
 
@@ -231,12 +231,12 @@ description first and tool second.
 
 Likely implementation files:
 
-- `src/toolang/cli/toolang/commands/chat/slashes.py`: command-specific columns,
+- `src/toolang/cli/toolang/commands/chat/commands.py`: command-specific columns,
   summaries, default marker, price formatting, and private-toolset filtering;
 - `src/toolang/cli/toolang/commands/chat/blocks.py`: structured one-line table
   rendering, neutral header, separator, width allocation, and ellipsis;
 - `src/toolang/cli/toolang/commands/chat/tui.py` and scripted Chat output:
-  preserve `SlashTable` structure and provide the current output width;
+  preserve `CommandTable` structure and provide the current output width;
 - `src/toolang/cli/toolang/commands/chat/tui.py` and `widgets.py`: resolve and
   render the compact session model/effort status segment without projecting
   active-run model calls;
@@ -276,10 +276,10 @@ query table renderer or introduce fixed cross-command column widths.
   description, content, and empty fallbacks are each covered.
 - Tool rows contain only `TOOL` and `DESCRIPTION`; private toolsets are absent
   even when queried, while a public toolset's `_name` tool remains visible.
-- Hidden tools do not alter `/allow tools=...` results.
+- Hidden tools do not alter `:allow tools=...` results.
 - Local Chat, remote Chat, and HTTP payload tests cover the new metadata and
   produce equivalent visible rows.
-- Existing no-match, slash-result scrollback, query forwarding, and session
+- Existing no-match, command-result scrollback, query forwarding, and session
   setting tests remain green.
 
 ## Risks

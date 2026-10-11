@@ -4,7 +4,7 @@
 
 Approved in the 2026-09-02 design discussion, with layout, keyboard-hint,
 focus, and spacing revisions approved on 2026-09-03. This definition
-follows the slash-command output work and is authoritative for interactive queue
+follows the command output work and is authoritative for interactive queue
 presentation, input submission keys, and steer shortcuts.
 
 ## Goal
@@ -17,7 +17,7 @@ away from the active run.
 ## Success Criteria
 
 - Enter submits runnable input when idle and queues it while a run is starting
-  or active; slash commands and other immediate interactions retain their
+  or active; commands and other immediate interactions retain their
   existing behavior.
 - Meta+Enter always treats the current draft or selected queue item as a raw
   steer message and never parses, submits, or queues it.
@@ -42,7 +42,7 @@ away from the active run.
 - Run cancellation, input clearing, and conditional exit are
   Input-scoped. Queue focus never makes those keys act on Input or the run.
 - Contextual panel hints and `/keys` teach the complete interaction without
-  requiring slash-command help.
+  requiring command help.
 
 ## Scope
 
@@ -64,7 +64,7 @@ Out of scope:
 - queue reordering, mouse controls, or a full-screen queue picker;
 - a generalized tab strip or focus framework for future Chat areas;
 - adding queue behavior to scripted Chat;
-- changing slash-command output or execution progress presentation.
+- changing command output or execution progress presentation.
 
 ## Input Model
 
@@ -77,14 +77,13 @@ The prompt owns three distinct actions:
 | Ctrl+J | Insert a newline | Insert a newline |
 | Shift+Enter | Insert a newline when supported | Insert a newline when supported |
 
-Enter continues to dispatch recognized slash commands and `:?` immediately,
+Enter continues to dispatch recognized slash and colon commands immediately,
 including during a run. Runnable inputs retain their current request-building
 and setting-snapshot behavior before entering the queue.
 
 Meta+Enter is represented at the terminal layer by the standard Meta sequence,
 `Escape` followed by `Enter`. A terminal may map a physical macOS Command-Enter
-keystroke to that sequence. Meta+Enter bypasses slash, colon-override, prompt,
-and runnable parsing, so a draft beginning with `/`, `:`, `$`, or `@` is still
+keystroke to that sequence. Meta+Enter bypasses command and run-directive parsing, so a draft beginning with `/`, `:`, `$`, or `@` is still
 sent as literal steer text. Empty drafts do nothing. A locally accepted steer
 is recorded in input history and clears the unchanged draft. If no accepted
 active run exists, Chat retains the draft and shows a transient status error.
@@ -197,7 +196,7 @@ request from the then-current session settings.
 Steering removes the selected queue item only after Chat locally accepts the
 steer request. Without an accepted active run, the item remains selected and a
 transient status error is shown. A successful steer uses the existing Run steer
-control block; it does not create separate slash-command output.
+control block; it does not create separate command output.
 
 Delete removes immediately without confirmation. After any removal, selection
 moves to the item now occupying the same position or to the new last item. If
@@ -265,7 +264,7 @@ Meta+Enter, including selection keys that are not repeated in every entry.
 Files:
 
 - `src/toolang/cli/toolang/commands/chat/shortcuts.py`
-- `src/toolang/cli/toolang/commands/chat/slashes.py`
+- `src/toolang/cli/toolang/commands/chat/commands.py`
 - `src/toolang/cli/toolang/commands/chat/base.py`
 - `src/toolang/cli/toolang/commands/chat/main.py`
 - `src/toolang/cli/toolang/commands/chat/events.py`
@@ -275,7 +274,7 @@ Files:
 - `docs/input-syntax.md`
 - `docs/execution-presentation.md`
 - `tests/unit/cli/test_chat_tui.py`
-- `tests/unit/cli/test_chat_slashes.py`
+- `tests/unit/cli/test_chat_commands.py`
 - `tests/unit/cli/test_chat_command.py`
 - `tests/system/cli/test_chat_tui_e2e.py`
 

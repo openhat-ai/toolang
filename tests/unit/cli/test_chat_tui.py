@@ -87,7 +87,7 @@ from toolang.cli.toolang.commands.chat.base import (
     SteerError,
 )
 from toolang.cli.toolang.commands.chat.events import ChatUIEvent
-from toolang.cli.toolang.commands.chat.input import QuickCommand
+from toolang.cli.toolang.commands.chat.input import ChatCommand
 from toolang.cli.toolang.commands.chat.policy import (
     build_run_request,
     update_session_setting,
@@ -1365,7 +1365,7 @@ def test_chat_command_blocks_render_run_and_steer_states() -> None:
         ),
     ],
 )
-def test_chat_quick_command_control_bars_match_output_width(
+def test_chat_command_control_bars_match_output_width(
     block: blocks.CommandBlock
     | blocks.CommandResultBlock
     | blocks.CommandTableBlock
@@ -3076,11 +3076,11 @@ def test_chat_progress_marker_style_does_not_leak_to_active_text() -> None:
     assert text.style is None or text.style.color is None
 
 
-def test_chat_slash_block_renders_command_usage_as_table_rows() -> None:
+def test_chat_command_block_renders_command_usage_as_table_rows() -> None:
     block = blocks.CommandBlock(
         "/?",
         [
-            "Slash commands act immediately.",
+            "Commands act immediately.",
             "",
             "/help, /?                         Show help.",
             ":model [MODEL]                    List or switch models.",
@@ -3094,35 +3094,35 @@ def test_chat_slash_block_renders_command_usage_as_table_rows() -> None:
     assert not rendered_lines[0].strip()
     assert rendered_lines[1].startswith(f"{rendering.CONTROL_BAR_MARK} /?")
     assert not rendered_lines[2].strip()
-    assert "  Slash commands act immediately." in rendered
+    assert "  Commands act immediately." in rendered
     assert ":model [MODEL]" in rendered
     assert "List or switch models." in rendered
     assert not rendered.endswith("\n")
     command = next(segment for segment in segments if segment.text == ":model")
     argument = next(segment for segment in segments if segment.text == "[MODEL]")
-    quick_accent_hex = (
+    command_accent_hex = (
         Color.parse(rendering.QUICK_COMMAND_CONTROL_ACCENT).get_truecolor().hex
     )
     input_background_hex = (
         Color.parse(DARK_TERMINAL_SURFACES.input_background).get_truecolor().hex
     )
-    quick_accents = [
+    command_accents = [
         segment
         for segment in all_segments
         if segment.text == rendering.CONTROL_BAR_MARK
         and segment.style is not None
         and segment.style.color is not None
-        and segment.style.color.get_truecolor().hex == quick_accent_hex
+        and segment.style.color.get_truecolor().hex == command_accent_hex
     ]
 
-    assert len(quick_accents) == 1
+    assert len(command_accents) == 1
     assert all(
         segment.style is not None
         and segment.style.color is not None
-        and segment.style.color.get_truecolor().hex == quick_accent_hex
+        and segment.style.color.get_truecolor().hex == command_accent_hex
         and segment.style.bgcolor is not None
         and segment.style.bgcolor.get_truecolor().hex == input_background_hex
-        for segment in quick_accents
+        for segment in command_accents
     )
     assert rendering.QUICK_COMMAND_CONTROL_ACCENT not in {
         rendering.RUN_CONTROL_ACCENT,
@@ -3136,7 +3136,7 @@ def test_chat_slash_block_renders_command_usage_as_table_rows() -> None:
     assert all(segment.style is None or not segment.style.bold for segment in segments)
 
 
-def test_chat_slash_summary_uses_two_space_indent_without_marker() -> None:
+def test_chat_command_summary_uses_two_space_indent_without_marker() -> None:
     block = blocks.CommandBlock(
         ":model openai/gpt-5 effort=high",
         ("Model set to openai/gpt-5 · high",),
@@ -3150,7 +3150,7 @@ def test_chat_slash_summary_uses_two_space_indent_without_marker() -> None:
 
 
 def test_chat_main_help_styles_structure_and_honors_maximum_width() -> None:
-    outcome = commands.handle(None, QuickCommand("help"))  # type: ignore[arg-type]
+    outcome = commands.handle(None, ChatCommand("help"))  # type: ignore[arg-type]
     assert outcome is not None
     assert isinstance(outcome.content, commands.CommandHelp)
     block = blocks.CommandHelpBlock(
@@ -3186,7 +3186,7 @@ def test_chat_main_help_styles_structure_and_honors_maximum_width() -> None:
     assert alias.style is not None and alias.style.dim
 
 
-def test_chat_slash_table_uses_neutral_headers_and_one_line_rows() -> None:
+def test_chat_command_table_uses_neutral_headers_and_one_line_rows() -> None:
     block = blocks.CommandTableBlock(
         "/models",
         commands.CommandTable(
@@ -5837,7 +5837,7 @@ def test_chat_tui_commits_live_finalization_in_one_terminal_transaction(
     assert block not in app.unfinalized_blocks
 
 
-def test_chat_tui_commits_slash_outcome_in_scrollback_transaction(
+def test_chat_tui_commits_command_outcome_in_scrollback_transaction(
     monkeypatch: Any,
 ) -> None:
     app = tui.ChatTuiApp(
@@ -6997,7 +6997,7 @@ def test_chat_reordered_receipts_preserve_a_consumed_batch_in_history(
     assert not _steer_feedback(app)
 
 
-@pytest.mark.parametrize("kind", ["run", "steer", "slash"])
+@pytest.mark.parametrize("kind", ["run", "steer", "command"])
 def test_chat_tabbed_control_body_keeps_padding_on_every_row(kind: str) -> None:
     message = "abcdef\tghi\tjkl"
     if kind == "run":
@@ -7365,7 +7365,7 @@ def test_chat_run_status_yields_space_to_input_on_short_terminals(
 
 
 @pytest.mark.parametrize("width", (30, 60))
-def test_slash_wrapped_prose_retains_its_inset(width: int) -> None:
+def test_command_wrapped_prose_retains_its_inset(width: int) -> None:
     summary = "Runnable set to flow:" + "very_long_name_" * 8
     block = blocks.CommandBlock(":flow review", (summary,), "success")
     lines = _render_text(block.render(), width=width).splitlines()
@@ -7382,7 +7382,7 @@ def test_chat_help_preserves_plain_layout_at_each_width(
     outcome = (
         commands.run_directive_help()
         if command == ":?"
-        else commands.handle(cast(Any, None), QuickCommand(command))
+        else commands.handle(cast(Any, None), ChatCommand(command))
     )
     assert outcome is not None and isinstance(outcome.content, commands.CommandHelp)
     inset = min(2, width - 1)
@@ -7417,7 +7417,7 @@ def test_chat_table_summary_wraps_with_unicode_and_preserves_inset(width: int) -
 def test_keys_help_wraps_descriptions_under_the_description_column(
     width: int, rich: bool
 ) -> None:
-    outcome = commands.handle(cast(Any, None), QuickCommand("keys"))
+    outcome = commands.handle(cast(Any, None), ChatCommand("keys"))
     assert outcome is not None
     if rich:
         block = (

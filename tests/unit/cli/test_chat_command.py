@@ -453,7 +453,7 @@ def test_scripted_chat_help_does_not_create_an_empty_thread(
     assert client.starts == []
 
 
-def test_scripted_chat_projects_shared_slash_outcomes(
+def test_scripted_chat_projects_shared_command_outcomes(
     monkeypatch: Any,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -539,7 +539,7 @@ def test_scripted_chat_rejects_removed_queue_commands(
     assert not client.starts
 
 
-def test_scripted_slash_help_honors_the_configured_maximum_width(
+def test_scripted_command_help_honors_the_configured_maximum_width(
     monkeypatch: Any,
     capsys: pytest.CaptureFixture[str],
 ) -> None:

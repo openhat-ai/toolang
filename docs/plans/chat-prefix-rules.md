@@ -54,7 +54,7 @@ colon commands reject. `/help` and `/?` cover the complete syntax; `:?` shows
 session settings. Existing prompt/include semantics remain.
 
 Use `:workdir [PATH]` for the session workdir and `/workdir PATH` for a run
-override. Preserve the existing `cd` handler's query, path resolution, reset
+override. Preserve workdir query, path resolution, reset
 (`default`/`unset`), and propagation into later run requests.
 
 After `/`, an exact built-in name selects its handler; errors never fall back
@@ -62,7 +62,7 @@ to a runnable. Otherwise use the valid State's final public binding:
 
 - Reserved slash commands: `help`, `?`, `keys`, `models`, `tools`, `caps`,
   `agics`, `flows`, `output`, `show`, `exit`, `quit`.
-- Reserved run overrides: `model`, `allow`, `limit`, `workdir`.
+- Reserved run override directives: `model`, `allow`, `limit`, `workdir`.
 - Resolve collisions with `/agic:help`, `/flow:help`, `/flow:model`, etc.
   Kind/module qualifications constrain the existing target; they do not redo
   shadowing or expose private targets. Preserve existing qualified-reference
