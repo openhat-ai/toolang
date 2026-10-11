@@ -63,7 +63,7 @@ from .types import (
 _PORTABLE_SOURCE_UPDATED_AT = "1970-01-01T00:00:00+00:00"
 
 CAP_KINDS: tuple[EntryKind, ...] = CATALOG_CAP_KINDS
-EMBEDDED_CAP_KINDS = frozenset({"psyche", "service", "prompt"})
+EMBEDDED_CAP_KINDS = frozenset({"psyche", "skill", "service", "prompt"})
 FILE_BACKED_KINDS = frozenset({"psyche", "service", "prompt"})
 DIR_NAME_BY_KIND: dict[EntryKind, str] = CAP_DIR_BY_KIND
 KIND_BY_DIR_NAME: dict[str, EntryKind] = CAP_KIND_BY_DIR

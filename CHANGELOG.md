@@ -60,6 +60,15 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Fixed
 
+- Inline skills declared in `.too` modules are now honored instead of
+  silently discarded: `skill NAME:` with a `description` and a literal body
+  becomes a module-local capability whose description is exposed as its
+  `skill/NAME` trigger and whose body loads on demand through
+  `_toolang__pick`, and cached home layers that omitted inline skills rebuild
+  automatically. A now-active declaration that shadows a same-name home or
+  root skill wins inside its module, so remove or rename it to keep the
+  previous effective skill.
+
 - An agent whose run store has a schema this version does not support no
   longer breaks activity views: `too AGENT top`, team `too top`, and Hub
   activity pages label it `History unavailable` with its authoritative presence

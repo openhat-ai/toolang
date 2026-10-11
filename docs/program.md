@@ -190,6 +190,26 @@ alias; its body is optional. Service transport is `http` or `stdio`. Optional
 unique environment variable names. All properties are single-use and
 nonempty.
 
+Inline skill bodies are literal guidance: they do not expand `{{parameters}}`
+or execute flow statements. Select them with their qualified capability ref:
+
+```too
+skill code_review:
+  description = Use when reviewing code changes.
+
+  Read the diff and report concrete bugs with file locations.
+
+agic review:
+  skills = skill/code_review
+
+  Use the code_review skill to review the current changes.
+```
+
+The model first receives the description. It loads the body on demand through
+`_toolang__pick` with `kind="skill"` and `ref="skill/code_review"`; selecting a
+skill alone does not load its body. Resource ceilings still apply. Inline skills
+contain text only; use directory-backed skills for bundled scripts and assets.
+
 
 ## Runnable Signatures
 

@@ -140,6 +140,69 @@ def _assert_replay_without_state(harness, tracer, monkeypatch):
     assert_replayed(harness.store.db_path, tracer.events)
 
 
+@pytest.mark.parametrize("restriction", [None, "directive", "ceiling"])
+def test_inline_skill_trigger_and_pick_respect_resource_selection(
+    tmp_path: Path, monkeypatch, restriction
+):
+    body = "Inspect {{literal}} and preserve <source> & evidence."
+    source = (
+        f"skill testing:\n  description = Review inline changes.\n\n  {body}\n"
+        + SOURCE.replace(
+            "  context = none",
+            f"  skills = {'none' if restriction == 'directive' else 'skill/testing'}\n"
+            "  context = none",
+        )
+    )
+    harness, _ = _harness(tmp_path, [_calls(_pick()), _answer()], source=source)
+    tracer = RecordingRunTracer()
+
+    async def scenario():
+        async with harness:
+            run = await harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    runnable="chat",
+                    ceilings=(AgentCeiling(skills=()),)
+                    if restriction == "ceiling"
+                    else (),
+                ),
+                tracer=tracer,
+            )
+            assert run.status == "succeeded", run.error
+            first, following = (item.call for item in harness.adapter.invocations)
+            assert escape(body, quote=False) not in first.instructions
+            assert all(
+                escape(body, quote=False) not in message_text(message.parts)
+                for message in first.messages
+            )
+            assert GUIDANCE not in following.instructions
+            result = _results(harness, run)["pick"]
+            if restriction is not None:
+                assert (
+                    '<toolang:skill-trigger ref="skill/testing"'
+                    not in first.instructions
+                )
+                assert result.error and "not available" in result.error
+                assert not _recalls(harness, run)
+                return
+            assert '<toolang:skill-trigger ref="skill/testing"' in first.instructions
+            assert 'description="Review inline changes."' in first.instructions
+            assert 'ref="skill/private"' not in first.instructions
+            assert result.error is None
+            (control,) = _recalls(harness, run)
+            assert control.payload.content == body
+            entry = harness.state.caps["skill:testing"]
+            assert entry.source.form == "inline"
+            assert control.payload.revision == entry.revision
+            assert any(
+                TextPart(escape(body, quote=False)) in message.parts
+                for message in following.messages
+            )
+
+    asyncio.run(scenario())
+    _assert_replay_without_state(harness, tracer, monkeypatch)
+
+
 @pytest.mark.parametrize("kind", ["skill", "service"])
 @pytest.mark.parametrize(
     "declarations,selection,expected",

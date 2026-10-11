@@ -394,6 +394,16 @@ def _matching_home(
             return None
         if layer.source != source:
             return None
+        # Older layers parsed inline skills but omitted their materialization.
+        for module, program in layer.modules.items():
+            declared = {cap.name for cap in program.caps if cap.kind == "skill"}
+            materialized = {
+                cap.name
+                for cap in layer.module_caps.get(module, ())
+                if cap.kind == "skill" and cap.source.form == "inline"
+            }
+            if not declared <= materialized:
+                return None
         validate_layer_revision(layout, "home", revision)
         return layer
     except (FileNotFoundError, KeyError, TypeError, ValueError):

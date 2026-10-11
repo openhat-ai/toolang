@@ -197,6 +197,14 @@ Home layers live under
 `${TOOLANG_ROOT}/agents/<agent>/.state/home/revs/<revision>`. See
 [agent-state.md](./agent-state.md) for the complete layout and revision rules.
 
+Inline skills are single files at
+`files/caps/inline/<module>/skill/<name>.md`, containing description frontmatter
+and the literal guidance body. Their inspection location is the authored `.too`
+file and declaration line; they have no bundled asset list. See
+[inline cap syntax](./program.md#inline-caps) for declaration and selection.
+State preparation rebuilds older cached modules that omitted inline skills;
+historical snapshots retain their original capability sets.
+
 
 ## Local Cap Frontmatter
 

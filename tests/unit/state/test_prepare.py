@@ -37,6 +37,7 @@ from toolang.state.cache import (
     validate_agent_revision,
 )
 from toolang.state.errors import StatePreparationError
+from toolang.state.schemas import CapDetail
 from toolang.state.prepare import (
     _validate_flow_source_names,
     compose_layer_state,
@@ -819,6 +820,162 @@ def test_prepare_materializes_inline_caps_as_independent_files(
         encoding="utf-8",
     )
     assert entry.read_content() == "Summarize this."
+
+
+@pytest.mark.parametrize("source_kind", ["agent", "flow", "script"])
+def test_inline_skill_materialization_preserves_source_and_snapshots(
+    tmp_path: Path, source_kind: str
+) -> None:
+    layout = _layout(tmp_path / "toolang")
+    module = "flows::review" if source_kind == "flow" else "agent"
+    source = layout.home / (
+        "flows/review.too" if source_kind == "flow" else "agent.too"
+    )
+    if source_kind == "script":
+        source = tmp_path / "review.too"
+        layout = AgentLayout.roaming(source)
+        layout.home.mkdir(parents=True)
+        layout.program.symlink_to(source)
+    source.parent.mkdir(parents=True, exist_ok=True)
+    body = "Read {{literal}} and report concrete bugs."
+    declaration = f"skill review:\n  description = Review changes.\n\n  {body}\n"
+    source.write_text(declaration + "\nflow:\n  pass\n", encoding="utf-8")
+
+    state = prepare_agent_state(layout)
+
+    (entry,) = state.caps_for(module)
+    assert (entry.kind, entry.name, entry.shape, entry.scope) == (
+        "skill",
+        "review",
+        "file",
+        "here",
+    )
+    assert entry.ref == "inline://skills/review"
+    assert entry.effective_ref == "skill/review"
+    assert entry.meta == {"description": "Review changes."}
+    assert entry.read_content() == body
+    assert entry.source.form == "inline"
+    assert entry.source.line == 1
+    assert entry.source.path == f"agents/{layout.name}/" + (
+        "flows/review.too" if source_kind == "flow" else "agent.too"
+    )
+    assert Path(entry.path) == (
+        layer_revision_dir(layout, "home", state.home_revision)
+        / "files"
+        / "caps"
+        / "inline"
+        / module
+        / "skill"
+        / "review.md"
+    )
+    detail = CapDetail.from_cap(entry, agent_name=layout.name)
+    assert detail.definition_file == entry.source.path
+    assert detail.line == 1 and not detail.editable
+    assert detail.files is None
+    assert detail.content is not None and body in detail.content
+
+    source.write_text(
+        declaration.replace(body, "Changed guidance.") + "\nflow:\n  pass\n",
+        encoding="utf-8",
+    )
+    changed = prepare_agent_state(layout)
+    (updated,) = changed.caps_for(module)
+    assert updated.revision != entry.revision
+    assert updated.read_content() == "Changed guidance."
+    (historical,) = load_agent_state(layout, state.revision).caps_for(module)
+    assert historical.read_content() == body
+
+    source.write_text("flow:\n  pass\n", encoding="utf-8")
+    assert not prepare_agent_state(layout).caps_for(module)
+    assert historical.read_content() == body
+
+
+@pytest.mark.parametrize("scope", ["root", "home"])
+def test_inline_skill_precedence_is_module_local(tmp_path: Path, scope: str) -> None:
+    layout = _layout(tmp_path)
+    (layout.home / "flows").mkdir(parents=True)
+    skill = (layout.root if scope == "root" else layout.home) / "skills/review/SKILL.md"
+    skill.parent.mkdir(parents=True)
+    skill.write_text("---\ndescription: Shared review\n---\nShared guidance.\n")
+    for filename, body in (
+        ("agent.too", "Agent guidance."),
+        ("flows/review.too", "Flow guidance."),
+    ):
+        (layout.home / filename).write_text(
+            f"skill review:\n  description = Review changes.\n\n  {body}\n"
+            "\nflow:\n  pass\n"
+        )
+    (layout.home / "flows/other.too").write_text("flow:\n  pass\n")
+
+    state = prepare_agent_state(layout)
+
+    for module, body, expected_scope in (
+        ("agent", "Agent guidance.", "here"),
+        ("flows::review", "Flow guidance.", "here"),
+        ("flows::other", "Shared guidance.", scope),
+    ):
+        (entry,) = state.caps_for(module)
+        assert entry.read_content() == body
+        assert entry.scope == expected_scope
+
+
+@pytest.mark.parametrize("module_file", ["agent.too", "flows/review.too"])
+@pytest.mark.parametrize("allowed", [True, False])
+def test_inline_skill_rebuilds_old_cache_without_rewriting_history(
+    tmp_path: Path, monkeypatch, module_file: str, allowed: bool
+) -> None:
+    layout = _layout(tmp_path)
+    source = layout.home / module_file
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        "skill review:\n  description = Review changes.\n\n  Review carefully.\n"
+        "\nflow:\n  pass\n"
+    )
+    if not allowed:
+        layout.config.write_text('[allow]\nskills = ["none"]\n')
+    with monkeypatch.context() as legacy:
+        legacy.setattr(
+            cap_state, "EMBEDDED_CAP_KINDS", frozenset({"psyche", "service", "prompt"})
+        )
+        old = prepare_agent_state(layout)
+    module = "agent" if module_file == "agent.too" else "flows::review"
+    assert not old.module_caps[module]
+    old_layer = layer_revision_dir(layout, "home", old.home_revision) / "layer.json"
+    old_bytes = old_layer.read_bytes()
+
+    current = prepare_agent_state(layout)
+
+    assert current.home_revision != old.home_revision
+    assert current.root_revision == old.root_revision
+    (entry,) = current.module_caps[module]
+    assert entry.kind == "skill" and entry.read_content() == "Review carefully."
+    assert bool(current.caps_for(module)) is allowed
+    assert not load_agent_state(layout, old.revision).module_caps[module]
+    assert old_layer.read_bytes() == old_bytes
+    monkeypatch.setattr(
+        ProgramSource, "parse", lambda _: pytest.fail("rebuilt repaired inline skill")
+    )
+    assert prepare_agent_state(layout).revision == current.revision
+
+
+def test_inline_skill_conflicts_with_same_name_reference(tmp_path: Path, monkeypatch):
+    layout = _layout(tmp_path)
+    layout.home.mkdir(parents=True)
+    layout.program.write_text(
+        "with skill github://acme/skills/review@main\n"
+        "skill review:\n  description = Review changes.\n\n  Review carefully.\n"
+    )
+    monkeypatch.setattr(
+        cap_state,
+        "_remote_materialized_files",
+        lambda *, relative_entry_path, **_kwargs: {
+            relative_entry_path.as_posix(): b"---\ndescription: Remote review\n---\nReview.\n"
+        },
+    )
+    with pytest.raises(
+        StatePreparationError, match="conflicting capabilities.*skill.*review"
+    ):
+        prepare_agent_state(layout)
 
 
 def test_concurrent_processes_publish_one_root_and_home_revision(
