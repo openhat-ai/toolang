@@ -79,6 +79,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Fixed
 
+- Team `too top` keeps `Threads` and `Runs` header counts from agents
+  whose activity is available when another agent's activity is missing,
+  incomplete, or stale, showing `-` only when no agent's activity is
+  available.
+
 - Inline skills declared in `.too` modules are now honored instead of
   silently discarded: `skill NAME:` with a `description` and a literal body
   becomes a module-local capability whose description is exposed as its

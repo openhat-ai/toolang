@@ -169,6 +169,53 @@ def test_team_header_runs_aggregates_agents():
     assert re.findall(r"Runs:\s+(\S+)", text) == ["10"]
 
 
+@pytest.mark.parametrize("unavailable", ["missing", "incomplete", "stale"])
+@pytest.mark.parametrize("threads,runs", [(0, 0), (4, 7)])
+def test_team_header_counts_available_agents_when_other_activity_is_unavailable(
+    unavailable, threads, runs
+):
+    from toolang.teaming.activity_cache import select_cached
+
+    state = Activity(None)
+    alice, bob = page(), page()
+    bob.agent = "agent:bob"
+    alice.thread_eligible, alice.eligible = threads, runs
+    bob.thread_eligible, bob.eligible = 2, 3
+    missing = select_cached("agent:carol", state.query, {})[0]
+    missing.presence = "offline"
+    if unavailable != "missing":
+        missing = page().model_copy(
+            update={
+                "agent": missing.agent,
+                "presence": "offline",
+                "thread_eligible": 100,
+                "eligible": 200,
+                "complete": unavailable != "incomplete",
+                "stale": unavailable == "stale",
+            }
+        )
+    snapshots = [alice, bob, missing]
+    for snapshot in snapshots:
+        state.feed("activity_page", snapshot.model_dump())
+    state.feed("activity_checkpoint", {"agents": [p.agent for p in snapshots]})
+    state.feed("observation_status", {"reconnecting": True})
+
+    lines = render(state)
+    assert lines[0].startswith("Team 2/3 online")
+    assert re.findall(r"(?:Threads|Runs):\s+(\S+)", lines[2]) == [
+        str(threads + 2),
+        str(runs + 3),
+    ]
+
+
+def test_team_header_counts_remain_unknown_without_available_activity():
+    from toolang.teaming.activity_cache import select_cached
+
+    state = Activity(None)
+    feed(state, select_cached("agent:alice", state.query, {})[0])
+    assert re.findall(r"(?:Threads|Runs):\s+(\S+)", render(state)[2]) == ["-", "-"]
+
+
 def test_status_bar_contains_only_function_key_hints_and_no_incomplete():
     from toolang.cli.common.activity_dashboard import status_bar
 

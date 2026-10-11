@@ -76,21 +76,25 @@ def header(state: Activity, width: int) -> list[Text]:
         )
         title = Text(f"Team {'?' if unknown else online}/{len(snapshots)} online")
     lines = [ends(title, Text(now.strftime("%H:%M:%S")), width), Text("")]
-    complete = (
+    # One unavailable agent must not hide counts from healthy observations.
+    counted = [page for page in snapshots if page.complete and not page.stale]
+    counts_available = (
         state.ready
         and not updating
         and not state.reconnecting
-        and all(page.complete and not page.stale for page in snapshots)
+        and (bool(counted) or not snapshots)
     )
     groups = [
         [
             (
                 "Threads",
-                str(sum(p.thread_eligible for p in snapshots)) if complete else "-",
+                str(sum(p.thread_eligible for p in counted))
+                if counts_available
+                else "-",
             ),
             (
                 "Runs",
-                str(sum(p.eligible for p in snapshots)) if complete else "-",
+                str(sum(p.eligible for p in counted)) if counts_available else "-",
             ),
             ("Models", str(metrics.model) if metrics.model is not None else "-"),
             ("Tools", str(metrics.tool) if metrics.tool is not None else "-"),
