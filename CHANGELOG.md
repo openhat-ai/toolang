@@ -7,6 +7,13 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ## [Unreleased]
 
+### Fixed
+
+- Markdown code blocks in `too chat`, `too talk` agent messages, and
+  execution progress now reach the right edge of the available content
+  width with their background and two-cell padding intact, including
+  inside list items and block quotes, instead of ending two cells short.
+
 ## [0.4.0a3] - 2026-10-11
 
 ### Added

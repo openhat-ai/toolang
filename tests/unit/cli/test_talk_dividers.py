@@ -3,6 +3,7 @@
 import pytest
 from rich.color import Color
 from rich.console import Console
+from rich.segment import Segment
 
 from toolang.cli.common.terminal_surfaces import (
     DARK_TERMINAL_SURFACES,
@@ -74,9 +75,15 @@ def test_agent_divider_touches_the_last_visible_markdown_row(body, width, own_me
         width,
         LIGHT_TERMINAL_SURFACES,
     )
-    lines = "".join(segment.text for segment in console.render(block)).splitlines()
+    rows = list(Segment.split_lines(console.render(block)))
+    lines = ["".join(segment.text for segment in row) for row in rows]
     assert lines[-2].strip().startswith("┄")
-    assert lines[-3].strip(), "Markdown must not leave an empty row before the divider"
+    assert lines[-3].strip() or any(
+        segment.style
+        and segment.style.bgcolor
+        == Color.parse(LIGHT_TERMINAL_SURFACES.code_background)
+        for segment in rows[-3]
+    ), "The divider must follow visible text or the code block's bottom padding"
     assert not lines[-1].strip()
 
 

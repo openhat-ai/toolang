@@ -14,6 +14,7 @@ from rich.console import Console
 from rich.ansi import AnsiDecoder
 from rich.color import Color
 from rich.live import Live
+from rich.segment import Segment
 
 from toolang.base.types.message import (
     TextDelta,
@@ -32,7 +33,11 @@ from toolang.cli.common.execution_progress import (
 from toolang.cli.common.execution_progress.formatting import display_width
 from toolang.cli.common.execution_progress.rich_rendering import run_footer_renderable
 from toolang.cli.common import terminal_surfaces
-from toolang.cli.toolang.commands.chat.blocks import ExecutionProgressBlock
+from toolang.cli.toolang.commands.chat.blocks import (
+    AssistantResponseBlock,
+    ExecutionProgressBlock,
+)
+from toolang.cli.toolang.commands.talk.rendering import message_block
 from toolang.cli.common.script_progress import ScriptRunPresenter
 from toolang.cli.common.script_progress.blocks import RunBlock, RunContext
 from toolang.cli.common.script_progress.console import ProgressConsole
@@ -58,6 +63,7 @@ from toolang.execution.types import (
     ToolStepGiven,
 )
 from toolang.lang.ast import RunStmt, Span
+from toolang.teaming.schemas import Message
 
 
 class _TtyStream(StringIO):
@@ -790,8 +796,76 @@ def test_non_tty_markdown_code_preserves_tty_geometry_without_ansi() -> None:
 
     lines = stream.getvalue().splitlines()
     assert [line.strip() for line in lines] == ["•", "x = 1", ""]
-    assert all(len(line) == 38 for line in lines)
+    assert all(len(line) == 40 for line in lines)
     assert "\x1b" not in stream.getvalue()
+
+
+@pytest.mark.parametrize("width", [24, 60])
+@pytest.mark.parametrize("character", ["x", "界"])
+@pytest.mark.parametrize(
+    "surfaces",
+    [
+        terminal_surfaces.DARK_TERMINAL_SURFACES,
+        terminal_surfaces.LIGHT_TERMINAL_SURFACES,
+    ],
+)
+def test_code_layout_matches_across_chat_talk_and_script(
+    monkeypatch, width, character, surfaces
+):
+    source = f"```text\n{character * width}\n\nlast\n```"
+    progress = ProgressBlock(
+        "model", (ProgressRow(source, "normal", format="markdown", prefix="• "),)
+    )
+    console = Console(width=width)
+    renderables = [
+        ExecutionProgressBlock(
+            progress,
+            live=live,
+            max_width=width,
+            code_background=surfaces.code_background,
+        ).render()
+        for live in (False, True)
+    ]
+    durable = AssistantResponseBlock(
+        source, max_width=width, code_background=surfaces.code_background
+    ).render()
+    assert durable is not None
+    renderables.extend(
+        [
+            durable,
+            message_block(
+                Message.create("agent:alice", source), "human:bryan", width, surfaces
+            ),
+        ]
+    )
+    expected = None
+    for renderable in renderables:
+        assert renderable is not None
+        rows = [
+            "".join(segment.text for segment in line)[2:]
+            for line in Segment.split_lines(console.render(renderable))
+            if any(segment.style and segment.style.bgcolor for segment in line)
+        ]
+        assert all(display_width(row) == width - 2 for row in rows)
+        if expected is None:
+            expected = rows
+        assert rows == expected
+
+    for mode in ("committed", "live", "show_live_rows", "non_tty"):
+        stream = StringIO() if mode == "non_tty" else _TtyStream()
+        output = ProgressConsole(stream, width=width, surfaces=surfaces)
+        monkeypatch.setattr(
+            output,
+            "_set_live",
+            lambda values: [output.console.print(value) for value in values],
+        )
+        if mode == "show_live_rows":
+            output.show_live_rows(list(progress.rows))
+        else:
+            field = "committed" if mode == "non_tty" else mode
+            output.apply(ProgressUpdate(**{field: (progress,)}))
+        rows = [line.plain[2:] for line in AnsiDecoder().decode(stream.getvalue())]
+        assert rows == expected, mode
 
 
 def test_tty_wraps_finalized_parallel_lane_at_its_embedded_marker() -> None:

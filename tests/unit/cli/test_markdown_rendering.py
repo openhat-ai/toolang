@@ -1,7 +1,9 @@
 """Progress Markdown follows the progress layout for tables and lists."""
 
 import pytest
+from rich.color import Color
 from rich.console import Console
+from rich.segment import Segment
 
 from toolang.cli.common.execution_progress import ProgressBlock, ProgressRow
 from toolang.cli.common.execution_progress.formatting import display_width
@@ -115,10 +117,9 @@ def test_nested_block_quotes_fill_the_progress_width():
         "- " + "x" * 100,
         "> " + "x" * 100,
         NARROW_TABLE,
-        "```text\n" + "x" * 100 + "\n```",
         "---",
     ],
-    ids=["paragraph", "cjk", "list", "quote", "table", "code", "rule"],
+    ids=["paragraph", "cjk", "list", "quote", "table", "rule"],
 )
 def test_markdown_keeps_two_cells_at_the_effective_right_edge(
     source, width, max_width, live
@@ -127,6 +128,48 @@ def test_markdown_keeps_two_cells_at_the_effective_right_edge(
     assert max(display_width(line) for line in text.splitlines()) == (
         min(width, max_width) - 2
     )
+
+
+@pytest.mark.parametrize("live", [False, True])
+@pytest.mark.parametrize(("width", "max_width"), [(24, 120), (80, 60)])
+@pytest.mark.parametrize("container", ["", "> ", "- "])
+@pytest.mark.parametrize("fenced", [False, True])
+def test_code_block_reaches_right_edge_with_existing_padding(
+    width, max_width, live, container, fenced
+):
+    effective_width = min(width, max_width)
+    left = len(PREFIX) + len(container)
+    code = "x" * (effective_width - left - 4)
+    source = f"```text\n{code}\n```" if fenced else f"    {code}"
+    if container:
+        continuation = container if container == "> " else "  "
+        source = container + source.replace("\n", "\n" + continuation)
+    row = ProgressRow(source, "normal", format="markdown", prefix=PREFIX)
+    console = Console(width=width)
+    lines = list(
+        Segment.split_lines(
+            console.render(
+                progress_block_renderable(
+                    ProgressBlock("model", (row,)), live=live, max_width=max_width
+                )
+            )
+        )
+    )
+    painted = [
+        [(character, segment.style) for segment in line for character in segment.text]
+        for line in lines
+        if any(s.style and s.style.bgcolor for s in line)
+    ]
+    assert len(painted) == 3
+    assert "".join(c for c, _ in painted[1][left:]) == f"  {code}  "
+    assert not "".join(c for c, _ in painted[0][left:]).strip()
+    assert not "".join(c for c, _ in painted[2][left:]).strip()
+    for line in painted:
+        assert len(line) == effective_width
+        assert all(
+            style and style.bgcolor == Color.parse("bright_black")
+            for _, style in line[left:]
+        )
 
 
 def test_nested_list_markers_add_two_cells_per_level():
