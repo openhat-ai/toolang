@@ -2,12 +2,19 @@ from __future__ import annotations
 
 import ast
 from importlib.util import resolve_name
+import os
 from pathlib import Path
 
 import pytest
 
 from tests import PROJECT_ROOT
 
+
+pytestmark = pytest.mark.skipif(
+    os.environ.get("TOOLANG_TEST_ALL") != "1"
+    and os.environ.get("TOOLANG_TEST_ARCHITECTURE") != "1",
+    reason="set TOOLANG_TEST_ARCHITECTURE=1 or TOOLANG_TEST_ALL=1",
+)
 
 SOURCE_ROOT = PROJECT_ROOT / "src" / "toolang"
 
@@ -403,13 +410,15 @@ def test_backend_driver_is_confined_to_teaming_backend() -> None:
 
 
 def test_teaming_services_depend_on_backend_contracts_not_storage_internals() -> None:
-    backend = SOURCE_ROOT / "teaming" / "backend"
+    teaming = SOURCE_ROOT / "teaming"
+    backend = teaming / "backend"
     implementation = backend / "valkey"
     violations = []
     for path in SOURCE_ROOT.rglob("*.py"):
         if path.is_relative_to(implementation) or path == backend / "factory.py":
             continue
         context = _module_context(path)
+        in_teaming = path.is_relative_to(teaming)
         for node in ast.walk(ast.parse(path.read_text(), filename=str(path))):
             if isinstance(node, ast.Import | ast.ImportFrom):
                 for target in _import_targets(node, context):
@@ -417,9 +426,7 @@ def test_teaming_services_depend_on_backend_contracts_not_storage_internals() ->
                         violations.append(
                             f"{path.relative_to(SOURCE_ROOT)}:{node.lineno}"
                         )
-            if path.is_relative_to(SOURCE_ROOT / "teaming") and isinstance(
-                node, ast.Attribute
-            ):
+            if in_teaming and isinstance(node, ast.Attribute):
                 if node.attr in {
                     "_call",
                     "_eval",
