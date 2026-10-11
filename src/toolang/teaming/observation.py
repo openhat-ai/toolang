@@ -13,6 +13,7 @@ import httpx
 from httpx_sse import aconnect_sse
 
 from toolang.execution.activity import ActivityQuery, ActivityReader
+from toolang.execution.errors import RunStoreSchemaError
 from toolang.execution.schemas import ActivityMetrics, ActivitySnapshot
 
 Presence = Literal["online", "offline", "unknown"]
@@ -92,7 +93,7 @@ class LocalObservation:
                 query,
                 live=self.live if presence is None else presence == "online",
             )
-        except (OSError, sqlite3.Error, ValueError):
+        except (OSError, sqlite3.Error, ValueError, RunStoreSchemaError):
             unknown = ActivityMetrics(
                 model=None, tool=None, cost=None, time=None, complete=False
             )
@@ -135,7 +136,7 @@ class LocalObservation:
                             ]
                         for frame in frames(pages):
                             yield frame
-            except (OSError, sqlite3.Error, ValueError):
+            except (OSError, sqlite3.Error, ValueError, RunStoreSchemaError):
                 for frame in frames(await self.read(query)):
                     yield frame
                 await asyncio.sleep(1)

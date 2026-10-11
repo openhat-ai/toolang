@@ -60,6 +60,12 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Fixed
 
+- An agent whose run store has a schema this version does not support no
+  longer breaks activity views: `too AGENT top`, team `too top`, and Hub
+  activity pages label it `History unavailable` with its authoritative presence
+  and unknown metrics while healthy agents keep updating, and Hub Details
+  returns `503 Result unavailable`.
+
 - `too chat` and `too talk` reapply their blinking block input cursor after
   each redraw, so it keeps blinking while composing instead of turning
   steady on terminals that stop blinking when the cursor is shown.
