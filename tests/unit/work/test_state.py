@@ -44,7 +44,7 @@ def test_name_identity_shadowing_and_collision(tmp_path, monkeypatch):
     program = Program.from_source(
         "chore cleanup:\n  First.\nchore cleanup:\n  Second.\n"
     )
-    first, second = state.program_chores(program)
+    first, second = state.inline_chores(program.chores)
     capitalized = replace(first, name="Cleanup")
     assert first.id == second.id != capitalized.id
     assert len(first.id) == 16

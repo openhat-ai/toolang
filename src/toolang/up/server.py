@@ -172,7 +172,7 @@ def build_serve_argv(
         spec.endpoint_host,
         "--port",
         str(spec.port),
-        "--driver",
+        "--enable",
         format_drivers(spec.drivers),
     ]
     if spec.layout.instance is not None:

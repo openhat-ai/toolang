@@ -11,7 +11,7 @@ import re
 from toolang.catalog.chore import AuthoredChores, ChoreFile
 from toolang.common.ids import chore_id
 from toolang.common.layout import AgentLayout
-from toolang.lang.ast import ChoreDecl, Program
+from toolang.lang.ast import ChoreDecl
 
 
 _REMOTE_REF_PATTERN = re.compile(r"\b[A-Z][A-Z0-9]+-\d+\b")
@@ -54,10 +54,10 @@ def load_chores(layout: AgentLayout) -> tuple[Chore, ...]:
     return tuple(merge_chores(*groups).values())
 
 
-def program_chores(program: Program) -> tuple[Chore, ...]:
+def inline_chores(declarations: Iterable[ChoreDecl]) -> tuple[Chore, ...]:
     """Normalize program chore declarations."""
 
-    return tuple(_program_chore(decl) for decl in program.chores)
+    return tuple(_program_chore(decl) for decl in declarations)
 
 
 def merge_chores(*groups: Iterable[Chore]) -> dict[str, Chore]:

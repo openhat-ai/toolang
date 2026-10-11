@@ -59,7 +59,7 @@ Repeated chores keep their future schedule.
 The chore driver must be enabled to dispatch work:
 
 ```sh
-too serve alice --driver chat,talk,chore
+too serve alice --enable chat,talk,chore
 ```
 
 Standalone scripts enable no persistent drivers, even when their source contains

@@ -18,6 +18,7 @@ from toolang.work.authoring import new_chore_file
 from toolang.work.inspection import ChoreInspection, ChoreRun
 from toolang.work.schemas import ChoreDetail, ChoreInfo
 from toolang.work.scheduler import ChoreDriver
+from toolang.work.state import inline_chores
 
 _T = TypeVar("_T")
 
@@ -154,7 +155,7 @@ def _inspection(core: AgentCore) -> ChoreInspection:
         layout=core.layout,
         runs=runs,
         read_only=True,
-        program=core.state.current().modules.get("agent"),
+        inline=inline_chores(core.state.current().modules["agent"].chores),
         error_messages={
             run.id: core.store.resolve_error(run.error)
             for run in runs

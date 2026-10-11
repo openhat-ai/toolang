@@ -401,7 +401,7 @@ class RemoteChatSession:
             )
             if isinstance(drivers, list) and "chat" not in drivers:
                 raise RemoteChatError(
-                    "chat driver is disabled; restart the agent with --driver chat"
+                    "chat driver is disabled; restart the agent with --enable chat"
                 )
         try:
             identity = _runtime_identity(profile)

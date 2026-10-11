@@ -170,6 +170,17 @@ def _lower(cst: ast._ParsedSource) -> ast.Program:
     return _Lowerer(cst).lower()
 
 
+def _lower_chores(cst: ast._ParsedSource) -> tuple[ast.ChoreDecl, ...]:
+    """Lower only chore declarations for definition inspection."""
+
+    lowerer = _Lowerer(cst)
+    return tuple(
+        lowerer._lower_chore(node, doc=lowerer.docs.for_node(node))
+        for child in cst.tree.root_node.named_children
+        if (node := lowerer._item(child)).type == "chore"
+    )
+
+
 class _Lowerer:
     def __init__(self, cst: ast._ParsedSource) -> None:
         self.cst = cst

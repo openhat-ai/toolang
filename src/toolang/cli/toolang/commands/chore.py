@@ -19,8 +19,10 @@ from toolang.cli.common.output import echo_table
 from toolang.cli.common.parameters import TextType
 from toolang.cli.common.routing import PrefixAgentChoreGroup, RequiredPrefixAgentCommand
 from toolang.state.source import read_home_program_source
+from toolang.lang.ast import parse_chore_declarations
 from toolang.work.authoring import allocate_authored_chore_name
 from toolang.work.inspection import ChoreInspection, ChoreRun
+from toolang.work.state import inline_chores
 
 ChoreRef = Annotated[
     str,
@@ -53,9 +55,14 @@ def list_chores(ctx: typer.Context) -> None:
         ChoreInspection.load,
         layout=layout,
         runs=runs,
-        program=user_call(read_home_program_source, layout.root, layout.name)
-        .load_program()
-        .parse(),
+        inline=inline_chores(
+            user_call(
+                parse_chore_declarations,
+                user_call(read_home_program_source, layout.root, layout.name)
+                .load_program()
+                .source_text,
+            )
+        ),
         read_only=True,
         error_messages=errors,
     ).list()

@@ -27,7 +27,7 @@ from toolang.setup import AgentSetup
 from toolang.state.state import AgentState
 
 from .records import ChoreRecord
-from .state import Chore, merge_chores, program_chores
+from .state import Chore, merge_chores, inline_chores
 from .store import ChoreStore, next_activation
 from .watcher import ChoreWatcher
 
@@ -223,9 +223,9 @@ class ChoreDriver:
         self._commands = asyncio.Queue()
         self._watch_stop = asyncio.Event()
         self._store = ChoreStore(self.layout.chore_store)
-        self._watcher = ChoreWatcher(self.layout)
         watch_task: asyncio.Task[None] | None = None
         try:
+            self._watcher = ChoreWatcher(self.layout)
             self._reconcile(self._watcher.current())
             await self._recover_active()
             watch_task = asyncio.create_task(
@@ -375,7 +375,7 @@ class ChoreDriver:
     ) -> None:
         assert self._store is not None
         state = self.get_agent_state() if state is None else state
-        chores = merge_chores(authored, program_chores(state.modules["agent"]))
+        chores = merge_chores(authored, inline_chores(state.modules["agent"].chores))
         records = self._store.reconcile(chores=chores)
         self._chores = chores
         self._state_revision = state.revision

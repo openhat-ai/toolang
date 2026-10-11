@@ -11,8 +11,8 @@ with a captured State/Setup snapshot.
 | `chore` | One-off, scheduled, or manual work | `chore_<name-derived-id>` |
 
 Resident agents enable all three by default. Visitors enable chat/talk; roaming
-agents and standalone scripts enable none. `--driver chat,talk,chore` replaces
-the defaults; `--driver none` disables all drivers. Only `serve`, `start`, and
+agents and standalone scripts enable none. `--enable chat,talk,chore` replaces
+the defaults; `--enable none` disables all drivers. Only `serve`, `start`, and
 `chat` expose this option. `talk` sends Hub messages; script execution owns its
 run lifecycle. Neither accepts a driver option.
 

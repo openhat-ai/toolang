@@ -177,7 +177,7 @@ def _prepare_agent_server(
             )
             if drivers is not None and drivers != running:
                 raise AgentServerAcquisitionError(
-                    f"--driver {format_drivers(drivers)} differs from the running agent ({format_drivers(running)}); stop and restart it to change drivers"
+                    f"--enable {format_drivers(drivers)} differs from the running agent ({format_drivers(running)}); stop and restart it to change drivers"
                 )
             if required_driver is not None and required_driver not in running:
                 raise AgentServerAcquisitionError(
@@ -213,7 +213,7 @@ def _prepare_agent_server(
     )
     if required_driver is not None and required_driver not in effective_drivers:
         raise AgentServerAcquisitionError(
-            f"{required_driver} driver is required; include it in --driver"
+            f"{required_driver} driver is required; include it in --enable"
         )
     selected = sandbox_runtime.resolve_selection(layout, explicit=sandbox)
     if selected == "host" and dev is not None:

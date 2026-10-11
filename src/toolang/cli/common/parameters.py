@@ -73,9 +73,9 @@ CompactModelOption = Annotated[
 DriverOption = Annotated[
     str | None,
     typer.Option(
-        "--driver",
+        "--enable",
         metavar="DRIVERS",
-        help="Enable chat,talk,chore or none when starting the agent",
+        help="Enable only these drivers, replacing defaults: chat,talk,chore or none",
     ),
 ]
 

@@ -429,6 +429,13 @@ class Program(Node):
         return program
 
 
+def parse_chore_declarations(source: str) -> tuple[ChoreDecl, ...]:
+    """Read inline chore definitions without resolving or validating runnables."""
+    from .lower import _lower_chores
+
+    return _lower_chores(_parse_source(source))
+
+
 def validate_source_syntax(source: str) -> None:
     """Validate authored syntax without resolving external declarations."""
     _parse_source(source)

@@ -11,8 +11,7 @@ from toolang.common.layout import AgentLayout
 from toolang.execution.types import ErrorMessage, ErrorRef
 from .records import ChoreRecord
 from .schemas import ChoreDetail, ChoreInfo, LastRunInfo
-from toolang.lang.ast import Program
-from .state import Chore, chore_thread_id, load_chores, merge_chores, program_chores
+from .state import Chore, chore_thread_id, load_chores, merge_chores
 from .store import open_chore_store
 
 
@@ -55,7 +54,7 @@ class ChoreInspection:
         layout: AgentLayout,
         runs: Iterable[ChoreRun],
         read_only: bool = False,
-        program: Program | None = None,
+        inline: Iterable[Chore] = (),
         error_messages: Mapping[str, str] | None = None,
     ) -> ChoreInspection:
         """Load one consistent inspection snapshot from the owning stores."""
@@ -77,11 +76,7 @@ class ChoreInspection:
         return cls(
             catalog=catalog,
             home=layout.home,
-            definitions=tuple(
-                merge_chores(
-                    load_chores(layout), program_chores(program) if program else ()
-                ).values()
-            ),
+            definitions=tuple(merge_chores(load_chores(layout), inline).values()),
             records={record.chore_id: record for record in records},
             latest_runs=latest_runs,
             error_messages=error_messages,

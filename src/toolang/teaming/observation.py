@@ -199,12 +199,17 @@ class CombinedObservation:
         results = await asyncio.gather(
             *(source.read(query) for source in self.sources), return_exceptions=True
         )
+        batches = []
+        for result in results:
+            if isinstance(result, asyncio.CancelledError):
+                raise result
+            batches.append([] if isinstance(result, BaseException) else result)
+        return self._combine(batches)
+
+    def _combine(self, batches: list[list[ActivitySnapshot]]) -> list[ActivitySnapshot]:
         grouped: dict[str, list[ActivitySnapshot]] = {}
-        for source, result in zip(self.sources, results, strict=True):
-            if isinstance(result, BaseException):
-                if isinstance(result, asyncio.CancelledError):
-                    raise result
-                continue
+        self.owners.clear()
+        for source, result in zip(self.sources, batches, strict=True):
             identities = {page.agent for page in result}
             for agent in identities:
                 grouped[agent] = [page for page in result if page.agent == agent]
@@ -212,10 +217,61 @@ class CombinedObservation:
         return [page for agent in sorted(grouped) for page in grouped[agent]]
 
     async def updates(self, query: ActivityQuery) -> AsyncGenerator[Frame]:
-        while True:
-            for frame in frames(await self.read(query)):
-                yield frame
-            await asyncio.sleep(0.5)
+        queue: asyncio.Queue[tuple[int, Frame]] = asyncio.Queue(
+            maxsize=max(1, len(self.sources) * 2)
+        )
+        batches: list[list[ActivitySnapshot]] = [[] for _ in self.sources]
+        pending: list[list[ActivitySnapshot]] = [[] for _ in self.sources]
+        reconnecting = [False for _ in self.sources]
+
+        async def receive(index: int, source: Observation) -> None:
+            retrying = False
+            while True:
+                try:
+                    async with aclosing(source.updates(query)) as updates:
+                        async for frame in updates:
+                            if retrying and frame[0] == "activity_checkpoint":
+                                await queue.put(
+                                    (
+                                        index,
+                                        ("observation_status", {"reconnecting": False}),
+                                    )
+                                )
+                                retrying = False
+                            await queue.put((index, frame))
+                except Exception:
+                    pass
+                # Remove incomplete and stale pages from a disconnected source;
+                # other sources keep updating while this one reconnects.
+                retrying = True
+                await queue.put((index, ("activity_checkpoint", {"agents": []})))
+                await queue.put((index, ("observation_status", {"reconnecting": True})))
+                await asyncio.sleep(0.5)
+
+        tasks = [
+            asyncio.create_task(receive(index, source))
+            for index, source in enumerate(self.sources)
+        ]
+        try:
+            while tasks:
+                index, (event, data) = await queue.get()
+                if event == "activity_page":
+                    pending[index].append(ActivitySnapshot.model_validate(data))
+                elif event == "activity_checkpoint":
+                    agents = set(data["agents"])
+                    batches[index] = [
+                        page for page in pending[index] if page.agent in agents
+                    ]
+                    pending[index] = []
+                    for frame in frames(self._combine(batches)):
+                        yield frame
+                elif event == "observation_status":
+                    reconnecting[index] = bool(data.get("reconnecting"))
+                    yield "observation_status", {"reconnecting": any(reconnecting)}
+        finally:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     async def result(self, agent: str, ref: str) -> str:
         owner = self.owners.get(agent)

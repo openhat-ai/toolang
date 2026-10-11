@@ -10,7 +10,7 @@ import pytest
 from toolang.catalog.chore import AuthoredChores, ChoreFile
 from toolang.common.layout import AgentLayout
 from toolang.lang.ast import Program
-from toolang.work.state import load_chores, merge_chores, program_chores
+from toolang.work.state import load_chores, merge_chores, inline_chores
 from toolang.work.store import ChoreStore
 from toolang.work.watcher import ChoreWatcher
 
@@ -44,7 +44,7 @@ def test_inline_chore_shadows_home_and_root_without_changing_identity(
     (home_definition,) = load_chores(layout)
     assert home_definition.body == "Home."
     program = Program.from_source("chore review:\n  Inline.\n")
-    effective = merge_chores((home_definition,), program_chores(program))
+    effective = merge_chores((home_definition,), inline_chores(program.chores))
     assert effective[root_file.id].body == "Inline."
     assert effective[root_file.id].thread_id == home_definition.thread_id
     assert (
@@ -60,7 +60,7 @@ def test_job_store_claims_once_across_connections(tmp_path: Path) -> None:
     )
     jobs = merge_chores(
         load_chores(AgentLayout.resident(root, "alice")),
-        program_chores(Program.from_source("")),
+        inline_chores(Program.from_source("").chores),
     )
     path = root / "agents" / "alice" / ".runtime" / "jobs.db"
     stores = (ChoreStore(path), ChoreStore(path))

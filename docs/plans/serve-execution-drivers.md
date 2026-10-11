@@ -39,17 +39,17 @@ observation; it excludes a generic driver plugin framework and live toggles.
 
 ## Command-specific driver option
 
-- Expose `--driver` only on `serve`, `start`, and `chat`. It is a command-specific
+- Expose `--enable` only on `serve`, `start`, and `chat`. It is a command-specific
   option, not a root/global option or a general runtime-acquisition parameter
   exposed by every command.
 - `chat` connects to a running agent or implicitly performs `start` when the agent
   is inactive. A new startup uses the same driver-selection rules as `start`.
-- Accept a comma-separated driver set; `--driver none` explicitly selects none
+- Accept a comma-separated driver set; `--enable none` explicitly selects none
   and cannot be combined with driver names. An explicit set replaces defaults;
   omission on startup uses the placement defaults above. Reject invalid values
   before starting a process, resolve once at the CLI boundary, and forward the
   concrete set through foreground/background, hidden `_serve`, and host/guest launches.
-- When chat finds an existing agent, omitting `--driver` preserves its selection
+- When chat finds an existing agent, omitting `--enable` preserves its selection
   without reapplying defaults. An explicit set is a compatibility requirement:
   an equal set permits connection; a different set fails with restart guidance.
   Chat also fails if chat is disabled, even when the explicit set matches. It never
@@ -58,16 +58,16 @@ observation; it excludes a generic driver plugin framework and live toggles.
   starting it. Report the effective set in startup/status output.
 - `talk` is a Hub messaging client and does not start the receiving agent.
   Script execution owns a run's lifecycle, not persistent drivers. Neither command
-  accepts `--driver`; use `serve` to activate drivers and inline chores in a `.too`
+  accepts `--enable`; use `serve` to activate drivers and inline chores in a `.too`
   app. A script attached to an existing agent leaves its driver selection intact.
 
 Examples (`too` is the `toolang` alias):
 
 ```sh
-too serve alice --driver chat,talk,chore
-too start alice --driver talk,chore
-too serve alice --driver none
-too alice chat --driver chat,talk,chore
+too serve alice --enable chat,talk,chore
+too start alice --enable talk,chore
+too serve alice --enable none
+too alice chat --enable chat,talk,chore
 ```
 
 ## Chore definitions and persistence

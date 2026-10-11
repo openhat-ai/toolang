@@ -31,7 +31,7 @@ def test_driver_selection_roundtrips_host_guest_and_preserves_management(
     layout = AgentLayout.resident(tmp_path, "alice")
     spec = resolve_serve(layout=layout, port=8123, drivers=drivers)
     argv = build_serve_argv(spec, root=tmp_path / "guest")
-    assert parse_drivers(argv[argv.index("--driver") + 1]) == drivers
+    assert parse_drivers(argv[argv.index("--enable") + 1]) == drivers
     core = AgentCore(layout, drivers=drivers)
     app = create_app(
         core, CapsManager(layout), ChoresManager(layout), cors_allowed_origins=()
@@ -71,7 +71,7 @@ def test_driver_selection_roundtrips_host_guest_and_preserves_management(
     "value", ["", "none,chat", "chat,unknown", "chat,", "jobs", "messaging"]
 )
 def test_invalid_driver_selection(value):
-    with pytest.raises(ValueError, match="--driver"):
+    with pytest.raises(ValueError, match="--enable"):
         parse_drivers(value)
 
 
@@ -151,17 +151,21 @@ def test_partial_startup_closes_execution_store(tmp_path, monkeypatch):
     core.close.assert_awaited_once()
 
 
-def test_cli_driver_option_is_command_specific(tmp_path, capsys):
+def test_cli_enable_option_is_command_specific(tmp_path, capsys):
     from toolang.cli.toolang.main import main
     from toolang.catalog.agent import LocalAgents
 
     LocalAgents(tmp_path / "agents").create("alice", content="agic:\n  {{_}}\n")
     for args in (["serve", "--help"], ["start", "--help"], ["alice", "chat", "--help"]):
         assert main(["--root", str(tmp_path), *args]) == 0
-        assert "--driver" in capsys.readouterr().out
+        output = capsys.readouterr().out
+        assert "--enable" in output
+        assert "--driver" not in output
     assert main(["--help"]) == 0
-    assert "--driver" not in capsys.readouterr().out
-    assert main(["talk", "--driver", "chat"]) != 0
+    assert "--enable" not in capsys.readouterr().out
+    assert main(["talk", "--enable", "chat"]) != 0
+    capsys.readouterr()
+    assert main(["--root", str(tmp_path), "start", "alice", "--driver", "chat"]) != 0
     capsys.readouterr()
     assert main(["--root", str(tmp_path), "alice", "chore", "--help"]) == 0
     output = capsys.readouterr().out

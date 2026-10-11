@@ -12,8 +12,8 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 - Execution drivers decide what a running agent serves: resident agents enable
   `chat`, `talk`, and `chore`, visiting agents enable chat and talk, and roaming
   agents and standalone scripts enable none. `too serve`, `too AGENT start`, and
-  `too AGENT chat` accept `--driver chat,talk,chore` or `--driver none`, so
-  `serve --driver none` is valid; only `too AGENT chat` requires chat, and
+  `too AGENT chat` accept `--enable chat,talk,chore` or `--enable none`, so
+  `serve --enable none` is valid; only `too AGENT chat` requires chat, and
   against a running agent an omitted selection preserves its drivers while an
   explicit selection that mismatches them or omits chat fails with restart
   guidance without changing the agent, and profile, status, and startup logs
@@ -134,6 +134,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   binding.
 
 ### Fixed
+
+- `too AGENT chore list` now reads inline `chore name:` declarations
+  directly without resolving runnable handlers or preparing State, so it
+  lists definitions even when the agent program references missing or
+  unresolvable flows instead of failing. (#767)
 
 - Team `too top` keeps `Threads` and `Runs` header counts from an agent
   whose activity coverage is incomplete, and its Details panel shows `-`

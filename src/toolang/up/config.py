@@ -17,7 +17,7 @@ def parse_drivers(value: str) -> ExecutionDrivers:
         return frozenset()
     names = {part.strip() for part in value.split(",")}
     if not names or not names <= ALL_DRIVERS:
-        raise ValueError("--driver expects chat,talk,chore or none")
+        raise ValueError("--enable expects chat,talk,chore or none")
     return frozenset(cast(DriverName, name) for name in names)
 
 

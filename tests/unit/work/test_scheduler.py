@@ -152,6 +152,39 @@ def test_scheduler_rejects_invalid_input_without_creating_a_run(
         harness.store.close()
 
 
+def test_invalid_definition_startup_closes_chore_store(tmp_path, monkeypatch) -> None:
+    from toolang.work import scheduler as scheduler_module
+
+    harness = ExecutionHarness.create(
+        tmp_path / "toolang", source=_SOURCE, responses=[]
+    )
+    directory = harness.setup.layout.home / "chores"
+    directory.mkdir()
+    (directory / "broken.md").write_text("---\nschedule: invalid\n---\nReview.\n")
+    closed = []
+
+    class TrackedStore(ChoreStore):
+        def close(self) -> None:
+            super().close()
+            closed.append(self.db_path)
+
+    monkeypatch.setattr(scheduler_module, "ChoreStore", TrackedStore)
+    scheduler = _scheduler(harness)
+
+    async def scenario() -> None:
+        try:
+            with pytest.raises(ValueError):
+                await scheduler.start()
+        finally:
+            await _close_scheduler(scheduler, harness)
+        assert closed == [harness.setup.layout.run_store]
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        harness.store.close()
+
+
 def test_scheduler_submits_and_awaits_runs_on_the_execution_loop(
     tmp_path,
     monkeypatch,

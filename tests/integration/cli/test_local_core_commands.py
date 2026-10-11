@@ -673,6 +673,31 @@ def test_inspect_thread_summary_keeps_selection_snapshot(
         writer.close()
 
 
+@pytest.mark.parametrize(
+    "external_flow", [None, "flow:\n  pass\n", "flow:\n  run missing\n"]
+)
+def test_chore_list_does_not_resolve_runnables_or_prepare_state(
+    tmp_path: Path, external_flow: str | None
+) -> None:
+    root = tmp_path / "toolang"
+    _create_agent(root)
+    layout = AgentLayout.resident(root, "alice")
+    flows = layout.home / "flows"
+    if external_flow is not None:
+        flows.mkdir()
+        (flows / "research.too").write_text(external_flow)
+    layout.program.write_text(
+        "flow chat:\n  run research\n\nchore cleanup:\n  Clean up.\n"
+    )
+
+    result = _invoke(root, "alice", "chore", "list")
+
+    assert result.exit_code == 0, result.stderr
+    assert "cleanup" in result.stdout
+    assert not layout.agent_state.exists()
+    assert not layout.run_store.exists()
+
+
 def test_chore_list_shows_scheduler_and_latest_run_state(tmp_path: Path) -> None:
     root = tmp_path / "toolang"
     _create_agent(root)
