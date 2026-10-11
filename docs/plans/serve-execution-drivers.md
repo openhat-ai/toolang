@@ -23,9 +23,6 @@ IDs. The following contracts replace those behaviors.
 | `talk` | Incoming agent messages | One durable `talk_` thread per agent |
 | `chore` | One-off, scheduled, or manual work | One `chore_` thread per chore |
 
-- Expose `--driver chat,talk,chore` on `serve` and forward the selection through
-  background `start` and host/guest launches. An explicit list replaces defaults;
-  resolve at the CLI boundary, reject unknown names, and report enabled drivers.
 - Defaults: resident enables all three; visitor enables chat/talk; roaming enables
   none. Visitor is currently called `visiting` internally. Ordinary scripts
   default to no drivers; attaching to a runtime does not change its selection.
@@ -43,6 +40,30 @@ IDs. The following contracts replace those behaviors.
   client instance and request alongside execution. Neither owns the thread nor
   selects its driver. Preserve request identity across retries; this change alone
   does not define a new deduplication scope.
+
+## Command-specific driver option
+
+- Declare `--driver` directly on the selected commands, starting with `serve` and
+  `start`. It is not a root/global option and is not inherited by other commands
+  merely because they can start a runtime. Script entry support is pending the
+  command-scope decision below.
+- Accept a comma-separated driver set; `--driver none` explicitly selects none
+  and cannot be combined with driver names. An explicit set replaces defaults;
+  omission uses the placement/script defaults above. Reject invalid values before
+  starting a process, resolve once at the CLI boundary, and forward the concrete
+  set through foreground/background, hidden `_serve`, and host/guest launches.
+- For an existing runtime, omission preserves its selection; an explicit matching
+  set permits reuse, while a different set fails with restart guidance. Never
+  silently reconfigure or start another instance. Chat requires chat to be enabled
+  and must not implicitly add it. Report the effective set in startup/status output.
+
+Proposed examples (`too` is the `toolang` alias):
+
+```sh
+too serve alice --driver chat,talk,chore
+too start alice --driver talk,chore
+too serve alice --driver none
+```
 
 ## Chore definitions and persistence
 
@@ -96,9 +117,11 @@ the driver never writes progress back into Markdown or `.too`.
 Paths below are relative to `src/toolang/`. Deliver independently verifiable
 changes after approval:
 
-1. **Selection/admission:** `cli/toolang/commands/runtime.py`, `up/`, `api/`,
-   and chat clients. Test all eight combinations, placement defaults, host/guest
-   forwarding, healthy management, and rejection without execution writes.
+1. **Selection/admission:** selected CLI command signatures/factories,
+   `cli/common/agent_server.py`, `up/`, and `api/`. Test help/parsing on the selected
+   commands, rejection on other commands, all eight combinations, placement/script
+   defaults, launch forwarding, matching/conflicting runtime reuse, healthy
+   management, and rejection without execution writes.
 2. **Unified chores:** `lang/`, `catalog/`, `state/`, `work/`, `common/ids.py`,
    and chore CLI/API surfaces. Test inline/file equivalence, shadowing, rename,
    deterministic IDs, restart without redispatch, schedule/manual serialization,
@@ -120,8 +143,9 @@ pytest checks. This plan-only PR requires source/path/link review and
 
 ## Open decisions and migration risks
 
-1. **Launch/admission:** explicit empty-driver syntax; the chat/script API boundary;
-   whether scripts may explicitly enable drivers and, if so, their exit behavior.
+1. **Launch/admission:** whether to expose the option on script execution in
+   addition to `serve`/`start`, the chat/script API boundary, and the exit behavior
+   of scripts that explicitly enable drivers.
 2. **Identity:** name normalization, Base32 derivation/length, collision handling,
    and same-scope shadow precedence; instance discovery/storage that distinguishes
    restart from another instance of the same source.
