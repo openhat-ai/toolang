@@ -47,6 +47,26 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Changed
 
+- The chore HTTP API changed its payload shape: list and detail responses now
+  carry `path` plus an optional `line` in place of the overloaded `path`, and
+  nest execution state under `runtime` — `status`, `active_run_id`, `last_run`,
+  `scheduler_error` (renamed from `error`), checkpoint `updated_at`, and
+  `synced`, which is false while the checkpoint still describes an older or
+  never-observed definition. `pending_at` and `next_scheduled_at` replace the
+  ambiguous `next_run_at`, and the guessed `remote_ref` and `remote_status`
+  fields are removed. Clients that read chore payloads must move to the
+  `runtime` fields and drop the removed projections.
+
+- Chore authoring edits only current home definitions: root and inline
+  `chore name:` definitions stay visible to `too AGENT chore list` but must be
+  edited at their source; `too AGENT chore new`, `clone`, `edit`, and `delete`
+  require a resident agent, `edit` and `delete` reject definitions that are not
+  home `chores/<name>.md` files or that an inline declaration shadows, `clone`
+  copies any effective root, home, or inline definition into a new home file,
+  and `new` may shadow a root file but fails when the name is already declared
+  inline, naming the source to edit, with the matching `/api/v1/chores` requests
+  returning `409`.
+
 - Tasks and jobs are unified into chores: current definitions are flat
   `chores/<name>.md` files or inline `chore name:` declarations with no draft,
   ready, or archive stages, and a definition is one-off unless it sets an
@@ -134,6 +154,35 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   binding.
 
 ### Fixed
+
+- Chore inspection over HTTP reads current inline `chore name:` definitions
+  straight from the agent program without preparing or publishing executable
+  State, so listing and reading chores over `/api/v1/chores` works even when the
+  program references missing or unresolvable flows and State publication fails.
+
+- A chore whose schedule is already exhausted starts terminal: the first
+  checkpoint records `done` with no next occurrence instead of leaving a pending
+  chore that can never run.
+
+- Reconciling a chore definition whose body and schedule are unchanged keeps the
+  saved checkpoint intact, so its `updated_at` timestamp no longer advances on
+  every scan.
+
+- A manual request on a one-off chore keeps its `manual` trigger identity across
+  restarts, so an unprocessed manual occurrence stays pending as `manual`
+  instead of losing its origin.
+
+- Chore inspection distinguishes current definitions from saved checkpoints:
+  `too AGENT chore list` marks a definition `unsynced` when its checkpoint does
+  not describe the current body and schedule instead of showing an older status,
+  reports the earliest pending manual or source request alongside the next
+  scheduled occurrence, and shows an inline `chore name:` definition's location
+  as `<file>:<line>`.
+
+- Listing an agent's capabilities (`too caps`, `caps list`, and the
+  kind-specific lists) resolves current declarations without preparing or
+  publishing executable agent State or validating runnable handlers, so an
+  unresolvable flow no longer breaks the listing.
 
 - `too AGENT chore list` now reads inline `chore name:` declarations
   directly without resolving runnable handlers or preparing State, so it
