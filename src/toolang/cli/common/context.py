@@ -121,6 +121,11 @@ def load_runtime_environ(
     return merged
 
 
+def load_root_environ(root: Path, *, base_environ: Mapping[str, str]) -> dict[str, str]:
+    """Load root-only presentation defaults below the process environment."""
+    return {**_load_dotenv(root / ".env"), **base_environ}
+
+
 def _load_dotenv(path: Path) -> dict[str, str]:
     if not path.is_file():
         return {}

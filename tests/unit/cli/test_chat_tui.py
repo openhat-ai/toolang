@@ -7027,51 +7027,40 @@ def test_chat_status_and_run_context_use_compact_entry_labels(kind: str) -> None
     assert status.runnable_label == f"agent::{kind}:<entry:3>"
 
 
-@pytest.mark.parametrize("slow_metadata", ["write", "rename"])
-def test_chat_terminal_publication_does_not_block_ui_events(slow_metadata: str) -> None:
+def test_chat_terminal_publication_does_not_block_ui_events() -> None:
     from queue import Queue
-
-    from prompt_toolkit.output.vt100 import Vt100_Output
-
-    from toolang.cli.common import tmux
+    from toolang.cli.common.terminal_session import TerminalSession
+    from toolang.cli.common.tmux import PaneMarks
     from toolang.cli.toolang.commands.chat.base import ThreadTitle
-    from toolang.cli.toolang.commands.chat.marks import ChatMarks
     from toolang.cli.toolang.commands.chat.title import ChatTitle
 
-    metadata_entered = threading.Event()
-    title_entered = threading.Event()
-    released = threading.Event()
+    metadata_entered, title_entered, released = (threading.Event() for _ in range(3))
     results: Queue[ThreadTitle] = Queue()
     writes: list[tuple[str, str]] = []
     stream = StringIO()
 
-    def slow() -> None:
-        metadata_entered.set()
-        assert released.wait(5)
+    class Pane:
+        def set_option(self, option: str, value: str) -> None:
+            metadata_entered.set()
+            assert released.wait(5)
+            writes.append((option, value))
 
-    def set_window(name: str, value: str) -> None:
-        if slow_metadata == "write":
-            slow()
-        writes.append((name, value))
+        def unset_option(self, option: str) -> None:
+            pass
 
-    def rename_window(name: str) -> None:
-        if slow_metadata == "rename":
-            slow()
-        writes.append(("name", name))
-
-    def lookup(_thread: str) -> str:
+    def lookup(_thread):
         title_entered.set()
         assert released.wait(5)
         return "hello world"
 
-    marks = ChatMarks(
-        marks=tmux.Marks(
-            pane_id="%3",
-            window_id="@1",
-            _set_pane=lambda *_: None,
-            _set_window=set_window,
-            _rename_window=rename_window,
-        )
+    terminal = TerminalSession(
+        enabled=True,
+        stream=stream,
+        marks=PaneMarks(
+            environment={"TMUX": "test", "TMUX_PANE": "%3"},
+            fields={"kind": "chat", "thread": "term_x"},
+            pane_factory=Pane,
+        ),
     )
 
     async def scenario() -> None:
@@ -7080,39 +7069,37 @@ def test_chat_terminal_publication_does_not_block_ui_events(slow_metadata: str) 
             setting=FakeClient().initial_setting(),
             input_history=None,
             client=FakeClient(),
-            marks=marks,
+            terminal=terminal,
         )
         app.loop = asyncio.get_running_loop()
         app.title = ChatTitle(
-            output=Vt100_Output(stream, lambda: Size(24, 80), term="xterm"),
+            publish=terminal.set_title,
+            agent="alice",
             enabled=True,
             lookup=lookup,
             on_result=results.put,
         )
-        app.title.set_thread("term_x")
-        marks.start_background()
-        marks.start("term_x")
+        terminal.start("alice")
+        app.title.start("term_x")
         try:
             app._handle_run_state(RunAccepted("run_1"))
-            assert metadata_entered.wait(5)
-            assert title_entered.wait(5)
+            assert metadata_entered.wait(5) and title_entered.wait(5)
             ui_progress = asyncio.Event()
             app.loop.call_soon(ui_progress.set)
             await ui_progress.wait()
             assert not released.is_set()
-            assert "hello world" not in stream.getvalue()
             released.set()
             result = await asyncio.to_thread(results.get, True, 5)
             app.handle_ui_event(ChatUIEvent("thread_title", result))
-            assert stream.getvalue().endswith("\x1b]0;hello world\x07")
+            assert stream.getvalue().endswith("\x1b]0;alice: hello world\x07")
+            before = stream.getvalue()
             app.handle_run_event(RunEnd(run="run_1", status="succeeded"))
-            assert results.empty()
+            assert results.empty() and stream.getvalue() == before
         finally:
             released.set()
             app.title.clear()
-            marks.clear()
-        assert writes[0] == ("@toolang_thread", "term_x")
-        assert not any(name == "@toolang_thread_title" for name, _ in writes)
+            terminal.close()
+        assert not any("title" in name for name, _ in writes)
 
     asyncio.run(scenario())
 
@@ -7124,6 +7111,8 @@ def test_chat_terminal_publication_does_not_block_ui_events(slow_metadata: str) 
 def test_terminal_title_requires_tty_but_not_tmux(
     monkeypatch: pytest.MonkeyPatch, input_tty: bool, output_tty: bool
 ) -> None:
+    from toolang.cli.common.terminal_session import TerminalSession
+
     class Input(DummyInput):
         def fileno(self) -> int:
             return 0
@@ -7151,13 +7140,18 @@ def test_terminal_title_requires_tty_but_not_tmux(
             setting=FakeClient().initial_setting(),
             input_history=None,
             client=FakeClient(),
+            terminal=TerminalSession(enabled=True),
         )
-        app.title.start(None)
-        app.title.clear()
+        app.terminal.start(
+            "alice",
+            write=output.write_raw,
+            flush=output.flush,
+            enabled=app._terminal_is_tty,
+        )
+        app.terminal.close()
     assert output.writes == (
-        ["\x1b]0;[new chat]\x07", "\x1b]0;\x07"] if input_tty and output_tty else []
+        ["\x1b]0;alice\x07", "\x1b]0;\x07"] if input_tty and output_tty else []
     )
-    assert not app.marks.active
 
 
 @pytest.mark.parametrize("fragmented", [False, True])

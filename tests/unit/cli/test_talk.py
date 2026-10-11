@@ -169,7 +169,6 @@ def test_talk_restores_saved_drafts_and_input_history(
     InputHistoryStore(state / "input.jsonl").append("previous message")
     monkeypatch.setattr(talk.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr(talk.sys.stdout, "isatty", lambda: True)
-    monkeypatch.setattr(talk, "resolve_launcher", lambda **kwargs: None)
     monkeypatch.setattr(talk, "toolang_version", lambda: "0.4.0-client")
     restored = []
 
@@ -219,7 +218,6 @@ def test_human_observer_sees_both_agents_left_without_a_composer(
     group = asyncio.run(agent_pair(messaging_cli, messages=True))
     monkeypatch.setattr(talk.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr(talk.sys.stdout, "isatty", lambda: True)
-    monkeypatch.setattr(talk, "resolve_launcher", lambda **kwargs: None)
     monkeypatch.setenv("TOOLANG_COLOR_SCHEME", "dark")
     output = StringIO()
     monkeypatch.setattr(
@@ -688,7 +686,6 @@ def test_interactive_talk_rejects_invalid_input_width_before_tui_start(
     monkeypatch.setenv("TOOLANG_INPUTBOX_MAX_WIDTH", "0")
     monkeypatch.setattr(talk.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr(talk.sys.stdout, "isatty", lambda: True)
-    monkeypatch.setattr(talk, "resolve_launcher", lambda **_kwargs: None)
 
     def forbidden(*_args, **_kwargs):
         raise AssertionError("TUI must not start with invalid input width")
@@ -717,7 +714,6 @@ def test_interactive_messages_use_chat_width_after_resize(
     monkeypatch.setenv("TOOLANG_COLOR_SCHEME", "dark")
     monkeypatch.setattr(talk.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr(talk.sys.stdout, "isatty", lambda: True)
-    monkeypatch.setattr(talk, "resolve_launcher", lambda **kwargs: None)
     output = StringIO()
     monkeypatch.setattr(
         tui,
@@ -772,73 +768,6 @@ def test_talk_identity_separates_root_connection_and_human(tmp_path):
         )
         == 4
     )
-
-
-def test_talk_tmux_session_reuses_canonical_window(
-    tmp_path, messaging_cli, monkeypatch, capsys
-):
-    from tests.unit.cli.test_tmux_launcher import FakePane, FakeServer, _launcher
-    from toolang.cli.common.tmux import MARK_CONTEXT, MARK_PAD
-
-    monkeypatch.setattr(
-        HubClient,
-        "info",
-        AsyncMock(side_effect=AssertionError("parent queried metadata")),
-    )
-    server, pane = FakeServer(), FakePane(session_id="$shell")
-    monkeypatch.setattr(talk.sys.stdin, "isatty", lambda: True)
-    monkeypatch.setattr(talk.sys.stdout, "isatty", lambda: True)
-    monkeypatch.setattr(
-        talk, "resolve_launcher", lambda *, agent: _launcher(server, pane, agent)
-    )
-    for action in ("created", "located"):
-        assert cli.main(["--root", str(tmp_path), "talk", "gc_00000001"]) == 0
-        assert capsys.readouterr().out == f"{action} pane %1 in talks:gc_00000001\n"
-    assert len(server.created) == 1
-    session = server.sessions[0]
-    assert session.session_name == "talks"
-    assert session.options["@toolang_talk"] == "talks"
-    assert len(session.windows) == 1
-    window = session.windows[0]
-    assert window.options[MARK_CONTEXT]
-    assert window.window_name == window.options["@toolang_convo"] == "gc_00000001"
-    assert window.panes[0].options[MARK_PAD] == "talk"
-    window.rename_window("my conversation")
-    assert cli.main(["--root", str(tmp_path), "talk", "gc_00000001"]) == 0
-    assert len(server.created) == 1 and len(session.windows) == 1
-    assert window.window_name == "my conversation"
-    assert cli.main(["--root", str(tmp_path), "talk", "gc_00000000"]) == 0
-    assert len(server.created) == 1 and len(session.windows) == 2
-    assert session.windows[1].options["@toolang_convo"] == "gc_00000000"
-
-
-def test_talk_reopening_after_hub_port_change_uses_a_fresh_window(
-    tmp_path, messaging_cli, monkeypatch
-):
-    from dataclasses import replace
-
-    from tests.unit.cli.test_tmux_launcher import FakePane, FakeServer, _launcher
-    from toolang.cli.common.tmux import MARK_CONTEXT
-
-    server, pane = FakeServer(), FakePane(session_id="$shell")
-    connection, human = talk.settings(tmp_path)
-    monkeypatch.setattr(talk.sys.stdin, "isatty", lambda: True)
-    monkeypatch.setattr(talk.sys.stdout, "isatty", lambda: True)
-    monkeypatch.setattr(
-        talk, "resolve_launcher", lambda *, agent: _launcher(server, pane, agent)
-    )
-    monkeypatch.setattr(talk, "settings", lambda _root: (connection, human))
-    assert cli.main(["--root", str(tmp_path), "talk", "gc_00000001"]) == 0
-    session = server.sessions[0]
-    first = session.windows[0]
-
-    connection = replace(connection, endpoint="http://hub:7001")
-    for _ in range(2):
-        assert cli.main(["--root", str(tmp_path), "talk", "gc_00000001"]) == 0
-    assert len(server.created) == 1 and len(session.windows) == 2
-    second = session.windows[1]
-    assert first.options["@toolang_convo"] == second.options["@toolang_convo"]
-    assert first.options[MARK_CONTEXT] != second.options[MARK_CONTEXT]
 
 
 def test_follow_reconnects_from_last_displayed_id_without_replaying_history(
@@ -945,7 +874,6 @@ def test_opening_empty_dm_writes_only_on_first_send(
 
     monkeypatch.setattr(talk.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr(talk.sys.stdout, "isatty", lambda: True)
-    monkeypatch.setattr(talk, "resolve_launcher", lambda **kwargs: None)
 
     async def inspect_ui(ui):
         assert ui.selection == "alice" and ui.conversation.kind == "dm"
@@ -1019,7 +947,9 @@ def test_empty_dm_follow_discovers_other_participants_first_send(tmp_path, monke
             monkeypatch.setattr(ui, "show", shown)
             # Title publication itself is synchronous.
             titles = []
-            monkeypatch.setattr(ui, "write_title", lambda text: titles.append(text))
+            monkeypatch.setattr(
+                ui.terminal, "set_title", lambda text: titles.append(text)
+            )
 
             async def wait(_):
                 return None

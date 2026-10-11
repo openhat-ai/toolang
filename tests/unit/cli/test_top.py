@@ -20,7 +20,9 @@ def test_top_observes_hub_without_preparing_an_agent(tmp_path, monkeypatch):
     monkeypatch.setattr(
         top.HubProcess,
         "connection",
-        lambda self: SimpleNamespace(endpoint="http://hub", identity="backend"),
+        lambda self: SimpleNamespace(
+            endpoint="http://hub", identity="backend", human="human:owner"
+        ),
     )
 
     async def observe(endpoint, **options):

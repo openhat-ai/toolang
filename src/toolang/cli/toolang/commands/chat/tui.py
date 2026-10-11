@@ -29,6 +29,7 @@ from prompt_toolkit.layout.containers import DynamicContainer
 from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.output.color_depth import ColorDepth
 from prompt_toolkit.patch_stdout import patch_stdout
+from toolang.cli.common.terminal_session import TerminalSession
 from toolang.cli.common.scrollback import ScrollbackApplication
 from toolang.cli.common.scrollback import ScrollbackRenderer as _ChatRenderer
 from prompt_toolkit.styles import Style
@@ -66,7 +67,6 @@ from . import rendering
 from . import shortcuts
 from . import slashes
 from . import widgets
-from .marks import ChatMarks
 from .base import (
     AppContext,
     ChatClient,
@@ -97,7 +97,7 @@ from .input import (
 )
 from .policy import run_override_error, validate_model_reasoning_request
 from .presenter import ChatRunPresenter
-from .title import ChatTitle
+from .title import ChatTitle, chat_label
 
 _RUN_EVENT_TYPES = (
     RunSnapshot,
@@ -207,7 +207,7 @@ class ChatTuiAppContext:
     def ensure_thread_id(self) -> str:
         if self._app.thread_id is None:
             self._app.thread_id = self._app.client.create_thread()
-            self._app.marks.set_thread(self._app.thread_id)
+            self._app.terminal.set_thread(self._app.thread_id)
             self._app.title.set_thread(self._app.thread_id)
         thread_id = self._app.thread_id
         if thread_id is None:
@@ -242,7 +242,7 @@ class ChatTuiApp:
         progress_max_width: int = DEFAULT_MAX_PROGRESS_WIDTH,
         inputbox_max_width: int | None = None,
         surfaces: TerminalSurfaces = DARK_TERMINAL_SURFACES,
-        marks: ChatMarks | None = None,
+        terminal: TerminalSession | None = None,
     ) -> None:
         asyncio.run(
             ChatTuiApp(
@@ -254,7 +254,7 @@ class ChatTuiApp:
                 progress_max_width=progress_max_width,
                 inputbox_max_width=inputbox_max_width,
                 surfaces=surfaces,
-                marks=marks,
+                terminal=terminal,
             ).run_loop()
         )
 
@@ -269,14 +269,14 @@ class ChatTuiApp:
         progress_max_width: int = DEFAULT_MAX_PROGRESS_WIDTH,
         inputbox_max_width: int | None = None,
         surfaces: TerminalSurfaces = DARK_TERMINAL_SURFACES,
-        marks: ChatMarks | None = None,
+        terminal: TerminalSession | None = None,
     ) -> None:
         # Focus reports can arrive when switching iTerm2/tmux tabs. Consume
         # them as whole events before Escape bindings or text insertion run.
         ANSI_SEQUENCES.setdefault("\x1b[I", Keys.Ignore)
         ANSI_SEQUENCES.setdefault("\x1b[O", Keys.Ignore)
         self.thread_id = thread_id
-        self.marks = marks if marks is not None else ChatMarks.disabled()
+        self.terminal = terminal if terminal is not None else TerminalSession()
         self.input_history = input_history
         self.client = client
         client_layout = getattr(client, "layout", None)
@@ -395,11 +395,11 @@ class ChatTuiApp:
             )
         except (OSError, ValueError, NotImplementedError):
             terminal_is_tty = False
-        if not terminal_is_tty:
-            self.marks = ChatMarks.disabled()
+        self._terminal_is_tty = terminal_is_tty
         self.title = ChatTitle(
-            output=self.app.output,
-            enabled=terminal_is_tty,
+            publish=self.terminal.set_title,
+            agent=self.agent_name,
+            enabled=terminal_is_tty and self.terminal.enabled,
             lookup=lambda thread_id: self.client.thread_title(thread_id),
             on_result=lambda result: self._enqueue_ui_event_from_thread(
                 ChatUIEvent("thread_title", result)
@@ -571,8 +571,12 @@ class ChatTuiApp:
             hide_cursor=False,
             width=self.content_width(),
         )
-        self.marks.start_background()
-        self.marks.start(self.thread_id)
+        self.terminal.start(
+            chat_label(self.agent_name),
+            write=self.app.output.write_raw,
+            flush=self.app.output.flush,
+            enabled=self._terminal_is_tty,
+        )
         self.title.start(self.thread_id)
         self.dispatcher_task = asyncio.create_task(self._dispatch_ui_events())
         self.status_elapsed_task = asyncio.create_task(self._refresh_status_elapsed())
@@ -581,7 +585,7 @@ class ChatTuiApp:
                 await self.app.run_async()
         finally:
             self.title.clear()
-            self.marks.clear()
+            self.terminal.close()
             self._stop_status_activity()
             if self.status_elapsed_task is not None:
                 self.status_elapsed_task.cancel()

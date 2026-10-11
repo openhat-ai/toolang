@@ -22,7 +22,6 @@ from toolang.base.types.policy import RunPolicy
 from toolang.cli.common.context import context_layout
 from toolang.cli.common.terminal_surfaces import TerminalSurfaces
 from toolang.cli.toolang.commands.chat import main as chat
-from toolang.cli.toolang.commands.chat.marks import ChatMarks
 from toolang.cli.toolang.commands.chat.base import (
     ChatExecutorMetadata,
     ChatResult,
@@ -646,20 +645,19 @@ def test_interactive_tty_passes_the_unmodified_thread_to_the_tui(
         thread_id: str | None,
         setting: SessionSetting,
         client: object,
-        marks: object = None,
+        title_prefix: object = None,
     ) -> None:
         captured.update(
             thread=thread_id,
             setting=setting,
             client=client,
-            marks=marks,
+            title_prefix=title_prefix,
         )
 
     monkeypatch.setattr(chat.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr(chat.sys.stdout, "isatty", lambda: True)
     monkeypatch.setattr(chat, "_chat_runtime", runtime)
     monkeypatch.setattr(chat, "context_layout", lambda _ctx: _Layout())
-    monkeypatch.setattr(chat, "resolve_marks", lambda **_kwargs: None)
     monkeypatch.setattr(chat, "_chat_interactive_prompt_toolkit", open_tui)
 
     chat._chat_interactive(
@@ -667,14 +665,12 @@ def test_interactive_tty_passes_the_unmodified_thread_to_the_tui(
         thread_id=thread_id,
     )
 
-    marks = captured.pop("marks")
+    assert captured.pop("title_prefix") is None
     assert captured == {
         "thread": thread_id,
         "setting": client.initial_setting(),
         "client": client,
     }
-    assert isinstance(marks, ChatMarks)
-    assert marks.active is False
     assert client.created == 0
 
 
@@ -694,9 +690,9 @@ def test_chat_invocation_defaults_initialize_the_session(
         thread_id: str | None,
         setting: SessionSetting,
         client: object,
-        marks: object = None,
+        title_prefix: object = None,
     ) -> None:
-        del marks
+        del title_prefix
         del thread_id, client
         captured["setting"] = setting
 
@@ -704,7 +700,6 @@ def test_chat_invocation_defaults_initialize_the_session(
     monkeypatch.setattr(chat.sys.stdout, "isatty", lambda: True)
     monkeypatch.setattr(chat, "_chat_runtime", runtime)
     monkeypatch.setattr(chat, "context_layout", lambda _ctx: _Layout())
-    monkeypatch.setattr(chat, "resolve_marks", lambda **_kwargs: None)
     monkeypatch.setattr(chat, "_chat_interactive_prompt_toolkit", open_tui)
 
     chat._chat_interactive(

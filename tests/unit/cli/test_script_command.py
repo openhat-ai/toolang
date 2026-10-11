@@ -2315,3 +2315,29 @@ def test_embedded_script_forwards_progress_to_its_final_state_check(
     finally:
         harness.store.close()
     assert observed == [progress.sink]
+
+
+@pytest.mark.parametrize("explicit_run", [False, True])
+@pytest.mark.parametrize(
+    "parent,child,expected",
+    [(None, None, None), ("p ", None, "p "), ("p ", "", ""), ("", " 💬 ", " 💬 ")],
+)
+def test_script_title_prefix_survives_both_dispatch_forms(
+    tmp_path, monkeypatch, explicit_run, parent, child, expected
+):
+    from toolang.cli.toolang import main as cli
+
+    monkeypatch.setattr(script.sys, "stdin", StringIO())
+    source = _write_source(tmp_path, "agic demo():\n  Hello.\n")
+    captured = {}
+    monkeypatch.setattr(
+        script, "_run", lambda _source, **kwargs: captured.update(kwargs) or 0
+    )
+    args = (["run"] if explicit_run else []) + [str(source)]
+    if parent is not None:
+        args += ["--title-prefix", parent]
+    args += ["demo"]
+    if child is not None:
+        args += ["--title-prefix", child]
+    assert cli.main(args) == 0
+    assert captured["title_prefix"] == expected

@@ -9,6 +9,7 @@ from dataclasses import replace
 from toolang.base.types.model import ModelRequest
 from toolang.cli.toolang.commands.chat import local
 from toolang.cli.toolang.commands.chat.tui import ChatTuiApp
+from toolang.cli.common.terminal_session import prepare_terminal
 from toolang.plugin.models.query import resolve_model
 from toolang.setup import AgentSetup
 from toolang.state.state import AgentState
@@ -92,6 +93,8 @@ def run_chat_tui(
             setting=setting,
             input_history=None,
             client=session,
+            agent_name=setup.layout.name,
+            terminal=prepare_terminal("chat", layout=setup.layout, environment={}),
         )
     finally:
         session.close()

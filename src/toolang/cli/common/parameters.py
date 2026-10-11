@@ -69,3 +69,8 @@ CompactModelOption = Annotated[
         help="Set an exact compact model (optional effort=LEVEL) for a new runtime",
     ),
 ]
+
+TitlePrefixOption = Annotated[
+    str | None,
+    typer.Option("--title-prefix", metavar="TEXT", help="Prefix this terminal title"),
+]

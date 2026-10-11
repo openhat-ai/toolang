@@ -15,6 +15,7 @@ from toolang.base.types.run import ModelCallResult
 from toolang.catalog import CapsManager, JobsManager
 from toolang.cli.toolang.commands.chat.remote import RemoteChatSession
 from toolang.cli.toolang.commands.chat.tui import ChatTuiApp
+from toolang.cli.common.terminal_session import prepare_terminal
 from toolang.up import AgentCore, process as agents
 from .execution_harness import ExecutionHarness
 
@@ -71,6 +72,8 @@ agic chat(_: Part[]) -> Part[]:
             setting=session.initial_setting(),
             input_history=None,
             client=session,
+            agent_name=core.layout.name,
+            terminal=prepare_terminal("chat", layout=core.layout, environment={}),
         )
     finally:
         session.close()
