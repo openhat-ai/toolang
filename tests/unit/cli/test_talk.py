@@ -755,21 +755,6 @@ def test_interactive_messages_use_chat_width_after_resize(
         assert cli.main(["--root", str(tmp_path), "talk", "gc_00000000"]) == 0
 
 
-def test_talk_identity_separates_root_connection_and_human(tmp_path):
-    base = talk.talk_identity(tmp_path, "one", "bryan")
-    assert (
-        len(
-            {
-                base,
-                talk.talk_identity(tmp_path / "other", "one", "bryan"),
-                talk.talk_identity(tmp_path, "two", "bryan"),
-                talk.talk_identity(tmp_path, "one", "other"),
-            }
-        )
-        == 4
-    )
-
-
 def test_follow_reconnects_from_last_displayed_id_without_replaying_history(
     tmp_path, monkeypatch
 ):

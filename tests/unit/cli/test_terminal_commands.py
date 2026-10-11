@@ -7,7 +7,8 @@ import pytest
 import typer
 
 from toolang.cli.common.context import CliContext
-from toolang.cli.common.terminal_session import TerminalSession, talk_context
+from toolang.cli.common.messaging import talk_context
+from toolang.cli.common.terminal_session import TerminalSession
 from toolang.cli.toolang import main as cli
 from toolang.cli.toolang.commands import hub, script, thread, top
 from toolang.common.layout import AgentLayout

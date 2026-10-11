@@ -9,7 +9,8 @@ import typer
 from typer._click.exceptions import ClickException
 
 from toolang.cli.common.parameters import TitlePrefixOption
-from toolang.cli.common.terminal_session import prepare_terminal, talk_context
+from toolang.cli.common.messaging import talk_context
+from toolang.cli.common.terminal_session import prepare_terminal
 from toolang.cli.common.terminal_title import agent_label
 from toolang.cli.common.activity import watch
 from toolang.cli.common.activity_view import since as stats_since

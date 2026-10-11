@@ -3,7 +3,6 @@
 import asyncio
 from hashlib import sha256
 import os
-from pathlib import Path
 import sys
 from typing import Annotated
 
@@ -13,9 +12,9 @@ from typer._click.exceptions import ClickException
 from toolang.cli.common.context import context_root
 from toolang.cli.common.execution_progress.config import resolve_progress_max_width
 from toolang.cli.common.input import resolve_inputbox_max_width
-from toolang.cli.common.messaging import settings
+from toolang.cli.common.messaging import settings, talk_context, talk_identity
 from toolang.cli.common.parameters import TitlePrefixOption
-from toolang.cli.common.terminal_session import prepare_terminal, talk_context
+from toolang.cli.common.terminal_session import prepare_terminal
 from toolang.teaming.client import HubClient
 from toolang.teaming.errors import TeamingError, MessagingError
 from toolang.common.version import toolang_version
@@ -33,10 +32,6 @@ async def _hub_version(client: HubClient) -> str:
             return (await client.info()).version
     except (MessagingError, TimeoutError):
         return "unknown"
-
-
-def talk_identity(root: Path, connection: str, human: str) -> str:
-    return sha256(f"{root.resolve()}\0{connection}\0{human}".encode()).hexdigest()[:20]
 
 
 def talk_command(

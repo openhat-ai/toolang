@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from hashlib import sha256
 import os
 from pathlib import Path
 import sys
@@ -17,14 +16,6 @@ from toolang.common.layout import AgentLayout
 from .context import load_root_environ, load_runtime_environ, user_call
 from .terminal_title import TerminalTitle
 from .tmux import PaneMarks
-
-
-def talk_context(root: Path, connection: str, human: str, endpoint: str) -> str:
-    """Share Talk's opaque connection context with team Top."""
-    identity = sha256(f"{root.resolve()}\0{connection}\0{human}".encode()).hexdigest()[
-        :20
-    ]
-    return sha256(f"{identity}\0{endpoint}".encode()).hexdigest()[:20]
 
 
 class TerminalSession:
