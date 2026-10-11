@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 
 from toolang.execution.activity import ActivityQuery, ActivityReader
+from toolang.execution.errors import RunStoreSchemaError
 from toolang.execution.schemas import ActivitySnapshot
 from .activity import HubActivity
 from .backend import Backend
@@ -73,7 +74,7 @@ def activity_router(
                 return {"text": await local.result(agent, ref)}
             except KeyError as exc:
                 raise HTTPException(404, "Execution record not found") from exc
-            except (OSError, sqlite3.Error) as exc:
+            except (OSError, sqlite3.Error, RunStoreSchemaError) as exc:
                 raise HTTPException(503, "Result unavailable") from exc
             except ValueError as exc:
                 raise HTTPException(422, "Result unavailable") from exc

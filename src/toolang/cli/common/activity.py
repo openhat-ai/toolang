@@ -19,6 +19,7 @@ from rich.console import Console
 from rich.live import Live
 
 from toolang.execution.activity import ActivityQuery
+from toolang.execution.errors import RunStoreSchemaError
 from toolang.teaming.observation import HttpObservation, Observation, frames
 from toolang.teaming.hub_observation import HubObservation
 from .activity_view import Activity, Sort, View
@@ -177,6 +178,7 @@ async def watch(
                         httpx.HTTPError,
                         OSError,
                         sqlite3.Error,
+                        RunStoreSchemaError,
                         ValueError,
                         KeyError,
                     ):
