@@ -75,9 +75,11 @@ template per kind, without a template selector.
   | `inspect` | Inspect run history and details |
 
   Preserve other descriptions, including `workspace`. Top's detailed help
-  explains observation of runtime instances, threads, and runs. Chore subcommand
-  help preserves the distinction between deleting a definition while retaining
-  history and canceling one occurrence while retaining future scheduled work.
+  explains observation of runtime instances, threads, and runs. Chore group
+  help uses short summaries: `List chores and status`, `Create a chore`,
+  `Edit a chore`, `Delete a chore; keep history`, `Run a chore once`, and
+  `Cancel a chore occurrence`. Detailed subcommand help retains authoring,
+  serialization, history retention, and future scheduling semantics.
 - Target-specific help uses the same placement for `top`, without exposing
   root-only `talk` or `hub` as agent-targeted commands. Other commands,
   options outside template selection, driver selection, and scheduling semantics

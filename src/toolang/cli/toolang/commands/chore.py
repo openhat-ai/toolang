@@ -167,16 +167,17 @@ def _create_app() -> typer.Typer:
         pretty_exceptions_enable=False,
         pretty_exceptions_show_locals=False,
     )
-    for name, command in (
-        ("list", list_chores),
-        ("new", new_chore),
-        ("edit", edit_chore),
-        ("delete", delete_chore),
-        ("run", run_chore),
-        ("cancel", cancel_chore),
+    for name, command, short_help in (
+        ("list", list_chores, "List chores and status"),
+        ("new", new_chore, "Create a chore"),
+        ("edit", edit_chore, "Edit a chore"),
+        ("delete", delete_chore, "Delete a chore; keep history"),
+        ("run", run_chore, "Run a chore once"),
+        ("cancel", cancel_chore, "Cancel a chore occurrence"),
     ):
         app.command(
             name,
+            short_help=short_help,
             cls=RequiredPrefixAgentCommand,
             no_args_is_help=name not in {"list", "new"},
         )(command)
