@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from contextlib import aclosing
+from contextlib import aclosing, nullcontext
 
 from collections import OrderedDict
 from collections.abc import AsyncGenerator, Callable
@@ -91,9 +91,12 @@ class HubActivity:
             if not feed.users and self._feeds.get(query) is feed:
                 del self._feeds[query]
 
-    async def read(self, query: ActivityQuery) -> list[ActivitySnapshot]:
-        async with self._lock:
-            previous = self._cache.get(query)
+    async def read(
+        self, query: ActivityQuery, *, agent: str | None = None
+    ) -> list[ActivitySnapshot]:
+        # Live observers read agents independently and need the current revision.
+        async with self._lock if agent is None else nullcontext():
+            previous = self._cache.get(query) if agent is None else None
             if previous and time.monotonic() - previous[0] < 0.5:
                 return previous[1]
             participants = await self.agents()
@@ -137,14 +140,16 @@ class HubActivity:
 
                 batches = await asyncio.gather(
                     *(
-                        source(agent)
-                        for agent in sorted(participants)
-                        if agent.startswith("agent:")
+                        source(name)
+                        for name in sorted(participants)
+                        if name.startswith("agent:")
+                        and (agent is None or name == agent)
                     )
                 )
             pages = [page for batch in batches for page in batch]
-            self._cache[query] = time.monotonic(), pages
-            self._cache.move_to_end(query)
-            while len(self._cache) > 8:
-                self._cache.popitem(last=False)
+            if agent is None:
+                self._cache[query] = time.monotonic(), pages
+                self._cache.move_to_end(query)
+                while len(self._cache) > 8:
+                    self._cache.popitem(last=False)
             return pages

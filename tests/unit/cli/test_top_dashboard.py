@@ -542,6 +542,33 @@ def test_result_reload_waits_for_recovered_checkpoint(reconnecting):
     assert state.selected == key[:2]
 
 
+@pytest.mark.parametrize("recovered", ["agent:alice", "agent:bob"])
+def test_details_retry_only_the_recovered_agent_while_another_source_is_unavailable(
+    recovered,
+):
+    state = Activity(None, view="execution")
+    snapshots = [page(), page().model_copy(update={"agent": "agent:bob"})]
+    for snapshot in snapshots:
+        snapshot.stale = True
+        state.feed("activity_page", snapshot.model_dump())
+    state.feed("activity_checkpoint", {"agents": [s.agent for s in snapshots]})
+    state.feed("observation_status", {"reconnecting": True})
+    state.details = True
+    key = ("agent:alice", "run_done", "succeeded")
+    state.selected = key[:2]
+    state.result_key, state.result_text = key, "Unavailable"
+
+    for snapshot in snapshots:
+        snapshot.stale = snapshot.agent != recovered
+        state.feed("activity_page", snapshot.model_dump())
+    assert state.result_key == key
+    state.feed("activity_checkpoint", {"agents": [s.agent for s in snapshots]})
+    state.feed("observation_status", {"reconnecting": True})
+    assert state.result_key == (None if recovered == key[0] else key)
+    assert state.selected == key[:2]
+    assert state.source_reconnecting
+
+
 @pytest.mark.parametrize("offline", [False, True])
 def test_run_details_describe_selected_run_independently_of_table(offline):
     from toolang.cli.common.activity_dashboard import details

@@ -20,6 +20,7 @@ from rich.live import Live
 
 from toolang.execution.activity import ActivityQuery
 from toolang.teaming.observation import HttpObservation, Observation, frames
+from toolang.teaming.hub_observation import HubObservation
 from .activity_view import Activity, Sort, View
 from .terminal_surfaces import resolve_terminal_surfaces
 
@@ -70,7 +71,9 @@ async def watch(
                     trust_env=False,
                 )
             )
-            source = HttpObservation(http, agent=agent)
+            source = (
+                HttpObservation(http, agent=agent) if agent else HubObservation(http)
+            )
         observer = source
         if once:
             try:

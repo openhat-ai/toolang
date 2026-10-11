@@ -34,6 +34,7 @@ from .schemas import (
     conversation_id,
     stream_id,
 )
+from .notifications import Changes
 
 
 T = TypeVar("T")
@@ -86,21 +87,36 @@ class HubClient:
     async def close(self) -> None:
         await self._http.aclose()
 
-    async def _request(
-        self, method: str, path: str, *, message_id: str | None = None, **kwargs: Any
-    ) -> Any:
-        connection = self.config
+    def _headers(self, connection: HubConnection) -> dict[str, str]:
         headers = {
             "X-Toolang-Backend": connection.identity,
             "X-Toolang-Human": quote(connection.human, safe=""),
         }
         if self._lease is not None:
             headers["X-Toolang-Agent-Lease"] = self._lease
+        return headers
+
+    def team_changes(self, conversation: str) -> Changes:
+        connection = self.config
+        return Changes(
+            self._http,
+            connection.endpoint + self._prefix + "/team/events",
+            checkpoint="checkpoint",
+            headers=self._headers(connection),
+            matches=lambda event, data: (
+                event == "change" and data.get("conversation") == conversation
+            ),
+        )
+
+    async def _request(
+        self, method: str, path: str, *, message_id: str | None = None, **kwargs: Any
+    ) -> Any:
+        connection = self.config
         try:
             response = await self._http.request(
                 method,
                 connection.endpoint + self._prefix + path,
-                headers=headers,
+                headers=self._headers(connection),
                 **kwargs,
             )
         except httpx.HTTPError as exc:

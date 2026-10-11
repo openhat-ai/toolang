@@ -149,6 +149,7 @@ class Activity:
         self.pending: dict[str, ActivitySnapshot] = {}
         self.ready = False
         self.reconnecting = False
+        self.source_reconnecting = False
         self.selected: tuple[str, str] | None = None
         self.tree_selected: tuple[str, str] | None = None
         self.tree_root: tuple[str, str] | None = None
@@ -173,6 +174,12 @@ class Activity:
         self.attached_query = self.query
 
     def feed(self, event: str, data: dict) -> bool:
+        if event == "observation_status":
+            recovering = data["reconnecting"]
+            if self.source_reconnecting and not recovering:
+                self.result_key = None
+            self.source_reconnecting = recovering
+            return True
         if event == "activity_roster":
             if self.attached_query != self.query:
                 return False
@@ -211,6 +218,12 @@ class Activity:
                 page.next_offset is not None for page in self.pending.values()
             ):
                 raise ValueError("Activity snapshot was incomplete")
+            if self.result_key:
+                previous = self.snapshots.get(self.result_key[0])
+                refreshed = self.pending.get(self.result_key[0])
+                if previous and previous.stale and refreshed and not refreshed.stale:
+                    # Retry this agent's Details even if another source stays down.
+                    self.result_key = None
             self.selection_ancestors = []
             ancestor = self.selected
             while ancestor and ancestor in self.parents:

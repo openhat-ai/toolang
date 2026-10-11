@@ -3,7 +3,7 @@
 from collections.abc import AsyncGenerator, Callable
 from contextlib import aclosing
 import sqlite3
-from typing import Annotated
+from typing import Annotated, Literal
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -41,8 +41,18 @@ def activity_router(
     @router.get("")
     async def snapshot(
         query: Annotated[ActivityQuery, Depends(activity_query)],
+        agent: str | None = None,
     ) -> list[ActivitySnapshot]:
-        return await reader.read(query)
+        return await reader.read(query, agent=agent)
+
+    @router.get("/roster")
+    async def members() -> dict[str, Literal["online", "offline"]]:
+        # Presence does not depend on history availability or activity queries.
+        return {
+            name: "online" if await backend.online(name) else "offline"
+            for name in await reader.agents()
+            if name.startswith("agent:")
+        }
 
     @router.get("/stream", response_class=EventSourceResponse)
     async def stream(

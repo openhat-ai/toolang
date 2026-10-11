@@ -28,11 +28,11 @@ from toolang.cli.common.terminal_title import label_text
 from toolang.common.files import atomic_write_text
 from toolang.teaming.client import HubClient
 from toolang.teaming.errors import BackendUnavailable, MessagingError
+from toolang.teaming.notifications import Changes
 from toolang.teaming.schemas import (
     Conversation,
     ConversationView,
     Message,
-    TeamMember,
     target,
 )
 
@@ -70,7 +70,6 @@ class TalkTui:
         self.conversation = conversation
         self.selection = selection
         self.terminal = terminal if terminal is not None else TerminalSession()
-        self.team: list[TeamMember] = []
         self.max_width = max_width
         self.inputbox_max_width = (
             max_width if inputbox_max_width is None else inputbox_max_width
@@ -301,19 +300,23 @@ class TalkTui:
         await run_in_terminal(write)
         self.cursor = entries[-1][0]
 
-    async def follow(self) -> None:
+    async def follow(self, changes: Changes | None = None) -> None:
         initialized = False
         delay = 0.5
         last_gap = None
+        if changes is not None:
+            await changes.wait()
         while True:
             try:
-                self.team = await self.client.team()
                 if self.selection:
                     resolved = await self.client.resolve(self.selection)
                     if not resolved.exists:
                         self.connection = "Connected"
                         self.invalidate()
-                        await asyncio.sleep(0.5)
+                        if changes is None:
+                            await asyncio.sleep(0.5)
+                        else:
+                            await changes.wait(timeout=0.5)
                         continue
                     self.selection = None
                 info = await self.client.conversation(self.conversation_id)
@@ -354,7 +357,10 @@ class TalkTui:
                 self.invalidate()
                 await self.print_notice(self.status)
                 return
-            await asyncio.sleep(delay)
+            if changes is None:
+                await asyncio.sleep(delay)
+            else:
+                await changes.wait(timeout=delay)
 
     async def run(self) -> None:
         console = terminal_console(width=self.content_width())
@@ -373,9 +379,12 @@ class TalkTui:
             enabled=is_tty,
         )
         try:
-            await self.app.run_async(
-                pre_run=lambda: self.app.create_background_task(self.follow())
-            )
+            async with self.client.team_changes(self.conversation_id) as changes:
+                await self.app.run_async(
+                    pre_run=lambda: self.app.create_background_task(
+                        self.follow(changes)
+                    )
+                )
         finally:
             self.terminal.close()
             self.save_draft()

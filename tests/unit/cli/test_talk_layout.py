@@ -20,6 +20,7 @@ from rich.console import Console
 from toolang.cli.common.terminal_surfaces import LIGHT_TERMINAL_SURFACES
 from toolang.cli.toolang.commands.talk import tui
 from toolang.teaming.schemas import Message
+from toolang.teaming.client import HubClient
 
 
 class TerminalOutput(DummyOutput):
@@ -44,7 +45,7 @@ async def talk_app(
     conversation = conversation or conversation_record(
         "gc_00000001", "gc", (human, "agent:alice", "agent:bob"), name="dev"
     )
-    client = AsyncMock()
+    client = AsyncMock(spec=HubClient)
     client.conversation.return_value = conversation
     client.team.return_value = []
     with create_app_session(input=DummyInput(), output=output):
@@ -329,6 +330,89 @@ def test_live_membership_changes_update_input_focus_and_preserve_drafts(
             with pytest.raises(asyncio.CancelledError):
                 await ui.follow()
             assert polls == 3
+
+    asyncio.run(scenario())
+
+
+def test_member_notification_wakes_talk_without_polling_or_reloading_history(
+    tmp_path, monkeypatch
+):
+    from dataclasses import asdict
+    from contextlib import suppress
+
+    import httpx
+
+    from tests.unit.messaging.test_latest_observation import Events
+    from toolang.teaming.notifications import Changes
+    from toolang.teaming.schemas import HubConnection
+
+    async def scenario():
+        stream = Events("checkpoint")
+        paths = []
+        wait = Changes.wait
+
+        async def without_timer(self, timeout=None):
+            await wait(self)
+
+        monkeypatch.setattr(Changes, "wait", without_timer)
+        async with talk_app(tmp_path) as (ui, _):
+            info = ui.conversation
+            loaded = asyncio.Event()
+            updated = asyncio.Event()
+
+            async def request(request):
+                path = request.url.path
+                paths.append(path)
+                if path == "/team/events":
+                    return httpx.Response(
+                        200,
+                        headers={"content-type": "text/event-stream"},
+                        stream=stream,
+                    )
+                if path.endswith("/messages"):
+                    loaded.set()
+                    return httpx.Response(200, json=[])
+                if path.endswith("/cursor"):
+                    return httpx.Response(200, json={"notice": None})
+                return httpx.Response(200, json=asdict(info))
+
+            original = ui.update_membership
+
+            def membership(value):
+                original(value)
+                updated.set()
+
+            monkeypatch.setattr(ui, "update_membership", membership)
+            ui.prompt.replace_input("keep my draft")
+            async with HubClient(
+                HubConnection("http://hub", ui.human, "backend"),
+                transport=httpx.MockTransport(request),
+            ) as client:
+                ui.client = client
+                async with client.team_changes(info.id) as changes:
+                    following = asyncio.create_task(ui.follow(changes))
+                    try:
+                        await asyncio.wait_for(loaded.wait(), 2)
+                        info = conversation_record(
+                            info.id, "gc", ("agent:alice",), name="dev"
+                        )
+                        await stream.send(
+                            "change",
+                            {
+                                "type": "conversation.member_removed",
+                                "conversation": info.id,
+                            },
+                        )
+                        await asyncio.wait_for(updated.wait(), 2)
+                        assert ui.read_only
+                        assert ui.draft.read_text() == "keep my draft"
+                        assert paths.count("/team/events") == 1
+                        assert "/events/stream" not in paths and "/team" not in paths
+                    finally:
+                        following.cancel()
+                        with suppress(asyncio.CancelledError):
+                            await following
+        assert stream.closed
 
     asyncio.run(scenario())
 

@@ -75,7 +75,7 @@ def test_top_hub_modes_and_source_recovery(valkey, running_hub, tmp_path):
                     ),
                     (
                         ("--filter", "MATH__DOUBLE", "--active", "--recent", "all"),
-                        ("Filter: MATH__DOUBLE", "Activity: all"),
+                        ("Filter: MATH__DOUBLE", "Recent: all"),
                     ),
                     (("--filter", "not-found"), ("No matching activity",)),
                 ]:
