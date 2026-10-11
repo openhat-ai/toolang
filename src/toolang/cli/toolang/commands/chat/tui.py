@@ -65,7 +65,7 @@ from . import blocks
 from . import events
 from . import rendering
 from . import shortcuts
-from . import slashes
+from . import commands
 from . import widgets
 from .base import (
     AppContext,
@@ -93,8 +93,9 @@ from .input import (
     normalize_chat_input,
     parse_chat_input,
     command_name,
+    run_override_error,
 )
-from .policy import run_override_error, validate_model_reasoning_request
+from .policy import validate_model_reasoning_request
 from .presenter import ChatRunPresenter
 from .title import ChatTitle, chat_label
 
@@ -601,7 +602,7 @@ class ChatTuiApp:
             if model is not None and model_reasoning_value(model) is None
             else None
         )
-        return slashes.model_status_label(model, effort_applicable=applicable)
+        return commands.model_status_label(model, effort_applicable=applicable)
 
     def _selected_model_effort_applicable(self, ref: str) -> bool | None:
         if ref in self._model_effort_applicability:
@@ -610,7 +611,7 @@ class ChatTuiApp:
             payload = self.client.list_models((ref,))
         except (OSError, RuntimeError, ToolangError, ValueError):
             return None
-        applicable = slashes.model_effort_applicability(payload, ref)
+        applicable = commands.model_effort_applicability(payload, ref)
         if applicable is not None:
             self._model_effort_applicability[ref] = applicable
         return applicable
@@ -989,14 +990,14 @@ class ChatTuiApp:
         except ValueError as exc:
             if is_command_input(source):
                 command = command_name(source) or ""
-                if slashes.is_registered(command, prefix=source[0]):
-                    self._write_slash_outcome(
+                if commands.is_registered(command, prefix=source[0]):
+                    self._write_command_outcome(
                         source,
-                        slashes.error_outcome(str(exc)),
+                        commands.error_outcome(str(exc)),
                     )
                     return True
                 self.status_bar.set_error(
-                    slashes.unrecognized_diagnostic(command, prefix=source[0])
+                    commands.unrecognized_diagnostic(command, prefix=source[0])
                 )
                 return False
             error = friendly_error(str(exc))
@@ -1009,16 +1010,16 @@ class ChatTuiApp:
         ):
             return False
         if isinstance(chat_input, QuickCommand):
-            if not slashes.is_registered(chat_input.name, prefix=chat_input.prefix):
+            if not commands.is_registered(chat_input.name, prefix=chat_input.prefix):
                 self.status_bar.set_error(
-                    slashes.unrecognized_diagnostic(
+                    commands.unrecognized_diagnostic(
                         chat_input.name, prefix=chat_input.prefix
                     )
                 )
                 return False
-            outcome = slashes.handle(self.app_context, chat_input)
+            outcome = commands.handle(self.app_context, chat_input)
             if outcome is not None:
-                self._write_slash_outcome(source, outcome)
+                self._write_command_outcome(source, outcome)
             return True
         if not is_runnable_input(chat_input):
             raise AssertionError("unknown chat input value")
@@ -1052,15 +1053,15 @@ class ChatTuiApp:
             self.submit_run(queued)
         return True
 
-    def _write_slash_outcome(
+    def _write_command_outcome(
         self,
         message: str,
-        outcome: slashes.SlashOutcome,
+        outcome: commands.CommandOutcome,
     ) -> None:
         content = outcome.content
-        if isinstance(content, slashes.SlashRunResult):
+        if isinstance(content, commands.CommandRunResult):
             result = content.result
-            renderable = blocks.SlashResultBlock(
+            renderable = blocks.CommandResultBlock(
                 message=message,
                 run_id=result.run_id,
                 parts=result.output,
@@ -1069,24 +1070,24 @@ class ChatTuiApp:
                 code_background=self.surfaces.code_background,
                 inline_code_background=self.surfaces.inline_code_background,
             ).render()
-        elif isinstance(content, slashes.SlashTable):
-            renderable = blocks.SlashTableBlock(
+        elif isinstance(content, commands.CommandTable):
+            renderable = blocks.CommandTableBlock(
                 message,
                 content,
                 max_width=self.progress_max_width,
                 input_background=self.surfaces.input_background,
             ).render()
-        elif isinstance(content, slashes.SlashHelp):
-            renderable = blocks.SlashHelpBlock(
+        elif isinstance(content, commands.CommandHelp):
+            renderable = blocks.CommandHelpBlock(
                 message,
                 content,
                 max_width=self.progress_max_width,
                 input_background=self.surfaces.input_background,
             ).render()
         else:
-            renderable = blocks.SlashBlock(
+            renderable = blocks.CommandBlock(
                 message,
-                slashes.outcome_lines(outcome),
+                commands.outcome_lines(outcome),
                 outcome.kind,
                 max_width=self.progress_max_width,
                 input_background=self.surfaces.input_background,

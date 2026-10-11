@@ -226,11 +226,12 @@ Open questions: none.
 
 Implementation touchpoints under `src/toolang/`:
 
-- `cli/toolang/commands/chat/{input,policy,slashes,main,tui}.py`: dispatch,
+- `cli/toolang/commands/chat/{input,policy,commands,main,tui}.py`: dispatch,
   settings, help, outcomes, and queue parity.
-- `execution/{policy,calls}.py`, `lang/input.py`: run-prefix parsing, input
-  presence, capture, and signature validation. Shared parsing must not import
-  Chat handlers; keep one shared reserved-name registry.
+- `execution/input.py`: submission parsing, input presence, and the shared
+  reserved-name registry; no runtime services or Chat handlers.
+- `execution/{policy,calls}.py`: setting application and runnable resolution.
+- `lang/input.py`: call-input capture and signature validation.
 - `cli/toolang/commands/script.py`, `work/scheduler.py`: shared-input integration.
 
 Update current input/Chat/model documentation, affected bundled examples, and

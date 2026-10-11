@@ -6,13 +6,13 @@ from dataclasses import dataclass
 import re
 from typing import Literal, TypeAlias, TypeGuard
 
-from toolang.execution.policy import (
+from toolang.execution.input import (
     COLON_COMMAND_NAMES,
     SLASH_COMMAND_NAMES,
-    parse_policy_prefix,
+    parse_call,
 )
 from toolang.execution.types import RunOverride
-from toolang.lang.input import CallInput, parse_input
+from toolang.lang.input import CallInput
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,8 +54,7 @@ def parse_chat_input(chat_input: str) -> ChatInput:
             raise ValueError(f"unknown colon command: :{name}")
         return QuickCommand(name, tail, ":" if first.startswith(":") else "/")
 
-    override, call_input = parse_policy_prefix(body)
-    runnable_input = parse_input(call_input)
+    override, runnable_input = parse_call(body)
     if not runnable_input and override.runnable is None:
         raise ValueError("chat input is empty")
     return override, runnable_input
@@ -97,6 +96,20 @@ def _command_parts(line: str) -> tuple[str, str | None]:
     return head[1:], tail[0].strip(" \t") or None if tail else None
 
 
+def run_override_error(source: str, message: str) -> str:
+    """Add concise Chat guidance to one rejected run directive."""
+
+    first = source.splitlines()[0].strip()
+    if first == "/" or first.startswith(("/ ", "/\t")):
+        return "Enter a directive name immediately after / · See /help for help"
+    if "run override prefix requires" in message.casefold():
+        return "Include primary or named input after run overrides · See /help for help"
+    if "duplicate model override" in message.casefold():
+        return "Duplicate model override; combine model and parameters on one line · See /help for help"
+    detail = message.rstrip(" .")
+    return f"{detail} · See /help for help"
+
+
 __all__ = [
     "ChatInput",
     "QuickCommand",
@@ -105,4 +118,5 @@ __all__ = [
     "is_runnable_input",
     "normalize_chat_input",
     "parse_chat_input",
+    "run_override_error",
 ]

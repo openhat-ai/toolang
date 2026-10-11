@@ -945,7 +945,7 @@ def test_output_json_schema_rejects_unknown_output_types() -> None:
 
 
 def test_duplicate_arguments_are_rejected_before_collecting_a_mapping() -> None:
-    from toolang.execution.calls import parse_call
+    from toolang.execution.input import parse_call
 
     with pytest.raises(ValueError, match="duplicate named input: focus"):
         parse_call("/agic:review focus=one focus=two -- text")

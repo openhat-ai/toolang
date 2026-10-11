@@ -590,7 +590,7 @@ def _collect_call(
     ):
         raise _IncompleteRunnableInput
 
-    from toolang.execution.calls import parse_call
+    from toolang.execution.input import parse_call
 
     call_source = call_input.get("_", "") if call_input is not None else ""
     override, input = parse_call(call_source)

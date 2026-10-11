@@ -68,7 +68,7 @@ from toolang.cli.toolang.commands.chat import (
     events,
     rendering,
     shortcuts,
-    slashes,
+    commands,
     tui,
     widgets,
 )
@@ -1343,20 +1343,20 @@ def test_chat_command_blocks_render_run_and_steer_states() -> None:
 @pytest.mark.parametrize(
     "block",
     [
-        blocks.SlashBlock("/help", (), max_width=40),
-        blocks.SlashResultBlock("/output", "run_1", (), max_width=40),
-        blocks.SlashTableBlock(
+        blocks.CommandBlock("/help", (), max_width=40),
+        blocks.CommandResultBlock("/output", "run_1", (), max_width=40),
+        blocks.CommandTableBlock(
             "/models",
-            slashes.SlashTable("Found 0 models", ("MODEL",), ()),
+            commands.CommandTable("Found 0 models", ("MODEL",), ()),
             max_width=40,
         ),
-        blocks.SlashHelpBlock(
+        blocks.CommandHelpBlock(
             "/help",
-            slashes.SlashHelp(
+            commands.CommandHelp(
                 (
-                    slashes.SlashHelpSection(
+                    commands.CommandHelpSection(
                         "Commands",
-                        (slashes.SlashHelpRow("/help", "", "Show help"),),
+                        (commands.CommandHelpRow("/help", "", "Show help"),),
                     ),
                 ),
                 "Footer",
@@ -1366,10 +1366,10 @@ def test_chat_command_blocks_render_run_and_steer_states() -> None:
     ],
 )
 def test_chat_quick_command_control_bars_match_output_width(
-    block: blocks.SlashBlock
-    | blocks.SlashResultBlock
-    | blocks.SlashTableBlock
-    | blocks.SlashHelpBlock,
+    block: blocks.CommandBlock
+    | blocks.CommandResultBlock
+    | blocks.CommandTableBlock
+    | blocks.CommandHelpBlock,
 ) -> None:
     lines = _render_text(block.render(), width=80).splitlines()
 
@@ -1393,14 +1393,14 @@ def test_chat_quick_command_control_bars_match_output_width(
             1,
         ),
         (
-            blocks.SlashBlock("first\nsecond", ()),
+            blocks.CommandBlock("first\nsecond", ()),
             rendering.QUICK_COMMAND_CONTROL_ACCENT,
             1,
         ),
     ],
 )
 def test_chat_two_line_control_bars_keep_both_padding_rows(
-    block: blocks.MutableBlock | blocks.SlashBlock,
+    block: blocks.MutableBlock | blocks.CommandBlock,
     accent: str,
     expected_accent_cells: int,
 ) -> None:
@@ -1485,11 +1485,11 @@ def test_chat_control_bar_wraps_every_physical_row(
             run_id="run_1",
             max_width=20,
         ),
-        blocks.SlashBlock("中文" * 20, (), max_width=20),
+        blocks.CommandBlock("中文" * 20, (), max_width=20),
     ],
 )
 def test_chat_auxiliary_control_bars_wrap_wide_text_at_output_width(
-    block: blocks.RunSteerBlock | blocks.SlashBlock,
+    block: blocks.RunSteerBlock | blocks.CommandBlock,
 ) -> None:
     rendered_lines = [
         line
@@ -1578,7 +1578,7 @@ def test_chat_custom_surfaces_reach_input_queue_and_code_renderers() -> None:
             run_id="run_1",
             input_background=surfaces.input_background,
         ),
-        blocks.SlashBlock(
+        blocks.CommandBlock(
             "/help",
             (),
             input_background=surfaces.input_background,
@@ -3077,7 +3077,7 @@ def test_chat_progress_marker_style_does_not_leak_to_active_text() -> None:
 
 
 def test_chat_slash_block_renders_command_usage_as_table_rows() -> None:
-    block = blocks.SlashBlock(
+    block = blocks.CommandBlock(
         "/?",
         [
             "Slash commands act immediately.",
@@ -3137,7 +3137,7 @@ def test_chat_slash_block_renders_command_usage_as_table_rows() -> None:
 
 
 def test_chat_slash_summary_uses_two_space_indent_without_marker() -> None:
-    block = blocks.SlashBlock(
+    block = blocks.CommandBlock(
         ":model openai/gpt-5 effort=high",
         ("Model set to openai/gpt-5 · high",),
         "success",
@@ -3150,10 +3150,10 @@ def test_chat_slash_summary_uses_two_space_indent_without_marker() -> None:
 
 
 def test_chat_main_help_styles_structure_and_honors_maximum_width() -> None:
-    outcome = slashes.handle(None, QuickCommand("help"))  # type: ignore[arg-type]
+    outcome = commands.handle(None, QuickCommand("help"))  # type: ignore[arg-type]
     assert outcome is not None
-    assert isinstance(outcome.content, slashes.SlashHelp)
-    block = blocks.SlashHelpBlock(
+    assert isinstance(outcome.content, commands.CommandHelp)
+    block = blocks.CommandHelpBlock(
         "/help",
         outcome.content,
         max_width=60,
@@ -3170,7 +3170,7 @@ def test_chat_main_help_styles_structure_and_honors_maximum_width() -> None:
     argument = next(segment for segment in segments if segment.text == "[MODEL]")
     alias = next(segment for segment in segments if "(alias: /show)" in segment.text)
     narrow = _render_text(
-        blocks.SlashHelpBlock("/help", outcome.content, max_width=24).render(),
+        blocks.CommandHelpBlock("/help", outcome.content, max_width=24).render(),
         width=100,
     )
     narrow_words = " ".join(narrow.split())
@@ -3187,9 +3187,9 @@ def test_chat_main_help_styles_structure_and_honors_maximum_width() -> None:
 
 
 def test_chat_slash_table_uses_neutral_headers_and_one_line_rows() -> None:
-    block = blocks.SlashTableBlock(
+    block = blocks.CommandTableBlock(
         "/models",
-        slashes.SlashTable(
+        commands.CommandTable(
             "Found 1 model",
             ("MODEL", "PRICE ($/1M)", "EFFORT"),
             (("openai/a-very-long-model *", "$ 1.25 / $10.00", "low, high"),),
@@ -3471,21 +3471,21 @@ def test_chat_model_label_uses_canonical_ref_and_reasoning_status() -> None:
     }
 
     assert (
-        slashes.chat_model_label(
+        commands.chat_model_label(
             payload,
             SessionSetting(model=ModelRequest("openai/gpt-5"), runnable="agic:chat"),
         )
         == "openai/gpt-5 · auto"
     )
     assert (
-        slashes.chat_model_label(
+        commands.chat_model_label(
             payload,
             SessionSetting(model=ModelRequest("openai/o3"), runnable="agic:chat"),
         )
         == "openai/o3"
     )
     assert (
-        slashes.chat_model_label(
+        commands.chat_model_label(
             payload,
             SessionSetting(
                 model=ModelRequest(
@@ -3498,7 +3498,7 @@ def test_chat_model_label_uses_canonical_ref_and_reasoning_status() -> None:
         == "openai/gpt-5 · high"
     )
     assert (
-        slashes.chat_model_label(
+        commands.chat_model_label(
             payload,
             SessionSetting(model=None, runnable="agic:chat"),
         )
@@ -3522,7 +3522,7 @@ def test_chat_model_label_preserves_explicit_reasoning_values(
         runnable="agic:chat",
     )
 
-    assert slashes.chat_model_label({"items": []}, setting) == expected
+    assert commands.chat_model_label({"items": []}, setting) == expected
 
 
 @pytest.mark.parametrize("module", ["", "agent::"])
@@ -6014,7 +6014,7 @@ def test_chat_output_divider_truncates_without_wrapping(
     monkeypatch: Any,
 ) -> None:
     monkeypatch.setattr(rendering, "terminal_width", lambda: 24)
-    block = blocks.SlashResultBlock(
+    block = blocks.CommandResultBlock(
         message="/output run_saved_with_a_long_identifier",
         run_id="run_saved_with_a_long_identifier",
         parts=(TextPart("durable result"),),
@@ -7007,7 +7007,7 @@ def test_chat_tabbed_control_body_keeps_padding_on_every_row(kind: str) -> None:
             message=message, run_id="run_1", max_width=20
         )
     else:
-        block = blocks.SlashBlock(message, (), max_width=20)
+        block = blocks.CommandBlock(message, (), max_width=20)
     lines = _render_text(block.render(), width=20).splitlines()
     body = [line for line in lines if line.strip()]
     assert len(body) == 2
@@ -7367,7 +7367,7 @@ def test_chat_run_status_yields_space_to_input_on_short_terminals(
 @pytest.mark.parametrize("width", (30, 60))
 def test_slash_wrapped_prose_retains_its_inset(width: int) -> None:
     summary = "Runnable set to flow:" + "very_long_name_" * 8
-    block = blocks.SlashBlock(":flow review", (summary,), "success")
+    block = blocks.CommandBlock(":flow review", (summary,), "success")
     lines = _render_text(block.render(), width=width).splitlines()
     start = next(i for i, line in enumerate(lines) if "Runnable" in line)
     assert all(line.startswith("  ") for line in lines[start:] if line.strip())
@@ -7380,18 +7380,18 @@ def test_chat_help_preserves_plain_layout_at_each_width(
     width: int, command: str
 ) -> None:
     outcome = (
-        slashes.run_override_help()
+        commands.run_directive_help()
         if command == ":?"
-        else slashes.handle(cast(Any, None), QuickCommand(command))
+        else commands.handle(cast(Any, None), QuickCommand(command))
     )
-    assert outcome is not None and isinstance(outcome.content, slashes.SlashHelp)
+    assert outcome is not None and isinstance(outcome.content, commands.CommandHelp)
     inset = min(2, width - 1)
     expected = [
         " " * inset + line if line else ""
-        for line in slashes.outcome_lines(outcome, width=max(1, width - inset))
+        for line in commands.outcome_lines(outcome, width=max(1, width - inset))
     ]
     rendered = _render_text(
-        blocks.SlashHelpBlock("?", outcome.content, max_width=width), width=100
+        blocks.CommandHelpBlock("?", outcome.content, max_width=width), width=100
     )
     actual = rendered.splitlines()[-len(expected) :]
     assert [line.rstrip() for line in actual] == [line.rstrip() for line in expected]
@@ -7400,11 +7400,11 @@ def test_chat_help_preserves_plain_layout_at_each_width(
 
 @pytest.mark.parametrize("width", (30, 60, 100))
 def test_chat_table_summary_wraps_with_unicode_and_preserves_inset(width: int) -> None:
-    table = slashes.SlashTable(
+    table = commands.CommandTable(
         "模型 " * 40, ("MODEL",), (("sample *",),), protected_suffixes=(" *",)
     )
     lines = _render_text(
-        blocks.SlashTableBlock("/models", table, max_width=width), width=120
+        blocks.CommandTableBlock("/models", table, max_width=width), width=120
     ).splitlines()
     start = next(index for index, line in enumerate(lines) if "模型" in line)
     assert all(line.startswith("  ") for line in lines[start:] if line.strip())
@@ -7417,19 +7417,19 @@ def test_chat_table_summary_wraps_with_unicode_and_preserves_inset(width: int) -
 def test_keys_help_wraps_descriptions_under_the_description_column(
     width: int, rich: bool
 ) -> None:
-    outcome = slashes.handle(cast(Any, None), QuickCommand("keys"))
+    outcome = commands.handle(cast(Any, None), QuickCommand("keys"))
     assert outcome is not None
     if rich:
         block = (
-            blocks.SlashHelpBlock("/keys", outcome.content, max_width=width)
-            if isinstance(outcome.content, slashes.SlashHelp)
-            else blocks.SlashBlock(
-                "/keys", slashes.outcome_lines(outcome), max_width=width
+            blocks.CommandHelpBlock("/keys", outcome.content, max_width=width)
+            if isinstance(outcome.content, commands.CommandHelp)
+            else blocks.CommandBlock(
+                "/keys", commands.outcome_lines(outcome), max_width=width
             )
         )
         lines = _render_text(block, width=100).splitlines()
     else:
-        lines = list(slashes.outcome_lines(outcome, width=width))
+        lines = list(commands.outcome_lines(outcome, width=width))
     start = next(
         i for i, line in enumerate(lines) if line.lstrip().startswith("Ctrl+C ")
     )

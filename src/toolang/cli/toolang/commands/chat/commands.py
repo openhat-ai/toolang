@@ -20,8 +20,7 @@ from toolang.cli.common.model_selection import materialize_model_selection
 from toolang.cli.common.model_formatting import model_reasoning_value
 from toolang.base.types.model import ModelRequest
 from toolang.common.errors import ToolangError
-from toolang.execution.policy import (
-    COLON_COMMAND_NAMES,
+from toolang.execution.input import (
     RUN_OVERRIDE_NAMES,
     SLASH_COMMAND_NAMES,
     parse_setting_override,
@@ -38,23 +37,23 @@ from .shortcuts import HELP_GROUPS
 from .tables import table_lines
 
 
-SlashOutcomeKind = Literal["success", "result", "usage", "error"]
-SlashArgument = Literal["none", "optional", "required"]
-SlashCategory = Literal["session", "inspection", "other"]
+CommandOutcomeKind = Literal["success", "result", "usage", "error"]
+CommandArgument = Literal["none", "optional", "required"]
+CommandCategory = Literal["session", "inspection", "other"]
 HELP_DESCRIPTION_MIN_WIDTH = 24
 
 
 @dataclass(frozen=True, slots=True)
-class SlashText:
-    """One concise slash outcome with optional supporting lines."""
+class CommandText:
+    """One concise command outcome with optional supporting lines."""
 
     summary: str
     details: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
-class SlashTable:
-    """One presentation-neutral slash table."""
+class CommandTable:
+    """One presentation-neutral command table."""
 
     summary: str
     headers: tuple[str, ...]
@@ -64,7 +63,7 @@ class SlashTable:
 
 
 @dataclass(frozen=True, slots=True)
-class SlashHelpRow:
+class CommandHelpRow:
     """One command or shortcut entry in structured help."""
 
     command: str
@@ -74,58 +73,55 @@ class SlashHelpRow:
 
 
 @dataclass(frozen=True, slots=True)
-class SlashHelpSection:
-    """One titled group in the main slash help."""
+class CommandHelpSection:
+    """One titled group in the main command help."""
 
     title: str
-    rows: tuple[SlashHelpRow, ...]
+    rows: tuple[CommandHelpRow, ...]
 
 
 @dataclass(frozen=True, slots=True)
-class SlashHelp:
+class CommandHelp:
     """Structured help with shared column widths."""
 
-    sections: tuple[SlashHelpSection, ...]
+    sections: tuple[CommandHelpSection, ...]
     footer: str
     intro: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
-class SlashRunResult:
+class CommandRunResult:
     """One durable result returned by `/output`."""
 
     result: ChatResult
 
 
-SlashContent: TypeAlias = SlashText | SlashTable | SlashHelp | SlashRunResult
+CommandContent: TypeAlias = CommandText | CommandTable | CommandHelp | CommandRunResult
 
 
 @dataclass(frozen=True, slots=True)
-class SlashOutcome:
+class CommandOutcome:
     """Semantic result of one submitted standalone command."""
 
-    kind: SlashOutcomeKind
-    content: SlashContent
+    kind: CommandOutcomeKind
+    content: CommandContent
 
 
 @dataclass(frozen=True, slots=True)
-class SlashCommand:
+class CommandSpec:
     name: str
     arguments: str
     description: str
-    run: Callable[[AppContext, str, str], SlashOutcome | None]
+    run: Callable[[AppContext, str, str], CommandOutcome | None]
+    prefix: Literal["/", ":"] = "/"
     aliases: tuple[str, ...] = ()
-    category: SlashCategory | None = None
-    argument: SlashArgument = "optional"
-    focused_help: SlashText | None = None
+    category: CommandCategory | None = None
+    argument: CommandArgument = "optional"
+    focused_help: CommandText | None = None
 
     @property
     def names(self) -> tuple[str, ...]:
         return (self.name, *self.aliases)
-
-    @property
-    def prefix(self) -> str:
-        return ":" if self.name in COLON_COMMAND_NAMES else "/"
 
     @property
     def display_usage(self) -> str:
@@ -134,25 +130,25 @@ class SlashCommand:
         )
 
 
-def handle(app: AppContext, quick: QuickCommand) -> SlashOutcome | None:
+def handle(app: AppContext, quick: QuickCommand) -> CommandOutcome | None:
     """Dispatch one registered, structurally parsed command."""
 
     command = quick.name
     argument = quick.tail or ""
-    slash = _COMMAND_BY_KEY.get((quick.prefix, command))
-    if slash is None:
+    spec = _COMMAND_BY_KEY.get((quick.prefix, command))
+    if spec is None:
         raise KeyError(f"unregistered command: {quick.prefix}{command}")
-    if slash.argument == "required" and not argument:
+    if spec.argument == "required" and not argument:
         return (
-            SlashOutcome("usage", slash.focused_help)
-            if slash.focused_help is not None
-            else _usage(slash)
+            CommandOutcome("usage", spec.focused_help)
+            if spec.focused_help is not None
+            else _usage(spec)
         )
-    if slash.argument == "none" and argument:
+    if spec.argument == "none" and argument:
         return error_outcome(f"{quick.prefix}{command} does not accept an argument")
 
     try:
-        return slash.run(app, command, argument)
+        return spec.run(app, command, argument)
     except (ToolangError, ValueError) as exc:
         return error_outcome(str(exc))
     except ClickException as exc:
@@ -174,26 +170,26 @@ def unrecognized_diagnostic(command: str, *, prefix: str = "/") -> str:
     return f"Unknown command {prefix}{command} · See {help_command} for help"
 
 
-def error_outcome(message: str) -> SlashOutcome:
-    """Build one user-visible slash error."""
+def error_outcome(message: str) -> CommandOutcome:
+    """Build one user-visible command error."""
 
-    return SlashOutcome("error", SlashText(f"Error: {friendly_error(message)}"))
+    return CommandOutcome("error", CommandText(f"Error: {friendly_error(message)}"))
 
 
 def outcome_lines(
-    outcome: SlashOutcome,
+    outcome: CommandOutcome,
     *,
     width: int | None = None,
 ) -> tuple[str, ...]:
     """Project one outcome to deterministic plain-text lines."""
 
     content = outcome.content
-    if isinstance(content, SlashText):
+    if isinstance(content, CommandText):
         lines = (content.summary, *content.details)
         return _wrapped_lines(lines, width=width)
-    if isinstance(content, SlashHelp):
+    if isinstance(content, CommandHelp):
         return _help_lines(content, width=width)
-    if isinstance(content, SlashTable):
+    if isinstance(content, CommandTable):
         indent = "  " if width is None or width >= 4 else ""
         lines = table_lines(
             content.headers,
@@ -212,44 +208,45 @@ def outcome_lines(
     return _wrapped_lines((f"{content.result.run_id} output",), width=width)
 
 
-def _usage(command: SlashCommand) -> SlashOutcome:
-    return SlashOutcome("usage", SlashText(f"Usage: {command.display_usage}"))
+def _usage(command: CommandSpec) -> CommandOutcome:
+    return CommandOutcome("usage", CommandText(f"Usage: {command.display_usage}"))
 
 
-def _success(summary: str, *details: str) -> SlashOutcome:
-    return SlashOutcome("success", SlashText(summary, tuple(details)))
+def _success(summary: str, *details: str) -> CommandOutcome:
+    return CommandOutcome("success", CommandText(summary, tuple(details)))
 
 
-def _result(summary: str, *details: str) -> SlashOutcome:
-    return SlashOutcome("result", SlashText(summary, tuple(details)))
+def _result(summary: str, *details: str) -> CommandOutcome:
+    return CommandOutcome("result", CommandText(summary, tuple(details)))
 
 
-def _help(_app: AppContext, _command: str, _argument: str) -> SlashOutcome:
-    sections = tuple(
-        SlashHelpSection(
-            title,
-            tuple(
-                SlashHelpRow(
-                    f"{slash.prefix}{slash.name}",
-                    slash.arguments,
-                    slash.description,
-                    tuple(f"{slash.prefix}{alias}" for alias in slash.aliases),
-                )
-                for slash in SLASHES
-                if slash.category == category
-            ),
-        )
-        for category, title in (
-            ("session", "Session settings (colon commands)"),
-            ("inspection", "Inspection (slash commands)"),
-            ("other", "Other slash commands"),
-        )
+def _command_help_section(category: CommandCategory, title: str) -> CommandHelpSection:
+    return CommandHelpSection(
+        title,
+        tuple(
+            CommandHelpRow(
+                f"{spec.prefix}{spec.name}",
+                spec.arguments,
+                spec.description,
+                tuple(f"{spec.prefix}{alias}" for alias in spec.aliases),
+            )
+            for spec in COMMANDS
+            if spec.category == category
+        ),
     )
-    directives = run_override_help().content
-    assert isinstance(directives, SlashHelp)
-    return SlashOutcome(
+
+
+def _help(_app: AppContext, _command: str, _argument: str) -> CommandOutcome:
+    sections = (
+        _command_help_section("session", "Session settings (colon commands)"),
+        _command_help_section("inspection", "Inspection (slash commands)"),
+        _command_help_section("other", "Other slash commands"),
+    )
+    directives = run_directive_help().content
+    assert isinstance(directives, CommandHelp)
+    return CommandOutcome(
         "result",
-        SlashHelp(
+        CommandHelp(
             (*sections, *directives.sections),
             "-a lists all available resources.\n"
             "/output without RUN shows the latest successful output in this thread.\n"
@@ -259,40 +256,38 @@ def _help(_app: AppContext, _command: str, _argument: str) -> SlashOutcome:
     )
 
 
-def _session_help(app: AppContext, command: str, argument: str) -> SlashOutcome:
-    content = _help(app, command, argument).content
-    assert isinstance(content, SlashHelp)
-    return SlashOutcome(
+def _session_help(_app: AppContext, _command: str, _argument: str) -> CommandOutcome:
+    return CommandOutcome(
         "result",
-        SlashHelp(
-            content.sections[:1],
+        CommandHelp(
+            (_command_help_section("session", "Session settings (colon commands)"),),
             "Session settings apply to later runs. /help shows commands and run directives.",
         ),
     )
 
 
-def run_override_help() -> SlashOutcome:
+def run_directive_help() -> CommandOutcome:
     """Describe run directives and their input boundaries for the main help."""
 
     rows = (
-        SlashHelpRow(
+        CommandHelpRow(
             "/model", "[MODEL] [PARAM=VALUE...]", "Override model or parameters"
         ),
-        SlashHelpRow("/allow", "FIELD=QUERY...", "Narrow allowed resources"),
-        SlashHelpRow("/limit", "FIELD=VALUE...", "Override run limits"),
-        SlashHelpRow("/workdir", "PATH", "Override workdir for this run"),
-        SlashHelpRow("/RUNNABLE", "[NAME=VALUE...]", "Call a root runnable"),
-        SlashHelpRow("/agic:NAME", "[NAME=VALUE...]", "Call a kind-qualified agic"),
-        SlashHelpRow("/flow:NAME", "[NAME=VALUE...]", "Call a kind-qualified flow"),
-        SlashHelpRow(
+        CommandHelpRow("/allow", "FIELD=QUERY...", "Narrow allowed resources"),
+        CommandHelpRow("/limit", "FIELD=VALUE...", "Override run limits"),
+        CommandHelpRow("/workdir", "PATH", "Override workdir for this run"),
+        CommandHelpRow("/RUNNABLE", "[NAME=VALUE...]", "Call a root runnable"),
+        CommandHelpRow("/agic:NAME", "[NAME=VALUE...]", "Call a kind-qualified agic"),
+        CommandHelpRow("/flow:NAME", "[NAME=VALUE...]", "Call a kind-qualified flow"),
+        CommandHelpRow(
             "$PROMPT", "[NAME=VALUE...]", "Expand a prompt (dollar directive)"
         ),
-        SlashHelpRow("@RESOURCE", "", "Include a resource (at directive)"),
+        CommandHelpRow("@RESOURCE", "", "Include a resource (at directive)"),
     )
-    return SlashOutcome(
+    return CommandOutcome(
         "result",
-        SlashHelp(
-            (SlashHelpSection("Run directives", rows),),
+        CommandHelp(
+            (CommandHelpSection("Run directives", rows),),
             "\n".join(
                 (
                     "Slash directives",
@@ -335,18 +330,18 @@ def run_override_help() -> SlashOutcome:
     )
 
 
-def _keys(_app: AppContext, _command: str, _argument: str) -> SlashOutcome:
+def _keys(_app: AppContext, _command: str, _argument: str) -> CommandOutcome:
     sections = tuple(
-        SlashHelpSection(
+        CommandHelpSection(
             title,
             tuple(
-                SlashHelpRow(shortcut.help_label, "", shortcut.summary)
+                CommandHelpRow(shortcut.help_label, "", shortcut.summary)
                 for shortcut in group
             ),
         )
         for title, group in HELP_GROUPS
     )
-    return SlashOutcome("result", SlashHelp(sections, footer=""))
+    return CommandOutcome("result", CommandHelp(sections, footer=""))
 
 
 def _exit(app: AppContext, _command: str, _argument: str) -> None:
@@ -354,7 +349,7 @@ def _exit(app: AppContext, _command: str, _argument: str) -> None:
     return None
 
 
-def _model(app: AppContext, _command: str, argument: str) -> SlashOutcome:
+def _model(app: AppContext, _command: str, argument: str) -> CommandOutcome:
     client = app.get_client()
     update = parse_setting_override("model", argument)
     model = update.model
@@ -399,7 +394,7 @@ def _model(app: AppContext, _command: str, argument: str) -> SlashOutcome:
     )
 
 
-def _runnable(app: AppContext, command: str, argument: str) -> SlashOutcome:
+def _runnable(app: AppContext, command: str, argument: str) -> CommandOutcome:
     kind = "runnable" if command == "runnable" else command
     update = parse_setting_override(command, argument)
     runnable = update.runnable
@@ -418,7 +413,7 @@ def _runnable(app: AppContext, command: str, argument: str) -> SlashOutcome:
     return _success(f"Runnable set to {setting.runnable or 'none'}")
 
 
-def _cd(app: AppContext, command: str, argument: str) -> SlashOutcome:
+def _workdir(app: AppContext, command: str, argument: str) -> CommandOutcome:
     """Set or display the current Chat-session workdir."""
     del command
     setting = app.get_setting()
@@ -453,7 +448,7 @@ def _cd(app: AppContext, command: str, argument: str) -> SlashOutcome:
     return _success(f"Workdir set to {workdir}")
 
 
-def _setting(app: AppContext, command: str, argument: str) -> SlashOutcome:
+def _setting(app: AppContext, command: str, argument: str) -> CommandOutcome:
     update = parse_setting_override(command, argument)
     previous = app.get_setting()
     if command == "allow":
@@ -485,7 +480,7 @@ def _setting(app: AppContext, command: str, argument: str) -> SlashOutcome:
     return _success(summary, *("", *details) if details else ())
 
 
-def _resources(app: AppContext, command: str, argument: str) -> SlashOutcome:
+def _resources(app: AppContext, command: str, argument: str) -> CommandOutcome:
     all_available, query = _resource_arguments(argument)
     client = app.get_client()
     if command == "models":
@@ -525,9 +520,9 @@ def _resources(app: AppContext, command: str, argument: str) -> SlashOutcome:
             )
             for item, price in zip(items, prices, strict=True)
         )
-        return SlashOutcome(
+        return CommandOutcome(
             "result",
-            SlashTable(
+            CommandTable(
                 summary,
                 headers,
                 rows,
@@ -566,9 +561,9 @@ def _resources(app: AppContext, command: str, argument: str) -> SlashOutcome:
             )
             for item in items
         )
-        return SlashOutcome(
+        return CommandOutcome(
             "result",
-            SlashTable(
+            CommandTable(
                 summary,
                 headers,
                 rows,
@@ -606,9 +601,9 @@ def _resources(app: AppContext, command: str, argument: str) -> SlashOutcome:
         )
         for item in items
     )
-    return SlashOutcome(
+    return CommandOutcome(
         "result",
-        SlashTable(
+        CommandTable(
             summary,
             headers,
             rows,
@@ -617,7 +612,7 @@ def _resources(app: AppContext, command: str, argument: str) -> SlashOutcome:
     )
 
 
-def _runnables(app: AppContext, command: str, _argument: str) -> SlashOutcome:
+def _runnables(app: AppContext, command: str, _argument: str) -> CommandOutcome:
     kind = command.removesuffix("s")
     payload = app.get_client().list_runnables(kind)
     items = _items(payload)
@@ -641,9 +636,9 @@ def _runnables(app: AppContext, command: str, _argument: str) -> SlashOutcome:
             else name,
         )
     )
-    return SlashOutcome(
+    return CommandOutcome(
         "result",
-        SlashTable(
+        CommandTable(
             summary,
             (kind.upper(),),
             rows,
@@ -652,7 +647,7 @@ def _runnables(app: AppContext, command: str, _argument: str) -> SlashOutcome:
     )
 
 
-def _output(app: AppContext, _command: str, argument: str) -> SlashOutcome:
+def _output(app: AppContext, _command: str, argument: str) -> CommandOutcome:
     tokens = argument.split()
     if len(tokens) > 1:
         raise ValueError("/output accepts at most one run id")
@@ -661,10 +656,10 @@ def _output(app: AppContext, _command: str, argument: str) -> SlashOutcome:
         run_id,
         thread_id=app.get_thread_id(),
     )
-    return SlashOutcome("result", SlashRunResult(result))
+    return CommandOutcome("result", CommandRunResult(result))
 
 
-_MODEL_HELP = SlashText(
+_MODEL_HELP = CommandText(
     ":model [MODEL] [PARAM=VALUE...]",
     (
         "Set the session model or its parameters.",
@@ -682,7 +677,7 @@ _MODEL_HELP = SlashText(
         "  :model max_output=8192",
     ),
 )
-_RUNNABLE_HELP = SlashText(
+_RUNNABLE_HELP = CommandText(
     ":runnable RUNNABLE",
     (
         "Set the session runnable.",
@@ -698,7 +693,7 @@ _RUNNABLE_HELP = SlashText(
         "  :runnable default",
     ),
 )
-_ALLOW_HELP = SlashText(
+_ALLOW_HELP = CommandText(
     ":allow FIELD=QUERY...",
     (
         "Set session resource ceilings.",
@@ -714,7 +709,7 @@ _ALLOW_HELP = SlashText(
         "  :allow tools=shell/* skills=review*",
     ),
 )
-_LIMIT_HELP = SlashText(
+_LIMIT_HELP = CommandText(
     ":limit FIELD=VALUE...",
     (
         "Set session run limits.",
@@ -731,91 +726,100 @@ _LIMIT_HELP = SlashText(
 )
 
 
-SLASHES: tuple[SlashCommand, ...] = (
-    SlashCommand("?", "", "Show session settings", _session_help, argument="none"),
-    SlashCommand(
+COMMANDS: tuple[CommandSpec, ...] = (
+    CommandSpec(
+        "?", "", "Show session settings", _session_help, prefix=":", argument="none"
+    ),
+    CommandSpec(
         "model",
         "[MODEL] [PARAM=VALUE...]",
         "Set model or parameters",
         _model,
+        prefix=":",
         category="session",
         argument="required",
         focused_help=_MODEL_HELP,
     ),
-    SlashCommand(
+    CommandSpec(
         "runnable",
         "RUNNABLE",
         "Set runnable (shortcuts: :agic, :flow)",
         _runnable,
+        prefix=":",
         category="session",
         argument="required",
         focused_help=_RUNNABLE_HELP,
     ),
-    SlashCommand(
+    CommandSpec(
         "agic",
         "AGIC",
         "Switch the session agic",
         _runnable,
+        prefix=":",
         category="session",
         argument="required",
         focused_help=_RUNNABLE_HELP,
     ),
-    SlashCommand(
+    CommandSpec(
         "flow",
         "FLOW",
         "Switch the session flow",
         _runnable,
+        prefix=":",
         category="session",
         argument="required",
         focused_help=_RUNNABLE_HELP,
     ),
-    SlashCommand(
+    CommandSpec(
         "allow",
         "FIELD=QUERY...",
         "Set resource ceilings",
         _setting,
+        prefix=":",
         category="session",
         argument="required",
         focused_help=_ALLOW_HELP,
     ),
-    SlashCommand(
+    CommandSpec(
         "workdir",
         "[PATH]",
         "Show or set workdir",
-        _cd,
+        _workdir,
+        prefix=":",
         category="session",
     ),
-    SlashCommand(
+    CommandSpec(
         "limit",
         "FIELD=VALUE...",
         "Set run limits",
         _setting,
+        prefix=":",
         category="session",
         argument="required",
         focused_help=_LIMIT_HELP,
     ),
-    SlashCommand(
+    CommandSpec(
         "models",
         "[-a] [QUERY]",
         "List allowed models",
         _resources,
         category="inspection",
     ),
-    SlashCommand(
+    CommandSpec(
         "tools",
         "[-a] [QUERY]",
         "List allowed tools",
         _resources,
         category="inspection",
     ),
-    SlashCommand(
+    CommandSpec(
         "caps",
         "[-a] [QUERY]",
         "List allowed capabilities",
         _resources,
         category="inspection",
     ),
-    SlashCommand(
+    CommandSpec(
         "agics",
         "",
         "List available agics",
@@ -823,7 +827,7 @@ SLASHES: tuple[SlashCommand, ...] = (
         category="inspection",
         argument="none",
     ),
-    SlashCommand(
+    CommandSpec(
         "flows",
         "",
         "List available flows",
@@ -831,7 +835,7 @@ SLASHES: tuple[SlashCommand, ...] = (
         category="inspection",
         argument="none",
     ),
-    SlashCommand(
+    CommandSpec(
         "output",
         "[RUN]",
         "Show saved output",
@@ -839,7 +843,7 @@ SLASHES: tuple[SlashCommand, ...] = (
         aliases=("show",),
         category="inspection",
     ),
-    SlashCommand(
+    CommandSpec(
         "help",
         "",
         "Show this help",
@@ -848,7 +852,7 @@ SLASHES: tuple[SlashCommand, ...] = (
         category="other",
         argument="none",
     ),
-    SlashCommand(
+    CommandSpec(
         "exit",
         "",
         "Exit Chat",
@@ -857,7 +861,7 @@ SLASHES: tuple[SlashCommand, ...] = (
         category="other",
         argument="none",
     ),
-    SlashCommand(
+    CommandSpec(
         "keys",
         "",
         "Show keyboard shortcuts",
@@ -867,7 +871,7 @@ SLASHES: tuple[SlashCommand, ...] = (
     ),
 )
 _COMMAND_BY_KEY = {
-    (slash.prefix, name): slash for slash in SLASHES for name in slash.names
+    (spec.prefix, name): spec for spec in COMMANDS for name in spec.names
 }
 
 
@@ -1016,7 +1020,7 @@ def _resource_summary(
     return f"{count} {subject} {scope}."
 
 
-def _help_lines(help_content: SlashHelp, *, width: int | None) -> tuple[str, ...]:
+def _help_lines(help_content: CommandHelp, *, width: int | None) -> tuple[str, ...]:
     usage_width = max(
         display_width(f"{row.command} {row.arguments}".rstrip())
         for section in help_content.sections

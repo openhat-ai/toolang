@@ -9,9 +9,9 @@ from toolang.cli.toolang.commands.chat.input import (
     command_name,
     normalize_chat_input,
     parse_chat_input,
+    run_override_error,
 )
-from toolang.execution.calls import parse_call
-from toolang.execution.policy import COLON_COMMAND_NAMES, SLASH_COMMAND_NAMES
+from toolang.execution.input import COLON_COMMAND_NAMES, SLASH_COMMAND_NAMES, parse_call
 from toolang.execution.types import ModelOverride, RunOverride
 from toolang.lang.ast import Program
 from toolang.lang.input import CallInput, resolve_input_parts, resolve_runnable_input
@@ -269,3 +269,18 @@ def test_signature_rejections_follow_parsing(kind, signature, tail, message) -> 
             runnable,
             {name: resolve_input_parts(value) for name, value in input.items()},
         )
+
+
+def test_run_override_errors_add_contextual_help_guidance() -> None:
+    assert run_override_error("/", "missing") == (
+        "Enter a directive name immediately after / · See /help for help"
+    )
+    assert run_override_error("/unknown value", "invalid") == (
+        "invalid · See /help for help"
+    )
+    assert run_override_error(
+        "/model effort=high", "run override prefix requires primary or named input"
+    ) == ("Include primary or named input after run overrides · See /help for help")
+    assert run_override_error("/model effort=extreme\nhello", "invalid effort.") == (
+        "invalid effort · See /help for help"
+    )

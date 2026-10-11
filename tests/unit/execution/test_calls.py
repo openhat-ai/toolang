@@ -16,8 +16,8 @@ from toolang.base.types.model import (
 )
 from toolang.base.types.run import ModelCallResult
 from toolang.base.types.policy import RunBindings, RunDefaults, RunPolicy
+from toolang.execution.input import parse_call
 from toolang.execution.calls import (
-    parse_call,
     resolve_restart_request,
     resolve_run_request,
     resolve_spec,
@@ -47,43 +47,6 @@ agic review(_: Part[], count: Number):
 agic bound(_: Part[]):
   {{_}}
 """
-
-
-def test_parse_call_rejects_an_override_without_runnable_input() -> None:
-    with pytest.raises(
-        ValueError, match="run override prefix requires primary or named input"
-    ):
-        parse_call("/model effort=high")
-
-
-def test_parse_call_allows_an_empty_call_without_an_override() -> None:
-    assert parse_call("") == (RunOverride(), CallInput())
-
-
-@pytest.mark.parametrize(
-    ("source", "runnable"),
-    [
-        ("/agic:review", "agic:review"),
-        ("/agic:research", "agic:research"),
-        ("/flow:research", "flow:research"),
-        ("/research", "research"),
-        ("/default", "default"),
-    ],
-)
-@pytest.mark.parametrize("prefix", ["", "/model effort=high\n"])
-def test_parse_call_allows_empty_input_for_explicit_runnable(
-    source: str, runnable: str, prefix: str
-) -> None:
-    if prefix:
-        with pytest.raises(ValueError, match="requires primary or named input"):
-            parse_call(prefix + source)
-        return
-    assert parse_call(prefix + source) == (
-        RunOverride(
-            runnable=runnable,
-        ),
-        CallInput(),
-    )
 
 
 @pytest.mark.parametrize("kind", ["agic", "flow"])

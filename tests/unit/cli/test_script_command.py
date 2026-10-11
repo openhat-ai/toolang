@@ -17,7 +17,7 @@ from toolang.base.types.model import ModelRequest
 from toolang.base.types.progress import ProgressEvent
 from toolang.cli.toolang.commands import script
 from toolang.common.layout import AgentLayout
-from toolang.execution.calls import parse_call
+from toolang.execution.input import parse_call
 from toolang.execution.records import RunRecord
 from toolang.execution.types import (
     ControlRef,

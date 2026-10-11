@@ -10,7 +10,6 @@ from toolang.base.model_settings import apply_model_override
 from toolang.base.types.model import ModelRequest
 from toolang.base.types.policy import RunPolicy
 from toolang.execution.policy import (
-    SETTING_OVERRIDE_FORMS,
     apply_session_setting,
     materialize_run_setting,
 )
@@ -18,27 +17,6 @@ from toolang.execution.runnables import parse_runnable_ref
 from toolang.execution.schemas import RunRequest, RunnableRequest
 from toolang.execution.types import RunOverride, SessionSetting
 from toolang.lang.input import CallInput
-
-
-def setting_slash_usage(name: str) -> str:
-    """Return canonical colon usage for one shared setting body."""
-
-    setting_body, _override_bodies = SETTING_OVERRIDE_FORMS[name]
-    return f":{name} {setting_body}"
-
-
-def run_override_error(source: str, message: str) -> str:
-    """Add concise Chat guidance to one rejected run directive."""
-
-    first = source.splitlines()[0].strip()
-    if first == "/" or first.startswith(("/ ", "/\t")):
-        return "Enter a directive name immediately after / · See /help for help"
-    if "run override prefix requires" in message.casefold():
-        return "Include primary or named input after run overrides · See /help for help"
-    if "duplicate model override" in message.casefold():
-        return "Duplicate model override; combine model and parameters on one line · See /help for help"
-    detail = message.rstrip(" .")
-    return f"{detail} · See /help for help"
 
 
 def validate_model_reasoning_request(

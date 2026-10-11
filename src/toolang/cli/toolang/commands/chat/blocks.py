@@ -48,10 +48,10 @@ from .rendering import (
     bar,
     terminal_width,
 )
-from .slashes import (
-    SlashHelp,
-    SlashTable,
-    SlashOutcome,
+from .commands import (
+    CommandHelp,
+    CommandTable,
+    CommandOutcome,
     outcome_lines,
 )
 from .tables import table_lines
@@ -570,8 +570,8 @@ class AssistantResponseBlock(MutableBlock):
 
 
 @dataclass(frozen=True, slots=True)
-class SlashResultBlock:
-    """Render a structured slash-command result with a terminal divider."""
+class CommandResultBlock:
+    """Render a structured command result with a terminal divider."""
 
     message: str
     run_id: str
@@ -602,7 +602,7 @@ class SlashResultBlock:
                 input_background=self.input_background,
                 width=width,
             ),
-            _SlashResultDivider(self.run_id, max_width=self.max_width),
+            _CommandResultDivider(self.run_id, max_width=self.max_width),
         ]
         if response is not None:
             lines.extend([Text(), response])
@@ -610,7 +610,7 @@ class SlashResultBlock:
 
 
 @dataclass(frozen=True, slots=True)
-class _SlashResultDivider:
+class _CommandResultDivider:
     run_id: str
     max_width: int
 
@@ -695,7 +695,7 @@ def _header_sandbox_value(metadata: ChatExecutorMetadata) -> Text:
 
 
 @dataclass(frozen=True, slots=True)
-class SlashBlock:
+class CommandBlock:
     message: str
     body: Sequence[str]
     kind: Literal["success", "result", "usage", "error"] = "result"
@@ -741,9 +741,9 @@ class SlashBlock:
         if not line.strip():
             return Text()
         if line.lstrip().startswith(("/", ":", "$", "@")):
-            return SlashBlock._command_line(line)
-        if SlashBlock._is_heading(line):
-            return SlashBlock._heading_line(line)
+            return CommandBlock._command_line(line)
+        if CommandBlock._is_heading(line):
+            return CommandBlock._heading_line(line)
         return Text.from_markup(f"[none]  {escape(line)}[/]")
 
     @staticmethod
@@ -764,7 +764,7 @@ class SlashBlock:
         while summary.startswith(" "):
             summary = summary[1:]
         text = Text(f"  {leading}")
-        SlashBlock._append_usage(text, usage)
+        CommandBlock._append_usage(text, usage)
         if summary:
             text.append(" " * (len(stripped) - len(usage) - len(summary)))
             text.append(summary, style="none")
@@ -827,11 +827,11 @@ class SlashBlock:
 
 
 @dataclass(frozen=True, slots=True)
-class SlashTableBlock:
-    """Render one submitted slash command with a structured result table."""
+class CommandTableBlock:
+    """Render one submitted command with a structured result table."""
 
     message: str
-    table: SlashTable
+    table: CommandTable
     max_width: int = DEFAULT_MAX_PROGRESS_WIDTH
     input_background: str = DARK_TERMINAL_SURFACES.input_background
 
@@ -853,16 +853,16 @@ class SlashTableBlock:
             _wrap_slash_text(console, Text(f"  {self.table.summary}"), width=width)
         )
         if self.table.rows:
-            lines.extend((Text(), _SlashTableRows(self.table)))
+            lines.extend((Text(), _CommandTableRows(self.table)))
         yield from console.render(Group(*lines), options.update_width(width))
 
 
 @dataclass(frozen=True, slots=True)
-class SlashHelpBlock:
-    """Render the structured main slash help."""
+class CommandHelpBlock:
+    """Render the structured main command help."""
 
     message: str
-    help: SlashHelp
+    help: CommandHelp
     max_width: int = DEFAULT_MAX_PROGRESS_WIDTH
     input_background: str = DARK_TERMINAL_SURFACES.input_background
 
@@ -882,9 +882,9 @@ class SlashHelpBlock:
             width=width,
         )
         for line in outcome_lines(
-            SlashOutcome("result", self.help), width=max(1, width - inset)
+            CommandOutcome("result", self.help), width=max(1, width - inset)
         ):
-            styled = SlashBlock._body_line(line)
+            styled = CommandBlock._body_line(line)
             # Alias notes stay visually subordinate even after wrapping.
             if "alias:" in styled.plain:
                 start = styled.plain.index("alias:")
@@ -907,8 +907,8 @@ def _wrap_slash_text(console: Console, text: Text, *, width: int) -> list[Text]:
 
 
 @dataclass(frozen=True, slots=True)
-class _SlashTableRows:
-    table: SlashTable
+class _CommandTableRows:
+    table: CommandTable
 
     def __rich_console__(
         self,

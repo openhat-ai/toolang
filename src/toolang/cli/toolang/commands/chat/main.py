@@ -26,7 +26,7 @@ from toolang.execution.events import RunObservation, RunSnapshot
 from toolang.execution.events import PartDelta, RunBegin, RunEnd, StepEnd
 from toolang.execution.inspection.history import RunHistory
 from toolang.execution.records import execution_error_message
-from toolang.execution.policy import merge_run_overrides
+from toolang.execution.input import merge_run_overrides
 from toolang.execution.types import (
     AllowField,
     AllowOverride,
@@ -60,7 +60,7 @@ from toolang.common.typer.options import BARE_VALUE
 from toolang.cli.common.terminal_surfaces import resolve_terminal_surfaces
 from toolang.cli.common.terminal_session import prepare_terminal
 from toolang.cli.common.workspaces import resolve_workspaces
-from . import slashes as chat_slashes
+from . import commands as chat_commands
 from .base import (
     AppContext,
     ChatClient,
@@ -80,9 +80,9 @@ from .input import (
     normalize_chat_input,
     parse_chat_input,
     command_name,
+    run_override_error,
 )
 from .presenter import ChatRunPresenter
-from .policy import run_override_error
 from .remote import RemoteChatError, RemoteChatSession
 from .rendering import terminal_width
 from .tui import ChatTuiApp
@@ -357,14 +357,16 @@ def _chat_interactive_scripted_local(
         except ValueError as exc:
             if is_command_input(source):
                 command = command_name(source) or ""
-                if chat_slashes.is_registered(command, prefix=source[0]):
+                if chat_commands.is_registered(command, prefix=source[0]):
                     _echo_scripted_outcome(
-                        chat_slashes.error_outcome(str(exc)),
+                        chat_commands.error_outcome(str(exc)),
                         max_width=progress_max_width,
                     )
                 else:
                     typer.echo(
-                        chat_slashes.unrecognized_diagnostic(command, prefix=source[0]),
+                        chat_commands.unrecognized_diagnostic(
+                            command, prefix=source[0]
+                        ),
                         err=True,
                     )
             else:
@@ -377,17 +379,17 @@ def _chat_interactive_scripted_local(
                 )
             continue
         if isinstance(chat_input, QuickCommand):
-            if not chat_slashes.is_registered(
+            if not chat_commands.is_registered(
                 chat_input.name, prefix=chat_input.prefix
             ):
                 typer.echo(
-                    chat_slashes.unrecognized_diagnostic(
+                    chat_commands.unrecognized_diagnostic(
                         chat_input.name, prefix=chat_input.prefix
                     ),
                     err=True,
                 )
                 continue
-            outcome = chat_slashes.handle(context, chat_input)
+            outcome = chat_commands.handle(context, chat_input)
             if outcome is not None:
                 _echo_scripted_outcome(outcome, max_width=progress_max_width)
             if context.exit_requested:
@@ -501,13 +503,13 @@ class _ScriptedAppContext(AppContext):
 
 
 def _echo_scripted_outcome(
-    outcome: chat_slashes.SlashOutcome,
+    outcome: chat_commands.CommandOutcome,
     *,
     max_width: int,
 ) -> None:
     width = max(1, min(terminal_width(), max_width))
     content = outcome.content
-    if isinstance(content, chat_slashes.SlashRunResult):
+    if isinstance(content, chat_commands.CommandRunResult):
         for line in wrap_display(f"{content.result.run_id} output", width):
             typer.echo(line)
         text = parts_response_text(content.result.output)
@@ -516,7 +518,7 @@ def _echo_scripted_outcome(
                 for line in wrap_display(raw_line, width):
                     typer.echo(line)
         return
-    for line in chat_slashes.outcome_lines(outcome, width=width):
+    for line in chat_commands.outcome_lines(outcome, width=width):
         typer.echo(line, err=outcome.kind == "error")
 
 
