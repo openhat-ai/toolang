@@ -378,7 +378,7 @@ def status_bar(state: Activity, width: int) -> Text:
         "Connecting"
         if not state.ready
         else "Reconnecting"
-        if state.reconnecting
+        if state.reconnecting or state.source_reconnecting
         else "Updating"
         if any(not current(state, page) for page in snapshots)
         else ""

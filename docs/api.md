@@ -187,8 +187,8 @@ settings.
 
 ## Team activity
 
-`too top` observes the running Hub; `too AGENT top` connects directly to an
-existing agent. Neither starts execution. `--once` (also implied for redirected
+`too top` observes the running Hub; `too AGENT top` reads the agent's local
+history. Neither starts execution. `--once` (also implied for redirected
 output) prints a snapshot. The terminal has a scope summary, an aligned table and
 a fixed bottom key bar. SSE updates data asynchronously; `--refresh SECONDS`
 (default `0.1`) schedules rendering, and local interactions repaint immediately.
@@ -237,6 +237,8 @@ appears on its column; `--sort cost` remains an alias for `spend`.
 | Agent `GET /api/v1/activity?offset=0` | One page of up to 200 root summaries and their running paths. |
 | Agent `GET /api/v1/activity/batch` | Pages from one database snapshot. |
 | Hub `GET /activity` | Agent pages, with presence and cached coverage. |
+| Hub `GET /activity?agent=agent:alice` | Current pages for one agent in this Hub's roster, bypassing the aggregate snapshot cache. An absent or foreign-root agent returns an empty list. |
+| Hub `GET /activity/roster` | Root-scoped agent IDs mapped to `online` or `offline`, without reading activity stores. |
 | Agent `GET /api/v1/activity/stream`, Hub `GET /activity/stream` | Absolute `activity_page` frames, committed together by `activity_checkpoint`. |
 | Agent `GET /api/v1/activity/result?ref=RUN_OR_STEP` | Full result as `{text}` from the execution records. |
 | Hub `GET /activity/result?agent=agent:alice&ref=RUN_OR_STEP` | Read local records when available, otherwise fetch from the online source; unavailable offline sources return `503`. |
@@ -258,6 +260,16 @@ Agent streams publish complete snapshots; Hub streams follow the baseline with
 independent per-agent updates and roster changes. Slow readers receive the latest
 complete state. Reconnect starts a new baseline; activity checkpoint IDs are not
 canonical execution cursors. Compact streams exclude token deltas and full outputs.
+
+Interactive team Top subscribes to `/events/stream` and `/team/events` as refresh
+notifications, then reads current per-agent activity and roster snapshots. Pending
+notifications coalesce; reconnects load new snapshots without replaying missed UI
+events. Independent agent reads keep slow history from blocking presence or other
+agents. One-second activity ticks preserve rolling windows, and five-second roster
+refreshes cover discovery metadata. The compact activity streams remain available
+to other consumers. Talk subscribes only to relevant conversation-member changes
+on `/team/events`, waking its existing message/metadata read loop; message cursors
+and rename polling retain their existing behavior.
 
 The shared agent reader checks committed revisions every 0.1 seconds and emits
 one-second clock updates from persisted aggregates and open duration anchors.

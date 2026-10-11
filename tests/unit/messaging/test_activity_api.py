@@ -127,6 +127,63 @@ def test_publication_fences_old_lease_and_does_not_regress_revision(tmp_path):
     asyncio.run(scenario())
 
 
+def test_roster_is_root_scoped_and_never_reads_activity():
+    from toolang.teaming.roster import Roster
+
+    async def scenario():
+        async with client(FakeServer(server_type="valkey"), "human:owner") as human:
+            roster = Roster(
+                human.backend,
+                root="selected",
+                owner=human.actor,
+                discover=lambda: {"agent:alice"},
+            )
+            other = Roster(
+                human.backend,
+                root="other",
+                owner=human.actor,
+                discover=lambda: {"agent:bob"},
+            )
+            await roster.register("agent:alice", "lease", "", True)
+            await other.scan()
+
+            def no_history(agent):
+                raise AssertionError("Roster must not open an activity store")
+
+            app = create_app(
+                human, version="test", roster=roster, local_activity=no_history
+            )
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app), base_url="http://hub"
+            ) as http:
+                response = await http.get("/activity/roster")
+                assert response.json() == {"agent:alice": "online"}
+                await human.backend.release_lease("agent:alice", "lease")
+                response = await http.get("/activity/roster")
+                assert response.json() == {"agent:alice": "offline"}
+                response = await http.get("/activity", params={"agent": "agent:bob"})
+                assert response.json() == []
+
+    asyncio.run(scenario())
+
+
+def test_single_agent_snapshot_bypasses_recent_aggregate_cache():
+    async def scenario():
+        async with client(FakeServer(server_type="valkey"), "human:owner") as human:
+            await human.backend.register(
+                human.actor, agent="agent:alice", token="lease"
+            )
+            reader = HubActivity(human.backend)
+            query = ActivityQuery()
+            assert (await reader.read(query))[0].presence == "online"
+            await human.backend.release_lease("agent:alice", "lease")
+            assert (await reader.read(query, agent="agent:alice"))[
+                0
+            ].presence == "offline"
+
+    asyncio.run(scenario())
+
+
 def test_agent_stream_stages_pages_then_checkpoint_without_token_payloads(tmp_path):
     async def scenario():
         with closing(RunStore(tmp_path / "runs.db")) as store:
