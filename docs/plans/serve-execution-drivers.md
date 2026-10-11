@@ -24,8 +24,8 @@ IDs. The following contracts replace those behaviors.
 | `chore` | One-off, scheduled, or manual work | One `chore_` thread per chore |
 
 - Defaults: resident enables all three; visitor enables chat/talk; roaming enables
-  none. Visitor is currently called `visiting` internally. Ordinary scripts
-  default to no drivers; attaching to a runtime does not change its selection.
+  none. Visitor is currently called `visiting` internally. Standalone scripts
+  start no drivers; attaching to a runtime does not change its selection.
 - Every driver resolves a runnable handler from State and uses the common executor
   with a consistent State/Setup snapshot. Handler is a role, not a new runnable
   type. Drivers need not all be loops.
@@ -43,19 +43,27 @@ IDs. The following contracts replace those behaviors.
 
 ## Command-specific driver option
 
-- Declare `--driver` directly on the selected commands, starting with `serve` and
-  `start`. It is not a root/global option and is not inherited by other commands
-  merely because they can start a runtime. Script entry support is pending the
-  command-scope decision below.
+- Expose `--driver` only on `serve`, `start`, and `chat`. It is a command-specific
+  option, not a root/global option or a general runtime-acquisition parameter
+  exposed by every command.
+- `chat` connects to a running agent or implicitly performs `start` when the agent
+  is inactive. A new startup uses the same driver-selection rules as `start`.
 - Accept a comma-separated driver set; `--driver none` explicitly selects none
   and cannot be combined with driver names. An explicit set replaces defaults;
-  omission uses the placement/script defaults above. Reject invalid values before
-  starting a process, resolve once at the CLI boundary, and forward the concrete
-  set through foreground/background, hidden `_serve`, and host/guest launches.
-- For an existing runtime, omission preserves its selection; an explicit matching
-  set permits reuse, while a different set fails with restart guidance. Never
-  silently reconfigure or start another instance. Chat requires chat to be enabled
-  and must not implicitly add it. Report the effective set in startup/status output.
+  omission on startup uses the placement defaults above. Reject invalid values
+  before starting a process, resolve once at the CLI boundary, and forward the
+  concrete set through foreground/background, hidden `_serve`, and host/guest launches.
+- When chat finds an existing agent, omitting `--driver` preserves its selection
+  without reapplying defaults. An explicit set is a compatibility requirement:
+  an equal set permits connection; a different set fails with restart guidance.
+  Chat also fails if chat is disabled, even when the explicit set matches. It never
+  enables drivers, restarts the agent, or launches another instance automatically.
+  For a new agent, reject a chat invocation whose resolved set excludes chat before
+  starting it. Report the effective set in startup/status output.
+- `talk` is a Hub messaging client and does not start the receiving agent.
+  Script execution owns a run's lifecycle, not persistent drivers. Neither command
+  accepts `--driver`; use `serve` to activate drivers and inline chores in a `.too`
+  app. A script attached to an existing agent leaves its driver selection intact.
 
 Proposed examples (`too` is the `toolang` alias):
 
@@ -63,6 +71,7 @@ Proposed examples (`too` is the `toolang` alias):
 too serve alice --driver chat,talk,chore
 too start alice --driver talk,chore
 too serve alice --driver none
+too alice chat --driver chat,talk,chore
 ```
 
 ## Chore definitions and persistence
@@ -117,11 +126,13 @@ the driver never writes progress back into Markdown or `.too`.
 Paths below are relative to `src/toolang/`. Deliver independently verifiable
 changes after approval:
 
-1. **Selection/admission:** selected CLI command signatures/factories,
+1. **Selection/admission:** serve/start/chat command signatures/factories,
    `cli/common/agent_server.py`, `up/`, and `api/`. Test help/parsing on the selected
-   commands, rejection on other commands, all eight combinations, placement/script
-   defaults, launch forwarding, matching/conflicting runtime reuse, healthy
-   management, and rejection without execution writes.
+   commands, rejection on talk/script, all eight combinations, placement defaults,
+   driver-free standalone scripts, and launch forwarding. Cover chat's implicit
+   start and existing-agent connection with omitted/equal/conflicting selections
+   and chat disabled; failures must preserve the running configuration and create
+   no execution records. Management remains healthy for every selection.
 2. **Unified chores:** `lang/`, `catalog/`, `state/`, `work/`, `common/ids.py`,
    and chore CLI/API surfaces. Test inline/file equivalence, shadowing, rename,
    deterministic IDs, restart without redispatch, schedule/manual serialization,
@@ -143,9 +154,8 @@ pytest checks. This plan-only PR requires source/path/link review and
 
 ## Open decisions and migration risks
 
-1. **Launch/admission:** whether to expose the option on script execution in
-   addition to `serve`/`start`, the chat/script API boundary, and the exit behavior
-   of scripts that explicitly enable drivers.
+1. **API admission:** the concrete chat/script API boundary that enforces driver
+   selection without relying on client identity or thread prefixes.
 2. **Identity:** name normalization, Base32 derivation/length, collision handling,
    and same-scope shadow precedence; instance discovery/storage that distinguishes
    restart from another instance of the same source.
