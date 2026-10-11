@@ -55,7 +55,12 @@ class PaneMarks:
         ):
             return
         self._worker = Thread(target=self._run, name="terminal-pane-marks", daemon=True)
-        self._worker.start()
+        try:
+            self._worker.start()
+        except RuntimeError as exc:
+            self._worker = None
+            self._closed.set()
+            self._debug(exc)
 
     def update(self, field: str, value: str) -> None:
         if field not in {"thread", "run"}:

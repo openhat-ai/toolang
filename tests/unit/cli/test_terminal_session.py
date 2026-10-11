@@ -88,6 +88,21 @@ def test_invalid_prefix_reports_source_and_key_even_with_cli_override(config, ke
     assert "broken.toml" in str(error.value) and key in str(error.value)
 
 
+@pytest.mark.parametrize("agent", [False, True])
+def test_config_read_errors_are_cli_errors_with_the_source_path(tmp_path, agent):
+    from typer._click.exceptions import ClickException
+
+    layout = AgentLayout.resident(tmp_path, "alice")
+    path = layout.config if agent else layout.root_config
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("[terminal.title.prefix\n")
+    with pytest.raises(ClickException) as error:
+        prepare_terminal(
+            "chat", layout=layout if agent else None, root=tmp_path, environment={}
+        )
+    assert str(path) in str(error.value)
+
+
 @pytest.mark.parametrize(
     "prefix,label,expected",
     [

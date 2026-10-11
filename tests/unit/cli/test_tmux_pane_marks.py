@@ -129,3 +129,27 @@ def test_unreachable_pane_is_nonfatal_and_debug_is_opt_in(capsys):
         marks.start()
         marks.close()
         assert ("server gone" in capsys.readouterr().err) == bool(debug)
+
+
+def test_worker_start_failure_preserves_titles_and_cleanup(monkeypatch, capsys):
+    from io import StringIO
+
+    from toolang.cli.common.terminal_session import TerminalSession
+
+    def fail_start(_worker):
+        raise RuntimeError("cannot start new thread")
+
+    monkeypatch.setattr("toolang.cli.common.tmux.Thread.start", fail_start)
+    pane = Pane()
+    output = StringIO()
+    marks = PaneMarks(
+        environment={**ENV, "TOOLANG_TMUX_DEBUG": "1"},
+        fields={"kind": "chat"},
+        pane_factory=lambda: pane,
+    )
+    with TerminalSession(label="alice", enabled=True, stream=output, marks=marks):
+        marks.update("thread", "term_x")
+    marks.close()
+    assert pane.events.empty()
+    assert output.getvalue() == "\x1b]0;alice\x07\x1b]0;\x07"
+    assert "cannot start new thread" in capsys.readouterr().err

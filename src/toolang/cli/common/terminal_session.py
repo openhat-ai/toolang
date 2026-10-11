@@ -119,13 +119,13 @@ def prepare_terminal(
     process = os.environ if environment is None else environment
     if layout is not None:
         root = layout.root
-        sources = config_sources(layout)
+        sources = user_call(config_sources, layout)
         environ = load_runtime_environ(layout, base_environ=process)
     else:
         if root is None:
             raise ValueError("terminal publication requires a root or agent layout")
         path = root / "config.toml"
-        sources = (ConfigSource(path, read_config(path)),)
+        sources = (ConfigSource(path, user_call(read_config, path)),)
         environ = load_root_environ(root, base_environ=process)
     prefix = user_call(
         resolve_title_prefix,

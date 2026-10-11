@@ -78,7 +78,10 @@ class ChatTitle:
             if not self._closed:
                 self._on_result(result)
 
-        Thread(target=lookup, name="chat-thread-title", daemon=True).start()
+        try:
+            Thread(target=lookup, name="chat-thread-title", daemon=True).start()
+        except RuntimeError:
+            self._pending = False
 
     def accept(self, result: ThreadTitle) -> None:
         if (

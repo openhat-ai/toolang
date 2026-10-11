@@ -135,3 +135,29 @@ def test_failed_publication_retries_and_disabled_lookup_is_silent() -> None:
     disabled.start("term_x")
     disabled.refresh()
     disabled.clear()
+
+
+def test_lookup_worker_start_failure_retries_at_next_normal_event(monkeypatch):
+    results: Queue[ThreadTitle] = Queue()
+    labels: list[str] = []
+    title = ChatTitle(
+        publish=lambda label: labels.append(label) or True,
+        agent="alice",
+        enabled=True,
+        lookup=lambda _: "topic",
+        on_result=results.put,
+    )
+
+    def fail_start(_worker):
+        raise RuntimeError("cannot start new thread")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            "toolang.cli.toolang.commands.chat.title.Thread.start", fail_start
+        )
+        title.start("term_x")
+    assert not labels and results.empty()
+    title.refresh()
+    title.accept(results.get(timeout=5))
+    assert labels == ["alice: topic"]
+    title.clear()
