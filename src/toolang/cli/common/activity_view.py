@@ -218,6 +218,12 @@ class Activity:
                 page.next_offset is not None for page in self.pending.values()
             ):
                 raise ValueError("Activity snapshot was incomplete")
+            if self.result_key:
+                previous = self.snapshots.get(self.result_key[0])
+                refreshed = self.pending.get(self.result_key[0])
+                if previous and previous.stale and refreshed and not refreshed.stale:
+                    # Retry this agent's Details even if another source stays down.
+                    self.result_key = None
             self.selection_ancestors = []
             ancestor = self.selected
             while ancestor and ancestor in self.parents:

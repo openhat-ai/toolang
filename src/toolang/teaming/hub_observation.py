@@ -75,7 +75,6 @@ class HubObservation(HttpObservation):
                 nonlocal roster, membership_known, received_roster
                 while True:
                     await members.wait(timeout=5)
-                    membership_known = False
                     if members.connected:
                         try:
                             response = await self.http.get(
@@ -86,7 +85,9 @@ class HubObservation(HttpObservation):
                             membership_known = True
                             received_roster = True
                         except (httpx.HTTPError, ValueError):
-                            pass
+                            membership_known = False
+                    else:
+                        membership_known = False
                     for agent in workers.keys() - roster.keys():
                         _, task = workers.pop(agent)
                         task.cancel()

@@ -221,6 +221,61 @@ def test_changes_during_snapshot_trigger_another_read_and_fresh_reconnect(
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("failed", [False, True])
+def test_roster_refresh_keeps_known_presence_until_the_response(
+    notifications_only, failed
+):
+    async def scenario():
+        hub = Hub()
+        hub.gate.set()
+        state = Activity(None)
+        blocked = False
+        started, release = asyncio.Event(), asyncio.Event()
+
+        async def request(request):
+            if blocked and request.url.path == "/activity/roster":
+                started.set()
+                await release.wait()
+                if failed:
+                    return httpx.Response(503)
+            return await hub.request(request)
+
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(request), base_url="http://hub"
+        ) as http:
+            async with aclosing(
+                HubObservation(http).updates(ActivityQuery())
+            ) as stream:
+                await until(
+                    stream, state, lambda: state.ready and not state.source_reconnecting
+                )
+                blocked = True
+                hub.roster["agent:alice"] = "offline"
+                await hub.streams["/team/events"].send(
+                    "change", {"type": "presence.offline"}
+                )
+                await asyncio.wait_for(started.wait(), 2)
+                hub.revision = 2
+                await hub.streams["/events/stream"].send("run_end")
+                await until(
+                    stream, state, lambda: state.snapshots["agent:bob"].revision == 2
+                )
+                assert {page.presence for page in state.snapshots.values()} == {
+                    "online"
+                }
+                assert not state.source_reconnecting
+                release.set()
+                expected = "unknown" if failed else "offline"
+                await until(
+                    stream,
+                    state,
+                    lambda: state.snapshots["agent:alice"].presence == expected,
+                )
+                assert state.source_reconnecting == failed
+
+    asyncio.run(scenario())
+
+
 def test_idle_activity_refreshes_without_execution_notifications():
     async def scenario():
         hub = Hub()
