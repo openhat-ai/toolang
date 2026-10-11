@@ -357,7 +357,7 @@ Responsibilities are:
 - `toolang.commands.script`: local script command, executable argument
   coercion, generated Typer help, and direct `RunExecutor.run()` orchestration
 - `toolang.commands.chat`: process-local chat orchestration, interactive TUI
-  state, mutable blocks, widgets, and slash commands
+  state, mutable blocks, widgets, and commands
 - `caps`: one cap command implementation reused by `too` and the standalone
   `caps` entry point
 - `common`: only code used by at least two first-level CLI areas

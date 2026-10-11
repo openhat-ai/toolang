@@ -43,134 +43,20 @@ Out of scope:
 
 ## Request Boundary
 
-Chat owns mutable session state. A submission builder combines a snapshot of
-that state with one parsed user input:
+The current request and model schemas are defined in
+[`execution/schemas.py`](../../src/toolang/execution/schemas.py) and
+[Models](../models.md). This plan's request-boundary intent is retained:
 
-```text
-ChatSession + ParsedInput -> build_run_request -> RunRequest -> RunSpec
-```
-
-Changing `/model`, `/runnable`, or standalone session policy updates only the
-client. It does not send a validation request. Server validation happens when a
-materialized run request is submitted.
-
-The core vocabulary is:
-
-```python
-ReasoningEffort = Literal[
-    "none", "minimal", "low", "medium", "high", "xhigh", "max", "default"
-]
-
-
-@dataclass(frozen=True, slots=True)
-class ReasoningParameters:
-    effort: ReasoningEffort | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class ModelParameters:
-    reasoning: ReasoningParameters | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class ModelRequest:
-    ref: str
-    parameters: ModelParameters = ModelParameters()
-
-
-@dataclass(frozen=True, slots=True)
-class NamedInputSource:
-    name: str
-    source: str
-
-
-@dataclass(frozen=True, slots=True)
-class RunnableInputRaw:
-    _: str | None = None
-    named: tuple[NamedInputSource, ...] = ()
-
-
-@dataclass(frozen=True, slots=True)
-class RunnableRequest:
-    ref: str
-    input: RunnableInputRaw
-
-
-@dataclass(frozen=True, slots=True)
-class RunPolicy:
-    allow: tuple[AgentCeiling, ...] = ()
-    limits: RunLimits = RunLimits()
-
-
-@dataclass(frozen=True, slots=True)
-class RunRequest:
-    thread_id: str
-    request_id: str
-    runnable: RunnableRequest
-    model: ModelRequest | None
-    policy: RunPolicy
-```
-
-`thread_id` retains the existing record field name. `runnable.ref` is concrete,
-and its input is grouped with the runnable it invokes. `model` is `None` only
-when that runnable requires no model. Both request selections use `ref` because
-they identify one target; `selector` remains terminology for list-filter syntax,
-not a request field.
-
-`RunPolicy` exposes each policy concept as a typed field rather than carrying
-generic commands. `allow` retains ordered `AgentCeiling` values because separate
-session and input-local ceilings intersect and cannot always be flattened into
-one selector list. `limits` is the fully materialized session value after
-input-local overrides. These are the only request policy groups now; a future
-group must receive its own named field.
-
-The current `session_commands` and `runnable_fallbacks` fields are removed.
-Call sites select one runnable, snapshot the session model, parameters, allow
-ceilings, and limits, apply input-local overrides to that copy, and build the
-request without mutating the session. Default model and runnable commands are
-materialized into their request refs and never appear in `policy`. Queued input
-retains this snapshot even if the UI changes later.
-
-Authored and direct HTTP requests expose the same selection shape and differ
-only in their existing input representation:
-
-```json
-{
-  "thread_id": "term_123",
-  "request_id": "term_request_123",
-  "runnable": {
-    "ref": "agic:chat",
-    "input": {"_": "Hello", "named": []}
-  },
-  "model": {
-    "ref": "openai/gpt-5",
-    "parameters": {
-      "reasoning": {"effort": "high"}
-    }
-  },
-  "policy": {
-    "allow": [],
-    "limits": {
-      "agic_model_calls": 200,
-      "agic_tool_calls": null,
-      "tokens": null,
-      "cost": null,
-      "time": null
-    }
-  }
-}
-```
-
-`RunnableInputRaw` uses `_` as its Python and JSON field for the primary
-runnable input. `_` is reserved; `named` contains canonical name/source values.
-The HTTP request embeds this dataclass and validates it through a type adapter,
-so there is no `primary` alias or transport-to-core conversion. It must not
-redeclare `_` as a Pydantic model field because Pydantic treats underscore names
-as private. Text parsing and resolved input values do not change.
-
-The parameter schema is closed; unknown fields fail. A future `temperature`
-field belongs directly under `ModelParameters`, while reasoning-owned fields
-remain grouped under `reasoning`. Provider wire options remain separate.
+- A `RunRequest` snapshots one concrete runnable request, model request,
+  authored input, and materialized execution policy.
+- Call sites apply session defaults and input-local overrides before submission.
+  Queue entries retain that request when later session settings change.
+- `CallInput[str]` is a flat mapping: `_` holds primary input and argument keys
+  hold their own source values. It has no separate named-input compartment.
+- `RunPolicy` carries ordered allow ceilings and effective run limits. It does
+  not transport authored commands or mutable session state.
+- Local and remote requests use the same schema; the HTTP boundary does not
+  maintain a second vocabulary or invent runnable fallback choices.
 
 ## Model List Contract
 
@@ -280,7 +166,7 @@ same model-list payload and send the same materialized run request.
    metadata; legacy provider-filter selector input still resolves.
 2. Core and HTTP requests round-trip the grouped model request, reject unknown
    fields, preserve `thread_id`, group each runnable with its input, require a
-   concrete runnable ref, expose `_` directly on `RunnableInputRaw`, perform no
+   concrete runnable ref, expose `_` directly in `CallInput[str]`, perform no
    request-boundary primary alias conversion, and contain no session or fallback
    fields.
 3. Submission building applies session and input-local choices without mutating

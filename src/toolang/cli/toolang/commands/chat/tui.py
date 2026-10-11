@@ -65,7 +65,7 @@ from . import blocks
 from . import events
 from . import rendering
 from . import shortcuts
-from . import slashes
+from . import commands
 from . import widgets
 from .base import (
     AppContext,
@@ -87,15 +87,15 @@ from .base import (
 from .events import ChatUIEvent
 from .history import ChatInputHistoryStore
 from .input import (
-    QuickCommand,
-    RunOverrideHelp,
-    is_runnable_input,
-    is_slash_input,
+    ChatCommand,
+    is_run_submission,
+    is_command_input,
     normalize_chat_input,
     parse_chat_input,
-    slash_command_name,
+    command_name,
+    run_directive_error,
 )
-from .policy import run_override_error, validate_model_reasoning_request
+from .policy import validate_model_reasoning_request
 from .presenter import ChatRunPresenter
 from .title import ChatTitle, chat_label
 
@@ -602,7 +602,7 @@ class ChatTuiApp:
             if model is not None and model_reasoning_value(model) is None
             else None
         )
-        return slashes.model_status_label(model, effort_applicable=applicable)
+        return commands.model_status_label(model, effort_applicable=applicable)
 
     def _selected_model_effort_applicable(self, ref: str) -> bool | None:
         if ref in self._model_effort_applicability:
@@ -611,7 +611,7 @@ class ChatTuiApp:
             payload = self.client.list_models((ref,))
         except (OSError, RuntimeError, ToolangError, ValueError):
             return None
-        applicable = slashes.model_effort_applicability(payload, ref)
+        applicable = commands.model_effort_applicability(payload, ref)
         if applicable is not None:
             self._model_effort_applicability[ref] = applicable
         return applicable
@@ -988,39 +988,40 @@ class ChatTuiApp:
         try:
             chat_input = parse_chat_input(source)
         except ValueError as exc:
-            if is_slash_input(source):
-                command = slash_command_name(source) or ""
-                if slashes.is_registered(command):
-                    self._write_slash_outcome(
+            if is_command_input(source):
+                command = command_name(source) or ""
+                if commands.is_registered(command, prefix=source[0]):
+                    self._write_command_outcome(
                         source,
-                        slashes.error_outcome(str(exc)),
+                        commands.error_outcome(str(exc)),
                     )
                     return True
-                self.status_bar.set_error(slashes.unrecognized_diagnostic(command))
+                self.status_bar.set_error(
+                    commands.unrecognized_diagnostic(command, prefix=source[0])
+                )
                 return False
             error = friendly_error(str(exc))
             self.status_bar.set_error(
-                run_override_error(source, error) if source.startswith(":") else error
+                run_directive_error(source, error) if source.startswith("/") else error
             )
             return False
         if self.submission_blocked is not None and not _blocked_input_allowed(
             chat_input
         ):
             return False
-        if isinstance(chat_input, QuickCommand):
-            if not slashes.is_registered(chat_input.name):
+        if isinstance(chat_input, ChatCommand):
+            if not commands.is_registered(chat_input.name, prefix=chat_input.prefix):
                 self.status_bar.set_error(
-                    slashes.unrecognized_diagnostic(chat_input.name)
+                    commands.unrecognized_diagnostic(
+                        chat_input.name, prefix=chat_input.prefix
+                    )
                 )
                 return False
-            outcome = slashes.handle(self.app_context, chat_input)
+            outcome = commands.handle(self.app_context, chat_input)
             if outcome is not None:
-                self._write_slash_outcome(source, outcome)
+                self._write_command_outcome(source, outcome)
             return True
-        if isinstance(chat_input, RunOverrideHelp):
-            self._write_slash_outcome(source, slashes.run_override_help())
-            return True
-        if not is_runnable_input(chat_input):
+        if not is_run_submission(chat_input):
             raise AssertionError("unknown chat input value")
         override, runnable_input = chat_input
         try:
@@ -1042,7 +1043,9 @@ class ChatTuiApp:
         except (ToolangError, ValueError) as exc:
             self.status_bar.set_error(friendly_error(str(exc)))
             return False
-        queued = QueuedCall(source, request)
+        queued = QueuedCall(
+            source, request, workdir_overridden=override.workdir is not None
+        )
         if self.active_run_id is not None or self.run_in_flight.is_set():
             self.queue.append(queued)
             self.queue_panel.reconcile()
@@ -1050,15 +1053,15 @@ class ChatTuiApp:
             self.submit_run(queued)
         return True
 
-    def _write_slash_outcome(
+    def _write_command_outcome(
         self,
         message: str,
-        outcome: slashes.SlashOutcome,
+        outcome: commands.CommandOutcome,
     ) -> None:
         content = outcome.content
-        if isinstance(content, slashes.SlashRunResult):
+        if isinstance(content, commands.CommandRunResult):
             result = content.result
-            renderable = blocks.SlashResultBlock(
+            renderable = blocks.CommandResultBlock(
                 message=message,
                 run_id=result.run_id,
                 parts=result.output,
@@ -1067,24 +1070,24 @@ class ChatTuiApp:
                 code_background=self.surfaces.code_background,
                 inline_code_background=self.surfaces.inline_code_background,
             ).render()
-        elif isinstance(content, slashes.SlashTable):
-            renderable = blocks.SlashTableBlock(
+        elif isinstance(content, commands.CommandTable):
+            renderable = blocks.CommandTableBlock(
                 message,
                 content,
                 max_width=self.progress_max_width,
                 input_background=self.surfaces.input_background,
             ).render()
-        elif isinstance(content, slashes.SlashHelp):
-            renderable = blocks.SlashHelpBlock(
+        elif isinstance(content, commands.CommandHelp):
+            renderable = blocks.CommandHelpBlock(
                 message,
                 content,
                 max_width=self.progress_max_width,
                 input_background=self.surfaces.input_background,
             ).render()
         else:
-            renderable = blocks.SlashBlock(
+            renderable = blocks.CommandBlock(
                 message,
-                slashes.outcome_lines(outcome),
+                commands.outcome_lines(outcome),
                 outcome.kind,
                 max_width=self.progress_max_width,
                 input_background=self.surfaces.input_background,
@@ -1260,7 +1263,7 @@ class ChatTuiApp:
     def submit_run(self, call: QueuedCall) -> None:
         self._status_run_id = None
         self._active_run_workdir_revision = self._session_workdir_revision
-        self._active_run_workdir_matches_session = (
+        self._active_run_workdir_matches_session = not call.workdir_overridden and (
             call.request.workdir,
             call.request.workdir_base,
         ) == (self.setting.workdir, self.setting.workdir_base)
@@ -1310,10 +1313,8 @@ def _is_run_state(value: object) -> TypeGuard[ChatRunState]:
 
 
 def _blocked_input_allowed(value: object) -> bool:
-    if isinstance(value, RunOverrideHelp):
-        return True
-    if not isinstance(value, QuickCommand):
+    if not isinstance(value, ChatCommand):
         return False
-    if value.name in {"model", "agic", "flow", "runnable", "allow", "limit"}:
+    if value.prefix == ":" and value.name != "?":
         return value.tail is None
     return value.name in _BLOCKED_READ_ONLY_COMMANDS

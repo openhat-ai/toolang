@@ -16,7 +16,7 @@ Setup-oriented `--default` vocabulary.
   preserves the shared model-body behavior, including parameter-only bodies.
 - Agent startup commands retain `--default FIELD=VALUE` because those values
   establish the Setup baseline for all runs in that runtime.
-- Script `--allow` and `--limit`, local/remote execution, colon overrides, and
+- Script `--allow` and `--limit`, local/remote execution, run override directives, and
   environment-derived Setup defaults keep their current behavior.
 
 ## Scope and Decisions

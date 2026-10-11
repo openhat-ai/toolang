@@ -101,7 +101,7 @@ heuristic with fixed RGB or terminal-color queries.
 
 ### Related Chat Surfaces
 
-The Chat input and start, steer, and quick-command control bars use ANSI slot 8
+The Chat input and start, steer, and command control bars use ANSI slot 8
 as their background. Rich and prompt-toolkit use different names for the same
 slot: `bright_black` and `ansibrightblack`, respectively. The implementation
 keeps both backend-specific names and verifies that the Rich-to-prompt-toolkit

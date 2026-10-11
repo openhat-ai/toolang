@@ -48,10 +48,10 @@ from .rendering import (
     bar,
     terminal_width,
 )
-from .slashes import (
-    SlashHelp,
-    SlashTable,
-    SlashOutcome,
+from .commands import (
+    CommandHelp,
+    CommandTable,
+    CommandOutcome,
     outcome_lines,
 )
 from .tables import table_lines
@@ -190,7 +190,7 @@ def _run_context(runnable: str, model: str, reasoning: str, width: int) -> str:
     return truncate(" · ".join(truncate(v, w) for v, w in zip(fields, widths)), width)
 
 
-def _slash_control_lines(
+def _command_control_lines(
     message: str,
     *,
     input_background: str,
@@ -570,8 +570,8 @@ class AssistantResponseBlock(MutableBlock):
 
 
 @dataclass(frozen=True, slots=True)
-class SlashResultBlock:
-    """Render a structured slash-command result with a terminal divider."""
+class CommandResultBlock:
+    """Render a structured command result with a terminal divider."""
 
     message: str
     run_id: str
@@ -597,12 +597,12 @@ class SlashResultBlock:
             inline_code_background=self.inline_code_background,
         ).render()
         lines = [
-            *_slash_control_lines(
+            *_command_control_lines(
                 self.message,
                 input_background=self.input_background,
                 width=width,
             ),
-            _SlashResultDivider(self.run_id, max_width=self.max_width),
+            _CommandResultDivider(self.run_id, max_width=self.max_width),
         ]
         if response is not None:
             lines.extend([Text(), response])
@@ -610,7 +610,7 @@ class SlashResultBlock:
 
 
 @dataclass(frozen=True, slots=True)
-class _SlashResultDivider:
+class _CommandResultDivider:
     run_id: str
     max_width: int
 
@@ -695,7 +695,7 @@ def _header_sandbox_value(metadata: ChatExecutorMetadata) -> Text:
 
 
 @dataclass(frozen=True, slots=True)
-class SlashBlock:
+class CommandBlock:
     message: str
     body: Sequence[str]
     kind: Literal["success", "result", "usage", "error"] = "result"
@@ -711,18 +711,18 @@ class SlashBlock:
         options: ConsoleOptions,
     ) -> RenderResult:
         width = max(1, min(options.max_width, self.max_width))
-        lines = _slash_control_lines(
+        lines = _command_control_lines(
             self.message,
             input_background=self.input_background,
             width=width,
         )
         for index, line in enumerate(self.body):
             styled = self._summary_line(line) if index == 0 else self._body_line(line)
-            lines.extend(_wrap_slash_text(console, styled, width=width))
+            lines.extend(_wrap_command_text(console, styled, width=width))
         yield from console.render(Group(*lines), options.update_width(width))
 
     def _summary_line(self, line: str) -> Text:
-        if line.lstrip().startswith(("/", ":")):
+        if line.lstrip().startswith(("/", ":", "$", "@")):
             return self._command_line(line)
         if self._is_heading(line):
             return self._heading_line(line)
@@ -740,10 +740,10 @@ class SlashBlock:
     def _body_line(line: str) -> Text:
         if not line.strip():
             return Text()
-        if line.lstrip().startswith(("/", ":")):
-            return SlashBlock._command_line(line)
-        if SlashBlock._is_heading(line):
-            return SlashBlock._heading_line(line)
+        if line.lstrip().startswith(("/", ":", "$", "@")):
+            return CommandBlock._command_line(line)
+        if CommandBlock._is_heading(line):
+            return CommandBlock._heading_line(line)
         return Text.from_markup(f"[none]  {escape(line)}[/]")
 
     @staticmethod
@@ -751,7 +751,7 @@ class SlashBlock:
         stripped = line.lstrip()
         leading = line[: len(line) - len(stripped)]
         aligned_argument = re.fullmatch(
-            r"(?P<command>[/:]\S+)(?P<gap>\s{2,})(?P<argument>[A-Z][A-Z0-9_.=-]*)",
+            r"(?P<command>[/:$@]\S+)(?P<gap>\s{2,})(?P<argument>[A-Z][A-Z0-9_.=-]*)",
             stripped,
         )
         if aligned_argument is not None:
@@ -764,7 +764,7 @@ class SlashBlock:
         while summary.startswith(" "):
             summary = summary[1:]
         text = Text(f"  {leading}")
-        SlashBlock._append_usage(text, usage)
+        CommandBlock._append_usage(text, usage)
         if summary:
             text.append(" " * (len(stripped) - len(usage) - len(summary)))
             text.append(summary, style="none")
@@ -784,6 +784,13 @@ class SlashBlock:
             "Inspection",
             "Other",
             "Overrides",
+            "Session settings (colon commands)",
+            "Inspection (slash commands)",
+            "Other slash commands",
+            "Run directives",
+            "Slash directives",
+            "Input",
+            "Model and policy",
             "Model",
             "Runnable",
             "Fields",
@@ -802,7 +809,7 @@ class SlashBlock:
         for index, token in enumerate(usage.split(" ")):
             if index:
                 text.append(" ")
-            is_command = token.startswith(("/", ":"))
+            is_command = token.startswith(("/", ":", "$", "@"))
             style = "cyan" if is_command else "dim"
             if is_command:
                 command, separator, rest = token.partition(",")
@@ -811,18 +818,20 @@ class SlashBlock:
                     text.append(separator, style="dim")
                     text.append(
                         rest,
-                        style=("cyan" if rest.startswith(("/", ":")) else "dim"),
+                        style=(
+                            "cyan" if rest.startswith(("/", ":", "$", "@")) else "dim"
+                        ),
                     )
             else:
                 text.append(token, style=style)
 
 
 @dataclass(frozen=True, slots=True)
-class SlashTableBlock:
-    """Render one submitted slash command with a structured result table."""
+class CommandTableBlock:
+    """Render one submitted command with a structured result table."""
 
     message: str
-    table: SlashTable
+    table: CommandTable
     max_width: int = DEFAULT_MAX_PROGRESS_WIDTH
     input_background: str = DARK_TERMINAL_SURFACES.input_background
 
@@ -835,25 +844,25 @@ class SlashTableBlock:
         options: ConsoleOptions,
     ) -> RenderResult:
         width = max(1, min(options.max_width, self.max_width))
-        lines: list[RenderableType] = _slash_control_lines(
+        lines: list[RenderableType] = _command_control_lines(
             self.message,
             input_background=self.input_background,
             width=width,
         )
         lines.extend(
-            _wrap_slash_text(console, Text(f"  {self.table.summary}"), width=width)
+            _wrap_command_text(console, Text(f"  {self.table.summary}"), width=width)
         )
         if self.table.rows:
-            lines.extend((Text(), _SlashTableRows(self.table)))
+            lines.extend((Text(), _CommandTableRows(self.table)))
         yield from console.render(Group(*lines), options.update_width(width))
 
 
 @dataclass(frozen=True, slots=True)
-class SlashHelpBlock:
-    """Render the structured main slash help."""
+class CommandHelpBlock:
+    """Render the structured main command help."""
 
     message: str
-    help: SlashHelp
+    help: CommandHelp
     max_width: int = DEFAULT_MAX_PROGRESS_WIDTH
     input_background: str = DARK_TERMINAL_SURFACES.input_background
 
@@ -867,24 +876,24 @@ class SlashHelpBlock:
     ) -> RenderResult:
         width = max(1, min(options.max_width, self.max_width))
         inset = min(2, max(0, width - 1))
-        lines: list[RenderableType] = _slash_control_lines(
+        lines: list[RenderableType] = _command_control_lines(
             self.message,
             input_background=self.input_background,
             width=width,
         )
         for line in outcome_lines(
-            SlashOutcome("result", self.help), width=max(1, width - inset)
+            CommandOutcome("result", self.help), width=max(1, width - inset)
         ):
-            styled = SlashBlock._body_line(line)
+            styled = CommandBlock._body_line(line)
             # Alias notes stay visually subordinate even after wrapping.
             if "alias:" in styled.plain:
                 start = styled.plain.index("alias:")
                 styled.stylize("dim", max(0, start - 1))
-            lines.extend(_wrap_slash_text(console, styled, width=width))
+            lines.extend(_wrap_command_text(console, styled, width=width))
         yield from console.render(Group(*lines), options.update_width(width))
 
 
-def _wrap_slash_text(console: Console, text: Text, *, width: int) -> list[Text]:
+def _wrap_command_text(console: Console, text: Text, *, width: int) -> list[Text]:
     """Preserve each logical line's inset on every wrapped physical line."""
     if not text.plain.strip():
         return [Text()]
@@ -898,8 +907,8 @@ def _wrap_slash_text(console: Console, text: Text, *, width: int) -> list[Text]:
 
 
 @dataclass(frozen=True, slots=True)
-class _SlashTableRows:
-    table: SlashTable
+class _CommandTableRows:
+    table: CommandTable
 
     def __rich_console__(
         self,

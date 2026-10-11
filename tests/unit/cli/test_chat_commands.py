@@ -18,11 +18,11 @@ from toolang.execution.types import (
     RunOverride,
     SessionSetting,
 )
-from toolang.cli.toolang.commands.chat import shortcuts, slashes
+from toolang.cli.toolang.commands.chat import shortcuts, commands
 from toolang.cli.toolang.commands.chat.base import ChatResult
 from toolang.cli.toolang.commands.chat.input import (
-    QuickCommand,
-    is_runnable_input,
+    ChatCommand,
+    is_run_submission,
     parse_chat_input,
 )
 from toolang.cli.toolang.commands.chat.policy import (
@@ -275,7 +275,7 @@ class _App:
         self.active_run = None
 
 
-def _outcome(value: slashes.SlashOutcome | None) -> slashes.SlashOutcome:
+def _outcome(value: commands.CommandOutcome | None) -> commands.CommandOutcome:
     assert value is not None
     return value
 
@@ -283,47 +283,49 @@ def _outcome(value: slashes.SlashOutcome | None) -> slashes.SlashOutcome:
 @pytest.mark.parametrize(
     ("name", "message"),
     [
-        ("", "Enter a command after / · See /? for help"),
-        ("missing", "Unknown command /missing · See /? for help"),
+        ("", "Enter a command after / · See /help for help"),
+        ("missing", "Unknown command /missing · See /help for help"),
     ],
 )
 def test_unrecognized_slash_names_return_status_guidance(
     name: str,
     message: str,
 ) -> None:
-    assert not slashes.is_registered(name)
-    assert slashes.unrecognized_diagnostic(name) == message
+    assert not commands.is_registered(name)
+    assert commands.unrecognized_diagnostic(name) == message
 
 
 def test_command_with_unexpected_body_returns_error() -> None:
     app = _App()
 
-    result = _outcome(slashes.handle(app, QuickCommand("help", "unexpected")))
+    result = _outcome(commands.handle(app, ChatCommand("help", "unexpected")))
 
     assert result.kind == "error"
-    assert slashes.outcome_lines(result) == (
+    assert commands.outcome_lines(result) == (
         "Error: /help does not accept an argument",
     )
 
 
-def test_quick_help_and_exit_are_declarative_commands() -> None:
+def test_command_help_and_exit_are_declarative_commands() -> None:
     app = _App()
 
-    help_result = _outcome(slashes.handle(app, QuickCommand("?")))
-    exit_result = slashes.handle(app, QuickCommand("quit"))
+    help_result = _outcome(commands.handle(app, ChatCommand("?")))
+    exit_result = commands.handle(app, ChatCommand("quit"))
 
-    help_lines = slashes.outcome_lines(help_result)
+    help_lines = commands.outcome_lines(help_result)
     assert help_result.kind == "result"
-    assert help_lines[0] == "Session"
-    assert help_lines[1].startswith("  /model ")
-    assert "Inspection" in help_lines and "Other" in help_lines
-    commands = [line.split()[0] for line in help_lines if line.startswith("  /")]
-    assert commands == [
-        "/model",
-        "/runnable",
-        "/allow",
-        "/cd",
-        "/limit",
+    assert isinstance(help_result.content, commands.CommandHelp)
+    help_commands = [
+        row.command for section in help_result.content.sections for row in section.rows
+    ]
+    for command in (
+        ":model",
+        ":runnable",
+        ":agic",
+        ":flow",
+        ":allow",
+        ":workdir",
+        ":limit",
         "/models",
         "/tools",
         "/caps",
@@ -333,64 +335,75 @@ def test_quick_help_and_exit_are_declarative_commands() -> None:
         "/help",
         "/exit",
         "/keys",
-    ]
-    assert any("shortcuts: /agic, /flow" in line for line in help_lines)
+        "/model",
+        "/allow",
+        "/limit",
+        "/workdir",
+        "/RUNNABLE",
+        "$PROMPT",
+        "@RESOURCE",
+    ):
+        assert command in help_commands
+    assert any("shortcuts: :agic, :flow" in line for line in help_lines)
     for alias in ("/show", "/?", "/quit"):
         assert any(f"(alias: {alias})" in line for line in help_lines)
-    assert help_lines[-1] == ":? shows one-run overrides."
+    assert ":? shows session settings." in help_lines
     assert not any("/queue" in line or "/steer" in line for line in help_lines)
     assert all(
-        get_cwidth(line) <= 10 for line in slashes.outcome_lines(help_result, width=10)
+        get_cwidth(line) <= 10 for line in commands.outcome_lines(help_result, width=10)
     )
     assert exit_result is None
     assert app.exited is True
 
 
-def test_run_override_help_covers_all_operations_and_input_forms() -> None:
-    result = slashes.run_override_help()
-    assert isinstance(result.content, slashes.SlashHelp)
+def test_run_directive_help_covers_all_operations_and_input_forms() -> None:
+    result = commands.run_directive_help()
+    assert isinstance(result.content, commands.CommandHelp)
     rows = result.content.sections[0].rows
     assert [row.command for row in rows] == [
-        ":model",
-        ":runnable",
-        ":workdir",
-        ":allow",
-        ":limit",
+        "/model",
+        "/allow",
+        "/limit",
+        "/workdir",
+        "/RUNNABLE",
+        "/agic:NAME",
+        "/flow:NAME",
+        "$PROMPT",
+        "@RESOURCE",
     ]
-    lines = slashes.outcome_lines(result)
+    lines = commands.outcome_lines(result)
     text = "\n".join(lines)
     for expected in (
-        "session defaults stay unchanged",
+        "slash overrides apply only to this run",
         "primary or named input",
-        "explicitly select a runnable",
-        "No input: :flow research",
-        ":agic NAME",
-        ":flow NAME",
+        "Direct /NAME calls may omit input",
+        "/agic:NAME",
+        "/flow:NAME",
         "max_output=POSITIVE_INT|auto",
         "unset",
         "default",
         "-- TEXT",
-        "- stream",
-        "--- fenced block",
+        "remaining stream",
+        "--- fenced input is only for $PROMPT",
         "psyches",
         "agic_tool_calls",
-        "/cd",
+        "/workdir",
     ):
         assert expected in text
 
     example = lines[lines.index("Example") + 1 :]
     parsed = parse_chat_input("\n".join(line.removeprefix("  ") for line in example))
-    assert is_runnable_input(parsed)
+    assert is_run_submission(parsed)
     assert parsed[0].model is not None and parsed[0].model.max_output == 8192
     assert parsed[1]["_"] == "Review this change."
 
 
 def test_keys_help_uses_the_binding_metadata_without_a_title() -> None:
-    result = _outcome(slashes.handle(_App(), QuickCommand("keys")))
-    lines = slashes.outcome_lines(result)
+    result = _outcome(commands.handle(_App(), ChatCommand("keys")))
+    lines = commands.outcome_lines(result)
 
     assert result.kind == "result"
-    assert isinstance(result.content, slashes.SlashHelp)
+    assert isinstance(result.content, commands.CommandHelp)
     assert tuple(section.title for section in result.content.sections) == tuple(
         title for title, _group in shortcuts.HELP_GROUPS
     )
@@ -409,11 +422,11 @@ def test_keys_help_uses_the_binding_metadata_without_a_title() -> None:
 def test_required_command_without_body_returns_focused_help(name: str) -> None:
     app = _App()
     app.client.error = AssertionError("client must not be called")
-    result = _outcome(slashes.handle(app, QuickCommand(name)))
+    result = _outcome(commands.handle(app, ChatCommand(name, prefix=":")))
     assert result.kind == "usage"
-    lines = slashes.outcome_lines(result)
+    lines = commands.outcome_lines(result)
     canonical = "runnable" if name == "agic" else name
-    assert lines[0].startswith(f"/{canonical} ")
+    assert lines[0].startswith(f":{canonical} ")
     assert lines[1].startswith("Set ")
     assert len(lines[lines.index("Examples:") + 1 :]) == 2
     if name == "model":
@@ -424,10 +437,10 @@ def test_required_command_without_body_returns_focused_help(name: str) -> None:
 
 @pytest.mark.parametrize("name", ("runnable", "agic", "flow"))
 def test_runnable_commands_share_focused_help(name: str) -> None:
-    result = _outcome(slashes.handle(_App(), QuickCommand(name)))
+    result = _outcome(commands.handle(_App(), ChatCommand(name, prefix=":")))
 
-    assert slashes.outcome_lines(result) == slashes.outcome_lines(
-        _outcome(slashes.handle(_App(), QuickCommand("runnable")))
+    assert commands.outcome_lines(result) == commands.outcome_lines(
+        _outcome(commands.handle(_App(), ChatCommand("runnable", prefix=":")))
     )
 
 
@@ -435,31 +448,35 @@ def test_model_identity_and_effort_update_independently() -> None:
     app = _App()
 
     selected = _outcome(
-        slashes.handle(app, QuickCommand("model", "openai/gpt-5 effort=high"))
+        commands.handle(
+            app, ChatCommand("model", "openai/gpt-5 effort=high", prefix=":")
+        )
     )
     assert app.setting.model == ModelRequest(
         "openai/gpt-5",
         reasoning=Reasoning(effort="high"),
     )
-    assert slashes.outcome_lines(selected) == (
+    assert commands.outcome_lines(selected) == (
         "Model set to openai/gpt-5 · effort=high",
     )
 
-    slashes.handle(app, QuickCommand("model", "effort=low"))
+    commands.handle(app, ChatCommand("model", "effort=low", prefix=":"))
     assert app.setting.model == ModelRequest(
         "openai/gpt-5",
         reasoning=Reasoning(effort="low"),
     )
 
-    slashes.handle(app, QuickCommand("model", "effort=4096"))
+    commands.handle(app, ChatCommand("model", "effort=4096", prefix=":"))
     assert app.setting.model == ModelRequest(
         "openai/gpt-5",
         reasoning=Reasoning(budget_tokens=4096),
     )
 
-    automatic = _outcome(slashes.handle(app, QuickCommand("model", "effort=auto")))
+    automatic = _outcome(
+        commands.handle(app, ChatCommand("model", "effort=auto", prefix=":"))
+    )
     assert app.setting.model == ModelRequest("openai/gpt-5")
-    assert slashes.outcome_lines(automatic) == (
+    assert commands.outcome_lines(automatic) == (
         "Model set to openai/gpt-5 · effort=auto",
     )
     assert app.status_refreshes == 4
@@ -469,10 +486,12 @@ def test_model_rejects_known_unsupported_effort_without_changing_session() -> No
     app = _App()
     previous = app.setting
 
-    result = _outcome(slashes.handle(app, QuickCommand("model", "effort=medium")))
+    result = _outcome(
+        commands.handle(app, ChatCommand("model", "effort=medium", prefix=":"))
+    )
 
     assert result.kind == "error"
-    assert slashes.outcome_lines(result) == (
+    assert commands.outcome_lines(result) == (
         "Error: model openai/gpt-5 does not advertise reasoning effort "
         "'medium' (allowed: low, high)",
     )
@@ -491,10 +510,12 @@ def test_model_defers_effort_validation_when_metadata_is_unavailable() -> None:
         },
     )
 
-    result = _outcome(slashes.handle(app, QuickCommand("model", "effort=medium")))
+    result = _outcome(
+        commands.handle(app, ChatCommand("model", "effort=medium", prefix=":"))
+    )
 
     assert result.kind == "success"
-    assert slashes.outcome_lines(result) == (
+    assert commands.outcome_lines(result) == (
         "Model set to openai/gpt-5 · effort=medium",
     )
 
@@ -502,11 +523,11 @@ def test_model_defers_effort_validation_when_metadata_is_unavailable() -> None:
 def test_model_none_is_rejected_without_loading_resources() -> None:
     app = _App()
 
-    result = _outcome(slashes.handle(app, QuickCommand("model", "none")))
+    result = _outcome(commands.handle(app, ChatCommand("model", "none", prefix=":")))
 
     assert result.kind == "error"
-    assert slashes.outcome_lines(result) == (
-        "Error: model identity 'none' was removed; use :model unset for a "
+    assert commands.outcome_lines(result) == (
+        "Error: model identity 'none' was removed; use /model unset for a "
         "model-free run",
     )
     assert app.setting.model == ModelRequest("openai/gpt-5")
@@ -517,11 +538,11 @@ def test_model_none_is_rejected_without_loading_resources() -> None:
 def test_model_unset_is_rejected_as_a_session_command() -> None:
     app = _App()
 
-    result = _outcome(slashes.handle(app, QuickCommand("model", "unset")))
+    result = _outcome(commands.handle(app, ChatCommand("model", "unset", prefix=":")))
 
     assert result.kind == "error"
-    assert slashes.outcome_lines(result) == (
-        "Error: /model unset is not a session setting; use :model unset for one run",
+    assert commands.outcome_lines(result) == (
+        "Error: :model unset is not a session setting; use /model unset for one run",
     )
     assert app.setting.model == ModelRequest("openai/gpt-5")
     assert app.status_refreshes == 0
@@ -530,10 +551,10 @@ def test_model_unset_is_rejected_as_a_session_command() -> None:
 def test_runnable_argument_updates_setting_and_refreshes_status() -> None:
     app = _App()
 
-    result = _outcome(slashes.handle(app, QuickCommand("flow", "review")))
+    result = _outcome(commands.handle(app, ChatCommand("flow", "review", prefix=":")))
 
     assert result.kind == "success"
-    assert slashes.outcome_lines(result) == ("Runnable set to flow:review",)
+    assert commands.outcome_lines(result) == ("Runnable set to flow:review",)
     assert app.setting.runnable == "flow:review"
     assert app.status_refreshes == 1
 
@@ -542,17 +563,17 @@ def test_allow_and_limit_report_effective_updates_and_refresh_status() -> None:
     app = _App()
 
     allowed = _outcome(
-        slashes.handle(
+        commands.handle(
             app,
-            QuickCommand("allow", "models=openai/* tools=shell/*"),
+            ChatCommand("allow", "models=openai/* tools=shell/*", prefix=":"),
         )
     )
     limited = _outcome(
-        slashes.handle(app, QuickCommand("limit", "tokens=2000 time=none"))
+        commands.handle(app, ChatCommand("limit", "tokens=2000 time=none", prefix=":"))
     )
 
-    assert slashes.outcome_lines(allowed) == ("Allowed 1 model, 1 tool",)
-    assert slashes.outcome_lines(limited) == ("Limits set to tokens=2000, time=none",)
+    assert commands.outcome_lines(allowed) == ("Allowed 1 model, 1 tool",)
+    assert commands.outcome_lines(limited) == ("Limits set to tokens=2000, time=none",)
     assert app.setting.allow.models == ("openai/*",)
     assert app.setting.allow.tools == ("shell/*",)
     assert app.setting.limits.tokens == 2000
@@ -574,11 +595,13 @@ def test_allow_selects_a_fallback_for_an_excluded_model_and_reports_it() -> None
         runnable="agic:chat",
     )
 
-    result = _outcome(slashes.handle(app, QuickCommand("allow", "models=openrouter/*")))
+    result = _outcome(
+        commands.handle(app, ChatCommand("allow", "models=openrouter/*", prefix=":"))
+    )
 
     assert app.setting.model == ModelRequest("openrouter/openai/o3")
     assert app.setting.allow.models == ("openrouter/*",)
-    assert slashes.outcome_lines(result) == (
+    assert commands.outcome_lines(result) == (
         "Allowed 1 model",
         "",
         "Model changed: openai/gpt-5 -> openrouter/openai/o3",
@@ -598,26 +621,32 @@ def test_allow_preserves_parameters_for_an_allowed_model() -> None:
     )
     app.setting = SessionSetting(model=selected, runnable="agic:chat")
 
-    result = _outcome(slashes.handle(app, QuickCommand("allow", "models=openai/*")))
+    result = _outcome(
+        commands.handle(app, ChatCommand("allow", "models=openai/*", prefix=":"))
+    )
 
     assert app.setting.model == selected
-    assert slashes.outcome_lines(result) == ("Allowed 1 model",)
+    assert commands.outcome_lines(result) == ("Allowed 1 model",)
     assert app.status_refreshes == 1
 
 
-def test_cd_sets_or_resets_only_the_session_workdir() -> None:
+def test_workdir_sets_or_resets_only_the_session_workdir() -> None:
     app = _App()
     app.setting = replace(app.setting, workdir="repo://src", workdir_base=None)
 
-    changed = _outcome(slashes.handle(app, QuickCommand("cd", "../tests")))
+    changed = _outcome(
+        commands.handle(app, ChatCommand("workdir", "../tests", prefix=":"))
+    )
     assert app.setting.workdir == "../tests"
     assert app.setting.workdir_base == "repo://src"
-    assert slashes.outcome_lines(changed) == ("Workdir set to ../tests",)
+    assert commands.outcome_lines(changed) == ("Workdir set to ../tests",)
 
-    reset = _outcome(slashes.handle(app, QuickCommand("cd", "default")))
+    reset = _outcome(
+        commands.handle(app, ChatCommand("workdir", "default", prefix=":"))
+    )
     assert app.setting.workdir is None
     assert app.setting.workdir_base is None
-    assert slashes.outcome_lines(reset) == ("Workdir reset to thread/default",)
+    assert commands.outcome_lines(reset) == ("Workdir reset to thread/default",)
     assert app.status_refreshes == 2
 
 
@@ -665,11 +694,13 @@ def test_model_reconciliation_prefers_the_available_configured_default() -> None
 def test_allow_none_clears_the_model_and_reports_an_empty_collection() -> None:
     app = _App()
 
-    result = _outcome(slashes.handle(app, QuickCommand("allow", "models=none")))
+    result = _outcome(
+        commands.handle(app, ChatCommand("allow", "models=none", prefix=":"))
+    )
 
     assert app.setting.model is None
     assert app.setting.allow.models == ()
-    assert slashes.outcome_lines(result) == (
+    assert commands.outcome_lines(result) == (
         "Allowed 0 models",
         "",
         "Model cleared: no models available.",
@@ -687,10 +718,12 @@ def test_explicit_model_outside_allow_is_atomic() -> None:
     )
     previous = app.setting
 
-    result = _outcome(slashes.handle(app, QuickCommand("model", "openai/gpt-5")))
+    result = _outcome(
+        commands.handle(app, ChatCommand("model", "openai/gpt-5", prefix=":"))
+    )
 
     assert result.kind == "error"
-    assert slashes.outcome_lines(result) == (
+    assert commands.outcome_lines(result) == (
         "Error: model is outside session allow.models: openai/gpt-5",
     )
     assert app.setting == previous
@@ -704,10 +737,12 @@ def test_default_model_uses_the_query_relative_fallback() -> None:
         runnable="agic:chat",
         allow=AgentCeiling(models=("openrouter/*",)),
     )
-    result = _outcome(slashes.handle(app, QuickCommand("model", "default effort=high")))
+    result = _outcome(
+        commands.handle(app, ChatCommand("model", "default effort=high", prefix=":"))
+    )
 
     assert result.kind == "success"
-    assert slashes.outcome_lines(result) == (
+    assert commands.outcome_lines(result) == (
         "Model set to openrouter/openai/o3 · effort=high",
     )
     assert app.setting.model == ModelRequest(
@@ -742,10 +777,10 @@ def test_resource_commands_forward_the_whole_query_and_return_tables(
 ) -> None:
     app = _App()
 
-    result = _outcome(slashes.handle(app, QuickCommand(command, query)))
+    result = _outcome(commands.handle(app, ChatCommand(command, query)))
 
     assert result.kind == "result"
-    assert isinstance(result.content, slashes.SlashTable)
+    assert isinstance(result.content, commands.CommandTable)
     assert result.content.summary == summary
     assert result.content.headers[0] == header
     assert app.client.resource_calls[-1] == (command, None, (query,))
@@ -754,9 +789,9 @@ def test_resource_commands_forward_the_whole_query_and_return_tables(
 def test_models_table_formats_prices_efforts_and_default_marker() -> None:
     app = _App()
 
-    result = _outcome(slashes.handle(app, QuickCommand("models")))
+    result = _outcome(commands.handle(app, ChatCommand("models")))
 
-    assert slashes.outcome_lines(result) == (
+    assert commands.outcome_lines(result) == (
         "2 models allowed.",
         "",
         "  MODEL                 PRICE ($/1M)     EFFORT",
@@ -778,16 +813,16 @@ def test_models_table_distinguishes_zero_and_missing_prices() -> None:
         },
     )
 
-    result = _outcome(slashes.handle(app, QuickCommand("models")))
+    result = _outcome(commands.handle(app, ChatCommand("models")))
 
-    assert isinstance(result.content, slashes.SlashTable)
+    assert isinstance(result.content, commands.CommandTable)
     assert result.content.rows == (("openai/gpt-5 *", "$ 0.00 /      -", "-"),)
 
 
 def test_resource_tables_fit_unicode_cells_without_wrapping() -> None:
-    outcome = slashes.SlashOutcome(
+    outcome = commands.CommandOutcome(
         "result",
-        slashes.SlashTable(
+        commands.CommandTable(
             "Found 1 model",
             ("MODEL", "PRICE ($/1M)", "EFFORT"),
             (("提供者/非常长的模型 *", "$ 1.25 / $10.00", "low, medium, high"),),
@@ -796,7 +831,7 @@ def test_resource_tables_fit_unicode_cells_without_wrapping() -> None:
         ),
     )
 
-    lines = slashes.outcome_lines(outcome, width=38)
+    lines = commands.outcome_lines(outcome, width=38)
 
     assert all("\n" not in line and get_cwidth(line) <= 38 for line in lines[1:])
     assert lines[2].strip().endswith("EFFORT")
@@ -821,23 +856,23 @@ def test_tools_table_hides_private_toolsets_after_query() -> None:
         },
     )
 
-    result = _outcome(slashes.handle(app, QuickCommand("tools")))
+    result = _outcome(commands.handle(app, ChatCommand("tools")))
 
-    assert isinstance(result.content, slashes.SlashTable)
+    assert isinstance(result.content, commands.CommandTable)
     assert result.content.summary == "3 tools allowed."
     assert all(not row[0].startswith("_internal/") for row in result.content.rows)
     assert any(row[0] == "filesystem/_private" for row in result.content.rows)
 
-    hidden_only = _outcome(slashes.handle(app, QuickCommand("tools", "_internal/*")))
-    assert slashes.outcome_lines(hidden_only) == ("0 tools matched out of 3 allowed.",)
+    hidden_only = _outcome(commands.handle(app, ChatCommand("tools", "_internal/*")))
+    assert commands.outcome_lines(hidden_only) == ("0 tools matched out of 3 allowed.",)
 
 
 def test_caps_table_uses_form_and_display_summary() -> None:
     app = _App()
 
-    result = _outcome(slashes.handle(app, QuickCommand("caps", "skill/*")))
+    result = _outcome(commands.handle(app, ChatCommand("caps", "skill/*")))
 
-    assert isinstance(result.content, slashes.SlashTable)
+    assert isinstance(result.content, commands.CommandTable)
     assert result.content.headers == ("CAP", "SCOPE", "FORM", "DESCRIPTION")
     assert result.content.rows == (
         ("skill/reviewer", "home", "authored", "Review code."),
@@ -847,10 +882,10 @@ def test_caps_table_uses_form_and_display_summary() -> None:
 def test_resource_command_without_matches_is_a_result() -> None:
     app = _App()
 
-    result = _outcome(slashes.handle(app, QuickCommand("models", "missing/*")))
+    result = _outcome(commands.handle(app, ChatCommand("models", "missing/*")))
 
     assert result.kind == "result"
-    assert slashes.outcome_lines(result) == ("0 models matched out of 2 allowed.",)
+    assert commands.outcome_lines(result) == ("0 models matched out of 2 allowed.",)
 
 
 def test_resource_commands_default_to_session_allowed_collections() -> None:
@@ -868,17 +903,17 @@ def test_resource_commands_default_to_session_allowed_collections() -> None:
         ),
     )
 
-    models = _outcome(slashes.handle(app, QuickCommand("models")))
-    tools = _outcome(slashes.handle(app, QuickCommand("tools")))
-    caps = _outcome(slashes.handle(app, QuickCommand("caps")))
+    models = _outcome(commands.handle(app, ChatCommand("models")))
+    tools = _outcome(commands.handle(app, ChatCommand("tools")))
+    caps = _outcome(commands.handle(app, ChatCommand("caps")))
 
-    assert isinstance(models.content, slashes.SlashTable)
+    assert isinstance(models.content, commands.CommandTable)
     assert models.content.summary == "1 model allowed."
     assert models.content.rows[0][0] == "openrouter/openai/o3 *"
-    assert isinstance(tools.content, slashes.SlashTable)
+    assert isinstance(tools.content, commands.CommandTable)
     assert tools.content.summary == "1 tool allowed."
     assert tools.content.rows == (("filesystem/read", "Read a file."),)
-    assert isinstance(caps.content, slashes.SlashTable)
+    assert isinstance(caps.content, commands.CommandTable)
     assert caps.content.summary == "1 capability allowed."
     assert caps.content.rows[0][0] == "skill/reviewer"
 
@@ -897,13 +932,13 @@ def test_resource_queries_intersect_instead_of_union_with_session_allow() -> Non
         ),
     )
 
-    models = _outcome(slashes.handle(app, QuickCommand("models", "openai/*")))
-    tools = _outcome(slashes.handle(app, QuickCommand("tools", "shell/*")))
-    caps = _outcome(slashes.handle(app, QuickCommand("caps", "prompt/*")))
+    models = _outcome(commands.handle(app, ChatCommand("models", "openai/*")))
+    tools = _outcome(commands.handle(app, ChatCommand("tools", "shell/*")))
+    caps = _outcome(commands.handle(app, ChatCommand("caps", "prompt/*")))
 
-    assert slashes.outcome_lines(models) == ("0 models matched out of 1 allowed.",)
-    assert slashes.outcome_lines(tools) == ("0 tools matched out of 1 allowed.",)
-    assert slashes.outcome_lines(caps) == ("0 capabilities matched out of 1 allowed.",)
+    assert commands.outcome_lines(models) == ("0 models matched out of 1 allowed.",)
+    assert commands.outcome_lines(tools) == ("0 tools matched out of 1 allowed.",)
+    assert commands.outcome_lines(caps) == ("0 capabilities matched out of 1 allowed.",)
 
 
 def test_all_resource_tables_show_allowed_state_and_available_denominator() -> None:
@@ -921,11 +956,11 @@ def test_all_resource_tables_show_allowed_state_and_available_denominator() -> N
         ),
     )
 
-    models = _outcome(slashes.handle(app, QuickCommand("models", "-a")))
-    tools = _outcome(slashes.handle(app, QuickCommand("tools", "-a shell/*")))
-    caps = _outcome(slashes.handle(app, QuickCommand("caps", "-a")))
+    models = _outcome(commands.handle(app, ChatCommand("models", "-a")))
+    tools = _outcome(commands.handle(app, ChatCommand("tools", "-a shell/*")))
+    caps = _outcome(commands.handle(app, ChatCommand("caps", "-a")))
 
-    assert isinstance(models.content, slashes.SlashTable)
+    assert isinstance(models.content, commands.CommandTable)
     assert models.content.summary == "2 models available."
     assert models.content.headers == (
         "MODEL",
@@ -935,87 +970,91 @@ def test_all_resource_tables_show_allowed_state_and_available_denominator() -> N
     )
     assert tuple(row[1] for row in models.content.rows) == ("no", "yes")
     assert models.content.rows[1][0].endswith(" *")
-    assert isinstance(tools.content, slashes.SlashTable)
+    assert isinstance(tools.content, commands.CommandTable)
     assert tools.content.summary == "1 tool matched out of 2 available."
     assert tools.content.headers == ("TOOL", "ALLOWED", "DESCRIPTION")
     assert tools.content.rows[0][1] == "no"
-    assert isinstance(caps.content, slashes.SlashTable)
+    assert isinstance(caps.content, commands.CommandTable)
     assert caps.content.summary == "2 capabilities available."
     assert caps.content.headers[1] == "ALLOWED"
     assert tuple(row[1] for row in caps.content.rows) == ("yes", "no")
 
-    narrow = slashes.outcome_lines(models, width=24)
+    narrow = commands.outcome_lines(models, width=24)
     assert any(" *" in line for line in narrow)
-    assert any(line.startswith(" *") for line in slashes.outcome_lines(models, width=3))
+    assert any(
+        line.startswith(" *") for line in commands.outcome_lines(models, width=3)
+    )
     for width in (1, 2, 10, 24):
         assert all(
             get_cwidth(line) <= width
-            for line in slashes.outcome_lines(models, width=width)
+            for line in commands.outcome_lines(models, width=width)
         )
 
 
 @pytest.mark.parametrize("command", ("models", "tools", "caps"))
 def test_empty_resource_queries_show_only_the_summary(command: str) -> None:
-    result = _outcome(slashes.handle(_App(), QuickCommand(command, "-a missing/*")))
-    assert isinstance(result.content, slashes.SlashText)
+    result = _outcome(commands.handle(_App(), ChatCommand(command, "-a missing/*")))
+    assert isinstance(result.content, commands.CommandText)
     assert result.content.summary.endswith("matched out of 2 available.")
-    assert slashes.outcome_lines(result, width=60) == (result.content.summary,)
+    assert commands.outcome_lines(result, width=60) == (result.content.summary,)
 
 
 def test_agics_and_flows_list_available_items_and_mark_the_current_kind() -> None:
     app = _App()
     app.setting = replace(app.setting, runnable="flow:review")
 
-    agics = _outcome(slashes.handle(app, QuickCommand("agics")))
-    flows = _outcome(slashes.handle(app, QuickCommand("flows")))
-    rejected = _outcome(slashes.handle(app, QuickCommand("flows", "review")))
+    agics = _outcome(commands.handle(app, ChatCommand("agics")))
+    flows = _outcome(commands.handle(app, ChatCommand("flows")))
+    rejected = _outcome(commands.handle(app, ChatCommand("flows", "review")))
 
-    assert isinstance(agics.content, slashes.SlashTable)
+    assert isinstance(agics.content, commands.CommandTable)
     assert agics.content.summary == "1 agic available."
     assert agics.content.rows == (("chat",),)
-    assert isinstance(flows.content, slashes.SlashTable)
+    assert isinstance(flows.content, commands.CommandTable)
     assert flows.content.summary == "1 flow available."
     assert flows.content.rows == (("review *",),)
     assert flows.content.protected_suffixes == (" *",)
-    assert slashes.outcome_lines(rejected) == (
+    assert commands.outcome_lines(rejected) == (
         "Error: /flows does not accept an argument",
     )
 
 
-def test_quick_output_and_show_load_an_explicit_or_latest_durable_result() -> None:
+def test_command_output_and_show_load_an_explicit_or_latest_durable_result() -> None:
     app = _App()
 
-    explicit = _outcome(slashes.handle(app, QuickCommand("output", "run_saved")))
-    latest = _outcome(slashes.handle(app, QuickCommand("output")))
-    alias = _outcome(slashes.handle(app, QuickCommand("show")))
+    explicit = _outcome(commands.handle(app, ChatCommand("output", "run_saved")))
+    latest = _outcome(commands.handle(app, ChatCommand("output")))
+    alias = _outcome(commands.handle(app, ChatCommand("show")))
 
-    assert isinstance(explicit.content, slashes.SlashRunResult)
-    assert isinstance(latest.content, slashes.SlashRunResult)
-    assert isinstance(alias.content, slashes.SlashRunResult)
+    assert isinstance(explicit.content, commands.CommandRunResult)
+    assert isinstance(latest.content, commands.CommandRunResult)
+    assert isinstance(alias.content, commands.CommandRunResult)
     assert explicit.content.result == ChatResult(
         run_id="run_saved",
         output=(TextPart("saved result"),),
     )
     assert latest.content.result == explicit.content.result
     assert alias.content.result == explicit.content.result
-    assert slashes.outcome_lines(latest) == ("run_saved output",)
+    assert commands.outcome_lines(latest) == ("run_saved output",)
 
 
 @pytest.mark.parametrize("command", ["queue", "q", "steer", "s"])
 def test_queue_and_steer_commands_are_not_registered(command: str) -> None:
-    assert not slashes.is_registered(command)
-    with pytest.raises(KeyError, match="unregistered slash command"):
-        slashes.handle(_App(), QuickCommand(command))
+    assert not commands.is_registered(command)
+    with pytest.raises(KeyError, match="unregistered command"):
+        commands.handle(_App(), ChatCommand(command))
 
 
-def test_quick_client_errors_return_scrollback_errors() -> None:
+def test_command_client_errors_return_scrollback_errors() -> None:
     app = _App()
     app.client.error = ToolangError("unavailable")
 
-    result = _outcome(slashes.handle(app, QuickCommand("model", "openai/gpt-5")))
+    result = _outcome(
+        commands.handle(app, ChatCommand("model", "openai/gpt-5", prefix=":"))
+    )
 
     assert result.kind == "error"
-    assert slashes.outcome_lines(result) == ("Error: unavailable",)
+    assert commands.outcome_lines(result) == ("Error: unavailable",)
     assert app.status_refreshes == 0
 
 
@@ -1023,9 +1062,46 @@ def test_quick_client_errors_return_scrollback_errors() -> None:
 def test_model_output_limit_is_applied_and_reported(identity: str) -> None:
     app = _App()
     result = _outcome(
-        slashes.handle(app, QuickCommand("model", f"{identity}max_output=8192"))
+        commands.handle(
+            app, ChatCommand("model", f"{identity}max_output=8192", prefix=":")
+        )
     )
     assert app.setting.model is not None
     assert app.setting.model.max_output == 8192
-    assert isinstance(result.content, slashes.SlashText)
+    assert isinstance(result.content, commands.CommandText)
     assert "max_output=8192" in result.content.summary
+
+
+def test_command_registry_matches_shared_reserved_names() -> None:
+    from toolang.execution.input import COLON_COMMAND_NAMES, SLASH_COMMAND_NAMES
+
+    for prefix, names in (("/", SLASH_COMMAND_NAMES), (":", COLON_COMMAND_NAMES)):
+        registered = {
+            name
+            for command in commands.COMMANDS
+            if command.prefix == prefix
+            for name in command.names
+        }
+        assert registered == names
+
+
+@pytest.mark.parametrize("kind", ["agic", "flow"])
+def test_runnable_lists_show_qualified_calls_for_builtin_collisions(kind) -> None:
+    app = _App()
+    app.client.runnables[kind] = {
+        "items": [{"name": "help"}, {"name": "model"}, {"name": "cd"}]
+    }
+    app.setting = replace(app.setting, runnable=f"{kind}:help")
+    outcome = _outcome(commands.handle(app, ChatCommand(kind + "s")))
+    assert isinstance(outcome.content, commands.CommandTable)
+    assert outcome.content.rows == ((f"/{kind}:help *",), (f"/{kind}:model",), ("cd",))
+
+
+def test_session_help_contains_only_colon_commands() -> None:
+    outcome = _outcome(commands.handle(_App(), ChatCommand("?", prefix=":")))
+    assert isinstance(outcome.content, commands.CommandHelp)
+    assert all(
+        row.command.startswith(":")
+        for section in outcome.content.sections
+        for row in section.rows
+    )

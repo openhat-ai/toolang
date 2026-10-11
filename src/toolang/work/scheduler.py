@@ -18,7 +18,8 @@ from toolang.base.types.policy import RunBindings
 from toolang.common.ids import IdIssuer
 from toolang.common.layout import AgentLayout
 from toolang.execution.runnables import runnable_fallback
-from toolang.execution.calls import parse_call, resolve_spec
+from toolang.execution.input import parse_call
+from toolang.execution.calls import resolve_spec
 from toolang.execution.executor import RunExecutor, RunSpec
 from toolang.execution.records import RunRecord
 from toolang.lang.includes import resolve_file_include

@@ -235,7 +235,7 @@ def test_chat_tui_updates_defaults_while_a_run_is_active(tmp_path: Path) -> None
         session.send(b"hold status\r")
         session.wait_for("• Thinking", "@lab")
 
-        session.send(b"/flow relay\r")
+        session.send(b":flow relay\r")
         running = session.wait_for("flow:relay", "test/scripted")
 
         assert "flow:relay · test/scripted" not in running

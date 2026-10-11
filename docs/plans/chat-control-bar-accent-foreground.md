@@ -2,12 +2,12 @@
 
 ## Goal and success criteria
 
-Reduce the visual weight of run, steer, and quick-command control bars by replacing their accent-colored background cells with a foreground `▮` marker. The marker uses each bar's existing accent color; its background matches the surrounding control bar.
+Reduce the visual weight of run, steer, and command control bars by replacing their accent-colored background cells with a foreground `▮` marker. The marker uses each bar's existing accent color; its background matches the surrounding control bar.
 
 ## Scope
 
-- Apply the marker treatment to run, steer, and quick-command control bars only.
-- Preserve bright cyan for run, bright magenta for steer, and yellow for quick commands.
+- Apply the marker treatment to run, steer, and command control bars only.
+- Preserve bright cyan for run, bright magenta for steer, and yellow for commands.
 - Preserve marker positions, bar dimensions, text, wrapping, and surrounding input background.
 - Leave chat input, queue, and other UI accents unchanged.
 
@@ -19,7 +19,7 @@ Reduce the visual weight of run, steer, and quick-command control bars by replac
 
 ## Acceptance criteria
 
-- Run, steer, and quick-command bars show `▮` in their respective existing accent colors.
+- Run, steer, and command bars show `▮` in their respective existing accent colors.
 - The marker background matches the surrounding control-bar background; no accent-colored background cell remains.
 - Existing bar widths, wrapping, and message rendering remain unchanged.
 - Other chat surfaces retain their existing appearance.

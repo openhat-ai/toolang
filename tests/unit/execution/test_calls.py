@@ -16,8 +16,8 @@ from toolang.base.types.model import (
 )
 from toolang.base.types.run import ModelCallResult
 from toolang.base.types.policy import RunBindings, RunDefaults, RunPolicy
+from toolang.execution.input import parse_call
 from toolang.execution.calls import (
-    parse_call,
     resolve_restart_request,
     resolve_run_request,
     resolve_spec,
@@ -49,42 +49,34 @@ agic bound(_: Part[]):
 """
 
 
-def test_parse_call_rejects_an_override_without_runnable_input() -> None:
-    with pytest.raises(ValueError, match="colon override requires runnable input"):
-        parse_call(":model effort=high")
-
-
-def test_parse_call_allows_an_empty_call_without_an_override() -> None:
-    assert parse_call("") == (RunOverride(), CallInput())
-
-
-@pytest.mark.parametrize(
-    ("source", "runnable"),
-    [
-        (":agic review", "agic:review"),
-        (":flow research", "flow:research"),
-        (":runnable flow:research", "flow:research"),
-        (":runnable research", "research"),
-        (":runnable default", "default"),
-    ],
-)
-@pytest.mark.parametrize("prefix", ["", ":model effort=high\n"])
-def test_parse_call_allows_empty_input_for_explicit_runnable(
-    source: str, runnable: str, prefix: str
+@pytest.mark.parametrize("kind", ["agic", "flow"])
+@pytest.mark.parametrize("name", ["help", "model"])
+def test_qualified_slash_calls_resolve_reserved_public_runnables(
+    tmp_path, kind: str, name: str
 ) -> None:
-    assert parse_call(prefix + source) == (
-        RunOverride(
-            runnable=runnable,
-            model=ModelOverride(effort="high") if prefix else None,
-        ),
-        CallInput(),
+    harness = ExecutionHarness.create(
+        tmp_path, source=f"{kind} {name}():\n  pass\n", responses=[]
     )
+    try:
+        override, input = parse_call(f"/{kind}:{name}")
+        spec = resolve_spec(
+            override,
+            input,
+            setup=harness.setup,
+            state=harness.state,
+            thread="term_test",
+            default_runnable=f"{kind}:{name}",
+        )
+        assert spec.input == CallInput()
+        assert spec.bindings.runnable == f"{kind}:{name}"
+    finally:
+        harness.store.close()
 
 
 @pytest.mark.parametrize("kind", ["agic", "flow"])
 @pytest.mark.parametrize("signature", ["()", "(topic?: Text)"])
-@pytest.mark.parametrize("selector", ["explicit", "default"])
-def test_empty_colon_call_executes_without_primary_input(
+@pytest.mark.parametrize("selector", ["qualified", "unqualified"])
+def test_empty_slash_call_executes_without_primary_input(
     tmp_path, kind: str, signature: str, selector: str
 ) -> None:
     body = "run worker" if kind == "flow" else "user: Complete the task."
@@ -99,7 +91,7 @@ def test_empty_colon_call_executes_without_primary_input(
 
     async def scenario() -> None:
         async with harness:
-            source = f":{kind} work" if selector == "explicit" else ":runnable default"
+            source = f"/{kind}:work" if selector == "qualified" else "/work"
             override, input = parse_call(source)
             spec = resolve_spec(
                 override,
@@ -125,14 +117,14 @@ def test_empty_colon_call_executes_without_primary_input(
         ("(topic: Text)", "missing named inputs for work: topic"),
     ],
 )
-def test_empty_colon_call_reports_missing_required_input(
+def test_empty_slash_call_reports_missing_required_input(
     tmp_path, kind: str, signature: str, message: str
 ) -> None:
     harness = ExecutionHarness.create(
         tmp_path, source=f"{kind} work{signature}:\n  pass\n", responses=[]
     )
     try:
-        override, input = parse_call(f":{kind} work")
+        override, input = parse_call(f"/{kind}:work")
         with pytest.raises(ValueError, match=message):
             resolve_spec(
                 override,
@@ -308,7 +300,7 @@ flow hello_flow(_: Text) -> Text:
 
     async def scenario() -> None:
         async with harness:
-            commands, input = parse_call(":flow hello_flow\n\nhello world")
+            commands, input = parse_call("/flow:hello_flow\n\nhello world")
             root = await harness.executor.run(
                 resolve_spec(
                     commands,
@@ -356,7 +348,7 @@ flow hello_flow(_: Text) -> Text:
     async def scenario() -> None:
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-            commands, input = parse_call(":flow hello_flow\n\nhello world")
+            commands, input = parse_call("/flow:hello_flow\n\nhello world")
             first = await harness.executor.run(
                 resolve_spec(
                     commands,
@@ -367,7 +359,7 @@ flow hello_flow(_: Text) -> Text:
                     default_runnable="default",
                 )
             )
-            commands, input = parse_call(":agic chat\n\nnext")
+            commands, input = parse_call("/agic:chat\n\nnext")
             second = await harness.executor.run(
                 resolve_spec(
                     commands,
@@ -397,7 +389,7 @@ def test_resolve_spec_binds_policy_primary_and_typed_named_inputs(
     harness = ExecutionHarness.create(tmp_path, source=_SOURCE, responses=[])
     try:
         commands, input = parse_call(
-            ":model test/scripted\n:agic review count=2\n\nReview this."
+            "/model test/scripted\n/agic:review count=2\n\nReview this."
         )
         spec = resolve_spec(
             commands,
@@ -446,7 +438,7 @@ agic default(_: Part[]):
         responses=[],
     )
     try:
-        commands, input = parse_call(f":limit time=30\n\n{prompt_source}")
+        commands, input = parse_call(f"/limit time=30\n\n{prompt_source}")
         spec = resolve_spec(
             commands,
             input,
@@ -557,12 +549,12 @@ agic default(_: Part[]):
         harness.store.close()
 
 
-def test_run_default_returns_to_surface_binding_not_session_binding(
+def test_run_default_selects_the_named_runnable_over_session_binding(
     tmp_path,
 ) -> None:
     harness = ExecutionHarness.create(tmp_path, source=_SOURCE, responses=[])
     try:
-        commands, input = parse_call(":runnable default\nInput")
+        commands, input = parse_call("/default\nInput")
         spec = resolve_spec(
             commands,
             input,
@@ -623,11 +615,11 @@ def test_setup_bindings_are_below_surface_session_and_run_selections(
             named=CallInput({"count": "2"}),
         )
         authored = resolve(
-            ":runnable default\nInput",
+            "/default\nInput",
             session=(RunCommand("default", "runnable", "agic:review"),),
         )
         selected = resolve(
-            ":runnable default\nInput",
+            "/default\nInput",
             surface=RunBindings(runnable="agic:default"),
             session=(RunCommand("default", "runnable", "agic:bound"),),
         )
@@ -647,7 +639,7 @@ def test_setup_bindings_are_below_surface_session_and_run_selections(
             "agic:review",
             {"count": 2},
         )
-        assert authored.bindings.runnable == "agic:bound"
+        assert authored.bindings.runnable == "agic:default"
         assert selected.bindings.runnable == "agic:default"
         assert restored_model.model_request == setup.defaults.model
     finally:
@@ -659,7 +651,7 @@ def test_invalid_explicit_model_is_rejected_before_run_persistence(tmp_path) -> 
 
     async def scenario() -> None:
         thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-        commands, input = parse_call(":model missing\nInput")
+        commands, input = parse_call("/model missing\nInput")
         with pytest.raises(ToolangError, match="model"):
             resolve_spec(
                 commands,

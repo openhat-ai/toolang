@@ -33,6 +33,25 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Changed
 
+- Chat commands and run directives now use distinct markers, breaking existing
+  input syntax. Colon commands inspect or change session settings (`:model`,
+  `:runnable`, `:agic`, `:flow`, `:allow`, `:limit`, `:workdir`, and `:?` for
+  session help); slash commands (`/help`, `/?`, `/keys`, `/models`, `/tools`,
+  `/caps`, `/agics`, `/flows`, `/output`, `/show`, `/exit`, `/quit`) remain
+  standalone interactions. A run submission may begin with consecutive
+  `/model`, `/allow`, `/limit`, and `/workdir` override lines followed by at
+  most one root runnable call (`/NAME`, `/agic:NAME`, or `/flow:NAME`), whose
+  signature decides arguments and primary input. Migrate by moving session
+  settings from `/model`, `/runnable`, `/agic`, `/flow`, `/allow`, and `/limit`
+  to their colon forms, renaming `/cd` to `:workdir` (bare `:workdir` queries
+  the session directory), and invoking runnables as `/NAME` or a qualified
+  `/agic:NAME`/`/flow:NAME` instead of `:runnable NAME`, `:agic NAME`, or
+  `:flow NAME`; reserved built-in names need qualification, as in `/agic:help`.
+  An override prefix requires at least one supplied primary or named input, so
+  overrides formerly accepted with empty Call Input now reject, and root `---`
+  capture becomes `-` without a closing fence. Script, Task, and Chore runs
+  share this syntax and reject Chat-only slash commands and colon headers.
+
 - Team `too top` refreshes from Hub state notifications instead of the
   aggregate activity stream, following execution and member events and reading
   each agent's current activity independently, so one slow or failing agent no

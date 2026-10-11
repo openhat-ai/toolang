@@ -145,7 +145,7 @@ caps. Each cap has one Form tag. No kind, shape, editability, or action tags are
 
 ## Policy and directives
 
-`[allow]`, environment overrides, `--allow`, Chat `/allow`, one-run `:allow`,
+`[allow]`, environment overrides, `--allow`, Chat `:allow`, one-run `/allow`,
 and resource directives use the same TQ syntax. The allow fields are `models`,
 `tools`, `psyches`, `skills`, `services`, and `prompts`. Singular `model`
 bindings accept an exact model reference.

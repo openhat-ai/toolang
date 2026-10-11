@@ -4,7 +4,6 @@ from tests.support.setup import materialized_setup
 
 from pathlib import Path
 
-import pytest
 
 from toolang.base.types.model import (
     ModelRequest,
@@ -15,9 +14,6 @@ from toolang.common.layout import AgentLayout
 from toolang.execution.policy import (
     apply_session_setting,
     materialize_run_setting,
-    parse_policy_prefix,
-    parse_run_override,
-    parse_setting_override,
     resolve_commands,
 )
 from toolang.execution.types import (
@@ -28,7 +24,6 @@ from toolang.execution.types import (
     RunOverride,
     SessionSetting,
 )
-from toolang.lang.input import CallInput
 from toolang.setup import AgentSetup, ToolCollection
 
 
@@ -43,145 +38,6 @@ def _setup() -> AgentSetup:
         defaults=RunDefaults(model=ModelRequest("root/model"), runnable="agic:chat"),
         limits=RunLimits(tokens=100, cost=5.0, time=60),
     )
-
-
-@pytest.mark.parametrize(
-    ("source", "expected"),
-    [
-        (
-            ":model openai/gpt-5",
-            RunOverride(model=ModelOverride(identity="openai/gpt-5")),
-        ),
-        (
-            ":model effort=high",
-            RunOverride(model=ModelOverride(effort="high")),
-        ),
-        (
-            ":model openai/gpt-5 effort=4096",
-            RunOverride(model=ModelOverride(identity="openai/gpt-5", effort=4096)),
-        ),
-        (
-            ":model effort=auto",
-            RunOverride(model=ModelOverride(effort="auto")),
-        ),
-        (":model unset", RunOverride(model=ModelOverride(identity="unset"))),
-        (":agic review", RunOverride(runnable="agic:review")),
-        (":flow research", RunOverride(runnable="flow:research")),
-        (":runnable custom", RunOverride(runnable="custom")),
-        (":workdir repo://src", RunOverride(workdir="repo://src")),
-        (
-            ":limit tokens=200 cost=1.25 time=none",
-            RunOverride(
-                limits=(
-                    LimitOverride("tokens", 200),
-                    LimitOverride("cost", 1.25),
-                    LimitOverride("time", None),
-                )
-            ),
-        ),
-    ],
-)
-def test_parse_run_override_forms(source: str, expected: RunOverride) -> None:
-    override, named = parse_run_override(source)
-
-    assert override == expected
-    assert named == {}
-
-
-def test_runnable_override_returns_named_input_sources() -> None:
-    override, named = parse_run_override(':agic review focus="security review" count=2')
-
-    assert override == RunOverride(runnable="agic:review")
-    assert named == {"focus": "security review", "count": "2"}
-
-
-def test_prefix_merges_allow_lines_and_multiple_fields() -> None:
-    override, call_input = parse_policy_prefix(
-        ":allow models=openai/* tools=shell/*\n"
-        ":allow models=deepseek/* skills=reviewer\n\nRun this."
-    )
-
-    assert override == RunOverride(
-        allow=(
-            AllowOverride("models", ("openai/*", "deepseek/*")),
-            AllowOverride("tools", ("shell/*",)),
-            AllowOverride("skills", ("reviewer",)),
-        )
-    )
-    assert call_input == CallInput({"_": "Run this."})
-
-
-@pytest.mark.parametrize(
-    ("source", "message"),
-    [
-        (":model", "requires"),
-        (":model openai/gpt-5 high", "first token"),
-        (":model ref=openai/gpt-5", "unknown model parameter"),
-        (":model reasoning=high", "unknown model parameter"),
-        (":model none", "was removed"),
-        (":allow", "requires"),
-        (":allow unknown=value", "unknown allow field"),
-        (":limit tokens=-1", "non-negative"),
-        (":limit tokens=1 tokens=2", "duplicate limit field"),
-        (":default model=openai/gpt-5", "not a run override"),
-        (":models openai/*", "not a run override"),
-    ],
-)
-def test_invalid_or_removed_override_forms_are_rejected(
-    source: str,
-    message: str,
-) -> None:
-    with pytest.raises(ValueError, match=message):
-        parse_run_override(source)
-
-
-def test_slash_and_colon_share_the_same_setting_body_parser() -> None:
-    colon, _named = parse_run_override(":model openai/gpt-5 effort=high")
-
-    assert parse_setting_override("model", "openai/gpt-5 effort=high") == colon
-    assert parse_setting_override(
-        "allow", "models=openai/* tools=shell/*"
-    ) == RunOverride(
-        allow=(
-            AllowOverride("models", ("openai/*",)),
-            AllowOverride("tools", ("shell/*",)),
-        )
-    )
-
-
-@pytest.mark.parametrize(
-    ("sentinel", "value"),
-    [("all", None), ("none", ())],
-)
-def test_repeated_allow_sentinels_are_idempotent(
-    sentinel: str,
-    value: tuple[str, ...] | None,
-) -> None:
-    expected = RunOverride(allow=(AllowOverride("models", value),))
-
-    assert (
-        parse_setting_override(
-            "allow",
-            f"models={sentinel} models={sentinel}",
-        )
-        == expected
-    )
-    override, call_input = parse_policy_prefix(
-        f":allow models={sentinel}\n:allow models={sentinel}\n\nRun"
-    )
-    assert override == expected
-    assert call_input == CallInput({"_": "Run"})
-
-
-@pytest.mark.parametrize("sentinel", ["all", "none"])
-def test_allow_sentinels_still_reject_a_query_for_the_same_field(
-    sentinel: str,
-) -> None:
-    with pytest.raises(ValueError, match="cannot combine"):
-        parse_setting_override(
-            "allow",
-            f"models={sentinel} models=openai/*",
-        )
 
 
 def test_model_identity_and_effort_have_independent_update_boundaries() -> None:

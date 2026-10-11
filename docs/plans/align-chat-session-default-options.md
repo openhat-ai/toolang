@@ -18,7 +18,7 @@ startup or Script behavior.
 - Chat exposes `--default FIELD=VALUE` as its only startup model/runnable
   setting form and does not emit a deprecation warning for it.
 - Chat rejects startup `--model` and `--runnable` as unknown options; `/model`,
-  `/runnable`, `:model`, and `:runnable` keep their current behavior.
+  `:model`, `:runnable`, and root runnable calls keep their current behavior.
 - Rerun exposes only `--model MODEL_BODY` for model replacement and rejects
   `--default` as an unknown option.
 - Retry rejects `--default` as an unknown option and continues to preserve the

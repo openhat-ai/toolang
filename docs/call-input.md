@@ -102,14 +102,14 @@ compatibility adapter or migration is provided.
 
 ## Input Forms
 
-Chat runnable overrides and prompt calls can capture primary text in three
-forms:
+Root runnable calls support line and stream input; prompt calls additionally
+support fenced input:
 
 | Form | Marker | Boundary |
 | --- | --- | --- |
 | line | `--` | end of the current line (EOL) |
 | stream | `-` | end of the current input stream (EOS) |
-| fenced | `---` | an exact closing `---` line |
+| fenced (prompts only) | `---` | an exact closing `---` line |
 
 Named arguments use `name=value` and precede the marker. On these Content
 surfaces, markers are recognized only as unquoted standalone tokens. Quoting
@@ -136,7 +136,8 @@ $greeting name=Bryan -- Additional content
 ```
 
 The marker and separating whitespace are excluded. The next line remains in the
-enclosing input. Empty line input is invalid.
+enclosing input for a prompt call. A root runnable call rejects any following
+nonblank content. Empty line input is invalid.
 
 ## Stream Input
 
@@ -165,41 +166,43 @@ This text remains outside the prompt call.
 
 The fences are excluded and the block may be empty. Leading or trailing spaces,
 longer hyphen runs, and hyphens embedded in another line do not close the block.
-At a root runnable boundary, only whitespace may follow the closing fence.
-Backtick fences do not introduce Call Input.
+Root runnable calls reject fenced input; use stream input instead. Backtick
+fences do not introduce Call Input.
 
 ## Chat Runnable Calls
 
-A runnable override is a runnable call header and accepts every explicit form:
+A slash directive selects the root runnable and accepts arguments before input:
 
 ```text
-:agic review focus=security -- Review this API
+/review focus=security -- Review this API
 ```
 
 ```text
-:agic review focus=security -
+/agic:review focus=security -
 Review this API and its tests.
 ```
 
+A root header followed by a body without a marker uses implicit stream input;
+separator blank lines before that body are structural. Plain input without an
+explicit call goes to the default runnable. `/review` alone leaves `_` absent;
+`/review -` supplies an empty `_`. Requiredness and types follow the
+[runnable signature](./program.md#runnable-signatures).
+
+Leading `/model`, `/allow`, `/limit`, or `/workdir` overrides require at least
+one supplied primary or named input key; naming a runnable alone does not count.
+Direct calls without overrides may omit all input when the signature permits it.
+Unknown, duplicate, or mistyped arguments and positional arguments reject.
+
+Prompt calls inside runnable input support all three explicit forms. A closing
+prompt fence returns to the same root input:
+
 ```text
-:agic review focus=security ---
-Review this API.
-Include concurrency risks.
+/review -
+$summarize ---
+Source material.
 ---
+Also check security.
 ```
-
-An ordinary Chat submission without a runnable override remains an implicit
-whole-buffer stream. The existing separated override form also remains an
-implicit stream:
-
-```text
-:agic review focus=security
-
-Review this API.
-```
-
-Prompt calls inside the submitted runnable input use the same line, stream, and
-fenced syntax.
 
 ## Authored Runnable Input
 

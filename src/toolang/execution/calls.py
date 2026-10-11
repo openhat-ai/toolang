@@ -1,4 +1,4 @@
-"""Parse caller input and resolve immutable run specifications."""
+"""Resolve caller input and immutable run specifications."""
 
 from __future__ import annotations
 from toolang.common.errors import ToolangError
@@ -33,7 +33,6 @@ from .policy import (
     apply_session_setting,
     commands_from_run_override,
     materialize_run_setting,
-    parse_policy_prefix,
     resolve_commands,
 )
 from .runnables import (
@@ -58,17 +57,6 @@ class RestartSpec:
     model: ModelRequest | None
     model_override: ModelOverride | None
     limits: RunLimits
-
-
-def parse_call(source: str) -> tuple[RunOverride, CallInput[str]]:
-    """Parse one run-only source into an aggregate override and runnable input."""
-
-    body = _strip_final_line_break(source)
-    override, call_input = parse_policy_prefix(body)
-    input = parse_input(call_input)
-    if not override.empty and override.runnable is None and not input:
-        raise ValueError("colon override requires runnable input")
-    return override, input
 
 
 def _is_alias_ref(value: str, resolved: object) -> bool:
@@ -296,7 +284,7 @@ def resolve_spec(
         authored_commands=commands_from_run_override(override),
         authored_session_commands=(
             *session_commands,
-            *commands_from_run_override(session_override),
+            *commands_from_run_override(session_override, session=True),
         ),
     )
 
@@ -539,14 +527,6 @@ def _select_runnable_fallback(
             if not str(error).startswith("Runnable not found:"):
                 raise
     raise ValueError(f"no runnable fallback is available: {', '.join(candidates)}")
-
-
-def _strip_final_line_break(source: str) -> str:
-    if source.endswith("\r\n"):
-        return source[:-2]
-    if source.endswith("\n"):
-        return source[:-1]
-    return source
 
 
 def input_file_references(

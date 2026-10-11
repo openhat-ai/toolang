@@ -224,6 +224,8 @@ def capture_call_input(
     if header.form == "stream":
         return following, ""
 
+    if root:
+        raise ToolangError("Fenced input is only supported for prompt calls.")
     lines = following.splitlines(keepends=True)
     closing_index = next(
         (index for index, line in enumerate(lines) if _split_line(line)[0] == "---"),
@@ -234,10 +236,6 @@ def capture_call_input(
     captured = "".join(lines[:closing_index])
     _, closing_break = _split_line(lines[closing_index])
     trailing = closing_break + "".join(lines[closing_index + 1 :])
-    if root and trailing.strip():
-        raise ToolangError(
-            f"Root fenced input for {label} cannot be followed by other content."
-        )
     return captured, trailing
 
 

@@ -30,7 +30,7 @@ Verified against `origin/main` at `7daa7d73`:
   It is not committed to scrollback.
 - `_control_bar_lines` uses `max(0, 3 - body_rows)` padding. Two body rows
   consume the bottom padding, and three or more consume both padding rows.
-  Root, steer, and quick-command bars share this behavior; the editable Input
+  Root, steer, and command bars share this behavior; the editable Input
   already has separate top and bottom padding rows and a right inset.
 - Both Chat clients send steer controls with `timing="next_step"`; the active
   Step continues. A subsequent model call consumes them. Chat discards the
@@ -44,7 +44,7 @@ Verified against `origin/main` at `7daa7d73`:
 
 ### Permanent Control Padding
 
-Apply to root inputs, steer inputs, and every quick-command control variant:
+Apply to root inputs, steer inputs, and every command control variant:
 
 ```text
 one top padding row
@@ -57,14 +57,14 @@ row. Two body rows therefore occupy four rows; three occupy five. Never reuse
 padding for authored text, including text that wraps after a terminal resize.
 Semantic metadata may occupy a padding row without turning it into body
 space. Root controls use bottom padding for context; terminal unapplied steers
-use it for a status label. All top padding and quick-command bottom padding
+use it for a status label. All top padding and command bottom padding
 remain empty, as does bottom padding for pending or applied steers.
 
 Preserve accents, adaptive Input background, authored blank lines, normal body
 foreground, and the existing outside gaps. Body text begins two cells from
 the bar's left edge (accent plus one space) and leaves two cells on the right.
 Wrap using this inner width without consuming either inset. Root bars remain
-full width; steer/quick-command bars use the existing output-width limit.
+full width; steer/command bars use the existing output-width limit.
 Editable Input uses the same two-cell left offset and right inset, retaining
 its existing separate top/bottom padding. At extreme widths, reduce horizontal
 insets only as necessary to retain a content cell.
@@ -83,7 +83,7 @@ left-aligned; metadata never shares its last line or appears above it. Do not
 add field labels or a Run ID.
 
 - Snapshot from the submitted `RunRequest`, including queued settings and
-  colon overrides. Later defaults never rewrite historical context.
+  run override directives. Later defaults never rewrite historical context.
 - Use the qualified runnable and canonical model reference. Show explicit
   reasoning effort or token budget; absent reasoning adds no suffix.
 - An absent model request renders `model unspecified`. The line describes
@@ -234,7 +234,7 @@ terminal colors, status meaning, and edge-aligned status text.
    rows preserve their two-cell left offset and two-cell right inset.
 2. Root metadata occupies only the bottom padding row, ends two cells before
    the right edge, is dim, and has no field labels. Long refs/CJK fit safely
-   without adding padding rows. Quick-command padding and pending/applied steer
+   without adding padding rows. Command padding and pending/applied steer
    padding stay empty. A terminal unapplied steer places only `not applied` in
    its existing bottom padding, with the same two-cell right inset.
 3. Submit with runnable/model A, queue with B, then change defaults to C.

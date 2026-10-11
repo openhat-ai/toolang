@@ -15,8 +15,8 @@ Feature definition. This document defines behavior and does not implement it.
 ## Goal
 
 Use one typed model-setting vocabulary across configuration, environment,
-startup CLI, invocation CLI, Chat slash settings, and input-local colon
-overrides. Reasoning effort is the first implemented parameter; adding a future
+startup CLI, invocation CLI, Chat colon commands, and input-local slash
+directives. Reasoning effort is the first implemented parameter; adding a future
 parameter such as temperature must not require a new syntax or parser for each
 surface.
 
@@ -58,7 +58,7 @@ too examples/deep_search.too research \
 - Configured parameters reach local and remote Chat and Script unchanged and
   are validated against the effective model before publication or acceptance.
 - Run-capable CLI policy is an invocation/session layer above Setup and below
-  colon overrides, independent of whether execution is local or remote.
+  run override directives, independent of whether execution is local or remote.
 - A future direct parameter is enabled on every human surface by adding one
   typed model field and one shared parameter definition; arbitrary provider
   options remain impossible.
@@ -87,7 +87,7 @@ Excluded:
 - changing provider defaults, model catalogs, adapters, accounting, or model
   metadata except where default projection must carry a `ModelRequest`;
 - adding invocation flags to scheduled tasks or chores; their authored bodies
-  continue to use colon overrides;
+  continue to use run override directives;
 - changing retry's model request.
 
 ## Relationship To Existing Definitions
@@ -169,8 +169,8 @@ The same semantic setting has the following encodings:
 | Environment | `TOOLANG_DEFAULT_MODEL='deepseek/deepseek-v4-flash effort=high'` |
 | Agent startup CLI | `--default model='deepseek/deepseek-v4-flash effort=high'` |
 | Script/Chat invocation CLI | `--model 'deepseek/deepseek-v4-flash effort=high'` |
-| Chat session | `/model deepseek/deepseek-v4-flash effort=high` |
-| One run | `:model deepseek/deepseek-v4-flash effort=high` |
+| Chat session | `:model deepseek/deepseek-v4-flash effort=high` |
+| One run | `/model deepseek/deepseek-v4-flash effort=high` |
 | Direct API | `model.ref` plus canonical `model.parameters` |
 
 Shell quotes group a multi-token `ModelBody`; they are not part of its value.
@@ -179,15 +179,15 @@ All setting groups follow the same ownership matrix:
 
 | Setting | Config | Environment / agent startup | Invocation CLI | Chat session | One run |
 | --- | --- | --- | --- | --- | --- |
-| model | `[default] model = "BODY"` | `TOOLANG_DEFAULT_MODEL` / `--default model=BODY` | `--model BODY` | `/model BODY` | `:model BODY` |
-| runnable | `[default].runnable` | `TOOLANG_DEFAULT_RUNNABLE` / `--default runnable=REF` | Chat `--runnable REF` | `/runnable BODY` | `:runnable BODY` |
-| allow | `[allow]` | `TOOLANG_ALLOW_*` / startup `--allow` | run-surface `--allow` | `/allow BODY` | `:allow BODY` |
-| limit | `[limit]` | `TOOLANG_LIMIT_*` / startup `--limit` | run-surface `--limit` | `/limit BODY` | `:limit BODY` |
+| model | `[default] model = "BODY"` | `TOOLANG_DEFAULT_MODEL` / `--default model=BODY` | `--model BODY` | `:model BODY` | `/model BODY` |
+| runnable | `[default].runnable` | `TOOLANG_DEFAULT_RUNNABLE` / `--default runnable=REF` | Chat `--runnable REF` | `:runnable REF` | `/REF` |
+| allow | `[allow]` | `TOOLANG_ALLOW_*` / startup `--allow` | run-surface `--allow` | `:allow BODY` | `/allow BODY` |
+| limit | `[limit]` | `TOOLANG_LIMIT_*` / startup `--limit` | run-surface `--limit` | `:limit BODY` | `/limit BODY` |
 
 Config, environment, and options on agent `run`, `start`, or `serve` build the
 frozen Setup baseline. Options on Script, Chat, or rerun build an invocation
-session above that baseline. Slash settings mutate only the current Chat
-session; colon settings affect only the submitted run. An option name such as
+session above that baseline. Colon commands mutate only the current Chat
+session; slash run directives affect only the submitted run. An option name such as
 `--allow` therefore has one policy meaning for each command category and never
 changes meaning based on local versus remote execution.
 
@@ -252,7 +252,7 @@ them or `--model` into Setup construction. CLI allow can only narrow resources
 published by Setup; CLI limits overlay Setup limits.
 
 Chat applies its invocation model, runnable, allow, and limits atomically to the
-initial `SessionSetting`. Later slash commands update that mutable session.
+initial `SessionSetting`. Later colon commands update that mutable session.
 
 Rerun uses the persisted source `ModelRequest` as its current value. A
 parameter-only body modifies that request without reconstructing it from the
@@ -266,8 +266,8 @@ continues to expose no model replacement.
 The canonical forms are:
 
 ```text
-/model MODEL_BODY    # subsequent runs in this Chat session
-:model MODEL_BODY    # runnable input in this submission only
+:model MODEL_BODY    # subsequent runs in this Chat session
+/model MODEL_BODY    # runnable input in this submission only
 ```
 
 Both call the same parser as environment and CLI strings. Only their lifetime
@@ -291,8 +291,8 @@ root config
     < process environment
       < agent startup CLI
         < invocation CLI / initial Chat session
-          < later slash session updates
-            < input-local colon override
+          < later colon command updates
+            < input-local run override
 ```
 
 For one model body:
@@ -317,7 +317,7 @@ model is invalid.
 
 Allow and limit use the same lifetime order but retain their existing typed
 semantics: frozen config/environment/startup allow may replace Setup
-publication policy; invocation, slash-session, and colon-run allow are
+publication policy; invocation, session, and run allow are
 intersecting ceilings. Each higher-layer limit field replaces the lower value.
 
 ## Future Parameter Contract

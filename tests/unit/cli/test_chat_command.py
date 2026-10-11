@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from contextlib import closing, contextmanager
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 import sqlite3
@@ -26,6 +27,7 @@ from toolang.cli.toolang.commands.chat.base import (
     ChatExecutorMetadata,
     ChatResult,
     ChatRunState,
+    RunWorkdirUpdated,
 )
 from toolang.cli.toolang.main import main as too_main
 from toolang.common.layout import AgentLayout
@@ -451,12 +453,12 @@ def test_scripted_chat_help_does_not_create_an_empty_thread(
     assert client.starts == []
 
 
-def test_scripted_chat_projects_shared_slash_outcomes(
+def test_scripted_chat_projects_shared_command_outcomes(
     monkeypatch: Any,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     client = _Client()
-    inputs = iter(("/model effort=high", "/model", "/models", "/exit"))
+    inputs = iter((":model effort=high", ":model", "/models", "/exit"))
     monkeypatch.setattr("builtins.input", lambda _prompt: next(inputs))
 
     chat._chat_interactive_scripted_local(
@@ -467,7 +469,7 @@ def test_scripted_chat_projects_shared_slash_outcomes(
 
     output = capsys.readouterr().out
     assert "Model set to test/model · effort=high" in output
-    assert "/model [MODEL] [PARAM=VALUE...]" in output
+    assert ":model [MODEL] [PARAM=VALUE...]" in output
     assert "Set the session model or its parameters." in output
     assert "0 models allowed." in output
     assert "Success:" not in output
@@ -481,7 +483,7 @@ def test_scripted_chat_projects_unrecognized_diagnostics_and_both_help_surfaces(
 ) -> None:
     client = _Client()
     inputs = iter(
-        ("/", "/missing", ":", ":missing value", ":?", "/keys", "/?", "/exit")
+        ("/", "/missing value", ":", ":missing value", ":?", "/keys", "/?", "/exit")
     )
     monkeypatch.setattr("builtins.input", lambda _prompt: next(inputs))
 
@@ -492,18 +494,21 @@ def test_scripted_chat_projects_unrecognized_diagnostics_and_both_help_surfaces(
     )
 
     captured = capsys.readouterr()
-    assert "Enter a command after / · See /? for help" in captured.err
-    assert "Unknown command /missing · See /? for help" in captured.err
-    assert "Enter a run override after : · See :? for help" in captured.err
-    assert "Unknown run override :missing · See :? for help" in captured.err
     assert (
-        "Overrides apply to this run only; session defaults stay unchanged."
+        "Enter a directive name immediately after / · See /help for help"
+        in captured.err
+    )
+    assert "named input must use name=value syntax · See /help for help" in captured.err
+    assert "Enter a command after : · See :? for help" in captured.err
+    assert "Unknown command :missing · See :? for help" in captured.err
+    assert (
+        "Colon commands set session defaults; slash overrides apply only to this run."
         in captured.out
     )
     assert "Input focused:" in captured.out
     assert "Session" in captured.out
-    assert ":? shows one-run overrides." in captured.out
-    assert "Overrides" in captured.out
+    assert ":? shows session settings." in captured.out
+    assert "Run directives" in captured.out
     assert "Queue focused:" in captured.out
     assert "Inspection" in captured.out
     assert "Chat Commands" not in captured.out
@@ -526,12 +531,15 @@ def test_scripted_chat_rejects_removed_queue_commands(
         client=client, thread_id=None, setting=client.initial_setting()
     )
 
-    assert f"Unknown command /{command} · See /? for help" in capsys.readouterr().err
+    assert (
+        "named input must use name=value syntax · See /help for help"
+        in capsys.readouterr().err
+    )
     assert client.created == 0
     assert not client.starts
 
 
-def test_scripted_slash_help_honors_the_configured_maximum_width(
+def test_scripted_command_help_honors_the_configured_maximum_width(
     monkeypatch: Any,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -569,6 +577,41 @@ def test_scripted_chat_creates_one_thread_for_the_first_submission(
         ("term_created", "hello", ModelRequest("test/model")),
         ("term_created", "again", ModelRequest("test/model")),
     ]
+
+
+@pytest.mark.parametrize("override_workdir", [None, "lab://session", "lab://temporary"])
+def test_scripted_chat_keeps_run_workdir_overrides_out_of_session_settings(
+    monkeypatch, override_workdir: str | None
+) -> None:
+    settings = []
+
+    class Client(_Client):
+        def build_request(self, thread_id, override, input, setting):
+            settings.append(setting)
+            request = super().build_request(thread_id, override, input, setting)
+            return replace(
+                request,
+                workdir=override.workdir or setting.workdir,
+                workdir_base=None if override.workdir else setting.workdir_base,
+            )
+
+        def run(self, request, on_event, on_error, on_state=None):
+            assert on_state is not None
+            on_state(RunWorkdirUpdated("run_test", "lab://changed"))
+
+    client = Client()
+    first = f"/workdir {override_workdir}\nhello" if override_workdir else "hello"
+    inputs = iter((first, "again", "/exit"))
+    monkeypatch.setattr("builtins.input", lambda _prompt: next(inputs))
+    chat._chat_interactive_scripted_local(
+        client=client,
+        thread_id=None,
+        setting=replace(client.initial_setting(), workdir="lab://session"),
+    )
+
+    assert settings[1].workdir == (
+        "lab://session" if override_workdir else "lab://changed"
+    )
 
 
 def test_scripted_chat_reports_a_failed_run(

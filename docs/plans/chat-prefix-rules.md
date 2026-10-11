@@ -1,7 +1,6 @@
 # Chat Commands and Run Directives
 
-Status: Feature definition for review, 2026-10-11. Implementation requires
-approval of this plan. Examples below describe the proposed syntax.
+Status: Approved for implementation on 2026-10-11 (PR #761).
 
 ## Goal and Scope
 
@@ -55,7 +54,7 @@ colon commands reject. `/help` and `/?` cover the complete syntax; `:?` shows
 session settings. Existing prompt/include semantics remain.
 
 Use `:workdir [PATH]` for the session workdir and `/workdir PATH` for a run
-override. Preserve the existing `cd` handler's query, path resolution, reset
+override. Preserve workdir query, path resolution, reset
 (`default`/`unset`), and propagation into later run requests.
 
 After `/`, an exact built-in name selects its handler; errors never fall back
@@ -63,7 +62,7 @@ to a runnable. Otherwise use the valid State's final public binding:
 
 - Reserved slash commands: `help`, `?`, `keys`, `models`, `tools`, `caps`,
   `agics`, `flows`, `output`, `show`, `exit`, `quit`.
-- Reserved run overrides: `model`, `allow`, `limit`, `workdir`.
+- Reserved run override directives: `model`, `allow`, `limit`, `workdir`.
 - Resolve collisions with `/agic:help`, `/flow:help`, `/flow:model`, etc.
   Kind/module qualifications constrain the existing target; they do not redo
   shadowing or expose private targets. Preserve existing qualified-reference
@@ -221,17 +220,18 @@ Dollar/at directive evaluation, including the prohibition on nested prompt calls
 is unchanged. The namespace rules here supersede the corresponding parts of
 [Chat Input Namespaces](chat-input-namespaces.md).
 
-Open questions: none; implementation approval remains pending.
+Open questions: none.
 
 ## Implementation and Acceptance
 
 Implementation touchpoints under `src/toolang/`:
 
-- `cli/toolang/commands/chat/{input,policy,slashes,main,tui}.py`: dispatch,
+- `cli/toolang/commands/chat/{input,policy,commands,main,tui}.py`: dispatch,
   settings, help, outcomes, and queue parity.
-- `execution/{policy,calls}.py`, `lang/input.py`: run-prefix parsing, input
-  presence, capture, and signature validation. Shared parsing must not import
-  Chat handlers; keep one shared reserved-name registry.
+- `execution/input.py`: submission parsing, input presence, and the shared
+  reserved-name registry; no runtime services or Chat handlers.
+- `execution/{policy,calls}.py`: setting application and runnable resolution.
+- `lang/input.py`: call-input capture and signature validation.
 - `cli/toolang/commands/script.py`, `work/scheduler.py`: shared-input integration.
 
 Update current input/Chat/model documentation, affected bundled examples, and

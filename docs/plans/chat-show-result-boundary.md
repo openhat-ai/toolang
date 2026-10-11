@@ -9,7 +9,7 @@ reopened by the Chat TUI `:show` command. It does not implement product code.
 
 - `:show [run_id]` resolves a durable output through `ChatClient.get_result()`.
 - `ChatResult` carries the `run_id` and `output` needed by the result view.
-- The TUI renders the result heading through the generic slash-command body as
+- The TUI renders the result heading through the generic command body as
   `: Result RUN_ID`, followed by one blank line and the Markdown result.
 - Root run footers use `• RUN_ID STATUS ───` and status color. The same `•`
   marker also identifies execution output, so reusing it would make reopened
@@ -129,14 +129,14 @@ while the result body should remain visually primary.
 5. Exactly one empty row separates the divider from the first result row, and
    exactly one empty row closes the result block.
 6. Narrow-terminal rendering does not wrap or exceed the configured width.
-7. Help, model-list, queue, and other slash-command rendering is unchanged.
+7. Help, model-list, queue, and other command rendering is unchanged.
 8. The PTY flow scenario reopens a durable result and observes both
    `• RUN_ID result` and the saved output without a traceback.
 9. The default offline verification suite passes.
 
 ## Risks
 
-- Generic slash-command spacing must not be changed while introducing the
+- Generic command spacing must not be changed while introducing the
   dedicated result block, or unrelated command layouts may regress.
 - Reusing `•` reduces the marker-only distinction between a divider and an
   execution row; the caption and trailing rule must remain intact.

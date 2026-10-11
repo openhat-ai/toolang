@@ -625,7 +625,7 @@ def test_script_cannot_select_a_synthetic_runtime_runnable(monkeypatch, capsys):
     monkeypatch.setattr(
         script, "_run", lambda *args, **kwargs: pytest.fail("ran synthetic default")
     )
-    assert cli.main(["run", path, "--", ":runnable agic:default\n\nHello."]) == 1
+    assert cli.main(["run", path, "--", "/agic:default\n\nHello."]) == 1
     assert "unknown or ambiguous" in capsys.readouterr().err
 
 

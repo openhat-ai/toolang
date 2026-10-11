@@ -12,14 +12,14 @@ execution concepts while preserving current behavior:
 - `AgentCeiling`: selector lists that can only narrow `AgentResources`.
 
 Raw chat input remains a `str`; there is no separate raw-text type alias. Chat
-parsing distinguishes quick commands, override-only input, and runnable input.
-`RunnableInputRaw` represents structured but unresolved primary and named source
-text, while `PolicyCommand` becomes `RunOverride`.
+parsing distinguishes a standalone `ChatCommand` from one run submission.
+`CallInput[str]` holds unresolved input and arguments; `RunOverride` holds the
+settings and root-runnable selection for that submission.
 
 ## Success Criteria
 
-- `parse_chat_input(str)` produces `QuickCommand | RunOverride+ |
-  RunOverride* + RunnableInputRaw`; execution resolution produces `RunnableInput`.
+- `parse_chat_input(str)` produces `ChatCommand | tuple[RunOverride, CallInput[str]]`;
+  execution resolution produces `RunnableInput`.
 - `RunSpec` and bound runs carry one `RunnableInput` instead of separate primary
   and named fields.
 - `AgentCeiling` remains selector-based, while `_ResolvedAgentCeiling` and
@@ -47,35 +47,28 @@ plugin instances, provider credentials, or other new setup provenance.
 
 ## Input Model
 
-The term chat input covers both the original `str` accepted by chat parsing and
-the resulting `ChatInput` object. The parsed alternatives are:
+The parsed alternatives are:
 
 ```text
-ChatInput -> QuickCommand
-           | RunOverride+
-           | RunOverride* + RunnableInputRaw
+ChatInput = ChatCommand | tuple[RunOverride, CallInput[str]]
+RunnableInput = CallInput[Value]
 ```
 
-Run-only text surfaces parse directly to `RunOverride* + RunnableInputRaw` without
-the chat-only quick-command branch. Resolution expands includes and declared
-types to produce the final `RunnableInput`. Programmatic callers may construct
-`RunnableInput` directly.
+Run-only surfaces produce the same aggregate override and source-input pair.
+Commands occupy one Chat submission and never submit a run. A leading override
+prefix requires supplied Call Input; direct root runnable calls may omit it when
+the signature permits. See [Input Syntax](../input-syntax.md) for the grammar.
 
-All input types are frozen, slotted dataclasses. `RunnableInputRaw` retains
-primary source text and immutable `(name, source)` pairs. `RunnableInput`
-retains one primary `Percept` and canonical immutable named values, including
-the declared type needed for durable round trips. Empty primary and named
-inputs remain valid.
-
-`RunSpec` and the bound executor value each expose `input: RunnableInput`.
-Child runs derive a new `RunnableInput` directly from parent locals; they do
-not round-trip through raw text or `RunnableInputRaw`.
+Resolution expands Content and coerces arguments into `CallInput[Value]`.
+Child runs receive typed values directly. Empty input is accepted only when the
+signature permits it; absence and explicit empty values remain distinct.
 
 ## Overrides And Resources
 
-`RunOverride` is the preparation-only representation of current `allow`,
-`default`, and `limit` commands. Existing config keys, environment variables,
-CLI flags, and colon-command spellings remain unchanged.
+`RunOverride` contains parsed submission settings and root-runnable selection.
+`SessionSetting` owns Chat defaults; `RunCommand` retains low-level restart
+provenance. These execution values are distinct from authored command and
+run-directive syntax.
 
 `AgentCeiling` contains the current model, tool, and cap selector lists.
 `AgentResources` contains the resolved model selectors and concrete tool/cap
@@ -122,7 +115,7 @@ shared limit accounting.
 
 ## Implementation Touchpoints
 
-- `lang/input.py`, execution call/policy parsing, CLI chat/script, and scheduler;
+- `lang/input.py`, `execution/input.py` submission parsing, CLI chat/script, and scheduler;
 - `base/types/policy.py`, resource selector helpers, setup configuration, and
   executor resource preparation;
 - `execution/executor`, `records.py`, `events.py`, `store.py`, and `schemas.py`;
@@ -131,8 +124,9 @@ shared limit accounting.
 
 ## Acceptance Tests
 
-- `ChatInput` alternatives and `RunnableInputRaw` validation retain current parse
-  behavior, including override-only and empty runnable input.
+- `ChatInput` alternatives and `CallInput[str]` validation follow the current
+  prefix plan, including required input after overrides and signature-based
+  empty root calls.
 - Resolved primary/named values round-trip through `RunnableInput`, controls,
   events, and SQLite without losing names or declared types.
 - Setup, session, run, runnable, flow, and agic resource restrictions select the

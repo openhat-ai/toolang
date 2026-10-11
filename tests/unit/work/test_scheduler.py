@@ -139,7 +139,7 @@ def test_scheduler_rejects_invalid_input_without_creating_a_run(
 
             assert record.active_run_id is None
             assert record.error is not None
-            assert "primary input must escape a leading colon" in record.error
+            assert "colon commands cannot be used in a run submission" in record.error
             assert not harness.store.list_runs(limit=None)
             assert not harness.store.list_threads()
         finally:
@@ -163,7 +163,7 @@ def test_scheduler_submits_and_awaits_runs_on_the_execution_loop(
     _create_task(
         AuthoredJobs(harness.setup.layout.home),
         "review",
-        ":agic review focus=security\n\nReview this.",
+        "/agic:review focus=security\n\nReview this.",
     )
     scheduler = _scheduler(harness)
     run_threads: list[int] = []
@@ -242,7 +242,7 @@ agic review(_: Part[], focus: Text):
         AuthoredJobs(harness.setup.layout.home),
         kind,
         "nested-input",
-        ":agic review focus=nested ---\nBefore\n$wrap -- target\nAfter\n---",
+        "/agic:review focus=nested -\nBefore\n$wrap ---\ntarget\n---\nAfter\n",
     )
     scheduler = _scheduler(harness)
 
@@ -252,7 +252,7 @@ agic review(_: Part[], focus: Text):
 
         assert spec.input["_"] == Array(
             "Part[]",
-            (TextPart("Before\n<target>\nAfter\n"),),
+            (TextPart("Before\n<target\n>\nAfter"),),
         )
         assert spec.input["focus"] == "nested"
         assert [invocation.name for invocation in spec.prompt_invocations] == ["wrap"]
@@ -269,7 +269,7 @@ def test_scheduler_recovers_a_claim_with_no_accepted_run(tmp_path) -> None:
     _create_task(
         AuthoredJobs(harness.setup.layout.home),
         "review",
-        ":agic review focus=recovery\n\nReview after recovery.",
+        "/agic:review focus=recovery\n\nReview after recovery.",
     )
     (job,) = load_ready_jobs(harness.setup.layout)
     checkpoint = JobStore(harness.setup.layout.job_store)
@@ -320,7 +320,7 @@ def test_scheduler_accepts_blocking_controls_from_api_worker_threads(
     _create_task(
         AuthoredJobs(harness.setup.layout.home),
         "review",
-        ":agic review focus=worker\n\nReview from a worker.",
+        "/agic:review focus=worker\n\nReview from a worker.",
     )
     scheduler = _scheduler(harness)
 
@@ -367,7 +367,7 @@ def test_scheduler_serializes_revisions_of_one_task(tmp_path) -> None:
     authored = _create_task(
         catalog,
         "review",
-        ":agic review focus=first\n\nReview the first revision.",
+        "/agic:review focus=first\n\nReview the first revision.",
     )
     scheduler = _scheduler(harness)
 
@@ -385,7 +385,7 @@ def test_scheduler_serializes_revisions_of_one_task(tmp_path) -> None:
 
             catalog.update(
                 authored.with_body(
-                    ":agic review focus=second\n\nReview the second revision."
+                    "/agic:review focus=second\n\nReview the second revision."
                 )
             )
             await scheduler.refresh()
@@ -430,8 +430,8 @@ def test_scheduler_allows_different_jobs_to_run_concurrently(tmp_path) -> None:
         ],
     )
     catalog = AuthoredJobs(harness.setup.layout.home)
-    _create_task(catalog, "alpha", ":agic review focus=alpha\n\nAlpha.")
-    _create_task(catalog, "beta", ":agic review focus=beta\n\nBeta.")
+    _create_task(catalog, "alpha", "/agic:review focus=alpha\n\nAlpha.")
+    _create_task(catalog, "beta", "/agic:review focus=beta\n\nBeta.")
     scheduler = _scheduler(harness)
 
     async def scenario() -> None:

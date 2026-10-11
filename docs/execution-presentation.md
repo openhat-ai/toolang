@@ -701,7 +701,7 @@ Interactive Chat resolves one concrete palette before prompt_toolkit begins
 reading keyboard input. Script resolves the same palette before starting run
 output, including remote execution and retry/rerun. The public backgrounds are
 Input, Queue, and Code, in that order. Input fills the input box and the non-
-accent cells of Run, Steer, and Quick Command bars. Queue fills the adjacent
+accent cells of Run, Steer, and Command bars. Queue fills the adjacent
 queue area; a focused queue selection uses Input. Code fills fenced-code
 rectangles; inline code has a separate derived background. These surfaces
 assign no ordinary foreground: normal text inherits the terminal foreground,
@@ -751,16 +751,16 @@ prefix, retaining the complete reference in the snapshot. Long annotations
 shorten the runnable first, then the model, preserving explicit reasoning
 where space permits. Their left background-filled accent cells distinguish
 start from steer without displaying Run IDs. The start accent uses the same ANSI
-bright cyan as the banner logo and wordmark. Quick-command bars use the same
+bright cyan as the banner logo and wordmark. Command bars use the same
 background-cell treatment with their own accent, and the prompt uses the start
 accent. Control bars and the input box share Input background. Control-bar
 messages use the terminal's default foreground and explicitly clear dim styling
 in both stable and live output. An empty prompt shows the muted
 placeholder `Describe your task`; the
 placeholder disappears as soon as the buffer contains text and is never part of
-the submitted message. Root, Steer, and quick-command control bars use the same
+the submitted message. Root, Steer, and command control bars use the same
 output width as execution and command output: the lesser of the available
-width and `TOOLANG_PROGRESS_MAX_WIDTH`. Quick-command result, help, table, and
+width and `TOOLANG_PROGRESS_MAX_WIDTH`. Command result, help, table, and
 reopened-output content align to the same output boundary. The editable input,
 Queue, and status bars use `TOOLANG_INPUTBOX_MAX_WIDTH`, falling back to the
 progress limit when unset; see [Chat](chat.md).
@@ -794,7 +794,7 @@ The absolute center anchor is the Chat agent and current workspace in
 `agent@workspace` form. The agent stays constant for the session. The
 workspace is the session workspace while idle and the active root run's
 effective workspace while running. Successful `_toolang.chdir` calls in the
-root run update this workspace; child run changes do not. `/cd` updates the
+root run update this workspace; child run changes do not. `:workdir` updates the
 session setting for subsequent runs without changing the active run's
 workspace. When the run ends, the center returns to the latest session
 workspace. Directory paths within a workspace are not shown.
@@ -844,9 +844,9 @@ cells, and keeps every header and data row on one physical line. Flexible cells
 are elided with `…` in command-specific order rather than wrapped. `-a` results
 add an `ALLOWED` column. The current model marker is the protected suffix ` *`.
 
-Every submitted slash control bar, help page, focused help result, resource
+Every submitted command control bar, help page, focused help result, resource
 table, and reopened run output uses the lesser of the terminal width and the
-configured progress maximum width. Prose wraps while table rows elide. Slash
+configured progress maximum width. Prose wraps while table rows elide. Command
 content owns no trailing blank rows; Chat adds exactly one scrollback separation
 row after the complete interaction. Scripted Chat applies the same maximum-width
 policy to its plain-text projection.

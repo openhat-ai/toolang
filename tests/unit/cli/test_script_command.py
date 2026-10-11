@@ -17,7 +17,7 @@ from toolang.base.types.model import ModelRequest
 from toolang.base.types.progress import ProgressEvent
 from toolang.cli.toolang.commands import script
 from toolang.common.layout import AgentLayout
-from toolang.execution.calls import parse_call
+from toolang.execution.input import parse_call
 from toolang.execution.records import RunRecord
 from toolang.execution.types import (
     ControlRef,
@@ -285,7 +285,7 @@ agic alternate(_: Part[]):
         [],
         [str(source), "demo"],
         prog_name="toolang",
-        stdin=StringIO(":agic alternate\n\nfrom stdin"),
+        stdin=StringIO("/agic:alternate\n\nfrom stdin"),
     )
 
     assert result == 0
@@ -578,7 +578,7 @@ def test_script_validates_before_creating_a_thread(
         return harness.setup
 
     monkeypatch.setattr("toolang.setup.SetupWatcher.refresh", current_setup)
-    override, input = parse_call(":agic missing\nInput")
+    override, input = parse_call("/agic:missing\nInput")
     try:
         with pytest.raises(ToolangError, match="Runnable not found: agic:missing"):
             asyncio.run(
@@ -1880,13 +1880,14 @@ def test_remote_script_cancellation_cancels_the_accepted_run(
     assert calls[-1] == "disconnect"
 
 
-def test_remote_script_default_returns_to_the_dynamic_runnable() -> None:
-    override = script._remote_script_override(
+def test_script_default_is_an_ordinary_runnable_name() -> None:
+    override = script._materialize_script_runnable_override(
         RunOverride(runnable="default"),
-        runnable="demo",
+        program=script.Program.from_source(
+            "agic demo():\n  pass\nflow default():\n  pass\n"
+        ),
     )
-
-    assert override == RunOverride(runnable="demo")
+    assert override == RunOverride(runnable="flow:default")
 
 
 def test_script_materializes_input_local_runnable_refs() -> None:

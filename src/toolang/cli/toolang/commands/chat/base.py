@@ -43,6 +43,7 @@ class QueuedCall:
 
     source: str
     request: RunRequest
+    workdir_overridden: bool = False
 
 
 @dataclass(frozen=True, slots=True)

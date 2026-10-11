@@ -16,7 +16,7 @@ follow the active terminal theme without fixing ordinary text colors. The
 feature succeeds when:
 
 - Input, Queue, and Code are the only public surface-background names;
-- Input is shared by the input box and Run, Steer, and Quick Command bars;
+- Input is shared by the input box and Run, Steer, and Command bars;
 - Queue is visually distinct from the adjacent Input area;
 - Code is only subtly distinct from the terminal background while retaining a
   visible block boundary on near-black themes;
@@ -36,7 +36,7 @@ In scope:
 - `TOOLANG_COLOR_SCHEME` parsing and validation;
 - a bounded OSC 10/11 foreground/background query before Prompt Toolkit starts;
 - deterministic light, dark, and theme-derived Input, Queue, and Code colors;
-- Chat input, queue, cursor, Run/Steer/Quick Command bars, tool-detail blocks,
+- Chat input, queue, cursor, Run/Steer/Command bars, tool-detail blocks,
   and fenced Markdown code backgrounds;
 - removal of fixed ordinary-text foregrounds from those Chat surfaces;
 - offline unit, pseudo-terminal, renderer, and Chat integration tests; and
@@ -64,8 +64,7 @@ tokens, in this order:
 2. `queue_background`
 3. `code_background`
 
-Input and Queue are peer areas in the user-input panel. Run, Steer, and Quick
-Command bars reuse `input_background`; they are not a fourth surface. A focused
+Input and Queue are peer areas in the user-input panel. Run, Steer, and Command bars reuse `input_background`; they are not a fourth surface. A focused
 Queue selection continues to reuse Input's background. Tool results and fenced
 Markdown code reuse `code_background`.
 
@@ -173,7 +172,7 @@ terminal's default background; no transparency claim is made.
 ## Rendering Behavior
 
 - Input background covers the complete input box and the non-accent cells of
-  Run, Steer, and Quick Command bars.
+  Run, Steer, and Command bars.
 - Queue background covers its complete width in expanded and collapsed states.
   A focused selected entry uses Input background as today.
 - Code background covers the existing padded rectangles for tool details and
@@ -182,7 +181,7 @@ terminal's default background; no transparency claim is made.
   foreground color. Dim labels and placeholders use only the terminal dim
   attribute.
 - The input cursor uses reverse video instead of fixed black/white colors.
-- Run bright-cyan, Quick Command yellow, and Steer purple accents remain fixed
+- Run bright-cyan, Command yellow, and Steer purple accents remain fixed
   branding colors. Existing red/yellow error and warning meanings remain.
 - Fenced-code syntax tokens and other established semantic styles remain named
   terminal ANSI colors; no new fixed text RGB values are introduced.

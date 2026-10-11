@@ -24,8 +24,9 @@ the current workdir, not a separate concept.
   runtime creates and mounts it. Runs fail preparation if `lab` cannot be made usable.
 - A Chat session's workdir is memory-only. At session creation, seed it from the selected
   thread's latest root Run final workdir, or from the runtime default if there is no root
-  Run. `/cd` changes the session setting. `:workdir` overrides one Run's initial workdir.
-  Run completion updates the session setting to that Run's final workdir.
+  Run. `:workdir` changes the session setting. `/workdir` overrides one Run's initial workdir.
+  A successful root Run without an explicit workdir override may update the
+  session workdir, provided the session has not changed in the meantime.
 - A Run records its initial workdir and applied `_toolang.chdir` transitions in controls.
   A later Chat session can therefore seed from durable root Run controls without persisting
   a session ID or session setting.
@@ -69,18 +70,18 @@ path syntax. Remove `_toolang.workspaces`; the per-call workspace list provides 
 
 ### Chat session and Run controls
 
-**Current:** `SessionSetting` and `RunOverride` have no workdir. Chat has slash-command
-infrastructure but no `/cd` setting. `RunControlPayload` stores the accepted `cwd`,
+**Current:** `SessionSetting` and `RunOverride` carry workdir values. Chat uses
+`:workdir` for the session and `/workdir` for one run. `RunControlPayload` stores the accepted `cwd`,
 `ChdirControlPayload` stores applied changes, and `RunStore.current_cwd()` reconstructs a
 Run's final value. New root Runs currently select a workdir only when exactly one workspace
 is configured and available. Child Runs inherit the parent's current value.
 
 **Modify:** Add a workdir field to the in-memory Chat `SessionSetting` and a per-Run workdir
-override to `RunOverride`/request parsing. Add `/cd` to update the session setting and
-`:workdir` to override a single Run. At Run acceptance, resolve override before the session
+override to `RunOverride`/request parsing. Add `:workdir` to update the session setting and
+`/workdir` to override a single Run. At Run acceptance, resolve override before the session
 setting; initialize a new session from the selected thread's latest root Run final workdir,
-otherwise from the runtime default. At Run completion, update the active session setting
-from the accepted workdir plus applied workdir controls. Do not persist session state or a
+otherwise from the runtime default. At successful root Run completion, apply its final workdir only when the Run
+had no explicit workdir override and the active session setting is unchanged. Do not persist session state or a
 session ID, and do not add an origin/cause field to Run controls. Task/chore root Runs use
 their stable work thread's latest root Run workdir when available; otherwise use the runtime
 default. Child, retry, and rerun behavior retains its current ownership/anchor semantics.
@@ -92,7 +93,7 @@ initial selection, tool descriptions, and `workspace-access` declarations.
 
 **Modify:** Update `docs/tools.md`, `docs/executor.md`, and `docs/program.md`. Add tests for
 insertion ordering; `lab` creation and guest mounts; workspace/workdir tags per Model Call;
-valid and invalid path examples; `/cd` and `:workdir` precedence; new-session seeding from
+valid and invalid path examples; `:workdir` and `/workdir` precedence; new-session seeding from
 the latest root Run; in-session updates after `_toolang.chdir`; and task/chore continuity.
 Update tests that assert removed tools, declarations, or wording. Preserve existing
 honor/preflight rule behavior while adapting it to the workspace-list declaration.
@@ -108,8 +109,9 @@ honor/preflight rule behavior while adapting it to the workspace-list declaratio
   calls reflect `_toolang.chdir` changes.
 - A new Chat session on a thread with root Run history seeds from the most recent root Run's
   final control-derived workdir. A thread with no root Run uses the runtime default.
-- `/cd` affects future requests in its session only; `:workdir` overrides one Run; the
-  completed Run's final workdir updates the active session. Session settings are not
+- `:workdir` affects future requests in its session only; `/workdir` overrides one Run; the
+  completed root Run may update the unchanged active session only without an
+  explicit workdir override. Session settings are not
   persisted or shared between live sessions.
 - fs guidance contains no unsupported path form; valid paths work and a leading-colon form
   is rejected.

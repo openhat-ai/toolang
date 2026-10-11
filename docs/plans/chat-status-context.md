@@ -57,7 +57,7 @@ agic:review          hak · tq · 1m30s      MODEL · auto
   omit the workdir path and context-window usage/capacity.
 - The workspace value is only the workspace name. Changing directories within
   one workspace does not change the label. An active root run's workspace
-  follows its effective workdir when `_toolang.chdir` changes it. `/cd` changes
+  follows its effective workdir when `_toolang.chdir` changes it. `:workdir` changes
   the session setting for subsequent runs; it does not rewrite the active run's
   snapshot. When the run ends, the center returns to the latest session
   workspace.
@@ -77,7 +77,7 @@ In scope:
   on run completion.
 - `src/toolang/cli/toolang/commands/chat/base.py` and Chat client/event paths:
   expose the effective workspace for the active root when it changes, including
-  `_toolang.chdir`, without treating session `/cd` changes as active-run
+  `_toolang.chdir`, without treating session `:workdir` changes as active-run
   changes.
 - `tests/unit/cli/test_chat_tui.py` and
   `tests/system/cli/test_chat_tui_e2e.py`: verify provenance, state transitions,
@@ -109,7 +109,7 @@ Out of scope:
    restores the latest session workspace while preserving the agent name.
 5. `_toolang.chdir` within the same workspace leaves the center workspace
    unchanged; a change to another workspace updates it while the root run is
-   active. `/cd` changes the session workspace and is reflected when idle or
+   active. `:workdir` changes the session workspace and is reflected when idle or
    after the active run ends, not by mixing it into the run context.
 6. Center labels, separators, and activity use dim styling. No workdir path,
    context usage, or active runnable label appears.

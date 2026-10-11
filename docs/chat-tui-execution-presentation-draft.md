@@ -66,7 +66,7 @@ durable schemas rather than reconstructed event deltas.
 - Defining a second chat-specific execution protocol.
 - Making the chat TUI full-screen.
 - Replacing Rich Markdown for assistant responses.
-- Replacing the existing input box, queue, slash commands, or status bar.
+- Replacing the existing input box, queue, commands, or status bar.
 - Making script and chat use one terminal renderer.
 - Requiring database reads while handling a live event.
 
@@ -93,7 +93,7 @@ The following existing chat elements remain surface-specific:
 - the startup header;
 - the full-width run control bar;
 - the full-width steer control bar;
-- slash-command results;
+- command results;
 - queued-message presentation;
 - the prompt and shortcut bar;
 - Rich Markdown assistant output.
@@ -168,7 +168,7 @@ The durable `succeeded` status is presented without translation.
 ```
 
 Root summaries begin at column zero and use `◆`, so they cannot be mistaken
-for indented step facts or child-run closures. Control bars and slash-command
+for indented step facts or child-run closures. Control bars and command
 decoration are not execution markers and keep their existing appearance.
 
 
@@ -514,8 +514,8 @@ response, before the root summary:
 
 `/show` reopens the latest result in the current chat thread; `/show run_abc`
 reopens a specific durable result. Neither form starts a new
-run. Structured slash-command results end with one blank line before the next
-prompt, matching the spacing boundary used by ordinary slash-command output.
+run. Structured command results end with one blank line before the next
+prompt, matching the spacing boundary used by ordinary command output.
 
 If the run succeeds without a text response, the footer remains visible and a
 bounded shape description may precede it:
@@ -773,7 +773,7 @@ visually correct result cannot hide stale live state.
 - A failure diagnostic is displayed once at the nearest useful visible
   boundary.
 - Start and steer bars retain their current prominence and behavior.
-- Queue, slash commands, prompt editing, and interrupt behavior do not regress.
+- Queue, commands, prompt editing, and interrupt behavior do not regress.
 - Script progress output does not change while common state is extracted.
 - Live event handling performs no durable-store reads.
 

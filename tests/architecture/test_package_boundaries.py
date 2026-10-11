@@ -201,6 +201,31 @@ def test_schema_modules_do_not_depend_on_runtime_services() -> None:
     )
 
 
+def test_submission_parser_does_not_depend_on_runtime_services() -> None:
+    path = SOURCE_ROOT / "execution" / "input.py"
+    context = _module_context(path)
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    violations: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Import, ast.ImportFrom)):
+            continue
+        for target in _import_targets(node, context):
+            if not target.startswith("toolang."):
+                continue
+            if target == "toolang.execution.types" or target.startswith(
+                ("toolang.base.", "toolang.common.", "toolang.lang.")
+            ):
+                continue
+            violations.append(
+                f"{path.relative_to(SOURCE_ROOT)}:{node.lineno} -> {target}"
+            )
+
+    assert not violations, (
+        "Submission syntax must remain independent of runtime and CLI services:\n"
+        + "\n".join(violations)
+    )
+
+
 def test_runtime_toolset_depends_only_on_base_contracts() -> None:
     violations: list[str] = []
     path = SOURCE_ROOT / "execution" / "tools" / "_toolang.py"

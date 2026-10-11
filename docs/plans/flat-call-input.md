@@ -41,8 +41,7 @@ class Output:
 copies the supplied mapping, exposes the read-only mapping interface, and
 serializes directly as an object. It has no primary/named compartments or
 wrapper field. `RunnableInput` is a type alias with no independent validation
-or serialization. Do not retain `RunnableInputRaw`, `NamedInputSource`, or
-`NamedInputSources`.
+or serialization. Do not retain separate primary/named input wrapper types.
 
 The type parameter distinguishes unresolved Content strings from evaluated
 values. Source resolution evaluates Content once; direct-value calls never
@@ -81,7 +80,7 @@ dimension. Their responsibilities remain distinct.
 - Collectors reject duplicate assignments before constructing the mapping.
   Both HTTP input endpoints reject duplicate input members before dictionaries
   discard them. Ordinary nested JSON values retain their existing contract.
-- Preserve existing policy-prefix and conflicting-input-source checks.
+- Preserve existing run-prefix and conflicting-input-source checks.
 
 ## Boundary Definitions
 
