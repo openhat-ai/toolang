@@ -7197,6 +7197,48 @@ def test_terminal_focus_reports_preserve_chat_draft_and_status(
     asyncio.run(exercise())
 
 
+@pytest.mark.parametrize("queued", [False, True])
+@pytest.mark.parametrize("override_workdir", [None, "lab://session", "lab://temporary"])
+def test_chat_tui_keeps_run_workdir_overrides_out_of_session_settings(
+    queued: bool, override_workdir: str | None
+) -> None:
+    class WorkdirClient(FakeClient):
+        def build_request(self, thread_id, override, input, setting):
+            return build_run_request(
+                thread_id=thread_id,
+                request_id="term_workdir",
+                input=input,
+                override=override,
+                setting=setting,
+                surface=self.initial_setting(),
+                resolve_model_ref=lambda ref: ref,
+                resolve_runnable_ref=lambda ref: ref,
+            )
+
+    client = WorkdirClient()
+    app = tui.ChatTuiApp(
+        thread_id="term_workdir",
+        setting=replace(client.initial_setting(), workdir="lab://session"),
+        input_history=None,
+        client=client,
+    )
+    if queued:
+        app.active_run_id = "run_busy"
+    source = f"/workdir {override_workdir}\nhello" if override_workdir else "hello"
+    assert app.handle_submit(source)
+    if queued:
+        if override_workdir is not None:
+            assert app.handle_submit(f":workdir {override_workdir}")
+        app.active_run_id = None
+        app.submit_run(app.queue.pop())
+    expected = app.setting.workdir if override_workdir else "lab://changed"
+
+    app._handle_run_state(RunAccepted("run_workdir"))
+    app._handle_run_state(RunWorkdirUpdated("run_workdir", "lab://changed"))
+
+    assert app.setting.workdir == expected
+
+
 def test_chat_tui_seeds_and_updates_session_workdir() -> None:
     class WorkdirClient(FakeClient):
         def initial_workdir(self, thread_id: str | None) -> str:

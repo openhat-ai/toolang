@@ -1042,7 +1042,9 @@ class ChatTuiApp:
         except (ToolangError, ValueError) as exc:
             self.status_bar.set_error(friendly_error(str(exc)))
             return False
-        queued = QueuedCall(source, request)
+        queued = QueuedCall(
+            source, request, workdir_overridden=override.workdir is not None
+        )
         if self.active_run_id is not None or self.run_in_flight.is_set():
             self.queue.append(queued)
             self.queue_panel.reconcile()
@@ -1260,7 +1262,7 @@ class ChatTuiApp:
     def submit_run(self, call: QueuedCall) -> None:
         self._status_run_id = None
         self._active_run_workdir_revision = self._session_workdir_revision
-        self._active_run_workdir_matches_session = (
+        self._active_run_workdir_matches_session = not call.workdir_overridden and (
             call.request.workdir,
             call.request.workdir_base,
         ) == (self.setting.workdir, self.setting.workdir_base)

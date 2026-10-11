@@ -411,7 +411,10 @@ def _chat_interactive_scripted_local(
             continue
 
         session = context.get_setting()
-        workdir_matches_session = (request.workdir, request.workdir_base) == (
+        workdir_matches_session = override.workdir is None and (
+            request.workdir,
+            request.workdir_base,
+        ) == (
             session.workdir,
             session.workdir_base,
         )

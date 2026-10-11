@@ -579,9 +579,9 @@ def test_scripted_chat_creates_one_thread_for_the_first_submission(
     ]
 
 
-@pytest.mark.parametrize("override_workdir", [False, True])
+@pytest.mark.parametrize("override_workdir", [None, "lab://session", "lab://temporary"])
 def test_scripted_chat_keeps_run_workdir_overrides_out_of_session_settings(
-    monkeypatch, override_workdir: bool
+    monkeypatch, override_workdir: str | None
 ) -> None:
     settings = []
 
@@ -600,7 +600,7 @@ def test_scripted_chat_keeps_run_workdir_overrides_out_of_session_settings(
             on_state(RunWorkdirUpdated("run_test", "lab://changed"))
 
     client = Client()
-    first = "/workdir lab://temporary\nhello" if override_workdir else "hello"
+    first = f"/workdir {override_workdir}\nhello" if override_workdir else "hello"
     inputs = iter((first, "again", "/exit"))
     monkeypatch.setattr("builtins.input", lambda _prompt: next(inputs))
     chat._chat_interactive_scripted_local(
