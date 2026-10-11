@@ -9,8 +9,8 @@ OSC titles and pane-local marks: no automatic placement, reuse, splitting,
 focus/layout changes, session/window naming, or tmux server startup. Users can
 build their own tmux scripts from the marks.
 
-Marks cover Chat, Talk, and continuous Top. Titles also cover foreground Serve,
-Script Run, Retry, and Rerun. Concurrent draft/submission behavior, job-control
+Marks and titles cover Chat, Talk, continuous Top, foreground Serve, Script Run,
+Retry, and Rerun. Concurrent draft/submission behavior, job-control
 handoff, pickers, and terminal configuration remain outside scope.
 
 This replaces the relevant placement, naming, metadata, and title rules in
@@ -23,10 +23,11 @@ All options are strings named `@toolang_<field>`. Use `convo`, not `conversation
 
 | Field | Value |
 | --- | --- |
-| `kind` | `chat`, `talk`, or `top` |
+| `kind` | `chat`, `talk`, `top`, `serve`, `run`, `rerun`, or `retry` |
 | `root` | Resolved absolute Toolang root |
-| `agent` | Bare agent name for Chat and single-agent Top |
+| `agent` | Resolved bare agent name for Chat, agent Top/Serve, and Run/Retry/Rerun; empty for Talk, team Top, and Hub Serve |
 | `thread` | Full Chat thread ID once created |
+| `run` | Full current execution ID for Run/Retry/Rerun, once normally allocated or accepted |
 | `convo` | Full canonical Talk conversation ID, including pending DMs |
 | `context` | Existing opaque Talk connection identity, shared by team Top |
 
@@ -35,14 +36,18 @@ Reuse Talk's existing context hash over root, backend identity, viewer, and
 endpoint without changing its draft key. Inapplicable or unknown fields are
 empty strings. Top describes its scope, not its selected row. Titles are never
 identity fields; several panes may describe the same content.
+Serve is distinguished by `agent`: populated for an agent, empty for the root's
+Hub. Execution marks track the actual run, while Retry/Rerun titles retain the
+source ID; never allocate execution state solely to populate marks.
 
-- The foreground UI captures its tmux server and pane ID and uses libtmux.
-  Require TTY stdin/stdout and a reachable pane. Retain `TOOLANG_TMUX` opt-out
+- The foreground command captures its tmux server and pane ID and uses libtmux.
+  Apply the publication exclusions below and require a reachable pane.
+  Retain `TOOLANG_TMUX` opt-out
   spellings and `TOOLANG_TMUX_DEBUG`; opt-out affects marks, not OSC titles.
 - Clear `kind`, write every other field, then publish `kind` last. A required
   write failure leaves the pane unpublished. New Chat starts with an empty
-  thread field and updates it at normal lazy creation; never create a thread
-  just for routing or marking.
+  thread field and updates it at normal lazy creation; execution commands
+  similarly update `run` from normal local allocation or remote acceptance.
 - Deduplicate and order writes off the UI loop. On normal/error exit, cancel
   queued writes, remove `kind` first, then the other owned fields with bounded
   cleanup. Failures are nonfatal; do not restore stale marks. One foreground
@@ -128,8 +133,8 @@ neither marks nor stored titles; a prefix sanitized to empty stays empty.
 - Emit and flush only `ESC ] 0 ; <title> BEL` through the foreground UI/status
   stream. Require TTY input, output, and presentation stream. Scripted Chat,
   Talk directory/send, Top snapshots, quiet execution, files/pipes/JSON,
-  background commands, and internal service children emit neither title nor
-  cleanup sequences. The outer CLI owns publication.
+  background commands, and internal service children publish no marks, titles,
+  or title cleanup sequences. The outer CLI owns publication.
 - Use common safety filtering: strip terminal escapes, C0/DEL/C1 controls,
   Unicode line separators, and invalid surrogates. Normalize generated label
   whitespace separately; never normalize prefix spaces after concatenation.
@@ -165,8 +170,9 @@ iTerm2 `-CC` uses the same application output contract.
   `talk/{__init__,tui}.py`: remove placement; preserve lazy thread creation and
   conversation selection; connect marks/titles. Keep Talk labels in `talk/status.py`.
 - `cli/toolang/commands/{top,runtime,hub,script,thread}.py` and
-  `cli/common/activity.py`: title lifetimes/options. Public agent Serve is
-  `runtime.run`; internal `runtime.serve` does not publish.
+  `cli/common/activity.py`: mark/title lifetimes and options, including normal
+  run allocation/acceptance hooks. Public agent Serve is `runtime.run`;
+  internal `runtime.serve` does not publish.
 - Paths above are under `src/toolang/`. Update relevant CLI/config/title tests,
   `docs/{chat,messaging,api}.md`, and the implementation changelog entry.
 
@@ -178,6 +184,8 @@ iTerm2 `-CC` uses the same application output contract.
 2. Sibling/moved panes retain independent marks and titles. Legacy inherited
    options cannot supply identity. Normal/error/queued-write cleanup, opt-out,
    unreachable tmux, and publication failures follow the lifecycle above.
+   Every command kind publishes its applicable fields; both Serve scopes and
+   local/remote execution ID updates are covered without extra state creation.
 3. Every title row, Chat lookup state, Talk label change, and excluded command
    mode produces the expected bytes. An isolated tmux test verifies `pane_title`
    updates without changing explicit container names or user title settings.
