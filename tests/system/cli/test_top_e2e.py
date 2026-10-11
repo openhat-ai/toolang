@@ -362,7 +362,7 @@ def test_top_terminal_grid_resize_and_markdown_pages(tmp_path, local):
         )
         # Paging moves only Details; the selected run and table stay in place.
         table = [
-            line[line.index("term_") :] for line in lines if line.startswith("alice + ")
+            line[line.index("chat_") :] for line in lines if line.startswith("alice + ")
         ]
         for _ in range(12):
             pane.send_keys("PageDown", enter=False)
@@ -370,7 +370,7 @@ def test_top_terminal_grid_resize_and_markdown_pages(tmp_path, local):
         assert any("Finished." in line for line in lines)
         assert "F1Help" in lines[-1]
         assert [
-            line[line.index("term_") :] for line in lines if line.startswith("alice + ")
+            line[line.index("chat_") :] for line in lines if line.startswith("alice + ")
         ] == table
         assert not any("```" in line for line in lines)
         pane.send_keys("C-p", enter=False)

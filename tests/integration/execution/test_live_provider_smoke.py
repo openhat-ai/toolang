@@ -97,7 +97,7 @@ class _LiveExecution:
     async def run(
         self, runnable: str, marker: str, *, thread: str | None = None
     ) -> tuple[str, str]:
-        thread = thread or self.threads.create(prefix=ThreadPrefix.TERM)
+        thread = thread or self.threads.create(prefix=ThreadPrefix.CHAT)
         runnable_name, runnable_kind = parse_runnable_ref(runnable)
         declaration = resolve_runnable(
             self.state.modules["agent"],
@@ -166,7 +166,7 @@ def test_real_provider_executes_requested_agic_once_with_chat_history(
                 runtime.setup,
                 limits=replace(runtime.setup.limits, agic_model_calls=5, time=120),
             )
-            thread = runtime.threads.create(prefix=ThreadPrefix.TERM)
+            thread = runtime.threads.create(prefix=ThreadPrefix.CHAT)
             await runtime.run(
                 "<entry:1>",
                 "run agic:test",

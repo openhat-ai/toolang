@@ -57,8 +57,9 @@ A dedicated scheduler thread owns the watcher, due heap, RRULE timers, and chore
 transitions. It submits to the executor's loop, where run lifecycle and controls
 remain owned. Chore and run writes use the same database but separate
 transactions; durable claims bridge acceptance and scheduler completion.
-The `chore` handler may be an agic or flow, falling back to the normal runnable
-when absent. No Task or Job entity is involved.
+Chore selects an explicit runnable call first, then a named `chore` handler,
+the configured default runnable, or the unnamed entry. The handler may be an
+agic or flow. No Task or Job entity is involved.
 
 ## Threads and observation
 

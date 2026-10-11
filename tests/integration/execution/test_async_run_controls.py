@@ -46,7 +46,7 @@ agic child(_: Text) -> Text:
         async with harness:
             parent = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="parent",
                     primary=(TextPart("input"),),
                 )
@@ -140,7 +140,7 @@ agic child() -> Text:
         async with harness:
             parent = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="parent",
                 )
             )

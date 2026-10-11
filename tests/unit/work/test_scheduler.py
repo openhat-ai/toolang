@@ -2,6 +2,7 @@ from toolang.common.ids import chore_id
 
 import asyncio
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import datetime, timezone
 from functools import partialmethod
 import threading
@@ -531,5 +532,32 @@ def test_chore_without_handler_or_entry_fails(tmp_path) -> None:
         (chore,) = load_chores(harness.setup.layout)
         with pytest.raises(ToolangError, match="or unnamed entry"):
             _scheduler(harness)._build_spec(chore)
+    finally:
+        harness.store.close()
+
+
+@pytest.mark.parametrize("specialized", [False, True])
+@pytest.mark.parametrize("explicit", [False, True])
+def test_chore_handler_falls_back_to_configured_runnable(
+    tmp_path, specialized, explicit
+):
+    source = "agic review:\n  {{_}}\nagic other:\n  {{_}}\n"
+    if specialized:
+        source += "agic chore:\n  {{_}}\n"
+    harness = ExecutionHarness.create(tmp_path, source=source, responses=[])
+    setup = replace(
+        harness.setup,
+        defaults=replace(harness.setup.defaults, runnable="agic:review"),
+    )
+    _create_chore(
+        AuthoredChores(setup.layout.home),
+        "entry",
+        ("/agic:other\n" if explicit else "") + "Handle this request.",
+    )
+    try:
+        (chore,) = load_chores(setup.layout)
+        spec = _scheduler(harness)._build_spec(chore, setup=setup)
+        expected = "other" if explicit else "chore" if specialized else "review"
+        assert spec.bindings.runnable == f"agic:{expected}"
     finally:
         harness.store.close()

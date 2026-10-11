@@ -254,7 +254,7 @@ def test_local_client_resolves_fallback_input_and_policy_precedence(
 
     async def scenario() -> None:
         await client.connect()
-        thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+        thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
         fallback_handle = await client.run(
             _request(
                 thread,
@@ -332,7 +332,7 @@ def test_local_client_rejects_preparation_without_persisting_a_run(
 
     async def scenario() -> None:
         await client.connect()
-        thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+        thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
         request = _request(
             thread,
             commands=(RunCommand("default", "runnable", "agic:not_found"),),
@@ -415,7 +415,7 @@ prompt rewrite:
 
     async def scenario() -> None:
         await client.connect()
-        thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+        thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
         source = await (
             await client.run(
                 _request(
@@ -541,7 +541,7 @@ def test_executor_rejects_retry_when_recorded_state_is_unavailable_without_mutat
 
     async def scenario() -> None:
         await client.connect()
-        thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+        thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
         source = await (
             await client.run(_request(thread, request_id="source_request"))
         ).wait()
@@ -594,7 +594,7 @@ def test_local_client_rejects_retry_on_a_different_sandbox_without_mutation(
 
     async def scenario() -> None:
         await client.connect()
-        thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+        thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
         source = await (
             await client.run(_request(thread, request_id="source_request"))
         ).wait()
@@ -657,7 +657,7 @@ flow chat(_: Part[]) -> Part[]:
 
     async def scenario() -> None:
         await client.connect()
-        thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+        thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
         handle = await client.run(
             _request(
                 thread,
@@ -694,7 +694,7 @@ def test_local_client_returns_caller_facing_steer_and_cancel_controls(
 
     async def scenario() -> None:
         await client.connect()
-        thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+        thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
         handle = await client.run(_request(thread))
         await asyncio.wait_for(gate.wait_until_entered(), timeout=1)
 
@@ -758,7 +758,7 @@ def test_local_client_disconnect_is_idempotent_without_stopping_executor(
     client = LocalRunClient(harness.executor)
 
     async def scenario() -> None:
-        thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+        thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
         with pytest.raises(RuntimeError, match="run client is disconnected"):
             await client.run(_request(thread, request_id="before_connect"))
 

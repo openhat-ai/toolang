@@ -326,7 +326,7 @@ def test_active_run_reads_and_repairs_latest_file_without_switching_revision(tmp
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             running = harness.executor.run(
                 harness.run_spec(thread=thread, runnable="inspect")
             )

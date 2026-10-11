@@ -52,7 +52,7 @@ def test_run_preserves_one_call_with_complete_input_and_output(
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             run = await harness.executor.run(
                 harness.run_spec(thread=thread, runnable="main", named={"_": value})
             )
@@ -144,7 +144,7 @@ def test_outer_arrays_are_identical_across_boundaries(
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             run = await harness.executor.run(
                 harness.run_spec(thread=thread, runnable="main", named={"_": items})
             )
@@ -191,7 +191,7 @@ def test_open_json_nonarrays_fail_inside_step_without_child_calls(
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             run = await harness.executor.run(
                 harness.run_spec(thread=thread, runnable="main")
             )
@@ -215,7 +215,7 @@ def test_part_arrays_select_outer_parts_and_keep_their_type(tmp_path, statement)
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             run = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
@@ -250,7 +250,7 @@ def test_singleton_json_reduce_keeps_the_seed_without_a_child_call(tmp_path, ite
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             run = await harness.executor.run(
                 harness.run_spec(thread=thread, runnable="main", named={"_": [item]})
             )
@@ -285,7 +285,7 @@ def test_retry_restores_nested_arrays_and_selected_item_provenance(tmp_path):
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             run = await harness.executor.run(
                 harness.run_spec(
                     thread=thread, runnable="main", named={"_": [["a", "b"], ["c"]]}
@@ -329,7 +329,7 @@ def test_retry_preserves_committed_output_when_later_result_is_discarded(
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             run = await harness.executor.run(
                 harness.run_spec(thread=thread, runnable="main")
             )
@@ -387,7 +387,7 @@ def test_empty_reduce_returns_typed_initializer_without_child_calls(
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             run = await harness.executor.run(
                 harness.run_spec(
                     thread=thread, runnable="main", named={"_": [], "initial": initial}

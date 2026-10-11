@@ -2632,7 +2632,7 @@ agic reply(_: Part[]) -> Part[]:
     monkeypatch.setattr(thread_commands, "acquire_run_client", run_client)
 
     async def run_source():
-        thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+        thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
         source = await harness.executor.run(
             harness.run_spec(
                 thread=thread,
@@ -2750,7 +2750,7 @@ agic reply(_: Part[]) -> Part[]:
     runtime_selections: list[tuple[str | None, Path | None]] = []
 
     async def run_source():
-        thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+        thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
         source = await harness.executor.run(
             harness.run_spec(
                 thread=thread,
@@ -2868,7 +2868,7 @@ def test_thread_fork_and_rewind_use_thread_manager_semantics(
         first = project_run_start(
             store,
             run_id="run_first",
-            thread_id="term_source",
+            thread_id="chat_source",
             origin="chat",
             input=Message.user("First"),
         )
@@ -2876,7 +2876,7 @@ def test_thread_fork_and_rewind_use_thread_manager_semantics(
         second = project_run_start(
             store,
             run_id="run_second",
-            thread_id="term_source",
+            thread_id="chat_source",
             origin="chat",
             input=Message.user("Second"),
         )
@@ -2885,7 +2885,7 @@ def test_thread_fork_and_rewind_use_thread_manager_semantics(
         store.close()
 
     requests = hosted_agent(layout)
-    fork = _invoke(root, "alice", "fork", "term_source")
+    fork = _invoke(root, "alice", "fork", "chat_source")
 
     assert fork.exit_code == 0
     words = fork.stdout.strip().split()
@@ -2900,17 +2900,17 @@ def test_thread_fork_and_rewind_use_thread_manager_semantics(
     assert forked is not None
     assert [run.id for run in forked.runs] == ["run_first", "run_second"]
 
-    rewind = _invoke(root, "alice", "rewind", "term_source")
+    rewind = _invoke(root, "alice", "rewind", "chat_source")
 
     assert rewind.exit_code == 0
-    assert rewind.stdout.strip() == "rewound term_source before run_second"
+    assert rewind.stdout.strip() == "rewound chat_source before run_second"
     assert [path for method, path in requests if method == "POST"] == [
-        "/api/v1/threads/term_source/fork",
-        "/api/v1/threads/term_source/rewind",
+        "/api/v1/threads/chat_source/fork",
+        "/api/v1/threads/chat_source/rewind",
     ]
     reopened = RunStore(layout.run_store)
     try:
-        rewound = RunHistory(reopened).get_thread("term_source")
+        rewound = RunHistory(reopened).get_thread("chat_source")
     finally:
         reopened.close()
     assert rewound is not None
@@ -2930,7 +2930,7 @@ def test_thread_commands_anchor_on_roots_with_child_runs(
         run = project_run_start(
             store,
             run_id="run_parent",
-            thread_id="term_source",
+            thread_id="chat_source",
             origin="chat",
             input=Message.user("Parent"),
         )
@@ -2948,19 +2948,19 @@ def test_thread_commands_anchor_on_roots_with_child_runs(
         child = project_run_start(
             store,
             run_id="run_child",
-            thread_id="term_source",
+            thread_id="chat_source",
             parent=parent_step.ref,
             origin="chat",
             input=Message.user("Child"),
         )
         project_run_end(store, run_id=child.id)
         project_run_end(store, run_id=run.id)
-        thread_id = "term_source"
+        thread_id = "chat_source"
         if inherited:
-            thread_id = "term_branch"
+            thread_id = "chat_branch"
             store.fork_thread(
                 thread_id=thread_id,
-                source="term_source",
+                source="chat_source",
                 anchor=run.id,
                 request_id=None,
                 created_at="2026-01-01T00:00:03Z",
@@ -3000,7 +3000,7 @@ def test_thread_commands_anchor_on_roots_with_child_runs(
             assert [
                 item.id
                 for item in reopened.list_thread_history_chronological(
-                    thread_id="term_source"
+                    thread_id="chat_source"
                 )
             ] == [run.id, child.id]
     finally:

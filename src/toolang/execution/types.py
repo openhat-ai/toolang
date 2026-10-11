@@ -2005,7 +2005,7 @@ ThreadPeerType = Literal["user", "agent"]
 
 
 class ThreadPrefix(StrEnum):
-    """Canonical prefixes, including historical thread identities."""
+    """Prefixes for driver, worker, and script contexts."""
 
     CHAT = "chat"
     TALK = "talk"
@@ -2013,9 +2013,6 @@ class ThreadPrefix(StrEnum):
     WORKER = "worker"
 
     SCRIPT = "script"
-    WEB = "web"
-    TERM = "term"
-    SPAWN = "spawn"
 
 
 def valid_execution_id(value: object) -> bool:

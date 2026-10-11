@@ -71,7 +71,7 @@ def test_run_history_projects_fork_and_rewind_from_one_snapshot(
     ids = IdIssuer(tmp_path / "ids.json", agent_name="alice")
     manager = ThreadManager(store, ids)
     try:
-        source = manager.create(prefix=ThreadPrefix.TERM)
+        source = manager.create(prefix=ThreadPrefix.CHAT)
         first = project_run_start(
             store,
             run_id="run_first",

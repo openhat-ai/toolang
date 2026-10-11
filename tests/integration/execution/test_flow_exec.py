@@ -70,7 +70,7 @@ def test_repeated_handoffs_do_not_reload_step_history(tmp_path, monkeypatch, kin
         async with harness:
             root = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="stage_0",
                     named={"_": "work"},
                 )
@@ -118,7 +118,7 @@ def test_flow_handoffs_allow_scheduled_cancellation(tmp_path, monkeypatch, timin
         async with harness:
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="stage_0",
                     named={"_": "work"},
                 ),
@@ -153,7 +153,7 @@ agic successor(_: Text) -> Text:
         async with harness:
             root = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="grow",
                     named={"_": "work", "unused": "unrelated"},
                 )
@@ -198,7 +198,7 @@ agic finish() -> Text:
         async with harness:
             root = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="parent",
                 ),
                 tracer=tracer,
@@ -267,7 +267,7 @@ agic successor(_: Text) -> Text:
     async def scenario():
         async with harness:
             spec = harness.run_spec(
-                thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                 runnable="grow",
                 named={"_": "work"},
             )
@@ -314,7 +314,7 @@ def test_rejected_child_self_exec_leaves_no_handoff(tmp_path):
         async with harness:
             root = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="parent",
                 )
             )
@@ -395,7 +395,7 @@ agic successor() -> Text:
             monkeypatch.setattr(tracer, "on_event", on_event)
             root = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="grow",
                 ),
                 tracer=tracer,
@@ -450,7 +450,7 @@ flow final():
         async with harness:
             root = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="grow",
                 ),
                 tracer=tracer,
@@ -533,7 +533,7 @@ agic successor() -> Text:
         async with harness:
             root = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="grow",
                 )
             )
@@ -566,7 +566,7 @@ agic successor() -> Text:
         async with harness:
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="grow",
                 )
             )
@@ -620,7 +620,7 @@ agic successor() -> Text:
             root = await harness.executor.run(
                 replace(
                     harness.run_spec(
-                        thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                        thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                         runnable="grow",
                         limits=RunLimits(tokens=10),
                     ),
@@ -665,7 +665,7 @@ flow grow(_: Text) -> Text:
         async with harness:
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="grow",
                     named={"_": "work"},
                 )
@@ -714,7 +714,7 @@ flow evolve() -> Text:
         async with harness:
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="grow",
                 )
             )
@@ -768,7 +768,7 @@ agic successor() -> Text:
         async with harness:
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="grow",
                 )
             )

@@ -13,6 +13,55 @@ from toolang.work.store import ChoreStore, next_activation
 NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
 
+@pytest.mark.parametrize(
+    "schedule",
+    [None, "DTSTART:20260102T000000Z\nRRULE:FREQ=DAILY"],
+)
+@pytest.mark.parametrize("edit_minutes", [1, 2])
+def test_recovery_does_not_restore_a_replaced_schedule(
+    tmp_path, schedule, edit_minutes
+):
+    store = ChoreStore(tmp_path / "runs.db")
+    definition = _chore()
+    changed = replace(definition, schedule=schedule)
+    try:
+        store.reconcile(chores=[definition], now=NOW)
+        store.claim(
+            chore=definition,
+            trigger="schedule",
+            run_id="run_unaccepted",
+            now=NOW + timedelta(minutes=1),
+        )
+        (updated,) = store.reconcile(
+            chores=[changed], now=NOW + timedelta(minutes=edit_minutes)
+        )
+    finally:
+        store.close()
+
+    store = ChoreStore(tmp_path / "runs.db")
+    try:
+        recovered = store.release_claim(
+            run_id="run_unaccepted", now=NOW + timedelta(minutes=3)
+        )
+        assert recovered is not None
+        assert recovered.next_scheduled_at == updated.next_scheduled_at
+        assert recovered.active_run_id is None
+        if schedule is None:
+            assert recovered.status == "done"
+            assert next_activation(recovered) is None
+        else:
+            due = NOW + timedelta(days=1)
+            assert next_activation(recovered) == (due, "schedule")
+            assert (
+                store.claim(
+                    chore=changed, trigger="schedule", run_id="run_new", now=due
+                ).active_due_at
+                == due.isoformat()
+            )
+    finally:
+        store.close()
+
+
 def _once() -> Chore:
     return Chore(
         name="review",

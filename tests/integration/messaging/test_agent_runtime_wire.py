@@ -170,7 +170,7 @@ def test_inflight_message_survives_hub_restart_and_scoped_fanout(
                     )
                 local = await harness.executor.run(
                     harness.run_spec(
-                        thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                        thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                         runnable="flow:local",
                         primary=(TextPart("local"),),
                     )

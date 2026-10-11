@@ -1,6 +1,18 @@
 from __future__ import annotations
 
 from toolang.catalog.chore import ChoreFile
+import pytest
+
+from toolang.lang.ast import Program, parse_chore_declarations
+from toolang.lang.errors import ToolangValidationError
+
+
+@pytest.mark.parametrize("parse", [Program.from_source, parse_chore_declarations])
+def test_inline_chore_rejects_invalid_schedule_like_markdown(parse):
+    with pytest.raises(ValueError):
+        ChoreFile.parse("---\nschedule: not-a-rule\n---\nClean up.", name="cleanup")
+    with pytest.raises(ToolangValidationError, match="schedule"):
+        parse("chore cleanup:\n  schedule = not-a-rule\n  Clean up.\n")
 
 
 def test_name_identity_shadowing_and_collision(tmp_path, monkeypatch):

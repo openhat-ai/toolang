@@ -573,7 +573,7 @@ def test_real_history_calls_are_ordinary_steps_and_replay_without_reading_again(
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             run = await harness.executor.run(
                 harness.run_spec(thread=thread, runnable="task"), tracer=tracer
             )
@@ -705,7 +705,7 @@ def test_history_read_can_be_interrupted_without_late_result_delivery(
         async with harness:
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="task",
                 ),
                 tracer=tracer,

@@ -139,7 +139,7 @@ def test_context_selection_keeps_data_and_current_input_out_of_instructions(
         async with harness:
             run = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="chat",
                     primary=(TextPart("Current user objective."),),
                 ),
@@ -192,7 +192,7 @@ def test_cross_run_baselines_do_not_duplicate_historical_contributions(
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             runs = [await _run(harness, thread, f"input {i}", tracer) for i in range(3)]
             assert all(run.status == "succeeded" for run in runs)
             assert [
@@ -262,7 +262,7 @@ flow job(_: Part[]) -> Part[]:
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             await _run(harness, thread, "seed", tracer)
             first = await _run(harness, thread, "first job", tracer, runnable="job")
             await _run(harness, thread, "second job", tracer, runnable="job")
@@ -360,7 +360,7 @@ agic next() -> Part[]:
     async def scenario():
         nonlocal horizon
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             await _run(harness, thread, "first", tracer)
             second = await _run(harness, thread, "second", tracer)
             horizon = _summary(harness, thread, second.id)
@@ -454,7 +454,7 @@ def test_compact_preparation_survives_failed_begin(
     async def scenario():
         nonlocal target
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             await _run(harness, thread, "first", tracer)
             second = await _run(harness, thread, "second", tracer)
             horizon = _summary(harness, thread, second.id)
@@ -541,7 +541,7 @@ def test_each_call_records_context_without_rerendering_history(
     async def scenario():
         nonlocal horizon
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             first = await _run(harness, thread, "first", tracer)
             second = await _run(harness, thread, "second", tracer)
             horizon = _summary(harness, thread, second.id)
@@ -615,7 +615,7 @@ def test_invalid_compact_coverage_never_dispatches(
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             await _run(harness, thread, "first", tracer)
             second = await _run(harness, thread, "second", tracer)
             current = harness.ids.issue_run()
@@ -672,7 +672,7 @@ agic describe() -> Text:
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             await _run(harness, thread, "first", tracer)
             second = await _run(harness, thread, "second", tracer)
             horizon = _summary(harness, thread, second.id)
@@ -706,7 +706,7 @@ def test_fork_and_later_rewind_preserve_old_model_calls(tmp_path: Path) -> None:
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             await _run(harness, thread, "first", tracer)
             second = await _run(harness, thread, "second", tracer)
             fork = harness.threads.fork(thread_id=thread)
@@ -748,7 +748,7 @@ def test_publication_preserves_recall_without_reading_state_during_replay(
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             await _run(harness, thread, "first", tracer)
             handle = harness.executor.run(
                 harness.run_spec(
@@ -848,7 +848,7 @@ agic child() -> Text:
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             await _run(harness, thread, "first", tracer)
             second = await _run(harness, thread, "second", tracer)
             old = _summary(harness, thread, second.id, summary="Old far.")
@@ -928,7 +928,7 @@ def test_initial_horizon_and_recall_selection(
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             first = await _run(harness, thread, "first", tracer)
             second = await _run(harness, thread, "second", tracer)
             horizon = _summary(
@@ -1026,7 +1026,7 @@ def test_compact_adoption_replaces_history_and_preserves_now(tmp_path: Path) -> 
     async def scenario():
         nonlocal horizon
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             await _run(harness, thread, "first", tracer)
             second = await _run(harness, thread, "second", tracer)
             horizon = _summary(harness, thread, second.id)
@@ -1133,7 +1133,7 @@ def test_compaction_between_tools_resets_the_last_model_baseline(tmp_path):
     async def scenario():
         nonlocal horizon
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             await _run(harness, thread, "old input", tracer)
             recent = await _run(harness, thread, "recent input", tracer)
             horizon = _summary(harness, thread, recent.id)
@@ -1195,7 +1195,7 @@ def test_compaction_excludes_the_covered_roots_terminal_reply(tmp_path, summary)
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             await _run(harness, thread, "covered input", tracer)
             retained = await _run(harness, thread, "retained input", tracer)
             horizon = _summary(harness, thread, retained.id, summary=summary)
@@ -1235,7 +1235,7 @@ def test_compaction_keeps_terminal_tool_exchanges_with_their_root(tmp_path):
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             roots = []
             for text in ("covered", "retained"):
                 root = await harness.executor.run(
@@ -1314,7 +1314,7 @@ def test_incomplete_catalog_reaches_adapter_and_records_resolved_controls(
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             spec = replace(
                 harness.run_spec(
                     thread=thread, runnable="seed", primary=(TextPart("hello"),)
@@ -1355,7 +1355,7 @@ def test_auto_output_does_not_reinherit_a_cleared_default(tmp_path):
         async with harness:
             spec = replace(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="seed",
                     primary=(TextPart("hello"),),
                 ),
@@ -1418,7 +1418,7 @@ def test_automatic_output_leaves_room_after_reasoning(
             for demand in (4096, None):
                 spec = replace(
                     harness.run_spec(
-                        thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                        thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                         runnable="seed",
                         primary=(TextPart("hello"),),
                     ),
@@ -1480,7 +1480,7 @@ def test_authored_output_and_explicit_demand_precede_the_fallback(
         async with harness:
             spec = replace(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="seed",
                     primary=(TextPart("hello"),),
                 ),
@@ -1513,7 +1513,7 @@ def test_impossible_reservation_names_route_and_output_source(tmp_path, demand):
         async with harness:
             spec = replace(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="seed",
                     primary=(TextPart("hello"),),
                 ),

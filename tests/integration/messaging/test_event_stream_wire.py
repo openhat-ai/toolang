@@ -88,7 +88,7 @@ def test_recovery_keeps_active_snapshot_and_live_suffix_after_slow_history(
             await publisher.register("human:owner")
             active = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="slow",
                     primary=(TextPart("input"),),
                 )
@@ -380,7 +380,7 @@ def test_hub_event_fanout_recovery_and_top_once(
             try:
                 await exporter.recover("initial")
                 initial, _ = await snapshot()
-                thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+                thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
                 record = await harness.executor.run(
                     harness.run_spec(
                         thread=thread, runnable="example", primary=(TextPart("input"),)

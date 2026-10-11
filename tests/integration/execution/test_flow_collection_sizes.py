@@ -40,7 +40,7 @@ flow main() -> {output_type}:
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             run = await harness.executor.run(
                 harness.run_spec(thread=thread, runnable="main")
             )

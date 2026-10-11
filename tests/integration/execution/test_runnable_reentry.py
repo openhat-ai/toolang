@@ -78,7 +78,7 @@ def test_flow_statements_reject_active_targets_even_after_publication(
         async with harness:
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="outer",
                     named={"_": ["seed"] if input_type == "Text[]" else "seed"},
                 ),
@@ -174,7 +174,7 @@ flow outer() -> Text[]:
         async with harness:
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="outer",
                 ),
                 tracer=tracer,
@@ -269,7 +269,7 @@ flow() -> Text:
         async with harness:
             root = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="worker",
                 )
             )

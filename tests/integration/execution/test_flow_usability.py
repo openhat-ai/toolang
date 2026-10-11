@@ -37,7 +37,7 @@ def _create(
 def _run(harness: ExecutionHarness, *, primary: str | None = None):
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             run = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
@@ -413,7 +413,7 @@ flow main():
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             run = await harness.executor.run(
                 harness.run_spec(thread=thread, runnable="flow:main")
             )
@@ -491,7 +491,7 @@ flow main({name}: Part):
         async with harness:
             run = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="flow:main",
                     primary=(part,) if name == "_" else None,
                     named={name: part} if name != "_" else None,
@@ -698,7 +698,7 @@ flow main() -> Text[][]:
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             run = await harness.executor.run(
                 harness.run_spec(thread=thread, runnable="main"), tracer=tracer
             )
@@ -741,7 +741,7 @@ flow main():
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             await harness.executor.run(harness.run_spec(thread=thread, runnable="seed"))
             run = await harness.executor.run(
                 harness.run_spec(thread=thread, runnable="main")
@@ -789,7 +789,7 @@ agic worker():
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             run = await harness.executor.run(
                 harness.run_spec(
                     thread=thread, runnable="parent", named={"topic": "private"}
@@ -924,7 +924,7 @@ flow main() -> Json:
         async with harness:
             run = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="flow:main",
                 )
             )
@@ -998,7 +998,7 @@ flow main() -> Text[]:
         async with harness:
             run = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="flow:main",
                 )
             )

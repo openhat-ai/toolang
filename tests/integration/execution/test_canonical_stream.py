@@ -101,8 +101,8 @@ flow child(_: Text) -> Text:
     async def scenario():
         async with harness:
             reader = source.subscribe()
-            thread = await asyncio.to_thread(threads.create, prefix=ThreadPrefix.TERM)
-            other = threads.create(prefix=ThreadPrefix.TERM)
+            thread = await asyncio.to_thread(threads.create, prefix=ThreadPrefix.CHAT)
+            other = threads.create(prefix=ThreadPrefix.CHAT)
             handles = [
                 harness.executor.run(
                     harness.run_spec(
@@ -147,7 +147,7 @@ agic child(_: Text) -> Text:
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             first = await harness.executor.run(
                 harness.run_spec(
                     thread=thread, runnable="parent", primary=(TextPart("input"),)
@@ -221,11 +221,11 @@ def test_failed_publication_rolls_back_thread_and_cursor(tmp_path, monkeypatch):
     with monkeypatch.context() as patch:
         patch.setattr(Publication, "append", fail_after_staging)
         with pytest.raises(RuntimeError, match="serialization failed"):
-            threads.create(prefix=ThreadPrefix.TERM)
+            threads.create(prefix=ThreadPrefix.CHAT)
     assert not harness.store.list_threads()
     assert not harness.store.list_controls()
     assert source.tail.seq == 0
-    threads.create(prefix=ThreadPrefix.TERM)
+    threads.create(prefix=ThreadPrefix.CHAT)
     assert source.tail.seq == 1
     harness.store.close()
 
@@ -245,7 +245,7 @@ def test_failing_tracer_cannot_change_run_result(tmp_path, caplog):
             tracer = FailingTracer()
             run = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="parent",
                     primary=(TextPart("input"),),
                 ),
@@ -278,7 +278,7 @@ def test_overflowed_tracer_is_released_while_execution_continues(tmp_path):
             reference = weakref.ref(tracer)
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="reply",
                     primary=(TextPart("input"),),
                 ),

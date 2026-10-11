@@ -77,10 +77,7 @@ class ThreadManager:
         def operation() -> tuple[str, ThreadEvent]:
             thread, control = self.store.create_thread(
                 thread_id=thread_id,
-                origin="chat"
-                if canonical_prefix
-                in {ThreadPrefix.CHAT, ThreadPrefix.WEB, ThreadPrefix.TERM}
-                else canonical_prefix.value,
+                origin=canonical_prefix.value,
                 peer=peer,
                 request_id=request_id,
                 client_id=client_id,

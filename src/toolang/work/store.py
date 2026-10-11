@@ -252,17 +252,24 @@ class ChoreStore:
                 ):
                     pending_trigger = record.active_trigger
                 pending_at = _earliest(pending_at, record.active_due_at)
-            elif record.active_trigger == "schedule":
+            elif (
+                record.active_trigger == "schedule"
+                and record.schedule_anchor_at is not None
+                and record.active_due_at is not None
+                and _parse(record.active_due_at) > _parse(record.schedule_anchor_at)
+            ):
+                # A new anchor supersedes claims from the previous schedule.
                 next_scheduled_at = _earliest(next_scheduled_at, record.active_due_at)
             self._conn.execute(
                 """
                 UPDATE chores
-                SET status = 'pending', pending_at = ?, pending_trigger = ?, next_scheduled_at = ?,
+                SET status = ?, pending_at = ?, pending_trigger = ?, next_scheduled_at = ?,
                     active_run_id = NULL,
                     active_trigger = NULL, active_due_at = NULL, updated_at = ?
                 WHERE chore_id = ? AND active_run_id = ?
                 """,
                 (
+                    "pending" if pending_at or next_scheduled_at else "done",
                     pending_at,
                     pending_trigger,
                     next_scheduled_at,

@@ -4,13 +4,17 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
+import logging
 from pathlib import Path
 
 from watchfiles import Change, awatch
+from yaml import YAMLError
 
 from toolang.common.layout import AgentLayout
 
 from .state import Chore, load_chore_files
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class ChoreWatcher:
@@ -26,9 +30,12 @@ class ChoreWatcher:
         return self._chores
 
     def refresh(self) -> tuple[Chore, ...]:
-        """Read and publish one complete current chore snapshot."""
+        """Refresh definitions, retaining the last valid snapshot on a bad edit."""
 
-        self._chores = load_chore_files(self.layout)
+        try:
+            self._chores = load_chore_files(self.layout)
+        except (OSError, ValueError, YAMLError) as exc:
+            _LOGGER.warning("chores.reload_rejected error=%s", exc)
         return self._chores
 
     async def updates(

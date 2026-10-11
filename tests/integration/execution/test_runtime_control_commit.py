@@ -89,7 +89,7 @@ flow child(_: Text) -> Text:
             observer = TraceObserver(harness.executor.stream.subscribe(), tracer)
             parent = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable=f"{caller}:{caller}_parent",
                     primary=(TextPart("work"),) if caller == "flow" else None,
                 ),
@@ -166,7 +166,7 @@ flow child() -> Text:
         async with harness:
             root = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="agic:parent",
                 ),
                 tracer=tracer,
@@ -240,7 +240,7 @@ agic child() -> Text:
         async with harness:
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="agic:parent",
                 ),
                 tracer=tracer,

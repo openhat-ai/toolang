@@ -416,7 +416,7 @@ def test_spawned_worker_sends_with_its_own_run_origin(tmp_path):
             await prepare(client, human)
             parent = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="flow:parent",
                     primary=(TextPart("Do work"),),
                 )

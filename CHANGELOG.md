@@ -155,6 +155,20 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Fixed
 
+- Recovering a scheduled chore whose claimed run was never accepted keeps the
+  current schedule: after the schedule is changed or removed, the chore keeps
+  the new next occurrence, or becomes `done` when no schedule or other pending
+  work remains, instead of rerunning the replaced schedule's occurrence.
+
+- Invalid inline `chore name:` schedules fail while parsing the `.too` module
+  with an error naming the schedule, matching invalid Markdown definitions,
+  and a malformed `chores/*.md` edit keeps the last valid definitions active
+  instead of ending the watch, so a later corrected edit still applies.
+
+- A chore that has no `chore` runnable uses the agent's configured default
+  runnable before the unnamed entry fallback, so it no longer fails when the
+  agent declares a default runnable but no unnamed entry.
+
 - Chore inspection over HTTP reads current inline `chore name:` definitions
   straight from the agent program without preparing or publishing executable
   State, so listing and reading chores over `/api/v1/chores` works even when the

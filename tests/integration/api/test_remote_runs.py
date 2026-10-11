@@ -756,7 +756,7 @@ agic chat(_: Part[]) -> Part[]:
     core.state = _Snapshot(harness.state)
 
     async def scenario() -> None:
-        thread = core.threads.create(prefix=ThreadPrefix.TERM)
+        thread = core.threads.create(prefix=ThreadPrefix.CHAT)
         request = _core_request(thread, "pending_request")
         handle = core.executor.run(
             resolve_run_request(
@@ -814,7 +814,7 @@ def test_http_controls_map_transaction_state_races_to_conflict(
     core = AgentCore(harness.setup.layout)
 
     async def scenario() -> None:
-        thread = core.threads.create(prefix=ThreadPrefix.TERM)
+        thread = core.threads.create(prefix=ThreadPrefix.CHAT)
         handle = core.executor.run(
             resolve_run_request(
                 _core_request(thread, "pending_race_request"),

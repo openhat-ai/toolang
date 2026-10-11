@@ -82,7 +82,7 @@ agic chat(_: Part[]) -> Part[]:
 
     async def scenario() -> tuple[str, str, ModelCall]:
         async with harness:
-            thread_id = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread_id = harness.threads.create(prefix=ThreadPrefix.CHAT)
             record = await harness.executor.run(
                 harness.run_spec(
                     thread=thread_id,
@@ -136,7 +136,7 @@ agic chat(_: Text) -> Text:
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             first = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
@@ -198,7 +198,7 @@ agic chat(_: Part[]) -> Part[]:
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             first = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
@@ -299,7 +299,7 @@ agic calculate(_: Text) -> Boolean:
 
     async def scenario() -> tuple[str, tuple[ModelCall, ...]]:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             record = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,

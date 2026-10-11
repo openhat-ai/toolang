@@ -160,7 +160,7 @@ def test_inline_skill_trigger_and_pick_respect_resource_selection(
         async with harness:
             run = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="chat",
                     ceilings=(AgentCeiling(skills=()),)
                     if restriction == "ceiling"
@@ -257,7 +257,7 @@ def test_instruct_selection_preserves_layers_and_guidance_delivery(
         async with harness:
             run = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="chat",
                 ),
                 tracer=tracer,
@@ -330,7 +330,7 @@ def test_catalog_escaping_preserves_pick_targets_and_recalled_source(
         async with harness:
             run = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="chat",
                 ),
                 tracer=tracer,
@@ -387,7 +387,7 @@ def test_instruct_cannot_restore_excluded_capabilities(tmp_path: Path, restricti
         async with harness:
             run = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="chat",
                     ceilings=(AgentCeiling(psyches=(), skills=(), services=()),)
                     if restriction == "ceiling"
@@ -435,7 +435,7 @@ def test_model_without_tools_keeps_protocol_but_exposes_no_tools(tmp_path: Path)
         async with harness:
             run = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="chat",
                 )
             )
@@ -475,7 +475,7 @@ def test_pick_reuses_pending_then_visible_guidance(
         async with harness:
             run = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="chat",
                 ),
                 tracer=tracer,
@@ -547,7 +547,7 @@ def test_only_selected_near_counts_in_the_next_run(tmp_path: Path, recall):
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             runs = [
                 await harness.executor.run(
                     harness.run_spec(thread=thread, runnable="chat"), tracer=tracer
@@ -598,7 +598,7 @@ def test_pick_matches_the_effective_catalog(tmp_path: Path, ceiling, kind, name)
         async with harness:
             run = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="chat",
                     ceilings=(
                         AgentCeiling(skills=("skill/testing",))
@@ -694,7 +694,7 @@ flow research() -> Text:
         async with harness:
             root = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="chat",
                     ceilings=(AgentCeiling(services=(home_ref,)),),
                 ),
@@ -771,7 +771,7 @@ def test_pick_retains_the_bound_resource_selection(tmp_path: Path):
         async with harness:
             run = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="chat",
                 ),
                 tracer=tracer,
@@ -847,7 +847,7 @@ def test_guidance_refreshes_between_batches_and_supports_revision_reversals(
         async with harness:
             run = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="chat",
                 ),
                 tracer=tracer,
@@ -895,7 +895,7 @@ def test_canceled_delivery_keeps_recall_but_does_not_make_it_visible(tmp_path: P
     async def scenario():
         nonlocal handle
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             handle = harness.executor.run(
                 harness.run_spec(thread=thread, runnable="chat"), tracer=tracer
             )
@@ -946,7 +946,7 @@ def test_pick_sees_controls_added_at_the_tool_boundary(tmp_path: Path):
         async with harness:
             run = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="chat",
                 ),
                 tracer=tracer,
@@ -1000,7 +1000,7 @@ def test_compaction_excludes_old_guidance_even_when_far_mentions_it(
     async def scenario():
         nonlocal horizon
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             first = await harness.executor.run(
                 harness.run_spec(thread=thread, runnable="chat"), tracer=tracer
             )
@@ -1038,7 +1038,7 @@ def test_fork_visibility_survives_source_rewind(tmp_path: Path):
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             first = await harness.executor.run(
                 harness.run_spec(thread=thread, runnable="chat")
             )
@@ -1086,7 +1086,7 @@ agic target() -> Text:
         async with harness:
             run = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="chat",
                 ),
                 tracer=tracer,
@@ -1136,7 +1136,7 @@ flow parent(_: Part[]) -> Part[][]:
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             handle = harness.executor.run(
                 harness.run_spec(
                     thread=thread, runnable="parent", primary=(TextPart("seed"),)
@@ -1176,7 +1176,7 @@ def test_restart_recovers_visibility_from_saved_deltas(tmp_path: Path, monkeypat
 
     async def scenario():
         async with first:
-            thread = first.threads.create(prefix=ThreadPrefix.TERM)
+            thread = first.threads.create(prefix=ThreadPrefix.CHAT)
             run = await first.executor.run(
                 first.run_spec(thread=thread, runnable="chat"), tracer=tracer
             )
@@ -1211,7 +1211,7 @@ def test_read_failure_is_not_a_removal(tmp_path: Path, monkeypatch):
         async with harness:
             run = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="chat",
                 )
             )
@@ -1231,7 +1231,7 @@ def test_child_pick_delivers_guidance_recalled_by_a_previous_root(tmp_path: Path
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             prior = await harness.executor.run(
                 harness.run_spec(thread=thread, runnable="chat")
             )

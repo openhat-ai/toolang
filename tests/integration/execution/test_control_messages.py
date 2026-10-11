@@ -75,7 +75,7 @@ agic chat(_: Part[]) -> Part[]:
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             handle = harness.executor.run(
                 harness.run_spec(
                     thread=thread, runnable="chat", primary=(TextPart("sleep 10s"),)
@@ -174,7 +174,7 @@ def test_cancel_during_steer_skipped_batch_closes_all_calls(tmp_path: Path) -> N
         async with harness:
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="chat",
                 ),
                 tracer=tracer,
@@ -257,7 +257,7 @@ agic chat(_: Part[]) -> Part[]:
         async with harness:
             run = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="chat",
                     primary=(TextPart("start"),),
                 ),
@@ -338,7 +338,7 @@ agic chat(_: Part[]) -> Part[]:
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             handle = harness.executor.run(
                 harness.run_spec(
                     thread=thread, runnable="chat", primary=(TextPart("start"),)

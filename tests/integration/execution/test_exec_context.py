@@ -53,7 +53,7 @@ def test_exec_successor_declares_current_identity_with_chat_history(
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             previous = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,

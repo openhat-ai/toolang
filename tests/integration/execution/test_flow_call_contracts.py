@@ -33,7 +33,7 @@ flow main:
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             root = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
@@ -149,7 +149,7 @@ flow main{annotation}:
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             root = await harness.executor.run(
                 harness.run_spec(
                     thread=thread, runnable="main", primary=(TextPart("seed"),)
@@ -232,7 +232,7 @@ flow main:
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             root = await harness.executor.run(
                 harness.run_spec(
                     thread=thread, runnable="main", primary=(TextPart("invalid"),)
@@ -285,7 +285,7 @@ flow main(limit) -> {output_type}:
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             root = await harness.executor.run(
                 harness.run_spec(thread=thread, runnable="main", named={"limit": limit})
             )

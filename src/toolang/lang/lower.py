@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import datetime, timezone
 from typing import TypeVar, cast
 
+from dateutil.rrule import rrulestr
 from tree_sitter import Node as CstNode
 
 from toolang.common.template import template_root_names, template_dependencies
@@ -308,10 +310,21 @@ class _Lowerer:
 
     def _lower_chore(self, node: CstNode, *, doc: str | None) -> ast.ChoreDecl:
         body = self._required(node, "body")
+        meta = self._properties(body)
+        if "schedule" in meta:
+            schedule = meta["schedule"]
+            try:
+                if not isinstance(schedule, str) or not schedule.strip():
+                    raise ValueError("expected non-empty text")
+                rrulestr(schedule, dtstart=datetime(2026, 1, 1, tzinfo=timezone.utc))
+            except ValueError as exc:
+                raise ToolangValidationError(
+                    f"Invalid chore schedule: {exc}", line=self._line(node)
+                ) from exc
         return ast.ChoreDecl(
             name=self._required_text(node, "name").strip(),
             body=self._content_text(body),
-            meta=self._properties(body),
+            meta=meta,
             span=self._span(node),
             doc=doc,
         )

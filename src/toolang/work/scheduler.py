@@ -497,7 +497,10 @@ class ChoreDriver:
         setup = self.get_agent_setup() if setup is None else setup
         state = self.get_agent_state() if state is None else state
         override, input = parse_call(chore.body)
-        runnable = override.runnable or runnable_fallback(state, preferred="chore")
+        runnable = override.runnable
+        if runnable is None and "chore" not in state.runnables:
+            runnable = setup.defaults.runnable
+        runnable = runnable or runnable_fallback(state, preferred="chore")
         base = chore.path.parent
         spec = resolve_spec(
             override,
