@@ -23,7 +23,7 @@ PortOption = Annotated[
 def hub_app() -> typer.Typer:
     app = typer.Typer(
         cls=CliGroup,
-        help="Manage the shared Hub service",
+        help="Manage the teaming service",
         add_completion=False,
         no_args_is_help=True,
         pretty_exceptions_enable=False,

@@ -7,6 +7,8 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ## [Unreleased]
 
+## [0.4.0a4] - 2026-10-11
+
 ### Added
 
 - Execution drivers decide what a running agent serves: resident agents enable
@@ -75,13 +77,12 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 - Chore authoring edits only current home definitions: root and inline
   `chore name:` definitions stay visible to `too AGENT chore list` but must be
-  edited at their source; `too AGENT chore new`, `clone`, `edit`, and `delete`
-  require a resident agent, `edit` and `delete` reject definitions that are not
-  home `chores/<name>.md` files or that an inline declaration shadows, `clone`
-  copies any effective root, home, or inline definition into a new home file,
-  and `new` may shadow a root file but fails when the name is already declared
-  inline, naming the source to edit, with the matching `/api/v1/chores` requests
-  returning `409`.
+  edited at their source; `too AGENT chore new`, `edit`, and `delete` require a
+  resident agent, `edit` and `delete` reject definitions that are not home
+  `chores/<name>.md` files or that an inline declaration shadows, and `new` may
+  shadow a root file but fails when the name is already declared inline, naming
+  the source to edit, with the matching `/api/v1/chores` requests returning
+  `409`.
 
 - Tasks and jobs are unified into chores: current definitions are flat
   `chores/<name>.md` files or inline `chore name:` declarations with no draft,
@@ -124,8 +125,8 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   `:flow NAME`; reserved built-in names need qualification, as in `/agic:help`.
   An override prefix requires at least one supplied primary or named input, so
   overrides formerly accepted with empty Call Input now reject, and root `---`
-  capture becomes `-` without a closing fence. Script, Task, and Chore runs
-  share this syntax and reject Chat-only slash commands and colon headers.
+  capture becomes `-` without a closing fence. Script and Chore runs share
+  this syntax and reject Chat-only slash commands and colon headers.
 
 - Team `too top` refreshes from Hub state notifications instead of the
   aggregate activity stream, following execution and member events and reading
@@ -170,8 +171,8 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   starts a new execution identity and independent progress.
 
 - **Breaking:** the `too task` command and the `task name:` declaration are
-  removed; `too AGENT chore` now lists, creates, clones, edits, runs, cancels,
-  and deletes chore definitions, and a `task name:` declaration fails with
+  removed; `too AGENT chore` now lists, creates, edits, runs, cancels, and
+  deletes chore definitions, and a `task name:` declaration fails with
   `Use chore for one-off or scheduled work`. No old directories, authored IDs,
   or `jobs.db` checkpoints are migrated or imported: existing `tasks/` files and
   databases are left untouched and unused, and a definition added to the new
@@ -1188,7 +1189,8 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 - The formatter normalizes `exec` statements consistently with other flow
   statements. (#676)
 
-[Unreleased]: https://github.com/openhat-ai/toolang/compare/v0.4.0a3...HEAD
+[Unreleased]: https://github.com/openhat-ai/toolang/compare/v0.4.0a4...HEAD
+[0.4.0a4]: https://github.com/openhat-ai/toolang/compare/v0.4.0a3...v0.4.0a4
 [0.4.0a3]: https://github.com/openhat-ai/toolang/compare/v0.4.0a2...v0.4.0a3
 [0.4.0a2]: https://github.com/openhat-ai/toolang/compare/v0.4.0a1...v0.4.0a2
 [0.4.0a1]: https://github.com/openhat-ai/toolang/compare/v0.3.6...v0.4.0a1
