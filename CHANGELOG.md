@@ -9,6 +9,12 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Added
 
+- The Hub serves a root-scoped presence roster at `GET /activity/roster`
+  (`agent:` IDs mapped to `online` or `offline` without reading activity
+  stores) and accepts `GET /activity?agent=agent:alice`, returning one roster
+  agent's current pages without the aggregate cache and an empty list for an
+  absent or foreign-root agent.
+
 - Foreground interactive commands publish OSC 0 terminal titles: Chat
   `<agent>: <thread title>`, Talk `@alice`, `@alice,bob`, or `#dev`, Top
   `top <agent>` or `top team`, Serve `serve <agent>` or `serve hub`, Script
@@ -26,6 +32,17 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   `TOOLANG_TMUX=0` disables marks while preserving OSC titles.
 
 ### Changed
+
+- Team `too top` refreshes from Hub state notifications instead of the
+  aggregate activity stream, following execution and member events and reading
+  each agent's current activity independently, so one slow or failing agent no
+  longer delays presence or healthy agents; pending refreshes coalesce,
+  reconnects reload current snapshots, and the Status bar reports
+  `Reconnecting` while a source reconnects.
+
+- `too talk` wakes its message and metadata read loop on relevant
+  conversation-member changes from the Hub's team feed, leaving message
+  cursors and rename polling unchanged.
 
 - Chat and Talk now always run in the invoking terminal; Toolang no longer
   creates, selects, or renames tmux sessions or windows, removing `too AGENT
