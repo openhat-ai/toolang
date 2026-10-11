@@ -9,6 +9,10 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Fixed
 
+- `too chat` and `too talk` reapply their blinking block input cursor after
+  each redraw, so it keeps blinking while composing instead of turning
+  steady on terminals that stop blinking when the cursor is shown.
+
 - Markdown code blocks in `too chat`, `too talk` agent messages, and
   execution progress now reach the right edge of the available content
   width with their background and two-cell padding intact, including

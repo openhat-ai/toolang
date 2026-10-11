@@ -29,18 +29,31 @@ def test_input_cursor_remains_a_blinking_block_until_exit(tmp_path, surface):
         "tests.system.cli.test_scrollback_resize", surface, tmp_path, "", "0"
     )
     cursor_shapes = re.compile(rb"\x1b\[([0-6]) q")
+    cursor_blink = re.compile(rb"\x1b\[(?:\?12[hl]|[0-6] q)")
     try:
         placeholder = "Describe your task" if surface == "chat" else "Type a message"
         session.wait_for(placeholder)
         session.wait_for_bytes(b"\x1b[1 q")
+
+        # A normal redraw must not leave DECRST 12 (stop blinking) active
+        # after the initial DECSCUSR request for a blinking block.
+        session.data.clear()
+        session.send(b"draft")
+        session.wait_for("draft")
+        session.wait_for_bytes(b"\x1b[?25h")
+        assert cursor_blink.findall(session.data)[-1] in (
+            b"\x1b[1 q",
+            b"\x1b[?12h",
+        )
 
         session.data.clear()
         session.send(b"\x0c")
         session.wait_for_bytes(b"\x1b[1 q")
         assert cursor_shapes.findall(session.data)[-1] == b"1"
 
-        session.send(b"draft\x01")
-        session.wait_for("draft")
+        session.data.clear()
+        session.send(b"\x01")
+        session.wait_for_bytes(b"\x1b[?25h")
         session.data.clear()
         fcntl.ioctl(
             session.master, termios.TIOCSWINSZ, struct.pack("HHHH", 20, 40, 0, 0)

@@ -205,6 +205,9 @@ class ScrollbackRenderer(Renderer):
                 size.rows,
                 layout.container.preferred_height(size.columns, size.rows).preferred,
             )
+            # VT100 show_cursor disables blinking on every redraw. Reapply the
+            # requested shape after it instead of trusting the renderer's cache.
+            self._last_cursor_shape = None
             super().render(app, layout, is_done=is_done)
             if not is_done:
                 self._last_content_height = content_height
