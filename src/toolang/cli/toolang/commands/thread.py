@@ -13,7 +13,13 @@ from uuid import uuid4
 import typer
 from typer._click.exceptions import ClickException
 
-from toolang.cli.common.parameters import AllowOptions, LimitOptions, TextType
+from toolang.cli.common.parameters import (
+    AllowOptions,
+    LimitOptions,
+    TextType,
+    TitlePrefixOption,
+)
+from toolang.cli.common.terminal_session import prepare_terminal
 
 from toolang.base.errors import ToolangError
 from toolang.base.model_settings import parse_model_body
@@ -123,6 +129,7 @@ def retry_command(
             help="Run id to retry. Thread id means its latest visible root run",
         ),
     ],
+    title_prefix: TitlePrefixOption = None,
     model_catalog: ModelCatalogOption = None,
     anchor: Annotated[
         str | None,
@@ -163,6 +170,7 @@ def retry_command(
         model_override=None,
         show_progress=show_progress,
         model_catalog=resolve_model_catalog_option(model_catalog),
+        title_prefix=title_prefix,
     )
     status = _display_status(result.status)
     if not show_progress:
@@ -181,6 +189,7 @@ def rerun_command(
             help="Run id to rerun. Thread id means its latest visible root run",
         ),
     ],
+    title_prefix: TitlePrefixOption = None,
     model_catalog: ModelCatalogOption = None,
     sandbox: Annotated[
         str | None,
@@ -232,6 +241,7 @@ def rerun_command(
         model_override=model_override,
         show_progress=show_progress,
         model_catalog=resolve_model_catalog_option(model_catalog),
+        title_prefix=title_prefix,
     )
     status = _display_status(result.status)
     if not show_progress:
@@ -369,15 +379,26 @@ def _run_retry_or_rerun(
     model_override: ModelOverride | None,
     show_progress: bool,
     model_catalog: Path | None = None,
+    title_prefix: str | None = None,
 ) -> RunDetail:
     try:
-        with acquire_agent_server(
-            layout,
-            sandbox=sandbox,
-            dev=dev,
-            model_catalog=model_catalog,
-            show_progress=show_progress,
-        ) as server:
+        with (
+            prepare_terminal(
+                kind,
+                layout=layout,
+                title_prefix=title_prefix,
+                label=f"{kind} {source}",
+                eligible=show_progress,
+                stream=sys.stderr,
+            ) as terminal,
+            acquire_agent_server(
+                layout,
+                sandbox=sandbox,
+                dev=dev,
+                model_catalog=model_catalog,
+                show_progress=show_progress,
+            ) as server,
+        ):
             if server is None:
                 raise AgentServerAcquisitionError("agent acquisition requires a server")
             return asyncio.run(
@@ -390,6 +411,7 @@ def _run_retry_or_rerun(
                     commands=commands,
                     model_override=model_override,
                     show_progress=show_progress,
+                    on_accept=terminal.set_run,
                 )
             )
     except AgentServerAcquisitionError as exc:
@@ -431,6 +453,7 @@ async def _execute_retry_or_rerun(
     commands: tuple[RunCommand, ...],
     model_override: ModelOverride | None,
     show_progress: bool,
+    on_accept: Callable[[str], None] | None = None,
 ) -> RunDetail:
     environ = load_runtime_environ(layout, base_environ=os.environ)
     run_id = source if kind == "retry" else None
@@ -470,6 +493,8 @@ async def _execute_retry_or_rerun(
                     tracer=tracer,
                 )
             )
+            if on_accept is not None:
+                on_accept(handle.run_id)
             try:
                 return await handle.wait()
             except (asyncio.CancelledError, KeyboardInterrupt):

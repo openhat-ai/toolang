@@ -22,7 +22,6 @@ from toolang.cli.common.policy import (
     resolve_limit_overrides,
 )
 from toolang.common.errors import ToolangError
-from toolang.common.layout import AgentLayout
 from toolang.execution.events import RunObservation, RunSnapshot
 from toolang.execution.events import PartDelta, RunBegin, RunEnd, StepEnd
 from toolang.execution.inspection.history import RunHistory
@@ -46,7 +45,6 @@ from toolang.cli.common.context import (
     user_call,
 )
 from toolang.cli.common.execution import open_execution
-from toolang.cli.common.errors import TmuxPlacementError
 from toolang.cli.common.agent_server import (
     AgentServerAcquisitionError,
     acquire_agent_server,
@@ -60,10 +58,7 @@ from toolang.cli.common.human_values import parts_response_text
 from toolang.cli.common.input import resolve_inputbox_max_width
 from toolang.common.typer.options import BARE_VALUE
 from toolang.cli.common.terminal_surfaces import resolve_terminal_surfaces
-from toolang.cli.common.tmux import (
-    resolve_launcher,
-    resolve_marks,
-)
+from toolang.cli.common.terminal_session import prepare_terminal
 from toolang.cli.common.workspaces import resolve_workspaces
 from . import slashes as chat_slashes
 from .base import (
@@ -87,7 +82,6 @@ from .input import (
     parse_chat_input,
     slash_command_name,
 )
-from .marks import ChatMarks
 from .presenter import ChatRunPresenter
 from .policy import run_override_error
 from .remote import RemoteChatError, RemoteChatSession
@@ -107,61 +101,9 @@ def chat_command(
     compact_model: str | None = None,
     workspace: list[str] | None = None,
     workdir: str | None = None,
+    title_prefix: str | None = None,
 ) -> None:
     thread_id = _target_thread_id(ctx, thread) if thread is not None else None
-    if sys.stdin.isatty() and sys.stdout.isatty():
-        layout = context_layout(ctx)
-        try:
-            launcher = resolve_launcher(agent=layout.name)
-        except TmuxPlacementError as exc:
-            raise ClickException(str(exc)) from exc
-        if launcher is not None:
-            if thread_id is None:
-                with _chat_runtime(
-                    ctx,
-                    model_catalog=model_catalog,
-                    sandbox=sandbox,
-                    dev=dev,
-                    compact_model=compact_model,
-                    workspace=workspace,
-                    workdir=workdir,
-                ) as client:
-                    thread_id = user_call(client.create_thread)
-                # Startup options have been applied; the TUI now attaches.
-                dev = None
-                compact_model = None
-                model_catalog = None
-            else:
-                with open_execution(ctx, required=True) as resources:
-                    if (
-                        resources is None
-                        or RunHistory(resources.store).get_thread(
-                            thread_id, run_limit=0
-                        )
-                        is None
-                    ):
-                        raise ClickException(f"thread not found: {thread_id}")
-            argv = _chat_argv(
-                layout,
-                thread_id=thread_id,
-                model_catalog=model_catalog,
-                allows=allows,
-                defaults=defaults,
-                sandbox=sandbox,
-                dev=dev,
-                limits=limits,
-                compact_model=compact_model,
-                workspace=workspace,
-                workdir=workdir,
-            )
-            try:
-                run_here = launcher.place_chat(
-                    thread_id=thread_id, argv=argv, directory=os.getcwd()
-                )
-            except TmuxPlacementError as exc:
-                raise ClickException(str(exc)) from exc
-            if not run_here:
-                return
     _chat_interactive(
         ctx,
         thread_id=thread_id,
@@ -174,58 +116,8 @@ def chat_command(
         compact_model=compact_model,
         workspace=workspace,
         workdir=workdir,
+        title_prefix=title_prefix,
     )
-
-
-def _chat_argv(
-    layout: AgentLayout,
-    *,
-    thread_id: str,
-    model_catalog: Path | None,
-    allows: list[str] | None,
-    defaults: list[str] | None,
-    sandbox: str | None,
-    dev: Path | None,
-    limits: list[str] | None,
-    compact_model: str | None,
-    workspace: list[str] | None = None,
-    workdir: str | None = None,
-) -> list[str]:
-    """Re-enter Chat for the prepared layout using already parsed CLI options."""
-
-    argv = [
-        sys.executable,
-        "-m",
-        "toolang.cli.toolang",
-        "--root",
-        str(layout.root),
-        f"agent:{layout.name}",
-        "chat",
-        "--thread",
-        thread_id,
-    ]
-    if layout.placement != "resident":
-        argv.extend(["--placement", layout.placement])
-    for option, value in (
-        ("--catalog", model_catalog),
-        ("--sandbox", sandbox),
-        ("--dev", dev),
-        ("--compact-model", compact_model),
-    ):
-        if value is not None:
-            argv.append(f"{option}={value}")
-    for option, values in (
-        ("--allow", allows),
-        ("--default", defaults),
-        ("--limit", limits),
-    ):
-        for value in values or ():
-            argv.append(f"{option}={value}")
-    for value in workspace or ():
-        argv.extend(["--workspace", value])
-    if workdir is not None:
-        argv.extend(["--workdir", workdir])
-    return argv
 
 
 def _chat_interactive(
@@ -241,6 +133,7 @@ def _chat_interactive(
     compact_model: str | None = None,
     workspace: list[str] | None = None,
     workdir: str | None = None,
+    title_prefix: str | None = None,
 ) -> None:
     with _chat_runtime(
         ctx,
@@ -277,14 +170,8 @@ def _chat_interactive(
             thread_id=thread_id,
             setting=setting,
             client=client,
-            marks=_chat_marks(),
+            title_prefix=title_prefix,
         )
-
-
-def _chat_marks() -> ChatMarks:
-    """Marks for one chat session; disabled outside tmux."""
-
-    return ChatMarks(marks=resolve_marks())
 
 
 @contextmanager
@@ -401,7 +288,7 @@ def _chat_interactive_prompt_toolkit(
     thread_id: str | None,
     setting: SessionSetting,
     client: ChatClient,
-    marks: ChatMarks | None = None,
+    title_prefix: str | None = None,
 ) -> None:
     environ = load_runtime_environ(context_layout(ctx), base_environ=os.environ)
     progress_max_width = user_call(resolve_progress_max_width, environ)
@@ -417,7 +304,12 @@ def _chat_interactive_prompt_toolkit(
         progress_max_width=progress_max_width,
         inputbox_max_width=inputbox_max_width,
         surfaces=user_call(resolve_terminal_surfaces, environment=environ),
-        marks=marks,
+        terminal=prepare_terminal(
+            "chat",
+            layout=context_layout(ctx),
+            title_prefix=title_prefix,
+            thread=thread_id or "",
+        ),
     )
 
 

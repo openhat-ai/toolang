@@ -18,12 +18,13 @@ from rich.text import Text
 
 from toolang.cli.common.console import terminal_console
 from toolang.cli.common.execution_progress.config import DEFAULT_MAX_PROGRESS_WIDTH
-from toolang.cli.common.execution_progress.formatting import truncate
 from toolang.cli.common.input import InputBox
 from toolang.cli.common.input_history import InputHistoryStore
 from toolang.cli.common.scrollback import ScrollbackApplication, ScrollbackRenderer
 from toolang.cli.common.status import error_status_line
 from toolang.cli.common.terminal_surfaces import TerminalSurfaces
+from toolang.cli.common.terminal_session import TerminalSession
+from toolang.cli.common.terminal_title import label_text
 from toolang.common.files import atomic_write_text
 from toolang.teaming.client import HubClient
 from toolang.teaming.errors import BackendUnavailable, MessagingError
@@ -55,6 +56,7 @@ class TalkTui:
         max_width: int = DEFAULT_MAX_PROGRESS_WIDTH,
         inputbox_max_width: int | None = None,
         selection: str | None = None,
+        terminal: TerminalSession | None = None,
     ):
         self.client, self.conversation_id, self.human = client, conversation.id, human
         self.header = startup_header(
@@ -67,6 +69,7 @@ class TalkTui:
         self.read_only = read_only
         self.conversation = conversation
         self.selection = selection
+        self.terminal = terminal if terminal is not None else TerminalSession()
         self.team: list[TeamMember] = []
         self.max_width = max_width
         self.inputbox_max_width = (
@@ -317,7 +320,7 @@ class TalkTui:
                 if info != self.conversation:
                     self.update_membership(info)
                     self.conversation = info
-                    self.write_title(conversation_label(info, self.human))
+                    self.terminal.set_title(self._title_label(info))
                     self.invalidate()
                 if not initialized:
                     entries = await self.client.history(self.conversation_id)
@@ -357,29 +360,26 @@ class TalkTui:
         console = terminal_console(width=self.content_width())
         console.print(self.header)
         console.print()
-        title_written = self.write_title(
-            conversation_label(self.conversation, self.human)
+        try:
+            is_tty = os.isatty(self.app.output.fileno()) and os.isatty(
+                self.app.input.fileno()
+            )
+        except (OSError, ValueError, NotImplementedError):
+            is_tty = False
+        self.terminal.start(
+            self._title_label(self.conversation),
+            write=self.app.output.write_raw,
+            flush=self.app.output.flush,
+            enabled=is_tty,
         )
         try:
             await self.app.run_async(
                 pre_run=lambda: self.app.create_background_task(self.follow())
             )
         finally:
-            if title_written:
-                self.write_title("")
+            self.terminal.close()
             self.save_draft()
 
-    def write_title(self, title: str) -> bool:
-        try:
-            if not (
-                os.isatty(self.app.output.fileno())
-                and os.isatty(self.app.input.fileno())
-            ):
-                return False
-            title = truncate(" ".join(display_text(title).split()), 120)
-            # OSC 0 updates iTerm2 tabs/windows and tmux pane_title, as Chat does.
-            self.app.output.write_raw(f"\x1b]0;{title}\x07")
-            self.app.output.flush()
-        except (OSError, ValueError, NotImplementedError):
-            return False
-        return True
+    def _title_label(self, info: ConversationView) -> str:
+        label = label_text(conversation_label(info, self.human))
+        return label + "?" if label in {"@", "#"} else label

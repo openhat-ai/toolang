@@ -965,6 +965,66 @@ already recorded by other local agents, instead of asking the OS for a random
 ephemeral port.
 
 
+## Terminal titles and pane marks
+
+Foreground interactive commands publish OSC 0 titles, which terminals and tmux
+`pane_title` can display according to user settings. Session/window names are
+untouched; Chat and Talk always run in the invoking terminal.
+
+| Command | Title |
+| --- | --- |
+| Chat | `alice: thread title`, initially `alice` |
+| Talk | `@alice`, `@alice,bob`, or `#dev` |
+| Top | `top alice` or `top team` |
+| Serve | `serve alice` or `serve hub` |
+| Script Run | `run file.too` or `run file.too runnable` (basename only) |
+| Retry / Rerun | `retry run_id` / `rerun run_id` (source ID) |
+
+Each type accepts `--title-prefix TEXT`, defaulting to an empty string. Configure
+`chat`, `talk`, `top`, `serve`, `run`, `retry`, and `rerun` independently:
+
+```toml
+[terminal.title.prefix]
+chat = "💬 "
+top = "[too] "
+```
+
+Precedence is CLI > `TOOLANG_TITLE_PREFIX_<TYPE>` > agent-home config > root
+config > empty. Omitted keys inherit; explicit empty strings clear. Root-only
+views skip agent-home config. Roaming/scripts use their existing outer-to-inner
+project `toolang.toml` layers. Environment values use root dotenv < home dotenv
+< process ordering; roaming/scripts use the process environment only.
+
+Prefixes concatenate directly: `"💬"` gives `💬alice`; `"💬 "` gives `💬 alice`.
+Printable spaces are preserved. Unsafe controls are removed and the complete
+title is clipped to 32 display columns without splitting graphemes. Titles clear
+on handled exit. TTY input, output, and presentation streams are required;
+snapshots, scripted Chat, quiet/file output, and background/internal services
+publish neither titles nor marks.
+
+In tmux, foreground commands also publish pane-local string options:
+
+| Option | Value |
+| --- | --- |
+| `@toolang_kind` | `chat`, `talk`, `top`, `serve`, `run`, `retry`, or `rerun` |
+| `@toolang_root` | Absolute resolved root |
+| `@toolang_agent` | Bare agent name; empty for Talk, team Top, and Hub Serve |
+| `@toolang_thread` | Chat thread ID, once created |
+| `@toolang_run` | Actual executing run ID, once allocated or accepted |
+| `@toolang_convo` | Canonical Talk conversation ID |
+| `@toolang_context` | Opaque connection identity shared by Talk and team Top |
+
+Unused fields are empty. Consumers must require a recognized local `kind` and
+read pane options with `tmux show-options -p -t "$TMUX_PANE"` **without `-A`**;
+format expansion can inherit stale session/window values. Marks clear on handled
+exit. Abrupt termination can leave stale metadata; marks do not prove liveness.
+
+`TOOLANG_TMUX=0` (also `false`, `no`, or `off`, case-insensitive) disables marks
+while preserving OSC titles. `TOOLANG_TMUX_DEBUG=1` enables tmux diagnostics.
+Scripts using the old session/window marks must migrate to these pane options;
+`@toolang_pad` and `@toolang_talk` are retired. Users who need automatic placement
+can create their own tmux bindings using the pane metadata.
+
 ## Resource Inspection Commands
 
 | Command | No agent | Selected resident agent |

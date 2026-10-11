@@ -7,6 +7,40 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ## [Unreleased]
 
+### Added
+
+- Foreground interactive commands publish OSC 0 terminal titles: Chat
+  `<agent>: <thread title>`, Talk `@alice`, `@alice,bob`, or `#dev`, Top
+  `top <agent>` or `top team`, Serve `serve <agent>` or `serve hub`, Script
+  Run `run <file>` (basename only), and Retry/Rerun `retry <run id>` /
+  `rerun <run id>`. Each accepts `--title-prefix TEXT` and is configurable per
+  type through `[terminal.title.prefix]` in `config.toml` or
+  `TOOLANG_TITLE_PREFIX_<TYPE>`, with CLI over environment over agent-home
+  config over root config precedence; unsafe controls are removed and the
+  complete title is clipped to 32 display columns.
+
+- In tmux, foreground commands publish pane-local options instead of session
+  and window marks: `@toolang_kind`, `@toolang_root`, `@toolang_agent`,
+  `@toolang_thread`, `@toolang_run`, `@toolang_convo`, and `@toolang_context`,
+  read with `tmux show-options -p -t "$TMUX_PANE"` without `-A`.
+  `TOOLANG_TMUX=0` disables marks while preserving OSC titles.
+
+### Changed
+
+- Chat and Talk now always run in the invoking terminal; Toolang no longer
+  creates, selects, or renames tmux sessions or windows, removing `too AGENT
+  chat` placement and the `talks` session. Chat's title is now
+  `<agent>: <thread title>`, with the agent component limited to 12 display
+  columns, instead of the previous 60-column thread title and `[new chat]`
+  placeholder.
+
+### Removed
+
+- The `@toolang_pad` and `@toolang_talk` tmux marks are retired. Integrations
+  that read the old session and window marks must migrate to the pane-local
+  `@toolang_*` options, and automatic placement now requires a user tmux
+  binding.
+
 ### Fixed
 
 - `too chat` and `too talk` reapply their blinking block input cursor after

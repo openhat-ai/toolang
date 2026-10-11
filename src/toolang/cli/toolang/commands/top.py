@@ -8,6 +8,10 @@ from rich.console import Console
 import typer
 from typer._click.exceptions import ClickException
 
+from toolang.cli.common.parameters import TitlePrefixOption
+from toolang.cli.common.messaging import talk_context
+from toolang.cli.common.terminal_session import prepare_terminal
+from toolang.cli.common.terminal_title import agent_label
 from toolang.cli.common.activity import watch
 from toolang.cli.common.activity_view import since as stats_since
 from toolang.execution.activity import ActivityQuery, ActivityReader, duration
@@ -24,6 +28,7 @@ from toolang.up.process import AgentProcess
 
 def top_command(
     ctx: typer.Context,
+    title_prefix: TitlePrefixOption = None,
     once: Annotated[
         bool, typer.Option(help="Print one activity snapshot and exit")
     ] = False,
@@ -68,6 +73,8 @@ def top_command(
     backend = None
     agent = None
     source = None
+    layout = None
+    context = ""
     if selected.agent is not None or selected.layout is not None:
         layout = context_layout(ctx)
         process = AgentProcess(layout)
@@ -86,24 +93,40 @@ def top_command(
     else:
         connection = user_call(HubProcess(context_root(ctx)).connection)
         endpoint, backend = connection.endpoint, connection.identity
+        context = talk_context(
+            context_root(ctx),
+            connection.identity,
+            connection.human,
+            connection.endpoint,
+        )
     console = Console()
     try:
-        asyncio.run(
-            watch(
-                endpoint,
-                agent=agent,
-                backend=backend,
-                once=once or not console.is_terminal,
-                console=console,
-                view=view,
-                tree=tree,
-                sort=sort,
-                query=query,
-                recent_label=recent,
-                refresh=refresh,
-                source=source,
+        with prepare_terminal(
+            "top",
+            layout=layout,
+            root=context_root(ctx),
+            title_prefix=title_prefix,
+            label=f"top {agent_label(layout.name) if layout is not None else 'team'}",
+            context=context,
+            eligible=not once and console.is_terminal,
+            stream=console.file,
+        ):
+            asyncio.run(
+                watch(
+                    endpoint,
+                    agent=agent,
+                    backend=backend,
+                    once=once or not console.is_terminal,
+                    console=console,
+                    view=view,
+                    tree=tree,
+                    sort=sort,
+                    query=query,
+                    recent_label=recent,
+                    refresh=refresh,
+                    source=source,
+                )
             )
-        )
     except ValueError as exc:
         raise ClickException(str(exc)) from exc
     except KeyboardInterrupt:

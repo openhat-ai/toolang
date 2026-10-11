@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import ExitStack
 from dataclasses import dataclass
 import os
+import sys
 import json
 from pathlib import Path
 from typing import Annotated, TYPE_CHECKING, cast, Literal
@@ -15,10 +17,14 @@ from toolang.cli.common.workspaces import (
     single_workdir,
 )
 
+from toolang.cli.common.terminal_session import prepare_terminal
+from toolang.cli.common.terminal_title import agent_label
+
 import typer
 from typer._click.exceptions import ClickException
 
 from toolang.cli.common.parameters import (
+    TitlePrefixOption,
     AllowOptions,
     CompactModelOption,
     DefaultOptions,
@@ -73,6 +79,7 @@ class RuntimeLaunch:
 
 def run(
     ctx: typer.Context,
+    title_prefix: TitlePrefixOption = None,
     agent: str | None = typer.Argument(
         None,
         help="Agent name, .too file, reference, or URL",
@@ -119,7 +126,7 @@ def run(
     launch: RuntimeLaunch | None = None
     launch_started = False
     try:
-        with progress, cleanup_progress:
+        with ExitStack() as terminal_scope, progress, cleanup_progress:
             selected_layout = cli_context(ctx).layout
             target = (
                 selected_layout
@@ -128,6 +135,15 @@ def run(
                     context_root(ctx),
                     selector,
                     progress=progress.sink,
+                )
+            )
+            terminal_scope.enter_context(
+                prepare_terminal(
+                    "serve",
+                    layout=target,
+                    title_prefix=title_prefix,
+                    label=f"serve {agent_label(target.name)}",
+                    stream=sys.stderr,
                 )
             )
             launch = resolve_startup(

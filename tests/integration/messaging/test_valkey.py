@@ -2,15 +2,14 @@
 
 import asyncio
 import json
-from contextlib import suppress
 from pathlib import Path
+import shlex
 import shutil
 import socket
 import subprocess
 import sys
 import tempfile
 import time
-from typing import Any, cast
 
 import libtmux
 from libtmux.constants import OptionScope
@@ -19,7 +18,6 @@ from rich.color import Color
 from rich.console import Console
 from rich.text import Text
 
-from toolang.cli.common.tmux import Launcher
 from toolang.teaming.messaging import MessagingClient
 from toolang.teaming.backend.valkey.keys import PRESENCE, TEAM
 from toolang.teaming.client import HubClient
@@ -236,7 +234,9 @@ def test_hub_cli_lifecycle_and_backend_independence(valkey, tmp_path):
         hub.stop(force=True)
 
 
-def test_real_talk_terminal_sends_reads_and_reuses_tmux(valkey, tmp_path, running_hub):
+def test_real_talk_terminal_sends_and_reads_in_the_invoking_pane(
+    valkey, tmp_path, running_hub
+):
     if not shutil.which("tmux"):
         pytest.skip("tmux is not installed")
 
@@ -270,16 +270,6 @@ def test_real_talk_terminal_sends_reads_and_reuses_tmux(valkey, tmp_path, runnin
                 scope=OptionScope.Window,
             )
             pane = source.active_window.panes[0]
-            launcher = Launcher(
-                agent="isolated-talk",
-                _server=cast(Any, tmux),
-                _pane=cast(Any, pane),
-                session_mark="@toolang_talk",
-                window_mark="@toolang_convo",
-                pad_kind="talk",
-                shared_session="talks",
-            )
-            # A detached test server has no client to switch; placement remains real.
             argv = [
                 "env",
                 "TERM=xterm-256color",
@@ -295,13 +285,12 @@ def test_real_talk_terminal_sends_reads_and_reuses_tmux(valkey, tmp_path, runnin
                 "talk",
                 dev,
             ]
-            from toolang.cli.common.errors import TmuxPlacementError
-
-            with suppress(TmuxPlacementError):
-                launcher.place_chat(thread_id=dev, argv=argv, directory=str(tmp_path))
-            session = next(s for s in tmux.sessions if s.session_name == "talks")
-            window = session.windows[0]
-            target = window.panes[0]
+            pane.respawn(
+                shell=shlex.join(argv), start_directory=str(tmp_path), kill=True
+            )
+            session = source
+            window = source.active_window
+            target = pane
 
             def screen():
                 return "\n".join(target.capture_pane(start=-200))
@@ -384,17 +373,11 @@ def test_real_talk_terminal_sends_reads_and_reuses_tmux(valkey, tmp_path, runnin
                     ]
 
             asyncio.run(check())
-            with suppress(TmuxPlacementError):
-                launcher.place_chat(thread_id=dev, argv=argv, directory=str(tmp_path))
             assert len(session.windows) == 1 and len(window.panes) == 1
-            # Another conversation owns a separate live draft and input history.
-            with suppress(TmuxPlacementError):
-                launcher.place_chat(
-                    thread_id=system,
-                    argv=[*argv[:-1], system],
-                    directory=str(tmp_path),
-                )
-            assert len(session.windows) == 2
+            # Users choose where each additional conversation runs.
+            session.new_window(
+                window_shell=shlex.join([*argv[:-1], system]), attach=False
+            )
 
             async def prepare_dm():
                 async with (
@@ -409,13 +392,9 @@ def test_real_talk_terminal_sends_reads_and_reuses_tmux(valkey, tmp_path, runnin
                     return group
 
             direct = asyncio.run(prepare_dm())
-            with suppress(TmuxPlacementError):
-                launcher.place_chat(
-                    thread_id=direct,
-                    argv=[*argv[:-1], direct],
-                    directory=str(tmp_path),
-                )
-            observer = session.windows[-1].panes[0]
+            observer = session.new_window(
+                window_shell=shlex.join([*argv[:-1], direct]), attach=False
+            ).panes[0]
 
             def observed_screen():
                 return "\n".join(observer.capture_pane(start=-200))

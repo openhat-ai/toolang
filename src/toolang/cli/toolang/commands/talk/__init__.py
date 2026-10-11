@@ -1,10 +1,8 @@
 """Send plain text or enter a single conversation."""
 
 import asyncio
-from dataclasses import replace
 from hashlib import sha256
 import os
-from pathlib import Path
 import sys
 from typing import Annotated
 
@@ -12,11 +10,11 @@ import typer
 from typer._click.exceptions import ClickException
 
 from toolang.cli.common.context import context_root
-from toolang.cli.common.errors import TmuxPlacementError
 from toolang.cli.common.execution_progress.config import resolve_progress_max_width
 from toolang.cli.common.input import resolve_inputbox_max_width
-from toolang.cli.common.messaging import settings
-from toolang.cli.common.tmux import resolve_launcher
+from toolang.cli.common.messaging import settings, talk_context, talk_identity
+from toolang.cli.common.parameters import TitlePrefixOption
+from toolang.cli.common.terminal_session import prepare_terminal
 from toolang.teaming.client import HubClient
 from toolang.teaming.errors import TeamingError, MessagingError
 from toolang.common.version import toolang_version
@@ -36,10 +34,6 @@ async def _hub_version(client: HubClient) -> str:
         return "unknown"
 
 
-def talk_identity(root: Path, connection: str, human: str) -> str:
-    return sha256(f"{root.resolve()}\0{connection}\0{human}".encode()).hexdigest()[:20]
-
-
 def talk_command(
     ctx: typer.Context,
     target: Annotated[
@@ -49,6 +43,7 @@ def talk_command(
             help="Conversation ID or shorthand. Omit to list conversations",
         ),
     ] = None,
+    title_prefix: TitlePrefixOption = None,
     body: Annotated[
         list[str] | None,
         typer.Argument(
@@ -100,32 +95,6 @@ def talk_command(
                 "Interactive Talk requires a TTY; provide a message to send and exit"
             )
         identity = talk_identity(root, config.identity, human)
-        # A running window pins its Hub endpoint; drafts belong to the dataset.
-        window_context = sha256(f"{identity}\0{config.endpoint}".encode()).hexdigest()[
-            :20
-        ]
-        launcher = resolve_launcher(agent=window_context)
-        if launcher is not None:
-            launcher = replace(
-                launcher,
-                session_mark="@toolang_talk",
-                window_mark="@toolang_convo",
-                pad_kind="talk",
-                shared_session="talks",
-            )
-            argv = [
-                sys.executable,
-                "-m",
-                "toolang.cli.toolang.main",
-                "--root",
-                str(root),
-                "talk",
-                resolved if selection.exists else target,
-            ]
-            if not launcher.place_chat(
-                thread_id=resolved, argv=argv, directory=str(Path.cwd())
-            ):
-                return
         from .tui import TalkTui
         from toolang.cli.common.terminal_surfaces import resolve_terminal_surfaces
 
@@ -160,12 +129,20 @@ def talk_command(
                     max_width=max_width,
                     inputbox_max_width=inputbox_max_width,
                     selection=None if selection.exists else target,
+                    terminal=prepare_terminal(
+                        "talk",
+                        root=root,
+                        title_prefix=title_prefix,
+                        convo=resolved,
+                        context=talk_context(
+                            root, config.identity, human, config.endpoint
+                        ),
+                    ),
                 ).run()
 
         asyncio.run(interactive())
     except (
         TeamingError,
-        TmuxPlacementError,
         ValueError,
         OSError,
     ) as exc:

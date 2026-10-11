@@ -8,6 +8,8 @@ import typer
 from typer._click.exceptions import ClickException
 
 from toolang.cli.common.context import context_root, user_call
+from toolang.cli.common.parameters import TitlePrefixOption
+from toolang.cli.common.terminal_session import prepare_terminal
 from toolang.cli.common.help import CliCommand, CliGroup
 from toolang.setup.teaming import load_teaming_root
 from toolang.up.config import resolve_port_override
@@ -71,10 +73,19 @@ def start(ctx: typer.Context, port: PortOption = None) -> None:
     typer.echo(f"Hub started: {record.connection.endpoint}")
 
 
-def serve(ctx: typer.Context, port: PortOption = None) -> None:
+def serve(
+    ctx: typer.Context, port: PortOption = None, title_prefix: TitlePrefixOption = None
+) -> None:
     """Run the Hub in the foreground"""
     config, selected = _settings(ctx, port)
-    raise typer.Exit(user_call(serve_hub, context_root(ctx), config, port=selected))
+    with prepare_terminal(
+        "serve",
+        root=context_root(ctx),
+        title_prefix=title_prefix,
+        label="serve hub",
+        stream=sys.stderr,
+    ):
+        raise typer.Exit(user_call(serve_hub, context_root(ctx), config, port=selected))
 
 
 def stop(

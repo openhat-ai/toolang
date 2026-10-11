@@ -169,25 +169,12 @@ returns when a new message or notice is displayed.
 
 ## Terminal titles and tmux
 
-Talk publishes the compact label (`@alice`, `@alice,bob`, or `#dev`) through OSC 0
-and clears it on exit. iTerm2 and tmux can display it according to terminal settings.
-The title is a display label; the footer retains the canonical ID for copying.
-
-All Talk windows in one tmux server use the single session named `talks`. Windows
-are reused by canonical conversation ID and connection context, including root,
-backend, viewer, and Hub endpoint. Manual window renaming does not affect lookup.
-A new window starts with the canonical ID as its name. Existing windows and shells
-are preserved. `TOOLANG_TMUX=0` keeps Talk in the invoking terminal.
-
-| Option | Scope | Value |
-| --- | --- | --- |
-| `@toolang_talk` | Session | `talks` |
-| `@toolang_convo` | Window | Canonical conversation ID |
-| `@toolang_context` | Window | Connection-context hash |
-| `@toolang_pad` | Pane | `talk` |
-
-`convo` abbreviates conversation. The marks support window and pane lookup;
-OSC titles describe the displayed conversation.
+Interactive Talk stays in the invoking pane and publishes `@alice`, `@alice,bob`,
+or `#dev` through OSC 0, refreshing when the conversation label changes. The
+footer retains the canonical ID. Pane-local marks identify `kind=talk`, root,
+`convo`, and the connection `context`; no sessions or windows are created or
+renamed. Directory listings and send-only commands publish nothing. See
+[terminal configuration and marks](api.md#terminal-titles-and-pane-marks).
 
 ## Agent messaging
 

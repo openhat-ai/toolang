@@ -10,6 +10,7 @@ import pytest
 from tests.unit.cli.test_talk_layout import talk_app
 from toolang.cli.common.execution_progress.formatting import display_width
 from toolang.cli.toolang.commands.talk import tui
+from toolang.cli.common.terminal_session import TerminalSession
 
 
 @pytest.mark.parametrize("fails", [False, True])
@@ -32,6 +33,7 @@ def test_talk_sets_osc_zero_title_and_clears_it_on_exit(
 ):
     async def scenario():
         async with talk_app(tmp_path, conversation=conversation) as (ui, output):
+            ui.terminal = TerminalSession(enabled=True)
             monkeypatch.setenv("TOOLANG_TMUX", "0")
             monkeypatch.setattr(tui.os, "isatty", lambda _fd: True)
             monkeypatch.setattr(output, "fileno", lambda: 1)
@@ -62,6 +64,7 @@ def test_talk_sets_osc_zero_title_and_clears_it_on_exit(
 def test_talk_does_not_emit_titles_on_non_tty_output(tmp_path, monkeypatch):
     async def scenario():
         async with talk_app(tmp_path) as (ui, output):
+            ui.terminal = TerminalSession(enabled=True)
             monkeypatch.setattr(tui.os, "isatty", lambda _fd: False)
             monkeypatch.setattr(output, "fileno", lambda: 1)
             write = Mock()
@@ -78,19 +81,21 @@ def test_title_sanitizes_controls_and_terminal_failures_are_nonfatal(
 ):
     async def scenario():
         async with talk_app(tmp_path) as (ui, output):
+            ui.terminal = TerminalSession(enabled=True)
             monkeypatch.setattr(tui.os, "isatty", lambda _fd: True)
             monkeypatch.setattr(output, "fileno", lambda: 1)
             monkeypatch.setattr(ui.app.input, "fileno", lambda: 0)
             write = Mock()
             monkeypatch.setattr(output, "write_raw", write)
-            assert ui.write_title("Talk\n\x1b]52;c;secret\x07" + "开发" * 100)
+            ui.terminal.start(write=output.write_raw, flush=output.flush)
+            assert ui.terminal.set_title("Talk\n\x1b]52;c;secret\x07" + "开发" * 100)
             title = write.call_args.args[0]
             assert title.startswith("\x1b]0;Talk ") and title.endswith("\x07")
             assert "secret" not in title and "\n" not in title
             assert title.count("\x1b") == title.count("\x07") == 1
-            assert display_width(title[4:-1]) <= 120
+            assert display_width(title[4:-1]) <= 32
             write.side_effect = OSError("terminal closed")
-            assert not ui.write_title("Talk")
+            assert not ui.terminal.set_title("Talk")
 
     asyncio.run(scenario())
 

@@ -5,36 +5,15 @@ from __future__ import annotations
 from collections.abc import Callable
 from threading import Thread
 
-from prompt_toolkit.output import Output
-from wcwidth import wcwidth
+from toolang.cli.common.terminal_title import agent_label, clip_title, label_text
 
 from .base import ThreadTitle
 
-TITLE_WIDTH = 60
-ELLIPSIS = "\u2026"
 
-
-def clip_title(text: str, *, width: int = TITLE_WIDTH) -> str:
-    """Return one bounded display line without terminal control characters."""
-
-    flat = "".join(
-        char
-        for char in " ".join(text.split())
-        if ord(char) >= 32 and not 127 <= ord(char) <= 159
-    )
-    if width <= 0:
-        return ""
-    if sum(max(wcwidth(char), 0) for char in flat) <= width:
-        return flat
-    clipped: list[str] = []
-    used = 0
-    for char in flat:
-        step = max(wcwidth(char), 0)
-        if used + step > width - 1:
-            break
-        clipped.append(char)
-        used += step
-    return "".join(clipped).rstrip() + ELLIPSIS
+def chat_label(agent: str, title: str = "") -> str:
+    name = clip_title(agent_label(agent), width=12)
+    topic = label_text(title)
+    return f"{name}: {topic}" if topic else name
 
 
 class ChatTitle:
@@ -43,12 +22,14 @@ class ChatTitle:
     def __init__(
         self,
         *,
-        output: Output,
+        publish: Callable[[str], bool],
+        agent: str,
         enabled: bool,
         lookup: Callable[[str], str | None],
         on_result: Callable[[ThreadTitle], None],
     ) -> None:
-        self._output = output
+        self._publish = publish
+        self._agent = agent
         self._enabled = enabled
         self._lookup = lookup
         self._on_result = on_result
@@ -57,7 +38,6 @@ class ChatTitle:
         self._pending = False
         self._retry = False
         self._published = False
-        self._written: str | None = None
         self._closed = False
 
     def start(self, thread_id: str | None) -> None:
@@ -72,8 +52,6 @@ class ChatTitle:
             self._thread_id = thread_id
             self._generation += 1
             self._pending = self._retry = self._published = False
-        if not self._published:
-            self._emit("[new chat]")
 
     def refresh(self) -> None:
         if (
@@ -100,7 +78,10 @@ class ChatTitle:
             if not self._closed:
                 self._on_result(result)
 
-        Thread(target=lookup, name="chat-thread-title", daemon=True).start()
+        try:
+            Thread(target=lookup, name="chat-thread-title", daemon=True).start()
+        except RuntimeError:
+            self._pending = False
 
     def accept(self, result: ThreadTitle) -> None:
         if (
@@ -110,9 +91,9 @@ class ChatTitle:
         ):
             return
         self._pending = False
-        title = clip_title(result.title or "")
-        if title:
-            self._published = self._emit(title)
+        title = label_text(result.title or "")
+        written = self._publish(chat_label(self._agent, title))
+        self._published = written and bool(title)
         retry, self._retry = self._retry, False
         if retry and not self._published:
             self.refresh()
@@ -121,21 +102,3 @@ class ChatTitle:
         if self._closed:
             return
         self._closed = True
-        if self._written is not None:
-            self._emit("")
-
-    def _emit(self, title: str) -> bool:
-        if not self._enabled:
-            return False
-        title = clip_title(title)
-        if title == self._written:
-            return True
-        try:
-            # OSC 0 updates iTerm2 tabs and windows, and tmux pane titles.
-            # Output.set_title() sends OSC 2, which leaves iTerm2 tabs unchanged.
-            self._output.write_raw(f"\x1b]0;{title}\x07")
-            self._output.flush()
-        except (OSError, ValueError):
-            return False
-        self._written = title
-        return True
