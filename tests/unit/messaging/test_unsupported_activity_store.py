@@ -149,11 +149,22 @@ def test_hub_details_reports_unsupported_history_as_unavailable(unsupported_read
     asyncio.run(scenario())
 
 
-def test_hub_live_feed_keeps_unsupported_source_and_healthy_updates(readers):
+@pytest.mark.parametrize("cached", [False, True], ids=["cold", "warm"])
+def test_hub_live_feed_keeps_unsupported_source_and_healthy_updates(
+    readers, tmp_path, cached
+):
     async def scenario():
         async with client(FakeServer(server_type="valkey"), "human:owner") as human:
             for agent in readers:
                 await human.backend.register(human.actor, agent=agent, token=agent)
+            if cached:
+                # A store can publish an empty snapshot before its first session.
+                with closing(RunStore(tmp_path / "cached.db")) as store:
+                    pages = ActivityReader(store.db_path, "agent:alice").pages(
+                        ActivityQuery()
+                    )
+                assert pages[0].session is None
+                await human.backend.activity.save("agent:alice", "agent:alice", pages)
             reader = HubActivity(human.backend, local_reader=readers.get)
             pages = {}
             unavailable_updates = 0

@@ -187,9 +187,11 @@ class HubActivityFeed:
                                 return
                             # Another reader may have cached a later observation.
                             # That must not block this feed's ordered live frames.
+                            # Unavailable history has no boundary to compare.
                             previous = self.pages.get(agent)
                             if (
                                 previous
+                                and batch[0].observed is not None
                                 and previous[0].session == batch[0].session
                                 and (batch[0].revision, batch[0].observed or 0)
                                 < (previous[0].revision, previous[0].observed or 0)
