@@ -17,9 +17,10 @@ from toolang.plugin.catalogs.models_dev.path import MODEL_CATALOG_ENV
 from toolang.up import process as agents
 from toolang.up import sandbox as sandbox_runtime
 from toolang.up.logging import resolve_agent_logging
-from toolang.up.types import AgentServerRef
+from toolang.up.types import ALL_DRIVERS, AgentServerRef, DriverName, ExecutionDrivers
+from toolang.up.config import default_drivers, format_drivers, parse_drivers
 
-from .context import load_runtime_environ
+from .context import load_runtime_environ, resolve_root
 from .parameters import DEVELOPMENT_WHEEL_HELP as DEVELOPMENT_WHEEL_HELP
 from .policy import (
     resolve_ceiling_overrides,
@@ -55,6 +56,8 @@ def acquire_agent_server(
     compact_override: ModelOverride | None = None,
     workspace_additions: Mapping[str, str] | None = None,
     temporary: bool = False,
+    drivers: ExecutionDrivers | None = None,
+    required_driver: DriverName | None = None,
 ) -> Iterator[AgentServerRef | None]:
     """Ensure a persistent server; temporary scripts retain their existing lifecycle."""
 
@@ -75,6 +78,8 @@ def acquire_agent_server(
                 compact_override=compact_override,
                 workspace_additions=workspace_additions,
                 temporary=temporary,
+                drivers=drivers,
+                required_driver=required_driver,
             )
     except AgentServerAcquisitionError:
         raise
@@ -144,6 +149,8 @@ def _prepare_agent_server(
     compact_override: ModelOverride | None,
     workspace_additions: Mapping[str, str] | None,
     temporary: bool,
+    drivers: ExecutionDrivers | None = None,
+    required_driver: DriverName | None = None,
 ) -> AgentServerRef | sandbox_runtime.SandboxHandle | None:
     status = agents.AgentProcess(layout).status(
         ui_base_url=ui_base_url, check_health=not temporary
@@ -160,6 +167,22 @@ def _prepare_agent_server(
             progress=progress.sink,
         )
     if status is not None and status.status == "running":
+        if drivers is not None or required_driver is not None:
+            state = agents.AgentProcess(layout).state() or {}
+            raw_drivers = state.get("drivers")
+            running = (
+                parse_drivers(",".join(str(item) for item in raw_drivers) or "none")
+                if isinstance(raw_drivers, list)
+                else ALL_DRIVERS
+            )
+            if drivers is not None and drivers != running:
+                raise AgentServerAcquisitionError(
+                    f"--enable {format_drivers(drivers)} differs from the running agent ({format_drivers(running)}); stop and restart it to change drivers"
+                )
+            if required_driver is not None and required_driver not in running:
+                raise AgentServerAcquisitionError(
+                    f"{required_driver} driver is disabled; restart the agent with it enabled"
+                )
         if workspace_additions is not None:
             captured = agents.AgentProcess(layout).state() or {}
             if captured.get("workspace_additions", {}) != dict(workspace_additions):
@@ -181,6 +204,17 @@ def _prepare_agent_server(
             )
         return _attached_server(layout, status, requested=sandbox)
 
+    effective_drivers = (
+        drivers
+        if drivers is not None
+        else frozenset()
+        if temporary
+        else default_drivers(layout.placement)
+    )
+    if required_driver is not None and required_driver not in effective_drivers:
+        raise AgentServerAcquisitionError(
+            f"{required_driver} driver is required; include it in --enable"
+        )
     selected = sandbox_runtime.resolve_selection(layout, explicit=sandbox)
     if selected == "host" and dev is not None:
         raise AgentServerAcquisitionError(
@@ -200,6 +234,7 @@ def _prepare_agent_server(
         compact_override=compact_override,
         workspace_additions=workspace_additions,
         temporary_port=temporary,
+        drivers=effective_drivers,
     )
     with progress.suspended():
         warn_development_package_source(launch)
@@ -297,11 +332,15 @@ def _resolve_inactive_launch(
     compact_override: ModelOverride | None = None,
     workspace_additions: Mapping[str, str] | None = None,
     temporary_port: bool = False,
+    drivers: ExecutionDrivers | None = None,
 ) -> sandbox_runtime.LaunchSpec:
     try:
         environ = load_runtime_environ(
             layout,
             base_environ=os.environ if base_environ is None else base_environ,
+        )
+        environ.setdefault(
+            "TOOLANG_OBSERVATION_ROOT", str(resolve_root(None, environ=environ))
         )
         environ["TOOLANG_ROOT"] = str(layout.root)
         if model_catalog is not None:
@@ -314,6 +353,7 @@ def _resolve_inactive_launch(
         return asyncio.run(
             sandbox_runtime.resolve_launch(
                 layout=layout,
+                drivers=drivers,
                 sandbox=sandbox,
                 port=None
                 if temporary_port

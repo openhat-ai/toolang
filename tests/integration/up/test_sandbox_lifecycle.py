@@ -70,7 +70,9 @@ def test_host_sandbox_runs_without_backend_with_default_teaming(tmp_path: Path) 
         with httpx.Client(
             base_url=state.ref.endpoint, timeout=10, trust_env=False
         ) as http:
-            response = http.post("/api/v1/threads", json={"client": "script"})
+            response = http.post(
+                "/api/v1/runs/threads", json={"client_id": "test-script"}
+            )
             response.raise_for_status()
             with connect_sse(
                 http,

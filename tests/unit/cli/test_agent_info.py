@@ -125,8 +125,7 @@ def test_running_info_uses_runtime_resources_without_loading_local_sources(
         "/api/v1/models": {"items": [{"provider": "guest"}]},
         "/api/v1/tools": {"items": [{"toolset": "guest"}, {"toolset": "guest"}]},
         "/api/v1/caps": {"psyches": [], "skills": [{}], "services": [], "prompts": []},
-        "/api/v1/tasks": [{}],
-        "/api/v1/chores": [],
+        "/api/v1/chores": [{}],
         "/api/v1/workspaces": {
             "revision": "a" * 64,
             "items": [{"name": "guest", "path": "/guest", "available": True}],
@@ -147,7 +146,7 @@ def test_running_info_uses_runtime_resources_without_loading_local_sources(
     assert "1 model, 1 provider" in output.out
     assert "2 tools, 1 toolset" in output.out
     assert "1 skill" in output.out
-    assert "0 chores, 1 task" in output.out
+    assert "1 chore" in output.out
     assert "guest" in output.out
     assert set(calls) == set(payloads)
     assert not (layout.home / ".state").exists()

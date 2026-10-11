@@ -57,7 +57,7 @@ Once created, the agent is ready for a conversation:
 too NAME chat
 ```
 
-Use the CLI help to configure the agent and add tasks or recurring chores:
+Use the CLI help to configure the agent and add one-off or recurring chores:
 
 ```bash
 too --help

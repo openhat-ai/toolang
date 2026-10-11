@@ -65,7 +65,7 @@ agic child() -> Text:
         async with harness:
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable=f"{caller}:{caller}_parent",
                 ),
                 tracer=tracer,
@@ -181,7 +181,7 @@ agic child():
         async with harness:
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable=f"{caller}:{caller}_parent",
                 ),
                 tracer=tracer,

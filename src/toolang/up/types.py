@@ -3,6 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
+
+DriverName = Literal["chat", "talk", "chore"]
+ExecutionDrivers = frozenset[DriverName]
+ALL_DRIVERS: ExecutionDrivers = frozenset(("chat", "talk", "chore"))
 
 
 @dataclass(frozen=True, slots=True)

@@ -10,7 +10,6 @@ from pydantic import BeforeValidator, BaseModel, ConfigDict, Field, model_valida
 
 from toolang.base.types.message import Part
 from toolang.base.money import reject_boolean_cost
-from toolang.catalog.types import DEFAULT_CHORE_SCHEDULE
 from toolang.base.types.model import ModelOverride, ModelRequest
 from toolang.base.types.policy import RunLimits, RunPolicy
 from toolang.execution.schemas import (
@@ -47,6 +46,7 @@ def _reject_materialized_run_unknowns(value: object) -> None:
         {
             "thread_id",
             "request_id",
+            "client_id",
             "runnable",
             "model",
             "policy",
@@ -208,7 +208,8 @@ class ThreadPeerPayload(ApiRequest):
 class ThreadCreateRequest(ApiRequest):
     """Request one empty thread."""
 
-    client: Literal["web", "term", "tui", "chat", "script"] = "term"
+    client_id: StrictText | None = Field(default=None, min_length=1)
+    request_id: StrictText | None = Field(default=None, min_length=1)
     peer: ThreadPeerPayload | None = None
 
 
@@ -217,6 +218,7 @@ class ThreadRewindRequest(ApiRequest):
 
     run_id: str | None = Field(default=None, min_length=1)
     request_id: str | None = None
+    client_id: StrictText | None = Field(default=None, min_length=1)
 
 
 class ThreadForkRequest(ThreadRewindRequest):
@@ -237,26 +239,14 @@ class ConfiguredCapRequest(ApiRequest):
     ref: str
 
 
-class TaskCreateRequest(ApiRequest):
-    """Request one authored task creation."""
-
-    title: str | None = None
-    body: str = ""
-
-
-class TaskPatchRequest(ApiRequest):
-    """Request one authored task update."""
-
-    title: str | None = None
-    body: str | None = None
-
-
 class ChoreCreateRequest(ApiRequest):
     """Request one authored chore creation."""
 
+    name: StrictText
+
     title: str | None = None
     body: str = ""
-    schedule: str = DEFAULT_CHORE_SCHEDULE
+    schedule: StrictText | None = None
 
 
 class ChorePatchRequest(ApiRequest):
@@ -289,6 +279,7 @@ class RunCreateRequest(ApiRequest):
 
     thread_id: str = Field(min_length=1)
     request_id: str = Field(min_length=1)
+    client_id: StrictText | None = Field(default=None, min_length=1)
     runnable: RunnableRequest[object]
     model: ModelRequest | None
     policy: RunPolicy
@@ -321,6 +312,7 @@ class AuthoredRunRequest(ApiRequest):
 
     thread_id: StrictText
     request_id: StrictText
+    client_id: StrictText | None = Field(default=None, min_length=1)
     runnable: RunnableRequest[str]
     model: ModelRequest | None
     policy: RunPolicy
@@ -341,6 +333,7 @@ class AuthoredRerunRequest(ApiRequest):
     """One unresolved rerun request for server-owned resolution."""
 
     request_id: StrictText
+    client_id: StrictText | None = Field(default=None, min_length=1)
     commands: list[RunOverridePayload] = Field(default_factory=list)
     model: ModelRequest | None = None
     model_override: ModelOverride | None = None
@@ -350,6 +343,7 @@ class AuthoredRetryRequest(ApiRequest):
     """One unresolved retry request for server-owned resolution."""
 
     request_id: StrictText
+    client_id: StrictText | None = Field(default=None, min_length=1)
     commands: list[RunOverridePayload] = Field(default_factory=list)
     anchor: StepRef | None = None
 
@@ -368,12 +362,14 @@ class RuntimeIdentityPayload(ApiRequest):
 
     version: StrictText
     sandbox: RuntimeSandboxPayload
+    drivers: tuple[str, ...] = ()
 
 
 class RunRerunRequest(ApiRequest):
     """Request a new run from one source invocation."""
 
     request_id: str | None = Field(default=None, min_length=1)
+    client_id: StrictText | None = Field(default=None, min_length=1)
     model: ModelRequest | None = None
     limits: RunLimitsPayload | None = None
 
@@ -382,6 +378,7 @@ class RunRetryRequest(ApiRequest):
     """Request retry from one durable step boundary."""
 
     request_id: str | None = Field(default=None, min_length=1)
+    client_id: StrictText | None = Field(default=None, min_length=1)
     anchor: StepRef | None = None
     limits: RunLimitsPayload | None = None
 
@@ -392,12 +389,14 @@ class RunCancelRequest(ApiRequest):
     reason: str | None = None
     mode: Literal["immediate", "next_step", "next_call"] = "immediate"
     request_id: str | None = None
+    client_id: StrictText | None = Field(default=None, min_length=1)
 
 
 class RunSteerRequest(ApiRequest):
     """Request one steering message for a running run."""
 
     request_id: str | None = None
+    client_id: StrictText | None = Field(default=None, min_length=1)
     mode: Literal["immediate", "next_step", "next_call"] = "next_step"
     message: InputMessagePayload
 

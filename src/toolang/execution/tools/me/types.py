@@ -7,7 +7,7 @@ from toolang.base.types.tool import ToolContext
 from toolang.common.layout import AgentLayout
 from toolang.state.types import StateSync
 
-HomeFileCategory = Literal["program", "config", "cap", "asset", "job"]
+HomeFileCategory = Literal["program", "config", "cap", "asset", "chore"]
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

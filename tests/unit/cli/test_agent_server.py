@@ -764,11 +764,13 @@ def test_inactive_launch_uses_fresh_environment_and_file_logging(
             "TOOLANG_LIMIT_TOKENS": "12000",
             "TOOLANG_COMPACT_MODEL": "test/compact effort=low",
             "TOOLANG_ROOT": str(layout.root),
+            "TOOLANG_OBSERVATION_ROOT": str(agent_server.resolve_root(None)),
             "TOOLANG_MODEL_CATALOG": str(catalog),
         },
         "agent_log_path": layout.runtime_log,
     }
     assert captured["launch"] == {
+        "drivers": None,
         "workspace_additions": None,
         "layout": layout,
         "sandbox": "docker",

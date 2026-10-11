@@ -441,6 +441,8 @@ class RunRequest:
     attachments: dict[str, Part] | None = None
     source_revision: str | None = None
 
+    client_id: str | None = None
+
     def __post_init__(self) -> None:
         if not isinstance(self.thread_id, str):
             raise TypeError("run request thread ID must be a string")
@@ -475,6 +477,8 @@ class RetryRequest:
     request_id: str
     anchor: StepRef | None = None
 
+    client_id: str | None = None
+
     def __post_init__(self) -> None:
         _validate_restart_request(
             source=self.source,
@@ -501,6 +505,8 @@ class RerunRequest:
     request_id: str
     model: ModelRequest | None = None
     model_override: ModelOverride | None = None
+
+    client_id: str | None = None
 
     def __post_init__(self) -> None:
         _validate_restart_request(
@@ -745,6 +751,7 @@ class ControlInfo:
     error: str | None
     created_at: str
     finished_at: str | None
+    client_id: str | None = None
     triggered_by: StepRef | None = None
 
     @classmethod
@@ -755,6 +762,7 @@ class ControlInfo:
             kind=control.kind,
             timing=control.timing,
             request_id=control.request,
+            client_id=control.client_id,
             status=control.status,
             payload=control.payload,
             triggered_by=control.triggered_by,
@@ -971,6 +979,9 @@ class ActivitySnapshot(BaseModel):
     """One atomic, bounded absolute projection; token deltas are never included."""
 
     agent: str
+    instance: str | None = None
+    placement: str | None = None
+    drivers: tuple[str, ...] | None = None
     revision: int
     session: str | None = None
     session_start: float | None = None

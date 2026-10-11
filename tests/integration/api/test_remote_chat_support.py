@@ -22,7 +22,7 @@ from toolang.base.types.model import (
 )
 from toolang.base.types.policy import RunDefaults
 from toolang.base.types.run import ModelCallResult
-from toolang.catalog import CapsManager, JobsManager
+from toolang.catalog import CapsManager, ChoresManager
 from toolang.common.errors import ToolangError
 from toolang.common.layout import AgentLayout
 from toolang.execution.schemas import RunDetail
@@ -140,7 +140,7 @@ def test_history_response_keeps_one_snapshot_during_retry(
         app = create_app(
             core,
             CapsManager(core.layout),
-            JobsManager(core.layout),
+            ChoresManager(core.layout),
             cors_allowed_origins=(),
         )
         with TestClient(app) as client:
@@ -207,7 +207,7 @@ agic chat:
     app = create_app(
         core,
         CapsManager(core.layout),
-        JobsManager(core.layout),
+        ChoresManager(core.layout),
         cors_allowed_origins=(),
     )
 
@@ -337,7 +337,7 @@ agic chat(_: Part[]) -> Part[]:
     app = create_app(
         core,
         CapsManager(core.layout),
-        JobsManager(core.layout),
+        ChoresManager(core.layout),
         cors_allowed_origins=(),
     )
 
@@ -346,7 +346,7 @@ agic chat(_: Part[]) -> Part[]:
             runtime = client.get("/api/v1/profile").json()["runtime"]
             models = client.get("/api/v1/models")
             defaults = client.get("/api/v1/runs/defaults")
-            created = client.post("/api/v1/threads", json={"client": "tui"})
+            created = client.post("/api/v1/threads", json={"client_id": "test-tui"})
             thread_id = created.json()["thread"]["id"]
             thread_defaults = client.get(
                 "/api/v1/runs/defaults", params={"thread_id": thread_id}
@@ -395,6 +395,7 @@ agic chat(_: Part[]) -> Part[]:
         latest = TypeAdapter(RunDetail).validate_python(latest_response.json())
 
         assert runtime == {
+            "drivers": ["chat", "chore", "talk"],
             "version": source_version,
             "sandbox": {
                 "driver": "host",
@@ -466,6 +467,7 @@ def test_profile_preserves_source_version_and_short_docker_instance(
         payload = profile(core)
 
         assert payload["runtime"] == {
+            "drivers": ("chat", "chore", "talk"),
             "version": source_version,
             "sandbox": {
                 "driver": "docker",

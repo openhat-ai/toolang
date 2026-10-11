@@ -525,7 +525,7 @@ def _chat_completion() -> dict[str, object]:
 def _create_authored_run(agent: _RunningDockerAgent) -> str:
     created = _post_json(
         f"{agent.endpoint}/api/v1/threads",
-        {"client": "script"},
+        {"client_id": "test-script"},
     )
     thread = cast(dict[str, Any], created["thread"])
     run_id, stream = _post_stream(

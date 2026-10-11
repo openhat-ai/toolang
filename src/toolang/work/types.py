@@ -3,5 +3,5 @@
 from typing import Literal
 
 
-JobStatus = Literal["pending", "running", "done", "failed", "canceled"]
-JobTrigger = Literal["source", "schedule", "manual"]
+ChoreStatus = Literal["pending", "running", "done", "failed", "canceled"]
+ChoreTrigger = Literal["source", "schedule", "manual"]

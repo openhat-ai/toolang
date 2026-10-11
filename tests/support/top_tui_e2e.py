@@ -80,7 +80,7 @@ flow review(_: Text) -> Text:
         tools={tool.name: tool},
     )
     async with harness:
-        thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+        thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
         await harness.executor.run(
             harness.run_spec(
                 thread=thread, runnable="worker", primary=(TextPart("Earlier work"),)

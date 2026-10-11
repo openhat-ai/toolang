@@ -175,7 +175,7 @@ def test_live_distinct_models_compact_and_resume_the_caller(tmp_path, request):
             ],
         )
         async with h:
-            thread = h.threads.create(prefix=ThreadPrefix.TERM)
+            thread = h.threads.create(prefix=ThreadPrefix.CHAT)
             for index in range(len(FACTS)):
                 seeded = await h.executor.run(
                     h.run_spec(

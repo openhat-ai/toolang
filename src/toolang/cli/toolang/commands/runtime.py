@@ -27,6 +27,7 @@ from toolang.cli.common.parameters import (
     TitlePrefixOption,
     AllowOptions,
     CompactModelOption,
+    DriverOption,
     DefaultOptions,
     LimitOptions,
     TextType,
@@ -50,6 +51,7 @@ from ...common.context import (
     ModelCatalogOption,
     cli_context,
     context_root,
+    resolve_root,
     require_runtime_agent,
     load_runtime_environ,
     resolve_model_catalog_option,
@@ -97,6 +99,7 @@ def run(
     limits: LimitOptions = None,
     defaults: DefaultOptions = None,
     compact_model: CompactModelOption = None,
+    driver: DriverOption = None,
     model_catalog: ModelCatalogOption = None,
     host: Annotated[
         str,
@@ -153,6 +156,7 @@ def run(
                 allows=allows,
                 defaults=defaults,
                 compact_model=compact_model,
+                driver=driver,
                 limits=limits,
                 port=port,
                 host=host,
@@ -235,6 +239,7 @@ def start(
     limits: LimitOptions = None,
     defaults: DefaultOptions = None,
     compact_model: CompactModelOption = None,
+    driver: DriverOption = None,
     model_catalog: ModelCatalogOption = None,
     host: Annotated[
         str,
@@ -278,6 +283,7 @@ def start(
                 allows=allows,
                 defaults=defaults,
                 compact_model=compact_model,
+                driver=driver,
                 limits=limits,
                 port=port,
                 host=host,
@@ -366,6 +372,7 @@ def serve(
     limits: LimitOptions = None,
     defaults: DefaultOptions = None,
     compact_model: CompactModelOption = None,
+    driver: DriverOption = None,
     model_catalog: ModelCatalogOption = None,
     host: Annotated[
         str, typer.Option("--host", metavar="HOST", help="API bind host")
@@ -384,6 +391,9 @@ def serve(
         typer.Option("--log", metavar="LOG_SPEC", help="Python logging specification"),
     ] = None,
     placement: Annotated[str, typer.Option("--placement", hidden=True)] = "resident",
+    runtime_instance: Annotated[
+        str | None, typer.Option("--runtime-instance", hidden=True)
+    ] = None,
     workspace_bindings: Annotated[
         str, typer.Option("--workspace-bindings", hidden=True)
     ] = "{}",
@@ -394,6 +404,7 @@ def serve(
     """Run the internal AgentServer entrypoint."""
 
     from toolang.up.server import resolve_serve, serve as serve_agent
+    from toolang.up.config import default_drivers, parse_drivers
     from toolang.plugin.sandboxes.host import HOST_LAUNCH_ENV
 
     launch_id = os.environ.pop(HOST_LAUNCH_ENV, None)
@@ -401,6 +412,7 @@ def serve(
         context_root(ctx),
         agent,
         cast(Literal["resident", "roaming", "visiting"], placement),
+        instance=runtime_instance,
     )
     sandbox = os.environ.get("TOOLANG_SANDBOX", "host").strip() or "host"
     environ = load_runtime_environ(layout, base_environ=os.environ)
@@ -410,6 +422,9 @@ def serve(
     spec = user_call(
         resolve_serve,
         layout=layout,
+        drivers=user_call(parse_drivers, driver)
+        if driver is not None
+        else default_drivers(layout.placement),
         host=host,
         endpoint_host=endpoint_host,
         port=port,
@@ -446,12 +461,20 @@ def resolve_startup(
     dev: Path | None,
     background: bool,
     compact_model: str | None = None,
+    driver: str | None = None,
     workspace_options: list[str] | None = None,
     workdir: str | None = None,
 ) -> RuntimeLaunch:
     from toolang.up import sandbox as sandbox_runtime
     from toolang.cli.common.ports import agent_port
 
+    from toolang.up.config import default_drivers, parse_drivers
+
+    drivers = (
+        user_call(parse_drivers, driver)
+        if driver is not None
+        else default_drivers(target.placement)
+    )
     root, agent = target.root, target.name
     workspaces = resolve_workspaces(
         target, procdir=Path.cwd(), paths=workspace_options or (), workdir=workdir
@@ -462,6 +485,9 @@ def resolve_startup(
     if existing is not None and existing.status in {"running", "preparing", "starting"}:
         raise ClickException(active_agent_error(existing))
     environ = load_runtime_environ(target, base_environ=os.environ)
+    environ.setdefault(
+        "TOOLANG_OBSERVATION_ROOT", str(resolve_root(None, environ=environ))
+    )
     environ["TOOLANG_ROOT"] = str(root)
     port = user_call(agent_port, target, port, environ=environ)
     if model_catalog := resolve_model_catalog_option(model_catalog):
@@ -492,6 +518,7 @@ def resolve_startup(
         asyncio.run,
         sandbox_runtime.resolve_launch(
             layout=target,
+            drivers=drivers,
             host=host,
             endpoint_host=endpoint_host,
             port=port,

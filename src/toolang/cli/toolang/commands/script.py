@@ -689,6 +689,8 @@ def _run(
     from toolang.execution.store import RunStore
     from toolang.state.prepare import prepare_agent_state
     from toolang.up import process as agents
+    from toolang.up.observation import RuntimeRegistration
+    from toolang.cli.common.context import resolve_root
     from toolang.up.logging import configure_logging_plan, resolve_agent_logging
 
     from ...common.agent_server import acquire_agent_server
@@ -702,7 +704,9 @@ def _run(
     accepted: list[str] = []
     runnable_ref = f"{runnable_kind}:{runnable}"
     try:
-        layout = agents.materialize_roaming_program(source_path)
+        layout = replace(
+            agents.materialize_roaming_program(source_path), instance=uuid4().hex
+        )
         workspaces = resolve_workspaces(
             layout,
             procdir=Path.cwd(),
@@ -721,6 +725,9 @@ def _run(
             f" {runnable}" if not runnable.startswith("<entry:") else ""
         )
         with (
+            RuntimeRegistration(
+                layout, roots=(layout.root, resolve_root(None)), drivers=frozenset()
+            ),
             prepare_terminal(
                 "run",
                 layout=layout,
@@ -940,10 +947,12 @@ async def _execute_remote(
                     model,
                     ref=materialize_model_selection(models, model.ref),
                 )
-            thread = await _create_remote_script_thread(http, client.endpoint)
+            thread = await _create_remote_script_thread(
+                http, client.endpoint, client_id=client.client_id
+            )
             request = RunRequest(
                 thread_id=thread,
-                request_id=f"term_{uuid4().hex}",
+                request_id=f"request_{uuid4().hex}",
                 runnable=RunnableRequest(effective.runnable or runnable, request_input),
                 model=model,
                 policy=RunPolicy(allow=ceilings, limits=effective.limits),
@@ -1010,6 +1019,8 @@ def _remote_script_input(
 async def _create_remote_script_thread(
     client: httpx.AsyncClient,
     endpoint: str,
+    *,
+    client_id: str,
 ) -> str:
     import httpx
     from pydantic import TypeAdapter, ValidationError
@@ -1018,8 +1029,8 @@ async def _create_remote_script_thread(
 
     try:
         response = await client.post(
-            f"{endpoint}/api/v1/threads",
-            json={"client": "script"},
+            f"{endpoint}/api/v1/runs/threads",
+            json={"client_id": client_id, "request_id": f"request_{uuid4().hex}"},
         )
     except (httpx.HTTPError, RuntimeError) as exc:
         raise RuntimeError(
@@ -1144,7 +1155,7 @@ async def _cancel_remote_script_run(
     try:
         await client.cancel(
             run_id,
-            request_id=f"term_{uuid4().hex}",
+            request_id=f"request_{uuid4().hex}",
             reason=reason,
         )
     except (OSError, ValueError, RemoteRunClientError, RuntimeError):
@@ -1271,7 +1282,12 @@ async def _execute(
         if quiet
         else resolve_terminal_surfaces(environment=environ, output_stream=sys.stderr)
     )
-    thread = ThreadManager(store, ids).create(prefix=ThreadPrefix.SCRIPT)
+    client_id = f"client_{uuid4().hex}"
+    thread = ThreadManager(store, ids).create(
+        prefix=ThreadPrefix.SCRIPT,
+        client_id=client_id,
+        request_id=f"request_{uuid4().hex}",
+    )
     spec = replace(spec, thread=thread)
     if spec.bindings.runnable is None:
         raise RuntimeError("resolved script spec has no runnable binding")
@@ -1293,6 +1309,8 @@ async def _execute(
             spec,
             run_id=run_id,
             tracer=tracer,
+            client_id=client_id,
+            request_id=f"request_{uuid4().hex}",
         )
         return await await_script_run(handle)
     finally:

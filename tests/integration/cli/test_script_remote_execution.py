@@ -13,7 +13,7 @@ from toolang.api.app import create_app
 from toolang.base.types.message import Message, TextPart
 from toolang.base.types.run import ModelCallResult
 from toolang.base.types.model import ModelOverride
-from toolang.catalog import CapsManager, JobsManager
+from toolang.catalog import CapsManager, ChoresManager
 from toolang.cli.toolang.commands import script
 from toolang.execution.records import RunControlPayload
 from toolang.execution.types import RunOverride
@@ -71,7 +71,7 @@ def test_remote_script_uses_a_script_thread_and_native_progress(
     app = create_app(
         core,
         CapsManager(core.layout),
-        JobsManager(core.layout),
+        ChoresManager(core.layout),
         cors_allowed_origins=(),
     )
 
@@ -163,7 +163,7 @@ def test_remote_script_captures_client_files_before_server_resolution(
         pid=123,
         sandbox_description="Test OS",
     )
-    app = create_app(core, CapsManager(core.layout), JobsManager(core.layout))
+    app = create_app(core, CapsManager(core.layout), ChoresManager(core.layout))
     try:
         record = asyncio.run(
             script._execute_remote(

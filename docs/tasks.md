@@ -1,234 +1,74 @@
-# Authored Jobs
+# Chores
 
-Toolang uses Markdown task and chore documents for durable authored jobs. The
-runtime scheduling and recovery model is defined in [work.md](./work.md).
+A chore defines one-off or repeated work in `chores/<name>.md` or an inline
+`chore name:` declaration in `agent.too`. Files directly inside `chores/` are
+current definitions. There are no draft, ready, or archive stages.
 
-Current job kinds are:
-
-- `task`: one-shot work activated by publication or a body revision;
-- `chore`: recurring work activated by an RRULE or an explicit manual request.
-
-
-## Layout And Stage
-
-Jobs live below one agent home:
-
-```text
-tasks/
-  <id>.md
-chores/
-  <id>.md
-drafts/
-  tasks/
-    <id>.md
-  chores/
-    <id>.md
-archive/
-  tasks/
-    <id>.md
-  chores/
-    <id>.md
-.runtime/
-  ids.json
-  jobs.db
-  runs.db
-```
-
-Stage is directory placement rather than frontmatter:
-
-| Directory | Stage | Meaning |
-| --- | --- | --- |
-| `drafts/tasks/` | `draft` | Inactive task definition |
-| `drafts/chores/` | `draft` | Inactive chore definition |
-| `tasks/` | `ready` | Task visible to scheduling |
-| `chores/` | `ready` | Chore visible to scheduling |
-| `archive/tasks/` | `archived` | Retired task definition |
-| `archive/chores/` | `archived` | Retired chore definition |
-
-Only ready directories are watched at runtime. Draft and archived directories
-are cold catalog storage and are read only by explicit catalog operations.
-
-
-## Identity And Fields
-
-Shared frontmatter fields are:
-
-| Field | Required | Meaning |
-| --- | --- | --- |
-| `id` | before publication | Globally unique stable job identity |
-| `title` | no | Human-readable display label |
-
-Chores add:
-
-| Field | Required | Meaning |
-| --- | --- | --- |
-| `schedule` | yes | RFC 5545 RRULE |
-
-There is no separate job `name`. The id is the machine selector, title is the
-optional label, and path is the current source location. New catalog-created
-jobs use `<id>.md`; renaming that file does not change identity.
-
-Job ids are unique across task and chore kinds and every stage. Both id and
-kind are immutable. Moving between stages, renaming a source file, editing the
-body, and changing a chore schedule preserve the id. Copying a job or changing
-its kind requires a new id.
-
-The CLI, API, and agent tools allocate an id before catalog creation. A
-manually added ready file may omit it; `toolang.work` allocates and writes the
-id under the authored-job lock before publishing the next ready snapshot.
-Duplicate ids make the authored state invalid.
-
-Runtime fields such as status, run ids, errors, and schedule cursors are never
-written into authored Markdown.
-
-
-## Body
-
-The body is run-only input defined by [input-syntax.md](./input-syntax.md): a
-`RunOverride` prefix and one `CallInput[str]`. It has no ambient template
-variables. Includes resolve relative to the Markdown file, and prompt templates
-receive only explicit arguments and input.
-
-The scheduler retains the body as source and parses it only when dispatching.
-The surface default is `task` or `chore`, falling back to `default` when that
-runnable is absent. Resolution evaluates the input source into
-`RunSpec.input["_"]` and binds arguments under their names in the same map.
-
-A scheduler-side parse or validation failure is retained on the job record and
-does not create a run.
-
-
-## Task Document
-
-```md
+```markdown
 ---
-id: 3nprht9x
-title: Review API changes
+title: Clean temporary files
 ---
-
-Review the API changes and summarize risks.
+Clean temporary files and summarize the result.
 ```
 
-A new ready task is pending immediately. Editing its authored body creates a
-new revision; title or path edits do not. Pending edits coalesce to the latest
-body. An edit during a run does not mutate that run and requests the latest
-revision afterward. An unchanged terminal task stays terminal until explicitly
-reopened.
+Without `schedule`, a chore runs once for each body revision. Add an explicit
+RRULE for repeated work, for example `schedule: FREQ=HOURLY;INTERVAL=1`.
+Inline definitions use the same rules:
 
-Task statuses are:
-
-| Status | Meaning |
-| --- | --- |
-| `pending` | A revision is ready to dispatch |
-| `running` | One captured revision has an active run |
-| `done` | The current revision finished successfully |
-| `failed` | The current revision failed |
-| `canceled` | The current revision was canceled |
-
-
-## Chore Document
-
-```md
----
-id: xy1234ab
-title: Check stale PRs
-schedule: "FREQ=HOURLY;INTERVAL=6"
----
-
-Check stale PRs and report actionable items.
+```toolang
+chore cleanup:
+  schedule = FREQ=DAILY;INTERVAL=1
+  Clean temporary files and summarize the result.
 ```
 
-The scheduler persists a stable anchor and the earliest RRULE occurrence not
-yet claimed. Body edits affect later runs without triggering an immediate run.
-Schedule edits establish a new cursor. Missed scheduled occurrences coalesce
-to the latest due occurrence, so downtime and long runs do not create an
-unbounded backlog or shift the recurrence.
+Names are case-sensitive declaration names or filename stems. The ref is
+`chore/cleanup`; its ID is the first 80 bits of SHA-256 of the exact UTF-8 name,
+encoded as 16 characters in Toolang's lowercase Base32 alphabet. Its thread is
+`chore_<id>`. Renaming creates a new identity; editing the body, title, schedule,
+or source location preserves identity. Root files are shadowed by home files,
+then inline declarations. Later inline declarations shadow earlier ones.
+Different names producing the same ID are rejected.
 
-`chore run <id>` requests one manual occurrence without changing the schedule.
-Repeated pending manual requests coalesce. Scheduled and manual occurrences
-remain distinct and execute serially in the same thread.
+Definitions hold no execution state. The `chores` table in `.runtime/runs.db`
+records revisions, pending work, active runs, and schedule checkpoints. Removing
+a definition stops future dispatch but preserves its checkpoint and history.
+Restoring an unchanged completed, failed, or canceled one-off does not rerun it.
+Deleting a definition does not cancel an already running occurrence.
 
-Chore statuses are:
+## Commands
 
-| Status | Meaning |
-| --- | --- |
-| `pending` | Waiting for a schedule or manual activation |
-| `running` | One occurrence has an active run |
-| `done` | A finite schedule is exhausted with no manual request |
+`too` is an alias for `toolang`.
 
-A failed or canceled run remains execution history and does not disable later
-chore occurrences.
-
-
-## Threads And Runs
-
-Thread ids are derived from immutable job identity:
-
-```text
-task_<id>
-chore_<id>
+```sh
+too alice chore list
+too alice chore new cleanup
+too alice chore clone cleanup cleanup-copy
+too alice chore edit cleanup
+too alice chore run chore/cleanup
+too alice chore cancel cleanup
+too alice chore delete cleanup
 ```
 
-All task revisions, reopens, manual chore runs, and scheduled chore runs reuse
-the same thread. Moving or archiving a job never deletes that thread or its run
-history.
+Selectors accept the name, ref, or ID. `new` and `clone` generate a name when
+omitted. Authoring commands edit home files; `list` also shows effective root and
+inline definitions. Edit inline definitions in their `.too` source.
+`run` requests a manual occurrence, including retrying a failed or completed
+one-off. `cancel` cancels active or pending work without deleting the definition.
+Repeated chores keep their future schedule.
 
-The stable job thread's create control stores minimal attribution without
-changing run context:
+The chore driver must be enabled to dispatch work:
 
-```json
-{
-  "job": {
-    "id": "3nprht9x",
-    "kind": "task"
-  }
-}
+```sh
+too serve alice --enable chat,talk,chore
 ```
 
-Revision, schedule cursors, and trigger details remain exclusively in
-`jobs.db`. A future root-run context change requires separate execution review.
+Standalone scripts enable no persistent drivers, even when their source contains
+inline chores. Use `serve` to activate them. See [execution drivers](work.md).
 
+## Transition from tasks and jobs
 
-## Caller Projection
-
-The jobs API joins authored fields with the current scheduler checkpoint and a
-latest-run summary derived from the stable job thread. Full execution history
-remains an independent thread and run projection.
-
-```json
-{
-  "id": "xy1234ab",
-  "kind": "chore",
-  "stage": "ready",
-  "status": "pending",
-  "title": "Check stale PRs",
-  "schedule": "FREQ=HOURLY;INTERVAL=6",
-  "path": "chores/xy1234ab.md",
-  "runtime": {
-    "thread_id": "chore_xy1234ab",
-    "last_run": null,
-    "next_run_at": "2026-04-23T12:00:00Z",
-    "error": null
-  }
-}
-```
-
-Ready jobs normally have scheduler records. Draft and archived jobs have no
-scheduler status. A ready job removed while running may retain one transient
-checkpoint until its run becomes terminal.
-
-`runtime.error` reports scheduler-side validation, dispatch, or recovery
-failures. When present, `last_run` includes its own `error` field for execution
-failure details. Neither value is written back to the authored Markdown.
-
-
-## API Shape
-
-Unified `/jobs` routes are read-only. Writes use `/tasks` and `/chores` so kind
-semantics remain explicit.
-
-Read operations cover ready and archived job lists and details. Write
-operations cover creation, title/body/schedule edits, stage moves, task reopen
-and cancel, chore manual run, and archived deletion. Stage operations mutate
-catalog placement. Execution controls act on scheduler or run state and never
-rewrite job output into the authored document.
+The `task` command/declaration, `/tasks`, `/jobs`, authored IDs, and stage commands
+are removed. Use named chores in the flat directory and explicit schedules for
+repeated work. No old directories, IDs, or `jobs.db` checkpoints are migrated or
+imported. Existing files and databases are left untouched; a definition added
+to the new model receives a checkpoint under its name-derived ID.

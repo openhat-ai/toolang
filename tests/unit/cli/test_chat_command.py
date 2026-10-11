@@ -940,6 +940,8 @@ def test_chat_runtime_uses_remote_execution_without_local_environment(
             "model_catalog": None,
             "ui_base_url": "https://ui.test",
             "compact_override": None,
+            "drivers": None,
+            "required_driver": "chat",
         }
         yield AgentServerRef(
             sandbox="docker:python:3.13-slim",

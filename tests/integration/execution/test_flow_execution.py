@@ -1109,7 +1109,7 @@ def test_thread_manager_emits_only_successful_events(tmp_path: Path) -> None:
     listener = _RecordingThreadListener()
     manager = ThreadManager(executor.store, executor.ids, listener=listener)
 
-    thread_id = manager.create(prefix=ThreadPrefix.TERM)
+    thread_id = manager.create(prefix=ThreadPrefix.CHAT)
     created = executor.store.get_thread(thread_id=thread_id)
 
     assert created is not None
@@ -1128,9 +1128,9 @@ def test_thread_create_rejects_duplicate_request(
     listener = _RecordingThreadListener()
     manager = ThreadManager(executor.store, executor.ids, listener=listener)
 
-    first = manager.create(prefix=ThreadPrefix.TERM, request_id="create-thread")
+    first = manager.create(prefix=ThreadPrefix.CHAT, request_id="create-thread")
     with pytest.raises(ValueError, match="thread control request already exists"):
-        manager.create(prefix=ThreadPrefix.TERM, request_id="create-thread")
+        manager.create(prefix=ThreadPrefix.CHAT, request_id="create-thread")
 
     assert executor.store.get_thread(thread_id=first) is not None
     assert [event.type for event in listener.events] == ["thread_created"]
@@ -1141,10 +1141,10 @@ def test_thread_request_is_unique_across_thread_kinds(tmp_path: Path) -> None:
     executor = _executor(tmp_path)
     manager = ThreadManager(executor.store, executor.ids)
 
-    manager.create(prefix=ThreadPrefix.TERM, request_id="create-thread")
+    manager.create(prefix=ThreadPrefix.CHAT, request_id="create-thread")
 
     with pytest.raises(ValueError, match="thread control request already exists"):
-        manager.create(prefix=ThreadPrefix.WEB, request_id="create-thread")
+        manager.create(prefix=ThreadPrefix.CHAT, request_id="create-thread")
     asyncio.run(executor.stop())
 
 
@@ -1153,7 +1153,7 @@ def test_run_history_starts_from_thread_records(
 ) -> None:
     executor = _executor(tmp_path)
     store = executor.store
-    created = ThreadManager(store, executor.ids).create(prefix=ThreadPrefix.TERM)
+    created = ThreadManager(store, executor.ids).create(prefix=ThreadPrefix.CHAT)
     history = RunHistory(store)
     monkeypatch.setattr(
         store,
@@ -1175,7 +1175,7 @@ def test_thread_fork_and_rewind_use_control_refs_without_copying_runs(
     store = executor.store
     listener = _RecordingThreadListener()
     manager = ThreadManager(store, executor.ids, listener=listener)
-    created = manager.create(prefix=ThreadPrefix.TERM)
+    created = manager.create(prefix=ThreadPrefix.CHAT)
     anchor_id = "run_anchor"
     accept_run(
         store,
@@ -1234,7 +1234,7 @@ def test_thread_fork_rejects_duplicate_request_without_starting_runs(
     store = executor.store
     listener = _RecordingThreadListener()
     manager = ThreadManager(store, executor.ids, listener=listener)
-    created = manager.create(prefix=ThreadPrefix.TERM)
+    created = manager.create(prefix=ThreadPrefix.CHAT)
     accept_run(
         store,
         run_id="run_anchor",
@@ -1291,7 +1291,7 @@ def test_rewind_uses_durable_acceptance_order_instead_of_timestamps(
     executor = _executor(tmp_path)
     store = executor.store
     manager = ThreadManager(store, executor.ids)
-    created = manager.create(prefix=ThreadPrefix.TERM)
+    created = manager.create(prefix=ThreadPrefix.CHAT)
     sink = _PersistSink(store)
     timestamp = "2026-01-01T00:00:00Z"
     for run_id in ("run_before", "run_anchor", "run_after"):
@@ -1331,7 +1331,7 @@ def test_rewind_can_trim_inherited_fork_history(tmp_path: Path) -> None:
     executor = _executor(tmp_path)
     store = executor.store
     manager = ThreadManager(store, executor.ids)
-    source = manager.create(prefix=ThreadPrefix.TERM)
+    source = manager.create(prefix=ThreadPrefix.CHAT)
     sink = _PersistSink(store)
     for run_id in ("run_a", "run_b"):
         accept_run(
@@ -1374,7 +1374,7 @@ def test_implicit_thread_anchor_ignores_child_runs(tmp_path: Path) -> None:
     executor = _executor(tmp_path)
     store = executor.store
     manager = ThreadManager(store, executor.ids)
-    source = manager.create(prefix=ThreadPrefix.TERM)
+    source = manager.create(prefix=ThreadPrefix.CHAT)
     sink = _PersistSink(store)
     for run_id, parent in (("run_root", None),):
         accept_run(
@@ -1501,7 +1501,7 @@ def _allocate_execution_ids(state_path: str, count: int) -> tuple[list[str], lis
     ids = IdIssuer(Path(state_path), agent_name="alice")
     return (
         [ids.issue_run() for _ in range(count)],
-        [ids.issue_thread(ThreadPrefix.TERM.value) for _ in range(count)],
+        [ids.issue_thread(ThreadPrefix.CHAT.value) for _ in range(count)],
     )
 
 

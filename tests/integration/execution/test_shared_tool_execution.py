@@ -70,7 +70,7 @@ def test_tool_binding_precedes_paths_and_keeps_raw_records(tmp_path, value):
         async with harness:
             root = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="task",
                 ),
                 tracer=tracer,
@@ -136,7 +136,7 @@ def test_path_errors_and_result_failures_are_recorded(tmp_path, phase):
         async with harness:
             run = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="task",
                 ),
                 tracer=tracer,
@@ -206,7 +206,7 @@ agic task() -> Text:
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             handle = harness.executor.run(
                 harness.run_spec(thread=thread, runnable="task"), tracer=tracer
             )
@@ -343,7 +343,7 @@ flow blocked(_: Text) -> Text:
         async with harness:
             root = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="parent",
                 ),
                 tracer=tracer,

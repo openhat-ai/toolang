@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 import pytest
 
 from toolang.api.app import create_app
-from toolang.catalog import CapsManager, JobsManager
+from toolang.catalog import CapsManager, ChoresManager
 from toolang.common.layout import AgentLayout
 from toolang.up import AgentCore
 
@@ -22,7 +22,7 @@ def test_authored_write_returns_published_content(tmp_path, description, scope):
     content = description + "New body.\n"
     try:
         with TestClient(
-            create_app(core, CapsManager(layout), JobsManager(layout)),
+            create_app(core, CapsManager(layout), ChoresManager(layout)),
             raise_server_exceptions=False,
         ) as client:
             response = client.put(
@@ -47,7 +47,7 @@ def test_root_write_returns_root_snapshot_when_shadowed(tmp_path):
     asyncio.run(core.state.refresh())
     try:
         with TestClient(
-            create_app(core, CapsManager(layout), JobsManager(layout)),
+            create_app(core, CapsManager(layout), ChoresManager(layout)),
             raise_server_exceptions=False,
         ) as client:
             response = client.put(
@@ -73,7 +73,7 @@ def test_rejected_write_publication_does_not_return_previous_content(tmp_path):
     layout.program.write_text("not a valid program ???")
     try:
         with TestClient(
-            create_app(core, CapsManager(layout), JobsManager(layout)),
+            create_app(core, CapsManager(layout), ChoresManager(layout)),
             raise_server_exceptions=False,
         ) as client:
             response = client.put(
@@ -108,7 +108,7 @@ def test_configured_write_materializes_content_and_delete_publishes(
     )
     try:
         with TestClient(
-            create_app(core, CapsManager(layout), JobsManager(layout))
+            create_app(core, CapsManager(layout), ChoresManager(layout))
         ) as client:
             response = client.put(
                 "/api/v1/prompts/rewrite/configured",
@@ -134,7 +134,7 @@ def test_allow_excluded_authored_write_returns_snapshot_and_delete_publishes(tmp
     asyncio.run(core.state.refresh())
     try:
         with TestClient(
-            create_app(core, CapsManager(layout), JobsManager(layout))
+            create_app(core, CapsManager(layout), ChoresManager(layout))
         ) as client:
             response = client.put(
                 "/api/v1/psyches/note/authored", json={"content": "Body.\n"}

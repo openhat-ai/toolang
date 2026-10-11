@@ -1,1 +1,1 @@
-"""Job scheduling."""
+"""Chore scheduling."""

@@ -43,7 +43,7 @@ async def prefix(subscription):
 
 
 async def run(harness):
-    thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+    thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
     return await harness.executor.run(
         harness.run_spec(
             thread=thread, runnable="example", primary=(TextPart("input"),)
@@ -695,7 +695,14 @@ def test_teaming_keeps_lease_through_final_export_drain(tmp_path, monkeypatch, b
                 get_agent_state=lambda: harness.state,
                 client=client,
             )
-            lifecycle = TeamingLoop(messaging, driver.events)
+            lifecycle = TeamingLoop(
+                driver.events,
+                client=messaging.client,
+                owner=messaging.owner,
+                endpoint=messaging.endpoint,
+                executor=messaging.executor,
+                messaging=messaging,
+            )
             observed = []
             original = lifecycle.exporter.publish
             entered, release = asyncio.Event(), asyncio.Event()
@@ -766,7 +773,12 @@ def test_teaming_close_bounds_unresponsive_lease_release(tmp_path, monkeypatch):
                 BackendConfig("redis://test"), actor="agent:alice", backend=driver
             )
             lifecycle = TeamingLoop(
-                MessagingLoop(
+                driver.events,
+                client=client,
+                owner="human:owner",
+                endpoint="",
+                executor=harness.executor,
+                messaging=MessagingLoop(
                     layout=harness.setup.layout,
                     owner="human:owner",
                     executor=harness.executor,
@@ -775,7 +787,6 @@ def test_teaming_close_bounds_unresponsive_lease_release(tmp_path, monkeypatch):
                     get_agent_state=lambda: harness.state,
                     client=client,
                 ),
-                driver.events,
             )
             closed = False
             close = client.close
@@ -951,7 +962,7 @@ def test_recovery_bounds_optional_history_without_losing_active_tree(
             recent = await run(harness)
             active = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="slow",
                     primary=(TextPart("input"),),
                 )
@@ -1038,7 +1049,7 @@ def test_recovery_bounds_records_work_before_it_consumes_the_snapshot_budget(
         async with harness:
             old = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="history",
                     primary=(TextPart("input"),),
                 )
@@ -1046,7 +1057,7 @@ def test_recovery_bounds_records_work_before_it_consumes_the_snapshot_budget(
             recent = await run(harness)
             active = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="slow",
                     primary=(TextPart("input"),),
                 )

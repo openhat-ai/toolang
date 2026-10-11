@@ -42,7 +42,7 @@ ChatInput = ChatCommand | tuple[RunOverride, CallInput[str]]
   override prefix requires at least one primary or named input key, including
   explicit empty values when their types accept them.
 
-Script, task, and chore surfaces parse the run-only pair of `RunOverride` and
+Script and chore surfaces parse the run-only pair of `RunOverride` and
 `CallInput[str]`; they do not parse `ChatCommand`. Agic, flow, and prompt
 bodies are `Content` sources rather than caller-input envelopes.
 

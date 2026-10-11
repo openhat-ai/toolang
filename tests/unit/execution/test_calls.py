@@ -98,7 +98,7 @@ def test_empty_slash_call_executes_without_primary_input(
                 input,
                 setup=harness.setup,
                 state=harness.state,
-                thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                 default_runnable=f"{kind}:work",
             )
             assert spec.input == CallInput()
@@ -307,7 +307,7 @@ flow hello_flow(_: Text) -> Text:
                     input,
                     setup=harness.setup,
                     state=harness.state,
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     default_runnable="default",
                 )
             )
@@ -347,7 +347,7 @@ flow hello_flow(_: Text) -> Text:
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             commands, input = parse_call("/flow:hello_flow\n\nhello world")
             first = await harness.executor.run(
                 resolve_spec(
@@ -650,7 +650,7 @@ def test_invalid_explicit_model_is_rejected_before_run_persistence(tmp_path) -> 
     harness = ExecutionHarness.create(tmp_path, source=_SOURCE, responses=[])
 
     async def scenario() -> None:
-        thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+        thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
         commands, input = parse_call("/model missing\nInput")
         with pytest.raises(ToolangError, match="model"):
             resolve_spec(
@@ -683,7 +683,7 @@ def test_missing_default_model_is_rejected_before_run_persistence(tmp_path) -> N
     )
 
     async def scenario() -> None:
-        thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+        thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
         commands, input = parse_call("Input")
         spec = resolve_spec(
             commands,

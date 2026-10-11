@@ -6,7 +6,7 @@ from toolang.common.layout import AgentLayout
 
 from .cap import AuthoredCaps
 from .config import ConfiguredCaps
-from .job import AuthoredJobs
+from .chore import AuthoredChores
 
 
 class CapsManager:
@@ -26,10 +26,10 @@ class CapsManager:
         self.root_configured = ConfiguredCaps(layout.root_config)
 
 
-class JobsManager:
-    """Group the authored job catalogs for one agent layout."""
+class ChoresManager:
+    """Group the authored chore catalogs for one agent layout."""
 
     __slots__ = ("home_authoring",)
 
     def __init__(self, layout: AgentLayout) -> None:
-        self.home_authoring = AuthoredJobs(layout.home)
+        self.home_authoring = AuthoredChores(layout.home)

@@ -42,7 +42,7 @@ from toolang.base.types.run import (
     ModelPartEnd,
     ModelUsage,
 )
-from toolang.catalog import CapsManager, JobsManager
+from toolang.catalog import CapsManager, ChoresManager
 from toolang.execution.events import (
     PartBegin,
     PartDelta,
@@ -127,7 +127,7 @@ def test_flow_module_is_listed_from_the_public_state_catalog(tmp_path: Path) -> 
     app = create_app(
         core,
         CapsManager(core.layout),
-        JobsManager(core.layout),
+        ChoresManager(core.layout),
         cors_allowed_origins=(),
     )
 
@@ -195,7 +195,7 @@ agic answer(_: Part[]) -> Part[]:
     app = create_app(
         core,
         CapsManager(core.layout),
-        JobsManager(core.layout),
+        ChoresManager(core.layout),
         cors_allowed_origins=(),
     )
 
@@ -205,8 +205,8 @@ agic answer(_: Part[]) -> Part[]:
             agics = client.get("/api/v1/agics")
             flows = client.get("/api/v1/flows")
             created = client.post(
-                "/api/v1/threads",
-                json={"client": "script"},
+                "/api/v1/runs/threads",
+                json={"client_id": "test-script"},
             )
             thread_id = created.json()["thread"]["id"]
             response = client.post(
@@ -304,13 +304,15 @@ agic answer(_: Part[]) -> Part[]:
     app = create_app(
         core,
         CapsManager(core.layout),
-        JobsManager(core.layout),
+        ChoresManager(core.layout),
         cors_allowed_origins=(),
     )
 
     try:
         with TestClient(app) as client:
-            created = client.post("/api/v1/threads", json={"client": "script"})
+            created = client.post(
+                "/api/v1/runs/threads", json={"client_id": "test-script"}
+            )
             response = client.post(
                 "/api/v1/runs/stream",
                 json=_direct_request(
@@ -356,7 +358,7 @@ agic chat(_: Part[]) -> Part[]:
     app = create_app(
         core,
         CapsManager(core.layout),
-        JobsManager(core.layout),
+        ChoresManager(core.layout),
         cors_allowed_origins=(),
     )
 
@@ -364,7 +366,7 @@ agic chat(_: Part[]) -> Part[]:
         with TestClient(app) as client:
             created = client.post(
                 "/api/v1/threads",
-                json={"client": "web"},
+                json={"client_id": "test-web"},
             )
             thread_id = created.json()["thread"]["id"]
             response = client.post(
@@ -430,15 +432,15 @@ def test_stream_validation_fails_before_sse_headers(tmp_path: Path) -> None:
     app = create_app(
         core,
         CapsManager(core.layout),
-        JobsManager(core.layout),
+        ChoresManager(core.layout),
         cors_allowed_origins=(),
     )
 
     try:
         with TestClient(app) as client:
             created = client.post(
-                "/api/v1/threads",
-                json={"client": "script"},
+                "/api/v1/runs/threads",
+                json={"client_id": "test-script"},
             )
             thread_id = created.json()["thread"]["id"]
             response = client.post(
@@ -492,13 +494,15 @@ agic answer(_: Part[]) -> Part[]:
     app = create_app(
         core,
         CapsManager(core.layout),
-        JobsManager(core.layout),
+        ChoresManager(core.layout),
         cors_allowed_origins=(),
     )
 
     try:
         with TestClient(app) as client:
-            created = client.post("/api/v1/threads", json={"client": "script"})
+            created = client.post(
+                "/api/v1/runs/threads", json={"client_id": "test-script"}
+            )
             thread_id = created.json()["thread"]["id"]
             short_name = client.post(
                 "/api/v1/runs/stream",
@@ -703,7 +707,7 @@ def test_existing_run_stream_attaches_to_live_events(tmp_path: Path) -> None:
     app = create_app(
         core,
         CapsManager(core.layout),
-        JobsManager(core.layout),
+        ChoresManager(core.layout),
         cors_allowed_origins=(),
     )
     errors: list[str] = []
@@ -797,7 +801,7 @@ def test_child_run_stream_redirects_client_to_root_run(tmp_path: Path) -> None:
     app = create_app(
         core,
         CapsManager(core.layout),
-        JobsManager(core.layout),
+        ChoresManager(core.layout),
         cors_allowed_origins=(),
     )
 
@@ -827,7 +831,7 @@ def test_event_collections_are_removed_and_missing_streams_are_404(
     app = create_app(
         core,
         CapsManager(layout),
-        JobsManager(layout),
+        ChoresManager(layout),
         cors_allowed_origins=(),
     )
 
@@ -841,7 +845,8 @@ def test_event_collections_are_removed_and_missing_streams_are_404(
             tags = client.get("/openapi.json").json()["tags"]
             assert "/api/v1/runs/{run_id}/events" not in paths
             assert "/api/v1/threads/{thread_id}/events" not in paths
-            assert all(not path.startswith("/api/v1/chat") for path in paths)
+            assert "/api/v1/chat/runs/stream" in paths
+            assert "/api/v1/chat/events" not in paths
             assert all(tag["name"] != "chat" for tag in tags)
     finally:
         asyncio.run(core.close())

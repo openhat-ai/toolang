@@ -15,14 +15,14 @@ from toolang.cli.common.terminal_title import agent_label
 from toolang.cli.common.activity import watch
 from toolang.cli.common.activity_view import since as stats_since
 from toolang.execution.activity import ActivityQuery, ActivityReader, duration
-from toolang.teaming.observation import LocalObservation, Presence
+from toolang.teaming.observation import CombinedObservation, LocalObservation, Presence
 from toolang.cli.common.context import (
     cli_context,
     context_layout,
     context_root,
-    user_call,
 )
 from toolang.up.hub import HubProcess
+from toolang.up.activity import RuntimeObservation
 from toolang.up.process import AgentProcess
 
 
@@ -87,18 +87,27 @@ def top_command(
 
         endpoint = None
         agent = f"agent:{layout.name}"
-        source = LocalObservation(
-            ActivityReader(layout.run_store, agent), presence=presence
+        source = CombinedObservation(
+            LocalObservation(
+                ActivityReader(layout.run_store, agent), presence=presence
+            ),
+            RuntimeObservation(layout.root, home=layout.home),
         )
     else:
-        connection = user_call(HubProcess(context_root(ctx)).connection)
-        endpoint, backend = connection.endpoint, connection.identity
-        context = talk_context(
-            context_root(ctx),
-            connection.identity,
-            connection.human,
-            connection.endpoint,
-        )
+        source = RuntimeObservation(context_root(ctx))
+        endpoint = None
+        try:
+            connection = HubProcess(context_root(ctx)).connection()
+        except (OSError, ValueError, RuntimeError):
+            pass
+        else:
+            endpoint, backend = connection.endpoint, connection.identity
+            context = talk_context(
+                context_root(ctx),
+                connection.identity,
+                connection.human,
+                connection.endpoint,
+            )
     console = Console()
     try:
         with prepare_terminal(

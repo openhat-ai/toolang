@@ -116,7 +116,7 @@ async def accept(
                         )
             resources = bound.resources
             assert resources is not None
-            thread = executor.ids.issue_thread(ThreadPrefix.SPAWN.value)
+            thread = executor.ids.issue_thread(ThreadPrefix.WORKER.value)
             bound = replace(
                 bound,
                 root_run_id=bound.run_id,
@@ -179,7 +179,7 @@ async def accept(
                     event = ThreadCreated(
                         thread=handle.thread,
                         control=ControlRef.for_thread(handle.thread, 0),
-                        origin="chat",
+                        origin="worker",
                         peer=ThreadPeer(
                             type="agent",
                             name=parent.setup.layout.name,

@@ -48,7 +48,7 @@ from toolang.base.types.run import ModelCall, ModelCallResult, ModelUsage, ToolC
 from toolang.base.types.tool import ToolContext, ToolDefinition, ToolResult
 from toolang.catalog import templates
 from toolang.catalog.agent import LocalAgents
-from toolang.catalog.job import AuthoredJobs, JobFile
+from toolang.catalog.chore import AuthoredChores, ChoreFile
 from toolang.cli.common.output import shorten_home_path
 from toolang.common.layout import AgentLayout
 from toolang.execution.client import LocalRunClient
@@ -80,9 +80,9 @@ from toolang.up import process as agents
 from toolang.up.types import AgentServerRef
 from toolang.up import AgentCore
 from toolang.api.app import create_app
-from toolang.catalog import CapsManager, JobsManager
-from toolang.work.state import load_ready_jobs
-from toolang.work.store import JobStore
+from toolang.catalog import CapsManager, ChoresManager
+from toolang.work.state import load_chores
+from toolang.work.store import ChoreStore
 from toolang.base.protocols.tool import Tool
 
 runner = CliRunner()
@@ -673,12 +673,37 @@ def test_inspect_thread_summary_keeps_selection_snapshot(
         writer.close()
 
 
+@pytest.mark.parametrize(
+    "external_flow", [None, "flow:\n  pass\n", "flow:\n  run missing\n"]
+)
+def test_chore_list_does_not_resolve_runnables_or_prepare_state(
+    tmp_path: Path, external_flow: str | None
+) -> None:
+    root = tmp_path / "toolang"
+    _create_agent(root)
+    layout = AgentLayout.resident(root, "alice")
+    flows = layout.home / "flows"
+    if external_flow is not None:
+        flows.mkdir()
+        (flows / "research.too").write_text(external_flow)
+    layout.program.write_text(
+        "flow chat:\n  run research\n\nchore cleanup:\n  Clean up.\n"
+    )
+
+    result = _invoke(root, "alice", "chore", "list")
+
+    assert result.exit_code == 0, result.stderr
+    assert "cleanup" in result.stdout
+    assert not layout.agent_state.exists()
+    assert not layout.run_store.exists()
+
+
 def test_chore_list_shows_scheduler_and_latest_run_state(tmp_path: Path) -> None:
     root = tmp_path / "toolang"
     _create_agent(root)
     layout = AgentLayout.resident(root, "alice")
-    AuthoredJobs(layout.home).create(
-        JobFile.parse(
+    AuthoredChores(layout.home).create(
+        ChoreFile.parse(
             """---
 id: maintain
 title: Maintain knowledge
@@ -686,13 +711,13 @@ schedule: FREQ=HOURLY
 ---
 Maintain the knowledge base.
 """,
-            kind="chore",
+            name="maintain",
         )
     )
-    (job,) = load_ready_jobs(layout)
-    jobs = JobStore(layout.job_store)
+    (job,) = load_chores(layout)
+    jobs = ChoreStore(layout.chore_store)
     try:
-        jobs.reconcile(jobs=(job,), now=datetime.now(timezone.utc))
+        jobs.reconcile(chores=(job,), now=datetime.now(timezone.utc))
     finally:
         jobs.close()
     runs = RunStore(layout.run_store)
@@ -700,7 +725,7 @@ Maintain the knowledge base.
         project_run_start(
             runs,
             run_id="run_failed",
-            thread_id="chore_maintain",
+            thread_id=job.thread_id,
             origin="chore",
             input=Message.user("Maintain the knowledge base."),
         )
@@ -2459,7 +2484,7 @@ def hosted_agent(monkeypatch):
             sandbox_description="Test OS 1.0 arm64",
         )
         app = create_app(
-            core, CapsManager(layout), JobsManager(layout), cors_allowed_origins=()
+            core, CapsManager(layout), ChoresManager(layout), cors_allowed_origins=()
         )
         requests = []
 
@@ -2607,7 +2632,7 @@ agic reply(_: Part[]) -> Part[]:
     monkeypatch.setattr(thread_commands, "acquire_run_client", run_client)
 
     async def run_source():
-        thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+        thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
         source = await harness.executor.run(
             harness.run_spec(
                 thread=thread,
@@ -2725,7 +2750,7 @@ agic reply(_: Part[]) -> Part[]:
     runtime_selections: list[tuple[str | None, Path | None]] = []
 
     async def run_source():
-        thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+        thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
         source = await harness.executor.run(
             harness.run_spec(
                 thread=thread,
@@ -2843,7 +2868,7 @@ def test_thread_fork_and_rewind_use_thread_manager_semantics(
         first = project_run_start(
             store,
             run_id="run_first",
-            thread_id="term_source",
+            thread_id="chat_source",
             origin="chat",
             input=Message.user("First"),
         )
@@ -2851,7 +2876,7 @@ def test_thread_fork_and_rewind_use_thread_manager_semantics(
         second = project_run_start(
             store,
             run_id="run_second",
-            thread_id="term_source",
+            thread_id="chat_source",
             origin="chat",
             input=Message.user("Second"),
         )
@@ -2860,7 +2885,7 @@ def test_thread_fork_and_rewind_use_thread_manager_semantics(
         store.close()
 
     requests = hosted_agent(layout)
-    fork = _invoke(root, "alice", "fork", "term_source")
+    fork = _invoke(root, "alice", "fork", "chat_source")
 
     assert fork.exit_code == 0
     words = fork.stdout.strip().split()
@@ -2875,17 +2900,17 @@ def test_thread_fork_and_rewind_use_thread_manager_semantics(
     assert forked is not None
     assert [run.id for run in forked.runs] == ["run_first", "run_second"]
 
-    rewind = _invoke(root, "alice", "rewind", "term_source")
+    rewind = _invoke(root, "alice", "rewind", "chat_source")
 
     assert rewind.exit_code == 0
-    assert rewind.stdout.strip() == "rewound term_source before run_second"
+    assert rewind.stdout.strip() == "rewound chat_source before run_second"
     assert [path for method, path in requests if method == "POST"] == [
-        "/api/v1/threads/term_source/fork",
-        "/api/v1/threads/term_source/rewind",
+        "/api/v1/threads/chat_source/fork",
+        "/api/v1/threads/chat_source/rewind",
     ]
     reopened = RunStore(layout.run_store)
     try:
-        rewound = RunHistory(reopened).get_thread("term_source")
+        rewound = RunHistory(reopened).get_thread("chat_source")
     finally:
         reopened.close()
     assert rewound is not None
@@ -2905,7 +2930,7 @@ def test_thread_commands_anchor_on_roots_with_child_runs(
         run = project_run_start(
             store,
             run_id="run_parent",
-            thread_id="term_source",
+            thread_id="chat_source",
             origin="chat",
             input=Message.user("Parent"),
         )
@@ -2923,19 +2948,19 @@ def test_thread_commands_anchor_on_roots_with_child_runs(
         child = project_run_start(
             store,
             run_id="run_child",
-            thread_id="term_source",
+            thread_id="chat_source",
             parent=parent_step.ref,
             origin="chat",
             input=Message.user("Child"),
         )
         project_run_end(store, run_id=child.id)
         project_run_end(store, run_id=run.id)
-        thread_id = "term_source"
+        thread_id = "chat_source"
         if inherited:
-            thread_id = "term_branch"
+            thread_id = "chat_branch"
             store.fork_thread(
                 thread_id=thread_id,
-                source="term_source",
+                source="chat_source",
                 anchor=run.id,
                 request_id=None,
                 created_at="2026-01-01T00:00:03Z",
@@ -2975,7 +3000,7 @@ def test_thread_commands_anchor_on_roots_with_child_runs(
             assert [
                 item.id
                 for item in reopened.list_thread_history_chronological(
-                    thread_id="term_source"
+                    thread_id="chat_source"
                 )
             ] == [run.id, child.id]
     finally:
@@ -3101,8 +3126,6 @@ def test_tools_visibility_queries_and_counts(
         ("skill", "list"),
         ("service", "list"),
         ("prompt", "list"),
-        ("alice", "task", "list"),
-        ("alice", "chore", "list"),
     ],
 )
 def test_all_short_option_matches_long_option(
@@ -3747,7 +3770,7 @@ def test_agent_info_fields_follow_the_compact_layout(
             ("Tools", "0 tools, 0 toolsets"),
             ("Models", "2 models, 1 provider"),
             ("Caps", "0 psyches, 0 skills, 0 services, 0 prompts"),
-            ("Jobs", "0 chores, 0 tasks"),
+            ("Chores", "0 chores"),
             ("Workspaces", "lab, extra, runtime"),
         ],
     )
@@ -3760,7 +3783,7 @@ def test_agent_info_fields_follow_the_compact_layout(
     result = _invoke(root, *args)
 
     assert result.exit_code == 0, result.stderr
-    expected = ["Home", "Tools", "Models", "Caps", "Jobs", "Workspaces", "Status"]
+    expected = ["Home", "Tools", "Models", "Caps", "Chores", "Workspaces", "Status"]
     if status != "stopped":
         expected += ["Sandbox", "PID", "API", "WebUI"]
     assert [key for key, _value in captured] == expected
@@ -3928,7 +3951,7 @@ def _invoke(root: Path, *args: str, tty: bool = False):
     return runner.invoke(app, list(args), env={})
 
 
-def test_cap_inspection_progress_identifies_prepared_scopes(tmp_path: Path) -> None:
+def test_cap_inspection_only_prepares_the_shared_root_layer(tmp_path: Path) -> None:
     _create_agent(tmp_path)
 
     cold = _invoke(tmp_path, "alice", "caps")
@@ -3938,8 +3961,6 @@ def test_cap_inspection_progress_identifies_prepared_scopes(tmp_path: Path) -> N
     assert cold.stderr.splitlines() == [
         "Preparing root caps...",
         "Prepared root caps",
-        "Preparing home caps for alice...",
-        "Prepared home caps for alice",
     ]
     assert warm.exit_code == 0, warm.stderr
     assert warm.stderr == ""
@@ -4167,7 +4188,7 @@ def test_running_roaming_inspection_preserves_runtime_workspaces(
 
     assert result == 0, output.err
     assert requests[-1] == "/api/v1/workspaces"
-    assert len(requests) == 6
+    assert len(requests) == 5
 
 
 @pytest.mark.parametrize("command", ["models", "providers", "tools"])
@@ -4294,3 +4315,37 @@ def test_tool_setup_matches_full_setup_and_captures_only_tool_inputs(
     unchanged = asyncio.run(load_tool_setup(layout, agent_context=agent_context))
     assert unchanged.revision == newer.revision
     assert tuple(unchanged.tools()) == tuple(newer.tools())
+
+
+def test_caps_list_does_not_validate_unrelated_runnables(tmp_path):
+    root = tmp_path / "toolang"
+    _create_agent(root)
+    layout = AgentLayout.resident(root, "alice")
+    layout.program.write_text(
+        "psyche careful:\n  Be careful.\nflow broken:\n  run missing\n"
+    )
+    result = _invoke(root, "alice", "caps")
+    assert result.exit_code == 0, result.stderr
+    assert "careful" in result.stdout
+    assert not layout.agent_state.exists()
+
+
+def test_chore_mutations_target_visible_definitions(tmp_path):
+    root = tmp_path / "toolang"
+    _create_agent(root)
+    layout = AgentLayout.resident(root, "alice")
+    layout.program.write_text(
+        "chore cleanup:\n  Inline body.\nflow broken:\n  run missing\n"
+    )
+    hidden = AuthoredChores(layout.home).create(
+        ChoreFile.parse("Home body.", name="cleanup")
+    )
+    for operation in ("edit", "delete"):
+        result = _invoke(root, "alice", "chore", operation, "cleanup")
+        assert result.exit_code == 1
+        assert "agent.too:1" in result.stderr
+    assert hidden.path is not None and hidden.path.read_text() == "Home body."
+    cloned = _invoke(root, "alice", "chore", "clone", "cleanup", "copy")
+    assert cloned.exit_code == 0, cloned.stderr
+    copy = AuthoredChores(layout.home).get("copy")
+    assert copy is not None and copy.body == "Inline body."

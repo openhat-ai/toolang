@@ -1,24 +1,22 @@
-"""Aggregate authored, scheduler, and execution state for job inspection."""
+"""Aggregate authored, scheduler, and execution state for chore inspection."""
 
 from __future__ import annotations
 
 from collections.abc import Iterable
+from dataclasses import fields
 from pathlib import Path
 from typing import Mapping, Protocol
 
-from toolang.catalog.job import AuthoredJobs, JobFile
-from toolang.catalog.types import JobKind, JobStage
 from toolang.common.layout import AgentLayout
 from toolang.execution.types import ErrorMessage, ErrorRef
-from .authoring import assign_missing_authored_job_ids
-from .records import JobRecord
-from .schemas import JobDetail, JobInfo, LastRunInfo
-from .state import job_thread_id
-from .store import open_job_store
+from .records import ChoreRecord
+from .schemas import ChoreDetail, ChoreInfo, ChoreRuntimeInfo, LastRunInfo
+from .state import Chore, load_chores
+from .store import open_chore_store
 
 
-class JobRun(Protocol):
-    """Execution fields required by job inspection."""
+class ChoreRun(Protocol):
+    """Execution fields required by chore inspection."""
 
     id: str
     thread: str
@@ -29,20 +27,20 @@ class JobRun(Protocol):
     error: ErrorMessage | ErrorRef | None
 
 
-class JobInspection:
-    """Inspect authored jobs with scheduler and execution state in one batch."""
+class ChoreInspection:
+    """Inspect authored chores with scheduler and execution state in one batch."""
 
     def __init__(
         self,
         *,
-        catalog: AuthoredJobs,
         home: Path,
-        records: dict[str, JobRecord],
-        latest_runs: dict[str, JobRun],
+        definitions: tuple[Chore, ...],
+        records: dict[str, ChoreRecord],
+        latest_runs: dict[str, ChoreRun],
         error_messages: Mapping[str, str] | None = None,
     ) -> None:
-        self.catalog = catalog
         self.home = home
+        self.definitions = definitions
         self.records = records
         self.latest_runs = latest_runs
         self.error_messages = dict(error_messages or {})
@@ -52,71 +50,87 @@ class JobInspection:
         cls,
         *,
         layout: AgentLayout,
-        runs: Iterable[JobRun],
-        read_only: bool = False,
+        runs: Iterable[ChoreRun],
         error_messages: Mapping[str, str] | None = None,
-    ) -> JobInspection:
-        """Load one consistent inspection snapshot from the owning stores."""
+    ) -> ChoreInspection:
+        """Load definitions and checkpoints from the owning stores."""
 
-        catalog = AuthoredJobs(layout.home)
-        assign_missing_authored_job_ids(
-            layout,
-            catalog=catalog,
-        )
-        if read_only and not layout.job_store.is_file():
+        if not layout.chore_store.is_file():
             records = ()
         else:
-            job_store = open_job_store(layout, read_only=read_only)
+            chore_store = open_chore_store(layout, read_only=True)
             try:
-                records = job_store.list()
+                records = chore_store.list()
             finally:
-                job_store.close()
-        latest_runs: dict[str, JobRun] = {}
+                chore_store.close()
+        latest_runs: dict[str, ChoreRun] = {}
         for run in runs:
             current = latest_runs.get(str(run.thread))
             if current is None or run.created_at > current.created_at:
                 latest_runs[str(run.thread)] = run
         return cls(
-            catalog=catalog,
             home=layout.home,
-            records={record.job_id: record for record in records},
+            definitions=load_chores(layout),
+            records={record.chore_id: record for record in records},
             latest_runs=latest_runs,
             error_messages=error_messages,
         )
 
-    def list(
-        self,
-        *,
-        kind: JobKind | None = None,
-        stage: JobStage = "ready",
-    ) -> tuple[JobInfo, ...]:
-        return tuple(
-            self._info(job) for job in self.catalog.list(kind=kind, stage=stage)
+    def list(self) -> tuple[ChoreInfo, ...]:
+        return tuple(self._info(chore) for chore in self.definitions)
+
+    def get(self, reference: str) -> Chore | None:
+        return next(
+            (
+                chore
+                for chore in self.definitions
+                if reference in {chore.id, chore.name, chore.ref}
+            ),
+            None,
         )
 
-    def detail(self, job: JobFile) -> JobDetail:
-        record, last_run = self._state(job)
-        return JobDetail.from_job(
-            job,
-            home=self.home,
-            record=record,
-            last_run=last_run,
+    def detail(self, chore: Chore) -> ChoreDetail:
+        info = self._info(chore)
+        return ChoreDetail(
+            **{field.name: getattr(info, field.name) for field in fields(info)},
+            body=chore.body,
         )
 
-    def _info(self, job: JobFile) -> JobInfo:
-        record, last_run = self._state(job)
-        return JobInfo.from_job(
-            job,
-            home=self.home,
-            record=record,
-            last_run=last_run,
+    def _info(self, chore: Chore) -> ChoreInfo:
+        record, last_run = self._state(chore)
+        synced = (
+            record is not None
+            and record.body_hash == chore.body_hash
+            and record.schedule_hash == chore.schedule_hash
+        )
+        try:
+            path = str(chore.path.relative_to(self.home))
+        except ValueError:
+            path = str(chore.path)
+        return ChoreInfo(
+            id=chore.id,
+            name=chore.name,
+            ref=chore.ref,
+            title=chore.display_title,
+            path=path,
+            line=chore.line,
+            schedule=chore.schedule,
+            runtime=ChoreRuntimeInfo(
+                thread_id=chore.thread_id,
+                synced=synced,
+                status=record.status if record else None,
+                active_run_id=record.active_run_id if record else None,
+                pending_at=record.pending_at if record else None,
+                next_scheduled_at=record.next_scheduled_at if record else None,
+                last_run=last_run,
+                scheduler_error=record.error if record else None,
+                updated_at=record.updated_at if record else None,
+            ),
         )
 
-    def _state(self, job: JobFile) -> tuple[JobRecord | None, LastRunInfo | None]:
-        record = self.records.get(job.id) if job.stage == "ready" else None
-        if record is not None and record.kind != job.kind:
-            record = None
-        run = self.latest_runs.get(job_thread_id(job))
+    def _state(self, chore: Chore) -> tuple[ChoreRecord | None, LastRunInfo | None]:
+        record = self.records.get(chore.id)
+        run = self.latest_runs.get(chore.thread_id)
         last_run = (
             LastRunInfo(
                 id=run.id,

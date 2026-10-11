@@ -63,7 +63,7 @@ agic calculate(_: Text) -> Text:
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             run = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
@@ -138,7 +138,7 @@ flow relay(_: Text) -> Text:
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             root = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
@@ -198,7 +198,7 @@ flow parallel(_: Text) -> Text[]:
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             root = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,

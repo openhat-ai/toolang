@@ -485,8 +485,6 @@ def test_real_and_virtual_agent_arguments_share_usage(
         "rewind",
         "workspace",
         "workspace list",
-        "task",
-        "task list",
         "chore",
         "chore list",
     ],
@@ -504,7 +502,6 @@ def test_agent_help_matches_target_scope(command, tmp_path, capsys):
         "start",
         "stop",
         "_serve",
-        "task",
         "chore",
     }:
         expected = "Local agent name"
@@ -658,7 +655,7 @@ def test_error_usage_preserves_the_virtual_agent_position(
     assert "TEXT" not in output
 
 
-@pytest.mark.parametrize("group", ["workspace", "chore", "task"])
+@pytest.mark.parametrize("group", ["workspace", "chore"])
 def test_required_group_agent_is_documented(group, tmp_path: Path, capsys):
     assert too_main(["--root", str(tmp_path), "a", group, "--help"]) == 0
     output = strip_ansi(capsys.readouterr().out)

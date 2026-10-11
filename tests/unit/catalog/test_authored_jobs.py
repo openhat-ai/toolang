@@ -1,356 +1,134 @@
-"""Tests for authored task and chore files."""
+"""Pure flat chore definitions, stable identities, and serialized authoring."""
 
-from __future__ import annotations
-
+from dataclasses import replace
 from datetime import date
-import os
 from pathlib import Path
-from typing import cast
 
 import pytest
 
-from toolang.catalog.errors import (
-    CatalogConflictError,
-    CatalogNotFoundError,
-    DuplicateJobIdError,
-)
-from toolang.catalog.job import (
-    DEFAULT_CHORE_SCHEDULE,
-    AuthoredJobs,
-    JobFile,
-    JobKind,
-    JobStage,
-)
+from toolang.catalog.chore import AuthoredChores, ChoreFile
+from toolang.catalog.errors import CatalogConflictError, CatalogNotFoundError
+from toolang.common.ids import chore_id
 
 
-def _job(
-    job_id: str,
-    *,
-    kind: JobKind = "task",
-    stage: JobStage = "ready",
-    body: str = "Do the work.",
-    schedule: str | None = None,
-) -> JobFile:
-    lines = ["---", f"id: {job_id}"]
-    if schedule is not None:
-        lines.append(f"schedule: {schedule}")
-    content = "\n".join((*lines, "---", body, ""))
-    return JobFile.parse(content, kind=kind, stage=stage)
-
-
-def _write_job(
-    home: Path,
-    relative_path: str,
-    *,
-    job_id: str | None,
-    body: str = "Do the work.",
-) -> Path:
-    path = home / relative_path
-    path.parent.mkdir(parents=True, exist_ok=True)
-    id_line = f"id: {job_id}\n" if job_id is not None else ""
-    path.write_text(
-        f"---\n{id_line}---\n{body}\n",
-        encoding="utf-8",
-    )
-    return path
-
-
-def test_job_file_parse_preserves_source_and_projects_fields(tmp_path: Path) -> None:
-    path = tmp_path / "tasks" / "review.md"
+def test_parsing_preserves_source_and_uses_filename_identity(tmp_path: Path) -> None:
     content = (
-        "---\n"
-        "id: task-1\n"
-        "title: Review change\n"
-        "due: 2026-07-20\n"
-        "labels: [backend, urgent]\n"
-        "---\n"
-        "Review the implementation.\n"
+        "---\nid: legacy\ntitle: Review\ndue: 2026-07-20\n---\nReview carefully.\n"
     )
-
-    job = JobFile.parse(content, kind="task", path=path)
-
-    assert job.path == path
-    assert job.content == content
-    assert job.kind == "task"
-    assert job.stage == "ready"
-    assert job.id == "task-1"
-    assert job.title == "Review change"
-    assert job.meta == {
-        "id": "task-1",
-        "title": "Review change",
-        "due": "2026-07-20",
-        "labels": ["backend", "urgent"],
-    }
-    assert job.body == "Review the implementation."
+    path = tmp_path / "review.md"
+    item = ChoreFile.parse(content, path=path)
+    assert item.name == "review"
+    assert item.id == chore_id("review")
+    assert item.ref == "chore/review"
+    assert item.content == content
+    assert item.meta["due"] == "2026-07-20"
+    assert item.schedule is None
 
 
-def test_job_file_parse_projects_caller_identity_without_rewriting_content() -> None:
-    content = "---\ntitle: Review change\n---\nReview it.\n"
-
-    job = JobFile.parse(
-        content,
-        kind="task",
-        stage="draft",
-        job_id="task-1",
+def test_definition_edits_never_change_identity() -> None:
+    item = ChoreFile.parse("Work.", name="cleanup")
+    changed = item.patch(
+        {"title": "Display title", "body": "New work.", "schedule": "FREQ=DAILY"}
     )
-
-    assert job.content == content
-    assert job.id == "task-1"
-    assert job.stage == "draft"
-
-
-def test_job_file_allows_missing_id_until_catalog_publication() -> None:
-    job = JobFile.parse("Body.\n", kind="task")
-    assert job.optional_id is None
-    with pytest.raises(ValueError, match="job id is required"):
-        _ = job.id
+    assert changed.id == item.id
+    assert changed.ref == item.ref
+    assert changed.schedule == "FREQ=DAILY"
+    assert "id" not in changed.meta
+    assert changed.patch({"schedule": None}).schedule is None
+    with pytest.raises(ValueError, match="unsupported chore fields"):
+        item.patch({"status": "done"})
 
 
-def test_job_file_rejects_mismatched_expected_id() -> None:
-    with pytest.raises(ValueError, match="does not match the expected id"):
-        JobFile.parse(
-            "---\nid: authored\n---\nBody.\n",
-            kind="task",
-            job_id="expected",
-        )
-
-
-def test_job_file_updates_meta_and_body_as_authored_content() -> None:
-    job = _job("task-1")
-
-    with_meta = job.with_meta(
+def test_metadata_normalization() -> None:
+    item = ChoreFile.parse("Work.", name="cleanup").with_meta(
         {
-            **job.meta,
-            "title": "Updated title",
             "due": date(2026, 7, 20),
-            "labels": ("backend", "urgent"),
+            "labels": ("a", "b"),
             "nested": {1: date(2026, 7, 21)},
         }
     )
-    with_body = with_meta.with_body("Updated body.")
-
-    assert with_meta.meta["due"] == "2026-07-20"
-    assert with_meta.meta["labels"] == ["backend", "urgent"]
-    assert with_meta.meta["nested"] == {"1": "2026-07-21"}
-    assert "title: Updated title" in with_meta.content
-    assert with_body.body == "Updated body."
-    assert with_body.meta == with_meta.meta
-    assert with_body.content.endswith("Updated body.")
-
-
-def test_job_file_chore_schedule_defaults_and_validates() -> None:
-    chore = _job("chore-1", kind="chore")
-
-    assert chore.schedule == DEFAULT_CHORE_SCHEDULE
-    with pytest.raises(ValueError, match="only chores have a schedule"):
-        _ = _job("task-1").schedule
-    with pytest.raises(ValueError):
-        _job("chore-2", kind="chore", schedule="not-an-rrule")
-
-
-def test_authored_jobs_crud_across_stages(tmp_path: Path) -> None:
-    catalog = AuthoredJobs(tmp_path)
-    task = catalog.create(_job("task-1"))
-    chore = catalog.create(
-        _job(
-            "chore-1",
-            kind="chore",
-            stage="draft",
-            schedule="FREQ=DAILY",
-        )
-    )
-
-    assert task.path == tmp_path / "tasks" / "task-1.md"
-    assert chore.path == tmp_path / "drafts" / "chores" / "chore-1.md"
-    assert catalog.list(kind="task") == (task,)
-    assert catalog.list(kind="chore", stage="draft") == (chore,)
-    assert catalog.get("chore", "chore-1") is None
-    assert catalog.get("chore", "chore-1", stage=None) == chore
-    assert catalog.contains_id("task-1")
-
-    updated = catalog.update(task.with_body("Updated task."))
-    moved = catalog.move("task", "task-1", "archived")
-    removed = catalog.remove("task", "task-1")
-
-    assert updated.path == task.path
-    assert updated.body == "Updated task."
-    assert moved.id == task.id
-    assert moved.stage == "archived"
-    assert moved.path == tmp_path / "archive" / "tasks" / "task-1.md"
-    assert removed == moved
-    assert removed.path is not None and not removed.path.exists()
-    assert catalog.contains_id("task-1") is False
-
-
-def test_authored_jobs_create_rejects_duplicate_id(tmp_path: Path) -> None:
-    catalog = AuthoredJobs(tmp_path)
-    catalog.create(_job("task-1"))
-
-    with pytest.raises(CatalogConflictError, match="job id already exists"):
-        catalog.create(_job("task-1", kind="chore", stage="draft"))
-    assert catalog.create(_job("task-2")).id == "task-2"
-
-
-def test_authored_jobs_update_rejects_missing_kind_and_stage_changes(
-    tmp_path: Path,
-) -> None:
-    catalog = AuthoredJobs(tmp_path)
-    task = catalog.create(_job("task-1"))
-
-    with pytest.raises(CatalogNotFoundError, match="job not found"):
-        catalog.update(_job("missing"))
-    with pytest.raises(CatalogConflictError, match="belongs to task"):
-        catalog.update(_job("task-1", kind="chore"))
-    with pytest.raises(ValueError, match="use move"):
-        catalog.update(_job("task-1", stage="draft"))
-
-    assert catalog.get("task", task.id) == task
-
-
-def test_authored_jobs_move_is_idempotent_and_rejects_target_conflict(
-    tmp_path: Path,
-) -> None:
-    catalog = AuthoredJobs(tmp_path)
-    task = catalog.create(_job("task-1"))
-
-    assert catalog.move("task", task.id, "ready") == task
-    conflict = tmp_path / "drafts" / "tasks" / "task-1.md"
-    conflict.parent.mkdir(parents=True)
-    conflict.write_text("---\nid: task-2\n---\nOther.\n", encoding="utf-8")
-    with pytest.raises(CatalogConflictError, match="path already exists"):
-        catalog.move("task", task.id, "draft")
-    with pytest.raises(CatalogNotFoundError, match="not found"):
-        catalog.move("task", "missing", "archived")
-
-
-def test_authored_jobs_remove_rejects_missing_job(tmp_path: Path) -> None:
-    with pytest.raises(CatalogNotFoundError, match="not found"):
-        AuthoredJobs(tmp_path).remove("task", "missing")
-
-
-def test_authored_jobs_assigns_and_persists_missing_ids(tmp_path: Path) -> None:
-    _write_job(tmp_path, "tasks/review.md", job_id=None)
-    _write_job(
-        tmp_path,
-        "drafts/chores/cleanup.md",
-        job_id=None,
-    )
-    _write_job(tmp_path, "archive/tasks/done.md", job_id="existing")
-    allocated = iter(("generated-1", "generated-2"))
-    catalog = AuthoredJobs(tmp_path)
-
-    assigned = catalog.assign_missing_ids(lambda: next(allocated))
-
-    assert [job.id for job in assigned] == ["generated-1", "generated-2"]
-    assert catalog.get("task", "generated-2", stage=None) is not None
-    assert catalog.get("chore", "generated-1", stage=None) is not None
-    assert catalog.get("task", "existing", stage=None) is not None
-    assert "id: generated-2" in (tmp_path / "tasks" / "review.md").read_text(
-        encoding="utf-8"
-    )
-
-
-def test_authored_jobs_rejects_generated_id_collision(tmp_path: Path) -> None:
-    _write_job(tmp_path, "tasks/existing.md", job_id="task-1")
-    _write_job(tmp_path, "tasks/manual.md", job_id=None)
-
-    with pytest.raises(CatalogConflictError, match="generated job id already exists"):
-        AuthoredJobs(tmp_path).assign_missing_ids(lambda: "task-1")
-
-
-def test_authored_jobs_reports_latest_duplicate_id_file(tmp_path: Path) -> None:
-    existing = _write_job(
-        tmp_path,
-        "tasks/review.md",
-        job_id="duplicate",
-    )
-    latest = _write_job(
-        tmp_path,
-        "drafts/chores/cleanup.md",
-        job_id="duplicate",
-    )
-    os.utime(existing, ns=(1_000_000_000, 1_000_000_000))
-    os.utime(latest, ns=(2_000_000_000, 2_000_000_000))
-
-    with pytest.raises(DuplicateJobIdError) as raised:
-        AuthoredJobs(tmp_path).contains_id("duplicate")
-
-    assert raised.value.job_id == "duplicate"
-    assert raised.value.path == latest
-    assert raised.value.existing_path == existing
+    assert item.meta == {
+        "due": "2026-07-20",
+        "labels": ["a", "b"],
+        "nested": {"1": "2026-07-21"},
+    }
+    assert item.with_body("Updated.").meta == item.meta
 
 
 @pytest.mark.parametrize(
-    ("kind", "stage", "job_id", "message"),
-    [
-        ("note", "ready", "task-1", "unsupported job kind"),
-        ("task", "pending", "task-1", "unsupported job stage"),
-        ("task", "ready", "../task", "invalid job id"),
-    ],
+    "name", ["", " ", " cleanup", "../cleanup", "a/b", "a\\b", ".."]
 )
-def test_job_file_rejects_invalid_identity_and_placement(
-    kind: str,
-    stage: str,
-    job_id: str,
-    message: str,
+def test_unsafe_or_noncanonical_names_fail(name: str) -> None:
+    with pytest.raises(ValueError, match="invalid chore name"):
+        ChoreFile.parse("Body.", name=name)
+
+
+def test_name_must_match_source_filename() -> None:
+    with pytest.raises(ValueError, match="name must match"):
+        ChoreFile.parse("Body.", name="other", path=Path("cleanup.md"))
+
+
+@pytest.mark.parametrize(
+    "metadata", ["title: ' '", "schedule: ' '", "schedule: not-an-rrule", "schedule: 1"]
+)
+def test_invalid_metadata_fails(metadata: str) -> None:
+    with pytest.raises((ValueError, TypeError)):
+        ChoreFile.parse(f"---\n{metadata}\n---\nWork.", name="cleanup")
+
+
+def test_crud_is_flat_and_addressable_by_name_ref_and_id(tmp_path: Path) -> None:
+    catalog = AuthoredChores(tmp_path)
+    assert catalog.list() == ()
+    assert not catalog.lock_path.exists()
+    item = catalog.create(ChoreFile.parse("Work.\n", name="cleanup"))
+    assert item.path == tmp_path / "chores" / "cleanup.md"
+    for reference in (item.name, item.ref, item.id):
+        assert catalog.get(reference) == item
+    changed = catalog.update(item.patch({"body": "Updated."}))
+    assert changed.id == item.id
+    assert catalog.remove(item.ref) == changed
+    assert catalog.list() == ()
+    assert item.path is not None and not item.path.exists()
+    assert catalog.create(item).content == "Work.\n"
+
+
+def test_authoring_rejects_conflicts_and_missing_definitions(tmp_path: Path) -> None:
+    catalog = AuthoredChores(tmp_path)
+    item = catalog.create(ChoreFile.parse("Work.", name="cleanup"))
+    with pytest.raises(CatalogConflictError, match="already exists"):
+        catalog.create(item)
+    with pytest.raises(CatalogNotFoundError):
+        catalog.update(replace(item, name="missing"))
+    with pytest.raises(CatalogNotFoundError):
+        catalog.remove("missing")
+
+
+def test_only_immediate_files_are_effective_and_reads_do_not_write(
+    tmp_path: Path,
 ) -> None:
-    with pytest.raises(ValueError, match=message):
-        JobFile(
-            path=None,
-            content="Body.\n",
-            kind=cast(JobKind, kind),
-            stage=cast(JobStage, stage),
-            meta={"id": job_id},
-            body="Body.",
+    paths = [
+        tmp_path / relative
+        for relative in (
+            "chores/current.md",
+            "chores/nested/hidden.md",
+            "drafts/chores/old.md",
+            "archive/chores/old.md",
         )
+    ]
+    for path in paths:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("Work.\n")
+    before = {path: path.read_bytes() for path in paths}
+    catalog = AuthoredChores(tmp_path)
+    assert [item.name for item in catalog.list()] == ["current"]
+    assert catalog.get("current") is not None
+    assert not catalog.lock_path.exists()
+    assert before == {path: path.read_bytes() for path in paths}
 
 
-def test_job_file_rejects_empty_optional_title() -> None:
-    with pytest.raises(ValueError, match="title must be non-empty text"):
-        JobFile(
-            path=None,
-            content="Body.\n",
-            kind="task",
-            stage="ready",
-            meta={"id": "task-1", "title": " "},
-            body="Body.",
-        )
-
-
-def test_authored_jobs_use_short_lock_filename(tmp_path: Path) -> None:
-    jobs = AuthoredJobs(tmp_path)
-
-    assert jobs.lock_path == tmp_path / ".jobs.lock"
-    with jobs.write_lock():
-        assert jobs.lock_path.is_file()
-    assert not (tmp_path / ".authored-jobs.lock").exists()
-
-
-def test_empty_read_queries_do_not_create_lock(tmp_path: Path) -> None:
-    for relative in (
-        "tasks",
-        "chores",
-        "drafts/tasks",
-        "drafts/chores",
-        "archive/tasks",
-        "archive/chores",
-    ):
-        (tmp_path / relative).mkdir(parents=True, exist_ok=True)
-    jobs = AuthoredJobs(tmp_path)
-
-    assert jobs.list() == ()
-    assert not jobs.lock_path.exists()
-    assert jobs.get("task", "missing") is None
-    assert not jobs.lock_path.exists()
-    assert not jobs.contains_id("missing")
-    assert not jobs.lock_path.exists()
-
-
-def test_reading_existing_jobs_does_not_create_lock(tmp_path: Path) -> None:
-    _write_job(tmp_path, "tasks/review.md", job_id="review")
-    jobs = AuthoredJobs(tmp_path)
-
-    assert [job.id for job in jobs.list()] == ["review"]
-    assert jobs.get("task", "review") is not None
-    assert jobs.contains_id("review")
-    assert not jobs.lock_path.exists()
+def test_authoring_lock_is_reentrant(tmp_path: Path) -> None:
+    catalog = AuthoredChores(tmp_path)
+    with catalog.write_lock():
+        item = catalog.create(ChoreFile.parse("Work.", name="cleanup"))
+        catalog.update(item.with_body("Updated."))
+    assert catalog.lock_path == tmp_path / ".chores.lock"

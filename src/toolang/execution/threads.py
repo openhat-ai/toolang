@@ -65,6 +65,7 @@ class ThreadManager:
         *,
         prefix: ThreadPrefix,
         request_id: str | None = None,
+        client_id: str | None = None,
         peer: ThreadPeer | None = None,
     ) -> str:
         """Create an empty thread and return its id."""
@@ -76,9 +77,10 @@ class ThreadManager:
         def operation() -> tuple[str, ThreadEvent]:
             thread, control = self.store.create_thread(
                 thread_id=thread_id,
-                origin="script" if canonical_prefix is ThreadPrefix.SCRIPT else "chat",
+                origin=canonical_prefix.value,
                 peer=peer,
                 request_id=request_id,
+                client_id=client_id,
                 created_at=created_at,
             )
             event = ThreadCreated(
@@ -92,12 +94,27 @@ class ThreadManager:
 
         return self._apply(operation)
 
+    def talk_thread(self) -> str:
+        """Return this agent store's unique durable incoming-message context."""
+        with file_write_lock(self._lock_path):
+            threads = [
+                thread
+                for thread in self.store.list_threads()
+                if thread.origin == "talk"
+            ]
+            if len(threads) > 1:
+                raise ValueError("multiple talk threads exist for this agent")
+            if threads:
+                return threads[0].id
+            return self.create(prefix=ThreadPrefix.TALK)
+
     def fork(
         self,
         *,
         thread_id: str,
         run_id: str | None = None,
         request_id: str | None = None,
+        client_id: str | None = None,
     ) -> str:
         """Fork after one terminal visible run and return the new thread id."""
 
@@ -106,6 +123,7 @@ class ThreadManager:
                 thread_id=thread_id,
                 run_id=run_id,
                 request_id=request_id,
+                client_id=client_id,
             )
 
     def rewind(
@@ -114,6 +132,7 @@ class ThreadManager:
         thread_id: str,
         run_id: str | None = None,
         request_id: str | None = None,
+        client_id: str | None = None,
     ) -> None:
         """Discard a terminal anchor and suffix from one idle thread."""
 
@@ -122,6 +141,7 @@ class ThreadManager:
                 thread_id=thread_id,
                 run_id=run_id,
                 request_id=request_id,
+                client_id=client_id,
             )
 
     @property
@@ -134,6 +154,7 @@ class ThreadManager:
         thread_id: str,
         run_id: str | None,
         request_id: str | None,
+        client_id: str | None = None,
     ) -> str:
         source = self._branchable_thread(thread_id)
         try:
@@ -149,6 +170,7 @@ class ThreadManager:
                 source=source.id,
                 anchor=run_id,
                 request_id=request_id,
+                client_id=client_id,
                 created_at=created_at,
             )
             if not isinstance(control.payload, ForkControlPayload):
@@ -170,6 +192,7 @@ class ThreadManager:
         thread_id: str,
         run_id: str | None,
         request_id: str | None,
+        client_id: str | None = None,
     ) -> None:
         thread = self._branchable_thread(thread_id)
         created_at = utc_now()
@@ -179,6 +202,7 @@ class ThreadManager:
                 thread_id=thread.id,
                 anchor=run_id,
                 request_id=request_id,
+                client_id=client_id,
                 expected_head=self.store.thread_view(thread.id).head,
                 created_at=created_at,
             )

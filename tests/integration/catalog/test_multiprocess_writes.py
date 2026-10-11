@@ -10,7 +10,7 @@ import pytest
 from toolang.catalog.cap import AuthoredCaps, CapFile
 from toolang.catalog.config import CapRef, ConfiguredCaps
 from toolang.catalog.errors import CatalogConflictError
-from toolang.catalog.job import AuthoredJobs, JobFile, JobKind
+from toolang.catalog.chore import AuthoredChores, ChoreFile
 from toolang.common.ids import (
     AllocatorSnapshot,
     AllocatorState,
@@ -19,9 +19,8 @@ from toolang.common.ids import (
 )
 from toolang.common.layout import AgentLayout
 from toolang.work.authoring import (
-    allocate_authored_job_id,
-    assign_missing_authored_job_ids,
-    new_job_file,
+    allocate_authored_chore_name,
+    new_chore_file,
 )
 
 
@@ -44,10 +43,10 @@ def _create_same_prompt(directory: str, body: str) -> str:
     return "created"
 
 
-def _create_same_job(directory: str, kind: JobKind) -> str:
-    catalog = AuthoredJobs(Path(directory))
+def _create_same_job(directory: str, kind: str) -> str:
+    catalog = AuthoredChores(Path(directory))
     content = frontmatter.dumps(frontmatter.Post("Run it.", None, id="same-id"))
-    job = JobFile.parse(content, kind=kind)
+    job = ChoreFile.parse(content, name="same-name")
     try:
         catalog.create(job)
     except CatalogConflictError:
@@ -56,16 +55,17 @@ def _create_same_job(directory: str, kind: JobKind) -> str:
 
 
 def _assign_manual_job(root: str) -> None:
-    assign_missing_authored_job_ids(AgentLayout.resident(Path(root), "alice"))
+    from toolang.work.state import load_chores
+
+    load_chores(AgentLayout.resident(Path(root), "alice"))
 
 
 def _allocate_and_create_job(root: str) -> None:
     root_path = Path(root)
-    job_id = allocate_authored_job_id(AgentLayout.resident(root_path, "alice"))
-    AuthoredJobs(root_path / "agents" / "alice").create(
-        new_job_file(
-            kind="task",
-            job_id=job_id,
+    job_id = allocate_authored_chore_name(AgentLayout.resident(root_path, "alice"))
+    AuthoredChores(root_path / "agents" / "alice").create(
+        new_chore_file(
+            name=job_id,
             title="Generated",
             body="Run it.",
         )
@@ -81,7 +81,7 @@ def test_authored_job_ids_use_the_layout_agent_name(
     tick = LOCAL_ID_FAMILY.tick_modulus - 1
     AllocatorSnapshot(families={"local": AllocatorState(tick, 6)}).save(layout.id_state)
 
-    job_id = allocate_authored_job_id(layout)
+    job_id = allocate_authored_chore_name(layout)
 
     decoded = decode_id(job_id, family=LOCAL_ID_FAMILY, agent_name=agent_name)
     assert (decoded.tick, decoded.seq) == (tick, 7)
@@ -120,7 +120,7 @@ def test_authored_jobs_serializes_global_id_uniqueness(tmp_path: Path) -> None:
             executor.map(
                 _create_same_job,
                 [str(tmp_path)] * 2,
-                ["task", "chore"],
+                ["chore", "chore"],
             )
         )
 
@@ -146,7 +146,7 @@ def test_job_state_assignment_and_api_allocation_share_lock_order(
     tmp_path: Path,
 ) -> None:
     root = tmp_path / "toolang"
-    manual = root / "agents" / "alice" / "tasks" / "manual.md"
+    manual = root / "agents" / "alice" / "chores" / "manual.md"
     manual.parent.mkdir(parents=True)
     manual.write_text("Manual.\n", encoding="utf-8")
     context = multiprocessing.get_context("spawn")
@@ -159,6 +159,6 @@ def test_job_state_assignment_and_api_allocation_share_lock_order(
         for future in futures:
             future.result(timeout=10)
 
-    jobs = AuthoredJobs(root / "agents" / "alice").list(kind="task")
+    jobs = AuthoredChores(root / "agents" / "alice").list()
     assert len(jobs) == 2
     assert len({job.id for job in jobs}) == 2

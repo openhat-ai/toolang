@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import datetime, timezone
 from typing import TypeVar, cast
 
+from dateutil.rrule import rrulestr
 from tree_sitter import Node as CstNode
 
 from toolang.common.template import template_root_names, template_dependencies
@@ -170,13 +172,38 @@ def _lower(cst: ast._ParsedSource) -> ast.Program:
     return _Lowerer(cst).lower()
 
 
+def _lower_caps(cst: ast._ParsedSource) -> ast.Program:
+    lowerer = _Lowerer(cst)
+    for child in cst.tree.root_node.named_children:
+        node = lowerer._item(child)
+        if node.type in {"with", "psyche", "skill", "service", "prompt", "struct"}:
+            lowerer._lower_item(node, doc=lowerer.docs.for_node(node))
+    return ast.Program(
+        span=ast.Span(line=1),
+        caps=tuple(lowerer.caps),
+        withs=tuple(lowerer.withs),
+        structs=tuple(lowerer.structs),
+    )
+
+
+def _lower_chores(cst: ast._ParsedSource) -> tuple[ast.ChoreDecl, ...]:
+    """Lower only chore declarations for definition inspection."""
+
+    lowerer = _Lowerer(cst)
+    return tuple(
+        lowerer._lower_chore(node, doc=lowerer.docs.for_node(node))
+        for child in cst.tree.root_node.named_children
+        if (node := lowerer._item(child)).type == "chore"
+    )
+
+
 class _Lowerer:
     def __init__(self, cst: ast._ParsedSource) -> None:
         self.cst = cst
         self.docs = _DocComments(cst)
         self.withs: list[ast.WithDecl] = []
         self.caps: list[ast.CapDecl] = []
-        self.jobs: list[ast.JobDecl] = []
+        self.chores: list[ast.ChoreDecl] = []
         self.structs: list[ast.StructDecl] = []
         self.contexts: list[ast.ContextDecl] = []
         self.instructs: list[ast.InstructDecl] = []
@@ -196,7 +223,7 @@ class _Lowerer:
             doc=self.docs.program_doc,
             withs=tuple(sorted(self.withs, key=_node_line)),
             caps=tuple(sorted(self.caps, key=_node_line)),
-            jobs=tuple(sorted(self.jobs, key=_node_line)),
+            chores=tuple(sorted(self.chores, key=_node_line)),
             structs=tuple(sorted(self.structs, key=_node_line)),
             contexts=tuple(sorted(self.contexts, key=_node_line)),
             instructs=tuple(sorted(self.instructs, key=_node_line)),
@@ -220,8 +247,12 @@ class _Lowerer:
         if node.type in {"psyche", "skill", "service", "prompt"}:
             self.caps.append(self._lower_cap(node, doc=doc))
             return
-        if node.type in {"task", "chore"}:
-            self.jobs.append(self._lower_job(node, doc=doc))
+        if node.type == "task":
+            raise ToolangValidationError(
+                "Use chore for one-off or scheduled work", line=self._line(node)
+            )
+        if node.type == "chore":
+            self.chores.append(self._lower_chore(node, doc=doc))
             return
         if node.type == "struct":
             self.structs.append(self._lower_struct(node, doc=doc))
@@ -277,13 +308,23 @@ class _Lowerer:
             doc=doc,
         )
 
-    def _lower_job(self, node: CstNode, *, doc: str | None) -> ast.JobDecl:
+    def _lower_chore(self, node: CstNode, *, doc: str | None) -> ast.ChoreDecl:
         body = self._required(node, "body")
-        return ast.JobDecl(
-            kind=cast(ast.JobKind, node.type),
+        meta = self._properties(body)
+        if "schedule" in meta:
+            schedule = meta["schedule"]
+            try:
+                if not isinstance(schedule, str) or not schedule.strip():
+                    raise ValueError("expected non-empty text")
+                rrulestr(schedule, dtstart=datetime(2026, 1, 1, tzinfo=timezone.utc))
+            except ValueError as exc:
+                raise ToolangValidationError(
+                    f"Invalid chore schedule: {exc}", line=self._line(node)
+                ) from exc
+        return ast.ChoreDecl(
             name=self._required_text(node, "name").strip(),
             body=self._content_text(body),
-            meta=self._properties(body),
+            meta=meta,
             span=self._span(node),
             doc=doc,
         )

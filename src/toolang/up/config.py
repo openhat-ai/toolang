@@ -7,6 +7,34 @@ from pathlib import Path
 from typing import cast
 
 from toolang.common.config_sources import ConfigSource
+from toolang.common.layout import AgentPlacement
+from .types import ALL_DRIVERS, DriverName, ExecutionDrivers
+
+
+def parse_drivers(value: str) -> ExecutionDrivers:
+    """Parse an explicit command-specific driver selection."""
+    if value.strip() == "none":
+        return frozenset()
+    names = {part.strip() for part in value.split(",")}
+    if not names or not names <= ALL_DRIVERS:
+        raise ValueError("--enable expects chat,talk,chore or none")
+    return frozenset(cast(DriverName, name) for name in names)
+
+
+def default_drivers(placement: AgentPlacement) -> ExecutionDrivers:
+    """Resolve placement defaults at a hosting or CLI boundary."""
+    if placement == "resident":
+        return ALL_DRIVERS
+    if placement == "visiting":
+        return frozenset(("chat", "talk"))
+    return frozenset()
+
+
+def format_drivers(drivers: ExecutionDrivers) -> str:
+    return (
+        ",".join(name for name in ("chat", "talk", "chore") if name in drivers)
+        or "none"
+    )
 
 
 def _port(value: object, source: str) -> int:

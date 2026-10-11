@@ -40,7 +40,7 @@ def test_research_pipeline_calls_synthesis_with_empty_evidence(
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             root = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
@@ -97,7 +97,7 @@ def test_delivery_pipeline_preserves_inputs_and_accumulates_reviews(
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             root = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,

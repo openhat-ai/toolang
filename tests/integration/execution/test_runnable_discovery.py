@@ -76,7 +76,7 @@ agic chat() -> Text:
         async with harness:
             run = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="chat",
                 ),
                 tracer=tracer,
@@ -199,7 +199,7 @@ def test_invalid_or_inaccessible_queries_fail_without_broadening(tmp_path, argum
         async with harness:
             run = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="chat",
                 )
             )
@@ -243,7 +243,7 @@ agic target():
         async with harness:
             run = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="outer",
                 ),
                 tracer=tracer,
@@ -284,7 +284,7 @@ def test_current_uses_bound_declaration_and_others_use_tool_step_state(
         async with harness:
             pending = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="chat",
                 ),
                 tracer=tracer,
@@ -346,7 +346,7 @@ def test_discovery_state_read_error_is_a_correlated_tool_failure(tmp_path):
         async with harness:
             run = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="chat",
                 ),
                 tracer=tracer,
@@ -395,7 +395,7 @@ def test_discovery_keeps_the_state_captured_before_tool_step_delivery(tmp_path):
         async with harness:
             run = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="chat",
                 ),
                 tracer=tracer,
@@ -447,7 +447,7 @@ def test_private_module_discovery_retains_aliases_and_hides_other_private_docs(
         async with harness:
             run = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="main",
                 )
             )
@@ -514,7 +514,7 @@ def test_discovery_keeps_export_and_same_named_private_agic(tmp_path, current):
         async with harness:
             run = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="main",
                 ),
                 tracer=tracer,
@@ -576,7 +576,7 @@ agic target():
         async with harness:
             run = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="chat",
                 ),
                 tracer=tracer,
@@ -617,7 +617,7 @@ def test_all_discovery_has_no_64_target_limit(tmp_path):
         async with harness:
             run = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="chat",
                 )
             )
@@ -643,7 +643,7 @@ def test_new_root_omits_routes_even_when_history_contains_restricted_batch(tmp_p
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             for runnable in ("chat", "target"):
                 run = await harness.executor.run(
                     harness.run_spec(

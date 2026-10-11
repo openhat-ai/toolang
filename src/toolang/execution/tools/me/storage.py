@@ -25,8 +25,7 @@ _DIRECTORIES: dict[str, tuple[str, HomeFileCategory]] = {
         for directory, kind in CAP_KIND_BY_DIR.items()
         if kind != "skill"
     },
-    "tasks": (".md", "job"),
-    "chores": (".md", "job"),
+    "chores": (".md", "chore"),
 }
 
 
@@ -74,7 +73,7 @@ class HomeFiles:
                 # Reconstructing a filename loses whitespace normalized by it.
                 if (
                     source.suffix == ".too"
-                    and AgentLayout.roaming(source) == self.layout
+                    and AgentLayout.roaming(source).home == self.layout.home
                 ):
                     target = source
             except RuntimeError as exc:
@@ -184,12 +183,12 @@ class HomeFiles:
             "config": ("config.toml",),
             "cap": ("caps",),
             "asset": ("caps",),
-            "job": ("jobs",),
+            "chore": ("chores",),
         }
         names = (
             targets[file.category]
             if file is not None
-            else ("agent.too", "flows", "config.toml", "caps", "jobs")
+            else ("agent.too", "flows", "config.toml", "caps", "chores")
         )
         self._directory(self.home)
         with ExitStack() as stack:

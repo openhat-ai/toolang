@@ -73,7 +73,7 @@ agic child() -> Text:
         async with harness:
             parent = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="parent",
                 )
             )
@@ -197,7 +197,7 @@ agic gamma() -> Text:
         async with harness:
             parent = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="parent",
                 ),
                 tracer=tracer,
@@ -284,7 +284,7 @@ agic child() -> {result_type}:
         async with harness:
             root = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="parent",
                 ),
                 tracer=tracer,
@@ -370,7 +370,7 @@ agic side() -> Text:
         async with harness:
             parent = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="parent",
                 ),
                 tracer=tracer,

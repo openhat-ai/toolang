@@ -96,7 +96,7 @@ def test_compaction_progress_in_chat_and_script(tmp_path, status, tty, width):
 
     async def scenario():
         async with h:
-            thread = h.threads.create(prefix=ThreadPrefix.TERM)
+            thread = h.threads.create(prefix=ThreadPrefix.CHAT)
             for text in ("old", "recent"):
                 await h.executor.run(
                     h.run_spec(

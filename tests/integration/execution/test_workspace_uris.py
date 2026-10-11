@@ -549,7 +549,7 @@ flow parent(_: Part[]) -> Text[]:
         async with harness:
             spec = replace(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="parent",
                     primary=(TextPart("start"),),
                 ),

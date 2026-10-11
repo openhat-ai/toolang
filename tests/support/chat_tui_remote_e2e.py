@@ -12,7 +12,7 @@ import httpx
 from toolang.api.app import create_app
 from toolang.base.types.message import Message
 from toolang.base.types.run import ModelCallResult
-from toolang.catalog import CapsManager, JobsManager
+from toolang.catalog import CapsManager, ChoresManager
 from toolang.cli.toolang.commands.chat.remote import RemoteChatSession
 from toolang.cli.toolang.commands.chat.tui import ChatTuiApp
 from toolang.cli.common.terminal_session import prepare_terminal
@@ -58,7 +58,7 @@ agic chat(_: Part[]) -> Part[]:
     app = create_app(
         core,
         CapsManager(core.layout),
-        JobsManager(core.layout),
+        ChoresManager(core.layout),
         cors_allowed_origins=(),
     )
     session = RemoteChatSession(

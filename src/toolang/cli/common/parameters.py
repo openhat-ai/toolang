@@ -70,6 +70,15 @@ CompactModelOption = Annotated[
     ),
 ]
 
+DriverOption = Annotated[
+    str | None,
+    typer.Option(
+        "--enable",
+        metavar="DRIVERS",
+        help="Enable only these drivers, replacing defaults: chat,talk,chore or none",
+    ),
+]
+
 TitlePrefixOption = Annotated[
     str | None,
     typer.Option("--title-prefix", metavar="TEXT", help="Prefix this terminal title"),

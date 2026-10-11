@@ -17,6 +17,7 @@ from toolang.cli.common.workspaces import (
 from toolang.cli.common.parameters import (
     AllowOptions,
     CompactModelOption,
+    DriverOption,
     DefaultOptions,
     LimitOptions,
     TextType,
@@ -50,6 +51,7 @@ def chat_command(
     limits: LimitOptions = None,
     defaults: DefaultOptions = None,
     compact_model: CompactModelOption = None,
+    driver: DriverOption = None,
     workspace: WorkspaceOptions = None,
     workdir: WorkdirOption = None,
     dev: Annotated[
@@ -67,6 +69,7 @@ def chat_command(
         allows=allows,
         defaults=defaults,
         compact_model=compact_model,
+        driver=driver,
         sandbox=sandbox,
         dev=dev,
         limits=limits,

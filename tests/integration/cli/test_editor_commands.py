@@ -11,7 +11,7 @@ from typer._click.utils import strip_ansi
 from toolang.catalog import templates
 from toolang.catalog.agent import LocalAgents
 from toolang.catalog.cap import AuthoredCaps, CapFile
-from toolang.catalog.job import AuthoredJobs, JobFile
+from toolang.catalog.chore import AuthoredChores, ChoreFile
 from toolang.cli.caps.main import main as caps_main
 from toolang.cli.toolang.main import main as toolang_main
 
@@ -21,7 +21,6 @@ from toolang.cli.toolang.main import main as toolang_main
     [
         ("caps", "skill"),
         ("toolang", "skill"),
-        ("toolang", "task"),
         ("toolang", "chore"),
     ],
 )
@@ -32,7 +31,7 @@ def test_editor_failures_return_cli_errors_without_changing_authored_files(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     entry_point: str,
-    kind: Literal["skill", "task", "chore"],
+    kind: Literal["skill", "chore"],
     action: str,
     editor_failure: str,
 ) -> None:
@@ -56,9 +55,9 @@ def test_editor_failures_return_cli_errors_without_changing_authored_files(
         )
         arguments = ["alice", kind, action]
         if action == "edit":
-            AuthoredJobs(home).create(
-                JobFile.parse(
-                    "---\nid: demo\ntitle: Demo\n---\nDo the work.\n", kind=kind
+            AuthoredChores(home).create(
+                ChoreFile.parse(
+                    "---\nid: demo\ntitle: Demo\n---\nDo the work.\n", name="demo"
                 )
             )
             arguments.append("demo")

@@ -54,7 +54,7 @@ def test_inflight_message_survives_hub_restart_and_scoped_fanout(
         )
         harness = ExecutionHarness.create(
             tmp_path,
-            source="agic msg(_: Json):\n  {{_}}\nflow local(_: Text):\n  let result = Done\n",
+            source="agic talk(_: Json):\n  {{_}}\nflow local(_: Text):\n  let result = Done\n",
             tools=tools,
             responses=[
                 ScriptedModelTurn(
@@ -83,7 +83,14 @@ def test_inflight_message_survives_hub_restart_and_scoped_fanout(
             get_agent_state=lambda: harness.state,
             client=client,
         )
-        lifecycle = TeamingLoop(loop, AgentEventClient(client))
+        lifecycle = TeamingLoop(
+            AgentEventClient(client),
+            client=client,
+            owner=loop.owner,
+            endpoint=loop.endpoint,
+            executor=loop.executor,
+            messaging=loop,
+        )
         connection = running_hub.connection()
         record = running_hub.current()
         assert record is not None
@@ -163,7 +170,7 @@ def test_inflight_message_survives_hub_restart_and_scoped_fanout(
                     )
                 local = await harness.executor.run(
                     harness.run_spec(
-                        thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                        thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                         runnable="flow:local",
                         primary=(TextPart("local"),),
                     )

@@ -170,10 +170,10 @@ Thread ids use one underscore-delimited normalized form:
 
 Examples:
 
-- `task_3nprht9x`
+- `talk_3nprht9x`
 - `chore_xy1234ab`
-- `web_def456gh`
-- `term_jk789mnp`
+- `chat_def456gh`
+- `worker_jk789mnp`
 - `script_pqr234st`
 - `tg_123456789`
 
@@ -284,7 +284,7 @@ inspection pages.
 
 Run control endpoints are:
 
-- `POST /api/v1/runs/{run_id}/steer`
+- `POST /api/v1/chat/runs/{run_id}/steer`
 - `POST /api/v1/runs/{run_id}/cancel`
 
 Thread lifecycle endpoints are:
@@ -292,7 +292,7 @@ Thread lifecycle endpoints are:
 - `POST /api/v1/threads/{thread_id}/rewind`
 - `POST /api/v1/threads/{thread_id}/fork`
 
-`steer` and `cancel` require a running run. They can target chat, task, and
+`steer` and `cancel` require a running run. They can target chat, talk, and
 chore runs.
 
 `rewind` removes the visible suffix of a branchable chat thread from the anchor
@@ -308,9 +308,8 @@ includes its anchor and may select an earlier terminal run while a later run
 remains active. Rewind discards its anchor and requires the entire thread to
 have no pending or running runs; callers must cancel active runs before rewinding.
 
-Task and chore thread ids are derived from job ids, so job threads cannot be
-rewound or forked. Job execution commands expose explicit job semantics such as
-`task reopen <id>` and `chore run <id>` instead.
+Only chat threads can be rewound or forked. Use `chore run <name>` to request
+another chore occurrence. Chore identities and checkpoints stay stable.
 
 
 ## Chat API
@@ -320,9 +319,9 @@ does not expose a separate `/chat` resource.
 
 A client starts a new conversation by calling:
 
-1. `POST /api/v1/threads` with `client` and an optional peer.
+1. `POST /api/v1/threads` with `client_id`, `request_id`, and an optional peer.
 2. `GET /api/v1/runs/defaults` once to adopt concrete session defaults.
-3. `POST /api/v1/runs/authored/stream` with the returned thread id, concrete
+3. `POST /api/v1/chat/runs/authored/stream` with the returned thread id, concrete
    runnable and model requests, authored input, and materialized policy.
 
 Subsequent turns reuse the same thread id. The client explicitly selects the

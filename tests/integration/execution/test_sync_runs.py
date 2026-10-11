@@ -115,7 +115,7 @@ def test_batch_runs_finish_before_replies_and_next_tools(tmp_path: Path) -> None
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             root = await harness.executor.run(
                 harness.run_spec(thread=thread, runnable="parent"), tracer=tracer
             )
@@ -228,7 +228,7 @@ def test_typed_result_survives_no_followup_and_reopen(
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             root = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
@@ -289,7 +289,7 @@ def test_repeated_steer_during_children_resumes_caller(tmp_path: Path) -> None:
         async with harness:
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="parent",
                 ),
                 tracer=tracer,
@@ -392,7 +392,7 @@ flow child(_: Part[]) -> Part[]:
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             root = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
@@ -492,7 +492,7 @@ def test_cancel_target_preserves_caller_and_remaining_batch(
         async with harness:
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="parent",
                 ),
                 tracer=tracer,
@@ -556,7 +556,7 @@ def test_target_cancel_cannot_override_root_cancel(tmp_path: Path) -> None:
         async with harness:
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="parent",
                 )
             )

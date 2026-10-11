@@ -1,4 +1,4 @@
-"""Immutable effective job definitions."""
+"""Current chore definitions, independent of handlers and execution state."""
 
 from __future__ import annotations
 
@@ -6,167 +6,122 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
-import re
 
-from toolang.catalog.job import AuthoredJobs, JobFile
-from toolang.catalog.types import DEFAULT_CHORE_SCHEDULE, JobKind
+from toolang.catalog.chore import AuthoredChores, ChoreFile
+from toolang.common.ids import chore_id
 from toolang.common.layout import AgentLayout
-from toolang.lang.ast import JobDecl, Program
-
-from .authoring import assign_missing_authored_job_ids
-
-_REMOTE_REF_PATTERN = re.compile(r"\b[A-Z][A-Z0-9]+-\d+\b")
+from toolang.lang.ast import ChoreDecl, parse_chore_declarations
 
 
 @dataclass(frozen=True, slots=True)
-class Job:
-    """One current task or chore definition."""
+class Chore:
+    """One effective definition and its exact authored location."""
 
-    id: str
-    kind: JobKind
+    name: str
     title: str | None
     body: str
     schedule: str | None
-    revision: str
-    source: str
-    path: Path | None
+    path: Path
+    line: int | None = None
+
+    @property
+    def id(self) -> str:
+        return chore_id(self.name)
+
+    @property
+    def ref(self) -> str:
+        return f"chore/{self.name}"
 
     @property
     def thread_id(self) -> str:
-        """Return the stable execution thread derived from job identity."""
+        return f"chore_{self.id}"
 
-        return f"{self.kind}_{self.id}"
+    @property
+    def body_hash(self) -> str:
+        return sha256(self.body.replace("\r\n", "\n").strip().encode()).hexdigest()
+
+    @property
+    def schedule_hash(self) -> str | None:
+        return sha256(self.schedule.encode()).hexdigest() if self.schedule else None
+
+    @property
+    def location(self) -> str:
+        return f"{self.path}:{self.line}" if self.line is not None else str(self.path)
+
+    @property
+    def display_title(self) -> str:
+        if self.title:
+            return self.title
+        for line in self.body.splitlines():
+            candidate = line.strip().lstrip("#").strip()
+            if candidate:
+                return candidate[:80]
+        return self.name
 
 
-def load_ready_jobs(layout: AgentLayout) -> tuple[Job, ...]:
-    """Load normalized ready Markdown jobs for one agent home."""
+def load_chore_files(layout: AgentLayout) -> tuple[Chore, ...]:
+    """Read immediate root/home Markdown definitions, with home taking precedence."""
 
-    catalog = AuthoredJobs(layout.home)
-    ready = catalog.list(stage="ready")
-    if any(item.optional_id is None for item in ready):
-        assign_missing_authored_job_ids(layout, catalog=catalog, stage="ready")
-        ready = catalog.list(stage="ready")
-    return tuple(_file_job(layout.root, item) for item in ready)
-
-
-def program_jobs(program: Program) -> tuple[Job, ...]:
-    """Normalize program task and chore declarations."""
-
-    return tuple(_program_job(decl) for decl in program.jobs)
+    return tuple(
+        merge_chores(
+            *(
+                (file_chore(item) for item in AuthoredChores(directory).list())
+                for directory in dict.fromkeys((layout.root, layout.home))
+            )
+        ).values()
+    )
 
 
-def merge_jobs(*groups: Iterable[Job]) -> dict[str, Job]:
-    """Merge effective job sources while rejecting every duplicate id."""
+def load_chores(layout: AgentLayout) -> tuple[Chore, ...]:
+    """Read effective authored definitions without preparing State or handlers."""
 
-    merged: dict[str, Job] = {}
+    source = (
+        layout.program.read_text(encoding="utf-8") if layout.program.is_file() else ""
+    )
+    inline = inline_chores(parse_chore_declarations(source), path=layout.program)
+    return tuple(merge_chores(load_chore_files(layout), inline).values())
+
+
+def inline_chores(
+    declarations: Iterable[ChoreDecl], *, path: Path
+) -> tuple[Chore, ...]:
+    return tuple(
+        Chore(
+            name=decl.name,
+            title=str(decl.meta.get("title") or "").strip() or None,
+            body=decl.body.strip(),
+            schedule=str(decl.meta["schedule"]).strip()
+            if decl.meta.get("schedule")
+            else None,
+            path=path,
+            line=decl.span.line,
+        )
+        for decl in declarations
+    )
+
+
+def file_chore(chore: ChoreFile) -> Chore:
+    if chore.path is None:
+        raise ValueError("authored chore path is required")
+    return Chore(
+        name=chore.name,
+        title=chore.title,
+        body=chore.body,
+        schedule=chore.schedule,
+        path=chore.path,
+    )
+
+
+def merge_chores(*groups: Iterable[Chore]) -> dict[str, Chore]:
+    """Later definitions shadow earlier definitions with the same name."""
+
+    merged: dict[str, Chore] = {}
     for group in groups:
-        for job in group:
-            previous = merged.get(job.id)
-            if previous is not None:
+        for chore in group:
+            previous = merged.get(chore.id)
+            if previous is not None and previous.name != chore.name:
                 raise ValueError(
-                    f"duplicate job id {job.id!r}: {previous.source} and {job.source}"
+                    f"chore ID collision {chore.id!r}: {previous.location} and {chore.location}"
                 )
-            merged[job.id] = job
+            merged[chore.id] = chore
     return merged
-
-
-def schedule_revision(job: Job) -> str | None:
-    """Return the stable revision of one chore schedule."""
-
-    if job.schedule is None:
-        return None
-    return sha256(job.schedule.encode()).hexdigest()
-
-
-def _file_job(root: Path, job: JobFile) -> Job:
-    if job.path is None:
-        raise ValueError("authored job path is required")
-    return _job(
-        job_id=job.id,
-        kind=job.kind,
-        title=job.title,
-        body=job.body,
-        schedule=job.schedule if job.kind == "chore" else None,
-        source=str(job.path.relative_to(root)),
-        path=job.path,
-    )
-
-
-def _program_job(decl: JobDecl) -> Job:
-    title = str(decl.meta.get("title") or "").strip()
-    return _job(
-        job_id=decl.name,
-        kind=decl.kind,
-        title=title or None,
-        body=decl.body.strip(),
-        schedule=(
-            str(decl.meta.get("schedule") or DEFAULT_CHORE_SCHEDULE).strip()
-            if decl.kind == "chore"
-            else None
-        ),
-        source=f"agent.too:{decl.span.line}",
-        path=None,
-    )
-
-
-def _job(
-    *,
-    job_id: str,
-    kind: JobKind,
-    title: str | None,
-    body: str,
-    schedule: str | None,
-    source: str,
-    path: Path | None,
-) -> Job:
-    normalized_body = body.replace("\r\n", "\n").strip()
-    return Job(
-        id=job_id,
-        kind=kind,
-        title=title,
-        body=body,
-        schedule=schedule,
-        revision=sha256(normalized_body.encode()).hexdigest(),
-        source=source,
-        path=path,
-    )
-
-
-def job_thread_id(job: JobFile) -> str:
-    """Return the runtime thread projection for one authored job."""
-
-    return f"{job.kind}_{job.id}"
-
-
-def job_display_title(job: JobFile, *, fallback: str) -> str:
-    """Return a short title for a caller-facing job projection."""
-
-    if job.title:
-        return job.title
-    for line in job.body.splitlines():
-        candidate = line.strip().lstrip("#").strip()
-        if candidate:
-            return candidate[:80]
-    return fallback
-
-
-def job_remote_status(job: JobFile) -> str | None:
-    """Return the first explicit remote status in a task body."""
-
-    if job.kind != "task":
-        return None
-    for line in job.body.splitlines():
-        key, separator, value = line.partition(":")
-        if separator == ":" and key.strip().lower() in {"status", "remote status"}:
-            return value.strip() or None
-    return None
-
-
-def job_remote_ref(job: JobFile) -> str | None:
-    """Return a remote work-item key projected from authored task content."""
-
-    if job.kind != "task":
-        return None
-    text = "\n".join(part for part in (job.title or "", job.body) if part)
-    match = _REMOTE_REF_PATTERN.search(text)
-    return None if match is None else match.group(0)

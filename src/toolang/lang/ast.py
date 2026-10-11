@@ -19,7 +19,6 @@ from toolang.common.immutable import freeze_mapping
 from .text import source_lines
 
 CapKind = Literal["psyche", "skill", "service", "prompt"]
-JobKind = Literal["task", "chore"]
 Role = Literal["user", "assistant", "tool"]
 Position = Literal["first", "last"]
 Order = Literal["ascending", "descending"]
@@ -82,8 +81,9 @@ class CapDecl(Node):
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class JobDecl(Node):
-    kind: JobKind
+class ChoreDecl(Node):
+    kind: ClassVar[str] = "chore"
+
     name: str
     body: str
     meta: Mapping[str, Any] = field(default_factory=dict)
@@ -347,7 +347,7 @@ class Program(Node):
 
     withs: tuple[WithDecl, ...] = ()
     caps: tuple[CapDecl, ...] = ()
-    jobs: tuple[JobDecl, ...] = ()
+    chores: tuple[ChoreDecl, ...] = ()
     structs: tuple[StructDecl, ...] = ()
     contexts: tuple[ContextDecl, ...] = ()
     instructs: tuple[InstructDecl, ...] = ()
@@ -427,6 +427,23 @@ class Program(Node):
                     exc.column = len(raw) - len(raw.lstrip(" \t")) + 1
             raise
         return program
+
+
+def parse_cap_declarations(source: str) -> Program:
+    """Parse and validate capability declarations without resolving runnables."""
+    from .lower import _lower_caps
+    from .validate import _validate
+
+    program = _lower_caps(_parse_source(source))
+    _validate(program)
+    return program
+
+
+def parse_chore_declarations(source: str) -> tuple[ChoreDecl, ...]:
+    """Read inline chore definitions without resolving or validating runnables."""
+    from .lower import _lower_chores
+
+    return _lower_chores(_parse_source(source))
 
 
 def validate_source_syntax(source: str) -> None:

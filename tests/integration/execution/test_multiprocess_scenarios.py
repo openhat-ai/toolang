@@ -404,7 +404,7 @@ def test_remote_process_can_steer_an_owned_run(tmp_path: Path) -> None:
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             handle = harness.executor.run(
                 harness.run_spec(
                     thread=thread,
@@ -469,7 +469,7 @@ def test_remote_process_can_cancel_a_pending_steer(tmp_path: Path) -> None:
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             handle = harness.executor.run(
                 harness.run_spec(
                     thread=thread,
@@ -759,7 +759,7 @@ def test_concurrent_forks_preserve_one_terminal_anchor(
         project_run_start(
             store,
             run_id="run_fork_anchor",
-            thread_id="term_fork_source",
+            thread_id="chat_fork_source",
             origin="chat",
             input=Message.user("source"),
         )
@@ -775,7 +775,7 @@ def test_concurrent_forks_preserve_one_terminal_anchor(
                 (
                     str(db_path),
                     str(id_path),
-                    "term_fork_source",
+                    "chat_fork_source",
                     "run_fork_anchor",
                     f"fork-request-{index}",
                 )

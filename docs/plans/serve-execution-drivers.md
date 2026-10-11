@@ -1,165 +1,179 @@
-# Serve execution drivers
+# Execution drivers and chores
 
-Status: discussion plan for review; resolve the open decisions and obtain human
-approval before implementation. This PR changes no product behavior.
+Status: approved in #758, incorporating the subsequent CLI, flat-directory,
+identity, and inspection decisions. Backward compatibility is out of scope.
 
 ## Goal and scope
 
-Make chat, talk, and chore independently selectable execution drivers with
-consistent handlers, durable identities, and observable execution. A driver
-accepts triggers, a thread retains context, and a run records one execution.
-Scope includes hosting/API admission, unified chores, thread naming, and
-observation; it excludes a generic driver plugin framework and live toggles.
+Independently select what triggers agent execution. A driver accepts triggers,
+a thread retains context, and a run records execution. All drivers resolve
+runnable handlers from State and submit captured State/Setup to the common
+executor; a handler is a role, not another runnable type.
 
-Today, hosting starts the scheduler unconditionally, messaging creates a new
-`script_` thread per batch, and jobs distinguish task/chore and reject duplicate
-IDs. The following contracts replace those behaviors.
+Scope: hosting and admission, unified chores, identities, and observation.
+No generic driver plugin framework, live toggles, Task/Job entity, or migration.
 
-## Drivers and hosting
+## Drivers and CLI
 
-| Driver | Trigger | Context |
+| Driver | Trigger | Thread |
 | --- | --- | --- |
-| `chat` | Interactive requests over FastAPI | One `chat_` thread per conversation |
-| `talk` | Incoming agent messages | One durable `talk_` thread per agent |
-| `chore` | One-off, scheduled, or manual work | One `chore_` thread per chore |
+| `chat` | TUI/WebUI interaction over FastAPI | `chat_` per conversation |
+| `talk` | Incoming Hub messages | One durable `talk_` per agent |
+| `chore` | One-off, scheduled, or manual work | `chore_<id>` per chore |
 
-- Defaults: resident enables all three; visitor enables chat/talk; roaming enables
-  none. Visitor is currently called `visiting` internally. Standalone scripts
-  start no drivers; attaching to a runtime does not change its selection.
-- Every driver resolves a runnable handler from State and uses the common executor
-  with a consistent State/Setup snapshot. Handler is a role, not a new runnable
-  type. Drivers need not all be loops.
-- TUI/WebUI use chat over HTTP. Disabling chat retains the management API, health,
-  inspection, authoring, cancellation, script execution, and other drivers.
-  Gate interactive creation, submission, retry/rerun, and steer before execution
-  writes, including when the target thread originally came from another driver.
-- Disabled chore/talk drivers do not dispatch or consume triggers. Separate talk
-  consumption from transport, presence, outbound tools, and observation. Explicit
-  startup/shutdown ownership must also clean up partial startup failures.
-- Replace client type with `client_id` and `request_id`, recording the initiating
-  client instance and request alongside execution. Neither owns the thread nor
-  selects its driver. Preserve request identity across retries; this change alone
-  does not define a new deduplication scope.
+Chore handler order: explicit runnable call, named `chore` handler, configured
+default runnable, unnamed entry. No available handler means a rejected activation.
 
-## Command-specific driver option
+| Startup placement | Default drivers |
+| --- | --- |
+| Resident | chat, talk, chore |
+| Visitor (`visiting` internally) | chat, talk |
+| Roaming or standalone script | none |
 
-- Expose `--driver` only on `serve`, `start`, and `chat`. It is a command-specific
-  option, not a root/global option or a general runtime-acquisition parameter
-  exposed by every command.
-- `chat` connects to a running agent or implicitly performs `start` when the agent
-  is inactive. A new startup uses the same driver-selection rules as `start`.
-- Accept a comma-separated driver set; `--driver none` explicitly selects none
-  and cannot be combined with driver names. An explicit set replaces defaults;
-  omission on startup uses the placement defaults above. Reject invalid values
-  before starting a process, resolve once at the CLI boundary, and forward the
-  concrete set through foreground/background, hidden `_serve`, and host/guest launches.
-- When chat finds an existing agent, omitting `--driver` preserves its selection
-  without reapplying defaults. An explicit set is a compatibility requirement:
-  an equal set permits connection; a different set fails with restart guidance.
-  Chat also fails if chat is disabled, even when the explicit set matches. It never
-  enables drivers, restarts the agent, or launches another instance automatically.
-  For a new agent, reject a chat invocation whose resolved set excludes chat before
-  starting it. Report the effective set in startup/status output.
-- `talk` is a Hub messaging client and does not start the receiving agent.
-  Script execution owns a run's lifecycle, not persistent drivers. Neither command
-  accepts `--driver`; use `serve` to activate drivers and inline chores in a `.too`
-  app. A script attached to an existing agent leaves its driver selection intact.
+- Only `serve`, `start`, and `chat` expose `--enable`. A comma-separated set
+  replaces defaults; `none` selects none and cannot accompany another name.
+  Reject invalid selections before startup; resolve placement defaults at the
+  call site and forward the concrete set through foreground/background and
+  host/guest launches. Report the set in startup/status output.
+- `chat` implicitly starts an inactive agent; reject a selection without chat
+  before starting. For an existing runtime, omission preserves its selection,
+  an equal explicit set permits connection, and a different set fails with
+  restart guidance. Disabled chat always fails. Connection never changes the
+  selection or restarts/duplicates a running agent.
+- `talk` sends Hub messages without starting the recipient. Script execution
+  owns one run lifecycle; it neither accepts `--enable` nor starts drivers.
+  Attaching a script preserves an existing runtime's drivers. Use `serve` to
+  activate drivers and inline chores in a `.too` app.
+- Disabling chat retains management HTTP, health, inspection, authoring,
+  cancellation, script execution, and other drivers. Interactive thread creation
+  uses `/api/v1/threads`; submission/retry/rerun/steer use `/api/v1/chat/runs`
+  and are gated before writes. Scripts use `/api/v1/runs`. Thread prefixes and
+  client identity do not classify admission, even on another driver's thread.
+- Disabled talk/chore drivers do not consume or dispatch triggers. Talk
+  consumption is separate from transport, presence, outbound tools, and
+  observation. Ownership includes cleanup after partial startup failure.
 
-Proposed examples (`too` is the `toolang` alias):
+Examples (`too` aliases `toolang`):
 
 ```sh
-too serve alice --driver chat,talk,chore
-too start alice --driver talk,chore
-too serve alice --driver none
-too alice chat --driver chat,talk,chore
+too serve alice --enable chat,talk,chore
+too start alice --enable talk,chore
+too serve alice --enable none
+too alice chat --enable chat,talk,chore
 ```
 
-## Chore definitions and persistence
+## Definitions, identity, and access
 
-Remove Task and Job as separate concepts. Chore unifies one-off and repeated work
-and remains authorable in Markdown and inline `.too` for portable apps.
+A chore is a pure definition in an immediate `chores/<name>.md` file or inline
+`chore name:` declaration. The directory contains current definitions only;
+there are no draft/ready/archive stages. Retain list/new/clone/edit/delete/run/cancel.
 
 | Value | Rule |
 | --- | --- |
-| `name` | Inline declaration name or filename without `.md`, e.g. `cleanup` |
-| `ref` | `chore/cleanup`, following the `skill/a-b-c` convention |
-| `id` | Deterministic Base32 identity derived from name |
+| `name` | Declaration name or filename stem; preserve case and Unicode |
+| `ref` | `chore/<name>`, following the `skill/a-b-c` convention |
+| `id` | First 80 SHA-256 bits of the UTF-8 name, encoded as 16 Toolang Base32 characters |
 | `thread_id` | `chore_<id>` |
-| `title` | Optional display text, excluded from identity |
+| `title` | Optional display text, excluded from identity and activation |
 
-Allow shadowing through established definition-resolution precedence and dispatch
-only the winning definition. The same name keeps its ID, thread, and progress
-when the winning source changes. Identity is scoped to the owning agent's durable
-state; content, schedule, directory, and revision do not enter the ID. Changing a
-declaration name or filename creates a new identity.
+Root files < home files < inline declarations; later inline declarations win.
+Dispatch only the winner. Name determines identity within the agent's durable
+state: shadowing or moving a definition preserves progress and context; renaming
+creates a new identity. Different-name ID collisions fail. Files contain body
+and optional title/schedule, never scheduler state or separately authored IDs.
 
-Definitions contain no execution state or separately maintained IDs/refs/thread
-IDs. State may retain inline declarations and runnable handlers; source parsing
-remains with language/catalog owners. ChoreDriver resolves definitions and owns
-scheduling; progress does not belong in State or Setup.
+Keep reads and writes with their owners; do not prepare handlers to list data:
 
-A `chores` table keyed by derived ID persists definition/revision association,
-status, active run, and schedule checkpoints. Runs retain each execution's history.
-Reload/restart must not redispatch a completed one-off revision or reset schedule
-progress. Definition edits and manual requests follow explicit activation rules;
-the driver never writes progress back into Markdown or `.too`.
+- Chore CLI/API read current effective source definitions and join read-only
+  checkpoints/run history. Expose source `path` and optional inline `line`.
+  Execution fields live under `runtime`; `synced` compares body/schedule hashes,
+  distinguishing an unobserved definition from its saved checkpoint.
+- Chore authoring requires a resident agent. New home files may shadow root;
+  inline conflicts fail with the source to edit. Edit/delete target the visible
+  home file and reject root/inline winners. Clone copies any effective definition
+  into a new home file/name. Removing a home override reveals its root fallback.
+- Caps CLI resolves current declarations through existing materializers, caches,
+  and allow rules without publishing executable State. Runtime caps API reads
+  the latest accepted State; cap writes target the explicit root/home scope.
+- Language/catalog packages own source parsing. State may retain inline chores
+  and runnable handlers; the driver combines accepted inline declarations with
+  current file definitions. State/Setup contain no chore execution progress.
+  Reject malformed definitions; a bad live edit must not stop future refreshes.
 
-## Threads, instances, and observation
+## Chore checkpoints and activation
 
-- Use `chat_`, `talk_`, and `chore_` for driver contexts; retain `script_` for
-  scripts. Independent contexts created by `spawn` use `worker_`, regardless of
-  parent prefix. Store ancestry in records; ordinary nested calls retain their
-  thread. Each execution still has a `run_` ID.
-- Reuse the talk thread across batches and restarts with normal history/compaction.
-  Keep conversation/backend checkpoints separate and preserve the
-  [transport contract](agent-hub-transport.md). Avoid accidentally inheriting a
-  previous batch's workdir.
-- The same `.too` source does not imply shared threads, drivers, or progress.
-  Independent agent instances remain separate; restarting the same durable agent
-  restores its state.
-- Within its selected scope, `top` observes every running resident, visitor,
-  roaming, and script instance as instance -> thread -> run. Runtime observation
-  works with talk disabled; idle driver status is separate from active runs.
+The driver owns one `chores` checkpoint per derived ID in `runs.db`; normal runs
+retain execution history. No separate jobs database or authored lifecycle state.
 
-## Delivery and acceptance
+| Checkpoint fields | Meaning |
+| --- | --- |
+| `chore_id`, `name`, `body_hash`, `schedule_hash` | Identity and last reconciled definition |
+| `status`, `error` | Scheduler status and scheduler/recovery error |
+| `pending_at`, `pending_trigger` | One coalesced source/manual request |
+| `active_run_id`, `active_trigger`, `active_due_at` | Claimed run and consumed occurrence |
+| `schedule_anchor_at`, `next_scheduled_at` | RRULE anchor and next scheduled occurrence |
+| `created_at`, `updated_at` | Checkpoint creation/change times; unchanged scans do not update them |
 
-Paths below are relative to `src/toolang/`. Deliver independently verifiable
-changes after approval:
+- No schedule means one-off: first discovery queues work; a body change queues
+  the latest body. Unchanged completed/failed/canceled bodies do not rerun on
+  refresh, removal/restoration, or restart. Title/location edits do not activate.
+- RRULE schedules begin at the next future occurrence; exhausted schedules are
+  terminal. Body edits wait for the next occurrence. A schedule edit resets the
+  anchor/cursor; an unchanged schedule preserves them. Removing the schedule
+  removes future scheduled occurrences, without itself queuing a source request.
+- At most one run per chore. Missed schedule occurrences coalesce into one
+  catch-up run. Repeated source/manual requests share one pending slot, preserving
+  its first trigger/time; scheduled work remains distinct and executes serially.
+- `run` explicitly queues work, including retrying a terminal one-off. `cancel`
+  cancels active execution or clears pending source/manual work; future RRULE
+  occurrences remain. Deletion stops dispatch but retains checkpoints/history
+  and does not cancel active execution.
+- Persist a claim before executor acceptance. On restart, release unaccepted
+  claims, finish terminal runs, and retain ambiguous accepted runs without
+  duplicate dispatch. Recovery preserves manual identity and the current
+  schedule cursor; it must not restore an occurrence from a replaced schedule.
+  The driver never writes execution state into Markdown or `.too`.
 
-1. **Selection/admission:** serve/start/chat command signatures/factories,
-   `cli/common/agent_server.py`, `up/`, and `api/`. Test help/parsing on the selected
-   commands, rejection on talk/script, all eight combinations, placement defaults,
-   driver-free standalone scripts, and launch forwarding. Cover chat's implicit
-   start and existing-agent connection with omitted/equal/conflicting selections
-   and chat disabled; failures must preserve the running configuration and create
-   no execution records. Management remains healthy for every selection.
-2. **Unified chores:** `lang/`, `catalog/`, `state/`, `work/`, `common/ids.py`,
-   and chore CLI/API surfaces. Test inline/file equivalence, shadowing, rename,
-   deterministic IDs, restart without redispatch, schedule/manual serialization,
-   and unchanged authored definitions.
-3. **Threads/handlers:** `work/{messaging,teaming}.py`,
-   `execution/{types,threads,schemas}.py`, and `execution/executor/spawn.py`.
-   Test durable talk/chore reuse, worker ancestry, agent isolation, history,
-   reconnect/receipts, and cleanup after interrupted startup/shutdown.
-4. **Observation/compatibility:** `execution/{activity,client}.py`, `teaming/`,
-   `cli/toolang/commands/top.py`, client/API schemas, and existing integration
-   tests. Verify client/request identity, all placements, concurrent instances,
-   talk-disabled visibility, and preserved completed work/history on upgrade.
-   Update CLI help, task/work/messaging docs, and the generated changelog with the
-   implementation.
+## Context, clients, and observation
 
-Code commits require the repository's Ruff, formatting, type, and full offline
-pytest checks. This plan-only PR requires source/path/link review and
-`git diff --check`; proposed CLI syntax is not yet available.
+- New thread prefixes are `chat_`, `talk_`, `chore_`, `worker_`, and `script_`.
+  `spawn` always creates `worker_` with recorded ancestry; ordinary nested calls
+  retain their thread. Each execution has a `run_` ID.
+- Talk reuses its thread across batches/restarts with normal history/compaction
+  and a freshly resolved workdir. Conversation/backend checkpoints remain
+  separate under the [transport contract](agent-hub-transport.md).
+- Requests and controls carry `client_id` plus `request_id`, replacing client
+  type. They identify the caller instance and request, not thread ownership or
+  driver selection. Preserve identity across transport retries without changing
+  existing deduplication scope.
+- Independent instances of the same `.too` source do not share threads or
+  progress; standalone scripts use distinct runtime/sandbox directories.
+  Restarting the same durable agent reuses state.
+- In its selected scope, `top` observes every running placement and script
+  instance as instance -> thread -> run, independently of talk/Hub. Combine local
+  registrations with available remote activity; distinguish idle drivers from
+  active runs and tolerate independent stream reconnects.
 
-## Open decisions and migration risks
+## Acceptance and implementation touchpoints
 
-1. **API admission:** the concrete chat/script API boundary that enforces driver
-   selection without relying on client identity or thread prefixes.
-2. **Identity:** name normalization, Base32 derivation/length, collision handling,
-   and same-scope shadow precedence; instance discovery/storage that distinguishes
-   restart from another instance of the same source.
-3. **Activation/migration:** confirm no schedule means one-off and fix edit/retry/
-   manual activation rules. Migrate authored IDs, task/job records, and today's
-   default recurring schedule without replaying completed work. Preserve historical
-   thread/run IDs with an explicit association to new chore identities.
+Paths are relative to `src/toolang/`. Verify these scenarios, not just shapes:
+
+1. `cli/`, `up/`, `api/`: all eight driver sets, placement defaults, CLI rejection
+   and host/guest forwarding; inactive/existing chat with omitted/equal/conflicting
+   sets; disabled interactive requests write nothing while management/scripts work.
+2. `lang/`, `catalog/`, `state/`, `work/`: file/inline equivalence and validation,
+   shadow/rename behavior, read access with unavailable handlers, visible authoring,
+   and recovery from invalid live edits without changing authored files.
+3. `work/`: restart and unchanged scans, body/schedule edits during active work,
+   manual coalescing, cancellation, exhausted schedules, claim recovery before/after
+   schedule replacement, and deletion/restoration with retained history.
+4. `execution/`, `work/{messaging,teaming}.py`: canonical prefixes, durable context,
+   worker ancestry, client/request identity, isolated instances, transport receipts,
+   and partial startup/shutdown cleanup.
+5. `up/{observation,activity}.py`, `teaming/`, `cli/`: every placement with talk
+   disabled, concurrent instances, and independent remote recovery.
+
+Run repository lint, format, type, and full offline tests. Keep CLI help and
+focused docs accurate; update the generated changelog for uncovered behavior.
+Risks are persisted-state and client-API breaks: remove old task/job/stage APIs
+and aliases; do not import or rewrite old on-disk data. No open design questions.

@@ -82,7 +82,7 @@ def test_create_and_fork_controls_preserve_identity_and_anchor(
     async def scenario() -> tuple[str, str, str, str]:
         async with harness:
             source = manager.create(
-                prefix=ThreadPrefix.WEB,
+                prefix=ThreadPrefix.CHAT,
                 request_id="thread-create-1",
                 peer=peer,
             )
@@ -180,7 +180,7 @@ def test_rewind_controls_form_a_monotonic_head_chain(
 
     async def scenario() -> None:
         async with harness:
-            thread = manager.create(prefix=ThreadPrefix.TERM)
+            thread = manager.create(prefix=ThreadPrefix.CHAT)
             runs = []
             for prompt in ("first", "second", "third"):
                 runs.append(
@@ -299,7 +299,7 @@ def test_fork_accepts_an_earlier_terminal_anchor_while_source_runs(
 
     async def scenario() -> None:
         async with harness:
-            source = manager.create(prefix=ThreadPrefix.TERM)
+            source = manager.create(prefix=ThreadPrefix.CHAT)
             terminal = await harness.executor.run(
                 harness.run_spec(
                     thread=source,
@@ -380,7 +380,7 @@ def test_rewind_rejects_a_running_thread_without_canceling_it(
 
     async def scenario() -> None:
         async with harness:
-            thread = manager.create(prefix=ThreadPrefix.TERM)
+            thread = manager.create(prefix=ThreadPrefix.CHAT)
             terminal = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
@@ -464,7 +464,7 @@ def test_failed_thread_controls_leave_no_record_or_event(
     async def scenario() -> None:
         async with harness:
             thread = manager.create(
-                prefix=ThreadPrefix.TERM,
+                prefix=ThreadPrefix.CHAT,
                 request_id="thread-request-1",
             )
             run = await harness.executor.run(
@@ -534,7 +534,7 @@ def test_listener_failure_does_not_roll_back_a_thread_control(
     async def scenario() -> None:
         async with harness:
             thread = manager.create(
-                prefix=ThreadPrefix.WEB,
+                prefix=ThreadPrefix.CHAT,
                 request_id="thread-create-with-failing-listener",
             )
 

@@ -76,7 +76,7 @@ def test_publication_updates_named_children_but_retains_inline_plan(tmp_path):
         async with harness:
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="parent",
                 )
             )
@@ -170,7 +170,7 @@ agic child() -> Text:
         async with harness:
             root = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="parent",
                 ),
                 tracer=Tracer(),
@@ -218,7 +218,7 @@ def test_named_calls_capture_one_publication_each_and_allow_rollback(tmp_path):
         async with harness:
             root = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="parent",
                 )
             )
@@ -262,7 +262,7 @@ def test_retry_retains_succeeded_prefix_and_rebinds_failed_suffix(tmp_path):
         async with harness:
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="parent",
                 )
             )
@@ -329,7 +329,7 @@ def test_main_calls_unnamed_export_and_flow_calls_private_helper(tmp_path):
         async with harness:
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="parent",
                 )
             )
@@ -374,7 +374,7 @@ def test_failed_acceptance_has_no_child_and_reports_revisions(tmp_path, change):
         async with harness:
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="parent",
                 )
             )
@@ -436,7 +436,7 @@ def test_model_frame_is_frozen_but_acceptance_selects_latest(
         async with harness:
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="parent",
                 )
             )
@@ -517,7 +517,7 @@ def test_new_target_waits_for_next_model_frame_and_becomes_discoverable(
         async with harness:
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="parent",
                 )
             )
@@ -596,7 +596,7 @@ def test_tool_batch_reuses_frame_and_next_model_adopts_publication(tmp_path, rou
         async with harness:
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="parent",
                 ),
                 tracer=Tracer(),
@@ -654,7 +654,7 @@ def test_exec_uses_latest_snapshot_and_records_explicit_binding(tmp_path):
         async with harness:
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="parent",
                 )
             )
@@ -726,7 +726,7 @@ def test_flow_model_routes_are_local_and_keep_advertised_identity(
         async with harness:
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="parent",
                 )
             )
@@ -789,7 +789,7 @@ def test_deleted_flow_module_discovery_keeps_only_the_bound_agic(tmp_path, route
         async with harness:
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="research",
                 )
             )
@@ -831,7 +831,7 @@ def test_discovery_uses_bound_state_without_publication_source(tmp_path):
         async with harness:
             root = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="parent",
                 )
             )
@@ -876,7 +876,7 @@ def test_output_repair_ignores_new_callable_targets(tmp_path, routes, added_targ
         async with harness:
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="parent",
                 ),
                 tracer=tracer,
@@ -960,7 +960,7 @@ agic grow() -> Text:
         async with harness:
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="grow",
                 ),
                 tracer=tracer,
@@ -1084,7 +1084,7 @@ flow() -> Text:
         async with harness:
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="root",
                 )
             )
@@ -1184,7 +1184,7 @@ agic worker() -> Text:
         async with harness:
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="parent",
                     ceilings=(AgentCeiling(**{plural: (f"{kind}/public*",)}),)
                     if restriction == "ceiling"
@@ -1276,7 +1276,7 @@ agic worker() -> Text:
         async with harness:
             root = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="parent",
                     ceilings=(AgentCeiling(tools=("test/*",)),),
                 )

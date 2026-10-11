@@ -1,4 +1,4 @@
-"""Event-driven task and chore scheduling on a dedicated owner loop."""
+"""Event-driven chore scheduling on a dedicated owner loop."""
 
 from __future__ import annotations
 
@@ -26,10 +26,10 @@ from toolang.lang.includes import resolve_file_include
 from toolang.setup import AgentSetup
 from toolang.state.state import AgentState
 
-from .records import JobRecord
-from .state import Job, merge_jobs, program_jobs
-from .store import JobStore, next_activation
-from .watcher import JobWatcher
+from .records import ChoreRecord
+from .state import Chore, merge_chores, inline_chores
+from .store import ChoreStore, next_activation
+from .watcher import ChoreWatcher
 
 DEFAULT_SAFETY_REFRESH_SECONDS = 30.0
 DEFAULT_STATE_POLL_SECONDS = 1.0
@@ -38,9 +38,8 @@ _LOGGER = logging.getLogger(__name__)
 _CommandKind: TypeAlias = Literal[
     "refresh",
     "snapshot",
-    "reopen_task",
     "run_chore",
-    "cancel_task",
+    "cancel_chore",
     "get",
     "pause",
     "stop",
@@ -54,8 +53,8 @@ class _Command:
     result: Future[object] | None = None
 
 
-class JobScheduler:
-    """Own job checkpoints and timers outside the execution event loop."""
+class ChoreDriver:
+    """Own chore checkpoints and timers outside the execution event loop."""
 
     def __init__(
         self,
@@ -81,10 +80,10 @@ class JobScheduler:
         self._started: Future[object] | None = None
         self._commands: asyncio.Queue[_Command] | None = None
         self._watch_stop: asyncio.Event | None = None
-        self._watcher: JobWatcher | None = None
-        self._store: JobStore | None = None
-        self._jobs: dict[str, Job] = {}
-        self._records: dict[str, JobRecord] = {}
+        self._watcher: ChoreWatcher | None = None
+        self._store: ChoreStore | None = None
+        self._chores: dict[str, Chore] = {}
+        self._records: dict[str, ChoreRecord] = {}
         self._tokens: dict[str, int] = {}
         self._heap: list[tuple[float, int, str, int]] = []
         self._sequence = itertools.count()
@@ -97,71 +96,61 @@ class JobScheduler:
         """Start the dedicated scheduler thread from the execution loop."""
 
         if self._thread is not None:
-            raise RuntimeError("job scheduler is already started")
+            raise RuntimeError("chore scheduler is already started")
         self._execution_loop = asyncio.get_running_loop()
         self._started = Future()
         self._thread = threading.Thread(
             target=self._thread_main,
-            name=f"toolang-jobs-{self.layout.name}",
+            name=f"toolang-chores-{self.layout.name}",
             daemon=True,
         )
         self._thread.start()
         await asyncio.wrap_future(self._started)
 
     async def refresh(self) -> None:
-        """Refresh authored and program jobs on the scheduler loop."""
+        """Refresh authored and program chores on the scheduler loop."""
 
         await self._request("refresh")
 
     def refresh_sync(self) -> None:
-        """Refresh jobs from a blocking API or CLI worker thread."""
+        """Refresh chores from a blocking API or CLI worker thread."""
 
         self._request_sync("refresh")
 
-    async def reopen_task(self, task_id: str) -> JobRecord:
-        """Request the current ready task revision again."""
-
-        return _as_record(await self._request("reopen_task", task_id))
-
-    def reopen_task_sync(self, task_id: str) -> JobRecord:
-        """Reopen a task from a blocking caller thread."""
-
-        return _as_record(self._request_sync("reopen_task", task_id))
-
-    async def run_chore(self, chore_id: str) -> JobRecord:
+    async def run_chore(self, chore_id: str) -> ChoreRecord:
         """Request one coalesced manual chore occurrence."""
 
         return _as_record(await self._request("run_chore", chore_id))
 
-    def run_chore_sync(self, chore_id: str) -> JobRecord:
+    def run_chore_sync(self, chore_id: str) -> ChoreRecord:
         """Request a manual chore run from a blocking caller thread."""
 
         return _as_record(self._request_sync("run_chore", chore_id))
 
-    async def cancel_task(self, task_id: str) -> JobRecord:
-        """Cancel a pending task or return its active checkpoint."""
+    async def cancel_chore(self, chore_id: str) -> ChoreRecord:
+        """Cancel a pending chore or return its active checkpoint."""
 
-        return _as_record(await self._request("cancel_task", task_id))
+        return _as_record(await self._request("cancel_chore", chore_id))
 
-    def cancel_task_sync(self, task_id: str) -> JobRecord:
-        """Cancel or inspect a task from a blocking caller thread."""
+    def cancel_chore_sync(self, chore_id: str) -> ChoreRecord:
+        """Cancel or inspect a chore from a blocking caller thread."""
 
-        return _as_record(self._request_sync("cancel_task", task_id))
+        return _as_record(self._request_sync("cancel_chore", chore_id))
 
-    def get_sync(self, job_id: str) -> JobRecord | None:
+    def get_sync(self, chore_id: str) -> ChoreRecord | None:
         """Return one in-memory checkpoint to a blocking caller thread."""
 
-        value = self._request_sync("get", job_id)
-        if value is not None and not isinstance(value, JobRecord):
-            raise TypeError("scheduler get did not return a JobRecord")
+        value = self._request_sync("get", chore_id)
+        if value is not None and not isinstance(value, ChoreRecord):
+            raise TypeError("scheduler get did not return a ChoreRecord")
         return value
 
-    async def get(self, job_id: str) -> JobRecord | None:
+    async def get(self, chore_id: str) -> ChoreRecord | None:
         """Return one in-memory checkpoint without blocking the caller loop."""
 
-        value = await self._request("get", job_id)
-        if value is not None and not isinstance(value, JobRecord):
-            raise TypeError("scheduler get did not return a JobRecord")
+        value = await self._request("get", chore_id)
+        if value is not None and not isinstance(value, ChoreRecord):
+            raise TypeError("scheduler get did not return a ChoreRecord")
         return value
 
     async def pause(self) -> None:
@@ -209,7 +198,7 @@ class JobScheduler:
         loop = self._scheduler_loop
         queue = self._commands
         if loop is None or queue is None or not loop.is_running():
-            raise RuntimeError("job scheduler is not running")
+            raise RuntimeError("chore scheduler is not running")
         result: Future[object] = Future()
         command = _Command(kind=kind, value=value, result=result)
         loop.call_soon_threadsafe(queue.put_nowait, command)
@@ -226,22 +215,22 @@ class JobScheduler:
             if started is not None and not started.done():
                 started.set_exception(exc)
             else:
-                _LOGGER.exception("job scheduler stopped unexpectedly")
+                _LOGGER.exception("chore scheduler stopped unexpectedly")
         finally:
             loop.close()
 
     async def _serve(self) -> None:
         self._commands = asyncio.Queue()
         self._watch_stop = asyncio.Event()
-        self._store = JobStore(self.layout.job_store)
-        self._watcher = JobWatcher(self.layout)
+        self._store = ChoreStore(self.layout.chore_store)
         watch_task: asyncio.Task[None] | None = None
         try:
+            self._watcher = ChoreWatcher(self.layout)
             self._reconcile(self._watcher.current())
             await self._recover_active()
             watch_task = asyncio.create_task(
                 self._watch_updates(),
-                name=f"toolang-job-watch-{self.layout.name}",
+                name=f"toolang-chore-watch-{self.layout.name}",
             )
             started = self._started
             if started is not None and not started.done():
@@ -300,7 +289,9 @@ class JobScheduler:
             ):
                 await self._commands.put(_Command("snapshot", snapshot))
         except Exception as exc:
-            _LOGGER.error("jobs.watch_failed error=%s", str(exc) or type(exc).__name__)
+            _LOGGER.error(
+                "chores.watch_failed error=%s", str(exc) or type(exc).__name__
+            )
 
     async def _handle(self, command: _Command) -> None:
         try:
@@ -310,7 +301,7 @@ class JobScheduler:
                 command.result.set_exception(exc)
             elif isinstance(exc, Exception):
                 _LOGGER.error(
-                    "jobs.command_failed kind=%s error=%s",
+                    "chores.command_failed kind=%s error=%s",
                     command.kind,
                     str(exc) or type(exc).__name__,
                 )
@@ -327,30 +318,45 @@ class JobScheduler:
             self._reconcile(self._watcher.refresh())
             return None
         if command.kind == "snapshot":
-            self._reconcile(_as_jobs(command.value))
+            self._reconcile(_as_chores(command.value))
             return None
-        if command.kind in {"reopen_task", "run_chore", "cancel_task"}:
+        if command.kind in {"run_chore", "cancel_chore"}:
             self._reconcile(self._watcher.refresh())
-            job_id = str(command.value)
-            if job_id not in self._jobs:
-                raise FileNotFoundError(f"ready job not found: {job_id}")
-            if command.kind == "reopen_task":
-                record = self._store.reopen_task(task_id=job_id)
-            elif command.kind == "run_chore":
-                record = self._store.request_manual_chore(chore_id=job_id)
+            reference = str(command.value)
+            chore_id = next(
+                (
+                    item.id
+                    for item in self._chores.values()
+                    if reference in (item.id, item.name, item.ref)
+                ),
+                reference,
+            )
+            if chore_id not in self._chores:
+                raise FileNotFoundError(f"chore not found: {chore_id}")
+            if command.kind == "run_chore":
+                record = self._store.request_manual_chore(chore_id=chore_id)
             else:
-                current = self._records.get(job_id)
+                current = self._records.get(chore_id)
                 if current is None:
-                    raise FileNotFoundError(f"ready job not found: {job_id}")
+                    raise FileNotFoundError(f"chore not found: {chore_id}")
                 record = (
                     current
                     if current.active_run_id is not None
-                    else self._store.cancel_pending_task(task_id=job_id)
+                    else self._store.cancel_pending_chore(chore_id=chore_id)
                 )
             self._replace_record(record)
             return record
         if command.kind == "get":
-            return self._records.get(str(command.value))
+            reference = str(command.value)
+            chore_id = next(
+                (
+                    item.id
+                    for item in self._chores.values()
+                    if reference in (item.id, item.name, item.ref)
+                ),
+                reference,
+            )
+            return self._records.get(chore_id)
         if command.kind == "pause":
             self._paused = True
             if self._watch_stop is not None:
@@ -364,22 +370,27 @@ class JobScheduler:
             return None
         raise ValueError(f"unsupported scheduler command: {command.kind}")
 
-    def _reconcile(self, authored: tuple[Job, ...]) -> None:
+    def _reconcile(
+        self, authored: tuple[Chore, ...], *, state: AgentState | None = None
+    ) -> None:
         assert self._store is not None
-        state = self.get_agent_state()
-        jobs = merge_jobs(authored, program_jobs(state.modules["agent"]))
-        records = self._store.reconcile(jobs=jobs)
-        self._jobs = jobs
+        state = self.get_agent_state() if state is None else state
+        chores = merge_chores(
+            authored,
+            inline_chores(state.modules["agent"].chores, path=self.layout.program),
+        )
+        records = self._store.reconcile(chores=chores)
+        self._chores = chores
         self._state_revision = state.revision
         self._set_records(records)
 
-    def _set_records(self, records: tuple[JobRecord, ...]) -> None:
+    def _set_records(self, records: tuple[ChoreRecord, ...]) -> None:
         previous_ids = set(self._records)
-        self._records = {record.job_id: record for record in records}
-        for job_id in previous_ids | set(self._records):
-            self._invalidate(job_id)
-        for job_id in self._records:
-            self._push(job_id)
+        self._records = {record.chore_id: record for record in records}
+        for chore_id in previous_ids | set(self._records):
+            self._invalidate(chore_id)
+        for chore_id in self._records:
+            self._push(chore_id)
 
     async def _recover_active(self) -> None:
         assert self._store is not None
@@ -400,16 +411,16 @@ class JobScheduler:
                 )
                 if blocked is not None:
                     self._replace_record(blocked)
-                _LOGGER.error("jobs.recovery_blocked run_id=%s", run_id)
+                _LOGGER.error("chores.recovery_blocked run_id=%s", run_id)
                 continue
             repaired = self._store.finish_run(
-                jobs=self._jobs, run_id=run_id, run_status=run.status
+                chores=self._chores, run_id=run_id, run_status=run.status
             )
             if repaired is None:
-                self._drop_record(record.job_id)
+                self._drop_record(record.chore_id)
             else:
                 self._replace_record(repaired)
-        self._set_records(self._store.reconcile(jobs=self._jobs))
+        self._set_records(self._store.reconcile(chores=self._chores))
 
     async def _get_run(self, run_id: str) -> RunRecord | None:
         loop = self._execution_loop
@@ -424,37 +435,42 @@ class JobScheduler:
 
     def _dispatch_due(self) -> None:
         assert self._store is not None
+        assert self._watcher is not None
+        state = self.get_agent_state()
+        setup = self.get_agent_setup()
+        if state.revision != self._state_revision:
+            self._reconcile(self._watcher.refresh(), state=state)
         now = datetime.now(timezone.utc)
         while self._heap:
-            timestamp, _sequence, job_id, token = self._heap[0]
-            if token != self._tokens.get(job_id):
+            timestamp, _sequence, chore_id, token = self._heap[0]
+            if token != self._tokens.get(chore_id):
                 heapq.heappop(self._heap)
                 continue
             if timestamp > now.timestamp():
                 return
             heapq.heappop(self._heap)
-            record = self._records.get(job_id)
-            job = self._jobs.get(job_id)
+            record = self._records.get(chore_id)
+            chore = self._chores.get(chore_id)
             activation = next_activation(record) if record is not None else None
-            if record is None or job is None or activation is None:
+            if record is None or chore is None or activation is None:
                 continue
             due_at, trigger = activation
             if due_at > now:
-                self._push(job_id)
+                self._push(chore_id)
                 continue
             try:
-                spec = self._build_spec(job)
+                spec = self._build_spec(chore, setup=setup, state=state)
             except (OSError, ToolangError, ValueError) as exc:
                 error = str(exc) or type(exc).__name__
                 _LOGGER.warning(
-                    "jobs.submission_rejected kind=%s job_id=%s source=%s error=%s",
-                    job.kind,
-                    job.id,
-                    job.source,
+                    "chores.submission_rejected kind=%s chore_id=%s source=%s error=%s",
+                    "chore",
+                    chore.id,
+                    chore.location,
                     error,
                 )
                 rejected = self._store.reject_activation(
-                    job=job,
+                    chore=chore,
                     trigger=trigger,
                     error=error,
                     now=now,
@@ -463,50 +479,59 @@ class JobScheduler:
                 continue
             run_id = self.ids.issue_run()
             claimed = self._store.claim(
-                job=job,
+                chore=chore,
                 trigger=trigger,
                 run_id=run_id,
                 now=now,
             )
-            self._replace_record(claimed.record)
-            self._submit_run(run_id, job, spec)
+            self._replace_record(claimed)
+            self._submit_run(run_id, chore, spec)
 
-    def _build_spec(self, job: Job) -> RunSpec:
-        setup = self.get_agent_setup()
-        state = self.get_agent_state()
-        override, input = parse_call(job.body)
-        runnable = override.runnable or runnable_fallback(state, preferred=job.kind)
-        base = job.path.parent if job.path is not None else setup.layout.home
+    def _build_spec(
+        self,
+        chore: Chore,
+        *,
+        setup: AgentSetup | None = None,
+        state: AgentState | None = None,
+    ) -> RunSpec:
+        setup = self.get_agent_setup() if setup is None else setup
+        state = self.get_agent_state() if state is None else state
+        override, input = parse_call(chore.body)
+        runnable = override.runnable
+        if runnable is None and "chore" not in state.runnables:
+            runnable = setup.defaults.runnable
+        runnable = runnable or runnable_fallback(state, preferred="chore")
+        base = chore.path.parent
         spec = resolve_spec(
             override,
             input,
             setup=setup,
             state=state,
-            thread=job.thread_id,
+            thread=chore.thread_id,
             default_runnable=runnable,
             surface=RunBindings(runnable=runnable),
             include=lambda reference: resolve_file_include(reference, base=base),
         )
         return spec
 
-    def _submit_run(self, run_id: str, job: Job, spec: RunSpec) -> None:
+    def _submit_run(self, run_id: str, chore: Chore, spec: RunSpec) -> None:
         execution_loop = self._execution_loop
         if execution_loop is None:
             raise RuntimeError("scheduler event loops are unavailable")
 
         async def execute() -> RunRecord:
-            thread = self.executor.store.get_thread(thread_id=job.thread_id)
+            thread = self.executor.store.get_thread(thread_id=chore.thread_id)
             if thread is None:
                 self.executor.store.create_thread(
-                    thread_id=job.thread_id,
-                    origin=job.kind,
+                    thread_id=chore.thread_id,
+                    origin="chore",
                 )
             return await self.executor.run(spec, run_id=run_id)
 
         future = asyncio.run_coroutine_threadsafe(execute(), execution_loop)
         waiter = asyncio.create_task(
             self._wait_run(run_id, future),
-            name=f"toolang-job-run-{run_id}",
+            name=f"toolang-chore-run-{run_id}",
         )
         self._active[run_id] = waiter
 
@@ -525,7 +550,7 @@ class JobScheduler:
             )
         else:
             record = self._store.finish_run(
-                jobs=self._jobs,
+                chores=self._chores,
                 run_id=run_id,
                 run_status=run.status,
             )
@@ -541,26 +566,26 @@ class JobScheduler:
                 None,
             )
             if previous is not None:
-                self._drop_record(previous.job_id)
+                self._drop_record(previous.chore_id)
         else:
             self._replace_record(record)
 
-    def _replace_record(self, record: JobRecord) -> None:
-        self._records[record.job_id] = record
-        self._invalidate(record.job_id)
-        self._push(record.job_id)
+    def _replace_record(self, record: ChoreRecord) -> None:
+        self._records[record.chore_id] = record
+        self._invalidate(record.chore_id)
+        self._push(record.chore_id)
 
-    def _drop_record(self, job_id: str) -> None:
-        self._records.pop(job_id, None)
-        self._invalidate(job_id)
+    def _drop_record(self, chore_id: str) -> None:
+        self._records.pop(chore_id, None)
+        self._invalidate(chore_id)
 
-    def _invalidate(self, job_id: str) -> None:
-        self._tokens[job_id] = self._tokens.get(job_id, 0) + 1
+    def _invalidate(self, chore_id: str) -> None:
+        self._tokens[chore_id] = self._tokens.get(chore_id, 0) + 1
 
-    def _push(self, job_id: str) -> None:
-        record = self._records.get(job_id)
+    def _push(self, chore_id: str) -> None:
+        record = self._records.get(chore_id)
         activation = next_activation(record) if record is not None else None
-        if activation is None:
+        if activation is None or chore_id not in self._chores:
             return
         due_at, _trigger = activation
         heapq.heappush(
@@ -568,28 +593,30 @@ class JobScheduler:
             (
                 due_at.timestamp(),
                 next(self._sequence),
-                job_id,
-                self._tokens[job_id],
+                chore_id,
+                self._tokens[chore_id],
             ),
         )
 
     def _heap_timeout(self) -> float:
         while self._heap:
-            timestamp, _sequence, job_id, token = self._heap[0]
-            if token != self._tokens.get(job_id):
+            timestamp, _sequence, chore_id, token = self._heap[0]
+            if token != self._tokens.get(chore_id):
                 heapq.heappop(self._heap)
                 continue
             return max(0.0, timestamp - datetime.now(timezone.utc).timestamp())
         return max(self.safety_refresh_seconds, self.state_poll_seconds)
 
 
-def _as_record(value: object) -> JobRecord:
-    if not isinstance(value, JobRecord):
-        raise TypeError("scheduler command did not return a JobRecord")
+def _as_record(value: object) -> ChoreRecord:
+    if not isinstance(value, ChoreRecord):
+        raise TypeError("scheduler command did not return a ChoreRecord")
     return value
 
 
-def _as_jobs(value: object) -> tuple[Job, ...]:
-    if not isinstance(value, tuple) or not all(isinstance(item, Job) for item in value):
-        raise TypeError("scheduler snapshot must contain Job values")
-    return cast(tuple[Job, ...], value)
+def _as_chores(value: object) -> tuple[Chore, ...]:
+    if not isinstance(value, tuple) or not all(
+        isinstance(item, Chore) for item in value
+    ):
+        raise TypeError("scheduler snapshot must contain Chore values")
+    return cast(tuple[Chore, ...], value)

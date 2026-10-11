@@ -19,6 +19,7 @@ class AgentLayout:
     root: Path
     name: str
     placement: AgentPlacement
+    instance: str | None = None
 
     def __post_init__(self) -> None:
         root = self.root.expanduser().resolve()
@@ -27,6 +28,10 @@ class AgentLayout:
             raise ValueError(f"invalid agent placement: {self.placement!r}")
         if not name or Path(name).name != name or name in {".", ".."}:
             raise ValueError(f"invalid agent name: {self.name!r}")
+        if self.instance is not None and (
+            not self.instance or not self.instance.isalnum()
+        ):
+            raise ValueError("instance identity must be alphanumeric")
         object.__setattr__(self, "root", root)
         object.__setattr__(self, "name", name)
 
@@ -101,7 +106,8 @@ class AgentLayout:
 
     @property
     def runtime(self) -> Path:
-        return self.home / ".runtime"
+        base = self.home / ".runtime"
+        return base / "instances" / self.instance if self.instance is not None else base
 
     @property
     def runtime_status(self) -> Path:
@@ -122,8 +128,8 @@ class AgentLayout:
         return self.runtime / "runs.db"
 
     @property
-    def job_store(self) -> Path:
-        return self.runtime / "jobs.db"
+    def chore_store(self) -> Path:
+        return self.run_store
 
     @property
     def id_state(self) -> Path:
@@ -151,7 +157,8 @@ class AgentLayout:
 
     @property
     def sandbox_home(self) -> Path:
-        return self.root / ".sandbox" / self.name
+        base = self.root / ".sandbox" / self.name
+        return base / "instances" / self.instance if self.instance is not None else base
 
     @property
     def sandbox_stage(self) -> Path:

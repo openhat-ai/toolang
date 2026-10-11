@@ -107,7 +107,7 @@ flow relay(_: Part[]) -> Part[]:
         ).start()
 
         async def seed_compact():
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             harness.adapter._responses.clear()
             harness.adapter._responses.extend(
                 [

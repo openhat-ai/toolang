@@ -6,12 +6,14 @@ from contextlib import aclosing, closing
 
 from fakeredis import FakeServer
 import httpx
+import pytest
 
 from toolang.execution import statistics
 from toolang.execution.activity import ActivityQuery, ActivityReader
 from toolang.execution.store import RunStore
 from toolang.teaming.api import create_app
-from toolang.teaming.observation import LocalObservation
+from toolang.execution.schemas import ActivitySnapshot
+from toolang.teaming.observation import CombinedObservation, LocalObservation, frames
 from tests.support.execution_fixtures import project_run_end
 from tests.unit.execution.test_activity import at, clock, model, root
 from tests.unit.messaging.test_protocol import client
@@ -31,6 +33,80 @@ def test_missing_local_store_is_unavailable_without_creating_files(tmp_path):
             assert event == "activity_page" and not data["complete"]
         assert not path.parent.exists()
         assert not source.reader._publishers
+
+    asyncio.run(scenario())
+
+
+def test_combined_updates_keep_sources_independent_and_local_precedence():
+    class Source:
+        def __init__(self, label):
+            self.label = label
+            self.batches = asyncio.Queue()
+            self.closed = False
+
+        async def read(self, query):
+            raise AssertionError("Live observation must subscribe to source updates")
+
+        async def updates(self, query):
+            try:
+                while True:
+                    batch = await self.batches.get()
+                    if isinstance(batch, Exception):
+                        raise batch
+                    for frame in frames(batch):
+                        yield frame
+            finally:
+                self.closed = True
+
+        async def result(self, agent, ref):
+            return self.label
+
+    async def scenario():
+        remote, local = Source("remote"), Source("local")
+        combined = CombinedObservation(remote, local)
+        snapshot = ActivitySnapshot(
+            agent="agent:alice", revision=1, observed=None, since="session", recent=None
+        )
+        local.batches.put_nowait([snapshot])
+
+        async def batch(stream):
+            pages = []
+            async with asyncio.timeout(2):
+                async for event, data in stream:
+                    if event == "activity_page":
+                        pages.append(ActivitySnapshot.model_validate(data))
+                    elif event == "activity_checkpoint":
+                        return pages
+
+        async with aclosing(combined.updates(ActivityQuery())) as stream:
+            assert await batch(stream) == [snapshot]
+            remote.batches.put_nowait(
+                [
+                    snapshot.model_copy(update={"revision": 2}),
+                    snapshot.model_copy(update={"agent": "agent:bob"}),
+                ]
+            )
+            pages = await batch(stream)
+            assert [(page.agent, page.revision) for page in pages] == [
+                ("agent:alice", 1),
+                ("agent:bob", 1),
+            ]
+            assert await combined.result("agent:alice", "run_one") == "local"
+            remote.batches.put_nowait(ValueError("Hub unavailable"))
+            assert await batch(stream) == [snapshot]
+            updated = snapshot.model_copy(update={"revision": 3})
+            local.batches.put_nowait([updated])
+            assert await batch(stream) == [updated]
+            remote.batches.put_nowait([snapshot.model_copy(update={"revision": 2})])
+            assert await batch(stream) == [updated]
+            local.batches.put_nowait([])
+            assert (await batch(stream))[0].revision == 2
+            assert await combined.result("agent:alice", "run_one") == "remote"
+            remote.batches.put_nowait([])
+            assert await batch(stream) == []
+            with pytest.raises(ValueError, match="no longer available"):
+                await combined.result("agent:alice", "run_one")
+        assert remote.closed and local.closed
 
     asyncio.run(scenario())
 

@@ -45,7 +45,7 @@ agic child(_: Text) -> Text:
     async def scenario():
         async with harness:
             tracer = RecordingRunTracer()
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             task = asyncio.ensure_future(
                 harness.executor.run(
                     harness.run_spec(
@@ -114,7 +114,7 @@ agic child() -> Json:
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             parent = await harness.executor.run(
                 harness.run_spec(thread=thread, runnable="parent")
             )
@@ -159,7 +159,7 @@ flow child():
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             parent = await harness.executor.run(
                 harness.run_spec(
                     thread=thread, runnable="parent", primary=(TextPart("input"),)
@@ -210,7 +210,7 @@ flow successor(_: Text) -> Text:
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             tracer = RecordingRunTracer()
             task = harness.executor.run(
                 harness.run_spec(
@@ -264,7 +264,7 @@ agic child() -> Text:
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             tracer = RecordingRunTracer()
             parent = harness.executor.run(
                 harness.run_spec(thread=thread, runnable="parent"), tracer=tracer
@@ -348,7 +348,7 @@ flow child(_: Text) -> Text:
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             tracer = RecordingRunTracer()
             parent = await harness.executor.run(
                 harness.run_spec(thread=thread, runnable="parent"), tracer=tracer
@@ -393,7 +393,7 @@ agic child(_: Text) -> Text:
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             parent = harness.executor.run(
                 harness.run_spec(
                     thread=thread, runnable="parent", primary=(TextPart("input"),)
@@ -464,7 +464,7 @@ agic unstable() -> Text:
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             parent = await harness.executor.run(
                 harness.run_spec(thread=thread, runnable="parent")
             )
@@ -530,7 +530,7 @@ flow child() -> Text:
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             tracer = RecordingRunTracer()
             parent = await harness.executor.run(
                 harness.run_spec(thread=thread, runnable="parent"), tracer=tracer
@@ -594,7 +594,7 @@ agic child(_: Text) -> Text:
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             parent = harness.executor.run(
                 harness.run_spec(
                     thread=thread, runnable="parent", primary=(TextPart("original"),)
@@ -646,7 +646,7 @@ agic child(_: Text) -> Text:
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             tracer = RecordingRunTracer()
             parent = await harness.executor.run(
                 harness.run_spec(
@@ -709,7 +709,7 @@ agic child() -> Text:
         async with harness:
             parent = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="parent",
                     limits=RunLimits(tokens=4),
                 )
@@ -774,7 +774,7 @@ agic child(_: Text, label: Text) -> Text:
         async with harness:
             parent = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="parent",
                     primary=(TextPart("first"),),
                 ),
@@ -828,7 +828,7 @@ agic child() -> Text:
         async with harness:
             parent = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="parent",
                 )
             )

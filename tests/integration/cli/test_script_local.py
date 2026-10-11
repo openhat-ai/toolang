@@ -82,7 +82,8 @@ def test_local_script_saves_only_to_an_explicit_destination(
 
     class _SetupWatcher:
         def __init__(self, actual_layout, **kwargs) -> None:
-            assert actual_layout == layout
+            assert replace(actual_layout, instance=None) == layout
+            assert actual_layout.instance is not None
             assert kwargs["sandbox"] == "host"
 
         def current(self):
@@ -100,7 +101,8 @@ def test_local_script_saves_only_to_an_explicit_destination(
 
     class _StateWatcher:
         def __init__(self, actual_layout, *, initial_state, **_kwargs) -> None:
-            assert actual_layout == layout
+            assert replace(actual_layout, instance=None) == layout
+            assert actual_layout.instance is not None
             assert initial_state is harness.state
 
         def load(self, revision):
@@ -126,7 +128,8 @@ def test_local_script_saves_only_to_an_explicit_destination(
     quiet = save_mode in {"stdout", "file"}
 
     def prepare_state(actual_layout, **kwargs):
-        assert actual_layout == layout
+        assert replace(actual_layout, instance=None) == layout
+        assert actual_layout.instance is not None
         assert (kwargs["progress"] is None) is quiet
         return harness.state
 
@@ -178,7 +181,7 @@ def test_local_script_saves_only_to_an_explicit_destination(
         assert destination.read_bytes() == b"done"
     else:
         assert not destination.exists()
-    store = RunStore(layout.run_store)
+    store = RunStore(next((layout.runtime / "instances").glob("*/runs.db")))
     try:
         threads = store.list_threads()
         runs = store.list_runs(thread_id=threads[0].id, limit=None)
@@ -242,7 +245,8 @@ def test_template_helpers_bind_arguments(
 
     class _SetupWatcher:
         def __init__(self, actual_layout, **_kwargs) -> None:
-            assert actual_layout == layout
+            assert replace(actual_layout, instance=None) == layout
+            assert actual_layout.instance is not None
 
         def current(self):
             return setup
@@ -255,7 +259,7 @@ def test_template_helpers_bind_arguments(
         "toolang.state.prepare.prepare_agent_state",
         lambda actual_layout, **_kwargs: (
             harness.state
-            if actual_layout == layout
+            if replace(actual_layout, instance=None) == layout
             else pytest.fail("unexpected layout")
         ),
     )
@@ -311,7 +315,8 @@ def test_local_script_renders_composite_flow_progress(
 
     class _SetupWatcher:
         def __init__(self, actual_layout, **_kwargs) -> None:
-            assert actual_layout == layout
+            assert replace(actual_layout, instance=None) == layout
+            assert actual_layout.instance is not None
 
         def current(self):
             return setup
@@ -324,7 +329,7 @@ def test_local_script_renders_composite_flow_progress(
         "toolang.state.prepare.prepare_agent_state",
         lambda actual_layout, **_kwargs: (
             harness.state
-            if actual_layout == layout
+            if replace(actual_layout, instance=None) == layout
             else pytest.fail("unexpected layout")
         ),
     )

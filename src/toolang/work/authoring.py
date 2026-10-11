@@ -1,65 +1,79 @@
-"""Shared orchestration for creating authored jobs."""
+"""Orchestration for creating pure authored chore definitions."""
 
 from __future__ import annotations
 
 import frontmatter
 
-from toolang.catalog.job import AuthoredJobs, JobFile
-from toolang.catalog.types import DEFAULT_CHORE_SCHEDULE, JobKind, JobStage
+from toolang.catalog.chore import AuthoredChores, ChoreFile
+from toolang.catalog.errors import CatalogConflictError, CatalogNotFoundError
 from toolang.common.ids import LOCAL_ID_FAMILY, allocate_id
 from toolang.common.layout import AgentLayout
 
+from .state import load_chores
 
-def allocate_authored_job_id(
-    layout: AgentLayout,
-    *,
-    catalog: AuthoredJobs | None = None,
+
+def allocate_authored_chore_name(
+    layout: AgentLayout, *, catalog: AuthoredChores | None = None
 ) -> str:
-    """Allocate one id that is unique across all authored job kinds and stages."""
-
-    effective_catalog = catalog or AuthoredJobs(layout.home)
-    with effective_catalog.write_lock():
+    """Allocate a filename when the caller did not supply a declaration name."""
+    effective = catalog or AuthoredChores(layout.home)
+    with effective.write_lock():
         return allocate_id(
             layout.id_state,
             family=LOCAL_ID_FAMILY,
             agent_name=layout.name,
-            exists=effective_catalog.contains_id,
+            exists=effective.contains_name,
         ).value
 
 
-def assign_missing_authored_job_ids(
-    layout: AgentLayout,
-    *,
-    catalog: AuthoredJobs | None = None,
-    stage: JobStage | None = None,
-) -> tuple[JobFile, ...]:
-    """Assign and persist ids missing from manually authored job files."""
-
-    effective_catalog = catalog or AuthoredJobs(layout.home)
-    return effective_catalog.assign_missing_ids(
-        lambda: allocate_authored_job_id(
-            layout,
-            catalog=effective_catalog,
-        ),
-        stage=stage,
-    )
-
-
-def new_job_file(
-    *,
-    kind: JobKind,
-    job_id: str,
-    title: str | None,
-    body: str,
-    schedule: str | None = None,
-    stage: JobStage = "ready",
-) -> JobFile:
-    """Build one new authored job from caller-resolved values."""
-
-    meta: dict[str, object] = {"id": job_id}
+def new_chore_file(
+    *, name: str, title: str | None, body: str, schedule: str | None = None
+) -> ChoreFile:
+    meta: dict[str, object] = {}
     if title is not None and title.strip():
         meta["title"] = title.strip()
-    if kind == "chore":
-        meta["schedule"] = schedule or DEFAULT_CHORE_SCHEDULE
+    if schedule is not None:
+        meta["schedule"] = schedule
     content = frontmatter.dumps(frontmatter.Post(body, None, **meta))
-    return JobFile.parse(content, kind=kind, stage=stage)
+    return ChoreFile.parse(content, name=name)
+
+
+def create_chore(layout: AgentLayout, definition: ChoreFile) -> ChoreFile:
+    """Create a home definition only when it can become effective."""
+    _require_resident(layout)
+    for chore in load_chores(layout):
+        if chore.name == definition.name and chore.line is not None:
+            raise CatalogConflictError(
+                f"chore {chore.name} is defined at {chore.location}; edit that source"
+            )
+    return AuthoredChores(layout.home).create(definition)
+
+
+def editable_chore(layout: AgentLayout, reference: str) -> ChoreFile:
+    """Require the effective definition to be an editable home Markdown file."""
+    _require_resident(layout)
+    chore = next(
+        (
+            item
+            for item in load_chores(layout)
+            if reference in {item.id, item.name, item.ref}
+        ),
+        None,
+    )
+    if chore is None:
+        raise CatalogNotFoundError(f"chore not found: {reference}")
+    if chore.line is not None or chore.path.parent != layout.home / "chores":
+        raise CatalogConflictError(
+            f"chore {chore.name} is defined at {chore.location}; edit that source"
+        )
+    entry = AuthoredChores(layout.home).get(chore.name)
+    if entry is None:
+        raise CatalogNotFoundError(f"chore not found: {reference}")
+    return entry
+
+
+def _require_resident(layout: AgentLayout) -> None:
+    if layout.placement != "resident":
+        raise CatalogConflictError(
+            "chore changes require a resident agent; clone the source first"
+        )

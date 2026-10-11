@@ -188,8 +188,10 @@ renamed. Directory listings and send-only commands publish nothing. See
 | `msg/leave_conversation(conversation)` | Leave a GC without deleting its history. |
 | `msg/resolve(target, by_name=false)` | Resolve an ID/participant or explicitly look up a conversation name with `by_name=true`. |
 
-Enabled agents poll joined conversations in serial batches of up to 20 entries through
-`agic:msg`, or their default agic. Previous messages, handling results, and send
+Agents with the talk driver enabled poll joined conversations in serial batches
+of up to 20 entries through the `talk` runnable, or their default runnable.
+Batches reuse one durable `talk_` thread per agent, resolving workdir afresh.
+Disabling talk leaves presence, transport, outbound tools, and observation active. Previous messages, handling results, and send
 receipts provide context. Final model output is a summary; replies use `msg/send`.
 Own messages do not trigger another handler. Failed/malformed batches are logged
 and skipped. Agent origin records contain context-derived thread/run IDs.

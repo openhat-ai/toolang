@@ -6,16 +6,16 @@ from collections.abc import Callable, Sequence
 from contextlib import AbstractAsyncContextManager
 from typing import Annotated, Any, cast
 
-from fastapi import Depends, FastAPI, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from toolang.api.common import RUN_ID_HEADER, SSESendDeadline
 from toolang.execution.subscriptions import Subscriptions
-from toolang.catalog import CapsManager, JobsManager
+from toolang.catalog import CapsManager, ChoresManager
 from toolang.catalog.errors import CatalogConflictError, CatalogNotFoundError
 from toolang.up import AgentCore
-from toolang.work.scheduler import JobScheduler
+from toolang.work.scheduler import ChoreDriver
 
 DEFAULT_CORS_ORIGINS = (
     "http://localhost:3000",
@@ -28,7 +28,7 @@ OPENAPI_TAGS = [
         "description": "Agent profile, health, and operational update endpoints.",
     },
     {"name": "caps", "description": "Capability inspection and mutation endpoints."},
-    {"name": "jobs", "description": "Task and chore management endpoints."},
+    {"name": "chores", "description": "Chore definition and execution endpoints."},
     {"name": "runs", "description": "Run execution and inspection endpoints."},
     {"name": "threads", "description": "Thread lifecycle and inspection endpoints."},
 ]
@@ -46,28 +46,35 @@ def get_caps_manager(request: Request) -> CapsManager:
     return cast(CapsManager, request.app.state.caps_manager)
 
 
-def get_jobs_manager(request: Request) -> JobsManager:
-    """Return the job catalogs owned by the application."""
+def get_chores_manager(request: Request) -> ChoresManager:
+    """Return the chore catalogs owned by the application."""
 
-    return cast(JobsManager, request.app.state.jobs_manager)
+    return cast(ChoresManager, request.app.state.chores_manager)
 
 
-def get_job_scheduler(request: Request) -> JobScheduler:
+def get_chore_driver(request: Request) -> ChoreDriver | None:
     """Return the runtime scheduler owned by the server lifespan."""
 
-    return cast(JobScheduler, request.app.state.job_scheduler)
+    return cast(ChoreDriver | None, getattr(request.app.state, "chore_driver", None))
 
 
 AgentCoreDep = Annotated[AgentCore, Depends(get_agent_core)]
 CapsManagerDep = Annotated[CapsManager, Depends(get_caps_manager)]
-JobsManagerDep = Annotated[JobsManager, Depends(get_jobs_manager)]
-JobSchedulerDep = Annotated[JobScheduler, Depends(get_job_scheduler)]
+ChoresManagerDep = Annotated[ChoresManager, Depends(get_chores_manager)]
+ChoreDriverDep = Annotated[ChoreDriver | None, Depends(get_chore_driver)]
+
+
+def require_chat_driver(core: AgentCoreDep) -> None:
+    if "chat" not in core.drivers:
+        raise HTTPException(
+            status_code=409, detail={"code": "driver_disabled", "driver": "chat"}
+        )
 
 
 def create_app(
     core: AgentCore,
     caps: CapsManager,
-    jobs: JobsManager,
+    chores: ChoresManager,
     *,
     lifespan: Callable[[FastAPI], AbstractAsyncContextManager[None]] | None = None,
     cors_allowed_origins: Sequence[str] = DEFAULT_CORS_ORIGINS,
@@ -82,7 +89,7 @@ def create_app(
     app.state.agent_core = core
     app.state.activity = core.activity
     app.state.caps_manager = caps
-    app.state.jobs_manager = jobs
+    app.state.chores_manager = chores
     app.state.subscriptions = Subscriptions(core.executor.stream, core.store.db_path)
     app.add_middleware(cast(Any, SSESendDeadline))
 

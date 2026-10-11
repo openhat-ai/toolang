@@ -78,7 +78,7 @@ agic inner() -> Text:
         async with harness:
             root = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="flow:outer",
                 )
             )
@@ -115,7 +115,7 @@ def test_child_control_relations_preserve_their_owner(tmp_path: Path) -> None:
         async with harness:
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="flow:outer",
                 ),
                 tracer=tracer,
@@ -171,7 +171,7 @@ agic inner(_: Part[]) -> Text:
         async with harness:
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="outer",
                     primary=resolve_input_parts("work"),
                 ),

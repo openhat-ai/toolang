@@ -51,7 +51,7 @@ def test_cd_persists_location_and_relative_fs_uses_it(tmp_path):
         async with harness:
             result = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="chat",
                 )
             )
@@ -120,7 +120,7 @@ def test_publication_preserves_committed_cwd_before_next_model_call(tmp_path, ch
         async with harness:
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="chat",
                 )
             )
@@ -217,7 +217,7 @@ agic successor() -> Text:
         async with harness:
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="grow",
                 )
             )
@@ -257,7 +257,7 @@ def test_initial_workdir_uses_last_available_workspace(tmp_path, count):
         async with harness:
             run = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="chat",
                 )
             )
@@ -309,7 +309,7 @@ def test_lab_workspace_is_implicit_and_old_scratch_is_untouched(tmp_path):
         async with harness:
             run = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="chat",
                 )
             )
@@ -357,7 +357,7 @@ def test_explicit_workspace_named_tmp_remains_configurable(tmp_path):
         async with harness:
             run = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="chat",
                 )
             )
@@ -388,7 +388,7 @@ def test_saved_former_implicit_workdir_falls_back_to_lab(tmp_path):
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             run = await harness.executor.run(
                 harness.run_spec(thread=thread, runnable="chat")
             )
@@ -429,7 +429,7 @@ def test_root_run_workdir_continues_from_previous_root_final_value(tmp_path):
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             first = await harness.executor.run(
                 harness.run_spec(thread=thread, runnable="chat")
             )
@@ -498,15 +498,15 @@ def test_new_session_inherits_latest_finished_root_workdir_across_threads(tmp_pa
 
     async def scenario():
         async with harness:
-            first_thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            first_thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             first = await harness.executor.run(
                 harness.run_spec(thread=first_thread, runnable="chat")
             )
-            second_thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            second_thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             second = await harness.executor.run(
                 harness.run_spec(thread=second_thread, runnable="chat")
             )
-            active_thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            active_thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             active = harness.executor.run(
                 harness.run_spec(thread=active_thread, runnable="chat")
             )
@@ -584,7 +584,7 @@ agic child(_: Text) -> Text:
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             root = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
@@ -642,7 +642,7 @@ def test_cd_mixed_batch_is_rejected_before_filesystem_mutation(tmp_path):
         async with harness:
             run = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="chat",
                 )
             )
@@ -710,7 +710,7 @@ def test_unavailable_workspace_is_omitted_and_lab_remains_usable(tmp_path):
         async with harness:
             result = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="chat",
                 )
             )
@@ -768,7 +768,7 @@ flow parent:
         async with harness:
             result = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="flow:parent",
                     primary=(TextPart("start"),),
                 )
@@ -822,7 +822,7 @@ def test_cd_and_shell_use_run_location_without_persisting_command_cd(tmp_path):
         async with harness:
             run = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="chat",
                 )
             )
@@ -877,7 +877,7 @@ def test_retry_discards_cd_control_at_agic_restart_anchor(tmp_path):
         async with harness:
             first = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="chat",
                 )
             )
@@ -969,7 +969,7 @@ def test_chdir_loads_rules_only_when_a_path_operation_follows(tmp_path):
         async with harness:
             run = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="chat",
                 )
             )
@@ -1042,7 +1042,7 @@ def test_failed_and_canceled_cd_never_change_the_run_location(tmp_path, monkeypa
         async with harness:
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="chat",
                 )
             )
@@ -1097,7 +1097,7 @@ def test_explicit_path_without_cwd_and_unicode_cwd_declaration(tmp_path):
         async with harness:
             run = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="chat",
                 )
             )
@@ -1163,7 +1163,7 @@ def test_guest_tool_paths_use_captured_mount_not_state_host_source(tmp_path):
         async with harness:
             run = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="chat",
                 )
             )
@@ -1226,7 +1226,7 @@ flow parent:
         async with harness:
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="flow:parent",
                     primary=(TextPart("seed"),),
                 )
@@ -1300,7 +1300,7 @@ agic target() -> Text:
         async with harness:
             run = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="agic:caller",
                 )
             )

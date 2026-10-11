@@ -33,6 +33,7 @@ def parse_authored_run(payload: AuthoredRunRequest) -> RunRequest:
         return RunRequest(
             thread_id=payload.thread_id,
             request_id=payload.request_id,
+            client_id=payload.client_id,
             runnable=payload.runnable,
             model=payload.model,
             policy=payload.policy,
@@ -56,6 +57,7 @@ def parse_authored_retry(
             source=source,
             commands=tuple(_parse_run_command(item) for item in payload.commands),
             request_id=payload.request_id,
+            client_id=payload.client_id,
             anchor=payload.anchor,
         )
     except (TypeError, ValueError) as exc:
@@ -73,6 +75,7 @@ def parse_authored_rerun(
             source=source,
             commands=tuple(_parse_run_command(item) for item in payload.commands),
             request_id=payload.request_id,
+            client_id=payload.client_id,
             model=payload.model,
             model_override=payload.model_override,
         )

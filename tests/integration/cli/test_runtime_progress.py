@@ -57,7 +57,7 @@ agic target() -> Text:
             monkeypatch.setattr(harness.store, "accept_exec_control", fail_commit)
             root = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="agic:caller",
                 ),
                 tracer=tracer,
@@ -152,7 +152,7 @@ agic child() -> Text:
         async with harness:
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="agic:caller",
                 ),
                 tracer=tracer,

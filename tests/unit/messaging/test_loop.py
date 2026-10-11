@@ -89,7 +89,7 @@ def test_tool_reply_receipt_context_and_restart(tmp_path, custom):
             ModelCallResult(message=ModelMessage.assistant("Handled.")),
             ModelCallResult(message=ModelMessage.assistant("Noted.")),
         ],
-        source="agic msg(_: Json):\n  {{_}}\n" if custom else "agic:\n  {{_}}\n",
+        source="agic talk(_: Json):\n  {{_}}\n" if custom else "agic:\n  {{_}}\n",
     )
 
     async def scenario():
@@ -105,6 +105,8 @@ def test_tool_reply_receipt_context_and_restart(tmp_path, custom):
             saved = loop.saved["gc_00000001"]
             assert saved["result"]["status"] == "succeeded"
             receipt = saved["result"]["replies"][0]
+            assert len(harness.store.list_threads()) == 1
+            assert harness.store.list_threads()[0].id.startswith("talk_")
             handled = harness.store.get_run(run_id=saved["result"]["run"])
             assert handled is not None
             assert receipt["message"]["origin"] == {
@@ -119,6 +121,8 @@ def test_tool_reply_receipt_context_and_restart(tmp_path, custom):
             restarted = make_loop(tmp_path, client, harness)
             restarted.load()
             await restarted.poll()
+            assert len(harness.store.list_threads()) == 1
+            assert harness.store.list_threads()[0].id == handled.thread.id
             prompt = repr(harness.adapter.invocations[-1].call.messages)
             assert (
                 "Handled." in prompt
@@ -252,7 +256,14 @@ def test_heartbeat_continues_during_slow_batch_and_reconnects(tmp_path, monkeypa
         exporter.run = drained.wait
         exporter.finish = drained.set
         monkeypatch.setattr(teaming, "EventExporter", lambda *args, **kwargs: exporter)
-        lifecycle = teaming.TeamingLoop(loop, MagicMock())
+        lifecycle = teaming.TeamingLoop(
+            MagicMock(),
+            client=loop.client,
+            owner=loop.owner,
+            endpoint=loop.endpoint,
+            executor=loop.executor,
+            messaging=loop,
+        )
         lifecycle.start()
         await asyncio.wait_for(entered.wait(), 2)
         for _ in range(200):
@@ -272,7 +283,20 @@ def test_heartbeat_continues_during_slow_batch_and_reconnects(tmp_path, monkeypa
 
 
 @pytest.mark.parametrize("enabled", [False, True])
-def test_hosted_lifespan_starts_and_stops_messaging(tmp_path, monkeypatch, enabled):
+@pytest.mark.parametrize(
+    "drivers",
+    [
+        frozenset(
+            name
+            for bit, name in enumerate(("chat", "talk", "chore"))
+            if mask & (1 << bit)
+        )
+        for mask in range(8)
+    ],
+)
+def test_hosted_lifespan_starts_and_stops_messaging(
+    tmp_path, monkeypatch, enabled, drivers
+):
     from types import SimpleNamespace
     from toolang.up import server
 
@@ -303,8 +327,8 @@ def test_hosted_lifespan_starts_and_stops_messaging(tmp_path, monkeypatch, enabl
         return object()
 
     class Lifecycle:
-        def __init__(self, messaging, publisher, **kwargs):
-            pass
+        def __init__(self, publisher, *, messaging, **kwargs):
+            assert (messaging is not None) == ("talk" in drivers)
 
         def start(self):
             assert scheduler.start.await_count == 0
@@ -330,7 +354,7 @@ def test_hosted_lifespan_starts_and_stops_messaging(tmp_path, monkeypatch, enabl
         asyncio.run(scenario())
 
     monkeypatch.setattr(server, "AgentCore", lambda *a, **k: core)
-    monkeypatch.setattr(server, "JobScheduler", lambda **k: scheduler)
+    monkeypatch.setattr(server, "ChoreDriver", lambda **k: scheduler)
     monkeypatch.setattr(server, "_refresh_core", AsyncMock())
     for name in (
         "validate_agent_ceiling",
@@ -347,11 +371,15 @@ def test_hosted_lifespan_starts_and_stops_messaging(tmp_path, monkeypatch, enabl
     monkeypatch.setattr(server, "_run_uvicorn_app", run_server)
     assert (
         server.serve(
-            server.resolve_serve(layout=layout, port=8123), environ={}, sandbox="test"
+            server.resolve_serve(layout=layout, port=8123, drivers=drivers),
+            environ={},
+            sandbox="test",
         )
         == 0
     )
     core.close.assert_awaited_once()
+    assert scheduler.start.await_count == int("chore" in drivers)
+    assert scheduler.stop.await_count == int("chore" in drivers)
 
 
 def test_spawned_worker_sends_with_its_own_run_origin(tmp_path):
@@ -388,7 +416,7 @@ def test_spawned_worker_sends_with_its_own_run_origin(tmp_path):
             await prepare(client, human)
             parent = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.TERM),
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="flow:parent",
                     primary=(TextPart("Do work"),),
                 )

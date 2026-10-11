@@ -99,14 +99,14 @@ def test_caps_inspects_the_selected_agent_layout(
             agents, "resolve_visiting_layout", lambda *_args, **_kwargs: layout
         )
 
-    prepare = commands.prepare_agent_state
+    inspect_caps = commands.inspect_agent_caps
     prepared = []
 
     def inspect(selected, **kwargs):
         prepared.append(selected)
-        return prepare(selected, **kwargs)
+        return inspect_caps(selected, **kwargs)
 
-    monkeypatch.setattr(commands, "prepare_agent_state", inspect)
+    monkeypatch.setattr(commands, "inspect_agent_caps", inspect)
     args = [selector, *command, *options]
     if target != "source":
         args = ["--root", str(root), *args]
@@ -193,7 +193,6 @@ def test_thread_option_registration_keeps_chat_runtime_imports_lazy() -> None:
         ("info", {"before", "after"}, {"resident", "roaming", "visiting"}),
         ("home", {"none", "before"}, {"resident", "visiting", "roaming"}),
         ("retry", {"before"}, {"resident", "roaming", "visiting"}),
-        ("task", {"before"}, {"resident"}),
         ("workspace", {"before"}, {"resident", "roaming", "visiting"}),
         ("skill", {"none", "before"}, {"resident", "roaming", "visiting"}),
         ("models", {"none", "before"}, {"resident", "roaming", "visiting"}),
@@ -354,7 +353,7 @@ def test_cli_visible_commands_follow_the_public_panel_order(arguments, capsys) -
             "stop",
         ),
         "Cap Commands": ("psyche", "skill", "service", "prompt"),
-        "Work Commands": ("chat", "chore", "task", "workspace"),
+        "Work Commands": ("chat", "chore", "workspace"),
         "Inspection Commands": ("caps", "tools", "models", "providers", "inspect"),
         "Script Commands": ("init", "run"),
         "Teaming Commands": ("hub", "talk", "top"),

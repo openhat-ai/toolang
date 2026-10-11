@@ -59,7 +59,7 @@ def harness_at(path):
 
 
 async def seed(h, monkeypatch):
-    thread = h.threads.create(prefix=ThreadPrefix.TERM)
+    thread = h.threads.create(prefix=ThreadPrefix.CHAT)
     roots = []
     for index in range(4):
         run = await h.executor.run(
@@ -587,7 +587,7 @@ def test_internal_run_cannot_be_started_publicly(tmp_path, name):
 
     async def scenario():
         async with h:
-            thread = h.threads.create(prefix=ThreadPrefix.TERM)
+            thread = h.threads.create(prefix=ThreadPrefix.CHAT)
             with pytest.raises(ValueError, match="runnable"):
                 h.executor.run(
                     h.run_spec(
@@ -613,7 +613,7 @@ def test_model_cannot_invoke_compaction_tool(tmp_path):
 
     async def scenario():
         async with h:
-            thread = h.threads.create(prefix=ThreadPrefix.TERM)
+            thread = h.threads.create(prefix=ThreadPrefix.CHAT)
             parent = await current(h, thread)
             steps = h.store.list_steps(run_id=parent.id)
             failed = next(s for s in steps if s.kind == "tool")
@@ -752,7 +752,7 @@ def test_restart_inside_one_root_keeps_accepted_step_coverage(tmp_path, monkeypa
 
     async def scenario():
         async with h:
-            thread = h.threads.create(prefix=ThreadPrefix.TERM)
+            thread = h.threads.create(prefix=ThreadPrefix.CHAT)
             original = await current(h, thread)
             assert original.status == "succeeded"
             source_units = compaction.history_units(h.store, original)

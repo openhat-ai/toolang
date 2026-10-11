@@ -12,12 +12,13 @@ import re
 from toolang.common.layout import AgentLayout, ensure_scratch_workspace
 
 from ..common.progress import ProgressSink, emit_progress
-from ..lang.ast import FlowDecl, Program
+from ..lang.ast import FlowDecl, Program, parse_cap_declarations
 from .state import (
     AgentState,
     agent_state_revision,
     KIND_BY_DIR_NAME,
     compose_agent_state,
+    effective_caps,
     flow_export,
     flow_module_name,
     public_runnable_index,
@@ -320,6 +321,61 @@ def inspect_root_caps(
         root=layout.root,
         agent_name="",
         allows=resolve_cap_allows((root.config,)),
+    )
+    return entries, allowed
+
+
+def inspect_agent_caps(
+    layout: AgentLayout,
+    *,
+    kinds: set[EntryKind],
+    progress: ProgressSink | None = None,
+) -> tuple[tuple[StateCap, ...], tuple[StateCap, ...]]:
+    """Resolve current agent capabilities without preparing executable State."""
+    _require_agent_home(layout)
+    root = prepare_root(layout, progress=progress)
+    authored = read_authored_source(layout.root, layout.name)
+    previous = _previous_home_layer(layout)
+    home, _ = materialize_scope(
+        authored,
+        scope="home",
+        include_program=False,
+        progress=progress,
+        remote_cache=layer_remote_cache(
+            authored, scope="home", entries=previous.caps if previous else ()
+        ),
+    )
+    source = authored.load_program()
+    here, _ = materialize_program_caps(
+        authored,
+        source,
+        program=parse_cap_declarations(source.source_text),
+        progress=progress,
+        remote_cache=layer_remote_cache(
+            authored,
+            scope="home",
+            entries=previous.module_caps.get("agent", ()) if previous else (),
+        ),
+    )
+    entries = tuple(
+        cap
+        for cap in effective_caps(effective_caps(root.caps, home), here)
+        if cap.kind in kinds
+    )
+    config_path = f"agents/{layout.name}/config.toml"
+    home_config = next(
+        (
+            parse_config(item.content)
+            for item in authored.files
+            if item.relative_path == config_path
+        ),
+        {},
+    )
+    allowed = _allowed_caps(
+        entries,
+        root=layout.root,
+        agent_name=layout.name,
+        allows=resolve_cap_allows((root.config, home_config)),
     )
     return entries, allowed
 
