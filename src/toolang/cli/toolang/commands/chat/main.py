@@ -75,12 +75,11 @@ from .blocks import MutableBlock
 from .history import ChatInputHistoryStore
 from .input import (
     QuickCommand,
-    RunOverrideHelp,
     is_runnable_input,
-    is_slash_input,
+    is_command_input,
     normalize_chat_input,
     parse_chat_input,
-    slash_command_name,
+    command_name,
 )
 from .presenter import ChatRunPresenter
 from .policy import run_override_error
@@ -356,31 +355,35 @@ def _chat_interactive_scripted_local(
         try:
             chat_input = parse_chat_input(source)
         except ValueError as exc:
-            if is_slash_input(source):
-                command = slash_command_name(source) or ""
-                if chat_slashes.is_registered(command):
+            if is_command_input(source):
+                command = command_name(source) or ""
+                if chat_slashes.is_registered(command, prefix=source[0]):
                     _echo_scripted_outcome(
                         chat_slashes.error_outcome(str(exc)),
                         max_width=progress_max_width,
                     )
                 else:
                     typer.echo(
-                        chat_slashes.unrecognized_diagnostic(command),
+                        chat_slashes.unrecognized_diagnostic(command, prefix=source[0]),
                         err=True,
                     )
             else:
                 error = chat_friendly_error(str(exc))
                 typer.echo(
                     run_override_error(source, error)
-                    if source.startswith(":")
+                    if source.startswith("/")
                     else error,
                     err=True,
                 )
             continue
         if isinstance(chat_input, QuickCommand):
-            if not chat_slashes.is_registered(chat_input.name):
+            if not chat_slashes.is_registered(
+                chat_input.name, prefix=chat_input.prefix
+            ):
                 typer.echo(
-                    chat_slashes.unrecognized_diagnostic(chat_input.name),
+                    chat_slashes.unrecognized_diagnostic(
+                        chat_input.name, prefix=chat_input.prefix
+                    ),
                     err=True,
                 )
                 continue
@@ -389,12 +392,6 @@ def _chat_interactive_scripted_local(
                 _echo_scripted_outcome(outcome, max_width=progress_max_width)
             if context.exit_requested:
                 return
-            continue
-        if isinstance(chat_input, RunOverrideHelp):
-            _echo_scripted_outcome(
-                chat_slashes.run_override_help(),
-                max_width=progress_max_width,
-            )
             continue
         if not is_runnable_input(chat_input):
             raise AssertionError("unknown chat input value")
@@ -413,6 +410,12 @@ def _chat_interactive_scripted_local(
             typer.echo(chat_friendly_error(detail), err=True)
             continue
 
+        session = context.get_setting()
+        workdir_matches_session = (request.workdir, request.workdir_base) == (
+            session.workdir,
+            session.workdir_base,
+        )
+
         def handle_state(state: ChatRunState) -> None:
             renderer.handle_state(state)
             workdir = (
@@ -422,7 +425,7 @@ def _chat_interactive_scripted_local(
                 if isinstance(state, RunRecovered)
                 else None
             )
-            if workdir is not None:
+            if workdir is not None and workdir_matches_session:
                 context.set_setting(
                     replace(context.get_setting(), workdir=workdir, workdir_base=None)
                 )
@@ -434,7 +437,7 @@ def _chat_interactive_scripted_local(
 
 
 class _ScriptedAppContext(AppContext):
-    """Minimal slash-command context for line-oriented Chat."""
+    """Minimal command context for line-oriented Chat."""
 
     def __init__(
         self,

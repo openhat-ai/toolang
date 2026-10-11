@@ -794,7 +794,7 @@ The absolute center anchor is the Chat agent and current workspace in
 `agent@workspace` form. The agent stays constant for the session. The
 workspace is the session workspace while idle and the active root run's
 effective workspace while running. Successful `_toolang.chdir` calls in the
-root run update this workspace; child run changes do not. `/cd` updates the
+root run update this workspace; child run changes do not. `:workdir` updates the
 session setting for subsequent runs without changing the active run's
 workspace. When the run ends, the center returns to the latest session
 workspace. Directory paths within a workspace are not shown.

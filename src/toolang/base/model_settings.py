@@ -40,7 +40,7 @@ def parse_model_body(body: str) -> ModelOverride:
             sentinel = token.lower()
             if sentinel == "none":
                 raise ValueError(
-                    "model identity 'none' was removed; use :model unset for "
+                    "model identity 'none' was removed; use /model unset for "
                     "a model-free run"
                 )
             identity = sentinel if sentinel in {"default", "unset"} else token

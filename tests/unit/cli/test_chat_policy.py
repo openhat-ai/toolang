@@ -243,17 +243,17 @@ def test_build_run_request_materializes_unqualified_runnable_to_exact_ref() -> N
 
 
 def test_run_override_errors_add_contextual_help_guidance() -> None:
-    assert run_override_error(":", "missing") == (
-        "Enter a run override after : · See :? for help"
+    assert run_override_error("/", "missing") == (
+        "Enter a directive name immediately after / · See /help for help"
     )
-    assert run_override_error(":unknown value", "invalid") == (
-        "Unknown run override :unknown · See :? for help"
+    assert run_override_error("/unknown value", "invalid") == (
+        "invalid · See /help for help"
     )
     assert run_override_error(
-        ":model effort=high", "colon override requires runnable input"
-    ) == ("Include primary or named input, or select a runnable · See :? for help")
-    assert run_override_error(":model effort=extreme\nhello", "invalid effort.") == (
-        "invalid effort · See :? for help"
+        "/model effort=high", "run override prefix requires primary or named input"
+    ) == ("Include primary or named input after run overrides · See /help for help")
+    assert run_override_error("/model effort=extreme\nhello", "invalid effort.") == (
+        "invalid effort · See /help for help"
     )
 
 

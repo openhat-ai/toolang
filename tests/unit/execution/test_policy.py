@@ -49,28 +49,28 @@ def _setup() -> AgentSetup:
     ("source", "expected"),
     [
         (
-            ":model openai/gpt-5",
+            "/model openai/gpt-5",
             RunOverride(model=ModelOverride(identity="openai/gpt-5")),
         ),
         (
-            ":model effort=high",
+            "/model effort=high",
             RunOverride(model=ModelOverride(effort="high")),
         ),
         (
-            ":model openai/gpt-5 effort=4096",
+            "/model openai/gpt-5 effort=4096",
             RunOverride(model=ModelOverride(identity="openai/gpt-5", effort=4096)),
         ),
         (
-            ":model effort=auto",
+            "/model effort=auto",
             RunOverride(model=ModelOverride(effort="auto")),
         ),
-        (":model unset", RunOverride(model=ModelOverride(identity="unset"))),
-        (":agic review", RunOverride(runnable="agic:review")),
-        (":flow research", RunOverride(runnable="flow:research")),
-        (":runnable custom", RunOverride(runnable="custom")),
-        (":workdir repo://src", RunOverride(workdir="repo://src")),
+        ("/model unset", RunOverride(model=ModelOverride(identity="unset"))),
+        ("/agic:review", RunOverride(runnable="agic:review")),
+        ("/flow:research", RunOverride(runnable="flow:research")),
+        ("/custom", RunOverride(runnable="custom")),
+        ("/workdir repo://src", RunOverride(workdir="repo://src")),
         (
-            ":limit tokens=200 cost=1.25 time=none",
+            "/limit tokens=200 cost=1.25 time=none",
             RunOverride(
                 limits=(
                     LimitOverride("tokens", 200),
@@ -89,7 +89,7 @@ def test_parse_run_override_forms(source: str, expected: RunOverride) -> None:
 
 
 def test_runnable_override_returns_named_input_sources() -> None:
-    override, named = parse_run_override(':agic review focus="security review" count=2')
+    override, named = parse_run_override('/agic:review focus="security review" count=2')
 
     assert override == RunOverride(runnable="agic:review")
     assert named == {"focus": "security review", "count": "2"}
@@ -97,8 +97,8 @@ def test_runnable_override_returns_named_input_sources() -> None:
 
 def test_prefix_merges_allow_lines_and_multiple_fields() -> None:
     override, call_input = parse_policy_prefix(
-        ":allow models=openai/* tools=shell/*\n"
-        ":allow models=deepseek/* skills=reviewer\n\nRun this."
+        "/allow models=openai/* tools=shell/*\n"
+        "/allow models=deepseek/* skills=reviewer\n\nRun this."
     )
 
     assert override == RunOverride(
@@ -114,15 +114,15 @@ def test_prefix_merges_allow_lines_and_multiple_fields() -> None:
 @pytest.mark.parametrize(
     ("source", "message"),
     [
-        (":model", "requires"),
-        (":model openai/gpt-5 high", "first token"),
-        (":model ref=openai/gpt-5", "unknown model parameter"),
-        (":model reasoning=high", "unknown model parameter"),
-        (":model none", "was removed"),
-        (":allow", "requires"),
-        (":allow unknown=value", "unknown allow field"),
-        (":limit tokens=-1", "non-negative"),
-        (":limit tokens=1 tokens=2", "duplicate limit field"),
+        ("/model", "requires"),
+        ("/model openai/gpt-5 high", "first token"),
+        ("/model ref=openai/gpt-5", "unknown model parameter"),
+        ("/model reasoning=high", "unknown model parameter"),
+        ("/model none", "was removed"),
+        ("/allow", "requires"),
+        ("/allow unknown=value", "unknown allow field"),
+        ("/limit tokens=-1", "non-negative"),
+        ("/limit tokens=1 tokens=2", "duplicate limit field"),
         (":default model=openai/gpt-5", "not a run override"),
         (":models openai/*", "not a run override"),
     ],
@@ -136,9 +136,9 @@ def test_invalid_or_removed_override_forms_are_rejected(
 
 
 def test_slash_and_colon_share_the_same_setting_body_parser() -> None:
-    colon, _named = parse_run_override(":model openai/gpt-5 effort=high")
+    override, _named = parse_run_override("/model openai/gpt-5 effort=high")
 
-    assert parse_setting_override("model", "openai/gpt-5 effort=high") == colon
+    assert parse_setting_override("model", "openai/gpt-5 effort=high") == override
     assert parse_setting_override(
         "allow", "models=openai/* tools=shell/*"
     ) == RunOverride(
@@ -167,7 +167,7 @@ def test_repeated_allow_sentinels_are_idempotent(
         == expected
     )
     override, call_input = parse_policy_prefix(
-        f":allow models={sentinel}\n:allow models={sentinel}\n\nRun"
+        f"/allow models={sentinel}\n/allow models={sentinel}\n\nRun"
     )
     assert override == expected
     assert call_input == CallInput({"_": "Run"})

@@ -11,26 +11,23 @@ The layers are independent values with separate parsers:
 CallInput[T] = {"_": Input?, argumentName: Argument, ...}
 RunnableInput = CallInput[Value]
 
-ChatInput = QuickCommand | RunOverrideHelp | RunOverride + CallInput[str]
+ChatInput = QuickCommand | RunOverride + CallInput[str]
 ```
 
 - `CallInput[str]` contains source text under `_` and argument names. Prompt,
   script, and runnable input share the same structure. The value specialization
   holds evaluated input; see [Call Input](./call-input.md).
-- `SessionSetting` is Chat's concrete model, runnable, allow, and limit default
-  for subsequent runs in the current session.
-- `RunOverride` is a sparse model, runnable, allow, and limit change attached to
-  one runnable input.
-- `QuickCommand` and the `ChatInput` classification are terminal-chat
-  concepts. Only one `QuickCommand` is accepted, and it must occupy the whole
-  chat input.
-- `RunOverrideHelp` is the terminal-chat-only `:?` interaction. It describes
-  colon syntax without creating a run.
-- The runnable branch requires primary or named input, or an explicit runnable
-  selection (`:agic`, `:flow`, or `:runnable`). An explicit selection may invoke
-  a runnable with no input; its signature still validates required parameters.
-  Other colon overrides alone are invalid and never change the session. Slash
-  setting commands change `SessionSetting` without creating a run.
+- `SessionSetting` holds Chat defaults for subsequent runs: model, runnable,
+  workdir, resource ceilings, and limits.
+- `RunOverride` supplies changes for one run; it never updates the session.
+- `QuickCommand` represents a standalone slash or colon command and occupies
+  the complete submission.
+- **Run directives** describe one submitted run: **slash directives** specify
+  overrides or a root runnable call, **dollar directives** expand prompts, and
+  **at directives** include resources.
+- A direct runnable call may omit input if its signature permits it. Any
+  override prefix requires at least one primary or named input key, including
+  explicit empty values when their types accept them.
 
 Script, task, and chore surfaces parse the run-only pair of `RunOverride` and
 `CallInput[str]`; they do not parse `QuickCommand`. Agic, flow, and prompt
@@ -44,27 +41,28 @@ coerces named inputs, and constructs `RunSpec`.
 
 ## Session Settings and Run Overrides
 
-The command body is shared. `/` changes the Chat session; a leading `:` changes
-only the run in the same submission:
+Colon commands change session defaults; slash directives override one run.
+The setting bodies are shared:
 
-```text
-/model BODY       :model BODY
-/runnable BODY    :runnable BODY
-/agic NAME        :agic NAME
-/flow NAME        :flow NAME
-/allow BODY       :allow BODY
-/limit BODY       :limit BODY
-```
+| Session command | Run directive |
+| --- | --- |
+| `:model BODY` | `/model BODY` |
+| `:allow BODY` | `/allow BODY` |
+| `:limit BODY` | `/limit BODY` |
+| `:workdir PATH` | `/workdir PATH` |
+
+`:workdir` alone queries the session directory. `default` or `unset` resets it;
+relative paths retain the existing session-relative resolution.
 
 Model bodies contain an optional identity followed by assignments:
 
 ```text
-/model openai/gpt-5
-/model effort=high
-/model effort=4096
-/model openai/gpt-5 effort=high
-/model max_output=8192
-/model effort=auto max_output=auto
+:model openai/gpt-5
+:model effort=high
+:model effort=4096
+:model openai/gpt-5 effort=high
+:model max_output=8192
+:model effort=auto max_output=auto
 ```
 
 `effort` is input convenience. A canonical unsigned integer becomes
@@ -76,43 +74,47 @@ control inherits the value in effect; passing `auto` cancels an inherited value.
 An effort, budget, or output ceiling is validated against the effective model
 before run acceptance. Parameter-only input retains the model identity. Selecting
 an identity clears unmentioned explicit model parameters. Bare one-run model
-`default` restores the surface model, while `:model unset` removes the inherited
-model binding for that run. `/model default` selects the effective default inside
-the session's current `allow.models` result. `/model unset`, `/model none`, and
-`:model none` are invalid.
+`default` restores the surface model, while `/model unset` removes the inherited
+model binding for that run. `:model default` selects the effective default inside
+the session's current `allow.models` result. `:model unset`, `:model none`, and
+`/model none` are invalid.
 
-The generic runnable form accepts an exact kind-qualified ref or a uniquely
-resolvable unqualified ref. `agic` and `flow` are exact shorthand:
+Session runnable commands select defaults: `:runnable REF`, `:agic NAME`, and
+`:flow NAME`. Only `:runnable default` resets to the surface default; kind-specific
+commands treat `default` as a name. They accept no runnable arguments.
+
+A root call selects a public runnable for this submission:
 
 ```text
-:runnable agic:review      :agic review
-:runnable flow:research    :flow research
-:runnable review
+/review [name=value...]
+/agic:review [name=value...]
+/flow:review [name=value...]
 ```
 
-`default` resets only the generic runnable form. Kind-specific commands treat it
-as a normal name. Colon runnable commands may carry named runnable input, such
-as `:agic review focus=security`; slash runnable commands may not.
-`:flow research` invokes `research` with an empty argument map. It may be
-combined with other overrides, such as `:model effort=high` on a preceding
-line. `:runnable default` invokes the surface default, even if the session has
-selected another runnable. These forms do not synthesize an empty primary
-input; `:flow research -` instead supplies `_` as an empty string.
+Names are case-sensitive, with no space after `/`. Exact built-in names win;
+invalid built-in arguments never fall back to runnable lookup. Other refs use
+the valid State's final public bindings. Kind or module qualification constrains
+that binding without exposing private targets or repeating shadow resolution.
+For a runnable named `help` or `model`, use `/agic:help` or `/flow:model`.
+
+`/runnable NAME`, `/agic NAME`, and `/flow NAME` are not selector forms.
+`runnable`, `agic`, `flow`, `default`, and `cd` are ordinary runnable names.
+`/default` calls that named runnable; it does not select the surface default.
 
 Allow and limit bodies accept one or more assignments:
 
 ```text
-/allow models=openai/* tools=shell/* skills=reviewer
-:allow models=openai/* tools=shell/*
+:allow models=openai/* tools=shell/* skills=reviewer
+/allow models=openai/* tools=shell/*
 
-/limit tokens=20000 cost=2.5 time=120
-:limit tokens=4000 time=30
+:limit tokens=20000 cost=2.5 time=120
+/limit tokens=4000 time=30
 ```
 
 Allow fields are `models`, `tools`, `psyches`, `skills`, `services`, and
 `prompts`. Values accept a query, `all`, or `none`. Repeated queries for one
 field accumulate and deduplicate; `all` and `none` cannot combine with another
-value. A slash assignment replaces that session field. A colon assignment adds
+value. A colon assignment replaces that session field. A slash assignment adds
 another ceiling and cannot broaden the session ceiling.
 
 Limit fields are `agic_model_calls`, `agic_tool_calls`, `tokens`, `cost`, and
@@ -120,15 +122,16 @@ Limit fields are `agic_model_calls`, `agic_tool_calls`, `tokens`, `cost`, and
 non-negative decimal. `none` disables one limit. Duplicate limit fields in a
 submission are invalid.
 
-Colon overrides occupy complete leading lines and use POSIX shell quoting and
-backslash escaping without expansion. Blank lines between overrides and the
-primary input are structural. Model and runnable may each appear once; allow
-may span lines; limit fields may span lines but remain unique.
+Run overrides occupy complete leading lines and use POSIX quoting without shell
+expansion. Blank lines between prefix lines and implicit input are structural.
+Model and workdir may each appear once; allow may span lines; limit fields must
+remain unique. A root call ends prefix parsing; following lines become primary
+input. A standalone command cannot be combined with this prefix.
 
 ```text
-:model effort=high
-:allow skills=reviewer tools=shell/*
-:agic review focus=security
+/model effort=high
+/allow skills=reviewer tools=shell/*
+/review focus=security
 
 Review this API.
 @./api.md
@@ -136,30 +139,29 @@ Review this API.
 
 ## Terminal Chat Input
 
-Slash commands are terminal-chat interactions and must occupy the complete
+Slash and colon commands are terminal-chat interactions and must occupy the complete
 normalized submission:
 
 ```text
 /help                     /?                       /keys
-/model [MODEL] [effort=VALUE] [max_output=VALUE]
-/runnable RUNNABLE
-/agic AGIC                /flow FLOW
-/allow FIELD=QUERY...
-/limit FIELD=VALUE...
-/models [-a] [QUERY]      /tools [-a] [QUERY]
-/caps [-a] [QUERY]
-/agics                    /flows
+/models [-a] [QUERY]       /tools [-a] [QUERY]
+/caps [-a] [QUERY]         /agics                    /flows
 /output [RUN]             /show [RUN]
 /exit                     /quit
+
+:model [MODEL] [effort=VALUE] [max_output=VALUE]
+:runnable RUNNABLE
+:agic AGIC                :flow FLOW
+:allow FIELD=QUERY...
+:limit FIELD=VALUE...
+:workdir [PATH]
 :?
 ```
 
-Every setting body is required. Submitting bare `/model`, `/runnable`, `/agic`,
-`/flow`, `/allow`, or `/limit` shows focused usage, purpose, and examples; it
-does not list values or open a picker. `/runnable`, `/agic`, and `/flow` share
-one focused help result. An editor completion popup may insert text into the
-draft, but selection never submits input or changes the session. A slash
-command cannot be combined with a colon override or runnable input.
+Bare `:model`, `:runnable`, `:agic`, `:flow`, `:allow`, and `:limit` show focused
+usage and examples. `:runnable`, `:agic`, and `:flow` share focused help.
+`:workdir` queries the directory, and `:?` shows session settings. These forms
+never create a run. An editor completion popup only edits the draft.
 
 `/models`, `/tools`, and `/caps` inspect resources allowed by the current
 session. Their optional body is one collection query, including any spaces; it
@@ -169,7 +171,7 @@ column. `/caps` evaluates session ceilings independently for psyches, skills,
 services, and prompts before combining the results. `/agics` and `/flows` list
 all available runnables of their kind and do not accept a query.
 
-Every submitted slash command that keeps Chat open writes its outcome to
+Every submitted command that keeps Chat open writes its outcome to
 scrollback. State changes use concrete confirmations such as `Model set to ...`
 or `Allowed 2 models`; resource summaries distinguish `allowed` from
 `available` and include the base count when a query is present. Missing
@@ -181,18 +183,14 @@ model request if it remains available. Otherwise it selects the configured
 default when present in the ordered result, then the first result. Only an empty
 model collection leaves the session model unset.
 
-`/help` and its `/?` alias are the main input guide. They group session,
-inspection, and other commands, identify aliases, and direct users to `:?` for
-one-run colon directives. `/keys` lists Toolang-owned interactive shortcuts.
-These are submitted read-only interactions and remain in scrollback. A bare or
-unknown slash command and any rejected runnable submission remain editable in
-the input box; their diagnostic appears in the status bar. Known slash-command
-help and errors are completed command outcomes, so they enter scrollback and
-clear the input.
+`/help` and `/?` describe commands and run directives. `/keys` lists interactive
+shortcuts. Known command help and errors enter scrollback and clear the input.
+Unknown colon commands and rejected run submissions retain the draft and show
+an error in the status bar. Unreserved slash names are resolved as runnables.
 
 Enter sends the complete normalized input. It starts a runnable request when
 Chat is idle and queues that request while a run is starting or active;
-recognized immediate interactions such as slash commands still execute during
+standalone slash and colon commands still execute during
 a run. Meta+Enter sends the draft as literal steer text to the active run and
 does not apply any input namespace. Ctrl+J inserts a newline; Shift+Enter also
 does so when supported by the terminal.
@@ -212,32 +210,34 @@ The Queue area disappears when it becomes empty.
 Chat removes leading and trailing blank lines, then removes horizontal
 whitespace from the end of the final line. It preserves indentation on the
 first nonblank line and all internal runnable-input whitespace. Removed forms
-have no aliases: settings-only colon input, `:default`, collection shortcuts
-such as `:models`, and positional `/model REF EFFORT` are invalid.
+have no aliases: `:cd`, `:default`, collection shortcuts such as `:models`,
+and positional model effort are invalid. Migrate `/cd` to `:workdir`, old
+slash session settings to colon commands, and old colon run input to slash
+directives. Stored history is not rewritten.
 
 ## Runnable Input
 
 `CallInput[str]` stores an optional `Content` source under `_` and each
 argument source under its parameter name. Source order is preserved; argument
 binding uses names.
-Chat obtains named sources from runnable shortcuts; script obtains them from
+Chat obtains named sources from root runnable calls; script obtains them from
 its generated CLI. Resolution evaluates each source and coerces it against the
 selected runnable signature. Missing, duplicate, or unknown named inputs are
 rejected before a run is accepted.
 
-Chat runnable calls use the shared line, stream, and fenced capture syntax
-defined in [call-input.md](./call-input.md). Script command headers accept line
-input directly or after `--`, and stream input through stdin with `-` or
-omitted input. They reject the standalone fenced marker `---`; prompt calls
-inside Script input still support fenced capture. The capture form is
-parser-only state and is not stored in `CallInput[str]`.
+Root runnable calls support line (`-- TEXT`), stream (`-`), and implicit
+following-body input. Line input must be nonempty; only whitespace may follow
+a root line-input call. Fenced input (`---`) belongs only to prompt calls.
+See [Call Input](./call-input.md) for boundaries and signature requirements.
+Script CLI command headers keep their existing line and stdin forms.
 
-Plain run-only parsing permits an empty `CallInput[str]` when the selected
-runnable accepts empty input. Colon overrides also permit an empty argument map
-when they explicitly select a runnable; missing required input is rejected
-against that runnable's signature. Overrides without an explicit runnable still
-require primary or named input. Parsing is atomic: any invalid run override,
-named input, include, prompt, or coerced value rejects the complete input.
+Bare `/review` leaves primary input absent; `/review -` supplies empty `_`.
+Without overrides, the signature alone decides whether empty Call Input is valid.
+With an override prefix, at least one input key must be supplied and the complete
+signature must still be satisfied. Thus a runnable with `()` can run directly,
+but cannot accept a run override prefix. Optional omitted arguments stay absent.
+Parsing and admission are atomic: invalid arguments, boundaries, or types reject
+the submission without executing a command or accepting a run.
 
 ## Content
 
@@ -250,10 +250,10 @@ evaluate(InputContent | Content) -> Part[]
 ```
 
 `$` and `@` are special only as the first character of a `Content` line. `:` is
-special only in the policy prefix, and `/` is special only when Chat classifies
-a complete command. Ordinary Markdown code fences suspend special-line
-recognition. Double a leading marker where its single form would be special to
-produce literal text:
+special at a command boundary, and `/` introduces commands or run directives
+before primary input. Slash lines within captured Content are text. Ordinary
+Markdown code fences suspend special-line recognition. Double a leading marker
+where its single form would be special to produce literal text:
 
 ```text
 //help           -> /help
@@ -288,8 +288,8 @@ results cannot contain another prompt call. The capture form is not persisted
 with prompt provenance.
 
 Slash-prefixed prompt calls are not supported. In terminal Chat, a leading
-slash belongs to the interaction namespace; on other `Content` surfaces it is
-ordinary text. Shell commands must single-quote dollar-prefixed input, for
+slash selects an interaction or runnable; within already captured `Content` it
+is ordinary text. Shell commands must single-quote dollar-prefixed input, for
 example:
 
 ```sh

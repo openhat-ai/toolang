@@ -20,17 +20,17 @@ One terminal `ChatInput` resolves to either one `QuickCommand` or one aggregate
 creates a run control and a run in an existing thread. A client creates the
 thread explicitly before the first run.
 
-Terminal interactions use complete slash commands such as `/help`, `/model`,
-`/runnable`, `/allow`, `/limit`, `/models`, `/tools`, `/caps`, `/agics`,
-`/flows`, `/output`, and `/keys`. `/show` remains an alias
-for `/output`. Model, runnable, allow, and limit slash commands update
-`SessionSetting`; matching colon-prefixed lines form the one-run `RunOverride`.
-The plural resource commands inspect collections without changing the session.
-`/help` and `/?` are the main guide and direct users to the special `:?`
-interaction for leading run overrides. Dollar-prefixed `Content` lines expand
-reusable prompts. See
-[input-syntax.md](./input-syntax.md) for the namespace contract and
-[call-input.md](./call-input.md) for runnable and prompt Call Input forms.
+Standalone slash commands such as `/help`, `/models`, `/tools`, `/caps`,
+`/agics`, `/flows`, `/output`, and `/keys` inspect or control Chat. `/show`
+remains an alias for `/output`. Colon commands such as `:model`, `:runnable`,
+`:allow`, `:limit`, and `:workdir` inspect or change session settings.
+
+Run directives describe one submission: leading `/model`, `/allow`, `/limit`,
+and `/workdir` lines override that run; `/NAME` selects its root runnable;
+`$PROMPT` expands a prompt and `@RESOURCE` includes a resource. `/help` and `/?`
+cover the complete syntax; `:?` focuses on session settings. See
+[input-syntax.md](./input-syntax.md) for dispatch and migration, and
+[call-input.md](./call-input.md) for input boundaries and signatures.
 
 The three plural discovery commands produce compact, structured tables:
 
@@ -55,13 +55,13 @@ follows the header, every row remains one terminal line, and flexible cells use
 `…` when the current output width cannot contain their full values. This
 presentation does not change query matching or resource allow semantics.
 
-Chat owns mutable model, runnable, allow, and limit session defaults. Model
+Chat owns mutable model, runnable, workdir, allow, and limit session defaults. Model
 parameters, including reasoning effort or token budget, live on the session's
 concrete `ModelRequest`. Each submission snapshots that state with input-local
 overrides into one self-contained `RunRequest`; queued submissions retain their
-snapshot when the visible session changes. A submitted slash setting command
-requires a body and never opens a picker. Completion may edit the command draft
-but does not submit it or mutate the session.
+snapshot when the visible session changes. A submitted colon setting command
+requires a body, except the `:workdir` query, and never opens a picker. Completion
+may edit the command draft but does not submit it or mutate the session.
 
 Interactive Chat uses one send-oriented input model. Enter submits runnable
 input when idle and appends it to the queue while a run is starting or active.
@@ -419,7 +419,7 @@ language and the TUI's existing control-bar, streaming, alignment, and
 scrollback constraints.
 
 The input-box status bar is for editable rejected input, local controls, and
-unresolved asynchronous state. A bare or unknown slash command and any run
+unresolved asynchronous state. Unknown colon commands and run submissions
 rejected before dispatch or queue insertion retain their text and cursor so the
 user can edit or retry them. Their transient diagnostic clears on the next edit,
 Esc, recognized command, or accepted run. Empty Enter is a no-op. Connection and
@@ -432,7 +432,7 @@ column, and are elided at the terminal edge. Once a runnable input is accepted,
 its terminal diagnostics and status summaries belong to the run and are finalized
 through native events.
 
-A submitted slash command likewise owns an immutable scrollback interaction.
+A submitted command likewise owns an immutable scrollback interaction.
 Its summary states the concrete effect or result without a generic `Success:`
 or `Result:` prefix; usage and errors retain explicit `Usage:` and `Error:`
 labels. Setting commands refresh the status bar after committing the new
@@ -446,7 +446,7 @@ is the Chat agent and workspace in `agent@workspace` form; it is fixed at the
 status line's absolute center. The workspace comes from session settings while
 idle and from the active root run while running. The active runnable is never
 duplicated beside the model. Successful root `_toolang.chdir` changes update
-the workspace. `/cd` changes the session workspace for subsequent runs; after
+the workspace. `:workdir` changes the session workspace for subsequent runs; after
 the current run ends, the center returns to the latest session workspace. Only
 the workspace name is shown, not the path. If the full status line overflows,
 the centered identity stays intact, with one space between adjacent status

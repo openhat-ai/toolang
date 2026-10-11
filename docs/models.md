@@ -510,7 +510,7 @@ may use a parameter-only body such as `effort=high` to modify the inherited root
 default. Without `default.model`, runtime uses the first ready model in the
 policy-adjusted order. Without `compact.model`, compaction follows the thread
 model identity with independent reasoning and output settings. The normal
-`:model unset` form supports model-free execution; compact configuration does
+`/model unset` form supports model-free execution; compact configuration does
 not accept `unset`.
 
 The same body is accepted by `TOOLANG_DEFAULT_MODEL`, Agent and Chat startup

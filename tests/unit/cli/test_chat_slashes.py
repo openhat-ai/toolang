@@ -283,8 +283,8 @@ def _outcome(value: slashes.SlashOutcome | None) -> slashes.SlashOutcome:
 @pytest.mark.parametrize(
     ("name", "message"),
     [
-        ("", "Enter a command after / · See /? for help"),
-        ("missing", "Unknown command /missing · See /? for help"),
+        ("", "Enter a command after / · See /help for help"),
+        ("missing", "Unknown command /missing · See /help for help"),
     ],
 )
 def test_unrecognized_slash_names_return_status_guidance(
@@ -314,16 +314,18 @@ def test_quick_help_and_exit_are_declarative_commands() -> None:
 
     help_lines = slashes.outcome_lines(help_result)
     assert help_result.kind == "result"
-    assert help_lines[0] == "Session"
-    assert help_lines[1].startswith("  /model ")
-    assert "Inspection" in help_lines and "Other" in help_lines
-    commands = [line.split()[0] for line in help_lines if line.startswith("  /")]
-    assert commands == [
-        "/model",
-        "/runnable",
-        "/allow",
-        "/cd",
-        "/limit",
+    assert isinstance(help_result.content, slashes.SlashHelp)
+    commands = [
+        row.command for section in help_result.content.sections for row in section.rows
+    ]
+    for command in (
+        ":model",
+        ":runnable",
+        ":agic",
+        ":flow",
+        ":allow",
+        ":workdir",
+        ":limit",
         "/models",
         "/tools",
         "/caps",
@@ -333,11 +335,19 @@ def test_quick_help_and_exit_are_declarative_commands() -> None:
         "/help",
         "/exit",
         "/keys",
-    ]
-    assert any("shortcuts: /agic, /flow" in line for line in help_lines)
+        "/model",
+        "/allow",
+        "/limit",
+        "/workdir",
+        "/RUNNABLE",
+        "$PROMPT",
+        "@RESOURCE",
+    ):
+        assert command in commands
+    assert any("shortcuts: :agic, :flow" in line for line in help_lines)
     for alias in ("/show", "/?", "/quit"):
         assert any(f"(alias: {alias})" in line for line in help_lines)
-    assert help_lines[-1] == ":? shows one-run overrides."
+    assert ":? shows session settings." in help_lines
     assert not any("/queue" in line or "/steer" in line for line in help_lines)
     assert all(
         get_cwidth(line) <= 10 for line in slashes.outcome_lines(help_result, width=10)
@@ -351,30 +361,33 @@ def test_run_override_help_covers_all_operations_and_input_forms() -> None:
     assert isinstance(result.content, slashes.SlashHelp)
     rows = result.content.sections[0].rows
     assert [row.command for row in rows] == [
-        ":model",
-        ":runnable",
-        ":workdir",
-        ":allow",
-        ":limit",
+        "/model",
+        "/allow",
+        "/limit",
+        "/workdir",
+        "/RUNNABLE",
+        "/agic:NAME",
+        "/flow:NAME",
+        "$PROMPT",
+        "@RESOURCE",
     ]
     lines = slashes.outcome_lines(result)
     text = "\n".join(lines)
     for expected in (
-        "session defaults stay unchanged",
+        "slash overrides apply only to this run",
         "primary or named input",
-        "explicitly select a runnable",
-        "No input: :flow research",
-        ":agic NAME",
-        ":flow NAME",
+        "Direct /NAME calls may omit input",
+        "/agic:NAME",
+        "/flow:NAME",
         "max_output=POSITIVE_INT|auto",
         "unset",
         "default",
         "-- TEXT",
-        "- stream",
-        "--- fenced block",
+        "remaining stream",
+        "--- fenced input is only for $PROMPT",
         "psyches",
         "agic_tool_calls",
-        "/cd",
+        "/workdir",
     ):
         assert expected in text
 
@@ -409,11 +422,11 @@ def test_keys_help_uses_the_binding_metadata_without_a_title() -> None:
 def test_required_command_without_body_returns_focused_help(name: str) -> None:
     app = _App()
     app.client.error = AssertionError("client must not be called")
-    result = _outcome(slashes.handle(app, QuickCommand(name)))
+    result = _outcome(slashes.handle(app, QuickCommand(name, prefix=":")))
     assert result.kind == "usage"
     lines = slashes.outcome_lines(result)
     canonical = "runnable" if name == "agic" else name
-    assert lines[0].startswith(f"/{canonical} ")
+    assert lines[0].startswith(f":{canonical} ")
     assert lines[1].startswith("Set ")
     assert len(lines[lines.index("Examples:") + 1 :]) == 2
     if name == "model":
@@ -424,10 +437,10 @@ def test_required_command_without_body_returns_focused_help(name: str) -> None:
 
 @pytest.mark.parametrize("name", ("runnable", "agic", "flow"))
 def test_runnable_commands_share_focused_help(name: str) -> None:
-    result = _outcome(slashes.handle(_App(), QuickCommand(name)))
+    result = _outcome(slashes.handle(_App(), QuickCommand(name, prefix=":")))
 
     assert slashes.outcome_lines(result) == slashes.outcome_lines(
-        _outcome(slashes.handle(_App(), QuickCommand("runnable")))
+        _outcome(slashes.handle(_App(), QuickCommand("runnable", prefix=":")))
     )
 
 
@@ -435,7 +448,9 @@ def test_model_identity_and_effort_update_independently() -> None:
     app = _App()
 
     selected = _outcome(
-        slashes.handle(app, QuickCommand("model", "openai/gpt-5 effort=high"))
+        slashes.handle(
+            app, QuickCommand("model", "openai/gpt-5 effort=high", prefix=":")
+        )
     )
     assert app.setting.model == ModelRequest(
         "openai/gpt-5",
@@ -445,19 +460,21 @@ def test_model_identity_and_effort_update_independently() -> None:
         "Model set to openai/gpt-5 · effort=high",
     )
 
-    slashes.handle(app, QuickCommand("model", "effort=low"))
+    slashes.handle(app, QuickCommand("model", "effort=low", prefix=":"))
     assert app.setting.model == ModelRequest(
         "openai/gpt-5",
         reasoning=Reasoning(effort="low"),
     )
 
-    slashes.handle(app, QuickCommand("model", "effort=4096"))
+    slashes.handle(app, QuickCommand("model", "effort=4096", prefix=":"))
     assert app.setting.model == ModelRequest(
         "openai/gpt-5",
         reasoning=Reasoning(budget_tokens=4096),
     )
 
-    automatic = _outcome(slashes.handle(app, QuickCommand("model", "effort=auto")))
+    automatic = _outcome(
+        slashes.handle(app, QuickCommand("model", "effort=auto", prefix=":"))
+    )
     assert app.setting.model == ModelRequest("openai/gpt-5")
     assert slashes.outcome_lines(automatic) == (
         "Model set to openai/gpt-5 · effort=auto",
@@ -469,7 +486,9 @@ def test_model_rejects_known_unsupported_effort_without_changing_session() -> No
     app = _App()
     previous = app.setting
 
-    result = _outcome(slashes.handle(app, QuickCommand("model", "effort=medium")))
+    result = _outcome(
+        slashes.handle(app, QuickCommand("model", "effort=medium", prefix=":"))
+    )
 
     assert result.kind == "error"
     assert slashes.outcome_lines(result) == (
@@ -491,7 +510,9 @@ def test_model_defers_effort_validation_when_metadata_is_unavailable() -> None:
         },
     )
 
-    result = _outcome(slashes.handle(app, QuickCommand("model", "effort=medium")))
+    result = _outcome(
+        slashes.handle(app, QuickCommand("model", "effort=medium", prefix=":"))
+    )
 
     assert result.kind == "success"
     assert slashes.outcome_lines(result) == (
@@ -502,11 +523,11 @@ def test_model_defers_effort_validation_when_metadata_is_unavailable() -> None:
 def test_model_none_is_rejected_without_loading_resources() -> None:
     app = _App()
 
-    result = _outcome(slashes.handle(app, QuickCommand("model", "none")))
+    result = _outcome(slashes.handle(app, QuickCommand("model", "none", prefix=":")))
 
     assert result.kind == "error"
     assert slashes.outcome_lines(result) == (
-        "Error: model identity 'none' was removed; use :model unset for a "
+        "Error: model identity 'none' was removed; use /model unset for a "
         "model-free run",
     )
     assert app.setting.model == ModelRequest("openai/gpt-5")
@@ -517,11 +538,11 @@ def test_model_none_is_rejected_without_loading_resources() -> None:
 def test_model_unset_is_rejected_as_a_session_command() -> None:
     app = _App()
 
-    result = _outcome(slashes.handle(app, QuickCommand("model", "unset")))
+    result = _outcome(slashes.handle(app, QuickCommand("model", "unset", prefix=":")))
 
     assert result.kind == "error"
     assert slashes.outcome_lines(result) == (
-        "Error: /model unset is not a session setting; use :model unset for one run",
+        "Error: :model unset is not a session setting; use /model unset for one run",
     )
     assert app.setting.model == ModelRequest("openai/gpt-5")
     assert app.status_refreshes == 0
@@ -530,7 +551,7 @@ def test_model_unset_is_rejected_as_a_session_command() -> None:
 def test_runnable_argument_updates_setting_and_refreshes_status() -> None:
     app = _App()
 
-    result = _outcome(slashes.handle(app, QuickCommand("flow", "review")))
+    result = _outcome(slashes.handle(app, QuickCommand("flow", "review", prefix=":")))
 
     assert result.kind == "success"
     assert slashes.outcome_lines(result) == ("Runnable set to flow:review",)
@@ -544,11 +565,11 @@ def test_allow_and_limit_report_effective_updates_and_refresh_status() -> None:
     allowed = _outcome(
         slashes.handle(
             app,
-            QuickCommand("allow", "models=openai/* tools=shell/*"),
+            QuickCommand("allow", "models=openai/* tools=shell/*", prefix=":"),
         )
     )
     limited = _outcome(
-        slashes.handle(app, QuickCommand("limit", "tokens=2000 time=none"))
+        slashes.handle(app, QuickCommand("limit", "tokens=2000 time=none", prefix=":"))
     )
 
     assert slashes.outcome_lines(allowed) == ("Allowed 1 model, 1 tool",)
@@ -574,7 +595,9 @@ def test_allow_selects_a_fallback_for_an_excluded_model_and_reports_it() -> None
         runnable="agic:chat",
     )
 
-    result = _outcome(slashes.handle(app, QuickCommand("allow", "models=openrouter/*")))
+    result = _outcome(
+        slashes.handle(app, QuickCommand("allow", "models=openrouter/*", prefix=":"))
+    )
 
     assert app.setting.model == ModelRequest("openrouter/openai/o3")
     assert app.setting.allow.models == ("openrouter/*",)
@@ -598,23 +621,29 @@ def test_allow_preserves_parameters_for_an_allowed_model() -> None:
     )
     app.setting = SessionSetting(model=selected, runnable="agic:chat")
 
-    result = _outcome(slashes.handle(app, QuickCommand("allow", "models=openai/*")))
+    result = _outcome(
+        slashes.handle(app, QuickCommand("allow", "models=openai/*", prefix=":"))
+    )
 
     assert app.setting.model == selected
     assert slashes.outcome_lines(result) == ("Allowed 1 model",)
     assert app.status_refreshes == 1
 
 
-def test_cd_sets_or_resets_only_the_session_workdir() -> None:
+def test_workdir_sets_or_resets_only_the_session_workdir() -> None:
     app = _App()
     app.setting = replace(app.setting, workdir="repo://src", workdir_base=None)
 
-    changed = _outcome(slashes.handle(app, QuickCommand("cd", "../tests")))
+    changed = _outcome(
+        slashes.handle(app, QuickCommand("workdir", "../tests", prefix=":"))
+    )
     assert app.setting.workdir == "../tests"
     assert app.setting.workdir_base == "repo://src"
     assert slashes.outcome_lines(changed) == ("Workdir set to ../tests",)
 
-    reset = _outcome(slashes.handle(app, QuickCommand("cd", "default")))
+    reset = _outcome(
+        slashes.handle(app, QuickCommand("workdir", "default", prefix=":"))
+    )
     assert app.setting.workdir is None
     assert app.setting.workdir_base is None
     assert slashes.outcome_lines(reset) == ("Workdir reset to thread/default",)
@@ -665,7 +694,9 @@ def test_model_reconciliation_prefers_the_available_configured_default() -> None
 def test_allow_none_clears_the_model_and_reports_an_empty_collection() -> None:
     app = _App()
 
-    result = _outcome(slashes.handle(app, QuickCommand("allow", "models=none")))
+    result = _outcome(
+        slashes.handle(app, QuickCommand("allow", "models=none", prefix=":"))
+    )
 
     assert app.setting.model is None
     assert app.setting.allow.models == ()
@@ -687,7 +718,9 @@ def test_explicit_model_outside_allow_is_atomic() -> None:
     )
     previous = app.setting
 
-    result = _outcome(slashes.handle(app, QuickCommand("model", "openai/gpt-5")))
+    result = _outcome(
+        slashes.handle(app, QuickCommand("model", "openai/gpt-5", prefix=":"))
+    )
 
     assert result.kind == "error"
     assert slashes.outcome_lines(result) == (
@@ -704,7 +737,9 @@ def test_default_model_uses_the_query_relative_fallback() -> None:
         runnable="agic:chat",
         allow=AgentCeiling(models=("openrouter/*",)),
     )
-    result = _outcome(slashes.handle(app, QuickCommand("model", "default effort=high")))
+    result = _outcome(
+        slashes.handle(app, QuickCommand("model", "default effort=high", prefix=":"))
+    )
 
     assert result.kind == "success"
     assert slashes.outcome_lines(result) == (
@@ -1004,7 +1039,7 @@ def test_quick_output_and_show_load_an_explicit_or_latest_durable_result() -> No
 @pytest.mark.parametrize("command", ["queue", "q", "steer", "s"])
 def test_queue_and_steer_commands_are_not_registered(command: str) -> None:
     assert not slashes.is_registered(command)
-    with pytest.raises(KeyError, match="unregistered slash command"):
+    with pytest.raises(KeyError, match="unregistered command"):
         slashes.handle(_App(), QuickCommand(command))
 
 
@@ -1012,7 +1047,9 @@ def test_quick_client_errors_return_scrollback_errors() -> None:
     app = _App()
     app.client.error = ToolangError("unavailable")
 
-    result = _outcome(slashes.handle(app, QuickCommand("model", "openai/gpt-5")))
+    result = _outcome(
+        slashes.handle(app, QuickCommand("model", "openai/gpt-5", prefix=":"))
+    )
 
     assert result.kind == "error"
     assert slashes.outcome_lines(result) == ("Error: unavailable",)
@@ -1023,9 +1060,46 @@ def test_quick_client_errors_return_scrollback_errors() -> None:
 def test_model_output_limit_is_applied_and_reported(identity: str) -> None:
     app = _App()
     result = _outcome(
-        slashes.handle(app, QuickCommand("model", f"{identity}max_output=8192"))
+        slashes.handle(
+            app, QuickCommand("model", f"{identity}max_output=8192", prefix=":")
+        )
     )
     assert app.setting.model is not None
     assert app.setting.model.max_output == 8192
     assert isinstance(result.content, slashes.SlashText)
     assert "max_output=8192" in result.content.summary
+
+
+def test_command_registry_matches_shared_reserved_names() -> None:
+    from toolang.execution.policy import COLON_COMMAND_NAMES, SLASH_COMMAND_NAMES
+
+    for prefix, names in (("/", SLASH_COMMAND_NAMES), (":", COLON_COMMAND_NAMES)):
+        registered = {
+            name
+            for command in slashes.SLASHES
+            if command.prefix == prefix
+            for name in command.names
+        }
+        assert registered == names
+
+
+@pytest.mark.parametrize("kind", ["agic", "flow"])
+def test_runnable_lists_show_qualified_calls_for_builtin_collisions(kind) -> None:
+    app = _App()
+    app.client.runnables[kind] = {
+        "items": [{"name": "help"}, {"name": "model"}, {"name": "cd"}]
+    }
+    app.setting = replace(app.setting, runnable=f"{kind}:help")
+    outcome = _outcome(slashes.handle(app, QuickCommand(kind + "s")))
+    assert isinstance(outcome.content, slashes.SlashTable)
+    assert outcome.content.rows == ((f"/{kind}:help *",), (f"/{kind}:model",), ("cd",))
+
+
+def test_session_help_contains_only_colon_commands() -> None:
+    outcome = _outcome(slashes.handle(_App(), QuickCommand("?", prefix=":")))
+    assert isinstance(outcome.content, slashes.SlashHelp)
+    assert all(
+        row.command.startswith(":")
+        for section in outcome.content.sections
+        for row in section.rows
+    )

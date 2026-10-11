@@ -1,7 +1,6 @@
 # Chat Commands and Run Directives
 
-Status: Feature definition for review, 2026-10-11. Implementation requires
-approval of this plan. Examples below describe the proposed syntax.
+Status: Approved for implementation on 2026-10-11 (PR #761).
 
 ## Goal and Scope
 
@@ -221,7 +220,7 @@ Dollar/at directive evaluation, including the prohibition on nested prompt calls
 is unchanged. The namespace rules here supersede the corresponding parts of
 [Chat Input Namespaces](chat-input-namespaces.md).
 
-Open questions: none; implementation approval remains pending.
+Open questions: none.
 
 ## Implementation and Acceptance
 

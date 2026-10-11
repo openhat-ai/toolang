@@ -88,12 +88,11 @@ from .events import ChatUIEvent
 from .history import ChatInputHistoryStore
 from .input import (
     QuickCommand,
-    RunOverrideHelp,
     is_runnable_input,
-    is_slash_input,
+    is_command_input,
     normalize_chat_input,
     parse_chat_input,
-    slash_command_name,
+    command_name,
 )
 from .policy import run_override_error, validate_model_reasoning_request
 from .presenter import ChatRunPresenter
@@ -988,19 +987,21 @@ class ChatTuiApp:
         try:
             chat_input = parse_chat_input(source)
         except ValueError as exc:
-            if is_slash_input(source):
-                command = slash_command_name(source) or ""
-                if slashes.is_registered(command):
+            if is_command_input(source):
+                command = command_name(source) or ""
+                if slashes.is_registered(command, prefix=source[0]):
                     self._write_slash_outcome(
                         source,
                         slashes.error_outcome(str(exc)),
                     )
                     return True
-                self.status_bar.set_error(slashes.unrecognized_diagnostic(command))
+                self.status_bar.set_error(
+                    slashes.unrecognized_diagnostic(command, prefix=source[0])
+                )
                 return False
             error = friendly_error(str(exc))
             self.status_bar.set_error(
-                run_override_error(source, error) if source.startswith(":") else error
+                run_override_error(source, error) if source.startswith("/") else error
             )
             return False
         if self.submission_blocked is not None and not _blocked_input_allowed(
@@ -1008,17 +1009,16 @@ class ChatTuiApp:
         ):
             return False
         if isinstance(chat_input, QuickCommand):
-            if not slashes.is_registered(chat_input.name):
+            if not slashes.is_registered(chat_input.name, prefix=chat_input.prefix):
                 self.status_bar.set_error(
-                    slashes.unrecognized_diagnostic(chat_input.name)
+                    slashes.unrecognized_diagnostic(
+                        chat_input.name, prefix=chat_input.prefix
+                    )
                 )
                 return False
             outcome = slashes.handle(self.app_context, chat_input)
             if outcome is not None:
                 self._write_slash_outcome(source, outcome)
-            return True
-        if isinstance(chat_input, RunOverrideHelp):
-            self._write_slash_outcome(source, slashes.run_override_help())
             return True
         if not is_runnable_input(chat_input):
             raise AssertionError("unknown chat input value")
@@ -1310,10 +1310,8 @@ def _is_run_state(value: object) -> TypeGuard[ChatRunState]:
 
 
 def _blocked_input_allowed(value: object) -> bool:
-    if isinstance(value, RunOverrideHelp):
-        return True
     if not isinstance(value, QuickCommand):
         return False
-    if value.name in {"model", "agic", "flow", "runnable", "allow", "limit"}:
+    if value.prefix == ":" and value.name != "?":
         return value.tail is None
     return value.name in _BLOCKED_READ_ONLY_COMMANDS

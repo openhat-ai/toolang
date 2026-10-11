@@ -631,7 +631,7 @@ def test_chat_submission_has_no_status_before_run_begin() -> None:
 
 def test_chat_preaccept_error_does_not_render_a_failed_run() -> None:
     app = FakeApp()
-    app.live_blocks.append(blocks.RunControlBlock.create(":flow missing\n\nInput"))
+    app.live_blocks.append(blocks.RunControlBlock.create("/flow:missing\n\nInput"))
 
     handled = events.handle_run_error(app, "Runnable not found: missing")
 
@@ -3083,7 +3083,7 @@ def test_chat_slash_block_renders_command_usage_as_table_rows() -> None:
             "Slash commands act immediately.",
             "",
             "/help, /?                         Show help.",
-            "/model [MODEL]                    List or switch models.",
+            ":model [MODEL]                    List or switch models.",
         ],
     )
     rendered = _render_text(block.render(), width=69)
@@ -3095,10 +3095,10 @@ def test_chat_slash_block_renders_command_usage_as_table_rows() -> None:
     assert rendered_lines[1].startswith(f"{rendering.CONTROL_BAR_MARK} /?")
     assert not rendered_lines[2].strip()
     assert "  Slash commands act immediately." in rendered
-    assert "/model [MODEL]" in rendered
+    assert ":model [MODEL]" in rendered
     assert "List or switch models." in rendered
     assert not rendered.endswith("\n")
-    command = next(segment for segment in segments if segment.text == "/model")
+    command = next(segment for segment in segments if segment.text == ":model")
     argument = next(segment for segment in segments if segment.text == "[MODEL]")
     quick_accent_hex = (
         Color.parse(rendering.QUICK_COMMAND_CONTROL_ACCENT).get_truecolor().hex
@@ -3138,7 +3138,7 @@ def test_chat_slash_block_renders_command_usage_as_table_rows() -> None:
 
 def test_chat_slash_summary_uses_two_space_indent_without_marker() -> None:
     block = blocks.SlashBlock(
-        "/model openai/gpt-5 effort=high",
+        ":model openai/gpt-5 effort=high",
         ("Model set to openai/gpt-5 · high",),
         "success",
     )
@@ -3161,8 +3161,12 @@ def test_chat_main_help_styles_structure_and_honors_maximum_width() -> None:
 
     rendered = _render_text(block.render(), width=100)
     segments = rendering.render_segments(block.render(), width=100)
-    heading = next(segment for segment in segments if segment.text.strip() == "Session")
-    command = next(segment for segment in segments if segment.text == "/model")
+    heading = next(
+        segment
+        for segment in segments
+        if segment.text.strip() == "Session settings (colon commands)"
+    )
+    command = next(segment for segment in segments if segment.text == ":model")
     argument = next(segment for segment in segments if segment.text == "[MODEL]")
     alias = next(segment for segment in segments if "(alias: /show)" in segment.text)
     narrow = _render_text(
@@ -4351,7 +4355,7 @@ def test_chat_tui_applies_default_settings_while_a_run_is_active() -> None:
     app.status_bar.set_run_workspace("active-space")
     app._set_status_running(True)
 
-    app.handle_submit("/flow research")
+    app.handle_submit(":flow research")
 
     runnable_changed = "".join(text for _style, text in app.status_bar._render())
     assert app.status_bar.runnable_label == "flow:research"
@@ -4361,7 +4365,7 @@ def test_chat_tui_applies_default_settings_while_a_run_is_active() -> None:
     assert "flow:research · openai/gpt-5" not in runnable_changed
     assert app.queue == []
 
-    app.handle_submit("/model effort=high")
+    app.handle_submit(":model effort=high")
 
     model_changed = "".join(text for _style, text in app.status_bar._render())
     assert app.status_bar.model_label == "openai/gpt-5 · high"
@@ -4369,7 +4373,7 @@ def test_chat_tui_applies_default_settings_while_a_run_is_active() -> None:
     assert model_changed.count("flow:research") == 1
     assert "active-space" in model_changed
 
-    app.handle_submit("/cd next://src")
+    app.handle_submit(":workdir next://src")
 
     cd_changed = "".join(text for _style, text in app.status_bar._render())
     assert app.status_bar.workspace_label == "next"
@@ -4379,7 +4383,7 @@ def test_chat_tui_applies_default_settings_while_a_run_is_active() -> None:
     app._handle_run_state(RunWorkdirUpdated("run_active", "run-final://"))
     assert app.setting.workdir == "next://src"
 
-    app.handle_submit("/agic chat")
+    app.handle_submit(":agic chat")
 
     restored = "".join(text for _style, text in app.status_bar._render())
     assert restored.count("agic:chat") == 1
@@ -4470,9 +4474,9 @@ def test_chat_thread_creation_error_is_a_submission_error() -> None:
 @pytest.mark.parametrize(
     ("source", "runnable"),
     [
-        (":flow research", "flow:research"),
-        (":agic review", "agic:review"),
-        (":runnable default", "agic:chat"),
+        ("/flow:research", "flow:research"),
+        ("/agic:review", "agic:review"),
+        ("/default", "default"),
     ],
 )
 def test_chat_tui_submits_empty_runnable_call(
@@ -4508,7 +4512,6 @@ def test_chat_tui_submits_empty_runnable_call(
     monkeypatch.setattr(app, "submit_run", submitted.append)
     if busy:
         app.active_run_id = "run_busy"
-    source = ":model effort=high\n" + source
     app.prompt.buffer.text = source
 
     app.handle_ui_event(ChatUIEvent("submit", source))
@@ -4516,9 +4519,7 @@ def test_chat_tui_submits_empty_runnable_call(
     calls = list(app.queue) if busy else submitted
     assert len(calls) == 1
     assert calls[0].request.runnable == RunnableRequest(runnable, CallInput())
-    assert calls[0].request.model == ModelRequest(
-        "openai/gpt-5", reasoning=Reasoning(effort="high")
-    )
+    assert calls[0].request.model == setting.model
     assert app.setting == setting
     assert app.prompt.buffer.text == ""
     assert app.prompt.history.get_strings() == [source]
@@ -4534,9 +4535,9 @@ def test_chat_queue_captures_settings_at_submission_time() -> None:
     )
     app.active_run_id = "run_busy"
 
-    app.handle_submit("/model effort=low")
+    app.handle_submit(":model effort=low")
     app.handle_submit("first call")
-    app.handle_submit("/model effort=high")
+    app.handle_submit(":model effort=high")
     app.handle_submit("second call")
 
     assert [item.source for item in app.queue] == ["first call", "second call"]
@@ -5074,7 +5075,10 @@ def test_chat_removed_queue_commands_preserve_queue_selection_and_draft(
     assert [item.source for item in app.queue] == ["first", "second", "third"]
     assert app.queue_panel.selected_index == 1
     assert app.prompt.buffer.text == f"/{command} delete 1"
-    assert app.status_bar.error_message == slashes.unrecognized_diagnostic(command)
+    assert (
+        app.status_bar.error_message
+        == "named input must use name=value syntax · See /help for help"
+    )
 
 
 def test_chat_queue_shortcut_help_includes_navigation_and_contextual_actions() -> None:
@@ -5211,7 +5215,7 @@ def test_chat_tui_recovers_from_durable_terminal_truth(
     )
     app.prompt.buffer.text = "draft"
     assert app.status_bar.error_message == "Connection lost · Reconnecting…"
-    app.handle_submit("/model effort=high")
+    app.handle_submit(":model effort=high")
     assert app.status_bar.error_message == "Connection lost · Reconnecting…"
     assert app.status_bar.model_label == "openai/gpt-5 · high"
     detail = RunDetail(
@@ -5283,7 +5287,7 @@ def test_chat_tui_blocks_mutating_input_after_ambiguous_acceptance(
 
     app.handle_ui_event(ChatUIEvent("run_state", RunBlocked(None, message)))
     app.handle_submit("new call")
-    app.handle_submit("/model test/model")
+    app.handle_submit(":model test/model")
     app.handle_submit("/keys")
     app.handle_submit("/output run_remote")
 
@@ -5326,10 +5330,10 @@ def test_chat_tui_bare_model_command_does_not_open_or_load_a_picker(
     )
     initial_reads = client.model_reads
 
-    app.handle_submit("/model")
+    app.handle_submit(":model")
 
     assert app.status_bar.error_message == ""
-    assert any("/model [MODEL] [PARAM=VALUE...]" in value for value in rendered)
+    assert any(":model [MODEL] [PARAM=VALUE...]" in value for value in rendered)
     assert any(
         "Set the session model or its parameters." in value for value in rendered
     )
@@ -5358,7 +5362,7 @@ def test_chat_tui_routes_slash_shaped_parse_errors_to_scrollback(
 
     assert app.status_bar.error_message == ""
     assert any(
-        "Error: quick command cannot be combined with other input" in value
+        "Error: command cannot be combined with other input" in value
         for value in rendered
     )
 
@@ -5366,13 +5370,16 @@ def test_chat_tui_routes_slash_shaped_parse_errors_to_scrollback(
 @pytest.mark.parametrize(
     ("source", "expected"),
     [
-        ("/", "Enter a command after / · See /? for help"),
-        ("/missing value", "Unknown command /missing · See /? for help"),
-        (":", "Enter a run override after : · See :? for help"),
-        (":missing value", "Unknown run override :missing · See :? for help"),
+        ("/", "Enter a directive name immediately after / · See /help for help"),
         (
-            ":model effort=high",
-            "Include primary or named input, or select a runnable · See :? for help",
+            "/missing value",
+            "named input must use name=value syntax · See /help for help",
+        ),
+        (":", "Enter a command after : · See :? for help"),
+        (":missing value", "Unknown command :missing · See :? for help"),
+        (
+            "/model effort=high",
+            "Include primary or named input after run overrides · See /help for help",
         ),
     ],
 )
@@ -5411,10 +5418,10 @@ def test_chat_tui_rejected_command_shaped_input_stays_editable_in_status(
 @pytest.mark.parametrize(
     ("source", "expected"),
     [
-        ("/model", "/model [MODEL] [PARAM=VALUE...]"),
-        ("/help\nInput", "Error: quick command cannot be combined with other input"),
+        (":model", ":model [MODEL] [PARAM=VALUE...]"),
+        ("/help\nInput", "Error: command cannot be combined with other input"),
         ("/?", "Session"),
-        (":?", "Overrides apply to this run only; session defaults stay unchanged."),
+        (":?", "Session settings (colon commands)"),
         ("/keys", "Input focused:"),
     ],
 )
@@ -5448,7 +5455,7 @@ def test_chat_tui_recognized_help_usage_and_errors_enter_scrollback(
     assert app.thread_id is None
 
 
-@pytest.mark.parametrize("source", (":model effort=high\nhello", "hello"))
+@pytest.mark.parametrize("source", ("/model effort=high\nhello", "hello"))
 def test_chat_tui_request_build_failure_retains_input_and_active_run(
     source: str,
 ) -> None:
@@ -5485,7 +5492,7 @@ def test_chat_tui_request_build_failure_retains_input_and_active_run(
     assert app.run_in_flight.is_set()
 
 
-def test_chat_tui_rejects_known_unsupported_colon_effort_in_status() -> None:
+def test_chat_tui_rejects_known_unsupported_run_effort_in_status() -> None:
     class UnsupportedEffortClient(FakeClient):
         def build_request(
             self,
@@ -5506,7 +5513,7 @@ def test_chat_tui_rejects_known_unsupported_colon_effort_in_status() -> None:
                 policy=RunPolicy(),
             )
 
-    source = ":model effort=medium\nhello"
+    source = "/model effort=medium\nhello"
     app = tui.ChatTuiApp(
         thread_id="term_remote",
         setting=FakeClient().initial_setting(),
@@ -5855,13 +5862,13 @@ def test_chat_tui_commits_slash_outcome_in_scrollback_transaction(
 
     def write_scrollback(renderables: Sequence[RenderableType | None]) -> None:
         assert len(renderables) == 1
-        assert "/model [MODEL] [PARAM=VALUE...]" in _render_text(renderables[0])
+        assert ":model [MODEL] [PARAM=VALUE...]" in _render_text(renderables[0])
         order.append("write")
 
     monkeypatch.setattr(app, "_write_scrollback", write_scrollback)
     monkeypatch.setattr(app.app, "invalidate", lambda: order.append("invalidate"))
 
-    app.handle_submit("/model")
+    app.handle_submit(":model")
 
     assert order == []
     assert len(app._pending_scrollback) == 1
@@ -6791,7 +6798,7 @@ def test_chat_queued_root_context_survives_new_defaults_and_run_transition(
 
     def call(name: str, effort: Literal["auto", "low", "high"]) -> QueuedCall:
         return QueuedCall(
-            f":agic {name} :model openai/gpt-5 effort={effort} hello",
+            f"/model openai/gpt-5 effort={effort}\n/agic:{name} -- hello",
             RunRequest(
                 thread_id="term_1",
                 request_id=name,
@@ -7318,7 +7325,7 @@ def test_chat_run_status_yields_space_to_input_on_short_terminals(
 @pytest.mark.parametrize("width", (30, 60))
 def test_slash_wrapped_prose_retains_its_inset(width: int) -> None:
     summary = "Runnable set to flow:" + "very_long_name_" * 8
-    block = blocks.SlashBlock("/flow review", (summary,), "success")
+    block = blocks.SlashBlock(":flow review", (summary,), "success")
     lines = _render_text(block.render(), width=width).splitlines()
     start = next(i for i, line in enumerate(lines) if "Runnable" in line)
     assert all(line.startswith("  ") for line in lines[start:] if line.strip())

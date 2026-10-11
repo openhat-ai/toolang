@@ -4,9 +4,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import re
-from typing import TypeAlias, TypeGuard
+from typing import Literal, TypeAlias, TypeGuard
 
-from toolang.execution.policy import parse_policy_prefix
+from toolang.execution.policy import (
+    COLON_COMMAND_NAMES,
+    SLASH_COMMAND_NAMES,
+    parse_policy_prefix,
+)
 from toolang.execution.types import RunOverride
 from toolang.lang.input import CallInput, parse_input
 
@@ -17,16 +21,10 @@ class QuickCommand:
 
     name: str
     tail: str | None = None
+    prefix: Literal["/", ":"] = "/"
 
 
-@dataclass(frozen=True, slots=True)
-class RunOverrideHelp:
-    """The special `:?` terminal-chat help interaction."""
-
-
-ChatInput: TypeAlias = (
-    QuickCommand | RunOverrideHelp | tuple[RunOverride, CallInput[str]]
-)
+ChatInput: TypeAlias = QuickCommand | tuple[RunOverride, CallInput[str]]
 
 _LEADING_BLANK_LINES_RE = re.compile(r"\A(?:[ \t]*(?:\r\n|\n))+")
 _TRAILING_BLANK_LINES_RE = re.compile(r"(?:(?:\r\n|\n)[ \t]*)+\Z")
@@ -46,27 +44,19 @@ def parse_chat_input(chat_input: str) -> ChatInput:
     body = normalize_chat_input(chat_input)
     if not body:
         raise ValueError("chat input is empty")
-    if body == ":?":
-        return RunOverrideHelp()
-
     first, separator, rest = body.partition("\n")
     first = first.removesuffix("\r")
-    quick = _parse_slash(first)
-    if quick is not None:
+    if is_command_input(first):
         if separator and rest.strip(" \t\r\n"):
-            raise ValueError("quick command cannot be combined with other input")
-        return quick
+            raise ValueError("command cannot be combined with other input")
+        name, tail = _command_parts(first)
+        if first.startswith(":") and name not in COLON_COMMAND_NAMES:
+            raise ValueError(f"unknown colon command: :{name}")
+        return QuickCommand(name, tail, ":" if first.startswith(":") else "/")
 
     override, call_input = parse_policy_prefix(body)
-    primary_source = call_input.get("_") or ""
-    if primary_source.startswith("/") and not primary_source.startswith("//"):
-        combined = _parse_slash(primary_source.splitlines()[0])
-        if combined is not None:
-            raise ValueError("slash command cannot be combined with other input")
     runnable_input = parse_input(call_input)
     if not runnable_input and override.runnable is None:
-        if not override.empty:
-            raise ValueError("colon override requires runnable input")
         raise ValueError("chat input is empty")
     return override, runnable_input
 
@@ -84,43 +74,35 @@ def is_runnable_input(
     )
 
 
-def is_slash_input(value: str) -> bool:
-    """Return whether normalized input is intended as a slash command."""
+def is_command_input(value: str) -> bool:
+    """Recognize standalone command intent without treating run directives as commands."""
 
-    return value.startswith("/") and not value.startswith("//")
+    if value.startswith(":") and not value.startswith("::"):
+        return True
+    if not value.startswith("/") or value.startswith("//"):
+        return False
+    return _command_parts(value.splitlines()[0])[0] in SLASH_COMMAND_NAMES
 
 
-def slash_command_name(value: str) -> str | None:
-    """Return the structural slash name from one normalized input."""
+def command_name(value: str) -> str | None:
+    """Return the structural name of a standalone slash or colon command."""
 
-    if not is_slash_input(value):
+    if not is_command_input(value):
         return None
-    first = value.splitlines()[0]
-    name, _tail = _command_parts(first)
-    return name
-
-
-def _parse_slash(line: str) -> QuickCommand | None:
-    if not line.startswith("/") or line.startswith("//"):
-        return None
-    name, tail = _command_parts(line)
-    return QuickCommand(name=name, tail=tail)
+    return _command_parts(value.splitlines()[0])[0]
 
 
 def _command_parts(line: str) -> tuple[str, str | None]:
-    head, separator, raw_tail = line.partition(" ")
-    if not separator:
-        head, _separator, raw_tail = line.partition("\t")
-    return head.removeprefix("/"), raw_tail.strip(" \t") or None
+    head, *tail = line.split(maxsplit=1)
+    return head[1:], tail[0].strip(" \t") or None if tail else None
 
 
 __all__ = [
     "ChatInput",
     "QuickCommand",
-    "RunOverrideHelp",
+    "command_name",
+    "is_command_input",
     "is_runnable_input",
-    "is_slash_input",
     "normalize_chat_input",
     "parse_chat_input",
-    "slash_command_name",
 ]

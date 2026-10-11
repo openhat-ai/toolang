@@ -1,4 +1,4 @@
-"""Slash commands for terminal chat."""
+"""Standalone slash and colon commands for terminal chat."""
 
 from __future__ import annotations
 
@@ -20,7 +20,12 @@ from toolang.cli.common.model_selection import materialize_model_selection
 from toolang.cli.common.model_formatting import model_reasoning_value
 from toolang.base.types.model import ModelRequest
 from toolang.common.errors import ToolangError
-from toolang.execution.policy import parse_setting_override
+from toolang.execution.policy import (
+    COLON_COMMAND_NAMES,
+    RUN_OVERRIDE_NAMES,
+    SLASH_COMMAND_NAMES,
+    parse_setting_override,
+)
 from toolang.execution.types import RunOverride, SessionSetting
 
 from .base import AppContext, ChatClient, ChatResult, as_text, friendly_error
@@ -97,7 +102,7 @@ SlashContent: TypeAlias = SlashText | SlashTable | SlashHelp | SlashRunResult
 
 @dataclass(frozen=True, slots=True)
 class SlashOutcome:
-    """Semantic result of one submitted slash command."""
+    """Semantic result of one submitted standalone command."""
 
     kind: SlashOutcomeKind
     content: SlashContent
@@ -119,18 +124,24 @@ class SlashCommand:
         return (self.name, *self.aliases)
 
     @property
+    def prefix(self) -> str:
+        return ":" if self.name in COLON_COMMAND_NAMES else "/"
+
+    @property
     def display_usage(self) -> str:
-        return f"/{self.name}{f' {self.arguments}' if self.arguments else ''}"
+        return (
+            f"{self.prefix}{self.name}{f' {self.arguments}' if self.arguments else ''}"
+        )
 
 
 def handle(app: AppContext, quick: QuickCommand) -> SlashOutcome | None:
-    """Dispatch one registered, structurally parsed slash command."""
+    """Dispatch one registered, structurally parsed command."""
 
     command = quick.name
     argument = quick.tail or ""
-    slash = _SLASH_BY_NAME.get(command)
+    slash = _COMMAND_BY_KEY.get((quick.prefix, command))
     if slash is None:
-        raise KeyError(f"unregistered slash command: {command}")
+        raise KeyError(f"unregistered command: {quick.prefix}{command}")
     if slash.argument == "required" and not argument:
         return (
             SlashOutcome("usage", slash.focused_help)
@@ -138,7 +149,7 @@ def handle(app: AppContext, quick: QuickCommand) -> SlashOutcome | None:
             else _usage(slash)
         )
     if slash.argument == "none" and argument:
-        return error_outcome(f"/{command} does not accept an argument")
+        return error_outcome(f"{quick.prefix}{command} does not accept an argument")
 
     try:
         return slash.run(app, command, argument)
@@ -148,18 +159,19 @@ def handle(app: AppContext, quick: QuickCommand) -> SlashOutcome | None:
         return error_outcome(exc.message)
 
 
-def is_registered(command: str) -> bool:
-    """Return whether one structural slash name belongs to the registry."""
+def is_registered(command: str, *, prefix: str = "/") -> bool:
+    """Return whether one command name belongs to the selected namespace."""
 
-    return command in _SLASH_BY_NAME
+    return (prefix, command) in _COMMAND_BY_KEY
 
 
-def unrecognized_diagnostic(command: str) -> str:
-    """Return actionable status text for an undispatchable slash input."""
+def unrecognized_diagnostic(command: str, *, prefix: str = "/") -> str:
+    """Return actionable status text for an undispatchable command."""
 
+    help_command = ":?" if prefix == ":" else "/help"
     if not command:
-        return "Enter a command after / · See /? for help"
-    return f"Unknown command /{command} · See /? for help"
+        return f"Enter a command after {prefix} · See {help_command} for help"
+    return f"Unknown command {prefix}{command} · See {help_command} for help"
 
 
 def error_outcome(message: str) -> SlashOutcome:
@@ -218,85 +230,106 @@ def _help(_app: AppContext, _command: str, _argument: str) -> SlashOutcome:
             title,
             tuple(
                 SlashHelpRow(
-                    f"/{slash.name}",
+                    f"{slash.prefix}{slash.name}",
                     slash.arguments,
                     slash.description,
-                    tuple(f"/{alias}" for alias in slash.aliases),
+                    tuple(f"{slash.prefix}{alias}" for alias in slash.aliases),
                 )
                 for slash in SLASHES
                 if slash.category == category
             ),
         )
         for category, title in (
-            ("session", "Session"),
-            ("inspection", "Inspection"),
-            ("other", "Other"),
+            ("session", "Session settings (colon commands)"),
+            ("inspection", "Inspection (slash commands)"),
+            ("other", "Other slash commands"),
         )
     )
+    directives = run_override_help().content
+    assert isinstance(directives, SlashHelp)
     return SlashOutcome(
         "result",
         SlashHelp(
-            sections,
+            (*sections, *directives.sections),
             "-a lists all available resources.\n"
             "/output without RUN shows the latest successful output in this thread.\n"
-            ":? shows one-run overrides.",
+            ":? shows session settings.\n\n" + directives.footer,
+            intro=directives.intro,
+        ),
+    )
+
+
+def _session_help(app: AppContext, command: str, argument: str) -> SlashOutcome:
+    content = _help(app, command, argument).content
+    assert isinstance(content, SlashHelp)
+    return SlashOutcome(
+        "result",
+        SlashHelp(
+            content.sections[:1],
+            "Session settings apply to later runs. /help shows commands and run directives.",
         ),
     )
 
 
 def run_override_help() -> SlashOutcome:
-    """Return concise syntax and composition guidance for one-run overrides."""
+    """Describe run directives and their input boundaries for the main help."""
 
     rows = (
-        SlashHelpRow(":model", "[MODEL] [PARAM=VALUE...]", "Set model or parameters"),
         SlashHelpRow(
-            ":runnable",
-            "RUNNABLE [NAME=VALUE...]",
-            "Set runnable (shortcuts: :agic, :flow)",
+            "/model", "[MODEL] [PARAM=VALUE...]", "Override model or parameters"
         ),
-        SlashHelpRow(":workdir", "PATH", "Set workdir (session: /cd)"),
-        SlashHelpRow(":allow", "FIELD=QUERY...", "Narrow allowed resources"),
-        SlashHelpRow(":limit", "FIELD=VALUE...", "Set run limits"),
+        SlashHelpRow("/allow", "FIELD=QUERY...", "Narrow allowed resources"),
+        SlashHelpRow("/limit", "FIELD=VALUE...", "Override run limits"),
+        SlashHelpRow("/workdir", "PATH", "Override workdir for this run"),
+        SlashHelpRow("/RUNNABLE", "[NAME=VALUE...]", "Call a root runnable"),
+        SlashHelpRow("/agic:NAME", "[NAME=VALUE...]", "Call a kind-qualified agic"),
+        SlashHelpRow("/flow:NAME", "[NAME=VALUE...]", "Call a kind-qualified flow"),
+        SlashHelpRow(
+            "$PROMPT", "[NAME=VALUE...]", "Expand a prompt (dollar directive)"
+        ),
+        SlashHelpRow("@RESOURCE", "", "Include a resource (at directive)"),
     )
     return SlashOutcome(
         "result",
         SlashHelp(
-            (SlashHelpSection("Overrides", rows),),
+            (SlashHelpSection("Run directives", rows),),
             "\n".join(
                 (
-                    "Model",
+                    "Slash directives",
+                    "  Put /model, /allow, /limit, and /workdir before input or a root call.",
+                    "  An override prefix requires primary or named input.",
+                    "  Direct /NAME calls may omit input when the signature permits it.",
+                    "  Built-in names win; use /agic:NAME or /flow:NAME for collisions.",
+                    "  /runnable NAME, /agic NAME, and /flow NAME are not selector forms.",
+                    "",
+                    "Input",
+                    "  Named arguments precede input; quotes protect spaces in values.",
+                    "  -- TEXT captures nonempty line input; a root call permits no later content.",
+                    "  - ends the header and captures the remaining stream, including empty input.",
+                    "  A root header followed by a body also captures the remaining stream.",
+                    "  --- fenced input is only for $PROMPT calls; close it with an exact --- line.",
+                    "  Following content is outside the prompt, within the same root input.",
+                    "",
+                    "Model and policy",
                     "  effort=LEVEL|TOKENS|auto; max_output=POSITIVE_INT|auto",
-                    "  Specify a model or parameters; combine them on one line.",
-                    "  auto clears a parameter override; default restores the surface model.",
+                    "  auto clears a parameter; default restores the surface model.",
                     "  unset removes the model binding for this run.",
                     "  Selecting a model clears unspecified parameter overrides.",
-                    "  max_output caps one model call; :limit tokens caps the run.",
-                    "",
-                    "Runnable",
-                    "  :agic NAME = :runnable agic:NAME",
-                    "  :flow NAME = :runnable flow:NAME",
-                    "  :runnable default follows the agent default.",
-                    "  No input: :flow research (the runnable must accept empty input).",
-                    "  Named input: :agic review focus=security",
-                    "  Input: following lines, -- TEXT, - stream, or --- fenced block.",
-                    "  Close a fenced block with a standalone --- line.",
-                    "",
-                    "Fields",
+                    "  max_output caps one model call; /limit tokens caps the run.",
                     "  allow: models, tools, psyches, skills, services, prompts",
                     "  limit: agic_model_calls, agic_tool_calls, tokens, cost, time",
                     "  allow accepts queries, all, or none; limit accepts none to disable.",
                     "  time is in seconds.",
                     "",
                     "Example",
-                    "  :model effort=high max_output=8192",
-                    "  :limit tokens=12000",
-                    "",
-                    "  Review this change.",
+                    "  /model effort=high max_output=8192",
+                    "  /limit tokens=12000",
+                    "  /review focus=security -- Review this change.",
                 )
             ),
             intro=(
-                "Overrides apply to this run only; session defaults stay unchanged.",
-                "Put overrides first; include primary or named input, or explicitly select a runnable.",
+                "Commands occupy a whole submission; run directives describe one run.",
+                "Colon commands set session defaults; slash overrides apply only to this run.",
             ),
         ),
     )
@@ -332,7 +365,7 @@ def _model(app: AppContext, _command: str, argument: str) -> SlashOutcome:
     default_model_ref: str | None = None
     if model.identity == "unset":
         raise ValueError(
-            "/model unset is not a session setting; use :model unset for one run"
+            ":model unset is not a session setting; use /model unset for one run"
         )
     if model.identity == "default":
         payload = client.list_models(app.get_setting().allow.models)
@@ -397,14 +430,14 @@ def _cd(app: AppContext, command: str, argument: str) -> SlashOutcome:
         current = setting.workdir or "thread/default"
         return _success(f"Workdir: {current}")
     if len(values) != 1:
-        raise ValueError("/cd requires one path")
+        raise ValueError(":workdir requires one path")
     path = values[0]
     if path in {"default", "unset"}:
         updated = replace(setting, workdir=None, workdir_base=None)
         _commit_setting(app, updated)
         return _success("Workdir reset to thread/default")
     if not path or path.startswith(":"):
-        raise ValueError("/cd requires one valid path")
+        raise ValueError(":workdir requires one valid path")
     if "://" in path or path.startswith("/"):
         workdir, base = path, None
     else:
@@ -599,9 +632,14 @@ def _runnables(app: AppContext, command: str, _argument: str) -> SlashOutcome:
         return _result(summary)
     current = app.get_setting().runnable
     rows = tuple(
-        (f"{name}{' *' if current == f'{kind}:{name}' else ''}",)
+        (f"{label}{' *' if current == f'{kind}:{name}' else ''}",)
         for item in items
         for name in (as_text(item.get("name")) or "-",)
+        for label in (
+            f"/{kind}:{name}"
+            if name in SLASH_COMMAND_NAMES | RUN_OVERRIDE_NAMES
+            else name,
+        )
     )
     return SlashOutcome(
         "result",
@@ -627,7 +665,7 @@ def _output(app: AppContext, _command: str, argument: str) -> SlashOutcome:
 
 
 _MODEL_HELP = SlashText(
-    "/model [MODEL] [PARAM=VALUE...]",
+    ":model [MODEL] [PARAM=VALUE...]",
     (
         "Set the session model or its parameters.",
         "",
@@ -640,28 +678,28 @@ _MODEL_HELP = SlashText(
         "Selecting a model clears unspecified parameter overrides.",
         "",
         "Examples:",
-        "  /model openai/gpt-5 effort=high",
-        "  /model max_output=8192",
+        "  :model openai/gpt-5 effort=high",
+        "  :model max_output=8192",
     ),
 )
 _RUNNABLE_HELP = SlashText(
-    "/runnable RUNNABLE",
+    ":runnable RUNNABLE",
     (
         "Set the session runnable.",
         "",
         "Shortcuts:",
-        "  /agic NAME = /runnable agic:NAME",
-        "  /flow NAME = /runnable flow:NAME",
+        "  :agic NAME = :runnable agic:NAME",
+        "  :flow NAME = :runnable flow:NAME",
         "",
-        "default follows the agent default (only /runnable).",
+        "default follows the agent default (only :runnable).",
         "",
         "Examples:",
-        "  /flow review",
-        "  /runnable default",
+        "  :flow review",
+        "  :runnable default",
     ),
 )
 _ALLOW_HELP = SlashText(
-    "/allow FIELD=QUERY...",
+    ":allow FIELD=QUERY...",
     (
         "Set session resource ceilings.",
         "",
@@ -672,12 +710,12 @@ _ALLOW_HELP = SlashText(
         "  QUERY, all, none",
         "",
         "Examples:",
-        "  /allow models=openai/*",
-        "  /allow tools=shell/* skills=review*",
+        "  :allow models=openai/*",
+        "  :allow tools=shell/* skills=review*",
     ),
 )
 _LIMIT_HELP = SlashText(
-    "/limit FIELD=VALUE...",
+    ":limit FIELD=VALUE...",
     (
         "Set session run limits.",
         "",
@@ -687,13 +725,14 @@ _LIMIT_HELP = SlashText(
         "time is in seconds; none disables a limit.",
         "",
         "Examples:",
-        "  /limit tokens=20000",
-        "  /limit time=120 cost=1.50",
+        "  :limit tokens=20000",
+        "  :limit time=120 cost=1.50",
     ),
 )
 
 
 SLASHES: tuple[SlashCommand, ...] = (
+    SlashCommand("?", "", "Show session settings", _session_help, argument="none"),
     SlashCommand(
         "model",
         "[MODEL] [PARAM=VALUE...]",
@@ -706,7 +745,7 @@ SLASHES: tuple[SlashCommand, ...] = (
     SlashCommand(
         "runnable",
         "RUNNABLE",
-        "Set runnable (shortcuts: /agic, /flow)",
+        "Set runnable (shortcuts: :agic, :flow)",
         _runnable,
         category="session",
         argument="required",
@@ -717,6 +756,7 @@ SLASHES: tuple[SlashCommand, ...] = (
         "AGIC",
         "Switch the session agic",
         _runnable,
+        category="session",
         argument="required",
         focused_help=_RUNNABLE_HELP,
     ),
@@ -725,6 +765,7 @@ SLASHES: tuple[SlashCommand, ...] = (
         "FLOW",
         "Switch the session flow",
         _runnable,
+        category="session",
         argument="required",
         focused_help=_RUNNABLE_HELP,
     ),
@@ -738,7 +779,7 @@ SLASHES: tuple[SlashCommand, ...] = (
         focused_help=_ALLOW_HELP,
     ),
     SlashCommand(
-        "cd",
+        "workdir",
         "[PATH]",
         "Show or set workdir",
         _cd,
@@ -825,7 +866,9 @@ SLASHES: tuple[SlashCommand, ...] = (
         argument="none",
     ),
 )
-_SLASH_BY_NAME = {name: slash for slash in SLASHES for name in slash.names}
+_COMMAND_BY_KEY = {
+    (slash.prefix, name): slash for slash in SLASHES for name in slash.names
+}
 
 
 def _resource_arguments(argument: str) -> tuple[bool, str | None]:

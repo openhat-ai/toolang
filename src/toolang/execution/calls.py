@@ -65,10 +65,7 @@ def parse_call(source: str) -> tuple[RunOverride, CallInput[str]]:
 
     body = _strip_final_line_break(source)
     override, call_input = parse_policy_prefix(body)
-    input = parse_input(call_input)
-    if not override.empty and override.runnable is None and not input:
-        raise ValueError("colon override requires runnable input")
-    return override, input
+    return override, parse_input(call_input)
 
 
 def _is_alias_ref(value: str, resolved: object) -> bool:
@@ -296,7 +293,7 @@ def resolve_spec(
         authored_commands=commands_from_run_override(override),
         authored_session_commands=(
             *session_commands,
-            *commands_from_run_override(session_override),
+            *commands_from_run_override(session_override, session=True),
         ),
     )
 

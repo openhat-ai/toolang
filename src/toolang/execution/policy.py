@@ -55,8 +55,29 @@ SETTING_OVERRIDE_FORMS: Mapping[str, tuple[str, tuple[str, ...]]] = MappingProxy
 )
 
 
+# Shared input vocabulary; Chat owns handlers, while run surfaces reject commands.
+SLASH_COMMAND_NAMES = frozenset(
+    {
+        "help",
+        "?",
+        "keys",
+        "models",
+        "tools",
+        "caps",
+        "agics",
+        "flows",
+        "output",
+        "show",
+        "exit",
+        "quit",
+    }
+)
+RUN_OVERRIDE_NAMES = frozenset({"model", "allow", "limit", "workdir"})
+COLON_COMMAND_NAMES = frozenset((*SETTING_OVERRIDE_FORMS, "?"))
+
+
 def parse_run_override(line: str) -> tuple[RunOverride, CallInput[str]]:
-    """Parse one leading colon override."""
+    """Parse one slash run directive without capturing primary input."""
 
     try:
         parsed = _try_parse_override(line)
@@ -71,10 +92,10 @@ def parse_run_override(line: str) -> tuple[RunOverride, CallInput[str]]:
 
 
 def parse_setting_override(command: str, body: str) -> RunOverride:
-    """Parse one slash setting body using the shared override grammar."""
+    """Parse one colon setting body using the shared override grammar."""
 
     if command not in SETTING_OVERRIDE_FORMS:
-        raise ValueError(f"unknown setting command: /{command}")
+        raise ValueError(f"unknown setting command: :{command}")
     try:
         tokens = shlex.split(body, comments=False, posix=True)
     except ValueError as error:
@@ -84,72 +105,75 @@ def parse_setting_override(command: str, body: str) -> RunOverride:
     if command in {"runnable", "agic", "flow"}:
         override, named = _runnable_override(command, tokens)
         if named:
-            raise ValueError(f"/{command} does not accept named runnable input")
+            raise ValueError(f":{command} does not accept named runnable input")
         return override
     if command == "workdir":
         if len(tokens) != 1:
             raise ValueError("workdir requires exactly one path")
         return RunOverride(workdir=tokens[0])
     if command == "allow":
-        return _allow_override(tokens)
-    return _limit_override(tokens)
+        return _allow_override(tokens, command=":allow")
+    return _limit_override(tokens, command=":limit")
 
 
 def parse_policy_prefix(
     source: str,
 ) -> tuple[RunOverride, CallInput[str]]:
-    """Parse one complete leading override section and its remaining source."""
+    """Parse leading run overrides, one optional root call, and its input."""
 
     lines = _lines(source)
     overrides: list[RunOverride] = []
     named: dict[str, str] = {}
     index = 0
+    has_prefix = False
     while index < len(lines):
         line = lines[index]
         if _is_blank(line.text):
             if not overrides:
+                input = CallInput({"_": source[line.start :]})
                 break
             index += 1
             continue
+        if line.text.startswith(":") and not line.text.startswith("::"):
+            raise ValueError("colon commands cannot be used in a run submission")
         try:
             parsed = _try_parse_override(line.text)
         except ToolangError as error:
             raise ValueError(str(error)) from error
         if parsed is None:
+            input = CallInput({"_": source[line.start :]})
             break
-        override, override_named, call_header = parsed
+        override, call_named, header = parsed
         overrides.append(override)
-        for name, value in override_named.items():
-            if name in named:
-                raise ValueError(f"duplicate named input: {name}")
-            named[name] = value
         index += 1
-        if call_header is not None and call_header.form is not None:
-            following = source[lines[index].start :] if index < len(lines) else ""
+        if header is None:
+            has_prefix = True
+            continue
+        named.update(call_named)
+        following = source[lines[index].start :] if index < len(lines) else ""
+        if header.form is None:
+            while index < len(lines) and _is_blank(lines[index].text):
+                index += 1
+            primary = source[lines[index].start :] if index < len(lines) else None
+        else:
             try:
                 primary, trailing = capture_call_input(
-                    call_header,
-                    following,
-                    label="runnable call",
-                    root=True,
+                    header, following, label="runnable call", root=True
                 )
             except ToolangError as error:
                 raise ValueError(str(error)) from error
-            if call_header.form == "line" and trailing.strip():
+            if trailing.strip():
                 raise ValueError(
-                    "Root line input for runnable call cannot be followed by "
-                    "other content."
+                    "Root line input for runnable call cannot be followed by other content."
                 )
-            return (
-                merge_run_overrides(overrides),
-                CallInput({"_": primary, **named} if primary is not None else named),
-            )
+        input = CallInput({"_": primary, **named} if primary is not None else named)
+        break
+    else:
+        input = CallInput(named)
 
-    remaining = source[lines[index].start :] if index < len(lines) else ""
-    return (
-        merge_run_overrides(overrides),
-        CallInput({"_": remaining, **named} if remaining else named),
-    )
+    if has_prefix and not input:
+        raise ValueError("run override prefix requires primary or named input")
+    return merge_run_overrides(overrides), input
 
 
 def merge_run_overrides(overrides: Sequence[RunOverride]) -> RunOverride:
@@ -216,7 +240,9 @@ def merge_commands(
     return tuple(merged)
 
 
-def commands_from_run_override(override: RunOverride) -> tuple[RunCommand, ...]:
+def commands_from_run_override(
+    override: RunOverride, *, session: bool = False
+) -> tuple[RunCommand, ...]:
     """Lower policy-compatible authored fields for durable execution provenance."""
 
     commands: list[RunCommand] = []
@@ -235,7 +261,9 @@ def commands_from_run_override(override: RunOverride) -> tuple[RunCommand, ...]:
             RunCommand(
                 "default",
                 "runnable",
-                None if override.runnable == "default" else override.runnable,
+                None
+                if session and override.runnable == "default"
+                else override.runnable,
             )
         )
     commands.extend(
@@ -252,7 +280,7 @@ def apply_session_setting(
     current: SessionSetting,
     update: RunOverride,
 ) -> SessionSetting:
-    """Apply one validated slash setting body atomically to a session."""
+    """Apply one validated colon setting body atomically to a session."""
 
     model = apply_model_override(current.model, surface.model, update.model)
     runnable = current.runnable
@@ -284,8 +312,8 @@ def materialize_run_setting(
     runnable_follows_default = session.runnable_follows_default
     runnable = surface.runnable if runnable_follows_default else session.runnable
     if override.runnable is not None:
-        runnable_follows_default = override.runnable == "default"
-        runnable = surface.runnable if runnable_follows_default else override.runnable
+        runnable_follows_default = False
+        runnable = override.runnable
     limits = _apply_limit_overrides(session.limits, override.limits)
     run_ceiling = _allow_ceiling(override.allow)
     ceilings = tuple(
@@ -368,39 +396,34 @@ def materialize_policy(
 def _try_parse_override(
     line: str,
 ) -> tuple[RunOverride, CallInput[str], CallInputHeader | None] | None:
-    if not line.startswith(":") or line.startswith("::"):
+    if not line.startswith("/") or line.startswith("//"):
         return None
-    try:
-        tokens = shlex.split(line, comments=False, posix=True)
-    except ValueError as error:
-        raise ValueError(str(error)) from error
-    if not tokens:
-        return None
-    name = tokens[0][1:]
-    body = tokens[1:]
-    if name not in SETTING_OVERRIDE_FORMS:
-        return None
-    if name == "model":
-        raw_body = line[len(tokens[0]) :].lstrip(" \t")
-        return RunOverride(model=parse_model_body(raw_body)), CallInput(), None
-    if name == "workdir":
-        if len(body) != 1 or not body[0]:
-            raise ValueError(":workdir requires exactly one path")
-        return RunOverride(workdir=body[0]), CallInput(), None
-    if name in {"runnable", "agic", "flow"}:
-        raw_body = line[len(tokens[0]) :].lstrip(" \t")
-        header = parse_call_input_header(raw_body, label=f":{name} runnable call")
-        try:
-            runnable_tokens = shlex.split(header.arguments, comments=False, posix=True)
-        except ValueError as error:
-            raise ValueError(str(error)) from error
-        override, named = _runnable_override(name, runnable_tokens)
-        return override, named, header
-    if name == "allow":
-        return _allow_override(body), CallInput(), None
-    if name == "limit":
-        return _limit_override(body), CallInput(), None
-    raise AssertionError(f"unhandled setting override: {name}")
+    head, *parts = line.split(maxsplit=1)
+    name = head[1:]
+    body = parts[0] if parts else ""
+    if not name:
+        raise ValueError("a slash directive requires a name immediately after /")
+    if name in SLASH_COMMAND_NAMES:
+        raise ValueError(f"/{name} is a standalone Chat command")
+    if name in RUN_OVERRIDE_NAMES:
+        if name == "model":
+            override = RunOverride(model=parse_model_body(body))
+        else:
+            tokens = shlex.split(body, comments=False, posix=True)
+            if name == "workdir":
+                if len(tokens) != 1 or not tokens[0]:
+                    raise ValueError("/workdir requires exactly one path")
+                override = RunOverride(workdir=tokens[0])
+            elif name == "allow":
+                override = _allow_override(tokens)
+            else:
+                override = _limit_override(tokens)
+        return override, CallInput(), None
+
+    parse_runnable_ref_parts(name)
+    header = parse_call_input_header(body, label=f"/{name} runnable call")
+    tokens = shlex.split(header.arguments, comments=False, posix=True)
+    return RunOverride(runnable=name), _named_inputs(tokens), header
 
 
 def _runnable_override(
@@ -419,13 +442,13 @@ def _runnable_override(
     return RunOverride(runnable=runnable), _named_inputs(tokens[1:])
 
 
-def _allow_override(tokens: Sequence[str]) -> RunOverride:
+def _allow_override(tokens: Sequence[str], *, command: str = "/allow") -> RunOverride:
     if not tokens:
-        raise ValueError(":allow requires at least one field=value assignment")
+        raise ValueError(f"{command} requires at least one field=value assignment")
     values: dict[str, tuple[str, ...] | None] = {}
     order: list[str] = []
     for token in tokens:
-        field, raw = _assignment(token, command=":allow")
+        field, raw = _assignment(token, command=command)
         if field not in ALLOW_FIELDS:
             raise ValueError(f"unknown allow field: {field}")
         parsed = _allow_value(field, (raw,))
@@ -441,13 +464,13 @@ def _allow_override(tokens: Sequence[str]) -> RunOverride:
     )
 
 
-def _limit_override(tokens: Sequence[str]) -> RunOverride:
+def _limit_override(tokens: Sequence[str], *, command: str = "/limit") -> RunOverride:
     if not tokens:
-        raise ValueError(":limit requires at least one field=value assignment")
+        raise ValueError(f"{command} requires at least one field=value assignment")
     values: list[LimitOverride] = []
     present: set[str] = set()
     for token in tokens:
-        field, raw = _assignment(token, command=":limit")
+        field, raw = _assignment(token, command=command)
         if field not in LIMIT_FIELDS:
             raise ValueError(f"unknown run limit: {field}")
         if field in present:

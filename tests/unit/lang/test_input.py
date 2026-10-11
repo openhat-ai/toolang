@@ -948,7 +948,7 @@ def test_duplicate_arguments_are_rejected_before_collecting_a_mapping() -> None:
     from toolang.execution.calls import parse_call
 
     with pytest.raises(ValueError, match="duplicate named input: focus"):
-        parse_call(":agic review focus=one focus=two -- text")
+        parse_call("/agic:review focus=one focus=two -- text")
 
 
 @pytest.mark.parametrize("value", ["", "hello", "false", "null", "123"])

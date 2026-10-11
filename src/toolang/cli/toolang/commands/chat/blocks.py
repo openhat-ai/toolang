@@ -722,7 +722,7 @@ class SlashBlock:
         yield from console.render(Group(*lines), options.update_width(width))
 
     def _summary_line(self, line: str) -> Text:
-        if line.lstrip().startswith(("/", ":")):
+        if line.lstrip().startswith(("/", ":", "$", "@")):
             return self._command_line(line)
         if self._is_heading(line):
             return self._heading_line(line)
@@ -740,7 +740,7 @@ class SlashBlock:
     def _body_line(line: str) -> Text:
         if not line.strip():
             return Text()
-        if line.lstrip().startswith(("/", ":")):
+        if line.lstrip().startswith(("/", ":", "$", "@")):
             return SlashBlock._command_line(line)
         if SlashBlock._is_heading(line):
             return SlashBlock._heading_line(line)
@@ -751,7 +751,7 @@ class SlashBlock:
         stripped = line.lstrip()
         leading = line[: len(line) - len(stripped)]
         aligned_argument = re.fullmatch(
-            r"(?P<command>[/:]\S+)(?P<gap>\s{2,})(?P<argument>[A-Z][A-Z0-9_.=-]*)",
+            r"(?P<command>[/:$@]\S+)(?P<gap>\s{2,})(?P<argument>[A-Z][A-Z0-9_.=-]*)",
             stripped,
         )
         if aligned_argument is not None:
@@ -784,6 +784,13 @@ class SlashBlock:
             "Inspection",
             "Other",
             "Overrides",
+            "Session settings (colon commands)",
+            "Inspection (slash commands)",
+            "Other slash commands",
+            "Run directives",
+            "Slash directives",
+            "Input",
+            "Model and policy",
             "Model",
             "Runnable",
             "Fields",
@@ -802,7 +809,7 @@ class SlashBlock:
         for index, token in enumerate(usage.split(" ")):
             if index:
                 text.append(" ")
-            is_command = token.startswith(("/", ":"))
+            is_command = token.startswith(("/", ":", "$", "@"))
             style = "cyan" if is_command else "dim"
             if is_command:
                 command, separator, rest = token.partition(",")
@@ -811,7 +818,9 @@ class SlashBlock:
                     text.append(separator, style="dim")
                     text.append(
                         rest,
-                        style=("cyan" if rest.startswith(("/", ":")) else "dim"),
+                        style=(
+                            "cyan" if rest.startswith(("/", ":", "$", "@")) else "dim"
+                        ),
                     )
             else:
                 text.append(token, style=style)

@@ -21,28 +21,24 @@ from toolang.lang.input import CallInput
 
 
 def setting_slash_usage(name: str) -> str:
-    """Return canonical slash usage for one shared setting body."""
+    """Return canonical colon usage for one shared setting body."""
 
     setting_body, _override_bodies = SETTING_OVERRIDE_FORMS[name]
-    return f"/{name} {setting_body}"
+    return f":{name} {setting_body}"
 
 
 def run_override_error(source: str, message: str) -> str:
-    """Add concise Chat guidance to one rejected colon override."""
+    """Add concise Chat guidance to one rejected run directive."""
 
     first = source.splitlines()[0].strip()
-    if first == ":":
-        return "Enter a run override after : · See :? for help"
-    head = first.split(maxsplit=1)[0] if first else ""
-    name = head.removeprefix(":")
-    if name and name not in SETTING_OVERRIDE_FORMS:
-        return f"Unknown run override :{name} · See :? for help"
-    if "colon override requires runnable input" in message.casefold():
-        return "Include primary or named input, or select a runnable · See :? for help"
+    if first == "/" or first.startswith(("/ ", "/\t")):
+        return "Enter a directive name immediately after / · See /help for help"
+    if "run override prefix requires" in message.casefold():
+        return "Include primary or named input after run overrides · See /help for help"
     if "duplicate model override" in message.casefold():
-        return "Duplicate model override; combine model and parameters on one line · See :? for help"
+        return "Duplicate model override; combine model and parameters on one line · See /help for help"
     detail = message.rstrip(" .")
-    return f"{detail} · See :? for help"
+    return f"{detail} · See /help for help"
 
 
 def validate_model_reasoning_request(
@@ -137,7 +133,7 @@ def update_session_setting(
     current: SessionSetting,
     update: RunOverride,
 ) -> SessionSetting:
-    """Apply one slash setting update without presentation state."""
+    """Apply one colon setting update without presentation state."""
 
     return apply_session_setting(surface, current, update)
 

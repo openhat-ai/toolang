@@ -620,7 +620,7 @@ def _materialize_script_runnable_override(
 ) -> RunOverride:
     """Resolve input-local runnable selections against the authored program."""
 
-    if override.runnable in {None, "default"}:
+    if override.runnable is None:
         return override
     from toolang.execution.runnables import resolve_runnable_reference
 
@@ -931,7 +931,7 @@ async def _execute_remote(
             ceilings, effective = materialize_run_setting(
                 surface_setting,
                 session_setting,
-                _remote_script_override(override, runnable=runnable),
+                override,
             )
             model = effective.model
             if model is not None and not is_concrete_model_ref(model.ref):
@@ -1005,20 +1005,6 @@ def _remote_script_input(
     if any(name != "_" for name in input) and raw_named:
         raise ValueError("named inputs cannot be supplied by both source and surface")
     return CallInput({**raw_named, **input})
-
-
-def _remote_script_override(
-    override: RunOverride,
-    *,
-    runnable: str,
-) -> RunOverride:
-    """Keep `:runnable default` anchored to the dynamic CLI runnable."""
-
-    return (
-        replace(override, runnable=runnable)
-        if override.runnable == "default"
-        else override
-    )
 
 
 async def _create_remote_script_thread(
