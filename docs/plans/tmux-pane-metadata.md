@@ -158,12 +158,28 @@ iTerm2 `-CC` uses the same application output contract.
 
 ## Implementation
 
+Keep each command's integration to one lifecycle entry and at most one update
+hook per publisher. A small CLI-owned lifecycle helper composes independent mark
+and OSC publishers, owning startup, deduplication, and exit cleanup. Commands
+pass resolved values/output; runtime services, executors, and schemas stay unaware.
+
+| Commands | Mark hooks | Title hooks |
+| --- | --- | --- |
+| Chat | Entry; thread ID becomes known | Entry; existing async title-result callback |
+| Talk | Entry | Entry; existing conversation-label change callback |
+| Top, Serve | Entry | Entry |
+| Run, Retry, Rerun | Entry; actual run ID becomes known | Entry |
+
+Identity updates never implicitly republish titles. Do not write either surface
+from token/progress/render loops, add polling, or scatter tmux/OSC calls through
+business logic. Reuse existing callbacks; cleanup stays in the shared lifecycle.
+
 - `cli/common/tmux.py`: pane-only writer and lifecycle; remove launcher,
   placement/reuse/naming helpers, session/window writers, child environment
   forwarding, and failed-pane retention. Delete their unused helpers/protocols
   and obsolete tests; add no compatibility branches for removed behavior.
-- New `cli/common/terminal_title.py`: shared filtering, clipping, emission,
-  deduplication, and cleanup. Command owners construct their labels.
+- New `cli/common/terminal_title.py` and `terminal_session.py`: title publisher
+  and thin lifecycle composition. Command owners construct their labels.
 - `cli/config.py`, `cli/common/{context,parameters}.py`: prefix parsing,
   source layering, and shared option; keep presentation out of execution schemas.
 - `cli/toolang/commands/chat/{main,marks,title,tui}.py` and
@@ -189,6 +205,8 @@ iTerm2 `-CC` uses the same application output contract.
 3. Every title row, Chat lookup state, Talk label change, and excluded command
    mode produces the expected bytes. An isolated tmux test verifies `pane_title`
    updates without changing explicit container names or user title settings.
+   Progress/render events trigger no writes; identity updates affect marks only,
+   and Chat title results update OSC without changing marks.
 4. Prefix precedence, partial tables, explicit empty values, whitespace, invalid
    config, and resident/visiting/roaming/root-only sources resolve consistently.
    Direct Script and `too run` options agree; one type never affects another.
