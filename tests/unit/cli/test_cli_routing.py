@@ -200,7 +200,6 @@ def test_thread_option_registration_keeps_chat_runtime_imports_lazy() -> None:
         ("providers", {"none", "before"}, {"resident", "roaming", "visiting"}),
         ("adapters", {"none"}, set()),
         ("sandboxes", {"none"}, set()),
-        ("channel", {"none"}, set()),
         ("catalogs", {"none"}, set()),
         ("toolsets", {"none"}, set()),
         ("more", {"none"}, set()),
@@ -320,7 +319,7 @@ def test_cli_no_args_still_shows_root_help(
 def test_cli_control_commands_have_consistent_order_and_descriptions() -> None:
     group = typer.main.get_command(cli.app)
     expected = {
-        "chat": "Open a chat",
+        "chat": "Chat directly with an agent",
         "steer": "Steer an active run",
         "cancel": "Cancel an active run",
         "retry": "Retry a run from a failed step",
@@ -348,15 +347,20 @@ def test_cli_visible_commands_follow_the_public_panel_order(arguments, capsys) -
             "list",
             "info",
             "home",
-            "serve",
-            "start",
-            "stop",
+            "workspace",
         ),
         "Cap Commands": ("psyche", "skill", "service", "prompt"),
-        "Work Commands": ("chat", "chore", "workspace"),
-        "Inspection Commands": ("caps", "tools", "models", "providers", "inspect"),
+        "Runtime Commands": ("serve", "start", "stop", "hub"),
+        "Work Commands": ("chat", "talk", "chore"),
+        "Inspection Commands": (
+            "caps",
+            "tools",
+            "models",
+            "providers",
+            "inspect",
+            "top",
+        ),
         "Script Commands": ("init", "run"),
-        "Teaming Commands": ("hub", "talk", "top"),
     }
 
     assert isinstance(group, TyperGroup)
@@ -398,10 +402,10 @@ def test_workspace_commands_follow_the_public_order() -> None:
     )
 
 
-def test_cli_exposes_plural_list_resources_and_hides_channels() -> None:
+def test_cli_exposes_plural_list_resources_and_removes_channels() -> None:
     group = typer.main.get_command(cli.app)
     expected_help = {
-        "inspect": "Inspect agent runs",
+        "inspect": "Inspect run history and details",
         "home": "Open a shell in agent home",
         "caps": "List available caps",
         "models": "List available models",
@@ -424,7 +428,8 @@ def test_cli_exposes_plural_list_resources_and_hides_channels() -> None:
         for name in ("catalogs", "adapters", "toolsets", "sandboxes")
         if group.commands[name].hidden
     } == {"catalogs", "adapters", "toolsets", "sandboxes"}
-    assert group.commands["channel"].hidden
+    assert "channel" not in group.commands
+    assert "channel" not in COMMAND_SPECS
 
 
 @pytest.mark.parametrize(
@@ -669,6 +674,7 @@ def test_cli_bare_resident_target_shows_its_command_help(
     panels = (
         "Agent Commands",
         "Cap Commands",
+        "Runtime Commands",
         "Work Commands",
         "Inspection Commands",
         "Run Commands",
@@ -680,6 +686,17 @@ def test_cli_bare_resident_target_shows_its_command_help(
     for control in ("steer", "cancel", "retry", "rerun", "fork", "rewind"):
         assert control in stdout
     assert "models" in stdout
+    assert "Teaming Commands" not in stdout
+    sections = {
+        panel: stdout.split(f"{panel}:\n", 1)[1].split("\n\n", 1)[0]
+        for panel in ("Agent Commands", "Runtime Commands", "Inspection Commands")
+    }
+    assert "workspace" in sections["Agent Commands"]
+    for command in ("serve", "start", "stop"):
+        assert command in sections["Runtime Commands"]
+    assert "top" in sections["Inspection Commands"]
+    assert "talk" not in stdout
+    assert "hub" not in stdout
     assert tuple(stdout.index(panel) for panel in panels) == tuple(
         sorted(stdout.index(panel) for panel in panels)
     )

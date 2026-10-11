@@ -188,7 +188,7 @@ def test_cli_enable_option_is_command_specific(tmp_path, capsys):
     capsys.readouterr()
     assert main(["--root", str(tmp_path), "alice", "chore", "--help"]) == 0
     output = capsys.readouterr().out
-    for command in ("list", "new", "clone", "edit", "delete", "run", "cancel"):
+    for command in ("list", "new", "edit", "delete", "run", "cancel"):
         assert command in output
     for command in ("archive", "draft", "ready", "reopen"):
         assert command not in output

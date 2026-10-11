@@ -42,16 +42,17 @@ Deleting a definition does not cancel an already running occurrence.
 ```sh
 too alice chore list
 too alice chore new cleanup
-too alice chore clone cleanup cleanup-copy
 too alice chore edit cleanup
 too alice chore run chore/cleanup
 too alice chore cancel cleanup
 too alice chore delete cleanup
 ```
 
-Selectors accept the name, ref, or ID. `new` and `clone` generate a name when
-omitted. Authoring commands edit home files; `list` also shows effective root and
-inline definitions. Edit inline definitions in their `.too` source.
+Selectors accept the name, ref, or ID. `new` generates a name when omitted.
+To copy a definition, use `new` or copy a home file under a different name;
+the new name creates independent progress and context. Authoring commands edit
+home files; `list` also shows effective root and inline definitions. Edit inline
+definitions in their `.too` source.
 `run` requests a manual occurrence, including retrying a failed or completed
 one-off. `cancel` cancels active or pending work without deleting the definition.
 Repeated chores keep their future schedule.

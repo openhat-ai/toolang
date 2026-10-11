@@ -138,7 +138,6 @@ COMMAND_SPECS: Mapping[str, CommandSpec] = {
         _command("catalogs", "none"),
         _command("adapters", "none"),
         _command("toolsets", "none"),
-        _command("channel", "none"),
         _command("sandboxes", "none"),
         _command("more", "none"),
         _command("fmt", "none"),

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from importlib.resources import files
+
 import pytest
 
 from toolang.catalog import templates
@@ -27,27 +29,24 @@ def test_load_default_template(
     template = templates.load_template(kind)
 
     assert template.kind == kind
-    assert template.name == "default"
     assert template.path.startswith(f"{kind}.default.")
     assert template.description == expected_description
 
 
-def test_list_templates_puts_default_first() -> None:
-    assert [template.name for template in templates.list_templates("service")] == [
-        "default",
-        "stdio",
-    ]
-
-
-def test_render_template_replaces_bindings() -> None:
-    rendered = templates.render_template("prompt", input="catalog input")
-
-    assert "Use `catalog input` for the caller input." in rendered
-
-
-def test_load_template_rejects_unknown_name() -> None:
-    with pytest.raises(FileNotFoundError, match="template not found: chore.unknown"):
-        templates.load_template("chore", "unknown")
+def test_bundled_templates_contain_only_one_default_per_kind() -> None:
+    assert {
+        item.name
+        for item in files("toolang.catalog.templates").iterdir()
+        if item.name.endswith((".md", ".too"))
+    } == {
+        "agent.default.too",
+        "script.default.too",
+        "chore.default.md",
+        "prompt.default.md",
+        "psyche.default.md",
+        "service.default.md",
+        "skill.default.md",
+    }
 
 
 def test_agent_template_declares_a_minimal_unnamed_entry() -> None:

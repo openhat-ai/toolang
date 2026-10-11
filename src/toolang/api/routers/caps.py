@@ -310,21 +310,17 @@ def cap_list(
 def cap_template_list(request: Request) -> list[dict[str, object]]:
     collection = str(request.url.path).split("/")[3]
     kind = _collection_kind(collection)
-    return [_template_summary(item) for item in templates.list_templates(kind)]
+    return [_template_summary(templates.load_template(kind))]
 
 
-@router.get("/prompts/templates/{template_name}", summary="Get Prompt Template")
-@router.get("/services/templates/{template_name}", summary="Get Service Template")
-@router.get("/skills/templates/{template_name}", summary="Get Skill Template")
-@router.get("/psyches/templates/{template_name}", summary="Get Psyche Template")
-def cap_template_detail(request: Request, template_name: str) -> dict[str, object]:
+@router.get("/prompts/templates/default", summary="Get Prompt Template")
+@router.get("/services/templates/default", summary="Get Service Template")
+@router.get("/skills/templates/default", summary="Get Skill Template")
+@router.get("/psyches/templates/default", summary="Get Psyche Template")
+def cap_template_detail(request: Request) -> dict[str, object]:
     collection = str(request.url.path).split("/")[3]
     kind = _collection_kind(collection)
-    try:
-        template = templates.load_template(kind, template_name)
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return _template_detail(template)
+    return _template_detail(templates.load_template(kind))
 
 
 @router.get("/prompts/{name}", summary="Get Prompt", response_model=CapDetail)
@@ -421,8 +417,8 @@ def _cap_infos(
 def _template_summary(template: templates.TemplateSpec) -> dict[str, object]:
     return {
         "kind": template.kind,
-        "name": template.name,
-        "title": template.title,
+        "name": "default",
+        "title": "Default",
         "description": template.description,
         "path": template.path,
     }

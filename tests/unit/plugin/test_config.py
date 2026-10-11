@@ -62,14 +62,9 @@ credential_env = "COMPANY_CATALOG_TOKEN"
     ("source", "message"),
     [
         ("[tools.fs]", "unsupported plugin config section: tools"),
-        ("[channels.telegram]", "unsupported plugin config section: channels"),
         (
             "[sandbox]\ndriver = 'docker'\n[sandbox.config]",
             "unknown sandbox config field: config",
-        ),
-        (
-            "[plugin.toolsets.fs]",
-            "unknown plugin config field: toolsets",
         ),
     ],
 )
@@ -81,6 +76,36 @@ def test_removed_and_unknown_plugin_config_shapes_fail(
 
     with pytest.raises(ValueError, match=message):
         merge_plugin_configs((config,), family="toolset")
+
+
+@pytest.mark.parametrize("family", ["channel", "toolsets", "future"])
+@pytest.mark.parametrize("value", [{"unused": {"option": True}}, "unread"])
+def test_unconsumed_plugin_families_are_ignored(family, value) -> None:
+    config = {
+        "plugin": {"toolset": {"fs": {"option": True}}, family: value},
+        "sandbox": {"driver": "host"},
+    }
+    assert merge_plugin_configs((config,), family="toolset") == {"fs": {"option": True}}
+    binding = resolve_sandbox_binding((config,))
+    assert binding is not None and binding.name == "host"
+
+
+@pytest.mark.parametrize("value", [{"telegram": {"unused": True}}, "unread"])
+def test_retired_channel_config_does_not_block_supported_plugins(value) -> None:
+    config = {
+        "channels": value,
+        "plugin": {"toolset": {"fs": {"option": True}}},
+        "sandbox": {"driver": "host"},
+    }
+
+    assert merge_plugin_configs((config,), family="toolset") == {"fs": {"option": True}}
+    binding = resolve_sandbox_binding((config,))
+    assert binding is not None and binding.name == "host"
+
+
+def test_consumed_plugin_family_still_validates_its_shape() -> None:
+    with pytest.raises(TypeError, match="plugin.toolset config must be a table"):
+        merge_plugin_configs(({"plugin": {"toolset": "invalid"}},), family="toolset")
 
 
 def test_removed_model_catalog_config_fails_in_model_config_parser() -> None:

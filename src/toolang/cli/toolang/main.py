@@ -54,7 +54,7 @@ WORK_COMMAND_PANEL = "Work Commands"
 CAPS_COMMAND_PANEL = "Cap Commands"
 INSPECTION_COMMAND_PANEL = "Inspection Commands"
 SCRIPT_COMMAND_PANEL = "Script Commands"
-TEAMING_COMMAND_PANEL = "Teaming Commands"
+PLUGIN_COMMAND_PANEL = "Plugin Commands"
 RUN_COMMAND_PANEL = "Run Commands"
 THREAD_COMMAND_PANEL = "Thread Commands"
 RUNTIME_COMMAND_PANEL = "Runtime Commands"
@@ -66,11 +66,10 @@ _AGENT_PANEL_COMMAND_ORDER = (
     "list",
     "info",
     "home",
-    "serve",
-    "start",
-    "stop",
+    "workspace",
 )
-_WORK_PANEL_COMMAND_ORDER = ("chat", "chore", "workspace")
+_RUNTIME_PANEL_COMMAND_ORDER = ("serve", "start", "stop", "hub")
+_WORK_PANEL_COMMAND_ORDER = ("chat", "talk", "chore")
 _CAPS_PANEL_COMMAND_ORDER = ("psyche", "skill", "service", "prompt")
 _RUN_PANEL_COMMAND_ORDER = ("steer", "cancel", "retry", "rerun")
 _THREAD_PANEL_COMMAND_ORDER = ("fork", "rewind")
@@ -80,9 +79,9 @@ _INSPECTION_PANEL_COMMAND_ORDER = (
     "models",
     "providers",
     "inspect",
+    "top",
 )
 _SCRIPT_PANEL_COMMAND_ORDER = ("init", "run")
-_TEAMING_PANEL_COMMAND_ORDER = ("hub", "talk", "top")
 # Root-hidden run and thread commands stay discoverable in target help.
 _TARGET_HELP_COMMANDS = frozenset(
     (*_RUN_PANEL_COMMAND_ORDER, *_THREAD_PANEL_COMMAND_ORDER)
@@ -90,17 +89,17 @@ _TARGET_HELP_COMMANDS = frozenset(
 # `too more` collects the commands the root directory omits, grouped by panel.
 _MORE_PANEL_COMMAND_ORDER = (
     (RUN_COMMAND_PANEL, _RUN_PANEL_COMMAND_ORDER),
-    (THREAD_COMMAND_PANEL, (*_THREAD_PANEL_COMMAND_ORDER, "compact")),
-    (RUNTIME_COMMAND_PANEL, ("catalogs", "adapters", "toolsets", "sandboxes")),
-    (LANGUAGE_COMMAND_PANEL, ("fmt", "highlight", "parse")),
+    (THREAD_COMMAND_PANEL, _THREAD_PANEL_COMMAND_ORDER),
+    (PLUGIN_COMMAND_PANEL, ("catalogs", "adapters", "toolsets", "sandboxes")),
+    (LANGUAGE_COMMAND_PANEL, ("parse", "highlight", "fmt")),
 )
 _VISIBLE_COMMAND_ORDER = (
     *_AGENT_PANEL_COMMAND_ORDER,
     *_CAPS_PANEL_COMMAND_ORDER,
+    *_RUNTIME_PANEL_COMMAND_ORDER,
     *_WORK_PANEL_COMMAND_ORDER,
     *_INSPECTION_PANEL_COMMAND_ORDER,
     *_SCRIPT_PANEL_COMMAND_ORDER,
-    *_TEAMING_PANEL_COMMAND_ORDER,
 )
 # Root-hidden run and thread commands still need an order for target help.
 _COMMAND_ORDER = (
@@ -363,7 +362,7 @@ _registered_group(
     name="workspace",
     help="Manage agent workspaces",
     no_args_is_help=True,
-    rich_help_panel=WORK_COMMAND_PANEL,
+    rich_help_panel=AGENT_COMMAND_PANEL,
 )
 _registered_command(
     "serve",
@@ -371,15 +370,15 @@ _registered_command(
     help="Run an agent in the foreground",
     no_args_is_help=True,
     cls=_ServeCommand,
-    rich_help_panel=AGENT_COMMAND_PANEL,
+    rich_help_panel=RUNTIME_COMMAND_PANEL,
 )
 _registered_command(
     "start",
     "toolang.cli.toolang.commands.runtime:start",
-    help="Start an agent",
+    help="Start an agent in the background",
     no_args_is_help=True,
     cls=_StartCommand,
-    rich_help_panel=AGENT_COMMAND_PANEL,
+    rich_help_panel=RUNTIME_COMMAND_PANEL,
 )
 _registered_command(
     "stop",
@@ -387,12 +386,12 @@ _registered_command(
     help="Stop an agent",
     no_args_is_help=True,
     cls=LocalRuntimeAgentCommand,
-    rich_help_panel=AGENT_COMMAND_PANEL,
+    rich_help_panel=RUNTIME_COMMAND_PANEL,
 )
 _registered_group(
     "toolang.cli.toolang.commands.chore:chore_app",
     name="chore",
-    help="Manage agent chores",
+    help="Manage one-off and scheduled work",
     no_args_is_help=True,
     rich_help_panel=WORK_COMMAND_PANEL,
 )
@@ -400,7 +399,7 @@ _registered_group(
 _registered_command(
     "talk",
     "toolang.cli.toolang.commands.talk:talk_command",
-    help="Open a conversation",
+    help="Exchange messages through the Hub",
     epilog=(
         "\nExamples:\n"
         "  too talk                     List conversations\n"
@@ -410,36 +409,37 @@ _registered_command(
         '  too talk alice "Hello"       Send a message and exit'
     ),
     context_settings={"allow_interspersed_args": False},
-    rich_help_panel=TEAMING_COMMAND_PANEL,
+    rich_help_panel=WORK_COMMAND_PANEL,
 )
 
 _registered_command(
     "top",
     "toolang.cli.toolang.commands.top:top_command",
-    help="Monitor agent activity",
-    rich_help_panel=TEAMING_COMMAND_PANEL,
+    help="Monitor running agents and scripts",
+    epilog="Observe runtime instances, threads, and runs. Local activity is available without the Hub.",
+    rich_help_panel=INSPECTION_COMMAND_PANEL,
 )
 
 _registered_group(
     "toolang.cli.toolang.commands.hub:hub_app",
     name="hub",
-    help="Manage the hub service",
+    help="Manage the shared Hub service",
     no_args_is_help=True,
-    rich_help_panel=TEAMING_COMMAND_PANEL,
+    rich_help_panel=RUNTIME_COMMAND_PANEL,
 )
 
 
 _registered_command(
     "chat",
     "toolang.cli.toolang.commands.chat:chat_command",
-    help="Open a chat",
+    help="Chat directly with an agent",
     cls=_ChatCommand,
     rich_help_panel=WORK_COMMAND_PANEL,
 )
 _registered_command(
     "inspect",
     "toolang.cli.toolang.commands.inspect:inspect_command",
-    help="Inspect agent runs",
+    help="Inspect run history and details",
     no_args_is_help=True,
     cls=_TargetAgentCommand,
     rich_help_panel=INSPECTION_COMMAND_PANEL,
@@ -512,13 +512,6 @@ _registered_command(
     help="List available model providers",
     cls=_TargetSetupCommand,
     rich_help_panel=INSPECTION_COMMAND_PANEL,
-)
-_registered_group(
-    "toolang.cli.toolang.commands.plugin:channel_app",
-    name="channel",
-    help="List installed channels",
-    no_args_is_help=True,
-    hidden=True,
 )
 _registered_command(
     "tools",

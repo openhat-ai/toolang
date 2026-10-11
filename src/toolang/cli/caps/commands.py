@@ -25,8 +25,7 @@ from toolang.state.prepare import (
     prepare_agent_state,
 )
 from ..common.context import context_agent, context_layout, context_root, user_call
-from ..common.help import CliCommand
-from ..common.output import echo_block, echo_collection_summary, echo_table
+from ..common.output import echo_collection_summary
 from ..common.records import check_output_options, echo_records
 from ..common.routing import (
     OptionalPrefixAgentCommand,
@@ -141,11 +140,6 @@ def create_cap_apps(
             factory=_make_remove_cap_command,
             no_args_is_help=True,
         ),
-        CapCommandSpec(
-            name="template",
-            help=lambda kind: f"Inspect {kind} templates",
-            factory=_make_template_command,
-        ),
     )
 
     apps: dict[CapKind, typer.Typer] = {}
@@ -167,13 +161,7 @@ def create_cap_apps(
                 spec.name,
                 help=spec.help(kind),
                 no_args_is_help=spec.no_args_is_help,
-                cls=(
-                    CliCommand
-                    if spec.name == "template"
-                    else list_command_cls
-                    if spec.name == "list"
-                    else command_cls
-                ),
+                cls=(list_command_cls if spec.name == "list" else command_cls),
             )(spec.factory(kind, title))
         apps[kind] = cap_app
     return apps
@@ -299,19 +287,13 @@ def _make_new_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
             str,
             typer.Argument(metavar="NAME", click_type=TextType(), help=f"{title} name"),
         ],
-        template: Annotated[
-            str,
-            typer.Option("--template", "-t", metavar="NAME", help="Template name"),
-        ] = "default",
     ) -> None:
         scope, agent_name = _target_scope(ctx)
         selected_agent = context_agent(ctx)
         authored = _authored_caps(context_root(ctx), agent_name, scope)
         if user_call(authored.get, kind, name) is not None:
             raise ClickException(f"{title} {name} already exists")
-        text = edit_markdown(
-            templates.render_template(kind, template, name=name, agent_name=agent_name),
-        )
+        text = edit_markdown(templates.load_template(kind).raw_text)
         if text is None:
             typer.echo("No changes")
             raise typer.Exit()
@@ -460,28 +442,6 @@ def _make_delete_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
         typer.echo(f"{kind.title()} {name} deleted: {deleted_path}")
 
     return delete_cap
-
-
-def _make_template_command(kind: CapKind, title: str) -> Callable[..., None]:
-    del title
-
-    def template(
-        name: Annotated[
-            str | None,
-            typer.Argument(help="Template name", metavar="NAME"),
-        ] = None,
-    ) -> None:
-        if name is not None:
-            echo_block(templates.load_template(kind, name).raw_text.rstrip("\n"))
-            return
-        specs = templates.list_templates(kind)
-        if not specs:
-            typer.echo(f"No {kind} templates found.")
-            return
-        rows = [(item.name, item.description or "-") for item in specs]
-        echo_table(("TEMPLATE", "DESCRIPTION"), rows)
-
-    return template
 
 
 def _target_scope(ctx: typer.Context) -> tuple[MutableScope, str]:

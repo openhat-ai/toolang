@@ -7,7 +7,6 @@ from copy import deepcopy
 from importlib.metadata import entry_points
 from typing import Any, TypeVar, cast
 
-from toolang.base.protocols.channel import AgentChannel
 from toolang.base.protocols.model import ModelAdapter, ModelCatalog
 from toolang.base.protocols.sandbox import Sandbox
 from .types import LoadedPlugin, PluginInfo, PluginProvenance, PluginSource
@@ -152,19 +151,6 @@ def load_plugins_with_sources(
             )
         )
     return tuple(plugins)
-
-
-def create_channel(
-    name: str,
-    *,
-    config: Mapping[str, Any] | None = None,
-) -> AgentChannel:
-    """Create one channel implementation by entry-point name."""
-
-    return cast(
-        AgentChannel,
-        create_plugin(name, group="toolang.channel", config=config),
-    )
 
 
 def create_sandbox(

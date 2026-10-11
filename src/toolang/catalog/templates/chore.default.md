@@ -2,4 +2,4 @@
 title: Chore title
 ---
 
-Describe the recurring work here.
+Describe the work to perform.

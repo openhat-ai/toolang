@@ -2147,7 +2147,7 @@ def test_inspect_display_modes_are_exclusive_and_removed_options_fail(
     assert "No such option: --limit" in strip_ansi(removed.stderr)
     assert help_code == 0
     assert "POINTER" in help_text
-    assert "Inspect agent runs" in help_text
+    assert "Inspect run history and details" in help_text
     assert "Subject chain." in help_text
     assert "Root subjects: threads, runs, controls" in compact_help
     assert "THREAD runs" in compact_help
@@ -3328,7 +3328,7 @@ def test_cap_lists_apply_scope_allow_and_display_status(
     ):
         AuthoredCaps(directory).create(
             CapFile.parse(
-                templates.render_template(kind, name=name),
+                templates.load_template(kind).raw_text,
                 kind=kind,
                 name=name,
             )
@@ -3665,7 +3665,7 @@ def test_agent_info_builds_state_and_setup_without_server(
     root = tmp_path / "toolang"
     LocalAgents(root / "agents").create(
         "alice",
-        content=templates.render_template("agent", agent_name="alice", name="alice"),
+        content=templates.load_template("agent").raw_text,
     )
 
     class _SetupWatcher:
@@ -3811,7 +3811,7 @@ def test_agent_info_reports_only_state_published_caps(
     root = tmp_path / "toolang"
     LocalAgents(root / "agents").create(
         "alice",
-        content=templates.render_template("agent", agent_name="alice", name="alice"),
+        content=templates.load_template("agent").raw_text,
     )
     prompts = root / "prompts"
     prompts.mkdir()
@@ -3852,7 +3852,7 @@ def test_roaming_agent_info_uses_the_source_layout(
 ) -> None:
     source = tmp_path / "demo.too"
     source.write_text(
-        templates.render_template("agent", agent_name="demo", name="demo"),
+        templates.load_template("agent").raw_text,
         encoding="utf-8",
     )
     captured: dict[str, object] = {}
@@ -3903,11 +3903,7 @@ def test_visiting_agent_info_uses_the_materialized_layout(
     )
     layout.home.mkdir(parents=True)
     layout.program.write_text(
-        templates.render_template(
-            "agent",
-            agent_name="researcher",
-            name="researcher",
-        ),
+        templates.load_template("agent").raw_text,
         encoding="utf-8",
     )
     monkeypatch.setattr(agent_commands, "SetupWatcher", _EmptySetupWatcher)
@@ -3968,7 +3964,7 @@ def test_cap_inspection_only_prepares_the_shared_root_layer(tmp_path: Path) -> N
 
 def _create_agent(root: Path, name: str = "alice") -> None:
     agents = LocalAgents(root / "agents")
-    content = templates.render_template("agent", agent_name=name, name=name)
+    content = templates.load_template("agent").raw_text
     if agents.get(name) is not None:
         return
     home = agents.path(name)
@@ -4045,16 +4041,6 @@ def test_standalone_caps_all_preserves_scope_and_query(
         assert output.out.count("psyche/shared_cap") == 1
     else:
         assert output.out.strip() == "0 caps"
-
-
-@pytest.mark.parametrize("target", ["alice", "agent:alice"])
-def test_plugin_channel_listing_rejects_agent_targets(
-    tmp_path: Path, target: str
-) -> None:
-    _create_agent(tmp_path)
-    result = _invoke(tmp_path, target, "channel", "list")
-    assert result.exit_code == 2
-    assert "channel does not accept an agent target here" in result.stderr
 
 
 def test_tools_help_and_missing_agent_need_no_setup(
@@ -4149,9 +4135,7 @@ def test_running_roaming_inspection_preserves_runtime_workspaces(
     from toolang.cli.common.client import RuntimeClient
 
     source = tmp_path / "demo.too"
-    source.write_text(
-        templates.render_template("agent", agent_name="demo", name="demo")
-    )
+    source.write_text(templates.load_template("agent").raw_text)
     monkeypatch.setattr(agent_commands, "SetupWatcher", _EmptySetupWatcher)
     monkeypatch.setattr(
         agents.AgentProcess,
@@ -4345,7 +4329,3 @@ def test_chore_mutations_target_visible_definitions(tmp_path):
         assert result.exit_code == 1
         assert "agent.too:1" in result.stderr
     assert hidden.path is not None and hidden.path.read_text() == "Home body."
-    cloned = _invoke(root, "alice", "chore", "clone", "cleanup", "copy")
-    assert cloned.exit_code == 0, cloned.stderr
-    copy = AuthoredChores(layout.home).get("copy")
-    assert copy is not None and copy.body == "Inline body."

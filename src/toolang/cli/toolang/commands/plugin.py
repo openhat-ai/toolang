@@ -24,15 +24,6 @@ from toolang.plugin.toolsets.collections import (
 )
 from toolang.setup.tools import load_tool_setup
 
-channel_app = typer.Typer(
-    help="List installed channels",
-    subcommand_metavar="<COMMAND> [ARGUMENTS]",
-    add_completion=False,
-    no_args_is_help=True,
-    pretty_exceptions_enable=False,
-    pretty_exceptions_show_locals=False,
-)
-
 
 def list_tools(
     ctx: typer.Context,
@@ -87,14 +78,6 @@ def list_tools(
             "tool",
             group=(len({str(record["toolset"]) for record in records}), "toolset"),
         )
-
-
-@channel_app.command("list", help="List installed channels")
-def list_channels() -> None:
-    _list_plugins(
-        group="toolang.channel",
-        noun="channel",
-    )
 
 
 def adapters_command() -> None:

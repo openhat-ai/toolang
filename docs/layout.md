@@ -122,7 +122,7 @@ Key paths:
 | `runs.db` | Threads, controls, runs, steps, model inputs, and chore checkpoints   |
 | `ids.json`     | Local id allocator state                                     |
 | `tools/`       | Per-toolset plugin working directories                       |
-| `channels/`    | Per-channel plugin working directories                       |
+| `channels/messaging/` | Hub/Talk transport checkpoints                        |
 
 Server ownership lives separately in
 `${TOOLANG_ROOT}/.sandbox/<agent>/state.json`, the authoritative sandbox

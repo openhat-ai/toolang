@@ -8,16 +8,15 @@ from typing import Literal, cast
 
 PluginFamily = Literal[
     "toolset",
-    "channel",
     "sandbox",
     "model_catalog",
     "model_adapter",
 ]
 
 PLUGIN_FAMILIES: frozenset[str] = frozenset(
-    {"toolset", "channel", "sandbox", "model_catalog", "model_adapter"}
+    {"toolset", "sandbox", "model_catalog", "model_adapter"}
 )
-_LEGACY_PLUGIN_SECTIONS = frozenset({"tools", "channels", "plugins"})
+_LEGACY_PLUGIN_SECTIONS = frozenset({"tools", "plugins"})
 _SANDBOX_FIELDS = frozenset({"driver", "target"})
 
 
@@ -55,7 +54,7 @@ def merge_plugin_configs(
 
 
 def validate_plugin_config(payload: Mapping[str, object]) -> None:
-    """Reject malformed canonical plugin config and removed legacy shapes."""
+    """Validate supported plugin families and ignore unconsumed families."""
 
     legacy = sorted(
         section for section in _LEGACY_PLUGIN_SECTIONS if section in payload
@@ -72,8 +71,9 @@ def validate_plugin_config(payload: Mapping[str, object]) -> None:
     if raw_plugin is None:
         return
     plugin = _require_table(raw_plugin, context="plugin")
-    _reject_unknown(plugin, PLUGIN_FAMILIES, context="plugin")
     for raw_family, raw_family_table in plugin.items():
+        if raw_family not in PLUGIN_FAMILIES:
+            continue
         family = str(raw_family)
         family_table = _require_table(
             raw_family_table,

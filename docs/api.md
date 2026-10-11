@@ -67,10 +67,13 @@ Cap commands:
 - `caps [AGENT] <kind> delete <name>`
 - `caps [AGENT] <kind> add <ref>`
 - `caps [AGENT] <kind> remove <name>`
-- `caps <kind> template [template-name]`
 
 `<kind>` is one of `psyche`, `skill`, `service`, or `prompt`. Without `AGENT`,
 cap mutations target root caps. With `AGENT`, they target the selected agent home's caps.
+
+`too new` and cap `new` commands use one bundled default template per kind.
+Cap creation opens that content in the editor. For a stdio service, edit the
+generated definition to use `transport: stdio` and a command-line `target`.
 
 List output uses `REF`, `DESCRIPTION`, `LOCATION`, and `TAGS` for combined and
 kind-specific lists. `location` addresses actual content, with `file:line` only
@@ -1092,7 +1095,6 @@ See [models](models.md), [tools](tools.md), and [caps](caps.md) for exact semant
 - `toolang adapters`
 - `toolang toolsets [--all]`
 - `toolang sandboxes`
-- `toolang channel list`
 
 These commands list installed entry-point `NAME` and distribution `PACKAGE`
 (such as `toolang`). They have no query, `--json`, or `--human` options. They reject agent names and do not read setup,
@@ -1263,16 +1265,16 @@ Detail:
 - `GET /api/v1/services/{name}`
 - `GET /api/v1/prompts/{name}`
 
-Templates:
+Templates (one bundled `default` per kind; list responses contain one entry):
 
 - `GET /api/v1/psyches/templates`
 - `GET /api/v1/skills/templates`
 - `GET /api/v1/services/templates`
 - `GET /api/v1/prompts/templates`
-- `GET /api/v1/psyches/templates/{template_name}`
-- `GET /api/v1/skills/templates/{template_name}`
-- `GET /api/v1/services/templates/{template_name}`
-- `GET /api/v1/prompts/templates/{template_name}`
+- `GET /api/v1/psyches/templates/default`
+- `GET /api/v1/skills/templates/default`
+- `GET /api/v1/services/templates/default`
+- `GET /api/v1/prompts/templates/default`
 
 Write:
 
@@ -1651,12 +1653,3 @@ Run control acceptance and status are durable `ControlRecord` truth. Retry also
 publishes `run_retried` with its control, invalidated steps, and removed runs. A thread stream may additionally carry
 `thread_created`, `thread_forked`, and `thread_rewound`, and aggregates live run
 events belonging to that thread.
-
-
-## Hook Endpoints
-
-- `POST /hook/runs`
-- `GET|POST|PUT|PATCH|DELETE /hook/{binding_name}`
-
-Hook endpoints queue runs or channel deliveries. They do not execute work
-synchronously.
