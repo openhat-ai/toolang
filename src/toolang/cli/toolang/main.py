@@ -415,7 +415,7 @@ _registered_command(
 _registered_command(
     "top",
     "toolang.cli.toolang.commands.top:top_command",
-    help="Monitor running agents and scripts",
+    help="Monitor runtime activity",
     epilog="Observe runtime instances, threads, and runs. Local activity is available without the Hub.",
     rich_help_panel=INSPECTION_COMMAND_PANEL,
 )
@@ -423,7 +423,7 @@ _registered_command(
 _registered_group(
     "toolang.cli.toolang.commands.hub:hub_app",
     name="hub",
-    help="Manage the shared Hub service",
+    help="Manage the teaming service",
     no_args_is_help=True,
     rich_help_panel=RUNTIME_COMMAND_PANEL,
 )
