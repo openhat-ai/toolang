@@ -9,6 +9,20 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Added
 
+- Execution drivers decide what a running agent serves: resident agents enable
+  `chat`, `talk`, and `chore`, visiting agents enable chat and talk, and roaming
+  agents and standalone scripts enable none. `too serve`, `too AGENT start`, and
+  `too AGENT chat` accept `--driver chat,talk,chore` or `--driver none`, so
+  `serve --driver none` is valid; only `too AGENT chat` requires chat, and
+  against a running agent an omitted selection preserves its drivers while an
+  explicit selection that mismatches them or omits chat fails with restart
+  guidance without changing the agent, and profile, status, and startup logs
+  report the enabled drivers. Interactive submission, retry/rerun, and steer use
+  routes under `/api/v1/chat/runs`, with interactive contexts created at
+  `POST /api/v1/threads`, both requiring the chat driver and answering
+  `409 driver_disabled` otherwise, while noninteractive scripts keep
+  `/api/v1/runs` and create contexts at `POST /api/v1/runs/threads`.
+
 - The Hub serves a root-scoped presence roster at `GET /activity/roster`
   (`agent:` IDs mapped to `online` or `offline` without reading activity
   stores) and accepts `GET /activity?agent=agent:alice`, returning one roster
@@ -32,6 +46,31 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   `TOOLANG_TMUX=0` disables marks while preserving OSC titles.
 
 ### Changed
+
+- Tasks and jobs are unified into chores: current definitions are flat
+  `chores/<name>.md` files or inline `chore name:` declarations with no draft,
+  ready, or archive stages, and a definition is one-off unless it sets an
+  explicit RRULE `schedule`. A chore ID is the first 80 bits of the SHA-256 of
+  its exact, case-sensitive name encoded as 16 lowercase Base32 characters and
+  its thread is `chore_<id>`, so renaming creates a new identity while editing
+  the body, title, schedule, or location preserves it. The chore driver keeps at
+  most one active run per chore, coalesces missed scheduled occurrences into one
+  catch-up run and repeated manual requests into one pending manual occurrence
+  while manual and scheduled work stay distinct and execute serially, and stores
+  pending work, the active run, and schedule checkpoints in the `chores` table
+  of `runs.db`. Removing a definition stops future dispatch but retains its
+  checkpoint and history; restoring an unchanged completed, failed, or canceled
+  one-off does not rerun it, and `chore run` is the explicit manual retry.
+  Thread prefixes are now `chat_`, `talk_` (one durable thread per agent instead
+  of one per message batch), `chore_`, `worker_`, and `script_`.
+
+- Independent invocations of the same `.too` script source use separate runtime
+  and sandbox instance directories, so each run keeps its own instance state.
+
+- `too top` observes locally running runtime instances (resident, visiting,
+  roaming, and script) from the root's `.runtime/instances` registrations, so it
+  needs neither talk nor the Hub to cover them and combines them with remote Hub
+  activity when a Hub is available.
 
 - Chat commands and run directives now use distinct markers, breaking existing
   input syntax. Colon commands inspect or change session settings (`:model`,
@@ -71,6 +110,23 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   placeholder.
 
 ### Removed
+
+- **Breaking:** the `too task` command and the `task name:` declaration are
+  removed; `too AGENT chore` now lists, creates, clones, edits, runs, cancels,
+  and deletes chore definitions, and a `task name:` declaration fails with
+  `Use chore for one-off or scheduled work`. No old directories, authored IDs,
+  or `jobs.db` checkpoints are migrated or imported: existing `tasks/` files and
+  databases are left untouched and unused, and a definition added to the new
+  model starts from a checkpoint under its name-derived ID. The `me/create` tool
+  no longer accepts `tasks/*.md`.
+
+- **Breaking:** the task and job HTTP API is removed. `/api/v1/tasks`,
+  `/api/v1/tasks/{task_id}`, the task draft/ready/archive/reopen/cancel routes,
+  and `/api/v1/jobs` no longer exist; `/api/v1/chores` covers current-definition
+  list/detail, create (now with a required `name`), update, delete, manual run,
+  and cancel, and its payloads expose chore fields instead of task and job
+  fields. Thread, run, rewind, and fork requests carry `client_id` and
+  `request_id` instead of the removed `client` client-type field.
 
 - The `@toolang_pad` and `@toolang_talk` tmux marks are retired. Integrations
   that read the old session and window marks must migrate to the pane-local
