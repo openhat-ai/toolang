@@ -282,10 +282,10 @@ Read endpoints:
 - `GET /api/v1/skills/templates`
 - `GET /api/v1/services/templates`
 - `GET /api/v1/prompts/templates`
-- `GET /api/v1/psyches/templates/{template_name}`
-- `GET /api/v1/skills/templates/{template_name}`
-- `GET /api/v1/services/templates/{template_name}`
-- `GET /api/v1/prompts/templates/{template_name}`
+- `GET /api/v1/psyches/templates/default`
+- `GET /api/v1/skills/templates/default`
+- `GET /api/v1/services/templates/default`
+- `GET /api/v1/prompts/templates/default`
 
 Write endpoints:
 
@@ -310,7 +310,8 @@ Authored write requests carry `scope` and `content`. Configured write requests
 carry `scope` and `ref`. Deletes use a `scope` query parameter. Scope is
 `root` or `home` and defaults to `home`.
 
-Template detail responses include template metadata and raw content. Cap read
+Each kind has one bundled `default` template. Template lists contain that one
+entry; default detail responses include metadata and raw content. Cap read
 requests return the effective runtime view with `scope`, `origin`, `form`,
 `ref`, `definition_file`, and optional `line`. CLI lists use `REF`, `DESCRIPTION`, `LOCATION`, and `TAGS`. Location addresses
 actual content; only inline caps use `file:line`. Form, origin, scope, and allow

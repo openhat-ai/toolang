@@ -56,7 +56,7 @@ def test_root_help_shows_the_source_version_in_dim_parentheses(
         (["--help"], 0),
         (["prompt", "--help"], 0),
         (["prompt", "new", "--help"], 0),
-        (["prompt", "new", "--template", "default"], 0),
+        (["prompt", "new"], 0),
         (["serve", "--port", "1234"], 0),
         (["workspace", "list"], 0),
         (["prompt", "new", "--unknown"], 2),
@@ -579,20 +579,12 @@ def test_inspection_help_describes_all_agent_targets(command, tmp_path, capsys):
 
 @pytest.mark.parametrize("main", [too_main, caps_main])
 @pytest.mark.parametrize("kind", ["psyche", "skill", "service", "prompt"])
-def test_template_help_omits_agent_scope(main, kind, tmp_path, capsys, monkeypatch):
-    monkeypatch.setattr("sys.argv", ["too"])
+def test_cap_commands_omit_and_reject_template(main, kind, tmp_path, capsys):
     for prefix in ([], ["a"]):
-        assert main(["--root", str(tmp_path), *prefix, kind, "template", "--help"]) == 0
-        captured = capsys.readouterr()
-        assert not captured.err
-        output = strip_ansi(captured.out)
-        assert f"Usage: too {kind} template [OPTIONS] [NAME]" in output.splitlines()
-        assert "NAME Template name" in " ".join(output.split())
-        assert "AGENT" not in output
-    assert main(["--root", str(tmp_path), kind, "template", "default"]) == 0
-    captured = capsys.readouterr()
-    assert captured.out and not captured.err
-    assert "Usage:" not in captured.out
+        assert main(["--root", str(tmp_path), *prefix, kind, "--help"]) == 0
+        assert "template" not in capsys.readouterr().out
+        assert main(["--root", str(tmp_path), *prefix, kind, "template"]) == 2
+        assert "No such command" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("args", [["--help"], ["--thread", "--help"], ["-t", "--help"]])
@@ -627,9 +619,7 @@ def test_prompt_help_uses_conventional_metavars(main, tmp_path, capsys, monkeypa
             if line.startswith("  ") and name in line.split()
         )
         assert "TEXT" not in row
-    assert "<NAME>" in next(
-        line for line in output.splitlines() if "--template" in line
-    )
+    assert "--template" not in output
 
 
 @pytest.mark.parametrize(
@@ -864,3 +854,24 @@ def test_commands_without_workspace_selection_hide_workspace_options(command):
         option for param in loaded.get_params(Context(loaded)) for option in param.opts
     }
     assert not {"-w", "--workspace", "-d", "--workdir", "--no-auto-workspace"} & options
+
+
+@pytest.mark.parametrize(
+    ("main", "command"),
+    [(too_main, ["new"])]
+    + [
+        (main, [kind, "new"])
+        for main in (too_main, caps_main)
+        for kind in ("psyche", "skill", "service", "prompt")
+    ],
+)
+def test_creation_commands_omit_and_reject_template_options(
+    main, command, tmp_path, capsys
+):
+    assert main(["--root", str(tmp_path), *command, "--help"]) == 0
+    assert "--template" not in capsys.readouterr().out
+    for option in ("--template", "-t"):
+        assert main(["--root", str(tmp_path), *command, "demo", option, "default"]) == 2
+        assert f"No such option: {option}" in capsys.readouterr().err
+    assert not list(tmp_path.rglob("*.md"))
+    assert not list(tmp_path.rglob("*.too"))

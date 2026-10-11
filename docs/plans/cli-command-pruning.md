@@ -8,7 +8,8 @@ Baseline: #767, merged as `dcc07b2e`.
 
 Remove redundant chore cloning and the unused channel plugin surface. Group
 commands by their current responsibilities without a Teaming panel. Removed
-commands have no compatibility aliases; retained commands keep their behavior.
+commands have no compatibility aliases. Creation uses one bundled default
+template per kind, without a template selector.
 
 ## Decisions
 
@@ -26,6 +27,15 @@ commands have no compatibility aliases; retained commands keep their behavior.
   Telegram integration is introduced. Preserve Hub/Talk transport and its
   messaging checkpoints; their paths containing `channels` do not make them
   part of the removed plugin system.
+- Remove `--template/-t` from `too new` and cap `new` commands, and remove
+  the cap `template` subcommand from both `too` and `caps`. Creation uses the
+  bundled default directly; cap creation opens its content in the editor.
+  Keep one bundled default for each kind and remove `service.stdio.md`.
+  Load defaults directly; remove template discovery, sorting, and name lookup.
+  Keep HTTP template list responses as a one-entry list and the existing
+  `/templates/default` detail paths as fixed routes. No named-template route
+  remains. To author a stdio service, edit `transport` and `target` in the
+  generated default; service transport support is unchanged.
 - Remove the `Teaming Commands` help panel. Root help uses these panels in this
   exact order:
 
@@ -70,7 +80,8 @@ commands have no compatibility aliases; retained commands keep their behavior.
   history and canceling one occurrence while retaining future scheduled work.
 - Target-specific help uses the same placement for `top`, without exposing
   root-only `talk` or `hub` as agent-targeted commands. Other commands,
-  options, driver selection, and scheduling semantics stay unchanged.
+  options outside template selection, driver selection, and scheduling semantics
+  stay unchanged.
 - Update current user documentation and record breaking removals and migration
   guidance through `too aide.too update_changelog`. Preserve historical records
   and superseded plans; this definition supersedes their conflicting CLI scope.
@@ -83,6 +94,8 @@ commands have no compatibility aliases; retained commands keep their behavior.
   `src/toolang/base/{protocols/channel,types/channel,utils/channels}.py`, and
   `pyproject.toml`: remove the channel plugin contract and implementation.
   Refresh `uv.lock` if required by the package metadata change.
+- `src/toolang/catalog/templates/`, CLI agent/cap/chore authoring, and
+  `src/toolang/api/routers/caps.py`: single default loading and inspection.
 - CLI help/routing and integration tests; channel and shared plugin tests.
 - Current plugin/layout guidance, the reference index template, chore docs, and
   `CHANGELOG.md` where descriptions reference the affected behavior.
@@ -104,7 +117,13 @@ commands have no compatibility aliases; retained commands keep their behavior.
    Agent, and Top under Inspection; it omits Talk/Hub. Updated descriptions agree
    across help surfaces. Hub/Talk behavior and messaging persistence remain
    covered by existing tests.
-5. Documentation examples match the resulting CLI. Run `git diff --check` and
+5. Agent and cap creation succeed using defaults without template flags;
+   `--template/-t` fail. Both CLI entry points omit cap `template` from help
+   and reject it, with and without an agent target. Every kind loads its
+   default directly.
+   HTTP template lists contain only default, its detail remains readable,
+   and non-default template URLs return 404.
+6. Documentation examples match the resulting CLI. Run `git diff --check` and
    the default Ruff, formatting, Ty, and full offline pytest checks before
    implementation commits.
 
@@ -113,6 +132,8 @@ commands have no compatibility aliases; retained commands keep their behavior.
 Channel removal breaks external imports and entry-point integrations, in
 addition to the removed CLI calls. Chore definition copying must use a new name
 to create independent progress. Help panel and description changes affect
-snapshot expectations but do not change invocation syntax.
+snapshot expectations. Existing creation invocations must omit template flags;
+use the editor opened by cap `new` instead of the removed `template` command.
+Service template API clients must use default and edit stdio fields.
 
 No open design questions.

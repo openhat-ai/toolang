@@ -87,3 +87,35 @@ def test_editor_failures_return_cli_errors_without_changing_authored_files(
         for path in root.rglob("*.md")
         if ".state" not in path.relative_to(root).parts
     } == authored_files
+
+
+@pytest.mark.parametrize("main", [toolang_main, caps_main])
+@pytest.mark.parametrize("kind", ["psyche", "skill", "service", "prompt"])
+def test_new_cap_edits_and_saves_the_default_template(
+    main, kind, tmp_path, monkeypatch, capsys
+):
+    edited = (
+        templates.render_template(kind, name="demo", agent_name="default")
+        + "\nCreated here.\n"
+    )
+    seeds = []
+
+    def edit(text):
+        seeds.append(text)
+        return edited
+
+    monkeypatch.setattr("toolang.cli.caps.commands.edit_markdown", edit)
+    assert main(["--root", str(tmp_path), kind, "new", "demo"]) == 0
+    assert seeds == [templates.load_template(kind).raw_text]
+    saved = AuthoredCaps(tmp_path).get(kind, "demo")
+    assert saved is not None and saved.path is not None
+    assert saved.path.read_text() == edited
+    assert "created:" in capsys.readouterr().out
+
+
+def test_new_agent_uses_the_default_template(tmp_path, capsys):
+    assert toolang_main(["--root", str(tmp_path), "new", "demo"]) == 0
+    assert (
+        tmp_path / "agents" / "demo" / "agent.too"
+    ).read_text() == templates.load_template("agent").raw_text
+    assert "Agent demo created:" in capsys.readouterr().out
