@@ -99,14 +99,14 @@ def test_caps_inspects_the_selected_agent_layout(
             agents, "resolve_visiting_layout", lambda *_args, **_kwargs: layout
         )
 
-    prepare = commands.prepare_agent_state
+    inspect_caps = commands.inspect_agent_caps
     prepared = []
 
     def inspect(selected, **kwargs):
         prepared.append(selected)
-        return prepare(selected, **kwargs)
+        return inspect_caps(selected, **kwargs)
 
-    monkeypatch.setattr(commands, "prepare_agent_state", inspect)
+    monkeypatch.setattr(commands, "inspect_agent_caps", inspect)
     args = [selector, *command, *options]
     if target != "source":
         args = ["--root", str(root), *args]

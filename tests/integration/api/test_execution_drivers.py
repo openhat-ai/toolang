@@ -24,6 +24,7 @@ def test_flat_authoring_and_inline_shadowing_with_chore_driver_disabled(tmp_path
         responses=[],
     )
     layout = harness.setup.layout
+    layout.program.write_text("chore cleanup:\n  Inline wins.\nagic:\n  {{_}}\n")
     harness.store.close()
     core = AgentCore(layout, drivers=frozenset())
     core.state = SimpleNamespace(current=lambda: harness.state)
@@ -123,5 +124,78 @@ def test_two_clients_share_chat_thread_and_controls_keep_both_identities(tmp_pat
             control = core.store.get_thread_control(thread_id=thread, index=0)
             assert control is not None
             assert (control.client_id, control.request) == ("web-1", "create-1")
+    finally:
+        asyncio.run(core.close())
+
+
+def test_chore_inspection_reads_current_source_and_rejects_hidden_mutations(tmp_path):
+    harness = ExecutionHarness.create(
+        tmp_path, source="chore cleanup:\n  Old inline.\nagic:\n  {{_}}\n", responses=[]
+    )
+    layout = harness.setup.layout
+    harness.store.close()
+    core = AgentCore(layout, drivers=frozenset())
+    core.state = SimpleNamespace(current=lambda: harness.state)
+    home = AuthoredChores(layout.home).create(
+        ChoreFile.parse("Home body.", name="cleanup")
+    )
+    layout.program.write_text(
+        "chore cleanup:\n  New inline.\nflow broken:\n  run missing\n"
+    )
+    app = create_app(
+        core, CapsManager(layout), ChoresManager(layout), cors_allowed_origins=()
+    )
+    try:
+        with TestClient(app) as client:
+            endpoint = "/api/v1/chores/cleanup"
+            assert client.get(endpoint).json()["body"] == "New inline."
+            assert (
+                client.patch(endpoint, json={"body": "Hidden edit."}).status_code == 409
+            )
+            assert client.delete(endpoint).status_code == 409
+            assert home.path is not None
+            assert home.path.read_text() == "Home body."
+            assert (
+                client.post(
+                    "/api/v1/chores", json={"name": "cleanup", "body": "Hidden new."}
+                ).status_code
+                == 409
+            )
+    finally:
+        asyncio.run(core.close())
+
+
+def test_chore_api_edits_visible_home_file_and_preserves_root(tmp_path):
+    harness = ExecutionHarness.create(tmp_path, source="agic:\n  {{_}}\n", responses=[])
+    layout = harness.setup.layout
+    harness.store.close()
+    core = AgentCore(layout, drivers=frozenset())
+    root_file = AuthoredChores(layout.root).create(
+        ChoreFile.parse("Root body.", name="cleanup")
+    )
+    app = create_app(
+        core, CapsManager(layout), ChoresManager(layout), cors_allowed_origins=()
+    )
+    try:
+        with TestClient(app) as client:
+            endpoint = "/api/v1/chores/cleanup"
+            assert (
+                client.patch(endpoint, json={"body": "Hidden edit."}).status_code == 409
+            )
+            assert client.delete(endpoint).status_code == 409
+            created = client.post(
+                "/api/v1/chores", json={"name": "cleanup", "body": "Home body."}
+            )
+            assert created.status_code == 201
+            assert client.get(endpoint).json() == created.json()
+            updated = client.patch(endpoint, json={"body": "Edited home."})
+            assert updated.status_code == 200
+            assert client.get(endpoint).json() == updated.json()
+            assert client.delete(endpoint).status_code == 204
+            assert client.get(endpoint).json()["body"] == "Root body."
+            assert (
+                root_file.path is not None
+                and root_file.path.read_text() == "Root body."
+            )
     finally:
         asyncio.run(core.close())

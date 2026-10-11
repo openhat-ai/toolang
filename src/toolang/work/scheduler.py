@@ -375,7 +375,10 @@ class ChoreDriver:
     ) -> None:
         assert self._store is not None
         state = self.get_agent_state() if state is None else state
-        chores = merge_chores(authored, inline_chores(state.modules["agent"].chores))
+        chores = merge_chores(
+            authored,
+            inline_chores(state.modules["agent"].chores, path=self.layout.program),
+        )
         records = self._store.reconcile(chores=chores)
         self._chores = chores
         self._state_revision = state.revision
@@ -463,7 +466,7 @@ class ChoreDriver:
                     "chores.submission_rejected kind=%s chore_id=%s source=%s error=%s",
                     "chore",
                     chore.id,
-                    chore.source,
+                    chore.location,
                     error,
                 )
                 rejected = self._store.reject_activation(
@@ -481,7 +484,7 @@ class ChoreDriver:
                 run_id=run_id,
                 now=now,
             )
-            self._replace_record(claimed.record)
+            self._replace_record(claimed)
             self._submit_run(run_id, chore, spec)
 
     def _build_spec(
@@ -495,7 +498,7 @@ class ChoreDriver:
         state = self.get_agent_state() if state is None else state
         override, input = parse_call(chore.body)
         runnable = override.runnable or runnable_fallback(state, preferred="chore")
-        base = chore.path.parent if chore.path is not None else setup.layout.home
+        base = chore.path.parent
         spec = resolve_spec(
             override,
             input,

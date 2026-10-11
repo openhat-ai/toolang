@@ -10,7 +10,7 @@ from watchfiles import Change, awatch
 
 from toolang.common.layout import AgentLayout
 
-from .state import Chore, load_chores
+from .state import Chore, load_chore_files
 
 
 class ChoreWatcher:
@@ -18,7 +18,7 @@ class ChoreWatcher:
 
     def __init__(self, layout: AgentLayout) -> None:
         self.layout = layout
-        self._chores = load_chores(layout)
+        self._chores = load_chore_files(layout)
 
     def current(self) -> tuple[Chore, ...]:
         """Return the latest completed snapshot without filesystem access."""
@@ -28,7 +28,7 @@ class ChoreWatcher:
     def refresh(self) -> tuple[Chore, ...]:
         """Read and publish one complete current chore snapshot."""
 
-        self._chores = load_chores(self.layout)
+        self._chores = load_chore_files(self.layout)
         return self._chores
 
     async def updates(

@@ -1,4 +1,4 @@
-"""Immutable effective chore definitions."""
+"""Current chore definitions, independent of handlers and execution state."""
 
 from __future__ import annotations
 
@@ -6,28 +6,23 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
-import re
 
 from toolang.catalog.chore import AuthoredChores, ChoreFile
 from toolang.common.ids import chore_id
 from toolang.common.layout import AgentLayout
-from toolang.lang.ast import ChoreDecl
-
-
-_REMOTE_REF_PATTERN = re.compile(r"\b[A-Z][A-Z0-9]+-\d+\b")
+from toolang.lang.ast import ChoreDecl, parse_chore_declarations
 
 
 @dataclass(frozen=True, slots=True)
 class Chore:
-    """One current chore definition."""
+    """One effective definition and its exact authored location."""
 
     name: str
     title: str | None
     body: str
     schedule: str | None
-    revision: str
-    source: str
-    path: Path | None
+    path: Path
+    line: int | None = None
 
     @property
     def id(self) -> str:
@@ -39,29 +34,86 @@ class Chore:
 
     @property
     def thread_id(self) -> str:
-        """Return the stable execution thread derived from chore identity."""
-
         return f"chore_{self.id}"
+
+    @property
+    def body_hash(self) -> str:
+        return sha256(self.body.replace("\r\n", "\n").strip().encode()).hexdigest()
+
+    @property
+    def schedule_hash(self) -> str | None:
+        return sha256(self.schedule.encode()).hexdigest() if self.schedule else None
+
+    @property
+    def location(self) -> str:
+        return f"{self.path}:{self.line}" if self.line is not None else str(self.path)
+
+    @property
+    def display_title(self) -> str:
+        if self.title:
+            return self.title
+        for line in self.body.splitlines():
+            candidate = line.strip().lstrip("#").strip()
+            if candidate:
+                return candidate[:80]
+        return self.name
+
+
+def load_chore_files(layout: AgentLayout) -> tuple[Chore, ...]:
+    """Read immediate root/home Markdown definitions, with home taking precedence."""
+
+    return tuple(
+        merge_chores(
+            *(
+                (file_chore(item) for item in AuthoredChores(directory).list())
+                for directory in dict.fromkeys((layout.root, layout.home))
+            )
+        ).values()
+    )
 
 
 def load_chores(layout: AgentLayout) -> tuple[Chore, ...]:
-    """Load normalized current Markdown chores for one agent home."""
+    """Read effective authored definitions without preparing State or handlers."""
 
-    groups = [
-        tuple(_file_chore(item) for item in AuthoredChores(directory).list())
-        for directory in dict.fromkeys((layout.root, layout.home))
-    ]
-    return tuple(merge_chores(*groups).values())
+    source = (
+        layout.program.read_text(encoding="utf-8") if layout.program.is_file() else ""
+    )
+    inline = inline_chores(parse_chore_declarations(source), path=layout.program)
+    return tuple(merge_chores(load_chore_files(layout), inline).values())
 
 
-def inline_chores(declarations: Iterable[ChoreDecl]) -> tuple[Chore, ...]:
-    """Normalize program chore declarations."""
+def inline_chores(
+    declarations: Iterable[ChoreDecl], *, path: Path
+) -> tuple[Chore, ...]:
+    return tuple(
+        Chore(
+            name=decl.name,
+            title=str(decl.meta.get("title") or "").strip() or None,
+            body=decl.body.strip(),
+            schedule=str(decl.meta["schedule"]).strip()
+            if decl.meta.get("schedule")
+            else None,
+            path=path,
+            line=decl.span.line,
+        )
+        for decl in declarations
+    )
 
-    return tuple(_program_chore(decl) for decl in declarations)
+
+def file_chore(chore: ChoreFile) -> Chore:
+    if chore.path is None:
+        raise ValueError("authored chore path is required")
+    return Chore(
+        name=chore.name,
+        title=chore.title,
+        body=chore.body,
+        schedule=chore.schedule,
+        path=chore.path,
+    )
 
 
 def merge_chores(*groups: Iterable[Chore]) -> dict[str, Chore]:
-    """Merge effective chore sources with later layers shadowing earlier layers by name."""
+    """Later definitions shadow earlier definitions with the same name."""
 
     merged: dict[str, Chore] = {}
     for group in groups:
@@ -69,99 +121,7 @@ def merge_chores(*groups: Iterable[Chore]) -> dict[str, Chore]:
             previous = merged.get(chore.id)
             if previous is not None and previous.name != chore.name:
                 raise ValueError(
-                    f"chore ID collision {chore.id!r}: {previous.source} and {chore.source}"
+                    f"chore ID collision {chore.id!r}: {previous.location} and {chore.location}"
                 )
             merged[chore.id] = chore
     return merged
-
-
-def schedule_revision(chore: Chore) -> str | None:
-    """Return the stable revision of one chore schedule."""
-
-    if chore.schedule is None:
-        return None
-    return sha256(chore.schedule.encode()).hexdigest()
-
-
-def _file_chore(chore: ChoreFile) -> Chore:
-    if chore.path is None:
-        raise ValueError("authored chore path is required")
-    return _chore(
-        name=chore.name,
-        title=chore.title,
-        body=chore.body,
-        schedule=chore.schedule,
-        source=str(chore.path),
-        path=chore.path,
-    )
-
-
-def _program_chore(decl: ChoreDecl) -> Chore:
-    title = str(decl.meta.get("title") or "").strip()
-    return _chore(
-        name=decl.name,
-        title=title or None,
-        body=decl.body.strip(),
-        schedule=str(decl.meta["schedule"]).strip()
-        if decl.meta.get("schedule")
-        else None,
-        source=f"agent.too:{decl.span.line}",
-        path=None,
-    )
-
-
-def _chore(
-    *,
-    name: str,
-    title: str | None,
-    body: str,
-    schedule: str | None,
-    source: str,
-    path: Path | None,
-) -> Chore:
-    normalized_body = body.replace("\r\n", "\n").strip()
-    return Chore(
-        name=name,
-        title=title,
-        body=body,
-        schedule=schedule,
-        revision=sha256(normalized_body.encode()).hexdigest(),
-        source=source,
-        path=path,
-    )
-
-
-def chore_thread_id(chore: ChoreFile | Chore) -> str:
-    """Return the runtime thread projection for one authored chore."""
-
-    return f"chore_{chore.id}"
-
-
-def chore_display_title(chore: ChoreFile | Chore, *, fallback: str) -> str:
-    """Return a short title for a caller-facing chore projection."""
-
-    if chore.title:
-        return chore.title
-    for line in chore.body.splitlines():
-        candidate = line.strip().lstrip("#").strip()
-        if candidate:
-            return candidate[:80]
-    return fallback
-
-
-def chore_remote_status(chore: ChoreFile | Chore) -> str | None:
-    """Return the first explicit remote status in a chore body."""
-
-    for line in chore.body.splitlines():
-        key, separator, value = line.partition(":")
-        if separator == ":" and key.strip().lower() in {"status", "remote status"}:
-            return value.strip() or None
-    return None
-
-
-def chore_remote_ref(chore: ChoreFile | Chore) -> str | None:
-    """Return a remote work-item key projected from authored chore content."""
-
-    text = "\n".join(part for part in (chore.title or "", chore.body) if part)
-    match = _REMOTE_REF_PATTERN.search(text)
-    return None if match is None else match.group(0)

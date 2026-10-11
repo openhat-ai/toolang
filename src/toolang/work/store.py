@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 import sqlite3
@@ -18,18 +17,8 @@ from toolang.execution.types import RunStatus
 
 from toolang.execution.store import RunStore
 from .records import ChoreRecord
-from .state import Chore, schedule_revision
+from .state import Chore
 from .types import ChoreStatus, ChoreTrigger
-
-
-@dataclass(frozen=True, slots=True)
-class ClaimedChore:
-    """One activation durably assigned to a preallocated run id."""
-
-    chore: Chore
-    record: ChoreRecord
-    trigger: ChoreTrigger
-    active_at: str
 
 
 class ChoreStore:
@@ -122,7 +111,7 @@ class ChoreStore:
         trigger: ChoreTrigger,
         run_id: str,
         now: datetime | None = None,
-    ) -> ClaimedChore:
+    ) -> ChoreRecord:
         """Claim one known due activation without searching for another chore."""
 
         current = _utc(now)
@@ -132,7 +121,7 @@ class ChoreStore:
             _require_identity(record, chore)
             if record.active_run_id is not None:
                 raise ValueError(f"chore is already running: {chore.id}")
-            active_at, ready_at, next_run_at = _consume_activation(
+            active_due_at, pending_at, next_scheduled_at = _consume_activation(
                 record,
                 chore,
                 trigger=trigger,
@@ -141,30 +130,25 @@ class ChoreStore:
             self._conn.execute(
                 """
                 UPDATE chores
-                SET revision = ?, status = 'running', ready_at = ?,
-                    active_run_id = ?, active_revision = ?, active_trigger = ?,
-                    active_at = ?, next_run_at = ?, error = NULL, updated_at = ?
+                SET body_hash = ?, status = 'running', pending_at = ?, pending_trigger = ?,
+                    active_run_id = ?, active_trigger = ?,
+                    active_due_at = ?, next_scheduled_at = ?, error = NULL, updated_at = ?
                 WHERE chore_id = ? AND active_run_id IS NULL
                 """,
                 (
-                    chore.revision,
-                    ready_at,
+                    chore.body_hash,
+                    pending_at,
+                    record.pending_trigger if pending_at else None,
                     run_id,
-                    chore.revision,
                     trigger,
-                    _iso(active_at),
-                    next_run_at,
+                    _iso(active_due_at),
+                    next_scheduled_at,
                     _iso(current),
                     chore.id,
                 ),
             )
             updated = self._require_row_locked(chore.id)
-        return ClaimedChore(
-            chore=chore,
-            record=_record(updated),
-            trigger=trigger,
-            active_at=_iso(active_at),
-        )
+        return _record(updated)
 
     def reject_activation(
         self,
@@ -182,25 +166,26 @@ class ChoreStore:
             _require_identity(record, chore)
             if record.active_run_id is not None:
                 raise ValueError(f"chore is already running: {chore.id}")
-            _active_at, ready_at, next_run_at = _consume_activation(
+            _active_at, pending_at, next_scheduled_at = _consume_activation(
                 record,
                 chore,
                 trigger=trigger,
                 now=current,
             )
-            status = _rejected_status(ready_at, next_run_at)
+            status = _rejected_status(pending_at, next_scheduled_at)
             self._conn.execute(
                 """
                 UPDATE chores
-                SET revision = ?, status = ?, ready_at = ?, next_run_at = ?,
+                SET body_hash = ?, status = ?, pending_at = ?, pending_trigger = ?, next_scheduled_at = ?,
                     error = ?, updated_at = ?
                 WHERE chore_id = ?
                 """,
                 (
-                    chore.revision,
+                    chore.body_hash,
                     status,
-                    ready_at,
-                    next_run_at,
+                    pending_at,
+                    record.pending_trigger if pending_at else None,
+                    next_scheduled_at,
                     error,
                     _iso(current),
                     chore.id,
@@ -231,8 +216,8 @@ class ChoreStore:
             self._conn.execute(
                 """
                 UPDATE chores
-                SET status = ?, active_run_id = NULL, active_revision = NULL,
-                    active_trigger = NULL, active_at = NULL, error = ?, updated_at = ?
+                SET status = ?, active_run_id = NULL,
+                    active_trigger = NULL, active_due_at = NULL, error = ?, updated_at = ?
                 WHERE chore_id = ? AND active_run_id = ?
                 """,
                 (status, error, _iso(current), record.chore_id, run_id),
@@ -257,21 +242,34 @@ class ChoreStore:
             if row is None:
                 return None
             record = _record(row)
-            ready_at = record.ready_at
-            next_run_at = record.next_run_at
+            pending_at = record.pending_at
+            pending_trigger = record.pending_trigger
+            next_scheduled_at = record.next_scheduled_at
             if record.active_trigger in {"source", "manual"}:
-                ready_at = _earliest(ready_at, record.active_at)
+                if pending_at is None or (
+                    record.active_due_at is not None
+                    and record.active_due_at < pending_at
+                ):
+                    pending_trigger = record.active_trigger
+                pending_at = _earliest(pending_at, record.active_due_at)
             elif record.active_trigger == "schedule":
-                next_run_at = _earliest(next_run_at, record.active_at)
+                next_scheduled_at = _earliest(next_scheduled_at, record.active_due_at)
             self._conn.execute(
                 """
                 UPDATE chores
-                SET status = 'pending', ready_at = ?, next_run_at = ?,
-                    active_run_id = NULL, active_revision = NULL,
-                    active_trigger = NULL, active_at = NULL, updated_at = ?
+                SET status = 'pending', pending_at = ?, pending_trigger = ?, next_scheduled_at = ?,
+                    active_run_id = NULL,
+                    active_trigger = NULL, active_due_at = NULL, updated_at = ?
                 WHERE chore_id = ? AND active_run_id = ?
                 """,
-                (ready_at, next_run_at, _iso(current), record.chore_id, run_id),
+                (
+                    pending_at,
+                    pending_trigger,
+                    next_scheduled_at,
+                    _iso(current),
+                    record.chore_id,
+                    run_id,
+                ),
             )
             updated = self._require_row_locked(record.chore_id)
         return _record(updated)
@@ -331,13 +329,13 @@ class ChoreStore:
             self._conn.execute(
                 """
                 UPDATE chores
-                SET revision = ?, status = ?, active_run_id = NULL,
-                    active_revision = NULL, active_trigger = NULL,
-                    active_at = NULL, error = NULL, updated_at = ?
+                SET body_hash = ?, status = ?, active_run_id = NULL,
+                    active_trigger = NULL,
+                    active_due_at = NULL, error = NULL, updated_at = ?
                 WHERE chore_id = ? AND active_run_id = ?
                 """,
                 (
-                    chore.revision if chore is not None else record.revision,
+                    chore.body_hash if chore is not None else record.body_hash,
                     status,
                     _iso(current),
                     record.chore_id,
@@ -353,20 +351,26 @@ class ChoreStore:
         chore_id: str,
         now: datetime | None = None,
     ) -> ChoreRecord:
-        """Keep at most one pending manual occurrence for a ready chore."""
+        """Keep at most one pending manual occurrence for one chore."""
 
         current = _utc(now)
         with self._write():
             record = _record(self._require_row_locked(chore_id))
-            ready_at = record.ready_at or _iso(current)
+            pending_at = record.pending_at or _iso(current)
             status = "running" if record.active_run_id is not None else "pending"
             self._conn.execute(
                 """
                 UPDATE chores
-                SET status = ?, ready_at = ?, error = NULL, updated_at = ?
+                SET status = ?, pending_at = ?, pending_trigger = ?, error = NULL, updated_at = ?
                 WHERE chore_id = ?
                 """,
-                (status, ready_at, _iso(current), chore_id),
+                (
+                    status,
+                    pending_at,
+                    record.pending_trigger or "manual",
+                    _iso(current),
+                    chore_id,
+                ),
             )
             updated = self._require_row_locked(chore_id)
         return _record(updated)
@@ -387,7 +391,7 @@ class ChoreStore:
             self._conn.execute(
                 """
                 UPDATE chores
-                SET status = CASE WHEN next_run_at IS NULL THEN 'canceled' ELSE 'pending' END, ready_at = NULL, updated_at = ?
+                SET status = CASE WHEN next_scheduled_at IS NULL THEN 'canceled' ELSE 'pending' END, pending_at = NULL, pending_trigger = NULL, updated_at = ?
                 WHERE chore_id = ?
                 """,
                 (_iso(current), chore_id),
@@ -400,28 +404,32 @@ class ChoreStore:
             "SELECT * FROM chores WHERE chore_id = ?",
             (chore.id,),
         ).fetchone()
-        current_schedule_revision = schedule_revision(chore)
+        current_schedule_hash = chore.schedule_hash
         if row is None:
             anchor = _iso(now) if chore.schedule is not None else None
-            next_run_at = _initial_next_run(chore, anchor=now, now=now)
+            next_scheduled_at = _initial_next_run(chore, anchor=now, now=now)
             self._conn.execute(
                 """
                 INSERT INTO chores(
-                    chore_id, name, revision, status, ready_at,
-                    active_run_id, active_revision, active_trigger, active_at,
-                    schedule_revision, schedule_anchor, next_run_at, error,
+                    chore_id, name, body_hash, status, pending_at, pending_trigger,
+                    active_run_id, active_trigger, active_due_at,
+                    schedule_hash, schedule_anchor_at, next_scheduled_at, error,
                     created_at, updated_at
-                ) VALUES (?, ?, ?, 'pending', ?, NULL, NULL, NULL, NULL,
+                ) VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL,
                           ?, ?, ?, NULL, ?, ?)
                 """,
                 (
                     chore.id,
                     chore.name,
-                    chore.revision,
+                    chore.body_hash,
+                    "pending"
+                    if chore.schedule is None or next_scheduled_at
+                    else "done",
                     _iso(now) if chore.schedule is None else None,
-                    current_schedule_revision,
+                    "source" if chore.schedule is None else None,
+                    current_schedule_hash,
                     anchor,
-                    next_run_at,
+                    next_scheduled_at,
                     _iso(now),
                     _iso(now),
                 ),
@@ -429,40 +437,48 @@ class ChoreStore:
             return
         record = _record(row)
         _require_identity(record, chore)
+        if (
+            chore.body_hash == record.body_hash
+            and current_schedule_hash == record.schedule_hash
+        ):
+            return
         status = record.status
-        ready_at = record.ready_at
-        anchor = record.schedule_anchor
-        next_run_at = record.next_run_at
+        pending_at = record.pending_at
+        pending_trigger = record.pending_trigger
+        anchor = record.schedule_anchor_at
+        next_scheduled_at = record.next_scheduled_at
         error = record.error
-        if chore.schedule is None and chore.revision != record.revision:
-            ready_at = ready_at or _iso(now)
+        if chore.schedule is None and chore.body_hash != record.body_hash:
+            pending_trigger = pending_trigger or "source"
+            pending_at = pending_at or _iso(now)
             status = "running" if record.active_run_id is not None else "pending"
             error = None
-        if current_schedule_revision != record.schedule_revision:
+        if current_schedule_hash != record.schedule_hash:
             anchor = _iso(now) if chore.schedule is not None else None
-            next_run_at = _initial_next_run(chore, anchor=now, now=now)
+            next_scheduled_at = _initial_next_run(chore, anchor=now, now=now)
             if record.active_run_id is None:
-                if ready_at or next_run_at:
+                if pending_at or next_scheduled_at:
                     status = "pending"
                 elif status == "pending":
                     status = "done"
             error = None
-        elif chore.revision != record.revision:
+        elif chore.body_hash != record.body_hash:
             error = None
         self._conn.execute(
             """
             UPDATE chores
-            SET revision = ?, status = ?, ready_at = ?, schedule_revision = ?,
-                schedule_anchor = ?, next_run_at = ?, error = ?, updated_at = ?
+            SET body_hash = ?, status = ?, pending_at = ?, pending_trigger = ?, schedule_hash = ?,
+                schedule_anchor_at = ?, next_scheduled_at = ?, error = ?, updated_at = ?
             WHERE chore_id = ?
             """,
             (
-                chore.revision,
+                chore.body_hash,
                 status,
-                ready_at,
-                current_schedule_revision,
+                pending_at,
+                pending_trigger,
+                current_schedule_hash,
                 anchor,
-                next_run_at,
+                next_scheduled_at,
                 error,
                 _iso(now),
                 chore.id,
@@ -489,16 +505,16 @@ class ChoreStore:
                     CREATE TABLE IF NOT EXISTS chores (
                         chore_id TEXT PRIMARY KEY,
                         name TEXT NOT NULL,
-                        revision TEXT NOT NULL,
+                        body_hash TEXT NOT NULL,
                         status TEXT NOT NULL,
-                        ready_at TEXT,
+                        pending_at TEXT,
+                        pending_trigger TEXT,
                         active_run_id TEXT,
-                        active_revision TEXT,
                         active_trigger TEXT,
-                        active_at TEXT,
-                        schedule_revision TEXT,
-                        schedule_anchor TEXT,
-                        next_run_at TEXT,
+                        active_due_at TEXT,
+                        schedule_hash TEXT,
+                        schedule_anchor_at TEXT,
+                        next_scheduled_at TEXT,
                         error TEXT,
                         created_at TEXT NOT NULL,
                         updated_at TEXT NOT NULL
@@ -530,16 +546,10 @@ class ChoreStore:
                 self._conn.commit()
 
 
-def chores_db_path(layout: AgentLayout) -> Path:
-    """Return the scheduler checkpoint database path."""
-
-    return layout.chore_store
-
-
 def open_chore_store(layout: AgentLayout, *, read_only: bool = False) -> ChoreStore:
     """Open scheduler checkpoints for one agent."""
 
-    return ChoreStore(chores_db_path(layout), read_only=read_only)
+    return ChoreStore(layout.chore_store, read_only=read_only)
 
 
 def next_activation(record: ChoreRecord) -> tuple[datetime, ChoreTrigger] | None:
@@ -548,15 +558,15 @@ def next_activation(record: ChoreRecord) -> tuple[datetime, ChoreTrigger] | None
     if record.active_run_id is not None:
         return None
     candidates: list[tuple[datetime, ChoreTrigger]] = []
-    if record.ready_at is not None:
+    if record.pending_at is not None:
         candidates.append(
             (
-                _parse(record.ready_at),
-                "source" if record.schedule_revision is None else "manual",
+                _parse(record.pending_at),
+                cast(ChoreTrigger, record.pending_trigger),
             )
         )
-    if record.next_run_at is not None:
-        candidates.append((_parse(record.next_run_at), "schedule"))
+    if record.next_scheduled_at is not None:
+        candidates.append((_parse(record.next_scheduled_at), "schedule"))
     return min(candidates, default=None, key=lambda item: (item[0], item[1]))
 
 
@@ -567,34 +577,33 @@ def _consume_activation(
     trigger: ChoreTrigger,
     now: datetime,
 ) -> tuple[datetime, str | None, str | None]:
-    ready_at = record.ready_at
-    next_run_at = record.next_run_at
-    if trigger == "source":
-        if chore.schedule is not None or ready_at is None or _parse(ready_at) > now:
-            raise ValueError(f"chore is not due: {chore.id}")
-        active_at = _parse(ready_at)
-        ready_at = None
-    elif trigger == "manual":
-        if ready_at is None or _parse(ready_at) > now:
-            raise ValueError(f"chore has no manual request: {chore.id}")
-        active_at = _parse(ready_at)
-        ready_at = None
+    pending_at = record.pending_at
+    next_scheduled_at = record.next_scheduled_at
+    if trigger in {"source", "manual"}:
+        if (
+            pending_at is None
+            or record.pending_trigger != trigger
+            or _parse(pending_at) > now
+        ):
+            raise ValueError(f"chore has no due {trigger} request: {chore.id}")
+        active_due_at = _parse(pending_at)
+        pending_at = None
     else:
         if (
             chore.schedule is None
-            or record.schedule_anchor is None
-            or next_run_at is None
-            or _parse(next_run_at) > now
+            or record.schedule_anchor_at is None
+            or next_scheduled_at is None
+            or _parse(next_scheduled_at) > now
         ):
             raise ValueError(f"chore schedule is not due: {chore.id}")
-        rule = rrulestr(chore.schedule, dtstart=_parse(record.schedule_anchor))
+        rule = rrulestr(chore.schedule, dtstart=_parse(record.schedule_anchor_at))
         scheduled = rule.before(now, inc=True)
         if scheduled is None:
             raise ValueError(f"chore schedule has no due occurrence: {chore.id}")
-        active_at = _utc(scheduled)
-        following = rule.after(active_at, inc=False)
-        next_run_at = _iso(_utc(following)) if following is not None else None
-    return active_at, ready_at, next_run_at
+        active_due_at = _utc(scheduled)
+        following = rule.after(active_due_at, inc=False)
+        next_scheduled_at = _iso(_utc(following)) if following is not None else None
+    return active_due_at, pending_at, next_scheduled_at
 
 
 def _initial_next_run(chore: Chore, *, anchor: datetime, now: datetime) -> str | None:
@@ -606,7 +615,7 @@ def _initial_next_run(chore: Chore, *, anchor: datetime, now: datetime) -> str |
 
 
 def _finished_status(record: ChoreRecord, run_status: RunStatus) -> ChoreStatus:
-    if record.ready_at is not None or record.next_run_at is not None:
+    if record.pending_at is not None or record.next_scheduled_at is not None:
         return "pending"
     if run_status == "succeeded":
         return "done"
@@ -615,8 +624,10 @@ def _finished_status(record: ChoreRecord, run_status: RunStatus) -> ChoreStatus:
     return "failed"
 
 
-def _rejected_status(ready_at: str | None, next_run_at: str | None) -> ChoreStatus:
-    return "pending" if ready_at or next_run_at else "failed"
+def _rejected_status(
+    pending_at: str | None, next_scheduled_at: str | None
+) -> ChoreStatus:
+    return "pending" if pending_at or next_scheduled_at else "failed"
 
 
 def _require_identity(record: ChoreRecord, chore: Chore) -> None:
@@ -642,16 +653,16 @@ def _record(row: sqlite3.Row) -> ChoreRecord:
     return ChoreRecord(
         chore_id=str(row["chore_id"]),
         name=str(row["name"]),
-        revision=str(row["revision"]),
+        body_hash=str(row["body_hash"]),
         status=cast(ChoreStatus, str(row["status"])),
-        ready_at=_optional(row["ready_at"]),
+        pending_at=_optional(row["pending_at"]),
+        pending_trigger=cast(ChoreTrigger | None, _optional(row["pending_trigger"])),
         active_run_id=_optional(row["active_run_id"]),
-        active_revision=_optional(row["active_revision"]),
         active_trigger=cast(ChoreTrigger | None, _optional(row["active_trigger"])),
-        active_at=_optional(row["active_at"]),
-        schedule_revision=_optional(row["schedule_revision"]),
-        schedule_anchor=_optional(row["schedule_anchor"]),
-        next_run_at=_optional(row["next_run_at"]),
+        active_due_at=_optional(row["active_due_at"]),
+        schedule_hash=_optional(row["schedule_hash"]),
+        schedule_anchor_at=_optional(row["schedule_anchor_at"]),
+        next_scheduled_at=_optional(row["next_scheduled_at"]),
         error=_optional(row["error"]),
         created_at=str(row["created_at"]),
         updated_at=str(row["updated_at"]),

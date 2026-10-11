@@ -3951,7 +3951,7 @@ def _invoke(root: Path, *args: str, tty: bool = False):
     return runner.invoke(app, list(args), env={})
 
 
-def test_cap_inspection_progress_identifies_prepared_scopes(tmp_path: Path) -> None:
+def test_cap_inspection_only_prepares_the_shared_root_layer(tmp_path: Path) -> None:
     _create_agent(tmp_path)
 
     cold = _invoke(tmp_path, "alice", "caps")
@@ -3961,8 +3961,6 @@ def test_cap_inspection_progress_identifies_prepared_scopes(tmp_path: Path) -> N
     assert cold.stderr.splitlines() == [
         "Preparing root caps...",
         "Prepared root caps",
-        "Preparing home caps for alice...",
-        "Prepared home caps for alice",
     ]
     assert warm.exit_code == 0, warm.stderr
     assert warm.stderr == ""
@@ -4317,3 +4315,37 @@ def test_tool_setup_matches_full_setup_and_captures_only_tool_inputs(
     unchanged = asyncio.run(load_tool_setup(layout, agent_context=agent_context))
     assert unchanged.revision == newer.revision
     assert tuple(unchanged.tools()) == tuple(newer.tools())
+
+
+def test_caps_list_does_not_validate_unrelated_runnables(tmp_path):
+    root = tmp_path / "toolang"
+    _create_agent(root)
+    layout = AgentLayout.resident(root, "alice")
+    layout.program.write_text(
+        "psyche careful:\n  Be careful.\nflow broken:\n  run missing\n"
+    )
+    result = _invoke(root, "alice", "caps")
+    assert result.exit_code == 0, result.stderr
+    assert "careful" in result.stdout
+    assert not layout.agent_state.exists()
+
+
+def test_chore_mutations_target_visible_definitions(tmp_path):
+    root = tmp_path / "toolang"
+    _create_agent(root)
+    layout = AgentLayout.resident(root, "alice")
+    layout.program.write_text(
+        "chore cleanup:\n  Inline body.\nflow broken:\n  run missing\n"
+    )
+    hidden = AuthoredChores(layout.home).create(
+        ChoreFile.parse("Home body.", name="cleanup")
+    )
+    for operation in ("edit", "delete"):
+        result = _invoke(root, "alice", "chore", operation, "cleanup")
+        assert result.exit_code == 1
+        assert "agent.too:1" in result.stderr
+    assert hidden.path is not None and hidden.path.read_text() == "Home body."
+    cloned = _invoke(root, "alice", "chore", "clone", "cleanup", "copy")
+    assert cloned.exit_code == 0, cloned.stderr
+    copy = AuthoredChores(layout.home).get("copy")
+    assert copy is not None and copy.body == "Inline body."

@@ -11,7 +11,6 @@ import pytest
 from toolang.base.types.message import Message, TextPart
 from toolang.base.types.run import ModelCallResult
 from toolang.catalog.chore import AuthoredChores, ChoreFile
-from typing import Literal
 
 from toolang.execution.records import CreateControlPayload, RunControlPayload
 from toolang.lang.input import CallInput
@@ -30,8 +29,6 @@ from tests.support.execution_harness import (
 )
 
 
-ChoreKind = Literal["chore"]
-
 _SOURCE = """
 agic review(_: Part[], focus: Text):
   recall = none
@@ -42,7 +39,7 @@ agic review(_: Part[], focus: Text):
 
 
 @pytest.fixture(autouse=True)
-def fast_job_watcher(monkeypatch: pytest.MonkeyPatch) -> None:
+def fast_chore_watcher(monkeypatch: pytest.MonkeyPatch) -> None:
     # Keep the real file watcher without its one-second shutdown polling delay.
     monkeypatch.setattr(
         ChoreWatcher,
@@ -55,29 +52,14 @@ def _result(text: str = "done") -> ModelCallResult:
     return ModelCallResult(message=Message.assistant(text))
 
 
-def _create_task(
+def _create_chore(
     catalog: AuthoredChores,
-    job_id: str,
+    name: str,
     body: str,
 ) -> ChoreFile:
     return catalog.create(
         new_chore_file(
-            name=job_id,
-            title=None,
-            body=body,
-        )
-    )
-
-
-def _create_job(
-    catalog: AuthoredChores,
-    kind: ChoreKind,
-    job_id: str,
-    body: str,
-) -> ChoreFile:
-    return catalog.create(
-        new_chore_file(
-            name=job_id,
+            name=name,
             title=None,
             body=body,
         )
@@ -98,12 +80,12 @@ def _scheduler(harness: ExecutionHarness) -> ChoreDriver:
 
 async def _wait_record(
     scheduler: ChoreDriver,
-    job_id: str,
+    name: str,
     predicate: Callable[[ChoreRecord], bool],
 ) -> ChoreRecord:
     async with asyncio.timeout(5):
         while True:
-            record = await scheduler.get(job_id)
+            record = await scheduler.get(name)
             if record is not None and predicate(record):
                 return record
             await asyncio.sleep(0.01)
@@ -126,7 +108,7 @@ def test_scheduler_rejects_invalid_input_without_creating_a_run(
         source=_SOURCE,
         responses=[],
     )
-    _create_task(AuthoredChores(harness.setup.layout.home), "review", ":help")
+    _create_chore(AuthoredChores(harness.setup.layout.home), "review", ":help")
     scheduler = _scheduler(harness)
 
     async def scenario() -> None:
@@ -194,7 +176,7 @@ def test_scheduler_submits_and_awaits_runs_on_the_execution_loop(
         source=_SOURCE,
         responses=[_result()],
     )
-    _create_task(
+    _create_chore(
         AuthoredChores(harness.setup.layout.home),
         "review",
         "/agic:review focus=security\n\nReview this.",
@@ -252,10 +234,8 @@ def test_scheduler_submits_and_awaits_runs_on_the_execution_loop(
         harness.store.close()
 
 
-@pytest.mark.parametrize("kind", ("chore",))
-def test_job_runnable_call_input_expands_a_prompt_call(
+def test_chore_runnable_call_input_expands_a_prompt_call(
     tmp_path,
-    kind: ChoreKind,
 ) -> None:
     harness = ExecutionHarness.create(
         tmp_path / "toolang",
@@ -272,17 +252,16 @@ agic review(_: Part[], focus: Text):
 """,
         responses=[],
     )
-    _create_job(
+    _create_chore(
         AuthoredChores(harness.setup.layout.home),
-        kind,
         "nested-input",
         "/agic:review focus=nested -\nBefore\n$wrap ---\ntarget\n---\nAfter\n",
     )
     scheduler = _scheduler(harness)
 
     try:
-        (job,) = load_chores(harness.setup.layout)
-        spec = scheduler._build_spec(job)
+        (chore,) = load_chores(harness.setup.layout)
+        spec = scheduler._build_spec(chore)
 
         assert spec.input["_"] == Array(
             "Part[]",
@@ -300,20 +279,20 @@ def test_scheduler_recovers_a_claim_with_no_accepted_run(tmp_path) -> None:
         source=_SOURCE,
         responses=[_result()],
     )
-    _create_task(
+    _create_chore(
         AuthoredChores(harness.setup.layout.home),
         "review",
         "/agic:review focus=recovery\n\nReview after recovery.",
     )
-    (job,) = load_chores(harness.setup.layout)
+    (chore,) = load_chores(harness.setup.layout)
     checkpoint = ChoreStore(harness.setup.layout.chore_store)
     try:
         checkpoint.reconcile(
-            chores={job.id: job},
+            chores={chore.id: chore},
             now=datetime(2026, 1, 1, tzinfo=timezone.utc),
         )
         checkpoint.claim(
-            chore=job,
+            chore=chore,
             trigger="source",
             run_id="run_missing",
             now=datetime(2026, 1, 1, tzinfo=timezone.utc),
@@ -351,7 +330,7 @@ def test_scheduler_accepts_blocking_controls_from_api_worker_threads(
         source=_SOURCE,
         responses=[_result("first"), _result("reopened")],
     )
-    _create_task(
+    _create_chore(
         AuthoredChores(harness.setup.layout.home),
         "review",
         "/agic:review focus=worker\n\nReview from a worker.",
@@ -387,7 +366,7 @@ def test_scheduler_accepts_blocking_controls_from_api_worker_threads(
         harness.store.close()
 
 
-def test_scheduler_serializes_revisions_of_one_task(tmp_path) -> None:
+def test_scheduler_serializes_body_changes(tmp_path) -> None:
     gate = AsyncGate()
     harness = ExecutionHarness.create(
         tmp_path / "toolang",
@@ -398,7 +377,7 @@ def test_scheduler_serializes_revisions_of_one_task(tmp_path) -> None:
         ],
     )
     catalog = AuthoredChores(harness.setup.layout.home)
-    authored = _create_task(
+    authored = _create_chore(
         catalog,
         "review",
         "/agic:review focus=first\n\nReview the first revision.",
@@ -452,7 +431,7 @@ def test_scheduler_serializes_revisions_of_one_task(tmp_path) -> None:
         harness.store.close()
 
 
-def test_scheduler_allows_different_jobs_to_run_concurrently(tmp_path) -> None:
+def test_scheduler_allows_different_chores_to_run_concurrently(tmp_path) -> None:
     first_gate = AsyncGate()
     second_gate = AsyncGate()
     harness = ExecutionHarness.create(
@@ -464,8 +443,8 @@ def test_scheduler_allows_different_jobs_to_run_concurrently(tmp_path) -> None:
         ],
     )
     catalog = AuthoredChores(harness.setup.layout.home)
-    _create_task(catalog, "alpha", "/agic:review focus=alpha\n\nAlpha.")
-    _create_task(catalog, "beta", "/agic:review focus=beta\n\nBeta.")
+    _create_chore(catalog, "alpha", "/agic:review focus=alpha\n\nAlpha.")
+    _create_chore(catalog, "beta", "/agic:review focus=beta\n\nBeta.")
     scheduler = _scheduler(harness)
 
     async def scenario() -> None:
@@ -510,29 +489,27 @@ def test_scheduler_allows_different_jobs_to_run_concurrently(tmp_path) -> None:
         harness.store.close()
 
 
-@pytest.mark.parametrize("job_kind", ["chore"])
 @pytest.mark.parametrize("runnable_kind", ["agic", "flow"])
 @pytest.mark.parametrize("specialized", [False, True])
-def test_job_selects_its_kind_before_the_unnamed_entry(
-    tmp_path, job_kind, runnable_kind, specialized
+def test_chore_selects_named_handler_before_unnamed_entry(
+    tmp_path, runnable_kind, specialized
 ):
     source = f"{runnable_kind}:\n  pass\n"
     if specialized:
-        source += f"\n{runnable_kind} {job_kind}:\n  pass\n"
+        source += f"\n{runnable_kind} chore:\n  pass\n"
     harness = ExecutionHarness.create(tmp_path, source=source, responses=[])
-    _create_job(
+    _create_chore(
         AuthoredChores(harness.setup.layout.home),
-        job_kind,
         "entry",
         "Handle this request.",
     )
     try:
-        (job,) = load_chores(harness.setup.layout)
-        spec = _scheduler(harness)._build_spec(job)
+        (chore,) = load_chores(harness.setup.layout)
+        spec = _scheduler(harness)._build_spec(chore)
         entry = next(
             name for name in harness.state.runnables if name.startswith("<entry:")
         )
-        expected = job_kind if specialized else entry
+        expected = "chore" if specialized else entry
         assert spec.bindings.runnable in {
             f"{runnable_kind}:{expected}",
             f"flow:{expected}",
@@ -541,20 +518,18 @@ def test_job_selects_its_kind_before_the_unnamed_entry(
         harness.store.close()
 
 
-@pytest.mark.parametrize("job_kind", ["chore"])
-def test_job_without_a_kind_or_entry_runnable_fails(tmp_path, job_kind) -> None:
+def test_chore_without_handler_or_entry_fails(tmp_path) -> None:
     harness = ExecutionHarness.create(
         tmp_path, source="agic review:\n  pass\n", responses=[]
     )
-    _create_job(
+    _create_chore(
         AuthoredChores(harness.setup.layout.home),
-        job_kind,
         "entry",
         "Handle this request.",
     )
     try:
-        (job,) = load_chores(harness.setup.layout)
+        (chore,) = load_chores(harness.setup.layout)
         with pytest.raises(ToolangError, match="or unnamed entry"):
-            _scheduler(harness)._build_spec(job)
+            _scheduler(harness)._build_spec(chore)
     finally:
         harness.store.close()

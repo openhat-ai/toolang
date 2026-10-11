@@ -5,8 +5,11 @@ from __future__ import annotations
 import frontmatter
 
 from toolang.catalog.chore import AuthoredChores, ChoreFile
+from toolang.catalog.errors import CatalogConflictError, CatalogNotFoundError
 from toolang.common.ids import LOCAL_ID_FAMILY, allocate_id
 from toolang.common.layout import AgentLayout
+
+from .state import load_chores
 
 
 def allocate_authored_chore_name(
@@ -33,3 +36,44 @@ def new_chore_file(
         meta["schedule"] = schedule
     content = frontmatter.dumps(frontmatter.Post(body, None, **meta))
     return ChoreFile.parse(content, name=name)
+
+
+def create_chore(layout: AgentLayout, definition: ChoreFile) -> ChoreFile:
+    """Create a home definition only when it can become effective."""
+    _require_resident(layout)
+    for chore in load_chores(layout):
+        if chore.name == definition.name and chore.line is not None:
+            raise CatalogConflictError(
+                f"chore {chore.name} is defined at {chore.location}; edit that source"
+            )
+    return AuthoredChores(layout.home).create(definition)
+
+
+def editable_chore(layout: AgentLayout, reference: str) -> ChoreFile:
+    """Require the effective definition to be an editable home Markdown file."""
+    _require_resident(layout)
+    chore = next(
+        (
+            item
+            for item in load_chores(layout)
+            if reference in {item.id, item.name, item.ref}
+        ),
+        None,
+    )
+    if chore is None:
+        raise CatalogNotFoundError(f"chore not found: {reference}")
+    if chore.line is not None or chore.path.parent != layout.home / "chores":
+        raise CatalogConflictError(
+            f"chore {chore.name} is defined at {chore.location}; edit that source"
+        )
+    entry = AuthoredChores(layout.home).get(chore.name)
+    if entry is None:
+        raise CatalogNotFoundError(f"chore not found: {reference}")
+    return entry
+
+
+def _require_resident(layout: AgentLayout) -> None:
+    if layout.placement != "resident":
+        raise CatalogConflictError(
+            "chore changes require a resident agent; clone the source first"
+        )

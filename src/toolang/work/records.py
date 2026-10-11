@@ -13,16 +13,16 @@ class ChoreRecord:
 
     chore_id: str
     name: str
-    revision: str
+    body_hash: str
     status: ChoreStatus
-    ready_at: str | None
+    pending_at: str | None
+    pending_trigger: ChoreTrigger | None
     active_run_id: str | None
-    active_revision: str | None
     active_trigger: ChoreTrigger | None
-    active_at: str | None
-    schedule_revision: str | None
-    schedule_anchor: str | None
-    next_run_at: str | None
+    active_due_at: str | None
+    schedule_hash: str | None
+    schedule_anchor_at: str | None
+    next_scheduled_at: str | None
     error: str | None
     created_at: str
     updated_at: str

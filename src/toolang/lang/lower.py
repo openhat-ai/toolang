@@ -170,6 +170,20 @@ def _lower(cst: ast._ParsedSource) -> ast.Program:
     return _Lowerer(cst).lower()
 
 
+def _lower_caps(cst: ast._ParsedSource) -> ast.Program:
+    lowerer = _Lowerer(cst)
+    for child in cst.tree.root_node.named_children:
+        node = lowerer._item(child)
+        if node.type in {"with", "psyche", "skill", "service", "prompt", "struct"}:
+            lowerer._lower_item(node, doc=lowerer.docs.for_node(node))
+    return ast.Program(
+        span=ast.Span(line=1),
+        caps=tuple(lowerer.caps),
+        withs=tuple(lowerer.withs),
+        structs=tuple(lowerer.structs),
+    )
+
+
 def _lower_chores(cst: ast._ParsedSource) -> tuple[ast.ChoreDecl, ...]:
     """Lower only chore declarations for definition inspection."""
 

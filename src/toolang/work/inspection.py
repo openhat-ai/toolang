@@ -3,15 +3,15 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from dataclasses import fields
 from pathlib import Path
 from typing import Mapping, Protocol
 
-from toolang.catalog.chore import AuthoredChores, ChoreFile
 from toolang.common.layout import AgentLayout
 from toolang.execution.types import ErrorMessage, ErrorRef
 from .records import ChoreRecord
-from .schemas import ChoreDetail, ChoreInfo, LastRunInfo
-from .state import Chore, chore_thread_id, load_chores, merge_chores
+from .schemas import ChoreDetail, ChoreInfo, ChoreRuntimeInfo, LastRunInfo
+from .state import Chore, load_chores
 from .store import open_chore_store
 
 
@@ -33,14 +33,12 @@ class ChoreInspection:
     def __init__(
         self,
         *,
-        catalog: AuthoredChores,
         home: Path,
         definitions: tuple[Chore, ...],
         records: dict[str, ChoreRecord],
         latest_runs: dict[str, ChoreRun],
         error_messages: Mapping[str, str] | None = None,
     ) -> None:
-        self.catalog = catalog
         self.home = home
         self.definitions = definitions
         self.records = records
@@ -53,17 +51,14 @@ class ChoreInspection:
         *,
         layout: AgentLayout,
         runs: Iterable[ChoreRun],
-        read_only: bool = False,
-        inline: Iterable[Chore] = (),
         error_messages: Mapping[str, str] | None = None,
     ) -> ChoreInspection:
-        """Load one consistent inspection snapshot from the owning stores."""
+        """Load definitions and checkpoints from the owning stores."""
 
-        catalog = AuthoredChores(layout.home)
-        if read_only and not layout.chore_store.is_file():
+        if not layout.chore_store.is_file():
             records = ()
         else:
-            chore_store = open_chore_store(layout, read_only=read_only)
+            chore_store = open_chore_store(layout, read_only=True)
             try:
                 records = chore_store.list()
             finally:
@@ -74,9 +69,8 @@ class ChoreInspection:
             if current is None or run.created_at > current.created_at:
                 latest_runs[str(run.thread)] = run
         return cls(
-            catalog=catalog,
             home=layout.home,
-            definitions=tuple(merge_chores(load_chores(layout), inline).values()),
+            definitions=load_chores(layout),
             records={record.chore_id: record for record in records},
             latest_runs=latest_runs,
             error_messages=error_messages,
@@ -95,29 +89,48 @@ class ChoreInspection:
             None,
         )
 
-    def detail(self, chore: ChoreFile | Chore) -> ChoreDetail:
-        record, last_run = self._state(chore)
-        return ChoreDetail.from_chore(
-            chore,
-            home=self.home,
-            record=record,
-            last_run=last_run,
+    def detail(self, chore: Chore) -> ChoreDetail:
+        info = self._info(chore)
+        return ChoreDetail(
+            **{field.name: getattr(info, field.name) for field in fields(info)},
+            body=chore.body,
         )
 
-    def _info(self, chore: ChoreFile | Chore) -> ChoreInfo:
+    def _info(self, chore: Chore) -> ChoreInfo:
         record, last_run = self._state(chore)
-        return ChoreInfo.from_chore(
-            chore,
-            home=self.home,
-            record=record,
-            last_run=last_run,
+        synced = (
+            record is not None
+            and record.body_hash == chore.body_hash
+            and record.schedule_hash == chore.schedule_hash
+        )
+        try:
+            path = str(chore.path.relative_to(self.home))
+        except ValueError:
+            path = str(chore.path)
+        return ChoreInfo(
+            id=chore.id,
+            name=chore.name,
+            ref=chore.ref,
+            title=chore.display_title,
+            path=path,
+            line=chore.line,
+            schedule=chore.schedule,
+            runtime=ChoreRuntimeInfo(
+                thread_id=chore.thread_id,
+                synced=synced,
+                status=record.status if record else None,
+                active_run_id=record.active_run_id if record else None,
+                pending_at=record.pending_at if record else None,
+                next_scheduled_at=record.next_scheduled_at if record else None,
+                last_run=last_run,
+                scheduler_error=record.error if record else None,
+                updated_at=record.updated_at if record else None,
+            ),
         )
 
-    def _state(
-        self, chore: ChoreFile | Chore
-    ) -> tuple[ChoreRecord | None, LastRunInfo | None]:
+    def _state(self, chore: Chore) -> tuple[ChoreRecord | None, LastRunInfo | None]:
         record = self.records.get(chore.id)
-        run = self.latest_runs.get(chore_thread_id(chore))
+        run = self.latest_runs.get(chore.thread_id)
         last_run = (
             LastRunInfo(
                 id=run.id,

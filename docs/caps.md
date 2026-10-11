@@ -91,6 +91,10 @@ Scope tells where a cap is available:
 | `local` | Local authored content, including inline program caps and local files or directories |
 | `remote` | A remote authored cap fetched through a ref |
 
+CLI listing resolves current capability declarations without validating runnable
+handlers or publishing executable agent State. Runtime APIs read the latest
+successfully published State.
+
 Runtime APIs expose effective caps. They do not expose every authored source
 variant as a separate history object.
 

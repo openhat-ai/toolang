@@ -1,7 +1,6 @@
 """Author and inspect the current chore definitions"""
 
 from collections.abc import Iterable
-from dataclasses import replace
 from pathlib import Path
 from typing import Annotated, cast
 from urllib.parse import quote
@@ -18,11 +17,14 @@ from toolang.cli.common.execution import open_execution
 from toolang.cli.common.output import echo_table
 from toolang.cli.common.parameters import TextType
 from toolang.cli.common.routing import PrefixAgentChoreGroup, RequiredPrefixAgentCommand
-from toolang.state.source import read_home_program_source
-from toolang.lang.ast import parse_chore_declarations
-from toolang.work.authoring import allocate_authored_chore_name
+from toolang.work.authoring import (
+    allocate_authored_chore_name,
+    create_chore,
+    editable_chore,
+    new_chore_file,
+)
 from toolang.work.inspection import ChoreInspection, ChoreRun
-from toolang.work.state import inline_chores
+from toolang.work.state import load_chores
 
 ChoreRef = Annotated[
     str,
@@ -55,15 +57,6 @@ def list_chores(ctx: typer.Context) -> None:
         ChoreInspection.load,
         layout=layout,
         runs=runs,
-        inline=inline_chores(
-            user_call(
-                parse_chore_declarations,
-                user_call(read_home_program_source, layout.root, layout.name)
-                .load_program()
-                .source_text,
-            )
-        ),
-        read_only=True,
         error_messages=errors,
     ).list()
     if not entries:
@@ -84,14 +77,24 @@ def list_chores(ctx: typer.Context) -> None:
             (
                 item.name,
                 item.title,
-                item.status or "-",
+                (item.runtime.status or "-") if item.runtime.synced else "unsynced",
                 item.runtime.last_run.status if item.runtime.last_run else "-",
-                item.runtime.next_run_at or "-",
+                min(
+                    (
+                        value
+                        for value in (
+                            item.runtime.pending_at,
+                            item.runtime.next_scheduled_at,
+                        )
+                        if value
+                    ),
+                    default="-",
+                ),
                 item.schedule or "once",
-                item.runtime.error
+                item.runtime.scheduler_error
                 or (item.runtime.last_run.error if item.runtime.last_run else None)
                 or "-",
-                item.path,
+                f"{item.path}:{item.line}" if item.line is not None else item.path,
             )
             for item in entries
         ],
@@ -110,29 +113,37 @@ def new_chore(ctx: typer.Context, name: ChoreName = None) -> None:
     definition = user_call(
         ChoreFile.parse, text, name=name or allocate_authored_chore_name(layout)
     )
-    saved = user_call(AuthoredChores(layout.home).create, definition)
+    saved = user_call(create_chore, layout, definition)
     typer.echo(f"chore {saved.name} created\t{_path(saved)}")
 
 
 def clone_chore(ctx: typer.Context, chore: ChoreRef, name: ChoreName = None) -> None:
     """Copy a definition under a new name and execution identity"""
     layout = context_layout(ctx)
-    catalog = AuthoredChores(layout.home)
-    source = _require(catalog, chore)
-    clone = source.with_meta(
-        {key: value for key, value in source.meta.items() if key != "id"}
+    source = next(
+        (
+            item
+            for item in user_call(load_chores, layout)
+            if chore in {item.id, item.name, item.ref}
+        ),
+        None,
     )
-    saved = user_call(
-        catalog.create,
-        replace(clone, name=name or allocate_authored_chore_name(layout), path=None),
+    if source is None:
+        raise ClickException(f"chore not found: {chore}")
+    clone = new_chore_file(
+        name=name or allocate_authored_chore_name(layout),
+        title=source.title,
+        body=source.body,
+        schedule=source.schedule,
     )
+    saved = user_call(create_chore, layout, clone)
     typer.echo(f"chore {saved.name} cloned\t{_path(saved)}")
 
 
 def edit_chore(ctx: typer.Context, chore: ChoreRef) -> None:
     """Edit a definition without changing its name or progress"""
     catalog = AuthoredChores(context_layout(ctx).home)
-    existing = _require(catalog, chore)
+    existing = user_call(editable_chore, context_layout(ctx), chore)
     text = edit_markdown(existing.content)
     if text is None:
         raise typer.Exit()
@@ -144,7 +155,8 @@ def edit_chore(ctx: typer.Context, chore: ChoreRef) -> None:
 def delete_chore(ctx: typer.Context, chore: ChoreRef) -> None:
     """Remove a definition; keep completed work and execution history"""
     catalog = AuthoredChores(context_layout(ctx).home)
-    removed = user_call(catalog.remove, chore)
+    existing = user_call(editable_chore, context_layout(ctx), chore)
+    removed = user_call(catalog.remove, existing.name)
     typer.echo(f"chore {removed.name} deleted")
 
 
@@ -166,13 +178,6 @@ def cancel_chore(ctx: typer.Context, chore: ChoreRef) -> None:
         payload={},
     )
     typer.echo(f"chore {chore} cancel requested")
-
-
-def _require(catalog: AuthoredChores, reference: str) -> ChoreFile:
-    value = user_call(catalog.get, reference)
-    if value is None:
-        raise ClickException(f"chore not found: {reference}")
-    return value
 
 
 def _path(chore: ChoreFile) -> Path:

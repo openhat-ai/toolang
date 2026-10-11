@@ -21,6 +21,7 @@ from toolang.catalog.types import CAP_KINDS, CapKind
 from toolang.state import state as cap_state
 from toolang.state.prepare import (
     inspect_root_caps,
+    inspect_agent_caps,
     prepare_agent_state,
 )
 from ..common.context import context_agent, context_layout, context_root, user_call
@@ -522,10 +523,9 @@ def _cap_entries(
                     kinds=kinds,
                     progress=progress.sink,
                 )
-            state = user_call(prepare_agent_state, layout, progress=progress.sink)
-            entries = tuple(cap for cap in state.caps.values() if cap.kind in kinds)
-            allowed = tuple(cap for cap in state.caps_for("agent") if cap.kind in kinds)
-            return entries, allowed
+            return user_call(
+                inspect_agent_caps, layout, kinds=kinds, progress=progress.sink
+            )
     except Exception as exc:
         if progress.failure_stage is not None:
             raise ClickException(progress.failure_message(exc)) from exc

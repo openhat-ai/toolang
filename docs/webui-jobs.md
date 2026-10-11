@@ -18,11 +18,20 @@ Creation accepts optional `title`, `body`, and `schedule`. Missing schedule mean
 one-off. Use a new name for a new identity. Root and inline definitions appear in
 inspection but must be edited at their source.
 
-Responses include `name`, `ref`, derived `id`, title, path, schedule, status, and
-`runtime` with `thread_id`, `last_run`, `next_run_at`, and dispatch errors.
-They have no `kind` or `stage`. Status is null before the driver creates a
-checkpoint, then pending/running/done/failed/canceled. A recurring chore normally
-remains pending after an occurrence when a future occurrence exists.
+Responses include `name`, `ref`, derived `id`, title, source `path` and optional
+`line`, schedule, and `runtime`. Runtime contains `thread_id`, `status`,
+`active_run_id`, `pending_at`, `next_scheduled_at`, `last_run`, `scheduler_error`,
+and checkpoint `updated_at`. `synced` indicates whether the checkpoint describes
+the current body and schedule; false means its status still belongs to an older
+or unobserved definition. Definitions have no execution timestamps or guessed
+remote issue fields. Status is null before the driver creates a checkpoint,
+then pending/running/done/failed/canceled. A recurring chore remains pending
+while future work exists; an already exhausted schedule starts as done.
+
+CLI and API inspection read the same current source definitions without resolving
+handlers. The driver uses accepted State for inline definitions and handlers.
+PATCH/DELETE reject root or inline definitions with 409 and identify the source
+to edit. Creating a home file hidden by an inline declaration also returns 409.
 
 Authoring and inspection work with the chore driver disabled. Manual dispatch
 returns 409 with `{ "code": "driver_disabled", "driver": "chore" }`.

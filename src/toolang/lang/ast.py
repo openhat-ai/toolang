@@ -429,6 +429,16 @@ class Program(Node):
         return program
 
 
+def parse_cap_declarations(source: str) -> Program:
+    """Parse and validate capability declarations without resolving runnables."""
+    from .lower import _lower_caps
+    from .validate import _validate
+
+    program = _lower_caps(_parse_source(source))
+    _validate(program)
+    return program
+
+
 def parse_chore_declarations(source: str) -> tuple[ChoreDecl, ...]:
     """Read inline chore definitions without resolving or validating runnables."""
     from .lower import _lower_chores

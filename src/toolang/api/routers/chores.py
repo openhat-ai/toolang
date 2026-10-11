@@ -14,11 +14,15 @@ from toolang.api.schemas import (
 from toolang.catalog import ChoresManager
 from toolang.catalog.chore import ChoreFile
 from toolang.up import AgentCore
-from toolang.work.authoring import new_chore_file
+from toolang.work.authoring import (
+    create_chore as create_definition,
+    editable_chore,
+    new_chore_file,
+)
 from toolang.work.inspection import ChoreInspection, ChoreRun
 from toolang.work.schemas import ChoreDetail, ChoreInfo
 from toolang.work.scheduler import ChoreDriver
-from toolang.work.state import inline_chores
+from toolang.work.state import file_chore
 
 _T = TypeVar("_T")
 
@@ -33,11 +37,10 @@ router = APIRouter(tags=["chores"])
 )
 def create_chore(
     core: AgentCoreDep,
-    manager: ChoresManagerDep,
     scheduler: ChoreDriverDep,
     payload: ChoreCreateRequest,
 ) -> ChoreDetail:
-    saved = manager.home_authoring.create(_new_chore(payload=payload))
+    saved = create_definition(core.layout, _new_chore(payload=payload))
     _refresh_chores(scheduler)
     return _chore_detail(core, saved)
 
@@ -74,7 +77,7 @@ def cancel_chore(
             if (
                 record is not None
                 and record.active_run_id is None
-                and record.ready_at is not None
+                and record.pending_at is not None
             ):
                 record = store.cancel_pending_chore(chore_id=record.chore_id)
         finally:
@@ -99,20 +102,19 @@ def update_chore(
         core,
         manager,
         scheduler,
-        _require_chore(manager, chore_id),
+        editable_chore(core.layout, chore_id),
         payload,
     )
 
 
 @router.get("/chores", summary="List Chores", response_model=list[ChoreInfo])
 def chores(core: AgentCoreDep) -> list[ChoreInfo]:
-    return _chore_collection(core)
+    return list(_inspection(core).list())
 
 
 @router.get("/chores/{chore_id}", summary="Get Chore", response_model=ChoreDetail)
 def chore_detail(
     core: AgentCoreDep,
-    manager: ChoresManagerDep,
     chore_id: str,
 ) -> ChoreDetail:
     inspection = _inspection(core)
@@ -129,9 +131,12 @@ def chore_detail(
     response_class=Response,
 )
 def delete_chore(
-    manager: ChoresManagerDep, scheduler: ChoreDriverDep, chore_id: str
+    core: AgentCoreDep,
+    manager: ChoresManagerDep,
+    scheduler: ChoreDriverDep,
+    chore_id: str,
 ) -> None:
-    _require_chore(manager, chore_id)
+    editable_chore(core.layout, chore_id)
     manager.home_authoring.remove(chore_id)
     _refresh_chores(scheduler)
 
@@ -154,8 +159,6 @@ def _inspection(core: AgentCore) -> ChoreInspection:
     return ChoreInspection.load(
         layout=core.layout,
         runs=runs,
-        read_only=True,
-        inline=inline_chores(core.state.current().modules["agent"].chores),
         error_messages={
             run.id: core.store.resolve_error(run.error)
             for run in runs
@@ -164,24 +167,8 @@ def _inspection(core: AgentCore) -> ChoreInspection:
     )
 
 
-def _chore_collection(
-    core: AgentCore,
-) -> list[ChoreInfo]:
-    return list(_inspection(core).list())
-
-
 def _chore_detail(core: AgentCore, entry: ChoreFile) -> ChoreDetail:
-    return _inspection(core).detail(entry)
-
-
-def _require_chore(
-    manager: ChoresManager,
-    chore_id: str,
-) -> ChoreFile:
-    entry = manager.home_authoring.get(chore_id)
-    if entry is not None:
-        return entry
-    raise HTTPException(status_code=404, detail=f"chore not found: {chore_id}")
+    return _inspection(core).detail(file_chore(entry))
 
 
 def _new_chore(*, payload: ChoreCreateRequest) -> ChoreFile:
