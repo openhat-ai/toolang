@@ -200,6 +200,8 @@ def load_agent_state(
         root.schema != LAYER_SCHEMA or home.schema != LAYER_SCHEMA
     ):
         raise ValueError("current Agent State uses an outdated layer schema")
+    if revision is None and _has_missing_inline_caps(home):
+        raise ValueError("current Agent State is missing inline capabilities")
     state = compose_layer_state(
         root,
         home,
@@ -394,10 +396,26 @@ def _matching_home(
             return None
         if layer.source != source:
             return None
+        if _has_missing_inline_caps(layer):
+            return None
         validate_layer_revision(layout, "home", revision)
         return layer
     except (FileNotFoundError, KeyError, TypeError, ValueError):
         return None
+
+
+def _has_missing_inline_caps(layer: HomeLayer) -> bool:
+    """Detect older layers that parsed caps without materializing them."""
+
+    for module, program in layer.modules.items():
+        materialized = {
+            (cap.kind, cap.name)
+            for cap in layer.module_caps.get(module, ())
+            if cap.source.form == "inline"
+        }
+        if any((cap.kind, cap.name) not in materialized for cap in program.caps):
+            return True
+    return False
 
 
 def _prepare_layer(
