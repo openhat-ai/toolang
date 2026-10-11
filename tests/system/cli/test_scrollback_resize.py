@@ -70,6 +70,11 @@ def test_input_cursor_remains_a_blinking_block_until_exit(tmp_path, surface):
         session.close()
 
 
+@pytest.mark.skipif(
+    os.environ.get("TOOLANG_TEST_ALL") != "1"
+    and os.environ.get("TOOLANG_TEST_RESIZE") != "1",
+    reason="set TOOLANG_TEST_RESIZE=1 or TOOLANG_TEST_ALL=1",
+)
 @pytest.mark.skipif(shutil.which("tmux") is None, reason="tmux is not installed")
 @pytest.mark.parametrize("surface", ["chat", "talk"])
 @pytest.mark.parametrize(
