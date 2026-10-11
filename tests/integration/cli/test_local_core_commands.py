@@ -2147,7 +2147,7 @@ def test_inspect_display_modes_are_exclusive_and_removed_options_fail(
     assert "No such option: --limit" in strip_ansi(removed.stderr)
     assert help_code == 0
     assert "POINTER" in help_text
-    assert "Inspect agent runs" in help_text
+    assert "Inspect run history and details" in help_text
     assert "Subject chain." in help_text
     assert "Root subjects: threads, runs, controls" in compact_help
     assert "THREAD runs" in compact_help
@@ -4047,16 +4047,6 @@ def test_standalone_caps_all_preserves_scope_and_query(
         assert output.out.strip() == "0 caps"
 
 
-@pytest.mark.parametrize("target", ["alice", "agent:alice"])
-def test_plugin_channel_listing_rejects_agent_targets(
-    tmp_path: Path, target: str
-) -> None:
-    _create_agent(tmp_path)
-    result = _invoke(tmp_path, target, "channel", "list")
-    assert result.exit_code == 2
-    assert "channel does not accept an agent target here" in result.stderr
-
-
 def test_tools_help_and_missing_agent_need_no_setup(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -4346,6 +4336,6 @@ def test_chore_mutations_target_visible_definitions(tmp_path):
         assert "agent.too:1" in result.stderr
     assert hidden.path is not None and hidden.path.read_text() == "Home body."
     cloned = _invoke(root, "alice", "chore", "clone", "cleanup", "copy")
-    assert cloned.exit_code == 0, cloned.stderr
-    copy = AuthoredChores(layout.home).get("copy")
-    assert copy is not None and copy.body == "Inline body."
+    assert cloned.exit_code == 2
+    assert "No such command 'clone'." in cloned.stderr
+    assert AuthoredChores(layout.home).get("copy") is None

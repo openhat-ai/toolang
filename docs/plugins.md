@@ -5,12 +5,17 @@ protocols and canonical value types live in `toolang.base`. Plugins should
 raise `toolang.base.errors.ToolangError` for user-facing configuration, input,
 or runtime failures.
 
+The channel plugin family and bundled Telegram integration are removed. Plugin
+configuration only consumes supported families; unknown families, including
+former `[plugin.channel.*]` tables, are ignored. Remove imports of the former
+channel contracts or factory. There is no replacement channel plugin API;
+Hub/Talk messaging continues to use its own transport.
+
 ## Plugin Families
 
 The public plugin families are:
 
 - `toolset`;
-- `channel`;
 - `sandbox`;
 - `model_catalog`;
 - `model_adapter`.
@@ -111,10 +116,6 @@ read uses a short-lived read-only Store connection in a worker thread, so it
 cannot hold the executor's Store lock. Interruption discards the late result;
 the worker closes its connection when the read finishes or fails.
 
-### Channel
-
-Channel plugins ingest or deliver external messages.
-
 ### Sandbox
 
 Sandbox plugins provide runtime execution environments.
@@ -191,7 +192,6 @@ discover models, match providers, calculate availability, or own pricing.
 Toolang loads plugins from Python entry points:
 
 - `toolang.toolset`;
-- `toolang.channel`;
 - `toolang.sandbox`;
 - `toolang.model_catalog`;
 - `toolang.model_adapter`.
@@ -200,12 +200,11 @@ Built-in implementations are registered through the same entry-point mechanism
 as external packages. The implementation packages are:
 
 - `toolang.plugin.toolsets.*`;
-- `toolang.plugin.channels.*`;
 - `toolang.plugin.sandboxes.*`;
 - `toolang.plugin.catalogs.*`;
 - `toolang.plugin.adapters.*`.
 
-Each entry point names one factory such as `create_toolset`, `create_channel`,
+Each entry point names one factory such as `create_toolset`,
 `create_sandbox`, `create_model_catalog`, or `create_model_adapter`. A
 distribution may register multiple entries in one or more families.
 
@@ -214,11 +213,10 @@ package named after its entry-point identity:
 
 | Family | Registered plugins | Implementation parent |
 | --- | --- | --- |
-| Toolset | `fs`, `history`, `service`, `shell`, `web` | `toolang.plugin.toolsets` |
+| Toolset | `fs`, `history`, `msg`, `service`, `shell`, `web` | `toolang.plugin.toolsets` |
 | Toolset | `_toolang`, `me` | `toolang.execution.tools` |
 | Model catalog | `models_dev`, `ollama`, `llama_cpp` | `toolang.plugin.catalogs` |
 | Model adapter | `chat_completions`, `generate_content`, `messages`, `responses` | `toolang.plugin.adapters` |
-| Channel | `telegram` | `toolang.plugin.channels` |
 | Sandbox | `host`, `docker` | `toolang.plugin.sandboxes` |
 
 Runtime-owned toolsets stay under `execution.tools` because they depend on
@@ -227,7 +225,7 @@ helpers are support code, not additional plugins. Docker owns its CLI helpers
 and packaged guest bootstrap files inside `sandboxes/docker/`.
 
 Installed-plugin commands (`too toolsets`, `too catalogs`, `too adapters`,
-`too channel list`, and `too sandboxes`) list entry-point `NAME` and distribution
+and `too sandboxes`) list entry-point `NAME` and distribution
 `PACKAGE`, with `-` for missing distribution metadata. They do not accept an agent name or read setup,
 configuration, or catalog files. No factory is invoked, so an installed plugin
 can be listed even if its runtime dependencies are unavailable.
@@ -271,7 +269,7 @@ policy. Every resource `--all` accepts
 `-a`.
 
 `toolang.plugin.loading` owns entry-point discovery, fresh factory configuration,
-and the typed channel, sandbox, model-adapter, and model-catalog loading APIs.
+and the typed sandbox, model-adapter, and model-catalog loading APIs.
 `toolang.plugin.types` owns shared plugin identity and provenance records.
 `toolang.plugin.toolsets.loading` adds toolset-specific identity validation,
 duplicate detection, leaf-tool wrapping, and selection. Loaders depend on base

@@ -48,7 +48,7 @@ applies, raise the ambiguity and ask the human before proceeding.
   `src/toolang/work`: authored data, installed setup, prepared state, and
   scheduling, respectively.
 - `src/toolang/execution`: runs, threads, persistence, inspection, and control.
-- `src/toolang/plugin`: reusable tool, model, channel, and sandbox plugins.
+- `src/toolang/plugin`: reusable tool, model, and sandbox plugins.
 - `src/toolang/up`, `src/toolang/api`, and `src/toolang/cli`: hosting, HTTP, and
   process orchestration, respectively.
 - `docs/`: potentially stale design context. Treat the implementation as the

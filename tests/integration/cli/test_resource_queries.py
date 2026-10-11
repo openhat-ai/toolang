@@ -52,7 +52,6 @@ def test_list_commands_reject_removed_query_discovery_options(
         ["catalogs"],
         ["toolsets"],
         ["sandboxes"],
-        ["channel", "list"],
     ],
 )
 def test_diagnostic_and_plugin_lists_expose_no_query(command: list[str]) -> None:
@@ -135,7 +134,7 @@ def test_allow_help_uses_resource_query_vocabulary() -> None:
 
 @pytest.mark.parametrize(
     "command",
-    [["adapters"], ["catalogs"], ["toolsets"], ["sandboxes"], ["channel", "list"]],
+    [["adapters"], ["catalogs"], ["toolsets"], ["sandboxes"]],
 )
 @pytest.mark.parametrize("option", ["--json", "--human"])
 def test_plugin_inventories_only_support_default_tables(command, option):

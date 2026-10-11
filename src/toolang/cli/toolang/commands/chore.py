@@ -6,7 +6,6 @@ from typing import Annotated, cast
 from urllib.parse import quote
 
 import typer
-from typer._click.exceptions import ClickException
 
 from toolang.catalog.chore import AuthoredChores, ChoreFile
 from toolang.catalog import templates
@@ -21,10 +20,8 @@ from toolang.work.authoring import (
     allocate_authored_chore_name,
     create_chore,
     editable_chore,
-    new_chore_file,
 )
 from toolang.work.inspection import ChoreInspection, ChoreRun
-from toolang.work.state import load_chores
 
 ChoreRef = Annotated[
     str,
@@ -117,29 +114,6 @@ def new_chore(ctx: typer.Context, name: ChoreName = None) -> None:
     typer.echo(f"chore {saved.name} created\t{_path(saved)}")
 
 
-def clone_chore(ctx: typer.Context, chore: ChoreRef, name: ChoreName = None) -> None:
-    """Copy a definition under a new name and execution identity"""
-    layout = context_layout(ctx)
-    source = next(
-        (
-            item
-            for item in user_call(load_chores, layout)
-            if chore in {item.id, item.name, item.ref}
-        ),
-        None,
-    )
-    if source is None:
-        raise ClickException(f"chore not found: {chore}")
-    clone = new_chore_file(
-        name=name or allocate_authored_chore_name(layout),
-        title=source.title,
-        body=source.body,
-        schedule=source.schedule,
-    )
-    saved = user_call(create_chore, layout, clone)
-    typer.echo(f"chore {saved.name} cloned\t{_path(saved)}")
-
-
 def edit_chore(ctx: typer.Context, chore: ChoreRef) -> None:
     """Edit a definition without changing its name or progress"""
     catalog = AuthoredChores(context_layout(ctx).home)
@@ -171,7 +145,7 @@ def run_chore(ctx: typer.Context, chore: ChoreRef) -> None:
 
 
 def cancel_chore(ctx: typer.Context, chore: ChoreRef) -> None:
-    """Cancel the active or pending occurrence"""
+    """Cancel the active or pending occurrence; keep future scheduled work"""
     runtime_post(
         ctx,
         f"/api/v1/chores/{quote(chore.removeprefix('chore/'), safe='')}/cancel",
@@ -189,7 +163,7 @@ def _path(chore: ChoreFile) -> Path:
 def _create_app() -> typer.Typer:
     app = typer.Typer(
         cls=PrefixAgentChoreGroup,
-        help="Manage agent chores",
+        help="Manage one-off and scheduled work",
         add_completion=False,
         no_args_is_help=True,
         pretty_exceptions_enable=False,
@@ -198,7 +172,6 @@ def _create_app() -> typer.Typer:
     for name, command in (
         ("list", list_chores),
         ("new", new_chore),
-        ("clone", clone_chore),
         ("edit", edit_chore),
         ("delete", delete_chore),
         ("run", run_chore),

@@ -107,11 +107,16 @@ def test_lazy_command_exposes_short_help_without_loading():
 @pytest.mark.parametrize(
     ("command", "description"),
     [
-        ("hub", "Manage the hub service"),
-        ("talk", "Open a conversation"),
+        ("hub", "Manage the shared Hub service"),
+        ("talk", "Exchange messages through the Hub"),
+        ("chat", "Chat directly with an agent"),
+        ("chore", "Manage one-off and scheduled work"),
+        ("start", "Start an agent in the background"),
+        ("top", "Monitor running agents and scripts"),
+        ("inspect", "Inspect run history and details"),
     ],
 )
-def test_teaming_descriptions_match_root_and_command_help(
+def test_command_descriptions_match_root_and_command_help(
     command, description, tmp_path, capsys
 ):
     assert too_main(["--root", str(tmp_path), "--help"]) == 0
@@ -122,6 +127,38 @@ def test_teaming_descriptions_match_root_and_command_help(
     assert f"{command} {description}" in rows
     assert too_main(["--root", str(tmp_path), command, "--help"]) == 0
     assert strip_ansi(capsys.readouterr().out).startswith(f"{description}.\n")
+    if command not in {"hub", "talk"}:
+        assert too_main(["--root", str(tmp_path), "agent:sample", "--help"]) == 0
+        rows = " ".join(strip_ansi(capsys.readouterr().out).split())
+        assert f"{command} {description}" in rows
+
+
+@pytest.mark.parametrize(
+    ("group", "commands"),
+    [
+        ("chore", ("list", "new", "edit", "delete", "run", "cancel")),
+        ("hub", ("start", "serve", "stop", "status")),
+    ],
+)
+def test_chore_and_hub_help_lists_supported_commands(group, commands, tmp_path, capsys):
+    assert too_main(["--root", str(tmp_path), group, "--help"]) == 0
+    output = strip_ansi(capsys.readouterr().out)
+    section = output.split("Commands:\n", 1)[1].split("\n\n", 1)[0]
+    assert (
+        tuple(
+            line.split()[0]
+            for line in section.splitlines()
+            if line.strip() and not line.startswith(" " * 10)
+        )
+        == commands
+    )
+
+
+def test_top_help_explains_observation_scope(tmp_path, capsys):
+    assert too_main(["--root", str(tmp_path), "top", "--help"]) == 0
+    output = " ".join(strip_ansi(capsys.readouterr().out).split())
+    assert "Observe runtime instances, threads, and runs." in output
+    assert "Local activity is available without the Hub." in output
 
 
 @pytest.mark.parametrize("application", [app, caps_app])
@@ -250,16 +287,16 @@ def test_additional_commands_keep_theme_and_root_invocation_hint(capsys, monkeyp
             "fork": "Fork a thread from an earlier run",
             "rewind": "Rewind a thread to an earlier run",
         },
-        "Runtime Commands": {
+        "Plugin Commands": {
             "catalogs": "List installed model catalogs",
             "adapters": "List installed model adapters",
             "toolsets": "List installed toolsets",
             "sandboxes": "List installed sandboxes",
         },
         "Language Commands": {
-            "fmt": "Format .too source",
-            "highlight": "Highlight .too source",
             "parse": "Parse .too source",
+            "highlight": "Highlight .too source",
+            "fmt": "Format .too source",
         },
     }
     for names in more_panels.values():
@@ -390,15 +427,17 @@ def test_hidden_is_no_longer_a_command():
     assert "No such command 'hidden'." in stderr.getvalue()
 
 
-@pytest.mark.parametrize("args, status", [([], 0), (["--help"], 0), (["--unknown"], 2)])
-def test_channel_usage_spells_out_arguments(
-    args, status, tmp_path, capsys, monkeypatch
-):
-    monkeypatch.setattr("sys.argv", ["too"])
-    assert too_main(["--root", str(tmp_path), "channel", *args]) == status
-    captured = capsys.readouterr()
-    output = strip_ansi(captured.err if status else captured.out)
-    assert "Usage: too channel [OPTIONS] <COMMAND> [ARGUMENTS]" in output.splitlines()
+@pytest.mark.parametrize(
+    ("args", "error"),
+    [
+        ([], "No such command 'channel'."),
+        (["list"], "list does not accept an agent target here"),
+        (["--help"], "No such command 'channel'."),
+    ],
+)
+def test_channel_command_is_removed(args, error, tmp_path, capsys):
+    assert too_main(["--root", str(tmp_path), "channel", *args]) == 2
+    assert error in strip_ansi(capsys.readouterr().err)
 
 
 @pytest.mark.parametrize(

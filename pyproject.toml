@@ -93,9 +93,6 @@ models_dev = "toolang.plugin.catalogs.models_dev:create_model_catalog"
 ollama = "toolang.plugin.catalogs.ollama:create_model_catalog"
 llama_cpp = "toolang.plugin.catalogs.llama_cpp:create_model_catalog"
 
-[project.entry-points."toolang.channel"]
-telegram = "toolang.plugin.channels.telegram:create_channel"
-
 [project.entry-points."toolang.sandbox"]
 host = "toolang.plugin.sandboxes.host:create_sandbox"
 docker = "toolang.plugin.sandboxes.docker:create_sandbox"
