@@ -3,6 +3,7 @@
 import pytest
 from rich.color import Color
 from rich.console import Console
+from rich.segment import Segment
 
 from toolang.cli.common.terminal_surfaces import (
     DARK_TERMINAL_SURFACES,
@@ -86,6 +87,37 @@ def test_agent_links_do_not_emit_terminal_hyperlinks():
     segments = render("[label](https://example.com)")
     assert all(not segment.style or segment.style.link is None for segment in segments)
     assert "label" in "".join(segment.text for segment in segments)
+
+
+@pytest.mark.parametrize("width", [24, 60])
+@pytest.mark.parametrize("surfaces", [DARK_TERMINAL_SURFACES, LIGHT_TERMINAL_SURFACES])
+@pytest.mark.parametrize("container", ["", "> ", "- "])
+def test_agent_code_reaches_right_edge_and_keeps_all_padding(
+    width, surfaces, container
+):
+    left = 2 + len(container)
+    code = "x" * (width - left - 4)
+    source = f"```text\n{code}\n```"
+    continuation = container if container == "> " else "  "
+    source = container + source.replace(
+        "\n", "\n" + continuation if container else "\n"
+    )
+    lines = list(Segment.split_lines(render(source, width=width, surfaces=surfaces)))
+    painted = [
+        [(character, segment.style) for segment in line for character in segment.text]
+        for line in lines
+        if any(s.style and s.style.bgcolor for s in line)
+    ]
+    assert len(painted) == 3
+    assert "".join(c for c, _ in painted[1][left:]) == f"  {code}  "
+    assert not "".join(c for c, _ in painted[0][left:]).strip()
+    assert not "".join(c for c, _ in painted[2][left:]).strip()
+    for line in painted:
+        assert len(line) == width
+        assert all(
+            style and style.bgcolor == Color.parse(surfaces.code_background)
+            for _, style in line[left:]
+        )
 
 
 def test_human_markdown_remains_literal():

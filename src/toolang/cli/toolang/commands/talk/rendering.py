@@ -52,7 +52,11 @@ class _AgentBody:
         for line in Segment.split_lines(console.render(self.content, options)):
             pending.extend(line)
             pending.append(Segment.line())
-            if any(segment.text.strip() for segment in line):
+            if any(
+                segment.text.strip()
+                or (segment.text and segment.style and segment.style.bgcolor)
+                for segment in line
+            ):
                 yield from pending
                 pending.clear()
 
@@ -86,6 +90,7 @@ def message_block(
                 inline_code_background=surfaces.inline_code_background,
                 code_foreground=None,
                 hyperlinks=False,
+                right_inset=padding,
             )
         )
         if agent
@@ -103,7 +108,7 @@ def message_block(
         columns.add_column(width=padding, no_wrap=True)
         columns.add_row("" if right else marker, header, marker if right else "")
         header = columns
-        content = Padding(content, (0, padding))
+        content = Padding(content, (0, 0 if agent else padding, 0, padding))
     if not agent:
         content = Padding(
             content,

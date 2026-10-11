@@ -569,7 +569,7 @@ class _MarkdownRow:
         console: Console,
         options: ConsoleOptions,
     ) -> RenderResult:
-        width = max(1, min(options.max_width, self.max_width) - PROGRESS_RIGHT_INSET)
+        width = max(1, min(options.max_width, self.max_width))
         prefix = self.row.prefix
         prefix_width = display_width(prefix)
         content_width = max(1, width - prefix_width)
@@ -579,6 +579,7 @@ class _MarkdownRow:
                 code_background=self.code_background,
                 inline_code_background=self.inline_code_background,
                 code_foreground=self.code_foreground,
+                right_inset=PROGRESS_RIGHT_INSET,
             ),
             options.update_width(content_width),
         )

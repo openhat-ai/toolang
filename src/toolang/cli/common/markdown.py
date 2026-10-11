@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Self, cast
+
 from markdown_it.token import Token
 from rich.console import Console, ConsoleOptions, RenderResult
 from rich.markdown import (
@@ -9,8 +11,11 @@ from rich.markdown import (
     CodeBlock,
     Heading,
     HorizontalRule,
+    ImageItem,
     ListItem,
     Markdown,
+    MarkdownElement,
+    Paragraph,
     TableElement,
 )
 from rich.rule import Rule
@@ -36,7 +41,38 @@ class _TerminalCodeTheme(SyntaxTheme):
         return self._theme.get_background_style() + Style(color=self._foreground)
 
 
-class _TerminalHeading(Heading):
+class _InsetMarkdownElement(MarkdownElement):
+    """Reserve the prose margin at leaves so nested code keeps the full width."""
+
+    right_inset: int = 0
+
+    @classmethod
+    def create(cls, markdown: Markdown, token: Token) -> Self:
+        assert isinstance(markdown, TerminalMarkdown)
+        element = cast(Self, super().create(markdown, token))
+        element.right_inset = markdown.right_inset
+        return element
+
+    def __rich_console__(
+        self, console: Console, options: ConsoleOptions
+    ) -> RenderResult:
+        options = options.update_width(max(1, options.max_width - self.right_inset))
+        for renderable in super().__rich_console__(console, options):
+            if isinstance(renderable, Segment):
+                yield renderable
+            else:
+                yield from console.render(renderable, options)
+
+
+class _TerminalParagraph(_InsetMarkdownElement, Paragraph):
+    """Keep prose inside the caller's right margin."""
+
+
+class _TerminalImageItem(_InsetMarkdownElement, ImageItem):
+    """Keep image labels inside the caller's right margin."""
+
+
+class _TerminalHeading(_InsetMarkdownElement, Heading):
     """Keep headings aligned with the surrounding content."""
 
     LEVEL_ALIGN = {
@@ -49,7 +85,7 @@ class _TerminalHeading(Heading):
     }
 
 
-class _TerminalHorizontalRule(HorizontalRule):
+class _TerminalHorizontalRule(_InsetMarkdownElement, HorizontalRule):
     """Render a quiet Unicode divider instead of Rich's ASCII hyphens."""
 
     def __rich_console__(
@@ -57,8 +93,8 @@ class _TerminalHorizontalRule(HorizontalRule):
         console: Console,
         options: ConsoleOptions,
     ) -> RenderResult:
-        del console, options
-        yield Rule(style="dim", characters="─")
+        options = options.update_width(max(1, options.max_width - self.right_inset))
+        yield from console.render(Rule(style="dim", characters="─"), options)
         yield Text()
 
 
@@ -109,7 +145,7 @@ class _TerminalCodeBlock(CodeBlock):
         )
 
 
-class _TerminalTableElement(TableElement):
+class _TerminalTableElement(_InsetMarkdownElement, TableElement):
     """Fill the content width and fold table cells.
 
     Rich renders a Markdown table at its natural width and gives its columns the
@@ -124,13 +160,17 @@ class _TerminalTableElement(TableElement):
         console: Console,
         options: ConsoleOptions,
     ) -> RenderResult:
-        for renderable in super().__rich_console__(console, options):
+        options = options.update_width(max(1, options.max_width - self.right_inset))
+        for renderable in TableElement.__rich_console__(self, console, options):
             if isinstance(renderable, Table):
                 renderable.expand = True
                 renderable.show_edge = False
                 for column in renderable.columns:
                     column.overflow = "fold"
-            yield renderable
+            if isinstance(renderable, Segment):
+                yield renderable
+            else:
+                yield from console.render(renderable, options)
 
 
 class _TerminalListItem(ListItem):
@@ -211,6 +251,8 @@ class TerminalMarkdown(Markdown):
         "heading_open": _TerminalHeading,
         "hr": _TerminalHorizontalRule,
         "list_item_open": _TerminalListItem,
+        "paragraph_open": _TerminalParagraph,
+        "image": _TerminalImageItem,
         "table_open": _TerminalTableElement,
     }
 
@@ -222,11 +264,13 @@ class TerminalMarkdown(Markdown):
         inline_code_background: str,
         code_foreground: str | None,
         hyperlinks: bool = True,
+        right_inset: int = 0,
     ) -> None:
         super().__init__(markup, code_theme="ansi_dark", hyperlinks=hyperlinks)
         self.code_background = code_background
         self.inline_code_background = inline_code_background
         self.code_foreground = code_foreground
+        self.right_inset = right_inset
 
     def __rich_console__(
         self,
