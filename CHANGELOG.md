@@ -47,6 +47,12 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Changed
 
+- **Breaking:** cap template HTTP lists now contain only `default`, and
+  `/templates/default` remains readable. The former
+  `GET /api/v1/services/templates/stdio` endpoint returns `404`; use
+  `GET /api/v1/services/templates/default` and edit `transport` and `target`
+  for stdio services.
+
 - Root help regroups its command panels into six ordered groups — Agent, Cap,
   Runtime, Work, Inspection, and Script Commands — retiring the Teaming
   Commands panel: `serve`, `start`, `stop`, and `hub` form the new Runtime
@@ -140,6 +146,13 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   placeholder.
 
 ### Removed
+
+- **Breaking:** the cap `template` subcommand is removed from `too` and `caps`,
+  and `too new` and cap `new` commands no longer accept `--template`/`-t`.
+  Creation always uses the one bundled default template per kind, and the extra
+  `service.stdio` template is removed; to author a stdio service, edit
+  `transport` and `target` in the generated default instead of selecting a
+  template.
 
 - **Breaking:** the hidden `too channel` command and its `channel list`
   subcommand are removed with the `toolang.channel` entry-point family, the
