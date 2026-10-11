@@ -440,6 +440,16 @@ def test_channel_command_is_removed(args, error, tmp_path, capsys):
     assert error in strip_ansi(capsys.readouterr().err)
 
 
+@pytest.mark.parametrize("target", ["alice", "agent:alice"])
+def test_chore_clone_command_is_removed(target, tmp_path, capsys):
+    assert (
+        too_main(["--root", str(tmp_path), target, "chore", "clone", "cleanup", "copy"])
+        == 2
+    )
+    assert "No such command 'clone'." in strip_ansi(capsys.readouterr().err)
+    assert not list(tmp_path.rglob("*.md"))
+
+
 @pytest.mark.parametrize(
     ("arguments", "usage"),
     [

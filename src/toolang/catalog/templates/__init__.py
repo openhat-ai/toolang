@@ -39,15 +39,6 @@ def load_template(kind: TemplateKind) -> TemplateSpec:
     )
 
 
-def render_template(kind: TemplateKind, **bindings: str) -> str:
-    """Render the default template with simple variable substitution."""
-
-    text = load_template(kind).raw_text
-    for key, value in bindings.items():
-        text = text.replace(f"{{{{{key}}}}}", value)
-    return text
-
-
 def _template_description(kind: TemplateKind, raw_text: str) -> str | None:
     if not raw_text.lstrip().startswith("---"):
         return None

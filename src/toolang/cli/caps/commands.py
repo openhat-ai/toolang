@@ -293,9 +293,7 @@ def _make_new_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
         authored = _authored_caps(context_root(ctx), agent_name, scope)
         if user_call(authored.get, kind, name) is not None:
             raise ClickException(f"{title} {name} already exists")
-        text = edit_markdown(
-            templates.render_template(kind, name=name, agent_name=agent_name),
-        )
+        text = edit_markdown(templates.load_template(kind).raw_text)
         if text is None:
             typer.echo("No changes")
             raise typer.Exit()

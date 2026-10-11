@@ -48,9 +48,7 @@ def test_remove_unresolvable_configured_cap(tmp_path, monkeypatch, capsys, scope
 
     layout = AgentLayout.resident(tmp_path, "alice")
     layout.home.mkdir(parents=True)
-    layout.program.write_text(
-        templates.render_template("agent", name="alice", agent_name="alice")
-    )
+    layout.program.write_text(templates.load_template("agent").raw_text)
     config = layout.root_config if scope == "root" else layout.config
     config.write_text('[prompts]\nrewrite = { ref = "acme/rewrite" }\n')
 
@@ -75,9 +73,7 @@ def test_delete_authored_cap_resolves_same_scope_conflict(
 
     layout = AgentLayout.resident(tmp_path, "alice")
     layout.home.mkdir(parents=True)
-    layout.program.write_text(
-        templates.render_template("agent", name="alice", agent_name="alice")
-    )
+    layout.program.write_text(templates.load_template("agent").raw_text)
     base = layout.root if scope == "root" else layout.home
     (base / "prompts").mkdir()
     source = base / "prompts" / "rewrite.md"

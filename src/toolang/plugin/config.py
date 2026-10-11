@@ -16,7 +16,7 @@ PluginFamily = Literal[
 PLUGIN_FAMILIES: frozenset[str] = frozenset(
     {"toolset", "sandbox", "model_catalog", "model_adapter"}
 )
-_LEGACY_PLUGIN_SECTIONS = frozenset({"tools", "channels", "plugins"})
+_LEGACY_PLUGIN_SECTIONS = frozenset({"tools", "plugins"})
 _SANDBOX_FIELDS = frozenset({"driver", "target"})
 
 

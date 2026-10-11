@@ -49,12 +49,6 @@ def test_bundled_templates_contain_only_one_default_per_kind() -> None:
     }
 
 
-def test_render_template_replaces_bindings() -> None:
-    rendered = templates.render_template("prompt", input="catalog input")
-
-    assert "Use `catalog input` for the caller input." in rendered
-
-
 def test_agent_template_declares_a_minimal_unnamed_entry() -> None:
     from toolang.lang import Program
 

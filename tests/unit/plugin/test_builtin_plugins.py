@@ -10,6 +10,19 @@ from toolang.plugin.loading import list_plugin_infos
 from toolang.plugin.catalogs.models_dev.path import PACKAGED_MODEL_CATALOG
 
 
+def test_builtin_entry_points_only_register_supported_plugin_families() -> None:
+    assert {
+        entry.group
+        for entry in distribution("toolang").entry_points
+        if entry.group.startswith("toolang.")
+    } == {
+        "toolang.toolset",
+        "toolang.model_catalog",
+        "toolang.model_adapter",
+        "toolang.sandbox",
+    }
+
+
 @pytest.mark.parametrize(
     ("family", "names"),
     [
@@ -22,7 +35,6 @@ from toolang.plugin.catalogs.models_dev.path import PACKAGED_MODEL_CATALOG
             "model_adapter",
             {"chat_completions", "generate_content", "messages", "responses"},
         ),
-        ("channel", set()),
         ("sandbox", {"host", "docker"}),
     ],
 )

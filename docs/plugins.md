@@ -7,9 +7,10 @@ or runtime failures.
 
 The channel plugin family and bundled Telegram integration are removed. Plugin
 configuration only consumes supported families; unknown families, including
-former `[plugin.channel.*]` tables, are ignored. Remove imports of the former
-channel contracts or factory. There is no replacement channel plugin API;
-Hub/Talk messaging continues to use its own transport.
+former `[plugin.channel.*]` tables, are ignored. Unused top-level `[channels.*]`
+tables are also ignored. Remove imports of the former channel contracts or
+factory. There is no replacement channel plugin API; Hub/Talk messaging continues
+to use its own transport.
 
 ## Plugin Families
 
@@ -328,9 +329,8 @@ own merged table. Core may add concrete runtime inputs owned by that plugin,
 such as the selected static catalog path or process environment, but it does
 not expose peer plugins, other families, the full `[plugin]` table, or other
 core configuration. Installed collection plugins receive an empty mapping when
-they have no table. Removed shapes such as `[tools]`, `[channels]`,
-`[sandbox.config]`, and `[models.catalogs]` are invalid; there is no legacy
-fallback or merge path.
+they have no table. Removed shapes such as `[tools]`, `[sandbox.config]`, and
+`[models.catalogs]` are invalid; there is no legacy fallback or merge path.
 
 Core selection remains separate from plugin-owned configuration. For example,
 `[sandbox]` selects `driver` and optional `target`, while

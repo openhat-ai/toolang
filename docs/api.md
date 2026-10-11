@@ -1095,7 +1095,6 @@ See [models](models.md), [tools](tools.md), and [caps](caps.md) for exact semant
 - `toolang adapters`
 - `toolang toolsets [--all]`
 - `toolang sandboxes`
-- `toolang channel list`
 
 These commands list installed entry-point `NAME` and distribution `PACKAGE`
 (such as `toolang`). They have no query, `--json`, or `--human` options. They reject agent names and do not read setup,
@@ -1654,12 +1653,3 @@ Run control acceptance and status are durable `ControlRecord` truth. Retry also
 publishes `run_retried` with its control, invalidated steps, and removed runs. A thread stream may additionally carry
 `thread_created`, `thread_forked`, and `thread_rewound`, and aggregates live run
 events belonging to that thread.
-
-
-## Hook Endpoints
-
-- `POST /hook/runs`
-- `GET|POST|PUT|PATCH|DELETE /hook/{binding_name}`
-
-Hook endpoints queue runs or channel deliveries. They do not execute work
-synchronously.

@@ -62,7 +62,6 @@ credential_env = "COMPANY_CATALOG_TOKEN"
     ("source", "message"),
     [
         ("[tools.fs]", "unsupported plugin config section: tools"),
-        ("[channels.telegram]", "unsupported plugin config section: channels"),
         (
             "[sandbox]\ndriver = 'docker'\n[sandbox.config]",
             "unknown sandbox config field: config",
@@ -86,6 +85,19 @@ def test_unconsumed_plugin_families_are_ignored(family, value) -> None:
         "plugin": {"toolset": {"fs": {"option": True}}, family: value},
         "sandbox": {"driver": "host"},
     }
+    assert merge_plugin_configs((config,), family="toolset") == {"fs": {"option": True}}
+    binding = resolve_sandbox_binding((config,))
+    assert binding is not None and binding.name == "host"
+
+
+@pytest.mark.parametrize("value", [{"telegram": {"unused": True}}, "unread"])
+def test_retired_channel_config_does_not_block_supported_plugins(value) -> None:
+    config = {
+        "channels": value,
+        "plugin": {"toolset": {"fs": {"option": True}}},
+        "sandbox": {"driver": "host"},
+    }
+
     assert merge_plugin_configs((config,), family="toolset") == {"fs": {"option": True}}
     binding = resolve_sandbox_binding((config,))
     assert binding is not None and binding.name == "host"

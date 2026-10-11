@@ -58,11 +58,7 @@ def new_agent(
 ) -> None:
     root = context_root(ctx)
     try:
-        source_text = templates.render_template(
-            "agent",
-            agent_name=agent,
-            name=agent,
-        )
+        source_text = templates.load_template("agent").raw_text
         home = LocalAgents(root / "agents").create(agent, content=source_text)
     except FileExistsError as exc:
         raise ClickException(f"Agent {agent} already exists") from exc

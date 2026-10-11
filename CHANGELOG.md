@@ -158,9 +158,10 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   subcommand are removed with the `toolang.channel` entry-point family, the
   bundled Telegram channel, the `create_channel` factory, and the channel
   protocols, value types, and helpers. Plugin configuration now consumes only
-  supported families and ignores unknown ones, including former
-  `[plugin.channel.*]` tables, instead of rejecting them. Remove imports of the
-  former channel contracts or factory and stop registering channel entry points;
+  supported families and ignores unknown ones, including former top-level
+  `[channels.*]` and `[plugin.channel.*]` tables, instead of rejecting them.
+  Remove imports of the former channel contracts or factory and stop
+  registering channel entry points;
   no replacement channel plugin API is provided, and Hub/Talk messaging keeps
   its own transport.
 

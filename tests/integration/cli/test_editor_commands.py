@@ -41,7 +41,7 @@ def test_editor_failures_return_cli_errors_without_changing_authored_files(
         if action == "edit":
             AuthoredCaps(root).create(
                 CapFile.parse(
-                    templates.render_template("skill", name="demo"),
+                    templates.load_template("skill").raw_text,
                     kind="skill",
                     name="demo",
                 )
@@ -49,9 +49,7 @@ def test_editor_failures_return_cli_errors_without_changing_authored_files(
     else:
         home = LocalAgents(root / "agents").create(
             "alice",
-            content=templates.render_template(
-                "agent", name="alice", agent_name="alice"
-            ),
+            content=templates.load_template("agent").raw_text,
         )
         arguments = ["alice", kind, action]
         if action == "edit":
@@ -94,10 +92,7 @@ def test_editor_failures_return_cli_errors_without_changing_authored_files(
 def test_new_cap_edits_and_saves_the_default_template(
     main, kind, tmp_path, monkeypatch, capsys
 ):
-    edited = (
-        templates.render_template(kind, name="demo", agent_name="default")
-        + "\nCreated here.\n"
-    )
+    edited = templates.load_template(kind).raw_text + "\nCreated here.\n"
     seeds = []
 
     def edit(text):

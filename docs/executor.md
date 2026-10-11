@@ -169,7 +169,7 @@ which creates the independent root's thread in the same transaction.
 
 Supplying a run ID is intentionally limited to one-shot script invocation so
 logging can be configured at a path containing that ID before execution.
-Interactive, job, file, channel, and API callers let the executor allocate the
+Interactive, job, file, Hub/Talk, and API callers let the executor allocate the
 ID. The supplied or allocated ID must be globally unique in `RunStore`.
 
 `RunStore.accept_run()` uses `BEGIN IMMEDIATE` to:
@@ -643,5 +643,5 @@ observe only step or run boundaries.
 Streaming adapters await each `ModelStreamHandler` update before requesting
 the next provider chunk, which makes ordering and backpressure explicit.
 
-API SSE, TUI rendering, channel replies, and buffered responses are tracer or
+API SSE, TUI rendering, Hub/Talk replies, and buffered responses are tracer or
 transport implementations outside `toolang.execution`.

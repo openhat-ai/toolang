@@ -21,8 +21,9 @@ template per kind, without a template selector.
   the `toolang.channel` entry-point family, the bundled Telegram channel,
   `create_channel`, and channel-only protocols, value types, and helpers.
   Read and validate only supported plugin families. Ignore unconsumed families,
-  including former `[plugin.channel.*]` configuration, with no channel-specific
-  compatibility or rejection code.
+  including former `[plugin.channel.*]` configuration, and unused top-level
+  `[channels.*]` configuration, with no channel-specific compatibility or
+  rejection code.
   Remove their dedicated tests and update shared plugin tests. No replacement
   Telegram integration is introduced. Preserve Hub/Talk transport and its
   messaging checkpoints; their paths containing `channels` do not make them
@@ -31,7 +32,9 @@ template per kind, without a template selector.
   the cap `template` subcommand from both `too` and `caps`. Creation uses the
   bundled default directly; cap creation opens its content in the editor.
   Keep one bundled default for each kind and remove `service.stdio.md`.
-  Load defaults directly; remove template discovery, sorting, and name lookup.
+  Load defaults directly; remove template discovery, sorting, name lookup, and
+  unused authoring-time variable substitution. Preserve runtime placeholders
+  in the authored source.
   Keep HTTP template list responses as a one-entry list and the existing
   `/templates/default` detail paths as fixed routes. No named-template route
   remains. To author a stdio service, edit `transport` and `target` in the
@@ -109,8 +112,8 @@ template per kind, without a template selector.
 2. `channel` is absent from command registration and routing; its former
    invocation fails with no matching agent. No channel entry point, factory,
    implementation, or channel-only contract remains. Unknown plugin-family
-   configuration is ignored without validating its contents; supported families
-   retain their normal validation.
+   configuration and retired top-level channel configuration are ignored without
+   validating their contents; supported families retain their normal validation.
 3. Root help has the six panels, command order, and descriptions specified
    above, with no Teaming panel. `too more`, `too more -h`, and
    `too more --help` agree on the four advanced panels. `too hub --help` retains

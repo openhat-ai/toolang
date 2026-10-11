@@ -100,9 +100,9 @@ def list_chores(ctx: typer.Context) -> None:
 
 def new_chore(ctx: typer.Context, name: ChoreName = None) -> None:
     """Create a definition in chores/"""
-    agent = require_prefix_agent(ctx)
+    require_prefix_agent(ctx)
     layout = context_layout(ctx)
-    text = edit_markdown(templates.render_template("chore", agent_name=agent))
+    text = edit_markdown(templates.load_template("chore").raw_text)
     if text is None:
         raise typer.Exit()
     definition = user_call(
