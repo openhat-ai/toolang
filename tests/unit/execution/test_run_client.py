@@ -121,6 +121,7 @@ def test_run_request_contains_only_materialized_caller_values() -> None:
     assert {item.name for item in fields(RunRequest)} == {
         "thread_id",
         "request_id",
+        "client_id",
         "runnable",
         "model",
         "policy",
@@ -174,12 +175,14 @@ def test_restart_requests_keep_retry_and_rerun_inputs_unambiguous() -> None:
         "source",
         "commands",
         "request_id",
+        "client_id",
         "anchor",
     }
     assert {item.name for item in fields(RerunRequest)} == {
         "source",
         "commands",
         "request_id",
+        "client_id",
         "model",
         "model_override",
     }

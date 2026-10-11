@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import asyncio
 from contextlib import contextmanager
 from io import StringIO
@@ -1649,7 +1651,7 @@ def test_script_routes_quiet_execution_through_a_remote_runtime(
 
     @contextmanager
     def agent_server_context(selected: AgentLayout, **kwargs):
-        assert selected == layout
+        assert replace(selected, instance=None) == layout
         captured["runtime"] = kwargs
         yield AgentServerRef(
             sandbox="docker:python:3.13-slim",
@@ -1797,6 +1799,7 @@ def test_remote_script_cancellation_cancels_the_accepted_run(
             return SimpleNamespace(id=self.run_id)
 
     class Client:
+        client_id = "client_test"
         endpoint = "http://runtime.test:7001"
 
         def __init__(self, endpoint: str, *, client: object) -> None:
@@ -2195,6 +2198,8 @@ def test_script_passes_resolved_surfaces_before_starting_run(
     if remote:
 
         class Client:
+            client_id = "client_test"
+
             def __init__(self, endpoint, **kwargs):
                 self.endpoint = endpoint
 
@@ -2247,7 +2252,7 @@ def test_script_passes_resolved_surfaces_before_starting_run(
         async def current_state(_watcher, *, progress=None):
             return harness.state
 
-        def run(_executor, spec, *, run_id, tracer):
+        def run(_executor, spec, *, run_id, tracer, client_id, request_id):
             check(tracer)
 
         monkeypatch.setattr("toolang.setup.SetupWatcher.refresh", current_setup)

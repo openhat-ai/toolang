@@ -37,9 +37,7 @@ ${TOOLANG_ROOT}/
       skills/
       services/
       prompts/
-      tasks/
       chores/
-      archive/
       .state/
       .runtime/
 ```
@@ -72,10 +70,7 @@ Key paths:
 | `flows/<name>.too` | Independently validated home flow module |
 | `config.toml` | Agent-local configuration |
 | `psyches/`, `skills/`, `services/`, `prompts/` | Agent-local cap definitions |
-| `tasks/` | Ready task documents |
-| `chores/` | Ready chore documents |
-| `drafts/` | Draft task and chore documents |
-| `archive/` | Retired task and chore documents |
+| `chores/` | Current chore definitions |
 | `.state/` | Immutable Agent State revisions |
 | `.runtime/` | Live runtime state |
 
@@ -124,8 +119,7 @@ Key paths:
 | `status.json` | Runtime status, endpoint, sandbox summary, and selected models |
 | `agent.log`    | Runtime log                                                  |
 | `logs/<agic>/<run_id>.log` | Per-run script logs when `PY_LOG` is set |
-| `jobs.db` | Ready-job checkpoints, RRULE cursors, and active claims       |
-| `runs.db` | Threads, controls, runs, steps, and replayable model inputs   |
+| `runs.db` | Threads, controls, runs, steps, model inputs, and chore checkpoints   |
 | `ids.json`     | Local id allocator state                                     |
 | `tools/`       | Per-toolset plugin working directories                       |
 | `channels/`    | Per-channel plugin working directories                       |
@@ -169,10 +163,7 @@ Durable authored state lives in:
 - agent `config.toml`
 - agent program
 - agent cap directories
-- agent `tasks/`
 - agent `chores/`
-- agent `drafts/`
-- agent `archive/`
 
 Durable execution state does not live in authored files. It lives in
-`jobs.db` and `runs.db`.
+the `chores` table and execution tables in `runs.db`.

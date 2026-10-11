@@ -18,7 +18,6 @@ from toolang.catalog import templates
             "Trigger this service when the agent needs this remote MCP server.",
         ),
         ("skill", "Trigger this skill for requests that need this workflow."),
-        ("task", "Task title"),
     ],
 )
 def test_load_default_template(
@@ -47,8 +46,8 @@ def test_render_template_replaces_bindings() -> None:
 
 
 def test_load_template_rejects_unknown_name() -> None:
-    with pytest.raises(FileNotFoundError, match="template not found: task.unknown"):
-        templates.load_template("task", "unknown")
+    with pytest.raises(FileNotFoundError, match="template not found: chore.unknown"):
+        templates.load_template("chore", "unknown")
 
 
 def test_agent_template_declares_a_minimal_unnamed_entry() -> None:

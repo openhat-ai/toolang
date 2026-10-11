@@ -14,6 +14,7 @@ from toolang.execution.activity import ActivityReader
 from toolang.execution.threads import ThreadManager
 from toolang.setup import SetupWatcher
 from toolang.state.watcher import StateWatcher
+from .types import ALL_DRIVERS, ExecutionDrivers
 
 
 class AgentCore:
@@ -21,6 +22,7 @@ class AgentCore:
 
     __slots__ = (
         "activity",
+        "drivers",
         "executor",
         "history",
         "ids",
@@ -36,6 +38,7 @@ class AgentCore:
         layout: AgentLayout,
         *,
         sandbox: str = "host",
+        drivers: ExecutionDrivers = ALL_DRIVERS,
         ceiling_overrides: Mapping[str, tuple[str, ...] | None] | None = None,
         default_overrides: Mapping[str, ModelOverride | str | None] | None = None,
         limit_overrides: Mapping[str, int | float | None] | None = None,
@@ -44,6 +47,7 @@ class AgentCore:
         workdir: str | None = None,
     ) -> None:
         self.layout = layout
+        self.drivers = drivers
         self.store = RunStore(layout.run_store)
         self.activity = ActivityReader(self.store.db_path, f"agent:{layout.name}")
         self.ids = IdIssuer(layout.id_state, agent_name=layout.name)

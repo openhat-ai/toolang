@@ -47,7 +47,7 @@ class RuntimeClient:
         try:
             resources = {
                 name: self.get(f"/api/v1/{name}")
-                for name in ("models", "tools", "caps", "chores", "tasks", "workspaces")
+                for name in ("models", "tools", "caps", "chores", "workspaces")
             }
         except BaseException:
             emit_progress(

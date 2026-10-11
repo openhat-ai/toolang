@@ -176,7 +176,7 @@ class _Lowerer:
         self.docs = _DocComments(cst)
         self.withs: list[ast.WithDecl] = []
         self.caps: list[ast.CapDecl] = []
-        self.jobs: list[ast.JobDecl] = []
+        self.chores: list[ast.ChoreDecl] = []
         self.structs: list[ast.StructDecl] = []
         self.contexts: list[ast.ContextDecl] = []
         self.instructs: list[ast.InstructDecl] = []
@@ -196,7 +196,7 @@ class _Lowerer:
             doc=self.docs.program_doc,
             withs=tuple(sorted(self.withs, key=_node_line)),
             caps=tuple(sorted(self.caps, key=_node_line)),
-            jobs=tuple(sorted(self.jobs, key=_node_line)),
+            chores=tuple(sorted(self.chores, key=_node_line)),
             structs=tuple(sorted(self.structs, key=_node_line)),
             contexts=tuple(sorted(self.contexts, key=_node_line)),
             instructs=tuple(sorted(self.instructs, key=_node_line)),
@@ -220,8 +220,12 @@ class _Lowerer:
         if node.type in {"psyche", "skill", "service", "prompt"}:
             self.caps.append(self._lower_cap(node, doc=doc))
             return
-        if node.type in {"task", "chore"}:
-            self.jobs.append(self._lower_job(node, doc=doc))
+        if node.type == "task":
+            raise ToolangValidationError(
+                "Use chore for one-off or scheduled work", line=self._line(node)
+            )
+        if node.type == "chore":
+            self.chores.append(self._lower_chore(node, doc=doc))
             return
         if node.type == "struct":
             self.structs.append(self._lower_struct(node, doc=doc))
@@ -277,10 +281,9 @@ class _Lowerer:
             doc=doc,
         )
 
-    def _lower_job(self, node: CstNode, *, doc: str | None) -> ast.JobDecl:
+    def _lower_chore(self, node: CstNode, *, doc: str | None) -> ast.ChoreDecl:
         body = self._required(node, "body")
-        return ast.JobDecl(
-            kind=cast(ast.JobKind, node.type),
+        return ast.ChoreDecl(
             name=self._required_text(node, "name").strip(),
             body=self._content_text(body),
             meta=self._properties(body),

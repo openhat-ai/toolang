@@ -70,6 +70,15 @@ CompactModelOption = Annotated[
     ),
 ]
 
+DriverOption = Annotated[
+    str | None,
+    typer.Option(
+        "--driver",
+        metavar="DRIVERS",
+        help="Enable chat,talk,chore or none when starting the agent",
+    ),
+]
+
 TitlePrefixOption = Annotated[
     str | None,
     typer.Option("--title-prefix", metavar="TEXT", help="Prefix this terminal title"),

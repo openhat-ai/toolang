@@ -14,7 +14,7 @@ from typer._click.exceptions import ClickException
 
 from toolang.cli.common.parameters import TextType
 
-from toolang.catalog.job import AuthoredJobs
+from toolang.catalog.chore import AuthoredChores
 from toolang.catalog.agent import LocalAgents
 from toolang.common.layout import AgentLayout
 from toolang.common.progress import ProgressSink
@@ -224,6 +224,9 @@ def info_agent(
     if status.status == "stopped":
         echo_pairs_table(rows, avatar=agent_avatar(), title=agent_name.upper())
         return
+    drivers = runtime_state.get("drivers")
+    if isinstance(drivers, list):
+        rows.append(("Drivers", ",".join(str(item) for item in drivers) or "none"))
     if status.sandbox:
         rows.append(("Sandbox", status.sandbox))
     if runtime_identity is not None and status.status != "stopped":
@@ -280,7 +283,7 @@ def _local_resources(
                 ("Tools", _tools_summary(setup, progress=progress.sink)),
                 ("Models", _models_summary(setup, progress=progress.sink)),
                 ("Caps", _caps_summary(state)),
-                ("Jobs", _jobs_summary(layout)),
+                ("Chores", _chores_summary(layout)),
                 ("Workspaces", ", ".join(setup.workspace_grants(state.workspaces))),
             ]
     except Exception as exc:
@@ -304,7 +307,6 @@ def _running_resources(
         for kind in ("psyches", "skills", "services", "prompts")
     }
     chores = _resource_list(resources["chores"], "chores")
-    tasks = _resource_list(resources["tasks"], "tasks")
     workspaces = WorkspaceInspection.model_validate(resources["workspaces"])
     return [
         (
@@ -316,7 +318,7 @@ def _running_resources(
             f"{_count(len(models), 'model')}, {_count(len(_resource_groups(models, 'provider')), 'provider')}",
         ),
         ("Caps", _cap_counts_summary(cap_counts)),
-        ("Jobs", f"{_count(len(chores), 'chore')}, {_count(len(tasks), 'task')}"),
+        ("Chores", _count(len(chores), "chore")),
         ("Workspaces", ", ".join(item.name for item in workspaces.items)),
     ]
 
@@ -351,14 +353,9 @@ def _cap_counts_summary(counts: Mapping[str, int]) -> str:
     )
 
 
-def _jobs_summary(layout: AgentLayout) -> str:
-    catalog = AuthoredJobs(layout.home)
-    chore_count = len(catalog.list(kind="chore"))
-    task_count = len(catalog.list(kind="task"))
-    return (
-        f"{chore_count} {'chore' if chore_count == 1 else 'chores'}, "
-        f"{task_count} {'task' if task_count == 1 else 'tasks'}"
-    )
+def _chores_summary(layout: AgentLayout) -> str:
+    catalog = AuthoredChores(layout.home)
+    return _count(len(catalog.list()), "chore")
 
 
 def _models_summary(setup: AgentSetup, *, progress: ProgressSink | None = None) -> str:

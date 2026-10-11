@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 import pytest
 
 from toolang.api.app import create_app
-from toolang.catalog import CapsManager, JobsManager
+from toolang.catalog import CapsManager, ChoresManager
 from toolang.common.layout import AgentLayout
 from toolang.setup import AgentSetup
 from toolang.setup.types import AgentEnvironment
@@ -44,7 +44,7 @@ def test_workspace_inspection_uses_published_state_and_runtime_paths(
     layout.config.write_text("invalid = [")
     try:
         with TestClient(
-            create_app(core, CapsManager(layout), JobsManager(layout))
+            create_app(core, CapsManager(layout), ChoresManager(layout))
         ) as client:
             response = client.get(
                 "/api/v1/workspaces", params={"workdir": "repo://src"}
@@ -99,7 +99,7 @@ def test_guest_workspace_added_after_launch_is_not_reported_available(
     )
     try:
         with TestClient(
-            create_app(core, CapsManager(layout), JobsManager(layout))
+            create_app(core, CapsManager(layout), ChoresManager(layout))
         ) as client:
             response = client.get("/api/v1/workspaces")
             assert response.status_code == 200
@@ -144,7 +144,7 @@ def test_workspace_inspection_accepts_symlinked_runtime_root(
     monkeypatch.setattr(core.setup, "current", lambda: setup)
     try:
         with TestClient(
-            create_app(core, CapsManager(layout), JobsManager(layout))
+            create_app(core, CapsManager(layout), ChoresManager(layout))
         ) as client:
             response = client.get(
                 "/api/v1/workspaces", params={"workdir": "repo://src"}
@@ -169,7 +169,7 @@ def test_workspace_listing_survives_stale_runtime_default(tmp_path, monkeypatch)
     selected.rmdir()
     try:
         with TestClient(
-            create_app(core, CapsManager(layout), JobsManager(layout))
+            create_app(core, CapsManager(layout), ChoresManager(layout))
         ) as client:
             response = client.get("/api/v1/workspaces")
             assert response.status_code == 200, response.text
@@ -213,7 +213,7 @@ def test_listing_reports_unavailable_lab_without_requiring_execution(
     )
     try:
         with TestClient(
-            create_app(core, CapsManager(layout), JobsManager(layout))
+            create_app(core, CapsManager(layout), ChoresManager(layout))
         ) as client:
             response = client.get("/api/v1/workspaces")
             assert response.status_code == 200, response.text

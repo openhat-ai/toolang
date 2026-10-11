@@ -81,7 +81,7 @@ agic child(_: Text) -> Text:
             assert step.output.type == "_Awaitable"
             child = harness.store.get_run(run_id=handle.id)
             assert child is not None and child.parent is None
-            assert handle.thread != thread and handle.thread.startswith("spawn_")
+            assert handle.thread != thread and handle.thread.startswith("worker_")
             assert child.id not in {
                 r.id for r in harness.store.list_run_tree(root_run_id=parent.id)
             }

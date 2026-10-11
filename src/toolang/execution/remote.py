@@ -6,10 +6,11 @@ import asyncio
 import json
 import logging
 from collections.abc import AsyncIterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from ipaddress import ip_address
 from typing import Any, cast
 from urllib.parse import urlsplit, urlunsplit
+from uuid import uuid4
 
 import httpx
 from httpx_sse import ServerSentEvent, SSEError, aconnect_sse
@@ -95,8 +96,12 @@ class RemoteRunClient:
         endpoint: str,
         *,
         client: httpx.AsyncClient | None = None,
+        interactive: bool = False,
+        client_id: str | None = None,
     ) -> None:
         self._endpoint = _normalize_endpoint(endpoint)
+        self._interactive = interactive
+        self.client_id = client_id or f"client_{uuid4().hex}"
         self._http = client
         self._owns_http = client is None
         self._readers: set[asyncio.Task[None]] = set()
@@ -131,7 +136,9 @@ class RemoteRunClient:
         return await self._submit_stream(
             operation="run",
             path="/api/v1/runs/authored/stream",
-            payload=_run_request_data(request),
+            payload=_run_request_data(
+                replace(request, client_id=request.client_id or self.client_id)
+            ),
             request_id=request.request_id,
             source_run_id=None,
             tracer=tracer,
@@ -146,7 +153,9 @@ class RemoteRunClient:
         return await self._submit_stream(
             operation="retry",
             path=f"/api/v1/runs/{request.source}/retry/stream",
-            payload=_restart_request_data(request),
+            payload=_restart_request_data(
+                replace(request, client_id=request.client_id or self.client_id)
+            ),
             request_id=request.request_id,
             source_run_id=request.source,
             tracer=tracer,
@@ -161,7 +170,9 @@ class RemoteRunClient:
         return await self._submit_stream(
             operation="rerun",
             path=f"/api/v1/runs/{request.source}/rerun/stream",
-            payload=_restart_request_data(request),
+            payload=_restart_request_data(
+                replace(request, client_id=request.client_id or self.client_id)
+            ),
             request_id=request.request_id,
             source_run_id=request.source,
             tracer=tracer,
@@ -178,6 +189,8 @@ class RemoteRunClient:
         tracer: RunTracer | None,
     ) -> RunHandle:
         self._require_connected()
+        if self._interactive:
+            path = path.replace("/api/v1/runs/", "/api/v1/chat/runs/", 1)
         loop = asyncio.get_running_loop()
         accepted: asyncio.Future[str] = loop.create_future()
         delivery = asyncio.Event()
@@ -227,6 +240,7 @@ class RemoteRunClient:
             payload={
                 "mode": timing,
                 "request_id": request_id,
+                "client_id": self.client_id,
                 "reason": reason,
             },
         )
@@ -248,6 +262,7 @@ class RemoteRunClient:
             payload={
                 "mode": timing,
                 "request_id": request_id,
+                "client_id": self.client_id,
                 "message": message.to_data(),
             },
         )
@@ -577,9 +592,14 @@ class RemoteRunClient:
         *,
         payload: dict[str, object],
     ) -> ControlInfo:
+        prefix = (
+            "/api/v1/chat/runs"
+            if self._interactive and action == "steer"
+            else "/api/v1/runs"
+        )
         response = await self._request(
             "POST",
-            f"/api/v1/runs/{run_id}/{action}",
+            f"{prefix}/{run_id}/{action}",
             operation=action,
             json=payload,
         )
@@ -722,6 +742,7 @@ def _run_request_data(request: RunRequest) -> dict[str, object]:
 def _restart_request_data(request: RetryRequest | RerunRequest) -> dict[str, object]:
     payload: dict[str, object] = {
         "request_id": request.request_id,
+        "client_id": request.client_id,
         "commands": [_run_command_data(item) for item in request.commands],
     }
     if isinstance(request, RetryRequest):

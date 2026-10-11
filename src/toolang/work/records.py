@@ -1,26 +1,24 @@
-"""Durable job scheduler records."""
+"""Durable chore scheduler records."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from toolang.catalog.types import JobKind
-
-from .types import JobStatus, JobTrigger
+from .types import ChoreStatus, ChoreTrigger
 
 
 @dataclass(frozen=True, slots=True)
-class JobRecord:
+class ChoreRecord:
     """One persisted scheduler checkpoint."""
 
-    job_id: str
-    kind: JobKind
+    chore_id: str
+    name: str
     revision: str
-    status: JobStatus
+    status: ChoreStatus
     ready_at: str | None
     active_run_id: str | None
     active_revision: str | None
-    active_trigger: JobTrigger | None
+    active_trigger: ChoreTrigger | None
     active_at: str | None
     schedule_revision: str | None
     schedule_anchor: str | None

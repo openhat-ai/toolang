@@ -170,7 +170,7 @@ Keys are canonical paths relative to the current home:
 | `flows/<name>.too` | Full-file CRUD |
 | `psyches/<name>.md`, `services/<name>.md`, `prompts/<name>.md` | Full-file CRUD |
 | `skills/<name>/SKILL.md`, `skills/<name>/assets/**` | Full-file CRUD |
-| `tasks/<name>.md`, `chores/<name>.md` | Full-file CRUD on ready job files |
+| `chores/<name>.md` | Full-file CRUD on current chore definitions |
 
 Use the exact spelling of existing file and directory names, as returned by
 `list`. Aliases with different casing are rejected as `invalid_request` on
@@ -220,15 +220,15 @@ returns a successful receipt. A list failure returns an error rather than a
 partial file list.
 
 Delete removes exactly one file. Deleting SKILL.md leaves assets in place; deleting
-a task/chore does not archive it or cancel an existing Run. Draft/archive job
-storage, root resources, external cap content, arbitrary paths, and directory
+a chore preserves its checkpoint and does not cancel an existing Run.
+Root resources, external cap content, arbitrary paths, and directory
 operations are excluded. Symlinks are rejected except the canonical roaming
 `agent.too` link to its own original script; that link is preserved when editing.
 Linked config files are not writable through me.
 
 Main operations use `.agent.too.lock`; flows use `.flows.lock`. Config writers,
 including configured caps, workspaces, and roaming projection, share
-`.config.toml.lock`; caps/assets use `.caps.lock`, and jobs use `.jobs.lock`.
+`.config.toml.lock`; caps/assets use `.caps.lock`, and chores use `.chores.lock`.
 Restart older writers when upgrading from `.authored-flows.lock` or `.project.lock`.
 Locks coordinate participating writers; filesystem edits that bypass these locks
 can still race a save.
@@ -243,7 +243,7 @@ Success returns exactly `{revision, files}`. Files are the complete published
 input manifest, sorted by `(scope, key)`, including shadowed inputs, raw config,
 and skill assets. Scope is `home` or `root`, and each key is relative to its scope.
 Deleted and untracked files are absent. No changes returns the existing revision.
-Independent `tasks/` and `chores/` are outside State.
+Independent Markdown chores are outside State.
 
 Operational failures set the tool error and return:
 

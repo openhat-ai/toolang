@@ -75,7 +75,7 @@ def test_six_closed_me_schemas():
         ("skills/review/assets/notes/example.txt", "Example.\n"),
         ("skills/review/assets/notes/a:b.txt", "POSIX filename.\n"),
         ("skills/review/assets/notes/line\nbreak.txt", "POSIX filename.\n"),
-        ("tasks/review.md", "---\nid: job-a\ntitle: Review\n---\nReview.\n"),
+        ("chores/review.md", "---\nid: job-a\ntitle: Review\n---\nReview.\n"),
         ("chores/check.md", "---\nid: job-b\nschedule: FREQ=HOURLY\n---\nCheck.\n"),
     ],
 )
@@ -498,7 +498,7 @@ def test_bad_requests_do_not_mutate(context, operation, arguments, code):
         "catalog.json",
         "flows/nested/a.too",
         "skills/a/scripts/run.py",
-        "archive/tasks/a.md",
+        "archive/chores/a.md",
         "drafts/chores/a.md",
         "skills/a/assets",
     ],
@@ -513,7 +513,7 @@ def test_list_excludes_other_homes_root_resources_and_unmanaged_files(context):
     for path in (
         context.layout.root / "psyches/root.md",
         context.layout.root / "agents/bob/agent.too",
-        context.home / "drafts/tasks/draft.md",
+        context.home / "drafts/chores/draft.md",
         context.home / "skills/review/scripts/run.py",
     ):
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -693,9 +693,9 @@ def test_config_writes_preserve_original_fields_and_relative_paths(context):
 
 def test_job_reads_never_allocate_and_crud_preserves_full_text(context):
     source = "# Manual task without an id\n\nReview.\n"
-    created = invoke(context, "create", key="tasks/manual.md", content=source)
+    created = invoke(context, "create", key="chores/manual.md", content=source)
     assert created.error is None, created.output
-    assert read(context, "tasks/manual.md")["content"] == source
+    assert read(context, "chores/manual.md")["content"] == source
     invoke(context, "list")
     assert not context.layout.id_state.exists()
     replacement = "---\nid: task-1\n---\nReview now.\n"
@@ -703,7 +703,7 @@ def test_job_reads_never_allocate_and_crud_preserves_full_text(context):
         invoke(
             context,
             "update",
-            key="tasks/manual.md",
+            key="chores/manual.md",
             content=replacement,
             if_digest=created.output["digest"],
         ).error
@@ -717,8 +717,8 @@ def test_job_reads_never_allocate_and_crud_preserves_full_text(context):
     result = invoke(
         context,
         "delete",
-        key="tasks/manual.md",
-        if_digest=read(context, "tasks/manual.md")["digest"],
+        key="chores/manual.md",
+        if_digest=read(context, "chores/manual.md")["digest"],
     )
     assert result.error is None
     assert not (context.home / "archive").exists()
@@ -964,7 +964,7 @@ def test_sync_captures_raw_config_shadowed_inputs_and_assets(context):
     context.layout.program.write_text(
         "prompt same:\n  Inline prompt.\n\nagic alice():\n  Hello.\n"
     )
-    for key in ("tasks/example.md", "chores/example.md"):
+    for key in ("chores/one.md", "chores/two.md"):
         invoke(context, "create", key=key, content="Independent job.")
     result = invoke(context, "sync")
     assert result.error is None
@@ -987,7 +987,7 @@ def test_sync_captures_raw_config_shadowed_inputs_and_assets(context):
         "key": "config.toml",
         "digest": sha256(context.layout.root_config.read_bytes()).hexdigest(),
     } in files
-    assert not any(item["key"].startswith(("tasks/", "chores/")) for item in files)
+    assert not any(item["key"].startswith(("chores/", "chores/")) for item in files)
 
 
 @pytest.mark.parametrize(

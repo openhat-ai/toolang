@@ -70,7 +70,7 @@ _AGENT_PANEL_COMMAND_ORDER = (
     "start",
     "stop",
 )
-_WORK_PANEL_COMMAND_ORDER = ("chat", "chore", "task", "workspace")
+_WORK_PANEL_COMMAND_ORDER = ("chat", "chore", "workspace")
 _CAPS_PANEL_COMMAND_ORDER = ("psyche", "skill", "service", "prompt")
 _RUN_PANEL_COMMAND_ORDER = ("steer", "cancel", "retry", "rerun")
 _THREAD_PANEL_COMMAND_ORDER = ("fork", "rewind")
@@ -390,16 +390,9 @@ _registered_command(
     rich_help_panel=AGENT_COMMAND_PANEL,
 )
 _registered_group(
-    "toolang.cli.toolang.commands.job:chore_app",
+    "toolang.cli.toolang.commands.chore:chore_app",
     name="chore",
     help="Manage agent chores",
-    no_args_is_help=True,
-    rich_help_panel=WORK_COMMAND_PANEL,
-)
-_registered_group(
-    "toolang.cli.toolang.commands.job:task_app",
-    name="task",
-    help="Manage agent tasks",
     no_args_is_help=True,
     rich_help_panel=WORK_COMMAND_PANEL,
 )

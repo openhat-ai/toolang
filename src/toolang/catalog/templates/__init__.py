@@ -10,10 +10,10 @@ from typing import Literal
 import frontmatter
 
 TemplateKind = Literal[
-    "agent", "script", "skill", "prompt", "service", "psyche", "task", "chore"
+    "agent", "script", "skill", "prompt", "service", "psyche", "chore"
 ]
 _TEMPLATE_FILE_RE = re.compile(
-    r"^(?P<kind>agent|script|skill|prompt|service|psyche|task|chore)\.(?P<name>[A-Za-z0-9_-]+)\.(?P<ext>md|too)$"
+    r"^(?P<kind>agent|script|skill|prompt|service|psyche|chore)\.(?P<name>[A-Za-z0-9_-]+)\.(?P<ext>md|too)$"
 )
 
 
@@ -80,6 +80,6 @@ def _template_description(kind: TemplateKind, raw_text: str) -> str | None:
     if not raw_text.lstrip().startswith("---"):
         return None
     post = frontmatter.loads(raw_text)
-    value = post.metadata.get("title" if kind in {"task", "chore"} else "description")
+    value = post.metadata.get("title" if kind == "chore" else "description")
     text = str(value).strip() if value is not None else ""
     return text or None

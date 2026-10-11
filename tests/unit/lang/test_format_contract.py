@@ -100,7 +100,7 @@ agic work:
         ("agic work:\n  user:", 4),
         ("context notes:", 2),
         ("instruct notes:", 2),
-        ("task work:", 2),
+        ("chore work:", 2),
         ("prompt work:", 2),
     ],
 )

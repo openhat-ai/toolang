@@ -1,4 +1,4 @@
-"""One lease owns agent messaging and optional observation export."""
+"""Runtime transport and observation with an optional incoming-message driver."""
 
 from __future__ import annotations
 
@@ -9,6 +9,8 @@ from toolang.execution.schemas import ActivitySnapshot
 import logging
 
 from toolang.execution.activity import ActivityQuery, ActivityReader
+from toolang.execution.executor import RunExecutor
+from toolang.teaming.types import AgentTransport
 
 from toolang.teaming.exporter import EventExporter
 from toolang.teaming.types import EventPublisher, RENEW_SECONDS
@@ -20,20 +22,27 @@ logger = logging.getLogger(__name__)
 class TeamingLoop:
     def __init__(
         self,
-        messaging: MessagingLoop,
         publisher: EventPublisher,
         *,
+        client: AgentTransport,
+        owner: str,
+        endpoint: str,
+        executor: RunExecutor,
+        messaging: MessagingLoop | None = None,
         activity: ActivityReader | None = None,
         publish_activity: Callable[[list[ActivitySnapshot]], Awaitable[None]]
         | None = None,
     ) -> None:
         self.messaging = messaging
+        self.client = client
+        self.owner = owner
+        self.endpoint = endpoint
         self.exporter = EventExporter(
-            messaging.executor.stream,
-            messaging.executor.store.db_path,
+            executor.stream,
+            executor.store.db_path,
             publisher,
-            agent=messaging.agent,
-            token=messaging.client.token,
+            agent=client.actor,
+            token=client.token,
         )
         self.activity = activity
         self.publish_activity = publish_activity
@@ -48,6 +57,7 @@ class TeamingLoop:
         self._task = asyncio.create_task(self._run())
 
     async def _consume(self) -> None:
+        assert self.messaging is not None
         while not self._messages.is_set():
             try:
                 await self.messaging.consume(self._messages)
@@ -55,7 +65,7 @@ class TeamingLoop:
                 raise
             except Exception:
                 logger.exception("Messaging disconnected; retrying")
-                await self.messaging._wait(self._messages, 1)
+                await _wait(self._messages, 1)
 
     async def _export_events(self) -> None:
         while not self._stop.is_set():
@@ -66,7 +76,7 @@ class TeamingLoop:
                 raise
             except Exception:
                 logger.exception("Event exporter failed; recovering independently")
-                await self.messaging._wait(self._stop, 1)
+                await _wait(self._stop, 1)
 
     async def _publish_activity(self) -> None:
         assert self.activity is not None and self.publish_activity is not None
@@ -81,7 +91,7 @@ class TeamingLoop:
                 raise
             except Exception:
                 logger.debug("Activity publication unavailable", exc_info=True)
-                await self.messaging._wait(self._stop, 1)
+                await _wait(self._stop, 1)
 
     async def _run(self) -> None:
         delay = 0.5
@@ -90,14 +100,13 @@ class TeamingLoop:
             while not self._stop.is_set():
                 try:
                     if registered:
-                        await self.messaging.client.renew()
+                        await self.client.renew()
                     else:
-                        await self.messaging.client.register(
-                            self.messaging.owner, endpoint=self.messaging.endpoint
-                        )
+                        await self.client.register(self.owner, endpoint=self.endpoint)
                         registered = True
-                        if self._consumer is None:
-                            self._consumer = tasks.create_task(self._consume())
+                        if self._export is None:
+                            if self.messaging is not None:
+                                self._consumer = tasks.create_task(self._consume())
                             self._export = tasks.create_task(self._export_events())
                             if (
                                 self.activity is not None
@@ -107,14 +116,14 @@ class TeamingLoop:
                                     self._publish_activity()
                                 )
                     delay = 0.5
-                    await self.messaging._wait(self._stop, RENEW_SECONDS)
+                    await _wait(self._stop, RENEW_SECONDS)
                 except asyncio.CancelledError:
                     raise
                 except Exception:
                     # Communication failures never cancel an in-flight handler.
                     registered = False
                     logger.warning("Teaming Hub unavailable; reconnecting")
-                    await self.messaging._wait(self._stop, delay)
+                    await _wait(self._stop, delay)
                     delay = min(5, delay * 2)
 
     async def stop_messages(self) -> None:
@@ -150,5 +159,12 @@ class TeamingLoop:
                 # Lease expiry handles an unavailable backend. Do not add its
                 # full socket timeout after the final-event drain budget.
                 async with asyncio.timeout(1):
-                    await self.messaging.client.unregister()
-            await self.messaging.client.close()
+                    await self.client.unregister()
+            await self.client.close()
+
+
+async def _wait(stop: asyncio.Event, seconds: float) -> None:
+    try:
+        await asyncio.wait_for(stop.wait(), seconds)
+    except TimeoutError:
+        pass

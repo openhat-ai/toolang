@@ -13,7 +13,7 @@ import pytest
 from toolang.api.app import create_app
 from toolang.base.types.message import Message, TextPart
 from toolang.base.types.run import ModelCallResult
-from toolang.catalog import CapsManager, JobsManager
+from toolang.catalog import CapsManager, ChoresManager
 from toolang.cli.toolang.commands.chat.base import RunAccepted, RunWorkdirUpdated
 from toolang.cli.toolang.commands.chat.remote import RemoteChatSession
 from toolang.execution.events import RunObservation
@@ -80,7 +80,7 @@ agic chat(_: Part[]) -> Part[]:
     app = create_app(
         core,
         CapsManager(core.layout),
-        JobsManager(core.layout),
+        ChoresManager(core.layout),
         cors_allowed_origins=(),
     )
     session = RemoteChatSession(
@@ -167,7 +167,7 @@ def test_remote_chat_default_runnable_tracks_the_latest_state(tmp_path: Path) ->
     app = create_app(
         core,
         CapsManager(core.layout),
-        JobsManager(core.layout),
+        ChoresManager(core.layout),
         cors_allowed_origins=(),
     )
     session = RemoteChatSession(
@@ -260,7 +260,7 @@ agic xyz(_: Text) -> Text:
         app = create_app(
             core,
             CapsManager(core.layout),
-            JobsManager(core.layout),
+            ChoresManager(core.layout),
             cors_allowed_origins=(),
         )
         session = RemoteChatSession(

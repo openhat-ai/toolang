@@ -8,7 +8,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 
-from toolang.api.app import AgentCoreDep
+from toolang.api.app import AgentCoreDep, require_chat_driver
 from toolang.api.common import RUN_ID_HEADER, StreamAttachmentDep, sse_stream
 from toolang.execution.subscriptions import EventSubscription, StreamScope
 from toolang.api.conversion import (
@@ -31,6 +31,8 @@ from toolang.api.schemas import (
     RunRetryRequest,
     RunSteerRequest,
     WorkdirResolveRequest,
+    ThreadCreateRequest,
+    ThreadResult,
 )
 from toolang.base.types.model import ModelRequest
 from toolang.base.types.policy import RunBindings
@@ -43,7 +45,8 @@ from toolang.execution.records import (
     RunRecord,
 )
 from toolang.execution.schemas import ControlInfo, RunDetail, RunInfo
-from toolang.execution.types import RunStatus
+from toolang.execution.types import RunStatus, ThreadPrefix
+from toolang.api.routers.threads import thread_info, parse_thread_peer
 from toolang.lang.input import decode_runnable_input
 from toolang.lang.ast import AgicDecl
 from toolang.execution.runnables import (
@@ -54,7 +57,28 @@ from toolang.state.state import AgentState
 from toolang.up import AgentCore
 
 router = APIRouter(prefix="/runs", tags=["runs"])
+chat_router = APIRouter(
+    prefix="/chat/runs", tags=["runs"], dependencies=[Depends(require_chat_driver)]
+)
 _AcceptedRunStream = tuple[LocalRunHandle, EventSubscription]
+
+
+@router.post(
+    "/threads",
+    summary="Create Script Thread",
+    status_code=201,
+    response_model=ThreadResult,
+)
+def create_script_thread(
+    core: AgentCoreDep, payload: ThreadCreateRequest
+) -> ThreadResult:
+    thread = core.threads.create(
+        prefix=ThreadPrefix.SCRIPT,
+        client_id=payload.client_id,
+        request_id=payload.request_id,
+        peer=parse_thread_peer(payload.peer),
+    )
+    return ThreadResult(thread=thread_info(core, thread))
 
 
 async def _reject_duplicate_input_keys(request: Request) -> None:
@@ -120,6 +144,7 @@ async def _run_stream(
                 ),
             ),
             request_id=payload.request_id,
+            client_id=payload.client_id,
         )
     except (ToolangError, TypeError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -230,6 +255,12 @@ def runs(
     )
 
 
+@chat_router.post(
+    "/stream",
+    summary="Execute Run Stream",
+    dependencies=[Depends(_reject_duplicate_input_keys)],
+    response_class=EventSourceResponse,
+)
 @router.post(
     "/stream",
     summary="Execute Run Stream",
@@ -249,6 +280,12 @@ async def execute_run_stream(
         yield event
 
 
+@chat_router.post(
+    "/authored/stream",
+    dependencies=[Depends(_reject_duplicate_input_keys)],
+    summary="Execute Authored Run Stream",
+    response_class=EventSourceResponse,
+)
 @router.post(
     "/authored/stream",
     dependencies=[Depends(_reject_duplicate_input_keys)],
@@ -268,6 +305,11 @@ async def execute_authored_run_stream(
         yield event
 
 
+@chat_router.post(
+    "/{run_id}/retry/stream",
+    summary="Retry Authored Run Stream",
+    response_class=EventSourceResponse,
+)
 @router.post(
     "/{run_id}/retry/stream",
     summary="Retry Authored Run Stream",
@@ -286,6 +328,11 @@ async def retry_authored_run_stream(
         yield event
 
 
+@chat_router.post(
+    "/{run_id}/rerun/stream",
+    summary="Rerun Authored Run Stream",
+    response_class=EventSourceResponse,
+)
 @router.post(
     "/{run_id}/rerun/stream",
     summary="Rerun Authored Run Stream",
@@ -432,6 +479,7 @@ def cancel_run(
             run_id=run.id,
             timing=payload.mode if payload else "immediate",
             request_id=payload.request_id if payload else None,
+            client_id=payload.client_id if payload else None,
             reason=payload.reason if payload else None,
         )
     except ValueError as exc:
@@ -439,6 +487,12 @@ def cancel_run(
     return _control_result(core, run.id, control)
 
 
+@chat_router.post(
+    "/{run_id}/steer",
+    summary="Steer Run",
+    status_code=202,
+    response_model=RunCommandResult,
+)
 @router.post(
     "/{run_id}/steer",
     summary="Steer Run",
@@ -456,6 +510,7 @@ def steer_run(
             run_id=run.id,
             timing=payload.mode,
             request_id=payload.request_id,
+            client_id=payload.client_id,
             message=parse_user_message(payload.message),
         )
     except ValueError as exc:
@@ -463,6 +518,12 @@ def steer_run(
     return _control_result(core, run.id, control)
 
 
+@chat_router.post(
+    "/{run_id}/retry",
+    summary="Retry Run",
+    status_code=202,
+    response_model=RunCommandResult,
+)
 @router.post(
     "/{run_id}/retry",
     summary="Retry Run",
@@ -489,6 +550,7 @@ async def retry_run(
                 else None
             ),
             request_id=request.request_id,
+            client_id=request.client_id,
         )
     except (ToolangError, TypeError, ValueError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -496,6 +558,12 @@ async def retry_run(
     return _control_result(core, handle.run_id, control)
 
 
+@chat_router.post(
+    "/{run_id}/rerun",
+    summary="Rerun Run",
+    status_code=202,
+    response_model=RunCommandResult,
+)
 @router.post(
     "/{run_id}/rerun",
     summary="Rerun Run",
@@ -527,6 +595,7 @@ async def rerun_run(
                 else None
             ),
             request_id=request.request_id,
+            client_id=request.client_id,
         )
     except (ToolangError, TypeError, ValueError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc

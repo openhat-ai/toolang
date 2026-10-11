@@ -30,7 +30,6 @@ Top-level commands are:
 - `start`
 - `stop`
 - `chore`
-- `task`
 - `psyche`
 - `skill`
 - `service`
@@ -139,7 +138,7 @@ Top-level routing uses these command shapes:
 - catalog commands are command-first only: `new`, `clone`, `list`, and
   `remove AGENT`
 - agent-self commands accept either order: `info`, `serve`, `start`, and `stop`
-- commands for an agent's execution history, caps, tasks, or chores require
+- commands for an agent's execution history, caps or chores require
   the target first, such as `toolang alice retry RUN` or
   `toolang alice skill list`
 
@@ -474,7 +473,7 @@ Behavior:
 - `--option` selects Toolang runtime options before input begins
 - `PY_LOG` uses env_logger-style directive formatting and does not affect stdout
 - key execution events are recorded in `runs.db` for script runs just like chat,
-  task, and chore runs
+  talk, and chore runs
 
 The same roaming source path can select agent commands:
 
@@ -1125,7 +1124,7 @@ Core endpoints are grouped as:
 
 - `agent`
 - `caps`
-- `jobs`
+- `chores`
 - `runs`
 - `threads`
 
@@ -1180,7 +1179,7 @@ filesystem paths do not determine remote availability.
 
 | Metric Group | Contents |
 | --- | --- |
-| `threads` | Thread totals grouped by chat, chore, and task |
+| `threads` | Thread totals grouped by chat, talk, chore, script, and worker |
 | `steps` | Step totals grouped by `model_call`, `tool_call`, and `runtime` |
 | `tokens` | Aggregated input, output, and total token usage |
 
@@ -1338,8 +1337,8 @@ The HTTP API has no endpoint that accepts terminal `ChatInput` text. A chat
 client creates a thread when needed, converts the interaction to the shared
 `RunRequest` boundary, and starts each turn through the authored run stream:
 
-1. `POST /api/v1/threads` with the client and optional peer descriptor.
-2. `POST /api/v1/runs/authored/stream` with the returned thread id, request id,
+1. `POST /api/v1/threads` with `client_id`, `request_id`, and an optional peer descriptor.
+2. `POST /api/v1/chat/runs/authored/stream` with the returned thread ID, client ID, request ID,
    authored input, run/session overrides, and ordered runnable fallbacks.
 
 An existing chat thread can be passed directly to the authored endpoint; the
@@ -1416,147 +1415,26 @@ ready OS description produced by the host sandbox plugin, for example
 and OS build identifiers are omitted. `/api/v1/profile` returns the same
 twelve-character Docker hostname used to identify the guest; the host retains
 the complete container ID for Docker lifecycle operations.
-Job thread ids are inspectable and controllable through thread and run commands,
-but `chat` does not implicitly reopen tasks or create manual chore runs.
+Chore thread IDs are inspectable through thread and run commands.
+Use `chore run` to request a manual occurrence.
 
 
-## Job Endpoints
+## Chore Endpoints
 
-- `GET /api/v1/jobs`
-- `GET /api/v1/jobs/{job_id}`
-- `GET /api/v1/jobs/archived`
-- `GET /api/v1/jobs/archived/{job_id}`
-- `GET /api/v1/tasks`
-- `POST /api/v1/tasks`
-- `GET /api/v1/tasks/{task_id}`
-- `PATCH /api/v1/tasks/{task_id}`
-- `POST /api/v1/tasks/{task_id}/draft`
-- `POST /api/v1/tasks/{task_id}/ready`
-- `POST /api/v1/tasks/{task_id}/archive`
-- `POST /api/v1/tasks/{task_id}/reopen`
-- `POST /api/v1/tasks/{task_id}/cancel`
-- `GET /api/v1/tasks/archived`
-- `GET /api/v1/tasks/archived/{task_id}`
-- `PATCH /api/v1/tasks/archived/{task_id}`
-- `DELETE /api/v1/tasks/archived/{task_id}`
-- `GET /api/v1/chores`
-- `POST /api/v1/chores`
-- `GET /api/v1/chores/{chore_id}`
-- `PATCH /api/v1/chores/{chore_id}`
-- `POST /api/v1/chores/{chore_id}/draft`
-- `POST /api/v1/chores/{chore_id}/ready`
-- `POST /api/v1/chores/{chore_id}/archive`
-- `POST /api/v1/chores/{chore_id}/run`
-- `POST /api/v1/chores/{chore_id}/cancel`
-- `GET /api/v1/chores/archived`
-- `GET /api/v1/chores/archived/{chore_id}`
-- `PATCH /api/v1/chores/archived/{chore_id}`
-- `DELETE /api/v1/chores/archived/{chore_id}`
-
-`GET /api/v1/jobs` returns tasks and chores in one response. Use `kind=task` or
-`kind=chore` to filter the unified list. `GET /api/v1/tasks` and
-`GET /api/v1/chores` return the same projections split by kind.
-The unified `/jobs` collection is read-only; mutations use the concrete
-`/tasks` or `/chores` collection selected by the job kind.
-
-List endpoints return authored job fields at the top level and runtime-derived
-status under `runtime`.
-
-Task items include:
-
-- `id`
-- `kind`
-- `stage`
-- `status`
-- `title`
-- `path`
-- `updated_at`
-- `runtime`
-
-Chore items include:
-
-- `id`
-- `kind`
-- `stage`
-- `status`
-- `schedule`
-- `title`
-- `path`
-- `updated_at`
-- `runtime`
-
-`stage` values are:
-
-- `ready`
-- `draft`
-- `archived`
-
-Task status values are:
-
-- `pending`
-- `running`
-- `done`
-- `failed`
-- `canceled`
-
-Chore status values are:
-
-- `pending`
-- `running`
-- `done`
-
-`runtime` contains:
-
-- `thread_id`
-- `last_run`
-- `next_run_at`
-- `error`
-
-`last_run` is the latest run object or `null`. If `last_run.status` is
-`running`, that run is the active run. `next_run_at` is the next scheduled
-chore timestamp or `null`. `runtime.error` is the current scheduler-side error;
-`last_run.error` is the execution failure for that run.
-
-Default job list endpoints return ready jobs. Draft and archived jobs are
-available only through explicit `/archived` routes.
-
-Detail endpoints return the same item shape plus `body`.
-
-Collection endpoints return JSON arrays directly, and detail or mutation
-endpoints return the projected resource directly. Destructive cap and archived
-job deletion endpoints return `204 No Content`.
-
-Task create requests accept:
-
-```json
-{
-  "title": "Review API changes",
-  "body": "Review the API changes and summarize risks."
-}
-```
-
-Task patch requests accept any subset of `title` and `body`. Stage actions
-use the task `draft`, `ready`, and `archive` endpoints. `task reopen` sets a
-completed, failed, or canceled task back to scheduler status `pending`.
-Delete is destructive and is available only through archived routes.
-
-Chore create requests accept:
-
-```json
-{
-  "title": "Check stale PRs",
-  "body": "Check stale pull requests and summarize blockers.",
-  "schedule": "FREQ=HOURLY;INTERVAL=6"
-}
-```
-
-Chore patch requests accept any subset of `title`, `body`, and `schedule`.
-Stage actions use the chore `draft`, `ready`, and `archive` endpoints.
-`chore run` starts one manual occurrence without changing the schedule.
-Delete is destructive and is available only through archived routes.
-
+The [chore API](webui-jobs.md) provides current-definition list/detail,
+create/update/delete, manual run, and cancel. Definitions have a name, ref,
+derived ID, and optional schedule. Progress is stored in the `chores` table of
+`runs.db`. There are no task/job collections or lifecycle stages.
 
 ## Run And Thread Endpoints
+
+Interactive clients submit, retry/rerun, and steer under `/api/v1/chat/runs`;
+these write routes require the chat driver. Noninteractive scripts use the
+`/api/v1/runs` routes below and create script threads at `POST /api/v1/runs/threads`.
+Interactive thread creation at `POST /api/v1/threads` creates `chat_` contexts.
+All callers use `client_id` and `request_id` rather than a client-type enum.
+Management, cancellation, inspection, and script execution remain available
+when chat is disabled. See [driver selection](work.md).
 
 - `POST /api/v1/runs/stream`
 - `POST /api/v1/runs/authored/stream`
@@ -1602,12 +1480,11 @@ sparse override is applied to the source run's complete persisted request.
 Both return `202 Accepted` and execute on the server's owner event loop.
 
 Thread `rewind` and `fork` request bodies take an optional `run_id` anchor and
-`request_id`. An omitted run id selects the last visible run. Task and chore
-threads cannot be rewound or forked because their thread ids are derived from
-job ids.
+`request_id` and `client_id`. An omitted run ID selects the last visible run.
+Only chat threads can be rewound or forked.
 
 `steer` and `cancel` return the accepted `RunControlInfo`. An accepted manual
-chore start returns its `RunInfo`. Thread create and fork return the created
+chore request returns 202 without a run result; inspect the chore for progress. Thread create and fork return the created
 thread; rewind returns the updated existing thread representation. None of
 these thread operations starts a follow-up run.
 

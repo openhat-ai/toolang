@@ -19,7 +19,6 @@ from toolang.common.immutable import freeze_mapping
 from .text import source_lines
 
 CapKind = Literal["psyche", "skill", "service", "prompt"]
-JobKind = Literal["task", "chore"]
 Role = Literal["user", "assistant", "tool"]
 Position = Literal["first", "last"]
 Order = Literal["ascending", "descending"]
@@ -82,8 +81,9 @@ class CapDecl(Node):
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class JobDecl(Node):
-    kind: JobKind
+class ChoreDecl(Node):
+    kind: ClassVar[str] = "chore"
+
     name: str
     body: str
     meta: Mapping[str, Any] = field(default_factory=dict)
@@ -347,7 +347,7 @@ class Program(Node):
 
     withs: tuple[WithDecl, ...] = ()
     caps: tuple[CapDecl, ...] = ()
-    jobs: tuple[JobDecl, ...] = ()
+    chores: tuple[ChoreDecl, ...] = ()
     structs: tuple[StructDecl, ...] = ()
     contexts: tuple[ContextDecl, ...] = ()
     instructs: tuple[InstructDecl, ...] = ()

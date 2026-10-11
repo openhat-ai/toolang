@@ -78,7 +78,7 @@ with skill org/review
 skill review:
   description = Review changes.
   Inspect carefully.
-task publish:
+chore publish:
   Publish the result.
 struct Review:
   title: Text
@@ -129,7 +129,7 @@ flow pipeline:
         "program",
         "with",
         "skill",
-        "task",
+        "chore",
         "struct",
         "field",
         "context",

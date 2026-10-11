@@ -52,7 +52,9 @@ from toolang.up.mounts import (
     prepare_workspace_mounts,
 )
 from toolang.up.records import SandboxState
+from toolang.up.observation import RuntimeRegistration
 from toolang.up.server import ServeSpec, build_serve_argv, resolve_serve
+from toolang.up.types import ExecutionDrivers
 
 SANDBOX_READY_TIMEOUT_SEC = 30.0
 SANDBOX_ATTACH_GRACE_SEC = 0.2
@@ -107,6 +109,7 @@ async def resolve_launch(
     host: str = "127.0.0.1",
     endpoint_host: str | None = None,
     port: int | None = None,
+    drivers: ExecutionDrivers | None = None,
     ceiling_overrides: Mapping[str, tuple[str, ...] | None] | None = None,
     default_overrides: Mapping[str, ModelOverride | str | None] | None = None,
     limit_overrides: Mapping[str, int | float | None] | None = None,
@@ -128,6 +131,7 @@ async def resolve_launch(
     artifact = _resolve_dev_artifact(dev, sandbox=selected)
     serve = resolve_serve(
         layout=layout,
+        drivers=drivers,
         host=host,
         endpoint_host=endpoint_host,
         port=port,
@@ -446,6 +450,21 @@ async def _launch_locked(
         )
         if plan.output == "file" and isinstance(implementation, _OutputDetach):
             await implementation.detach_output(ref)
+        if not on_host:
+            RuntimeRegistration(
+                spec.serve.layout,
+                roots=(
+                    spec.serve.layout.root,
+                    Path(
+                        spec.environ.get(
+                            "TOOLANG_OBSERVATION_ROOT", str(spec.serve.layout.root)
+                        )
+                    ),
+                ),
+                drivers=spec.serve.drivers,
+                endpoint=ref.endpoint,
+                sandbox_runtime=ref.runtime_id,
+            ).__enter__()
         return SandboxHandle(implementation, state, progress_id=spec.progress_id)
     except BaseException as exc:
         if not attach_failure_observed:

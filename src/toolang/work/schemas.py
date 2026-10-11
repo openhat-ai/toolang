@@ -1,4 +1,4 @@
-"""Caller-facing job protocol schemas."""
+"""Caller-facing chore protocol schemas."""
 
 from __future__ import annotations
 
@@ -6,16 +6,21 @@ from dataclasses import dataclass, fields
 from datetime import datetime, timezone
 from pathlib import Path
 
-from toolang.catalog.job import JobFile
-from toolang.catalog.types import JobKind, JobStage
-from .records import JobRecord
-from .state import job_display_title, job_remote_ref, job_remote_status, job_thread_id
-from .types import JobStatus
+from toolang.catalog.chore import ChoreFile
+from .records import ChoreRecord
+from .state import (
+    Chore,
+    chore_display_title,
+    chore_remote_ref,
+    chore_remote_status,
+    chore_thread_id,
+)
+from .types import ChoreStatus
 
 
 @dataclass(frozen=True, slots=True)
 class LastRunInfo:
-    """Small run summary embedded in job runtime state."""
+    """Small run summary embedded in chore runtime state."""
 
     id: str
     status: str
@@ -25,8 +30,8 @@ class LastRunInfo:
 
 
 @dataclass(frozen=True, slots=True)
-class JobRuntimeInfo:
-    """Runtime state attached to one authored job."""
+class ChoreRuntimeInfo:
+    """Runtime state attached to one authored chore."""
 
     thread_id: str
     last_run: LastRunInfo | None
@@ -35,54 +40,56 @@ class JobRuntimeInfo:
 
 
 @dataclass(frozen=True, slots=True)
-class JobInfo:
-    """Summary of one authored task or chore."""
+class ChoreInfo:
+    """Summary of one authored chore."""
 
     id: str
-    kind: JobKind
-    stage: JobStage
-    status: JobStatus | None
+    name: str
+    ref: str
+    status: ChoreStatus | None
     title: str
     path: str
     updated_at: str
-    runtime: JobRuntimeInfo
+    runtime: ChoreRuntimeInfo
     schedule: str | None = None
     remote_ref: str | None = None
     remote_status: str | None = None
 
     @classmethod
-    def from_job(
+    def from_chore(
         cls,
-        job: JobFile,
+        chore: ChoreFile | Chore,
         *,
         home: Path,
-        record: JobRecord | None,
+        record: ChoreRecord | None,
         last_run: LastRunInfo | None,
-    ) -> JobInfo:
-        """Build caller-facing job information from authored and durable state."""
+    ) -> ChoreInfo:
+        """Build caller-facing chore information from authored and durable state."""
 
-        if job.path is None:
-            raise ValueError("authored job path is required")
-        try:
-            path = str(job.path.relative_to(home))
-        except ValueError:
-            path = str(job.path)
+        if chore.path is None:
+            path = chore.source if isinstance(chore, Chore) else "inline"
+            updated_at = record.updated_at if record is not None else ""
+        else:
+            try:
+                path = str(chore.path.relative_to(home))
+            except ValueError:
+                path = str(chore.path)
+            updated_at = datetime.fromtimestamp(
+                chore.path.stat().st_mtime_ns / 1_000_000_000, tz=timezone.utc
+            ).isoformat()
         return cls(
-            id=job.id,
-            kind=job.kind,
-            stage=job.stage,
+            id=chore.id,
+            name=chore.name,
+            ref=chore.ref,
             status=record.status if record is not None else None,
-            schedule=job.schedule if job.kind == "chore" else None,
-            remote_ref=job_remote_ref(job),
-            remote_status=job_remote_status(job),
-            title=job_display_title(job, fallback=job.id),
+            schedule=chore.schedule,
+            remote_ref=chore_remote_ref(chore),
+            remote_status=chore_remote_status(chore),
+            title=chore_display_title(chore, fallback=chore.id),
             path=path,
-            updated_at=datetime.fromtimestamp(
-                job.path.stat().st_mtime_ns / 1_000_000_000,
-                tz=timezone.utc,
-            ).isoformat(),
-            runtime=JobRuntimeInfo(
-                thread_id=job_thread_id(job),
+            updated_at=updated_at,
+            runtime=ChoreRuntimeInfo(
+                thread_id=chore_thread_id(chore),
                 last_run=last_run,
                 next_run_at=record.next_run_at if record is not None else None,
                 error=record.error if record is not None else None,
@@ -91,29 +98,29 @@ class JobInfo:
 
 
 @dataclass(frozen=True, slots=True)
-class JobDetail(JobInfo):
-    """Complete representation of one authored job."""
+class ChoreDetail(ChoreInfo):
+    """Complete representation of one authored chore."""
 
     body: str = ""
 
     @classmethod
-    def from_job(
+    def from_chore(
         cls,
-        job: JobFile,
+        chore: ChoreFile | Chore,
         *,
         home: Path,
-        record: JobRecord | None,
+        record: ChoreRecord | None,
         last_run: LastRunInfo | None,
-    ) -> JobDetail:
-        """Build complete caller-facing job detail."""
+    ) -> ChoreDetail:
+        """Build complete caller-facing chore detail."""
 
-        info = JobInfo.from_job(
-            job,
+        info = ChoreInfo.from_chore(
+            chore,
             home=home,
             record=record,
             last_run=last_run,
         )
         return cls(
-            **{item.name: getattr(info, item.name) for item in fields(JobInfo)},
-            body=job.body,
+            **{item.name: getattr(info, item.name) for item in fields(ChoreInfo)},
+            body=chore.body,
         )

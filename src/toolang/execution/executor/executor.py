@@ -244,6 +244,7 @@ class LocalRunHandle(Awaitable[RunRecord]):
         *,
         timing: ControlTiming = "immediate",
         request_id: str | None = None,
+        client_id: str | None = None,
         reason: str | None = None,
     ) -> ControlRecord:
         """Persist a cancel control for this run."""
@@ -252,6 +253,7 @@ class LocalRunHandle(Awaitable[RunRecord]):
             run_id=self.run_id,
             timing=timing,
             request_id=request_id,
+            client_id=client_id,
             reason=reason,
         )
 
@@ -261,6 +263,7 @@ class LocalRunHandle(Awaitable[RunRecord]):
         *,
         timing: ControlTiming = "next_step",
         request_id: str | None = None,
+        client_id: str | None = None,
     ) -> ControlRecord:
         """Persist a steer control for this run."""
 
@@ -269,6 +272,7 @@ class LocalRunHandle(Awaitable[RunRecord]):
             message=message,
             timing=timing,
             request_id=request_id,
+            client_id=client_id,
         )
 
     def cancel_control(self, index: int) -> ControlRecord:
@@ -439,18 +443,20 @@ class RunExecutor:
         *,
         run_id: str | None = None,
         request_id: str | None = None,
+        client_id: str | None = None,
         tracer: RunTracer | None = None,
     ) -> LocalRunHandle:
         """Accept one top-level run and immediately return its local handle."""
 
         self._require_available()
         if isinstance(spec, RunRequest):
-            if run_id is not None or request_id is not None:
+            if run_id is not None or request_id is not None or client_id is not None:
                 raise ValueError(
                     "resolved run identity cannot override a caller run request"
                 )
             setup, state = self._current_snapshots()
             request_id = spec.request_id
+            client_id = spec.client_id
             spec = resolve_run_request(
                 spec,
                 setup=setup,
@@ -495,6 +501,7 @@ class RunExecutor:
                 cwd=bound.cwd,
                 occurrence=bound.occurrence,
                 request_id=request_id,
+                client_id=client_id,
                 created_at=bound.created_at,
                 authored_input=spec.authored_input,
                 authored_commands=spec.authored_commands,
@@ -517,6 +524,7 @@ class RunExecutor:
         limits: RunLimits | None = None,
         run_id: str | None = None,
         request_id: str | None = None,
+        client_id: str | None = None,
         tracer: RunTracer | None = None,
     ) -> LocalRunHandle:
         """Start a new root run from one visible source run's invocation."""
@@ -528,6 +536,7 @@ class RunExecutor:
                 or state is not None
                 or model_request is not None
                 or request_id is not None
+                or client_id is not None
             ):
                 raise ValueError(
                     "resolved rerun inputs cannot override a caller rerun request"
@@ -544,6 +553,7 @@ class RunExecutor:
             model_override = resolved.model_override
             limits = resolved.limits
             request_id = request.request_id
+            client_id = request.client_id
         else:
             model_override = None
         if setup is None or state is None:
@@ -617,6 +627,7 @@ class RunExecutor:
                 cwd=bound.cwd,
                 occurrence=bound.occurrence,
                 request_id=request_id,
+                client_id=client_id,
                 created_at=bound.created_at,
                 authored_input=spec.authored_input,
                 authored_commands=spec.authored_commands,
@@ -637,6 +648,7 @@ class RunExecutor:
         ceiling: AgentCeiling = AgentCeiling(),
         limits: RunLimits | None = None,
         request_id: str | None = None,
+        client_id: str | None = None,
         tracer: RunTracer | None = None,
     ) -> LocalRunHandle:
         """Reopen one terminal root run from a durable step boundary."""
@@ -644,7 +656,12 @@ class RunExecutor:
         self._require_available()
         model_request: ModelRequest | None = None
         if isinstance(run_id, RetryRequest):
-            if setup is not None or state is not None or request_id is not None:
+            if (
+                setup is not None
+                or state is not None
+                or request_id is not None
+                or client_id is not None
+            ):
                 raise ValueError(
                     "resolved retry inputs cannot override a caller retry request"
                 )
@@ -660,6 +677,7 @@ class RunExecutor:
             model_request = resolved.model
             limits = resolved.limits
             request_id = request.request_id
+            client_id = request.client_id
         if setup is None or state is None:
             raise TypeError("retry requires resolved setup and state")
         loop = asyncio.get_running_loop()
@@ -695,6 +713,7 @@ class RunExecutor:
                     model_request=bound.model_request,
                     sandbox=sandbox,
                     request_id=request_id,
+                    client_id=client_id,
                     created_at=bound.created_at,
                 )
                 self.store.record_event_cursor(control.ref, publication.cursor)
@@ -1011,6 +1030,7 @@ class RunExecutor:
         run_id: str,
         timing: ControlTiming = "immediate",
         request_id: str | None = None,
+        client_id: str | None = None,
         reason: str | None = None,
     ) -> ControlRecord:
         """Persist one cancel control for the process that owns the run."""
@@ -1022,6 +1042,7 @@ class RunExecutor:
             timing=timing,
             input=CallInput({"_": reason} if reason is not None else {}),
             request_id=request_id,
+            client_id=client_id,
             created_at=utc_now(),
         )
         self._observe_control(control)
@@ -1034,6 +1055,7 @@ class RunExecutor:
         message: Message,
         timing: ControlTiming,
         request_id: str | None = None,
+        client_id: str | None = None,
     ) -> ControlRecord:
         """Persist one steer control for the process that owns the run."""
 
@@ -1047,6 +1069,7 @@ class RunExecutor:
             timing=timing,
             input=CallInput({"_": Array("Part[]", tuple(message.parts))}),
             request_id=request_id,
+            client_id=client_id,
             created_at=utc_now(),
         )
         self._observe_control(control)

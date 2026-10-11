@@ -147,8 +147,8 @@ class RequiredPrefixAgentGroup(CliGroup):
         write_usage(formatter, prefix_path, " ".join(pieces))
 
 
-class PrefixAgentJobGroup(RequiredPrefixAgentGroup):
-    """Render required AGENT for the existing task and chore groups."""
+class PrefixAgentChoreGroup(RequiredPrefixAgentGroup):
+    """Render required AGENT for the chore group."""
 
 
 class OptionalPrefixAgentGroup(CliGroup):

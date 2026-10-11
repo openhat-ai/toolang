@@ -37,7 +37,7 @@ Use this directory for:
 | [caps.md](./caps.md) | Capability model, including form, scope, origin, refs, precedence, and effective-cap rules |
 | [queries.md](./queries.md) | Native TQ resource queries, JSON fields, tags, and set semantics |
 | [work.md](./work.md) | Task and chore scheduling, checkpoints, event-loop ownership, and recovery |
-| [tasks.md](./tasks.md) | Authored task and chore documents, stages, and caller-facing projections |
+| [tasks.md](./tasks.md) | Current chore definitions, execution state, and authoring commands |
 | [webui-jobs.md](./webui-jobs.md) | Web UI job board integration guide |
 | [execution.md](./execution.md) | Execution boundaries, controls, threads, traces, and mandatory persistence |
 | [executor.md](./executor.md) | RunExecutor acceptance, execution, control polling, and tracing |

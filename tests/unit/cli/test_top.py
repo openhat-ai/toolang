@@ -59,8 +59,8 @@ def test_top_uses_layout_without_requiring_an_existing_service(
     monkeypatch.setattr(top.AgentProcess, "status", status)
 
     async def observe(endpoint, **options):
-        assert options["source"].reader.path == layout.run_store
-        assert options["source"].presence() == "online"
+        assert options["source"].sources[0].reader.path == layout.run_store
+        assert options["source"].sources[0].presence() == "online"
         seen.append((endpoint, options["agent"], options["once"]))
 
     monkeypatch.setattr(top, "watch", observe)

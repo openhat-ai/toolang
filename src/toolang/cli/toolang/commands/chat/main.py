@@ -98,6 +98,7 @@ def chat_command(
     dev: Path | None = None,
     limits: list[str] | None = None,
     compact_model: str | None = None,
+    driver: str | None = None,
     workspace: list[str] | None = None,
     workdir: str | None = None,
     title_prefix: str | None = None,
@@ -113,6 +114,7 @@ def chat_command(
         default_options=defaults,
         limit_options=limits,
         compact_model=compact_model,
+        driver=driver,
         workspace=workspace,
         workdir=workdir,
         title_prefix=title_prefix,
@@ -130,6 +132,7 @@ def _chat_interactive(
     default_options: list[str] | None = None,
     limit_options: list[str] | None = None,
     compact_model: str | None = None,
+    driver: str | None = None,
     workspace: list[str] | None = None,
     workdir: str | None = None,
     title_prefix: str | None = None,
@@ -140,6 +143,7 @@ def _chat_interactive(
         sandbox=sandbox,
         dev=dev,
         compact_model=compact_model,
+        driver=driver,
         workspace=workspace,
         workdir=workdir,
     ) as client:
@@ -181,11 +185,15 @@ def _chat_runtime(
     sandbox: str | None,
     dev: Path | None = None,
     compact_model: str | None = None,
+    driver: str | None = None,
     workspace: list[str] | None = None,
     workdir: str | None = None,
 ) -> Iterator[ChatClient]:
     """Attach Chat to the agent runtime, starting it when needed."""
 
+    from toolang.up.config import parse_drivers
+
+    drivers = user_call(parse_drivers, driver) if driver is not None else None
     layout = context_layout(ctx)
     workspaces = user_call(
         resolve_workspaces,
@@ -198,6 +206,8 @@ def _chat_runtime(
     try:
         server_context = acquire_agent_server(
             layout,
+            drivers=drivers,
+            required_driver="chat",
             sandbox=sandbox,
             dev=dev,
             model_catalog=resolve_model_catalog_option(model_catalog),

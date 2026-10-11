@@ -750,6 +750,7 @@ def write_runtime_state(
     sandbox_description: str | None = None,
     sandbox_instance: str | None = None,
     models: Sequence[str] | None = None,
+    drivers: Sequence[str] | None = None,
     workspace_additions: Mapping[str, str] | None = None,
     status: str = "running",
     message: str | None = None,
@@ -767,6 +768,7 @@ def write_runtime_state(
         "process_created": process_created,
         "sandbox": sandbox,
         "models": list(models or ()),
+        "drivers": list(drivers if drivers is not None else ("chat", "talk", "chore")),
         "workspace_additions": dict(workspace_additions or {}),
         "message": message,
     }

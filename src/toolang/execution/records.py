@@ -719,6 +719,7 @@ class ControlRecord:
     payload: ControlPayloadField
     triggered_by: StepRef | None = None
     request: str | None = None
+    client_id: str | None = None
     status: ControlStatus = "pending"
     timing: ControlTiming = "immediate"
     error: str | None = None

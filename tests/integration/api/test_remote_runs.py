@@ -23,7 +23,7 @@ from toolang.base.types.message import ImagePart, Message, TextPart
 from toolang.base.types.model import ModelRequest
 from toolang.base.types.policy import RunPolicy
 from toolang.base.types.run import ModelCallResult, ModelUsage
-from toolang.catalog import CapsManager, JobsManager
+from toolang.catalog import CapsManager, ChoresManager
 from toolang.execution.calls import resolve_run_request
 from toolang.execution.records import (
     RetryControlPayload,
@@ -70,14 +70,14 @@ def test_http_rerun_binds_fresh_signature_before_admission(tmp_path, value):
     app = create_app(
         core,
         CapsManager(core.layout),
-        JobsManager(core.layout),
+        ChoresManager(core.layout),
         cors_allowed_origins=(),
     )
     try:
         with TestClient(app) as client:
-            thread = client.post("/api/v1/threads", json={"client": "tui"}).json()[
-                "thread"
-            ]["id"]
+            thread = client.post(
+                "/api/v1/threads", json={"client_id": "test-tui"}
+            ).json()["thread"]["id"]
             response = client.post(
                 "/api/v1/runs/authored/stream",
                 json=_authored_request(
@@ -173,7 +173,7 @@ agic chat(_: Text, count: Number, enabled: Boolean, primary: Text, named: Text, 
     core = AgentCore(harness.setup.layout)
     core.setup = _Snapshot(harness.setup)
     core.state = _Snapshot(harness.state)
-    app = create_app(core, CapsManager(core.layout), JobsManager(core.layout))
+    app = create_app(core, CapsManager(core.layout), ChoresManager(core.layout))
     expected = {
         "_": "",
         "count": 0,
@@ -187,9 +187,9 @@ agic chat(_: Text, count: Number, enabled: Boolean, primary: Text, named: Text, 
     authored = {**direct, "count": "0", "enabled": "false", "items": "[]"}
     try:
         with TestClient(app) as client:
-            thread = client.post("/api/v1/threads", json={"client": "script"}).json()[
-                "thread"
-            ]["id"]
+            thread = client.post(
+                "/api/v1/runs/threads", json={"client_id": "test-script"}
+            ).json()["thread"]["id"]
             envelope = {
                 "thread_id": thread,
                 "model": {
@@ -299,12 +299,12 @@ agic chat(_: Part[]) -> Part[]:
     core = AgentCore(harness.setup.layout)
     core.setup = _Snapshot(harness.setup)
     core.state = _Snapshot(harness.state)
-    app = create_app(core, CapsManager(core.layout), JobsManager(core.layout))
+    app = create_app(core, CapsManager(core.layout), ChoresManager(core.layout))
     try:
         with TestClient(app) as client:
-            thread = client.post("/api/v1/threads", json={"client": "script"}).json()[
-                "thread"
-            ]["id"]
+            thread = client.post(
+                "/api/v1/runs/threads", json={"client_id": "test-script"}
+            ).json()["thread"]["id"]
             response = client.post(
                 "/api/v1/runs/stream",
                 json={
@@ -345,7 +345,7 @@ agic chat(_: Part[], part: Part, rows: Part[][], packet: Packet, data: Json) -> 
     core = AgentCore(harness.setup.layout)
     core.setup = _Snapshot(harness.setup)
     core.state = _Snapshot(harness.state)
-    app = create_app(core, CapsManager(core.layout), JobsManager(core.layout))
+    app = create_app(core, CapsManager(core.layout), ChoresManager(core.layout))
     image = {"type": "image", "file_id": "image-1"}
     data = {"type": "text", "text": 123}
     values = {
@@ -358,9 +358,9 @@ agic chat(_: Part[], part: Part, rows: Part[][], packet: Packet, data: Json) -> 
     invalid = {"type": "text"}
     try:
         with TestClient(app) as client:
-            thread = client.post("/api/v1/threads", json={"client": "script"}).json()[
-                "thread"
-            ]["id"]
+            thread = client.post(
+                "/api/v1/runs/threads", json={"client_id": "test-script"}
+            ).json()["thread"]["id"]
             envelope = {
                 "thread_id": thread,
                 "request_id": "nested_parts",
@@ -450,7 +450,7 @@ agic selected(_: Part[], tone: Text) -> Part[]:
     app = create_app(
         core,
         CapsManager(core.layout),
-        JobsManager(core.layout),
+        ChoresManager(core.layout),
         cors_allowed_origins=("https://ui.test",),
     )
 
@@ -468,7 +468,7 @@ agic selected(_: Part[], tone: Text) -> Part[]:
                     }
                 ]
             }
-            created = client.post("/api/v1/threads", json={"client": "tui"})
+            created = client.post("/api/v1/threads", json={"client_id": "test-tui"})
             thread_id = created.json()["thread"]["id"]
             fallback = client.post(
                 "/api/v1/runs/authored/stream",
@@ -663,7 +663,7 @@ agic chat(_: Part[]) -> Part[]:
     app = create_app(
         core,
         CapsManager(core.layout),
-        JobsManager(core.layout),
+        ChoresManager(core.layout),
         cors_allowed_origins=(),
     )
 
@@ -671,7 +671,7 @@ agic chat(_: Part[]) -> Part[]:
         with TestClient(app) as client:
             thread_id = client.post(
                 "/api/v1/threads",
-                json={"client": "tui"},
+                json={"client_id": "test-tui"},
             ).json()["thread"]["id"]
             source = client.post(
                 "/api/v1/runs/authored/stream",
@@ -877,7 +877,7 @@ def test_authored_attachments_reject_changed_state_before_acceptance(tmp_path):
     core = AgentCore(harness.setup.layout)
     core.setup = _Snapshot(harness.setup)
     core.state = _Snapshot(harness.state)
-    app = create_app(core, CapsManager(core.layout), JobsManager(core.layout))
+    app = create_app(core, CapsManager(core.layout), ChoresManager(core.layout))
     try:
         with TestClient(app) as client:
             references = client.post(
@@ -889,9 +889,9 @@ def test_authored_attachments_reject_changed_state_before_acceptance(tmp_path):
                 "state": harness.state.revision,
                 "references": ["note.txt"],
             }
-            thread = client.post("/api/v1/threads", json={"client": "tui"}).json()[
-                "thread"
-            ]["id"]
+            thread = client.post(
+                "/api/v1/threads", json={"client_id": "test-tui"}
+            ).json()["thread"]["id"]
             payload = _authored_request(
                 thread,
                 "changed_state",
@@ -920,14 +920,14 @@ def test_post_validates_cursor_before_admission(tmp_path, cursor):
     app = create_app(
         core,
         CapsManager(core.layout),
-        JobsManager(core.layout),
+        ChoresManager(core.layout),
         cors_allowed_origins=(),
     )
     try:
         with TestClient(app) as client:
-            thread = client.post("/api/v1/threads", json={"client": "tui"}).json()[
-                "thread"
-            ]["id"]
+            thread = client.post(
+                "/api/v1/threads", json={"client_id": "test-tui"}
+            ).json()["thread"]["id"]
             before = core.executor.stream.tail
             after = (
                 str(EventCursor(before.epoch, before.seq + 100))
@@ -976,7 +976,7 @@ def test_new_run_with_old_cursor_still_starts_with_identifying_begin(
     app = create_app(
         core,
         CapsManager(core.layout),
-        JobsManager(core.layout),
+        ChoresManager(core.layout),
         cors_allowed_origins=(),
     )
     source = core.executor.stream
@@ -985,9 +985,9 @@ def test_new_run_with_old_cursor_still_starts_with_identifying_begin(
     try:
         with TestClient(app) as client:
             for _ in range(2):
-                thread = client.post("/api/v1/threads", json={"client": "tui"}).json()[
-                    "thread"
-                ]["id"]
+                thread = client.post(
+                    "/api/v1/threads", json={"client_id": "test-tui"}
+                ).json()["thread"]["id"]
             source.limits = StreamLimits()
             response = client.post(
                 "/api/v1/runs/authored/stream",

@@ -523,6 +523,19 @@ def scramble_id(value: int, *, width: int, key: bytes, reverse: bool = False) ->
     return (left << half) | right
 
 
+def chore_id(name: str) -> str:
+    """Derive an 80-bit, lowercase Base32 identity from a canonical chore name."""
+    if (
+        not name
+        or name != name.strip()
+        or name in {".", ".."}
+        or any(char in name for char in ("/", "\\", "\x00"))
+    ):
+        raise ValueError(f"invalid chore name: {name!r}")
+    digest = hashlib.sha256(name.encode("utf-8")).digest()[:10]
+    return encode_short_id(int.from_bytes(digest, "big"), width=16)
+
+
 def encode_short_id(value: int, *, width: int = 8) -> str:
     """Encode an unsigned value using the shared lowercase base32 alphabet."""
     return _encode_fixed_width(value, width=width)

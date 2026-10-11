@@ -1,4 +1,4 @@
-"""SQLite-backed checkpoints for ready task and chore jobs."""
+"""SQLite-backed checkpoints for chore definitions."""
 
 from __future__ import annotations
 
@@ -13,34 +13,33 @@ from typing import cast
 
 from dateutil.rrule import rrulestr
 
-from toolang.catalog.types import JobKind
 from toolang.common.layout import AgentLayout
 from toolang.execution.types import RunStatus
 
-from .errors import JobStoreSchemaError
-from .records import JobRecord
-from .state import Job, schedule_revision
-from .types import JobStatus, JobTrigger
-
-_SCHEMA_VERSION = 3
+from toolang.execution.store import RunStore
+from .records import ChoreRecord
+from .state import Chore, schedule_revision
+from .types import ChoreStatus, ChoreTrigger
 
 
 @dataclass(frozen=True, slots=True)
-class ClaimedJob:
+class ClaimedChore:
     """One activation durably assigned to a preallocated run id."""
 
-    job: Job
-    record: JobRecord
-    trigger: JobTrigger
+    chore: Chore
+    record: ChoreRecord
+    trigger: ChoreTrigger
     active_at: str
 
 
-class JobStore:
+class ChoreStore:
     """Own durable scheduler transitions; due discovery stays in memory."""
 
     def __init__(self, db_path: Path, *, read_only: bool = False) -> None:
         self.db_path = db_path
         self.read_only = read_only
+        if not read_only:
+            RunStore(db_path).close()
         if read_only:
             target = f"{db_path.expanduser().resolve().as_uri()}?mode=ro"
             self._conn = sqlite3.connect(
@@ -69,108 +68,99 @@ class JobStore:
     def reconcile(
         self,
         *,
-        jobs: Mapping[str, Job] | Iterable[Job],
+        chores: Mapping[str, Chore] | Iterable[Chore],
         now: datetime | None = None,
-    ) -> tuple[JobRecord, ...]:
-        """Project the latest effective ready definitions into checkpoints."""
+    ) -> tuple[ChoreRecord, ...]:
+        """Project the latest effective current definitions into checkpoints."""
 
         current = _utc(now)
-        indexed = _index_jobs(jobs)
+        indexed = _index_chores(chores)
         with self._write():
-            for job in indexed.values():
-                self._upsert_locked(job, now=current)
-            for row in self._conn.execute("SELECT * FROM jobs").fetchall():
-                record = _record(row)
-                if record.job_id in indexed or record.active_run_id is not None:
-                    continue
-                self._conn.execute(
-                    "DELETE FROM jobs WHERE job_id = ?",
-                    (record.job_id,),
-                )
+            for chore in indexed.values():
+                self._upsert_locked(chore, now=current)
             rows = self._conn.execute(
-                "SELECT * FROM jobs ORDER BY kind, job_id"
+                "SELECT * FROM chores ORDER BY name, chore_id"
             ).fetchall()
         return tuple(_record(row) for row in rows)
 
-    def get(self, *, job_id: str, kind: JobKind | None = None) -> JobRecord | None:
+    def get(self, *, chore_id: str) -> ChoreRecord | None:
         with self._lock:
+            if not self._has_table():
+                return None
             row = self._conn.execute(
-                "SELECT * FROM jobs WHERE job_id = ?",
-                (job_id,),
+                "SELECT * FROM chores WHERE chore_id = ?",
+                (chore_id,),
             ).fetchone()
         if row is None:
             return None
         record = _record(row)
-        return record if kind is None or record.kind == kind else None
+        return record
 
-    def get_by_run(self, *, run_id: str) -> JobRecord | None:
+    def get_by_run(self, *, run_id: str) -> ChoreRecord | None:
         with self._lock:
+            if not self._has_table():
+                return None
             row = self._conn.execute(
-                "SELECT * FROM jobs WHERE active_run_id = ?",
+                "SELECT * FROM chores WHERE active_run_id = ?",
                 (run_id,),
             ).fetchone()
         return _record(row) if row is not None else None
 
-    def list(self, *, kind: JobKind | None = None) -> tuple[JobRecord, ...]:
+    def list(self) -> tuple[ChoreRecord, ...]:
         with self._lock:
-            rows = (
-                self._conn.execute(
-                    "SELECT * FROM jobs ORDER BY kind, job_id"
-                ).fetchall()
-                if kind is None
-                else self._conn.execute(
-                    "SELECT * FROM jobs WHERE kind = ? ORDER BY job_id",
-                    (kind,),
-                ).fetchall()
-            )
+            if not self._has_table():
+                return ()
+            rows = self._conn.execute(
+                "SELECT * FROM chores ORDER BY name, chore_id"
+            ).fetchall()
         return tuple(_record(row) for row in rows)
 
     def claim(
         self,
         *,
-        job: Job,
-        trigger: JobTrigger,
+        chore: Chore,
+        trigger: ChoreTrigger,
         run_id: str,
         now: datetime | None = None,
-    ) -> ClaimedJob:
-        """Claim one known due activation without searching for another job."""
+    ) -> ClaimedChore:
+        """Claim one known due activation without searching for another chore."""
 
         current = _utc(now)
         with self._write():
-            row = self._require_row_locked(job.id)
+            row = self._require_row_locked(chore.id)
             record = _record(row)
-            _require_kind(record, job)
+            _require_identity(record, chore)
             if record.active_run_id is not None:
-                raise ValueError(f"job is already running: {job.id}")
+                raise ValueError(f"chore is already running: {chore.id}")
             active_at, ready_at, next_run_at = _consume_activation(
                 record,
-                job,
+                chore,
                 trigger=trigger,
                 now=current,
             )
             self._conn.execute(
                 """
-                UPDATE jobs
+                UPDATE chores
                 SET revision = ?, status = 'running', ready_at = ?,
                     active_run_id = ?, active_revision = ?, active_trigger = ?,
                     active_at = ?, next_run_at = ?, error = NULL, updated_at = ?
-                WHERE job_id = ? AND active_run_id IS NULL
+                WHERE chore_id = ? AND active_run_id IS NULL
                 """,
                 (
-                    job.revision,
+                    chore.revision,
                     ready_at,
                     run_id,
-                    job.revision,
+                    chore.revision,
                     trigger,
                     _iso(active_at),
                     next_run_at,
                     _iso(current),
-                    job.id,
+                    chore.id,
                 ),
             )
-            updated = self._require_row_locked(job.id)
-        return ClaimedJob(
-            job=job,
+            updated = self._require_row_locked(chore.id)
+        return ClaimedChore(
+            chore=chore,
             record=_record(updated),
             trigger=trigger,
             active_at=_iso(active_at),
@@ -179,44 +169,44 @@ class JobStore:
     def reject_activation(
         self,
         *,
-        job: Job,
-        trigger: JobTrigger,
+        chore: Chore,
+        trigger: ChoreTrigger,
         error: str,
         now: datetime | None = None,
-    ) -> JobRecord:
+    ) -> ChoreRecord:
         """Consume one invalid activation without creating a run."""
 
         current = _utc(now)
         with self._write():
-            record = _record(self._require_row_locked(job.id))
-            _require_kind(record, job)
+            record = _record(self._require_row_locked(chore.id))
+            _require_identity(record, chore)
             if record.active_run_id is not None:
-                raise ValueError(f"job is already running: {job.id}")
+                raise ValueError(f"chore is already running: {chore.id}")
             _active_at, ready_at, next_run_at = _consume_activation(
                 record,
-                job,
+                chore,
                 trigger=trigger,
                 now=current,
             )
-            status = _rejected_status(job.kind, ready_at, next_run_at)
+            status = _rejected_status(ready_at, next_run_at)
             self._conn.execute(
                 """
-                UPDATE jobs
+                UPDATE chores
                 SET revision = ?, status = ?, ready_at = ?, next_run_at = ?,
                     error = ?, updated_at = ?
-                WHERE job_id = ?
+                WHERE chore_id = ?
                 """,
                 (
-                    job.revision,
+                    chore.revision,
                     status,
                     ready_at,
                     next_run_at,
                     error,
                     _iso(current),
-                    job.id,
+                    chore.id,
                 ),
             )
-            updated = self._require_row_locked(job.id)
+            updated = self._require_row_locked(chore.id)
         return _record(updated)
 
     def reject_claim(
@@ -225,13 +215,13 @@ class JobStore:
         run_id: str,
         error: str,
         now: datetime | None = None,
-    ) -> JobRecord | None:
+    ) -> ChoreRecord | None:
         """Finish a claimed activation rejected by RunExecutor acceptance."""
 
         current = _utc(now)
         with self._write():
             row = self._conn.execute(
-                "SELECT * FROM jobs WHERE active_run_id = ?",
+                "SELECT * FROM chores WHERE active_run_id = ?",
                 (run_id,),
             ).fetchone()
             if row is None:
@@ -240,14 +230,14 @@ class JobStore:
             status = _finished_status(record, "failed")
             self._conn.execute(
                 """
-                UPDATE jobs
+                UPDATE chores
                 SET status = ?, active_run_id = NULL, active_revision = NULL,
                     active_trigger = NULL, active_at = NULL, error = ?, updated_at = ?
-                WHERE job_id = ? AND active_run_id = ?
+                WHERE chore_id = ? AND active_run_id = ?
                 """,
-                (status, error, _iso(current), record.job_id, run_id),
+                (status, error, _iso(current), record.chore_id, run_id),
             )
-            updated = self._require_row_locked(record.job_id)
+            updated = self._require_row_locked(record.chore_id)
         return _record(updated)
 
     def release_claim(
@@ -255,13 +245,13 @@ class JobStore:
         *,
         run_id: str,
         now: datetime | None = None,
-    ) -> JobRecord | None:
+    ) -> ChoreRecord | None:
         """Restore an activation whose preallocated run was never accepted."""
 
         current = _utc(now)
         with self._write():
             row = self._conn.execute(
-                "SELECT * FROM jobs WHERE active_run_id = ?",
+                "SELECT * FROM chores WHERE active_run_id = ?",
                 (run_id,),
             ).fetchone()
             if row is None:
@@ -275,15 +265,15 @@ class JobStore:
                 next_run_at = _earliest(next_run_at, record.active_at)
             self._conn.execute(
                 """
-                UPDATE jobs
+                UPDATE chores
                 SET status = 'pending', ready_at = ?, next_run_at = ?,
                     active_run_id = NULL, active_revision = NULL,
                     active_trigger = NULL, active_at = NULL, updated_at = ?
-                WHERE job_id = ? AND active_run_id = ?
+                WHERE chore_id = ? AND active_run_id = ?
                 """,
-                (ready_at, next_run_at, _iso(current), record.job_id, run_id),
+                (ready_at, next_run_at, _iso(current), record.chore_id, run_id),
             )
-            updated = self._require_row_locked(record.job_id)
+            updated = self._require_row_locked(record.chore_id)
         return _record(updated)
 
     def mark_recovery_blocked(
@@ -292,14 +282,14 @@ class JobStore:
         run_id: str,
         error: str,
         now: datetime | None = None,
-    ) -> JobRecord | None:
+    ) -> ChoreRecord | None:
         """Retain an ambiguous accepted run without risking duplicate dispatch."""
 
         current = _utc(now)
         with self._write():
             cursor = self._conn.execute(
                 """
-                UPDATE jobs
+                UPDATE chores
                 SET error = ?, updated_at = ?
                 WHERE active_run_id = ?
                 """,
@@ -308,7 +298,7 @@ class JobStore:
             if cursor.rowcount != 1:
                 return None
             row = self._conn.execute(
-                "SELECT * FROM jobs WHERE active_run_id = ?",
+                "SELECT * FROM chores WHERE active_run_id = ?",
                 (run_id,),
             ).fetchone()
         return _record(row) if row is not None else None
@@ -316,11 +306,11 @@ class JobStore:
     def finish_run(
         self,
         *,
-        jobs: Mapping[str, Job],
+        chores: Mapping[str, Chore],
         run_id: str,
         run_status: RunStatus,
         now: datetime | None = None,
-    ) -> JobRecord | None:
+    ) -> ChoreRecord | None:
         """Apply one terminal run result to its active checkpoint."""
 
         if run_status in {"pending", "running"}:
@@ -328,60 +318,33 @@ class JobStore:
         current = _utc(now)
         with self._write():
             row = self._conn.execute(
-                "SELECT * FROM jobs WHERE active_run_id = ?",
+                "SELECT * FROM chores WHERE active_run_id = ?",
                 (run_id,),
             ).fetchone()
             if row is None:
                 return None
             record = _record(row)
-            job = jobs.get(record.job_id)
-            if job is None:
-                self._conn.execute(
-                    "DELETE FROM jobs WHERE job_id = ?",
-                    (record.job_id,),
-                )
-                return None
-            _require_kind(record, job)
+            chore = chores.get(record.chore_id)
+            if chore is not None:
+                _require_identity(record, chore)
             status = _finished_status(record, run_status)
             self._conn.execute(
                 """
-                UPDATE jobs
+                UPDATE chores
                 SET revision = ?, status = ?, active_run_id = NULL,
                     active_revision = NULL, active_trigger = NULL,
                     active_at = NULL, error = NULL, updated_at = ?
-                WHERE job_id = ? AND active_run_id = ?
+                WHERE chore_id = ? AND active_run_id = ?
                 """,
-                (job.revision, status, _iso(current), record.job_id, run_id),
+                (
+                    chore.revision if chore is not None else record.revision,
+                    status,
+                    _iso(current),
+                    record.chore_id,
+                    run_id,
+                ),
             )
-            updated = self._require_row_locked(record.job_id)
-        return _record(updated)
-
-    def reopen_task(
-        self,
-        *,
-        task_id: str,
-        now: datetime | None = None,
-    ) -> JobRecord:
-        """Request the current task revision again."""
-
-        current = _utc(now)
-        with self._write():
-            record = _record(self._require_row_locked(task_id))
-            if record.kind != "task":
-                raise ValueError(f"job is not a task: {task_id}")
-            if record.active_run_id is not None:
-                raise ValueError(f"task is running: {task_id}")
-            if record.status not in {"done", "failed", "canceled"}:
-                raise ValueError(f"task cannot reopen from status: {record.status}")
-            self._conn.execute(
-                """
-                UPDATE jobs
-                SET status = 'pending', ready_at = ?, error = NULL, updated_at = ?
-                WHERE job_id = ?
-                """,
-                (_iso(current), _iso(current), task_id),
-            )
-            updated = self._require_row_locked(task_id)
+            updated = self._require_row_locked(record.chore_id)
         return _record(updated)
 
     def request_manual_chore(
@@ -389,66 +352,62 @@ class JobStore:
         *,
         chore_id: str,
         now: datetime | None = None,
-    ) -> JobRecord:
+    ) -> ChoreRecord:
         """Keep at most one pending manual occurrence for a ready chore."""
 
         current = _utc(now)
         with self._write():
             record = _record(self._require_row_locked(chore_id))
-            if record.kind != "chore":
-                raise ValueError(f"job is not a chore: {chore_id}")
             ready_at = record.ready_at or _iso(current)
             status = "running" if record.active_run_id is not None else "pending"
             self._conn.execute(
                 """
-                UPDATE jobs
+                UPDATE chores
                 SET status = ?, ready_at = ?, error = NULL, updated_at = ?
-                WHERE job_id = ?
+                WHERE chore_id = ?
                 """,
                 (status, ready_at, _iso(current), chore_id),
             )
             updated = self._require_row_locked(chore_id)
         return _record(updated)
 
-    def cancel_pending_task(
+    def cancel_pending_chore(
         self,
         *,
-        task_id: str,
+        chore_id: str,
         now: datetime | None = None,
-    ) -> JobRecord:
-        """Cancel a task activation that has not started."""
+    ) -> ChoreRecord:
+        """Cancel a chore activation that has not started."""
 
         current = _utc(now)
         with self._write():
-            record = _record(self._require_row_locked(task_id))
-            if record.kind != "task":
-                raise ValueError(f"job is not a task: {task_id}")
+            record = _record(self._require_row_locked(chore_id))
             if record.active_run_id is not None or record.status != "pending":
-                raise ValueError(f"task cannot cancel from status: {record.status}")
+                raise ValueError(f"chore cannot cancel from status: {record.status}")
             self._conn.execute(
                 """
-                UPDATE jobs
-                SET status = 'canceled', ready_at = NULL, updated_at = ?
-                WHERE job_id = ?
+                UPDATE chores
+                SET status = CASE WHEN next_run_at IS NULL THEN 'canceled' ELSE 'pending' END, ready_at = NULL, updated_at = ?
+                WHERE chore_id = ?
                 """,
-                (_iso(current), task_id),
+                (_iso(current), chore_id),
             )
-            updated = self._require_row_locked(task_id)
+            updated = self._require_row_locked(chore_id)
         return _record(updated)
 
-    def _upsert_locked(self, job: Job, *, now: datetime) -> None:
+    def _upsert_locked(self, chore: Chore, *, now: datetime) -> None:
         row = self._conn.execute(
-            "SELECT * FROM jobs WHERE job_id = ?",
-            (job.id,),
+            "SELECT * FROM chores WHERE chore_id = ?",
+            (chore.id,),
         ).fetchone()
-        current_schedule_revision = schedule_revision(job)
+        current_schedule_revision = schedule_revision(chore)
         if row is None:
-            anchor = _iso(now) if job.kind == "chore" else None
-            next_run_at = _initial_next_run(job, anchor=now, now=now)
+            anchor = _iso(now) if chore.schedule is not None else None
+            next_run_at = _initial_next_run(chore, anchor=now, now=now)
             self._conn.execute(
                 """
-                INSERT INTO jobs(
-                    job_id, kind, revision, status, ready_at,
+                INSERT INTO chores(
+                    chore_id, name, revision, status, ready_at,
                     active_run_id, active_revision, active_trigger, active_at,
                     schedule_revision, schedule_anchor, next_run_at, error,
                     created_at, updated_at
@@ -456,10 +415,10 @@ class JobStore:
                           ?, ?, ?, NULL, ?, ?)
                 """,
                 (
-                    job.id,
-                    job.kind,
-                    job.revision,
-                    _iso(now) if job.kind == "task" else None,
+                    chore.id,
+                    chore.name,
+                    chore.revision,
+                    _iso(now) if chore.schedule is None else None,
                     current_schedule_revision,
                     anchor,
                     next_run_at,
@@ -469,34 +428,36 @@ class JobStore:
             )
             return
         record = _record(row)
-        _require_kind(record, job)
+        _require_identity(record, chore)
         status = record.status
         ready_at = record.ready_at
         anchor = record.schedule_anchor
         next_run_at = record.next_run_at
         error = record.error
-        if job.kind == "task" and job.revision != record.revision:
+        if chore.schedule is None and chore.revision != record.revision:
             ready_at = ready_at or _iso(now)
             status = "running" if record.active_run_id is not None else "pending"
             error = None
-        elif job.kind == "chore":
-            if current_schedule_revision != record.schedule_revision:
-                anchor = _iso(now)
-                next_run_at = _initial_next_run(job, anchor=now, now=now)
-                if record.active_run_id is None:
-                    status = "pending" if ready_at or next_run_at else "done"
-                error = None
-            elif job.revision != record.revision:
-                error = None
+        if current_schedule_revision != record.schedule_revision:
+            anchor = _iso(now) if chore.schedule is not None else None
+            next_run_at = _initial_next_run(chore, anchor=now, now=now)
+            if record.active_run_id is None:
+                if ready_at or next_run_at:
+                    status = "pending"
+                elif status == "pending":
+                    status = "done"
+            error = None
+        elif chore.revision != record.revision:
+            error = None
         self._conn.execute(
             """
-            UPDATE jobs
+            UPDATE chores
             SET revision = ?, status = ?, ready_at = ?, schedule_revision = ?,
                 schedule_anchor = ?, next_run_at = ?, error = ?, updated_at = ?
-            WHERE job_id = ?
+            WHERE chore_id = ?
             """,
             (
-                job.revision,
+                chore.revision,
                 status,
                 ready_at,
                 current_schedule_revision,
@@ -504,52 +465,30 @@ class JobStore:
                 next_run_at,
                 error,
                 _iso(now),
-                job.id,
+                chore.id,
             ),
         )
 
-    def _require_row_locked(self, job_id: str) -> sqlite3.Row:
+    def _require_row_locked(self, chore_id: str) -> sqlite3.Row:
         row = self._conn.execute(
-            "SELECT * FROM jobs WHERE job_id = ?",
-            (job_id,),
+            "SELECT * FROM chores WHERE chore_id = ?",
+            (chore_id,),
         ).fetchone()
         if row is None:
-            raise FileNotFoundError(f"job not found: {job_id}")
+            raise FileNotFoundError(f"chore not found: {chore_id}")
         return row
 
     def _init_schema(self) -> None:
         with self._lock:
-            self._conn.execute("PRAGMA busy_timeout=30000;")
-            version = int(self._conn.execute("PRAGMA user_version").fetchone()[0])
-            if version > _SCHEMA_VERSION or (
-                self.read_only and version != _SCHEMA_VERSION
-            ):
-                raise JobStoreSchemaError(
-                    version,
-                    current=_SCHEMA_VERSION,
-                    read_only=self.read_only,
-                )
+            self._conn.execute("PRAGMA busy_timeout=30000")
             if self.read_only:
-                self._conn.execute("PRAGMA query_only=ON;")
+                self._conn.execute("PRAGMA query_only=ON")
                 return
-            self._conn.execute("PRAGMA journal_mode=WAL;")
-            self._conn.execute("PRAGMA synchronous=NORMAL;")
-            self._conn.execute("BEGIN IMMEDIATE")
-            try:
-                version = int(self._conn.execute("PRAGMA user_version").fetchone()[0])
-                if version > _SCHEMA_VERSION:
-                    raise JobStoreSchemaError(
-                        version,
-                        current=_SCHEMA_VERSION,
-                        read_only=False,
-                    )
-                if version < _SCHEMA_VERSION:
-                    self._conn.execute("DROP TABLE IF EXISTS jobs")
-                self._conn.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS jobs (
-                        job_id TEXT PRIMARY KEY,
-                        kind TEXT NOT NULL,
+            with self._write():
+                self._conn.execute("""
+                    CREATE TABLE IF NOT EXISTS chores (
+                        chore_id TEXT PRIMARY KEY,
+                        name TEXT NOT NULL,
                         revision TEXT NOT NULL,
                         status TEXT NOT NULL,
                         ready_at TEXT,
@@ -564,21 +503,19 @@ class JobStore:
                         created_at TEXT NOT NULL,
                         updated_at TEXT NOT NULL
                     )
-                    """
-                )
-                self._conn.execute(
-                    """
-                    CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_active_run
-                    ON jobs(active_run_id)
-                    WHERE active_run_id IS NOT NULL
-                    """
-                )
-                self._conn.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
-            except Exception:
-                self._conn.rollback()
-                raise
-            else:
-                self._conn.commit()
+                """)
+                self._conn.execute("""
+                    CREATE UNIQUE INDEX IF NOT EXISTS idx_chores_active_run
+                    ON chores(active_run_id) WHERE active_run_id IS NOT NULL
+                """)
+
+    def _has_table(self) -> bool:
+        return (
+            self._conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE name = 'chores'"
+            ).fetchone()
+            is not None
+        )
 
     @contextmanager
     def _write(self) -> Iterator[None]:
@@ -593,86 +530,83 @@ class JobStore:
                 self._conn.commit()
 
 
-def jobs_db_path(layout: AgentLayout) -> Path:
+def chores_db_path(layout: AgentLayout) -> Path:
     """Return the scheduler checkpoint database path."""
 
-    return layout.job_store
+    return layout.chore_store
 
 
-def open_job_store(layout: AgentLayout, *, read_only: bool = False) -> JobStore:
+def open_chore_store(layout: AgentLayout, *, read_only: bool = False) -> ChoreStore:
     """Open scheduler checkpoints for one agent."""
 
-    return JobStore(jobs_db_path(layout), read_only=read_only)
+    return ChoreStore(chores_db_path(layout), read_only=read_only)
 
 
-def next_activation(record: JobRecord) -> tuple[datetime, JobTrigger] | None:
+def next_activation(record: ChoreRecord) -> tuple[datetime, ChoreTrigger] | None:
     """Return one record's next in-memory heap activation."""
 
     if record.active_run_id is not None:
         return None
-    candidates: list[tuple[datetime, JobTrigger]] = []
+    candidates: list[tuple[datetime, ChoreTrigger]] = []
     if record.ready_at is not None:
         candidates.append(
             (
                 _parse(record.ready_at),
-                "source" if record.kind == "task" else "manual",
+                "source" if record.schedule_revision is None else "manual",
             )
         )
-    if record.kind == "chore" and record.next_run_at is not None:
+    if record.next_run_at is not None:
         candidates.append((_parse(record.next_run_at), "schedule"))
     return min(candidates, default=None, key=lambda item: (item[0], item[1]))
 
 
 def _consume_activation(
-    record: JobRecord,
-    job: Job,
+    record: ChoreRecord,
+    chore: Chore,
     *,
-    trigger: JobTrigger,
+    trigger: ChoreTrigger,
     now: datetime,
 ) -> tuple[datetime, str | None, str | None]:
     ready_at = record.ready_at
     next_run_at = record.next_run_at
     if trigger == "source":
-        if job.kind != "task" or ready_at is None or _parse(ready_at) > now:
-            raise ValueError(f"task is not due: {job.id}")
+        if chore.schedule is not None or ready_at is None or _parse(ready_at) > now:
+            raise ValueError(f"chore is not due: {chore.id}")
         active_at = _parse(ready_at)
         ready_at = None
     elif trigger == "manual":
-        if job.kind != "chore" or ready_at is None or _parse(ready_at) > now:
-            raise ValueError(f"chore has no manual request: {job.id}")
+        if ready_at is None or _parse(ready_at) > now:
+            raise ValueError(f"chore has no manual request: {chore.id}")
         active_at = _parse(ready_at)
         ready_at = None
     else:
         if (
-            job.kind != "chore"
-            or job.schedule is None
+            chore.schedule is None
             or record.schedule_anchor is None
             or next_run_at is None
             or _parse(next_run_at) > now
         ):
-            raise ValueError(f"chore schedule is not due: {job.id}")
-        rule = rrulestr(job.schedule, dtstart=_parse(record.schedule_anchor))
+            raise ValueError(f"chore schedule is not due: {chore.id}")
+        rule = rrulestr(chore.schedule, dtstart=_parse(record.schedule_anchor))
         scheduled = rule.before(now, inc=True)
         if scheduled is None:
-            raise ValueError(f"chore schedule has no due occurrence: {job.id}")
+            raise ValueError(f"chore schedule has no due occurrence: {chore.id}")
         active_at = _utc(scheduled)
         following = rule.after(active_at, inc=False)
         next_run_at = _iso(_utc(following)) if following is not None else None
     return active_at, ready_at, next_run_at
 
 
-def _initial_next_run(job: Job, *, anchor: datetime, now: datetime) -> str | None:
-    if job.kind != "chore" or job.schedule is None:
+def _initial_next_run(chore: Chore, *, anchor: datetime, now: datetime) -> str | None:
+    if chore.schedule is None:
         return None
-    rule = rrulestr(job.schedule, dtstart=_utc(anchor))
-    candidate = rule.after(_utc(now), inc=True)
+    rule = rrulestr(chore.schedule, dtstart=_utc(anchor))
+    candidate = rule.after(_utc(now), inc=False)
     return _iso(_utc(candidate)) if candidate is not None else None
 
 
-def _finished_status(record: JobRecord, run_status: RunStatus) -> JobStatus:
-    if record.kind == "chore":
-        return "pending" if record.ready_at or record.next_run_at else "done"
-    if record.ready_at is not None or record.revision != record.active_revision:
+def _finished_status(record: ChoreRecord, run_status: RunStatus) -> ChoreStatus:
+    if record.ready_at is not None or record.next_run_at is not None:
         return "pending"
     if run_status == "succeeded":
         return "done"
@@ -681,45 +615,39 @@ def _finished_status(record: JobRecord, run_status: RunStatus) -> JobStatus:
     return "failed"
 
 
-def _rejected_status(
-    kind: JobKind,
-    ready_at: str | None,
-    next_run_at: str | None,
-) -> JobStatus:
-    if kind == "task":
-        return "failed"
-    return "pending" if ready_at or next_run_at else "done"
+def _rejected_status(ready_at: str | None, next_run_at: str | None) -> ChoreStatus:
+    return "pending" if ready_at or next_run_at else "failed"
 
 
-def _require_kind(record: JobRecord, job: Job) -> None:
-    if record.kind != job.kind:
-        raise ValueError(f"job kind changed for {job.id}: {record.kind} -> {job.kind}")
+def _require_identity(record: ChoreRecord, chore: Chore) -> None:
+    if record.name != chore.name:
+        raise ValueError(f"chore ID collision: {record.name!r} and {chore.name!r}")
 
 
-def _index_jobs(jobs: Mapping[str, Job] | Iterable[Job]) -> dict[str, Job]:
-    values: Iterable[Job]
-    if isinstance(jobs, Mapping):
-        values = cast(Mapping[str, Job], jobs).values()
+def _index_chores(chores: Mapping[str, Chore] | Iterable[Chore]) -> dict[str, Chore]:
+    values: Iterable[Chore]
+    if isinstance(chores, Mapping):
+        values = cast(Mapping[str, Chore], chores).values()
     else:
-        values = jobs
-    indexed: dict[str, Job] = {}
-    for job in values:
-        if job.id in indexed:
-            raise ValueError(f"duplicate job id: {job.id}")
-        indexed[job.id] = job
+        values = chores
+    indexed: dict[str, Chore] = {}
+    for chore in values:
+        if chore.id in indexed:
+            raise ValueError(f"duplicate chore id: {chore.id}")
+        indexed[chore.id] = chore
     return indexed
 
 
-def _record(row: sqlite3.Row) -> JobRecord:
-    return JobRecord(
-        job_id=str(row["job_id"]),
-        kind=cast(JobKind, str(row["kind"])),
+def _record(row: sqlite3.Row) -> ChoreRecord:
+    return ChoreRecord(
+        chore_id=str(row["chore_id"]),
+        name=str(row["name"]),
         revision=str(row["revision"]),
-        status=cast(JobStatus, str(row["status"])),
+        status=cast(ChoreStatus, str(row["status"])),
         ready_at=_optional(row["ready_at"]),
         active_run_id=_optional(row["active_run_id"]),
         active_revision=_optional(row["active_revision"]),
-        active_trigger=cast(JobTrigger | None, _optional(row["active_trigger"])),
+        active_trigger=cast(ChoreTrigger | None, _optional(row["active_trigger"])),
         active_at=_optional(row["active_at"]),
         schedule_revision=_optional(row["schedule_revision"]),
         schedule_anchor=_optional(row["schedule_anchor"]),

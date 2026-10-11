@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Mapping, Sequence
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field
 import logging
 import json
@@ -26,7 +26,7 @@ from toolang.api.app import create_app
 from toolang.base.model_settings import format_model_body
 from toolang.base.types.model import ModelOverride
 from toolang.base.types.policy import AgentCeiling
-from toolang.catalog import CapsManager, JobsManager
+from toolang.catalog import CapsManager, ChoresManager
 from toolang.common.config import resolve_ui_base_url
 from toolang.common.env_logger import PY_LOG_ENV_VAR
 from toolang.common.layout import AgentLayout
@@ -38,14 +38,20 @@ from toolang.setup.config import load_setup_config
 from toolang.state import watcher as state_watcher
 from toolang.state.state import AgentState
 from toolang.up import process as agents
-from toolang.up.config import resolve_cors_allowed_origins
+from toolang.up.config import (
+    default_drivers,
+    format_drivers,
+    resolve_cors_allowed_origins,
+)
+from toolang.up.types import ALL_DRIVERS, ExecutionDrivers
 from toolang.up.core import AgentCore
+from toolang.up.observation import RuntimeRegistration
 from toolang.up.logging import (
     DEFAULT_LOG_LEVEL,
     build_uvicorn_log_config,
     configure_logging,
 )
-from toolang.work.scheduler import JobScheduler
+from toolang.work.scheduler import ChoreDriver
 from toolang.work.messaging import MessagingLoop
 from toolang.work.teaming import TeamingLoop
 from toolang.teaming.agent_client import AgentClient, AgentEventClient
@@ -66,6 +72,7 @@ class ServeSpec:
     host: str
     endpoint_host: str
     port: int
+    drivers: ExecutionDrivers = ALL_DRIVERS
     ceiling_overrides: Mapping[str, tuple[str, ...] | None] = field(
         default_factory=dict
     )
@@ -111,6 +118,7 @@ def resolve_serve(
     host: str = "127.0.0.1",
     endpoint_host: str | None = None,
     port: int | None = None,
+    drivers: ExecutionDrivers | None = None,
     ceiling_overrides: Mapping[str, tuple[str, ...] | None] | None = None,
     default_overrides: Mapping[str, ModelOverride | str | None] | None = None,
     limit_overrides: Mapping[str, int | float | None] | None = None,
@@ -124,6 +132,7 @@ def resolve_serve(
 
     return ServeSpec(
         layout=layout,
+        drivers=default_drivers(layout.placement) if drivers is None else drivers,
         workspace_additions=dict(workspace_additions or {}),
         workdir=workdir,
         host=host,
@@ -163,7 +172,11 @@ def build_serve_argv(
         spec.endpoint_host,
         "--port",
         str(spec.port),
+        "--driver",
+        format_drivers(spec.drivers),
     ]
+    if spec.layout.instance is not None:
+        command.extend(["--runtime-instance", spec.layout.instance])
     if spec.layout.placement != "resident":
         command.extend(["--placement", spec.layout.placement])
     if spec.workspace_additions:
@@ -217,6 +230,7 @@ def serve(
     configure_logging(spec=runtime_log_spec, environ=environ)
     core = AgentCore(
         spec.layout,
+        drivers=spec.drivers,
         sandbox=sandbox,
         ceiling_overrides=spec.ceiling_overrides,
         default_overrides=spec.default_overrides,
@@ -225,159 +239,206 @@ def serve(
         workspace_additions=spec.workspace_additions,
         workdir=spec.workdir,
     )
-    asyncio.run(_refresh_core(core))
-    state = core.state.current()
-    ceiling = AgentCeiling()
-    validate_agent_ceiling(core.setup.current(), state, ceiling)
-    core.executor.resolve_workdir(
-        core.setup.current(), state, workdir=spec.workdir, inherit_thread_workdir=False
-    )
-    cors_allowed_origins = resolve_cors_allowed_origins(
-        load_setup_config(spec.layout),
-        environ=environ,
-    )
-    started_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    core_closed = False
 
-    def current_setup() -> AgentSetup:
-        return core.setup.current()
+    async def close_core() -> None:
+        nonlocal core_closed
+        if not core_closed:
+            core_closed = True
+            await core.close()
 
-    def current_state() -> AgentState:
-        return core.state.current()
+    try:
+        asyncio.run(_refresh_core(core))
+        state = core.state.current()
+        ceiling = AgentCeiling()
+        validate_agent_ceiling(core.setup.current(), state, ceiling)
+        core.executor.resolve_workdir(
+            core.setup.current(),
+            state,
+            workdir=spec.workdir,
+            inherit_thread_workdir=False,
+        )
+        cors_allowed_origins = resolve_cors_allowed_origins(
+            load_setup_config(spec.layout),
+            environ=environ,
+        )
+        started_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
-    _log_state_loaded(
-        current_setup(),
-        current_state(),
-        ceiling=ceiling,
-    )
-    shutdown_signal = threading.Event()
-    caps_manager = CapsManager(spec.layout)
-    jobs_manager = JobsManager(spec.layout)
+        def current_setup() -> AgentSetup:
+            return core.setup.current()
 
-    @asynccontextmanager
-    async def lifespan(app: FastAPI):
-        stop_signal = asyncio.Event()
-        tasks: list[asyncio.Task[None]] = []
-        scheduler: JobScheduler | None = None
-        teaming: TeamingLoop | None = None
-        try:
-            agents.write_runtime_state(
-                spec.layout,
-                endpoint=spec.endpoint,
-                started_at=started_at,
-                pid=os.getpid(),
-                models=tuple(model.ref for model in current_setup().models_effective()),
-                sandbox=sandbox,
-                workspace_additions=spec.workspace_additions,
-                process_created=host_ref.meta.get("created")
-                if host_ref is not None
-                else None,
-                sandbox_description=environ.get(HOST_SANDBOX_DESCRIPTION_ENV),
-                sandbox_instance=environ.get("TOOLANG_SANDBOX_INSTANCE"),
-            )
-            scheduler = JobScheduler(
-                layout=spec.layout,
-                executor=core.executor,
-                ids=core.ids,
-                get_agent_setup=current_setup,
-                get_agent_state=current_state,
-            )
-            messaging_setup = current_setup().teaming
-            if messaging_setup is not None and messaging_setup.home.enabled:
-                hub_client = AgentClient(
-                    spec.layout.root,
-                    actor=f"agent:{spec.layout.name}",
-                    managed=spec.layout.placement == "resident",
-                )
-                messaging = MessagingLoop(
-                    layout=spec.layout,
-                    owner=messaging_setup.root.human,
-                    client=hub_client,
-                    endpoint=spec.endpoint,
-                    executor=core.executor,
-                    threads=core.threads,
-                    get_agent_setup=current_setup,
-                    get_agent_state=current_state,
-                )
-                teaming = TeamingLoop(
-                    messaging,
-                    AgentEventClient(hub_client),
-                    activity=core.activity,
-                    publish_activity=hub_client.publish_activity,
-                )
-                teaming.start()
-            await scheduler.start()
-            app.state.job_scheduler = scheduler
-            tasks.extend(
-                [
-                    asyncio.create_task(
-                        core.state.run(
-                            stop_signal=stop_signal,
-                            interval_ms=state_watcher.DEFAULT_INTERVAL_MS,
-                            debounce_ms=DEFAULT_WATCH_DEBOUNCE_MS,
-                        )
+        def current_state() -> AgentState:
+            return core.state.current()
+
+        _log_state_loaded(
+            current_setup(),
+            current_state(),
+            ceiling=ceiling,
+        )
+        shutdown_signal = threading.Event()
+        caps_manager = CapsManager(spec.layout)
+        chores_manager = ChoresManager(spec.layout)
+
+        @asynccontextmanager
+        async def lifespan(app: FastAPI):
+            stop_signal = asyncio.Event()
+            tasks: list[asyncio.Task[None]] = []
+            scheduler: ChoreDriver | None = None
+            teaming: TeamingLoop | None = None
+            registration = (
+                RuntimeRegistration(
+                    spec.layout,
+                    roots=(
+                        spec.layout.root,
+                        Path(
+                            environ.get(
+                                "TOOLANG_OBSERVATION_ROOT", str(spec.layout.root)
+                            )
+                        ),
                     ),
-                    asyncio.create_task(core.setup.run(stop_signal=stop_signal)),
-                ]
+                    drivers=spec.drivers,
+                    endpoint=spec.endpoint,
+                )
+                if sandbox == "host"
+                else None
             )
-            yield
-        finally:
-            agents.stop_runtime_state(
-                spec.layout,
-                expected_pid=os.getpid(),
-                expected_started_at=started_at,
-            )
-            stop_signal.set()
-            if scheduler is not None:
-                await scheduler.pause()
-            await _finish_runtime_tasks(tasks)
-            if teaming is not None:
-                await teaming.stop_messages()
             try:
-                await core.close()
+                agents.write_runtime_state(
+                    spec.layout,
+                    endpoint=spec.endpoint,
+                    started_at=started_at,
+                    pid=os.getpid(),
+                    models=tuple(
+                        model.ref for model in current_setup().models_effective()
+                    ),
+                    sandbox=sandbox,
+                    drivers=sorted(spec.drivers),
+                    workspace_additions=spec.workspace_additions,
+                    process_created=host_ref.meta.get("created")
+                    if host_ref is not None
+                    else None,
+                    sandbox_description=environ.get(HOST_SANDBOX_DESCRIPTION_ENV),
+                    sandbox_instance=environ.get("TOOLANG_SANDBOX_INSTANCE"),
+                )
+                if "chore" in spec.drivers:
+                    scheduler = ChoreDriver(
+                        layout=spec.layout,
+                        executor=core.executor,
+                        ids=core.ids,
+                        get_agent_setup=current_setup,
+                        get_agent_state=current_state,
+                    )
+                messaging_setup = current_setup().teaming
+                if messaging_setup is not None and messaging_setup.home.enabled:
+                    hub_client = AgentClient(
+                        spec.layout.root,
+                        actor=f"agent:{spec.layout.name}",
+                        managed=spec.layout.placement == "resident",
+                    )
+                    messaging = (
+                        MessagingLoop(
+                            layout=spec.layout,
+                            owner=messaging_setup.root.human,
+                            client=hub_client,
+                            endpoint=spec.endpoint,
+                            executor=core.executor,
+                            threads=core.threads,
+                            get_agent_setup=current_setup,
+                            get_agent_state=current_state,
+                        )
+                        if "talk" in spec.drivers
+                        else None
+                    )
+                    teaming = TeamingLoop(
+                        AgentEventClient(hub_client),
+                        client=hub_client,
+                        owner=messaging_setup.root.human,
+                        endpoint=spec.endpoint,
+                        executor=core.executor,
+                        messaging=messaging,
+                        activity=core.activity,
+                        publish_activity=hub_client.publish_activity,
+                    )
+                    teaming.start()
+                if scheduler is not None:
+                    await scheduler.start()
+                if registration is not None:
+                    registration.__enter__()
+                app.state.chore_driver = scheduler
+                tasks.extend(
+                    [
+                        asyncio.create_task(
+                            core.state.run(
+                                stop_signal=stop_signal,
+                                interval_ms=state_watcher.DEFAULT_INTERVAL_MS,
+                                debounce_ms=DEFAULT_WATCH_DEBOUNCE_MS,
+                            )
+                        ),
+                        asyncio.create_task(core.setup.run(stop_signal=stop_signal)),
+                    ]
+                )
+                yield
             finally:
-                if teaming is not None:
-                    await teaming.close()
-            if scheduler is not None:
-                await scheduler.stop()
+                if registration is not None:
+                    registration.close()
+                agents.stop_runtime_state(
+                    spec.layout,
+                    expected_pid=os.getpid(),
+                    expected_started_at=started_at,
+                )
+                stop_signal.set()
+                async with AsyncExitStack() as cleanup:
+                    if scheduler is not None:
+                        cleanup.push_async_callback(scheduler.stop)
+                    if teaming is not None:
+                        cleanup.push_async_callback(teaming.close)
+                    cleanup.push_async_callback(close_core)
+                    if teaming is not None:
+                        cleanup.push_async_callback(teaming.stop_messages)
+                    cleanup.push_async_callback(_finish_runtime_tasks, tasks)
+                    if scheduler is not None:
+                        cleanup.push_async_callback(scheduler.pause)
 
-    app = create_app(
-        core,
-        caps_manager,
-        jobs_manager,
-        lifespan=lifespan,
-        cors_allowed_origins=cors_allowed_origins,
-    )
-    app.state.shutdown_signal = shutdown_signal
-    webui_url = _runtime_webui_url(
-        spec.endpoint,
-        config=load_setup_config(spec.layout),
-        environ=environ,
-    )
-    _run_uvicorn_app(
-        app,
-        host=spec.host,
-        port=spec.port,
-        log_config=build_uvicorn_log_config(
-            level=runtime_log_spec or DEFAULT_LOG_LEVEL
-        ),
-        shutdown_signal=shutdown_signal,
-        on_starting=lambda: logger.info(
-            "Agent starting root=%s",
-            spec.layout.root,
-            extra={"color_message": "Agent starting root=\x1b[1m%s\x1b[0m"},
-        ),
-        on_running=lambda: logger.info(
-            "Agent started webui=%s",
-            webui_url,
-            extra={"color_message": "Agent started webui=\x1b[1m%s\x1b[0m"},
-        ),
-        on_stopping=lambda: (
-            app.state.subscriptions.stop(),
-            logger.info("Agent stopping"),
-        ),
-        on_stopped=lambda: logger.info("Agent stopped"),
-    )
-    return 0
+        app = create_app(
+            core,
+            caps_manager,
+            chores_manager,
+            lifespan=lifespan,
+            cors_allowed_origins=cors_allowed_origins,
+        )
+        app.state.shutdown_signal = shutdown_signal
+        webui_url = _runtime_webui_url(
+            spec.endpoint,
+            config=load_setup_config(spec.layout),
+            environ=environ,
+        )
+        _run_uvicorn_app(
+            app,
+            host=spec.host,
+            port=spec.port,
+            log_config=build_uvicorn_log_config(
+                level=runtime_log_spec or DEFAULT_LOG_LEVEL
+            ),
+            shutdown_signal=shutdown_signal,
+            on_starting=lambda: logger.info(
+                "Agent starting root=%s",
+                spec.layout.root,
+                extra={"color_message": "Agent starting root=\x1b[1m%s\x1b[0m"},
+            ),
+            on_running=lambda: logger.info(
+                "Agent started webui=%s drivers=%s",
+                webui_url,
+                format_drivers(spec.drivers),
+            ),
+            on_stopping=lambda: (
+                app.state.subscriptions.stop(),
+                logger.info("Agent stopping"),
+            ),
+            on_stopped=lambda: logger.info("Agent stopped"),
+        )
+        return 0
+    finally:
+        asyncio.run(close_core())
 
 
 def _format_allow(values: tuple[str, ...] | None) -> str:

@@ -7,7 +7,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 
-from toolang.api.app import AgentCoreDep
+from toolang.api.app import AgentCoreDep, require_chat_driver
 from toolang.api.common import StreamAttachmentDep, sse_stream
 from toolang.execution.subscriptions import EventSubscription, StreamScope
 from toolang.api.schemas import (
@@ -42,12 +42,15 @@ async def _subscribe_thread(
 @router.post(
     "",
     summary="Create Thread",
+    dependencies=[Depends(require_chat_driver)],
     status_code=201,
     response_model=ThreadResult,
 )
 def create_thread(core: AgentCoreDep, payload: ThreadCreateRequest) -> ThreadResult:
     thread_id = core.threads.create(
-        prefix=_thread_prefix(payload.client),
+        prefix=ThreadPrefix.CHAT,
+        request_id=payload.request_id,
+        client_id=payload.client_id,
         peer=parse_thread_peer(payload.peer),
     )
     return ThreadResult(thread=thread_info(core, thread_id))
@@ -134,6 +137,7 @@ def rewind_thread(
             thread_id=thread_id,
             run_id=payload.run_id,
             request_id=payload.request_id,
+            client_id=payload.client_id,
         )
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -154,6 +158,7 @@ def fork_thread(
             thread_id=thread_id,
             run_id=payload.run_id,
             request_id=payload.request_id,
+            client_id=payload.client_id,
         )
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -203,11 +208,3 @@ def _thread_or_404(core: AgentCore, thread_id: str) -> None:
     if core.store.get_thread(thread_id=thread_id) is not None:
         return
     raise HTTPException(status_code=404, detail=f"thread not found: {thread_id}")
-
-
-def _thread_prefix(client: str) -> ThreadPrefix:
-    if client == "web":
-        return ThreadPrefix.WEB
-    if client == "script":
-        return ThreadPrefix.SCRIPT
-    return ThreadPrefix.TERM

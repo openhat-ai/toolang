@@ -142,21 +142,11 @@ Agics and flows share one program namespace and the same parameter and output
 signature rules. A flow may start either kind as a child run.
 
 
-## Jobs
+## Chores
 
-Jobs are durable authored work definitions.
-
-Current built-in job kinds are:
-
-- `task`
-- `chore`
-
-Jobs are definitions. They are not runs.
-
-A ready task or chore has one scheduler checkpoint and one stable derived
-thread. Each concrete handling attempt is a run. Chat and direct script calls
-create runs directly and have no job or scheduler record. See
-[work.md](./work.md).
+A chore is a one-off or repeated work definition. Its driver maintains an
+execution checkpoint in `runs.db`; each handling attempt is a run in its stable
+`chore_` thread. Chat and scripts create runs directly. See [work.md](work.md).
 
 
 ## Thread
@@ -329,8 +319,8 @@ additionally contain `ToolCallPart` values, and tool messages contain only
 
 Toolang uses these ownership rules:
 
-- one agent owns caps and jobs
-- jobs and chat inputs create runs
+- one agent owns caps and chores
+- chores and chat inputs create runs
 - runs belong to threads
 - runs contain steps
 - step output projects to caller-facing messages

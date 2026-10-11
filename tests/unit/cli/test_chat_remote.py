@@ -897,7 +897,7 @@ def test_remote_chat_repeated_concrete_runs_do_not_list_models() -> None:
             return httpx.Response(200, json=_run_defaults())
         if request.url.path == "/api/v1/models":
             return httpx.Response(200, json=_models())
-        if request.url.path == "/api/v1/runs/authored/stream":
+        if request.url.path == "/api/v1/chat/runs/authored/stream":
             return _stream(_begin(), _end())
         if request.url.path == "/api/v1/runs/run_remote":
             return httpx.Response(200, json=_json(detail))
@@ -944,7 +944,7 @@ def test_remote_chat_repeated_concrete_runs_do_not_list_models() -> None:
     assert requests.count("/api/v1/models") == 0
     assert requests.count("/api/v1/agics") == 0
     assert requests.count("/api/v1/flows") == 0
-    assert requests.count("/api/v1/runs/authored/stream") == 2
+    assert requests.count("/api/v1/chat/runs/authored/stream") == 2
 
 
 def test_remote_chat_falls_back_to_detail_without_resubmitting(
@@ -975,7 +975,7 @@ def test_remote_chat_falls_back_to_detail_without_resubmitting(
             return httpx.Response(200, json=_run_defaults())
         if request.url.path == "/api/v1/models":
             return httpx.Response(200, json=_models())
-        if request.url.path == "/api/v1/runs/authored/stream":
+        if request.url.path == "/api/v1/chat/runs/authored/stream":
             submissions += 1
             return _stream(_begin())
         if request.url.path == "/api/v1/runs/run_remote/stream":
@@ -1035,7 +1035,7 @@ def test_remote_chat_blocks_ambiguous_pre_acceptance_failure() -> None:
             return httpx.Response(200, json=_run_defaults())
         if request.url.path == "/api/v1/models":
             return httpx.Response(200, json=_models())
-        if request.url.path == "/api/v1/runs/authored/stream":
+        if request.url.path == "/api/v1/chat/runs/authored/stream":
             submissions += 1
             raise httpx.ReadError("private transport detail", request=request)
         raise AssertionError(f"unexpected request: {request.method} {request.url}")
@@ -1102,7 +1102,7 @@ def test_remote_chat_steer_delivers_receipt_or_error_once(failure: str | None) -
             return httpx.Response(200, json=_run_defaults())
         if path == "/api/v1/models":
             return httpx.Response(200, json=_models())
-        if path == "/api/v1/runs/run_remote/steer":
+        if path == "/api/v1/chat/runs/run_remote/steer":
             requests.append(json.loads(request.content))
             if failure == "transport":
                 raise httpx.ReadError("receipt lost")

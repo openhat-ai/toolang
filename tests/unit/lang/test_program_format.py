@@ -263,7 +263,7 @@ flow collect:
 
 def test_format_source_formats_inline_job_headers() -> None:
     source = """
-task   review_api  :
+chore   review_api  :
   title = Review API changes
 
   Review the API changes.
@@ -273,7 +273,7 @@ chore stale_prs  :
 """.strip()
 
     assert format_source(source) == (
-        "task review_api:\n"
+        "chore review_api:\n"
         "  title = Review API changes\n"
         "\n"
         "  Review the API changes.\n"
@@ -908,7 +908,7 @@ def test_format_source_does_not_attach_detached_documentation(
         ("context notes:", "  "),
         ("instruct rules:", "  "),
         ("prompt review:", "  "),
-        ("task review:", "  "),
+        ("chore review:", "  "),
     ],
 )
 def test_format_source_preserves_literal_headers_and_markdown(

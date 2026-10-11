@@ -16,7 +16,6 @@ from toolang.common.layout import AgentLayout
 from toolang.execution.executor import RunExecutor, RunSpec
 from toolang.execution.runnables import resolve_runnable_reference, runnable_fallback
 from toolang.execution.threads import ThreadManager
-from toolang.execution.types import ThreadPrefix
 from toolang.lang.input import resolve_runnable_input
 from toolang.teaming.types import MessageReceiver
 from toolang.teaming.errors import ConversationAccessDenied, MessagingError
@@ -182,20 +181,22 @@ class MessagingLoop:
 
     async def handle(self, batch: dict[str, Any], outcome: dict[str, Any]) -> None:
         setup, state = self.get_setup(), self.get_state()
-        custom = "msg" in state.agics
+        preferred = "talk"
+        custom = preferred in state.agics or preferred in state.flows
         runnable = (
-            "agic:msg"
+            runnable_fallback(state, preferred=preferred)
             if custom
-            else setup.defaults.runnable or runnable_fallback(state, preferred="msg")
+            else setup.defaults.runnable or runnable_fallback(state, preferred="talk")
         )
         resolved = resolve_runnable_reference(state, runnable)
-        if resolved.executable.kind != "agic":
-            raise MessagingError("Messaging requires agic:msg or a default agic")
         text = ("" if custom else _INSTRUCTIONS) + json.dumps(batch, ensure_ascii=False)
         spec = RunSpec(
             setup=setup,
             state=state,
-            thread=self.threads.create(prefix=ThreadPrefix.SCRIPT),
+            thread=self.threads.talk_thread(),
+            workdir=self.executor.resolve_workdir(
+                setup, state, workdir=None, inherit_thread_workdir=False
+            ),
             bindings=RunBindings(
                 runnable=runnable,
                 model=setup.defaults.model.ref if setup.defaults.model else None,

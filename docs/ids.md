@@ -2,8 +2,7 @@
 
 This document defines the Toolang-owned id families and allocator model.
 
-This design is implemented in `toolang.common.ids` and is used for local task ids,
-chore ids, Toolang-owned local thread ids, and run ids.
+This design is implemented in `toolang.common.ids` and is used for allocated thread/run IDs and name-derived chore IDs.
 
 
 ## Goals
@@ -37,7 +36,7 @@ The local allocator defines two families:
 
 | Family | Width | Raw layout | Intended use |
 | --- | --- | --- | --- |
-| `local` | 8 chars | `tick(20) + seq(20)` | task ids, chore ids, and Toolang-owned local thread ids |
+| `local` | 8 chars | `tick(20) + seq(20)` | generated chore filenames and allocated local thread IDs |
 | `run` | 8 chars | `tick(20) + seq(20)` | run ids |
 
 Shared rules:
@@ -69,21 +68,20 @@ For the `run` family:
 
 ## Full Forms
 
-The proposed full identities are:
+The current full identities are:
 
-- task thread: `task_<id>`
-- chore thread: `chore_<id>`
-- web chat thread: `web_<id>`
-- terminal and TUI chat thread: `term_<id>`
-- one-shot script invocation thread: `script_<id>`
-- Telegram thread: `tg_<external_id>`
-- run id: `run_<id>`
+- chat context: `chat_<allocated-id>`
+- incoming-message context: `talk_<allocated-id>` (one per durable agent)
+- chore context: `chore_<name-derived-id>`
+- independent spawned context: `worker_<allocated-id>`
+- standalone script context: `script_<allocated-id>`
+- run: `run_<allocated-id>`
 
-For task and chore ids, the bare `<id>` stays stable even when the authored file
-is renamed, moved, archived, or restored.
-
-Each one-shot script invocation receives a fresh `script_<id>` thread so its history
-and result remain independently inspectable.
+Chore IDs do not use the monotonic allocator: hash the exact UTF-8 name with
+SHA-256, take its first 80 bits, and encode them in 16 lowercase Base32
+characters. Name changes create new IDs; body, title, schedule, and location
+changes preserve them. Names are case-sensitive and are not normalized.
+Different-name hash collisions are rejected. The canonical ref is `chore/name`.
 
 
 ## Reversible Obfuscation
@@ -176,8 +174,7 @@ State-loss recovery remains manual. Stop writers before reconstructing the
 snapshot. Decoding retained IDs and taking the maximum `(tick, seq)` per family
 can recover a persisted high-water mark; timestamp or insertion order does not
 necessarily match allocation order. `runs.db` is not a complete allocation log:
-jobs and scheduler claims have other stores, and deleted or unpersisted IDs
-cannot be reconstructed from it. No automatic scan or repair is performed.
+deleted or unpersisted allocated IDs cannot be reconstructed from it. No automatic scan or repair is performed.
 
 
 ## Collision Handling
@@ -196,13 +193,8 @@ Because visible id prefixes are now mixed across the whole encoded value,
 archive bucketing uses the decoded tick-derived UTC bucket rather than the
 literal leading chars shown in the id string.
 
-Examples:
-
-- `archive/tasks/20260423T10Z/<id>.md`
-- `archive/chores/20260423T10Z/<id>.md`
-
-The `T` separates date from hour and `Z` makes the UTC timezone explicit while
-keeping the directory compact.
+These generic decoded buckets do not define chore lifecycle directories.
+Chores have no archive stage.
 
 
 ## Current API

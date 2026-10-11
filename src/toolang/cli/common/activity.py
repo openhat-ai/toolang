@@ -20,7 +20,12 @@ from rich.live import Live
 
 from toolang.execution.activity import ActivityQuery
 from toolang.execution.errors import RunStoreSchemaError
-from toolang.teaming.observation import HttpObservation, Observation, frames
+from toolang.teaming.observation import (
+    CombinedObservation,
+    HttpObservation,
+    Observation,
+    frames,
+)
 from toolang.teaming.hub_observation import HubObservation
 from .activity_view import Activity, Sort, View
 from .terminal_surfaces import resolve_terminal_surfaces
@@ -75,6 +80,16 @@ async def watch(
             source = (
                 HttpObservation(http, agent=agent) if agent else HubObservation(http)
             )
+        elif endpoint is not None and agent is None:
+            http = await stack.enter_async_context(
+                httpx.AsyncClient(
+                    base_url=endpoint,
+                    headers={"X-Toolang-Backend": backend} if backend else {},
+                    timeout=httpx.Timeout(2),
+                    trust_env=False,
+                )
+            )
+            source = CombinedObservation(HubObservation(http), source)
         observer = source
         if once:
             try:

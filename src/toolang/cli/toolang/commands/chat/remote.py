@@ -109,6 +109,7 @@ class RemoteChatSession:
         transport: httpx.AsyncBaseTransport | None = None,
         workdir: str | None = None,
     ) -> None:
+        self._client_id = f"client_{uuid4().hex}"
         self._invocation_workdir = workdir
         self._procdir = Path.cwd().resolve()
         self._endpoint = endpoint
@@ -338,7 +339,7 @@ class RemoteChatSession:
         self._submit_control(
             run_client.cancel(
                 run_id,
-                request_id=f"term_{uuid4().hex}",
+                request_id=f"request_{uuid4().hex}",
             ),
             on_error,
         )
@@ -356,7 +357,7 @@ class RemoteChatSession:
                 run_id,
                 Message.user(message),
                 timing="next_step",
-                request_id=f"term_{uuid4().hex}",
+                request_id=f"request_{uuid4().hex}",
             ),
             on_error,
             on_control,
@@ -376,7 +377,12 @@ class RemoteChatSession:
             transport=self._transport,
             timeout=httpx.Timeout(3.0),
         )
-        self.run_client = RemoteRunClient(self._endpoint, client=self._http)
+        self.run_client = RemoteRunClient(
+            self._endpoint,
+            client=self._http,
+            interactive=True,
+            client_id=self._client_id,
+        )
         await self.run_client.connect()
         health = await self._request_json("GET", "/healthz", operation="health")
         if health != {"ok": True}:
@@ -388,6 +394,15 @@ class RemoteChatSession:
             "/api/v1/profile",
             operation="profile",
         )
+        runtime_profile = _mapping(profile, operation="profile").get("runtime")
+        if isinstance(runtime_profile, Mapping):
+            drivers = _mapping(runtime_profile, operation="profile.runtime").get(
+                "drivers"
+            )
+            if isinstance(drivers, list) and "chat" not in drivers:
+                raise RemoteChatError(
+                    "chat driver is disabled; restart the agent with --driver chat"
+                )
         try:
             identity = _runtime_identity(profile)
         except ValueError as exc:
@@ -586,7 +601,7 @@ class RemoteChatSession:
             "POST",
             "/api/v1/threads",
             operation="create thread",
-            json={"client": "tui"},
+            json={"client_id": self._client_id, "request_id": f"request_{uuid4().hex}"},
         )
         body = _mapping(payload, operation="create thread")
         if set(body) != {"thread"}:
@@ -737,7 +752,7 @@ class RemoteChatSession:
             surface = replace(surface, runnable=await self._current_runnable_default())
         request = build_run_request(
             thread_id=thread_id,
-            request_id=f"term_{uuid4().hex}",
+            request_id=f"request_{uuid4().hex}",
             input=input,
             override=override,
             setting=setting,
@@ -768,7 +783,10 @@ class RemoteChatSession:
                 ),
             )
         return await capture_attachments(
-            self._http_client(), self._endpoint, request, procdir=self._procdir
+            self._http_client(),
+            self._endpoint,
+            replace(request, client_id=self._client_id),
+            procdir=self._procdir,
         )
 
     async def _run(

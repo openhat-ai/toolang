@@ -1,7 +1,7 @@
 # Serve execution drivers
 
-Status: discussion plan for review; resolve the open decisions and obtain human
-approval before implementation. This PR changes no product behavior.
+Status: approved in #758; implementation includes the subsequent flat-directory
+and command simplification decisions. Backward compatibility is out of scope.
 
 ## Goal and scope
 
@@ -10,10 +10,6 @@ consistent handlers, durable identities, and observable execution. A driver
 accepts triggers, a thread retains context, and a run records one execution.
 Scope includes hosting/API admission, unified chores, thread naming, and
 observation; it excludes a generic driver plugin framework and live toggles.
-
-Today, hosting starts the scheduler unconditionally, messaging creates a new
-`script_` thread per batch, and jobs distinguish task/chore and reject duplicate
-IDs. The following contracts replace those behaviors.
 
 ## Drivers and hosting
 
@@ -65,7 +61,7 @@ IDs. The following contracts replace those behaviors.
   accepts `--driver`; use `serve` to activate drivers and inline chores in a `.too`
   app. A script attached to an existing agent leaves its driver selection intact.
 
-Proposed examples (`too` is the `toolang` alias):
+Examples (`too` is the `toolang` alias):
 
 ```sh
 too serve alice --driver chat,talk,chore
@@ -98,7 +94,11 @@ IDs. State may retain inline declarations and runnable handlers; source parsing
 remains with language/catalog owners. ChoreDriver resolves definitions and owns
 scheduling; progress does not belong in State or Setup.
 
-A `chores` table keyed by derived ID persists definition/revision association,
+Only immediate `chores/*.md` files are current definitions. Remove draft/archive
+stages and commands; retain list/new/clone/edit/delete/run/cancel. Deletion
+removes a definition while retaining its checkpoint and execution history.
+
+A `chores` table in `runs.db`, keyed by derived ID persists definition/revision association,
 status, active run, and schedule checkpoints. Runs retain each execution's history.
 Reload/restart must not redispatch a completed one-off revision or reset schedule
 progress. Definition edits and manual requests follow explicit activation rules;
@@ -144,22 +144,25 @@ changes after approval:
 4. **Observation/compatibility:** `execution/{activity,client}.py`, `teaming/`,
    `cli/toolang/commands/top.py`, client/API schemas, and existing integration
    tests. Verify client/request identity, all placements, concurrent instances,
-   talk-disabled visibility, and preserved completed work/history on upgrade.
+   talk-disabled visibility, and completed work/history across restarts.
    Update CLI help, task/work/messaging docs, and the generated changelog with the
    implementation.
 
 Code commits require the repository's Ruff, formatting, type, and full offline
-pytest checks. This plan-only PR requires source/path/link review and
-`git diff --check`; proposed CLI syntax is not yet available.
+pytest checks. Documentation changes require source/path/link review and `git diff --check`.
 
-## Open decisions and migration risks
+## Implementation decisions
 
-1. **API admission:** the concrete chat/script API boundary that enforces driver
-   selection without relying on client identity or thread prefixes.
-2. **Identity:** name normalization, Base32 derivation/length, collision handling,
-   and same-scope shadow precedence; instance discovery/storage that distinguishes
-   restart from another instance of the same source.
-3. **Activation/migration:** confirm no schedule means one-off and fix edit/retry/
-   manual activation rules. Migrate authored IDs, task/job records, and today's
-   default recurring schedule without replaying completed work. Preserve historical
-   thread/run IDs with an explicit association to new chore identities.
+- Interactive execution uses `/chat/runs`; noninteractive scripts use `/runs`.
+  Neither client identity nor a thread prefix classifies the request.
+- Names preserve case and Unicode without normalization. IDs encode the first
+  80 SHA-256 bits as 16 Toolang Base32 characters. Root files < home files <
+  inline declarations; later inline declarations win. Different-name ID
+  collisions fail.
+- Missing schedule means one-off. Body changes reactivate one-offs; scheduled
+  body changes wait for the next occurrence. Manual requests coalesce and
+  serialize with scheduled work. Deleted definitions retain checkpoints.
+- Independent scripts use distinct runtime/sandbox instance directories and
+  register in their observation scope. Durable agent restarts reuse their state.
+- Remove task syntax/commands, stage commands, and jobs APIs. Do not migrate old
+  definitions/checkpoints or provide aliases. Old on-disk data is left untouched.

@@ -48,7 +48,7 @@ from toolang.base.types.run import ModelCall, ModelCallResult, ModelUsage, ToolC
 from toolang.base.types.tool import ToolContext, ToolDefinition, ToolResult
 from toolang.catalog import templates
 from toolang.catalog.agent import LocalAgents
-from toolang.catalog.job import AuthoredJobs, JobFile
+from toolang.catalog.chore import AuthoredChores, ChoreFile
 from toolang.cli.common.output import shorten_home_path
 from toolang.common.layout import AgentLayout
 from toolang.execution.client import LocalRunClient
@@ -80,9 +80,9 @@ from toolang.up import process as agents
 from toolang.up.types import AgentServerRef
 from toolang.up import AgentCore
 from toolang.api.app import create_app
-from toolang.catalog import CapsManager, JobsManager
-from toolang.work.state import load_ready_jobs
-from toolang.work.store import JobStore
+from toolang.catalog import CapsManager, ChoresManager
+from toolang.work.state import load_chores
+from toolang.work.store import ChoreStore
 from toolang.base.protocols.tool import Tool
 
 runner = CliRunner()
@@ -677,8 +677,8 @@ def test_chore_list_shows_scheduler_and_latest_run_state(tmp_path: Path) -> None
     root = tmp_path / "toolang"
     _create_agent(root)
     layout = AgentLayout.resident(root, "alice")
-    AuthoredJobs(layout.home).create(
-        JobFile.parse(
+    AuthoredChores(layout.home).create(
+        ChoreFile.parse(
             """---
 id: maintain
 title: Maintain knowledge
@@ -686,13 +686,13 @@ schedule: FREQ=HOURLY
 ---
 Maintain the knowledge base.
 """,
-            kind="chore",
+            name="maintain",
         )
     )
-    (job,) = load_ready_jobs(layout)
-    jobs = JobStore(layout.job_store)
+    (job,) = load_chores(layout)
+    jobs = ChoreStore(layout.chore_store)
     try:
-        jobs.reconcile(jobs=(job,), now=datetime.now(timezone.utc))
+        jobs.reconcile(chores=(job,), now=datetime.now(timezone.utc))
     finally:
         jobs.close()
     runs = RunStore(layout.run_store)
@@ -700,7 +700,7 @@ Maintain the knowledge base.
         project_run_start(
             runs,
             run_id="run_failed",
-            thread_id="chore_maintain",
+            thread_id=job.thread_id,
             origin="chore",
             input=Message.user("Maintain the knowledge base."),
         )
@@ -2459,7 +2459,7 @@ def hosted_agent(monkeypatch):
             sandbox_description="Test OS 1.0 arm64",
         )
         app = create_app(
-            core, CapsManager(layout), JobsManager(layout), cors_allowed_origins=()
+            core, CapsManager(layout), ChoresManager(layout), cors_allowed_origins=()
         )
         requests = []
 
@@ -3101,8 +3101,6 @@ def test_tools_visibility_queries_and_counts(
         ("skill", "list"),
         ("service", "list"),
         ("prompt", "list"),
-        ("alice", "task", "list"),
-        ("alice", "chore", "list"),
     ],
 )
 def test_all_short_option_matches_long_option(
@@ -3747,7 +3745,7 @@ def test_agent_info_fields_follow_the_compact_layout(
             ("Tools", "0 tools, 0 toolsets"),
             ("Models", "2 models, 1 provider"),
             ("Caps", "0 psyches, 0 skills, 0 services, 0 prompts"),
-            ("Jobs", "0 chores, 0 tasks"),
+            ("Chores", "0 chores"),
             ("Workspaces", "lab, extra, runtime"),
         ],
     )
@@ -3760,7 +3758,7 @@ def test_agent_info_fields_follow_the_compact_layout(
     result = _invoke(root, *args)
 
     assert result.exit_code == 0, result.stderr
-    expected = ["Home", "Tools", "Models", "Caps", "Jobs", "Workspaces", "Status"]
+    expected = ["Home", "Tools", "Models", "Caps", "Chores", "Workspaces", "Status"]
     if status != "stopped":
         expected += ["Sandbox", "PID", "API", "WebUI"]
     assert [key for key, _value in captured] == expected
@@ -4167,7 +4165,7 @@ def test_running_roaming_inspection_preserves_runtime_workspaces(
 
     assert result == 0, output.err
     assert requests[-1] == "/api/v1/workspaces"
-    assert len(requests) == 6
+    assert len(requests) == 5
 
 
 @pytest.mark.parametrize("command", ["models", "providers", "tools"])

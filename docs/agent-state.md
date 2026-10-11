@@ -8,8 +8,8 @@ It combines one root layer with one home layer. Each accepted Run keeps one
 Agent State revision. New named children select the latest valid publication
 independently; inline bodies retain their containing plan.
 
-Tasks and chores stored as independent Markdown files are work data, not Agent
-State. Task and chore declarations inside `agent.too` are part of State because
+Chores stored as independent Markdown files are work data, not Agent
+State. Chore declarations inside `agent.too` are part of State because
 they are part of the program. Installed providers, tools, environments, and
 other `AgentSetup` data remain separate from Agent State.
 

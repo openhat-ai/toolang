@@ -1,4 +1,4 @@
-"""Immutable effective job definitions."""
+"""Immutable effective chore definitions."""
 
 from __future__ import annotations
 
@@ -8,22 +8,20 @@ from hashlib import sha256
 from pathlib import Path
 import re
 
-from toolang.catalog.job import AuthoredJobs, JobFile
-from toolang.catalog.types import DEFAULT_CHORE_SCHEDULE, JobKind
+from toolang.catalog.chore import AuthoredChores, ChoreFile
+from toolang.common.ids import chore_id
 from toolang.common.layout import AgentLayout
-from toolang.lang.ast import JobDecl, Program
+from toolang.lang.ast import ChoreDecl, Program
 
-from .authoring import assign_missing_authored_job_ids
 
 _REMOTE_REF_PATTERN = re.compile(r"\b[A-Z][A-Z0-9]+-\d+\b")
 
 
 @dataclass(frozen=True, slots=True)
-class Job:
-    """One current task or chore definition."""
+class Chore:
+    """One current chore definition."""
 
-    id: str
-    kind: JobKind
+    name: str
     title: str | None
     body: str
     schedule: str | None
@@ -32,97 +30,98 @@ class Job:
     path: Path | None
 
     @property
+    def id(self) -> str:
+        return chore_id(self.name)
+
+    @property
+    def ref(self) -> str:
+        return f"chore/{self.name}"
+
+    @property
     def thread_id(self) -> str:
-        """Return the stable execution thread derived from job identity."""
+        """Return the stable execution thread derived from chore identity."""
 
-        return f"{self.kind}_{self.id}"
-
-
-def load_ready_jobs(layout: AgentLayout) -> tuple[Job, ...]:
-    """Load normalized ready Markdown jobs for one agent home."""
-
-    catalog = AuthoredJobs(layout.home)
-    ready = catalog.list(stage="ready")
-    if any(item.optional_id is None for item in ready):
-        assign_missing_authored_job_ids(layout, catalog=catalog, stage="ready")
-        ready = catalog.list(stage="ready")
-    return tuple(_file_job(layout.root, item) for item in ready)
+        return f"chore_{self.id}"
 
 
-def program_jobs(program: Program) -> tuple[Job, ...]:
-    """Normalize program task and chore declarations."""
+def load_chores(layout: AgentLayout) -> tuple[Chore, ...]:
+    """Load normalized current Markdown chores for one agent home."""
 
-    return tuple(_program_job(decl) for decl in program.jobs)
+    groups = [
+        tuple(_file_chore(item) for item in AuthoredChores(directory).list())
+        for directory in dict.fromkeys((layout.root, layout.home))
+    ]
+    return tuple(merge_chores(*groups).values())
 
 
-def merge_jobs(*groups: Iterable[Job]) -> dict[str, Job]:
-    """Merge effective job sources while rejecting every duplicate id."""
+def program_chores(program: Program) -> tuple[Chore, ...]:
+    """Normalize program chore declarations."""
 
-    merged: dict[str, Job] = {}
+    return tuple(_program_chore(decl) for decl in program.chores)
+
+
+def merge_chores(*groups: Iterable[Chore]) -> dict[str, Chore]:
+    """Merge effective chore sources with later layers shadowing earlier layers by name."""
+
+    merged: dict[str, Chore] = {}
     for group in groups:
-        for job in group:
-            previous = merged.get(job.id)
-            if previous is not None:
+        for chore in group:
+            previous = merged.get(chore.id)
+            if previous is not None and previous.name != chore.name:
                 raise ValueError(
-                    f"duplicate job id {job.id!r}: {previous.source} and {job.source}"
+                    f"chore ID collision {chore.id!r}: {previous.source} and {chore.source}"
                 )
-            merged[job.id] = job
+            merged[chore.id] = chore
     return merged
 
 
-def schedule_revision(job: Job) -> str | None:
+def schedule_revision(chore: Chore) -> str | None:
     """Return the stable revision of one chore schedule."""
 
-    if job.schedule is None:
+    if chore.schedule is None:
         return None
-    return sha256(job.schedule.encode()).hexdigest()
+    return sha256(chore.schedule.encode()).hexdigest()
 
 
-def _file_job(root: Path, job: JobFile) -> Job:
-    if job.path is None:
-        raise ValueError("authored job path is required")
-    return _job(
-        job_id=job.id,
-        kind=job.kind,
-        title=job.title,
-        body=job.body,
-        schedule=job.schedule if job.kind == "chore" else None,
-        source=str(job.path.relative_to(root)),
-        path=job.path,
+def _file_chore(chore: ChoreFile) -> Chore:
+    if chore.path is None:
+        raise ValueError("authored chore path is required")
+    return _chore(
+        name=chore.name,
+        title=chore.title,
+        body=chore.body,
+        schedule=chore.schedule,
+        source=str(chore.path),
+        path=chore.path,
     )
 
 
-def _program_job(decl: JobDecl) -> Job:
+def _program_chore(decl: ChoreDecl) -> Chore:
     title = str(decl.meta.get("title") or "").strip()
-    return _job(
-        job_id=decl.name,
-        kind=decl.kind,
+    return _chore(
+        name=decl.name,
         title=title or None,
         body=decl.body.strip(),
-        schedule=(
-            str(decl.meta.get("schedule") or DEFAULT_CHORE_SCHEDULE).strip()
-            if decl.kind == "chore"
-            else None
-        ),
+        schedule=str(decl.meta["schedule"]).strip()
+        if decl.meta.get("schedule")
+        else None,
         source=f"agent.too:{decl.span.line}",
         path=None,
     )
 
 
-def _job(
+def _chore(
     *,
-    job_id: str,
-    kind: JobKind,
+    name: str,
     title: str | None,
     body: str,
     schedule: str | None,
     source: str,
     path: Path | None,
-) -> Job:
+) -> Chore:
     normalized_body = body.replace("\r\n", "\n").strip()
-    return Job(
-        id=job_id,
-        kind=kind,
+    return Chore(
+        name=name,
         title=title,
         body=body,
         schedule=schedule,
@@ -132,41 +131,37 @@ def _job(
     )
 
 
-def job_thread_id(job: JobFile) -> str:
-    """Return the runtime thread projection for one authored job."""
+def chore_thread_id(chore: ChoreFile | Chore) -> str:
+    """Return the runtime thread projection for one authored chore."""
 
-    return f"{job.kind}_{job.id}"
+    return f"chore_{chore.id}"
 
 
-def job_display_title(job: JobFile, *, fallback: str) -> str:
-    """Return a short title for a caller-facing job projection."""
+def chore_display_title(chore: ChoreFile | Chore, *, fallback: str) -> str:
+    """Return a short title for a caller-facing chore projection."""
 
-    if job.title:
-        return job.title
-    for line in job.body.splitlines():
+    if chore.title:
+        return chore.title
+    for line in chore.body.splitlines():
         candidate = line.strip().lstrip("#").strip()
         if candidate:
             return candidate[:80]
     return fallback
 
 
-def job_remote_status(job: JobFile) -> str | None:
-    """Return the first explicit remote status in a task body."""
+def chore_remote_status(chore: ChoreFile | Chore) -> str | None:
+    """Return the first explicit remote status in a chore body."""
 
-    if job.kind != "task":
-        return None
-    for line in job.body.splitlines():
+    for line in chore.body.splitlines():
         key, separator, value = line.partition(":")
         if separator == ":" and key.strip().lower() in {"status", "remote status"}:
             return value.strip() or None
     return None
 
 
-def job_remote_ref(job: JobFile) -> str | None:
-    """Return a remote work-item key projected from authored task content."""
+def chore_remote_ref(chore: ChoreFile | Chore) -> str | None:
+    """Return a remote work-item key projected from authored chore content."""
 
-    if job.kind != "task":
-        return None
-    text = "\n".join(part for part in (job.title or "", job.body) if part)
+    text = "\n".join(part for part in (chore.title or "", chore.body) if part)
     match = _REMOTE_REF_PATTERN.search(text)
     return None if match is None else match.group(0)

@@ -2,7 +2,7 @@
 
 import re
 from collections.abc import AsyncIterator, Mapping
-from typing import Any, Literal
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
@@ -61,7 +61,9 @@ def profile(core: AgentCoreDep) -> dict[str, object]:
         "summary": None,
         "description": None,
         "avatar": None,
-        "runtime": _profile_runtime(runtime_state=runtime_state).model_dump(),
+        "runtime": _profile_runtime(runtime_state=runtime_state)
+        .model_copy(update={"drivers": tuple(sorted(core.drivers))})
+        .model_dump(),
         "environment": _profile_environment(core, runtime_state=runtime_state),
         "metrics": _profile_metrics(core),
     }
@@ -188,7 +190,7 @@ def _profile_metrics(core: AgentCore) -> dict[str, object]:
     steps_by_run = core.store.list_steps_for_runs(
         run_ids=tuple(item.id for item in runs)
     )
-    thread_counts = {"chat": 0, "chore": 0, "task": 0}
+    thread_counts = dict.fromkeys(("chat", "talk", "chore", "script", "worker"), 0)
     step_total = 0
     model_total = 0
     tool_total = 0
@@ -229,11 +231,14 @@ def _profile_metrics(core: AgentCore) -> dict[str, object]:
     }
 
 
-def _thread_metric_kind(thread: ThreadInfo) -> Literal["chat", "chore", "task"]:
-    if thread.id.startswith("task_") or thread.origin == "task":
-        return "task"
-    if thread.id.startswith("chore_") or thread.origin == "chore":
+def _thread_metric_kind(thread: ThreadInfo) -> str:
+    prefix = thread.id.split("_", 1)[0]
+    if prefix == "task" or thread.origin == "task":
         return "chore"
+    if prefix == "spawn":
+        return "worker"
+    if prefix in {"chat", "talk", "chore", "script", "worker"}:
+        return prefix
     return "chat"
 
 

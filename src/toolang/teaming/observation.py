@@ -186,3 +186,39 @@ class HttpObservation:
         )
         response.raise_for_status()
         return response.json()["text"]
+
+
+class CombinedObservation:
+    """Merge remote agents and local instances; later sources own duplicate identities."""
+
+    def __init__(self, *sources: Observation) -> None:
+        self.sources = sources
+        self.owners: dict[str, Observation] = {}
+
+    async def read(self, query: ActivityQuery) -> list[ActivitySnapshot]:
+        results = await asyncio.gather(
+            *(source.read(query) for source in self.sources), return_exceptions=True
+        )
+        grouped: dict[str, list[ActivitySnapshot]] = {}
+        for source, result in zip(self.sources, results, strict=True):
+            if isinstance(result, BaseException):
+                if isinstance(result, asyncio.CancelledError):
+                    raise result
+                continue
+            identities = {page.agent for page in result}
+            for agent in identities:
+                grouped[agent] = [page for page in result if page.agent == agent]
+                self.owners[agent] = source
+        return [page for agent in sorted(grouped) for page in grouped[agent]]
+
+    async def updates(self, query: ActivityQuery) -> AsyncGenerator[Frame]:
+        while True:
+            for frame in frames(await self.read(query)):
+                yield frame
+            await asyncio.sleep(0.5)
+
+    async def result(self, agent: str, ref: str) -> str:
+        owner = self.owners.get(agent)
+        if owner is None:
+            raise ValueError("Activity instance is no longer available")
+        return await owner.result(agent, ref)

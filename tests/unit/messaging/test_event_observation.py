@@ -695,7 +695,14 @@ def test_teaming_keeps_lease_through_final_export_drain(tmp_path, monkeypatch, b
                 get_agent_state=lambda: harness.state,
                 client=client,
             )
-            lifecycle = TeamingLoop(messaging, driver.events)
+            lifecycle = TeamingLoop(
+                driver.events,
+                client=messaging.client,
+                owner=messaging.owner,
+                endpoint=messaging.endpoint,
+                executor=messaging.executor,
+                messaging=messaging,
+            )
             observed = []
             original = lifecycle.exporter.publish
             entered, release = asyncio.Event(), asyncio.Event()
@@ -766,7 +773,12 @@ def test_teaming_close_bounds_unresponsive_lease_release(tmp_path, monkeypatch):
                 BackendConfig("redis://test"), actor="agent:alice", backend=driver
             )
             lifecycle = TeamingLoop(
-                MessagingLoop(
+                driver.events,
+                client=client,
+                owner="human:owner",
+                endpoint="",
+                executor=harness.executor,
+                messaging=MessagingLoop(
                     layout=harness.setup.layout,
                     owner="human:owner",
                     executor=harness.executor,
@@ -775,7 +787,6 @@ def test_teaming_close_bounds_unresponsive_lease_release(tmp_path, monkeypatch):
                     get_agent_state=lambda: harness.state,
                     client=client,
                 ),
-                driver.events,
             )
             closed = False
             close = client.close

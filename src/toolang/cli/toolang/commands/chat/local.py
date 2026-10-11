@@ -319,7 +319,7 @@ class LocalChatSession:
         }
 
     def create_thread(self) -> str:
-        return self.threads.create(prefix=ThreadPrefix.TERM)
+        return self.threads.create(prefix=ThreadPrefix.CHAT)
 
     def thread_title(self, thread_id: str) -> str | None:
         """Return one thread's title, or ``None`` when it cannot be read.

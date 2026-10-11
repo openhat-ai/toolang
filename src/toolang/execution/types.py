@@ -2005,7 +2005,12 @@ ThreadPeerType = Literal["user", "agent"]
 
 
 class ThreadPrefix(StrEnum):
-    """Canonical prefixes for locally issued thread ids."""
+    """Canonical prefixes, including historical thread identities."""
+
+    CHAT = "chat"
+    TALK = "talk"
+    CHORE = "chore"
+    WORKER = "worker"
 
     SCRIPT = "script"
     WEB = "web"

@@ -706,10 +706,10 @@ def test_program_data_round_trips_without_parsing_source() -> None:
 
 
 @pytest.mark.parametrize("kind", ["scatter", "gather", "storm", "settle"])
-def test_program_data_does_not_treat_job_metadata_as_flow_syntax(kind: str) -> None:
+def test_program_data_does_not_treat_chore_metadata_as_flow_syntax(kind: str) -> None:
     from toolang.lang.ast import program_from_data
 
-    program = Program.from_source(f"task work:\n  kind = {kind}\n  Do the work.\n")
+    program = Program.from_source(f"chore work:\n  kind = {kind}\n  Do the work.\n")
 
     assert program_from_data(to_data(program)) == program
 

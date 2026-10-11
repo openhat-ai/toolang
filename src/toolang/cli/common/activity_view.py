@@ -298,6 +298,8 @@ class Activity:
                 if current
                 else "-"
             )
+            if snapshot.drivers is not None:
+                summary += "  drivers=" + (",".join(snapshot.drivers) or "none")
             agent_match = (
                 not self.display_query.text
                 or self.display_query.text.casefold() in agent.casefold()

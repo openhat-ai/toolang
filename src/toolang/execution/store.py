@@ -129,8 +129,8 @@ from .schemas import Record, RecordSelection, select_record
 from .values import parts_from_value
 from . import statistics
 
-_SCHEMA_VERSION = 55
-_SUPPORTED_SCHEMA_VERSIONS = (52, 53, 54, _SCHEMA_VERSION)
+_SCHEMA_VERSION = 56
+_SUPPORTED_SCHEMA_VERSIONS = (52, 53, 54, 55, _SCHEMA_VERSION)
 
 
 class RunStore:
@@ -547,6 +547,7 @@ class RunStore:
         timing: ControlTiming,
         payload: ControlPayload,
         request: str | None,
+        client_id: str | None = None,
         status: ControlStatus,
         error: str | None,
         created_at: str,
@@ -555,13 +556,14 @@ class RunStore:
         triggered_by: StepRef | None = None,
         revision: int | None = None,
     ) -> None:
+        _validate_request_id(client_id)
         scope = "run" if isinstance(ref.target, RunRef) else "thread"
         self._conn.execute(
             """
             INSERT INTO controls(
                 id, scope, target, "index", kind, request, status, error, timing,
-                payload, created_at, finished_at, _claimed, _revision, triggered_by
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                payload, created_at, finished_at, _claimed, _revision, triggered_by, client_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 str(ref),
@@ -579,6 +581,7 @@ class RunStore:
                 int(claimed),
                 revision if revision is not None else self._next_run_control_revision(),
                 str(triggered_by) if triggered_by is not None else None,
+                client_id,
             ),
         )
 
@@ -597,6 +600,7 @@ class RunStore:
         sandbox: str | None,
         occurrence: Occurrence | None,
         request_id: str | None,
+        client_id: str | None = None,
         created_at: str,
         state_ref: ControlRef | None = None,
         horizon: RunRef | StepRef | None = None,
@@ -726,6 +730,7 @@ class RunStore:
                     timing="immediate",
                     payload=payload,
                     request=request_id,
+                    client_id=client_id,
                     status="applied",
                     error=None,
                     created_at=created_at,
@@ -819,6 +824,7 @@ class RunStore:
                 raise ValueError("spawn requires an unacknowledged running Step")
             self.create_thread(
                 thread_id=handle.thread,
+                origin="worker",
                 peer=peer,
                 created_at=created_at,
                 triggered_by=source,
@@ -1129,6 +1135,7 @@ class RunStore:
         timing: ControlTiming,
         input: CallInput[Value | TypedRef],
         request_id: str | None,
+        client_id: str | None = None,
         created_at: str,
     ) -> ControlRecord:
         """Atomically allocate and accept one steer or cancel control."""
@@ -1211,6 +1218,7 @@ class RunStore:
                     timing=timing,
                     payload=payload,
                     request=request_id,
+                    client_id=client_id,
                     status="pending",
                     error=None,
                     created_at=created_at,
@@ -1244,6 +1252,7 @@ class RunStore:
         model_request: ModelRequest | None = None,
         sandbox: str,
         request_id: str | None,
+        client_id: str | None = None,
         created_at: str,
     ) -> tuple[RunRecord, ControlRecord, tuple[StepRef, ...]]:
         """Atomically cut one root run at a step and reopen it for execution."""
@@ -1374,6 +1383,7 @@ class RunStore:
                         removed_runs=removed_runs,
                     ),
                     request=request_id,
+                    client_id=client_id,
                     status="applied",
                     error=None,
                     created_at=created_at,
@@ -1655,6 +1665,7 @@ class RunStore:
         origin: str = "chat",
         peer: ThreadPeer | None = None,
         request_id: str | None = None,
+        client_id: str | None = None,
         created_at: str | None = None,
         triggered_by: StepRef | None = None,
     ) -> tuple[ThreadRecord, ControlRecord]:
@@ -1689,6 +1700,7 @@ class RunStore:
                     timing="immediate",
                     payload=CreateControlPayload(),
                     request=request_id,
+                    client_id=client_id,
                     status="applied",
                     error=None,
                     created_at=now,
@@ -1732,6 +1744,7 @@ class RunStore:
         source: str,
         anchor: str | None,
         request_id: str | None,
+        client_id: str | None = None,
         created_at: str,
     ) -> tuple[ThreadRecord, ControlRecord]:
         """Atomically fork from one terminal anchor without copying runs."""
@@ -1796,6 +1809,7 @@ class RunStore:
                     timing="immediate",
                     payload=payload,
                     request=request_id,
+                    client_id=client_id,
                     status="applied",
                     error=None,
                     created_at=created_at,
@@ -1837,6 +1851,7 @@ class RunStore:
         thread_id: str,
         anchor: str | None,
         request_id: str | None,
+        client_id: str | None = None,
         expected_head: ControlRef,
         created_at: str,
     ) -> tuple[ThreadRecord, ControlRecord, tuple[str, ...]]:
@@ -1897,6 +1912,7 @@ class RunStore:
                         rewind_if=expected_head,
                     ),
                     request=request_id,
+                    client_id=client_id,
                     status="applied",
                     error=None,
                     created_at=created_at,
@@ -4200,7 +4216,7 @@ class RunStore:
             for table, names in (
                 ("runs", ("begin_cursor", "end_cursor")),
                 ("steps", ("begin_cursor", "end_cursor")),
-                ("controls", ("event_cursor",)),
+                ("controls", ("event_cursor", "client_id")),
             ):
                 columns = {
                     row[1] for row in self._conn.execute(f"PRAGMA table_info({table})")
@@ -4541,6 +4557,9 @@ def _control_from_row(row: sqlite3.Row) -> ControlRecord:
         if row["triggered_by"] is not None
         else None,
         request=str(row["request"]) if row["request"] is not None else None,
+        client_id=str(row["client_id"])
+        if "client_id" in row.keys() and row["client_id"] is not None
+        else None,
         status=cast(ControlStatus, row["status"]),
         error=str(row["error"]) if row["error"] is not None else None,
         created_at=str(row["created_at"]),
