@@ -79,6 +79,10 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Fixed
 
+- Team `too top` keeps `Threads` and `Runs` header counts from an agent
+  whose activity coverage is incomplete, and its Details panel shows `-`
+  for counts it cannot confirm instead of `0/0`.
+
 - Team `too top` keeps `Threads` and `Runs` header counts from agents
   whose activity is available when another agent's activity is missing,
   incomplete, or stale, showing `-` only when no agent's activity is

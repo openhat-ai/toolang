@@ -169,7 +169,7 @@ def test_team_header_runs_aggregates_agents():
     assert re.findall(r"Runs:\s+(\S+)", text) == ["10"]
 
 
-@pytest.mark.parametrize("unavailable", ["missing", "incomplete", "stale"])
+@pytest.mark.parametrize("unavailable", ["missing", "stale"])
 @pytest.mark.parametrize("threads,runs", [(0, 0), (4, 7)])
 def test_team_header_counts_available_agents_when_other_activity_is_unavailable(
     unavailable, threads, runs
@@ -190,8 +190,7 @@ def test_team_header_counts_available_agents_when_other_activity_is_unavailable(
                 "presence": "offline",
                 "thread_eligible": 100,
                 "eligible": 200,
-                "complete": unavailable != "incomplete",
-                "stale": unavailable == "stale",
+                "stale": True,
             }
         )
     snapshots = [alice, bob, missing]
@@ -214,6 +213,57 @@ def test_team_header_counts_remain_unknown_without_available_activity():
     state = Activity(None)
     feed(state, select_cached("agent:alice", state.query, {})[0])
     assert re.findall(r"(?:Threads|Runs):\s+(\S+)", render(state)[2]) == ["-", "-"]
+
+
+@pytest.mark.parametrize("limit", ["THREAD_LIMIT", "PATH_LIMIT"])
+def test_header_keeps_known_counts_when_display_rows_are_truncated(
+    tmp_path, monkeypatch, limit
+):
+    from contextlib import closing
+
+    from toolang.execution import activity, statistics
+    from toolang.execution.activity import ActivityQuery, ActivityReader
+    from toolang.execution.store import RunStore
+    from tests.unit.execution.test_activity import at, clock, model, root
+
+    monkeypatch.setattr(activity, limit, 1)
+    with closing(RunStore(tmp_path / "runs.db")) as store:
+        statistics.start_session(store, "one", at(0))
+        root(store)
+        root(store, "run_second")
+        store.create_thread(thread_id="term_empty", origin="chat", created_at=at(100))
+        for index in range(2):
+            model(store, index=index, status="running")
+        for text in ("", "run_second"):
+            query = ActivityQuery(recent=30, text=text)
+            snapshot = ActivityReader(store.db_path, "agent:alice").read(
+                query, now=clock(120)
+            )
+            assert snapshot.complete == bool(text)
+            assert snapshot.thread_eligible == snapshot.eligible == 2
+            state = Activity(None, query=query)
+            feed(state, snapshot)
+            assert re.findall(r"(?:Threads|Runs):\s+(\S+)", render(state)[2]) == [
+                "2",
+                "2",
+            ]
+
+
+@pytest.mark.parametrize("view", ["agent", "thread", "execution"])
+def test_details_keeps_missing_counts_unknown(view):
+    from toolang.cli.common.activity_dashboard import details
+    from toolang.execution.activity import ActivityQuery
+    from toolang.teaming.activity_cache import select_cached
+
+    state = Activity(None, view=view, query=ActivityQuery(text="alice"))
+    feed(state, select_cached("agent:alice", state.query, {})[0])
+    state.details = True
+    text = "\n".join(
+        line.plain for line in details(state, state.rows(), Console(width=180), 180)
+    )
+    label = "Threads" if view == "thread" else "Runs"
+    assert f"{label}: -" in text
+    assert "0/0" not in text
 
 
 def test_status_bar_contains_only_function_key_hints_and_no_incomplete():
