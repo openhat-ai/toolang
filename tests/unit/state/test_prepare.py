@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import replace
 from hashlib import sha256
@@ -23,6 +24,7 @@ from toolang.lang.ast import Program
 from toolang.state import cache as state_cache
 from toolang.state import prepare as state_prepare
 from toolang.state import state as cap_state
+from toolang.state import watcher as state_watcher
 from toolang.state.cache import (
     LAYER_SCHEMA,
     LayerScope,
@@ -933,23 +935,42 @@ def test_inline_skill_rebuilds_old_cache_without_rewriting_history(
     )
     if not allowed:
         layout.config.write_text('[allow]\nskills = ["none"]\n')
+    collect = cap_state._collect_program_embedded_entries
+
+    def without_skills(*args, **kwargs):
+        kwargs["kinds"] = {"psyche", "service", "prompt"}
+        return collect(*args, **kwargs)
+
     with monkeypatch.context() as legacy:
-        legacy.setattr(
-            cap_state, "EMBEDDED_CAP_KINDS", frozenset({"psyche", "service", "prompt"})
-        )
+        legacy.setattr(cap_state, "_collect_program_embedded_entries", without_skills)
         old = prepare_agent_state(layout)
     module = "agent" if module_file == "agent.too" else "flows::review"
     assert not old.module_caps[module]
     old_layer = layer_revision_dir(layout, "home", old.home_revision) / "layer.json"
     old_bytes = old_layer.read_bytes()
 
-    current = prepare_agent_state(layout)
+    with pytest.raises(ValueError, match="missing inline capabilities"):
+        load_agent_state(layout)
+    watcher = state_watcher.StateWatcher(layout)
+
+    async def one_timeout(*_args, **_kwargs):
+        yield set()
+
+    monkeypatch.setattr(state_watcher, "awatch", one_timeout)
+
+    async def start_watching():
+        async for _ in watcher.updates(stop_signal=asyncio.Event()):
+            pass
+        return watcher.current()
+
+    current = asyncio.run(start_watching())
 
     assert current.home_revision != old.home_revision
     assert current.root_revision == old.root_revision
     (entry,) = current.module_caps[module]
     assert entry.kind == "skill" and entry.read_content() == "Review carefully."
     assert bool(current.caps_for(module)) is allowed
+    assert load_agent_state(layout).revision == current.revision
     assert not load_agent_state(layout, old.revision).module_caps[module]
     assert old_layer.read_bytes() == old_bytes
     monkeypatch.setattr(

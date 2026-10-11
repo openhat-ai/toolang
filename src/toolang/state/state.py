@@ -63,7 +63,6 @@ from .types import (
 _PORTABLE_SOURCE_UPDATED_AT = "1970-01-01T00:00:00+00:00"
 
 CAP_KINDS: tuple[EntryKind, ...] = CATALOG_CAP_KINDS
-EMBEDDED_CAP_KINDS = frozenset({"psyche", "skill", "service", "prompt"})
 FILE_BACKED_KINDS = frozenset({"psyche", "service", "prompt"})
 DIR_NAME_BY_KIND: dict[EntryKind, str] = CAP_DIR_BY_KIND
 KIND_BY_DIR_NAME: dict[str, EntryKind] = CAP_KIND_BY_DIR
@@ -1409,7 +1408,6 @@ def _collect_scope_entries_with_files(
             authored,
             scope=scope,
             kinds=kinds,
-            materialize=materialize_remote,
         )
         if include_program
         else ((), {})
@@ -1469,7 +1467,6 @@ def materialize_program_caps(
     embedded, embedded_files = _collect_program_embedded_entries(
         authored,
         scope="home",
-        materialize=True,
         program_source=source,
         program=program,
     )
@@ -1907,11 +1904,9 @@ def _collect_program_embedded_entries(
     *,
     scope: CapScope | None = None,
     kinds: set[EntryKind] | None = None,
-    materialize: bool = False,
     program_source: ProgramSource | None = None,
     program: Program | None = None,
 ) -> tuple[tuple[StateCap, ...], dict[str, bytes]]:
-    del materialize
     if scope == "root" or (program_source is None and authored.program_path is None):
         return (), {}
     program_source = program_source or authored.load_program()
@@ -1921,46 +1916,34 @@ def _collect_program_embedded_entries(
     files: dict[str, bytes] = {}
     seen: dict[tuple[EntryKind, str], int] = {}
     for cap in program.caps:
-        kind = _embedded_cap_kind(cap)
-        if kind is None:
+        if kinds is not None and cap.kind not in kinds:
             continue
-        if kinds is not None and kind not in kinds:
-            continue
-        key = (kind, cap.name)
+        key = (cap.kind, cap.name)
         existing_line = seen.get(key)
         if existing_line is not None:
             raise ValueError(
-                f"duplicate embedded {kind} cap: {cap.name} "
+                f"duplicate embedded {cap.kind} cap: {cap.name} "
                 f"(lines {existing_line} and {cap.span.line})"
             )
         seen[key] = cap.span.line
         entry, entry_files = _embedded_entry_from_cap(
-            kind=kind,
             cap=cap,
             relative_program_path=relative_program_path,
             source_fingerprint=program_source.digest,
-            source_line=cap.span.line,
         )
         entries.append(entry)
         files.update(entry_files)
     return tuple(sorted(entries, key=_entry_sort_key)), files
 
 
-def _embedded_cap_kind(cap: CapDecl) -> EntryKind | None:
-    if cap.kind not in EMBEDDED_CAP_KINDS:
-        return None
-    return cap.kind
-
-
 def _embedded_entry_from_cap(
     *,
-    kind: EntryKind,
     cap: CapDecl,
     relative_program_path: Path,
     source_fingerprint: str,
-    source_line: int,
 ) -> tuple[StateCap, dict[str, bytes]]:
-    relative_entry_path = _relative_embedded_entry_path(kind=kind, name=cap.name)
+    kind = cap.kind
+    relative_entry_path = Path("inline") / DIR_NAME_BY_KIND[kind] / f"{cap.name}.md"
     content = _embedded_materialized_content(cap)
     return (
         StateCap(
@@ -1975,20 +1958,12 @@ def _embedded_entry_from_cap(
                 path=relative_program_path.as_posix(),
                 updated_at=_PORTABLE_SOURCE_UPDATED_AT,
                 fingerprint=source_fingerprint,
-                line=source_line,
+                line=cap.span.line,
             ),
             meta=_load_meta_text(content.decode("utf-8")),
         ),
         {relative_entry_path.as_posix(): content},
     )
-
-
-def _relative_embedded_entry_path(
-    *,
-    kind: EntryKind,
-    name: str,
-) -> Path:
-    return Path("inline") / DIR_NAME_BY_KIND[kind] / f"{name}.md"
 
 
 def _embedded_materialized_content(cap: CapDecl) -> bytes:

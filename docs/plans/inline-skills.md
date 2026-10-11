@@ -51,7 +51,8 @@ Preserve existing duplicate and same-scope conflict errors.
 
 ## State and Runtime Design
 
-- Add `skill` to embedded capability collection. Reuse the existing single-file
+- Collect every validated cap declaration directly, without a second kind
+  whitelist that can silently discard skills. Reuse the existing single-file
   materialization: `shape="file"`, `form="inline"`, `origin="local"`, and
   `inline://skills/<name>`. Store frontmatter plus body at
   `files/caps/inline/<module>/skill/<name>.md` in the immutable home layer.
@@ -61,11 +62,11 @@ Preserve existing duplicate and same-scope conflict errors.
 - Reuse trigger generation and `_toolang__pick(kind="skill", ref="skill/<name>")`.
   Initial model input contains the description; a successful pick publishes the
   captured body as skill guidance. Existing revision and recall rules apply.
-- Reject reuse of a current home layer when any module's declared inline skill
-  is absent from that module's unfiltered inline capability set. Rebuild it using
-  normal preparation, even when authored bytes are unchanged. Keep the existing
-  layer schema and historical snapshots; this is a current-cache eligibility
-  check, not a rewrite or reinterpretation of past State.
+- Share one completeness check between current-State loading and cache reuse:
+  every declared `(kind, name)` must exist in its module's unfiltered inline cap
+  set. Reject incomplete current loads so watchers rebuild on startup even when
+  authored bytes are unchanged. Keep the existing layer schema; explicit
+  revision loads preserve historical snapshots without applying this check.
 
 Directory-backed skills and `with skill ...` references retain their existing
 behavior. This phase does not package scripts or assets, define relative asset
@@ -77,7 +78,7 @@ Those features require a separate definition if requested.
 | File | Change |
 | --- | --- |
 | `src/toolang/state/state.py` | Include skills in embedded collection and reuse materialization. |
-| `src/toolang/state/prepare.py` | Detect cached modules missing declared inline skills before reuse. |
+| `src/toolang/state/prepare.py` | Reject incomplete current-State loads and cache reuse with one shared check. |
 | `tests/unit/state/test_prepare.py` | Cover materialization, scope, precedence, snapshots, and cache upgrade. |
 | `tests/integration/execution/test_pick_guidance.py` | Exercise inline trigger, pick, and denied-resource behavior with a scripted model. |
 | `docs/program.md`, `docs/caps.md` | Explain inline skill syntax, loading, and text-only boundaries. |
@@ -99,9 +100,10 @@ No grammar or protocol change is expected. Existing tests in
    still fail preparation.
 5. Source edits produce a new capability revision and body; old snapshots retain
    the old body. A removal withdraws the capability through existing State rules.
-6. A baseline cached layer that omitted an inline skill rebuilds without source
-   edits or manual cache deletion. The repaired layer is reused on the next
-   preparation; layers without inline skills continue to be reused.
+6. A baseline cached layer that omitted an inline skill is rejected as current
+   State and rebuilt by watcher startup without source edits or manual cache
+   deletion. The repaired layer is reused on the next preparation; explicit
+   historical loads and layers without inline skills remain usable.
 7. Existing syntax rejection, directory skills, remote references, inspection,
    and replay tests remain green. All new runtime tests stay offline.
 

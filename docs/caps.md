@@ -203,7 +203,9 @@ and the literal guidance body. Their inspection location is the authored `.too`
 file and declaration line; they have no bundled asset list. See
 [inline cap syntax](./program.md#inline-caps) for declaration and selection.
 State preparation rebuilds older cached modules that omitted inline skills;
-historical snapshots retain their original capability sets.
+current-State loading rejects those caches so watchers also rebuild them on
+startup without source edits. Explicit historical snapshot loads retain their
+original capability sets.
 
 
 ## Local Cap Frontmatter
