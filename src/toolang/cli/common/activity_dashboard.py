@@ -36,6 +36,15 @@ def current(state: Activity, snapshot: ActivitySnapshot) -> bool:
     )
 
 
+def has_counts(state: Activity, snapshot: ActivitySnapshot) -> bool:
+    return (
+        snapshot.observed is not None
+        and not snapshot.stale
+        and not state.reconnecting
+        and current(state, snapshot)
+    )
+
+
 def presence(state: Activity, snapshot: ActivitySnapshot) -> str:
     return "unknown" if state.reconnecting else snapshot.presence
 
@@ -76,21 +85,25 @@ def header(state: Activity, width: int) -> list[Text]:
         )
         title = Text(f"Team {'?' if unknown else online}/{len(snapshots)} online")
     lines = [ends(title, Text(now.strftime("%H:%M:%S")), width), Text("")]
-    complete = (
+    # One unavailable agent must not hide counts from healthy observations.
+    counted = [page for page in snapshots if has_counts(state, page)]
+    counts_available = (
         state.ready
         and not updating
         and not state.reconnecting
-        and all(page.complete and not page.stale for page in snapshots)
+        and (bool(counted) or not snapshots)
     )
     groups = [
         [
             (
                 "Threads",
-                str(sum(p.thread_eligible for p in snapshots)) if complete else "-",
+                str(sum(p.thread_eligible for p in counted))
+                if counts_available
+                else "-",
             ),
             (
                 "Runs",
-                str(sum(p.eligible for p in snapshots)) if complete else "-",
+                str(sum(p.eligible for p in counted)) if counts_available else "-",
             ),
             ("Models", str(metrics.model) if metrics.model is not None else "-"),
             ("Tools", str(metrics.tool) if metrics.tool is not None else "-"),
@@ -296,7 +309,9 @@ def details(
     if state.query.text or state.query.active or loaded < matched:
         values.append(
             Text(
-                f"{label}: {matched}/{eligible} matched  Loaded: {loaded}/{matched}",
+                f"{label}: {matched}/{eligible} matched  Loaded: {loaded}/{matched}"
+                if has_counts(state, snapshot)
+                else f"{label}: -",
                 style="dim",
             )
         )
