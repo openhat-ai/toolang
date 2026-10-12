@@ -4,117 +4,80 @@ Status: Proposed; awaiting human approval. Definition only.
 
 ## Goal and scope
 
-Give every Toolang-owned advisory file lock one predictable location and lifetime
-without changing concurrency boundaries. Success means runtime directories no
-longer mix data with lock sidecars, all cooperating writers resolve the same
-lock, and existing exclusion and cancellation behavior remains intact.
+Move all Toolang-owned advisory lock files into an adjacent `.locks/` directory,
+without changing lock granularity or acquisition behavior. Cover execution,
+compaction, IDs, State, authored files, caches, runtime status, sandbox control,
+and Hub hosting. Exclude SQLite/third-party files, cleanup commands, PID metadata,
+and a new locking framework. Data formats and public commands stay unchanged.
 
-Cover execution stores, thread compaction, ID allocation, State preparation and
-checks, authored configuration/caps/chores/home tools, document caches, runtime
-status, sandbox control, and Hub hosting. Exclude SQLite-managed journal/WAL
-files, third-party locks, new cleanup commands, PID metadata, and acquisition
-policy redesign. Data formats, public commands, and thread IDs stay unchanged.
+## One path rule
 
-## Path contract
+All sidecars live directly in `<owning-directory>/.locks/`. Keep existing lock
+basenames, removing the leading dot used by hidden sidecars. Do not add resource,
+operation, or thread subdirectories.
 
-Extend the pure `common.files.file_lock_path` formatter with explicit operation
-and optional key arguments. Callers pass the concrete resource path; the helper
-must not infer a home, runtime, or environment. The default operation is `write`.
-
-| Lock | Canonical path relative to the resource's parent |
+| Existing lock | New location in the same owning directory |
 | --- | --- |
-| Unkeyed | `.locks/<resource-name>/<operation>.lock` |
-| Keyed | `.locks/<resource-name>/<operation>/<key>.lock` |
+| `runs.db.init.lock` | `.locks/runs.db.init.lock` |
+| `runs.db.threads.lock` | `.locks/runs.db.threads.lock` |
+| `runs.db.term_408kpc9t.compact.lock` | `.locks/runs.db.term_408kpc9t.compact.lock` |
+| `.config.toml.lock`, `.caps.lock`, `.chores.lock` | `.locks/config.toml.lock`, `.locks/caps.lock`, `.locks/chores.lock` |
+| `.agent.too.lock`, `.runnables.lock` | `.locks/agent.too.lock`, `.locks/runnables.lock` |
+| `prepare.lock`, `check.lock` | `.locks/prepare.lock`, `.locks/check.lock` |
+| `status.lock`, `state.lock`, `hub.lock` | `.locks/status.lock`, `.locks/state.lock`, `.locks/hub.lock` |
+| `.<cached-document-name>.lock` | `.locks/<cached-document-name>.lock` |
+| Data descriptor lock on `ids.json` | `.locks/ids.json.lock` |
 
-Use the full resource basename, including its extension. Resource, operation,
-and key must be nonempty single path components other than `.` or `..`; reject
-separators and invalid components before filesystem access. Keep thread keys
-verbatim, including historical prefixes. Resource directories prevent collisions
-between default and operation-specific locks. Different homes, roots, instances,
-and databases retain separate namespaces.
+Keep each existing owning directory from [the filesystem layout](../layout.md),
+including runtime instances, State layers, and sandbox homes. Thread IDs remain
+verbatim. Different stores retain their database-name prefixes. Catalog and home
+writers must resolve the same lock addresses and retain their acquisition order.
 
-| Existing purpose | New path example |
-| --- | --- |
-| Store initialization | `.runtime/.locks/runs.db/init.lock` |
-| Thread mutations | `.runtime/.locks/runs.db/threads.lock` |
-| Per-thread compaction | `.runtime/.locks/runs.db/compact/term_408kpc9t.lock` |
-| ID state | `.runtime/.locks/ids.json/write.lock` |
-| Runtime status | `.runtime/.locks/status.json/write.lock` |
-| Root Hub lifetime | `<root>/.runtime/.locks/hub.json/write.lock` |
-| Sandbox control | `<sandbox-home>/.locks/state.json/write.lock` |
-| Authored configuration | `<home>/.locks/config.toml/write.lock` |
-| Authored collections | `<home>/.locks/caps/write.lock`, `.locks/chores/write.lock` |
-| Home program sources | `<home>/.locks/agent.too/write.lock`, `.locks/runnables/write.lock` |
-| State preparation | `<state-layer>/.locks/state/prepare.lock` |
-| Agent State check | `<agent-state>/.locks/state/check.lock` |
-| Cached document | `<cache-parent>/.locks/<document-name>/write.lock` |
+Keep `common.files.file_lock_path(path)` as a pure one-argument formatter returning
+`path.parent / ".locks" / (path.name + ".lock")`. Callers pass a concrete resource
+or logical lock stem, such as `db_path.with_name(db_path.name + ".init")`;
+no operation/key API or environment inference is needed. Preserve canonical
+stems in the table, including `status`, `state`, and `hub`.
 
-`state` is a virtual resource in each existing State directory. Keep the directory
-ownership boundaries in [the filesystem layout](../layout.md); do not collect
-locks into a global runtime directory. Catalog and home-authoring paths must
-share addresses and retain the existing multi-lock acquisition order.
+## Lifetime and upgrade
 
-## Acquisition and lifetime
+Create `.locks/` lazily, preserving existing owner inheritance and home-authoring
+checks against symbolic links/nonregular paths. Locks must not enter authored
+source manifests, fingerprints, or relevant watcher changes.
 
-Create lock directories lazily before opening a sidecar. Preserve existing
-owner inheritance for privileged writers. Apply home authoring's directory and
-regular-file validation to the new lock ancestors and files; reject conflicting
-files or symbolic links. Lock activity must not enter authored discovery,
-fingerprints, or relevant watcher changes.
+Preserve reentrancy, progress callbacks, async compaction cancellation and
+`wait=False`, Hub lifetime exclusion, and existing lock ordering. Open/read/update/
+close `ids.json` within its new sidecar guard. Do not hold SQLite transactions
+while waiting for compaction.
 
-Keep existing acquisition mechanisms: synchronous reentrancy and wait progress,
-State progress reporting, cancellable asynchronous compaction with `wait=False`,
-and the Hub's nonblocking process-lifetime lock. Preserve per-thread compaction
-granularity and avoid holding SQLite transactions while waiting.
+Keep empty sidecars after release. Unlock and close the descriptor; never unlink,
+replace, or rename the sidecar during normal operation. File existence, age, and
+size do not indicate ownership. No automatic pruning is included.
 
-Move the ID allocator's lock from the data descriptor to its canonical sidecar.
-Open, read, update, and close the unchanged `ids.json` format inside that guard;
-preserve allocation and failure behavior.
+Stop all writers sharing the affected storage, upgrade together, then restart.
+Mixed old/new versions cannot coordinate through different paths. Leave legacy
+locks untouched; optional manual cleanup requires the entire scope to remain
+offline. No lock aliases, dual locking, or data migration are needed.
 
-Sidecars remain empty and persistent. Release the descriptor's advisory lock;
-never unlink, replace, or rename its file during normal release. Existence, size,
-and age do not indicate ownership. Do not automatically prune per-thread locks:
-unlinking can allow two processes to lock different inodes for one resource.
+## Implementation and acceptance
 
-## Upgrade and risks
+Likely files: `common/{files,ids,cache}.py`, `catalog/{config,cap,chore}.py`,
+`state/{config,cache}.py`, `execution/tools/state/storage.py`, `execution/store.py`,
+`execution/executor/runs/compact.py`, `execution/compaction.py`, and
+`up/{process,records,sandbox,hub}.py`. Update their relevant tests, `docs/layout.md`,
+and the canonical changelog when implementing.
 
-This is a coordinated namespace cutover. Stop every writer sharing an affected
-root/home, including hosts, Hub, and sandbox clients; upgrade them together,
-then restart. Mixed versions are unsupported because their locks differ. Do not
-dual-lock or alias old paths. Leave legacy lock files untouched; optional manual
-removal requires the entire affected scope to remain offline. A successful
-nonblocking lock attempt alone is insufficient proof that removal is safe.
+- Inventory: every owned lock uses the flat layout; shared writers agree and
+  distinct stores/scopes remain separate.
+- Concurrency: existing process exclusion and per-thread compaction parallelism,
+  cancellation, nonblocking failures, and progress behavior remain intact.
+- IDs: concurrent allocation remains unique after reopening existing state.
+- Filesystem: release preserves the lock inode, legacy files remain untouched,
+  ownership is correct, and home authoring rejects unsafe paths.
+- Source stability: lock activity changes no source manifest or State revision.
+- Upgrade: existing data works after all old writers stop and the new paths open.
 
-There is no data migration. Risks are missed writers, mixed-version concurrency,
-new directory ownership/path conflicts, and continued growth of persistent
-per-thread sidecars. Document these constraints with the implementation.
-
-## Implementation touchpoints
-
-- `common/files.py`, `common/ids.py`, and `common/cache.py`.
-- `catalog/{config,cap,chore}.py`, `state/{config,cache}.py`, and
-  `execution/tools/state/storage.py`.
-- `execution/store.py`, `execution/executor/runs/compact.py`, and
-  `execution/compaction.py`.
-- `up/{process,records,sandbox,hub}.py`; their lock-path assertions and lifecycle tests.
-- `docs/layout.md` and the canonical changelog for the implemented migration.
-
-## Acceptance tests
-
-- Path inventory: every Toolang lock uses the formatter; unsafe components fail,
-  shared writers agree, and distinct resources/scopes never collide.
-- Process exclusion: initialization, thread writes, State, authored writes,
-  cache writes, sandbox control, and Hub retain their existing exclusion.
-- Compaction: one thread serializes, different threads proceed independently;
-  cancellation and nonblocking contention retain their existing outcomes.
-- IDs: concurrent processes allocate unique IDs, including after reopening state.
-- Filesystem lifecycle: release preserves the sidecar inode; legacy files remain;
-  new directories inherit required ownership and home authoring rejects symlinks.
-- Source stability: creating/acquiring locks changes no source manifest or
-  published State revision and triggers no relevant authored refresh.
-- Offline upgrade: existing data opens and operations succeed with the new
-  namespace after all old writers stop.
-
-Implementation must pass the repository's default verification. No unresolved
-design questions remain; human approval of this definition is required before
-implementation.
+Run default repository verification for implementation. Risks are missed writers,
+mixed-version operation, `.locks/` ownership/path conflicts, and continued
+per-thread file growth. No open design questions remain; human approval of this
+definition is required before implementation.
