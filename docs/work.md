@@ -65,7 +65,7 @@ agic or flow. No Task or Job entity is involved.
 
 Talk reuses one thread across batches and restarts, with a fresh workdir resolved
 for each batch. Disabling talk consumption leaves transport, presence, outbound
-tools, and observation available. `spawn` creates an independent `worker_`
+tools, and observation available. `spawn` creates an independent `work_`
 thread with recorded ancestry; ordinary nested calls remain in their thread.
 Scripts retain the `script_` prefix, and every execution has a `run_` ID.
 

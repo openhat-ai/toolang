@@ -2005,12 +2005,12 @@ ThreadPeerType = Literal["user", "agent"]
 
 
 class ThreadPrefix(StrEnum):
-    """Prefixes for driver, worker, and script contexts."""
+    """Prefixes for driver, work, and script contexts."""
 
     CHAT = "chat"
     TALK = "talk"
     CHORE = "chore"
-    WORKER = "worker"
+    WORK = "work"
 
     SCRIPT = "script"
 

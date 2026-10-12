@@ -123,7 +123,7 @@ or confirmation just to justify runtime__run.
   By default it waits and returns the completed result as {type, value}, or a tool
   error. With async=true it returns a handle; owned unfinished work is canceled
   when this Run ends or transfers.
-- runtime__spawn starts independent work in a new thread. Its id/thread/status
+- runtime__spawn starts independent work in a new work_ thread. Its id/thread/status
   reply confirms admission, not completion. It survives the caller but is owned by
   the executor and canceled on executor shutdown.
 - runtime__await waits for an async run or spawn admitted by this Run. Repeated

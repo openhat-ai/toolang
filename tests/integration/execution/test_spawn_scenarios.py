@@ -16,6 +16,7 @@ from tests.support.execution_harness import (
 from tests.support.execution_assertions import last_tool_result
 from toolang.base.types.message import Message, TextPart, message_text
 from toolang.base.types.run import ModelCallResult, ToolCall
+from toolang.execution.events import ThreadCreated
 from toolang.execution.records import (
     output_from_data,
     output_to_data,
@@ -28,8 +29,12 @@ from toolang.execution.types import AwaitableHandle, ThreadPrefix, Output, ToolS
     "statement", ["spawn child", "let spawn child", "let job = spawn child"]
 )
 @pytest.mark.parametrize("ending", ["", "run fail", "exec successor"])
+@pytest.mark.parametrize(
+    "prefix",
+    [ThreadPrefix.CHAT, ThreadPrefix.TALK, ThreadPrefix.CHORE, ThreadPrefix.SCRIPT],
+)
 def test_spawn_root_outlives_source_and_executor_drains_it(
-    tmp_path: Path, statement: str, ending: str
+    tmp_path: Path, statement: str, ending: str, prefix: ThreadPrefix
 ):
     gate = AsyncGate()
     harness = ExecutionHarness.create(
@@ -57,7 +62,7 @@ agic child(_: Text) -> Text:
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(prefix=prefix)
             tracer = RecordingRunTracer()
             parent = await harness.executor.run(
                 harness.run_spec(
@@ -81,13 +86,23 @@ agic child(_: Text) -> Text:
             assert step.output.type == "_Awaitable"
             child = harness.store.get_run(run_id=handle.id)
             assert child is not None and child.parent is None
-            assert handle.thread != thread and handle.thread.startswith("worker_")
+            assert handle.id.startswith("run_")
+            assert handle.thread != thread and handle.thread.startswith("work_")
             assert child.id not in {
                 r.id for r in harness.store.list_run_tree(root_run_id=parent.id)
             }
             spawned_thread = harness.store.get_thread(thread_id=handle.thread)
             assert spawned_thread is not None and spawned_thread.peer.thread == thread
+            assert spawned_thread.origin == "work"
             assert spawned_thread.peer.type == "agent"
+            with harness.executor.stream.boundary() as (_, _, frames):
+                created = next(
+                    frame.event
+                    for frame in frames
+                    if isinstance(frame.event, ThreadCreated)
+                    and frame.event.thread == handle.thread
+                )
+            assert created.origin == "work" and created.peer == spawned_thread.peer
             entry = harness.store.get_run_control(run_id=handle.id, index=0)
             assert entry is not None and entry.triggered_by == step.ref
             assert isinstance(entry.payload, RunControlPayload)
@@ -148,7 +163,13 @@ flow child(_: Text) -> Text:
     asyncio.run(scenario())
 
 
-def test_agic_spawn_returns_snapshot_without_completion_injection(tmp_path: Path):
+@pytest.mark.parametrize(
+    "prefix",
+    [ThreadPrefix.CHAT, ThreadPrefix.TALK, ThreadPrefix.CHORE, ThreadPrefix.SCRIPT],
+)
+def test_agic_spawn_returns_snapshot_without_completion_injection(
+    tmp_path: Path, prefix: ThreadPrefix
+):
     harness = ExecutionHarness.create(
         tmp_path,
         source="""
@@ -176,7 +197,7 @@ flow child(_: Text) -> Text:
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(prefix=prefix)
             parent = await harness.executor.run(
                 harness.run_spec(thread=thread, runnable="agic:parent")
             )
@@ -186,6 +207,8 @@ flow child(_: Text) -> Text:
             reply = last_tool_result(harness.adapter.invocations[-1].call)
             assert set(reply.output) == {"id", "thread", "status"}
             assert reply.output["status"] == "pending"
+            assert reply.output["id"].startswith("run_")
+            assert reply.output["thread"].startswith("work_")
             assert "run-result" not in "\n".join(
                 message_text(m.parts)
                 for m in harness.adapter.invocations[-1].call.messages

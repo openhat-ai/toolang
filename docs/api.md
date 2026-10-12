@@ -1181,7 +1181,7 @@ filesystem paths do not determine remote availability.
 
 | Metric Group | Contents |
 | --- | --- |
-| `threads` | Thread totals grouped by chat, talk, chore, script, and worker |
+| `threads` | Thread totals grouped by chat, talk, chore, script, and work |
 | `steps` | Step totals grouped by `model_call`, `tool_call`, and `runtime` |
 | `tokens` | Aggregated input, output, and total token usage |
 

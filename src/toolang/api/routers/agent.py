@@ -190,7 +190,7 @@ def _profile_metrics(core: AgentCore) -> dict[str, object]:
     steps_by_run = core.store.list_steps_for_runs(
         run_ids=tuple(item.id for item in runs)
     )
-    thread_counts = dict.fromkeys(("chat", "talk", "chore", "script", "worker"), 0)
+    thread_counts = dict.fromkeys(("chat", "talk", "chore", "script", "work"), 0)
     step_total = 0
     model_total = 0
     tool_total = 0
@@ -235,9 +235,7 @@ def _thread_metric_kind(thread: ThreadInfo) -> str:
     prefix = thread.id.split("_", 1)[0]
     if prefix == "task" or thread.origin == "task":
         return "chore"
-    if prefix == "spawn":
-        return "worker"
-    if prefix in {"chat", "talk", "chore", "script", "worker"}:
+    if prefix in {"chat", "talk", "chore", "script", "work"}:
         return prefix
     return "chat"
 

@@ -378,7 +378,8 @@ its elapsed timer. Flow descriptions are unchanged.
 ### Spawn independent work
 
 `runtime/spawn({runnable, input?})` starts an independent root in a new empty
-thread under the same agent/executor. It shares run's input decoder and follows the current spawns route. It accepts no thread,
+`work_` thread under the same agent/executor. It shares run's input decoder and
+follows the current spawns route. It accepts no thread,
 identity, source-code, or execution-configuration arguments. Multiple spawn calls
 may share a tool batch; each commits independently.
 

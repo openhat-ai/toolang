@@ -28,7 +28,13 @@ from toolang.common.layout import AgentLayout
 from toolang.execution.schemas import RunDetail
 from toolang.execution.records import RunControlPayload
 from toolang.execution.store import RunStore
-from toolang.execution.types import FieldRef, RunRef, Output, value_for_type
+from toolang.execution.types import (
+    FieldRef,
+    RunRef,
+    Output,
+    ThreadPrefix,
+    value_for_type,
+)
 from toolang.execution.values import parts_from_value
 from toolang.state.state import CapSource, StateCap
 from toolang.up import AgentCore, process as agents
@@ -436,6 +442,25 @@ agic chat(_: Part[]) -> Part[]:
         assert latest.output is not None
         assert parts_from_value(explicit.output.value) == (TextPart("remote answer"),)
         assert parts_from_value(latest.output.value) == (TextPart("remote answer"),)
+    finally:
+        asyncio.run(core.close())
+
+
+def test_profile_counts_independent_work_threads(tmp_path: Path) -> None:
+    core = AgentCore(AgentLayout.resident(tmp_path, "alice"))
+    try:
+        thread_id = core.threads.create(prefix=ThreadPrefix.WORK)
+        thread = core.store.get_thread(thread_id=thread_id)
+        assert thread is not None and thread.origin == "work"
+        metrics = agent_router._profile_metrics(core)
+        assert metrics["threads"] == {
+            "total": 1,
+            "chat": 0,
+            "talk": 0,
+            "chore": 0,
+            "script": 0,
+            "work": 1,
+        }
     finally:
         asyncio.run(core.close())
 

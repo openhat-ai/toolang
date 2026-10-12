@@ -374,7 +374,7 @@ _TOOLS = (
     ),
     RuntimeTool(
         "spawn",
-        "Start an authorized hand as an independent root in a new empty thread. "
+        "Start an authorized hand as an independent root in a new empty work_ thread. "
         "Returns id, thread, and the admission-time status without waiting. "
         "Use runtime__await with its id for the result; no completion message is injected. "
         "Work continues after this Run ends, until completion or executor shutdown. "
