@@ -39,9 +39,18 @@ class _Snapshot:
         raise AssertionError("remote run acceptance must not refresh publications")
 
 
-@pytest.mark.parametrize("entry", ["agic:chat", "agic:_", "flow:_", "flow:chat"])
+@pytest.mark.parametrize(
+    ("entry", "module"),
+    [
+        ("agic:chat", False),
+        ("agic:_", False),
+        ("flow:_", False),
+        pytest.param("flow:chat", True, id="flow-module"),
+        pytest.param("agic:chat", True, id="agic-module"),
+    ],
+)
 def test_remote_chat_session_executes_against_the_agent_api(
-    tmp_path: Path, entry: str
+    tmp_path: Path, entry: str, module: bool
 ) -> None:
     source = """
 agic chat(_: Part[]) -> Part[]:
@@ -57,17 +66,17 @@ agic chat(_: Part[]) -> Part[]:
         source += "\nflow(_: Part[]) -> Part[]:\n  run helper\n"
     harness = ExecutionHarness.create(
         tmp_path,
-        source="" if entry == "flow:chat" else source,
+        source="" if module else source,
         responses=[ModelCallResult(message=Message.assistant("remote response"))],
     )
     harness.store.close()
     core = AgentCore(harness.setup.layout)
     core.setup = _Snapshot(harness.setup)
     state = harness.state
-    if entry == "flow:chat":
-        flows = harness.setup.layout.home / "runnables"
-        flows.mkdir()
-        (flows / "chat.too").write_text(source)
+    if module:
+        runnables = harness.setup.layout.home / "runnables"
+        runnables.mkdir()
+        (runnables / "chat.too").write_text(source)
         state = prepare_agent_state(harness.setup.layout)
     core.state = _Snapshot(state)
     agents.write_runtime_state(
