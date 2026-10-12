@@ -14,7 +14,7 @@ from toolang.catalog.types import CAP_DIRECTORY_NAMES
 
 from .types import StateFile
 
-from ..lang.ast import FlowDecl, Program
+from ..lang.ast import AgicDecl, FlowDecl, Program
 
 SourceNodeKind = Literal["file", "directory"]
 SOURCE_SCHEMA = 4
@@ -325,7 +325,7 @@ def observe_home_source(toolang_root: Path, agent_name: str) -> SourceObservatio
     home = toolang_root / "agents" / agent_name
     for name in ("agent.too", "config.toml"):
         _require_source_shape(home / name, shape="file")
-    for directory_name in ("flows", *CAP_DIRECTORY_NAMES):
+    for directory_name in ("runnables", *CAP_DIRECTORY_NAMES):
         _require_source_shape(home / directory_name, shape="directory")
     return observe_source(home, _home_source_paths(home))
 
@@ -384,8 +384,8 @@ def _home_source_paths(home: Path) -> tuple[str, ...]:
         "config.toml",
         *CAP_DIRECTORY_NAMES,
         *(
-            (Path("flows") / path.name).as_posix()
-            for path in _direct_flow_files(home / "flows")
+            (Path("runnables") / path.name).as_posix()
+            for path in _direct_runnable_files(home / "runnables")
         ),
     )
 
@@ -470,14 +470,21 @@ class ProgramSource:
     """Authored program text captured during preparation."""
 
     agent_name: str
-    kind: Literal["agent", "flow"]
+    kind: Literal["agent", "runnable"]
     authored_path: str
     source_path: str
     source_text: str
     digest: str
 
-    def parse(self, *, external_flows: Mapping[str, FlowDecl] | None = None) -> Program:
-        return Program.from_source(self.source_text, external_flows=external_flows)
+    def parse(
+        self,
+        *,
+        external_runnables: Mapping[str, tuple[Program, AgicDecl | FlowDecl]]
+        | None = None,
+    ) -> Program:
+        return Program.from_source(
+            self.source_text, external_runnables=external_runnables
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -515,7 +522,7 @@ class SourceSnapshot:
 
     @property
     def program_files(self) -> tuple[SourceFile, ...]:
-        """Return agent and direct flow program files in authored-path order."""
+        """Return agent and direct runnable program files in authored-path order."""
 
         return tuple(item for item in self.files if item.category == "program")
 
@@ -549,14 +556,14 @@ class SourceSnapshot:
         return source
 
     def load_programs(self) -> tuple[ProgramSource, ...]:
-        """Load the special agent module followed by direct home flow modules."""
+        """Load the special agent module followed by direct home runnable modules."""
 
         agent = self.load_program()
         prefix = Path("agents") / self.agent_name
-        flows = tuple(
+        runnables = tuple(
             ProgramSource(
                 agent_name=self.agent_name,
-                kind="flow",
+                kind="runnable",
                 authored_path=Path(item.relative_path).relative_to(prefix).as_posix(),
                 source_path=item.relative_path,
                 source_text=item.read_text(),
@@ -565,7 +572,7 @@ class SourceSnapshot:
             for item in self.program_files
             if Path(item.relative_path) != prefix / "agent.too"
         )
-        return (agent, *flows)
+        return (agent, *runnables)
 
     @property
     def config_paths(self) -> tuple[str, ...]:
@@ -657,7 +664,7 @@ def source_path_scope(
         return "home", agent_relative.as_posix()
     if (
         len(agent_relative.parts) == 2
-        and agent_relative.parts[0] == "flows"
+        and agent_relative.parts[0] == "runnables"
         and agent_relative.suffix == ".too"
     ):
         return "home", agent_relative.as_posix()
@@ -690,7 +697,7 @@ def _authored_files(toolang_root: Path, agent_name: str) -> list[SourceFile]:
             toolang_root, agent_dir / "config.toml", category="config", origin="agent"
         )
     )
-    for path in _direct_flow_files(agent_dir / "flows"):
+    for path in _direct_runnable_files(agent_dir / "runnables"):
         files.extend(
             _collect_file(
                 toolang_root,
@@ -792,7 +799,7 @@ def _collect_directory(
     return files
 
 
-def _direct_flow_files(directory: Path) -> tuple[Path, ...]:
+def _direct_runnable_files(directory: Path) -> tuple[Path, ...]:
     if not directory.exists() and not directory.is_symlink():
         return ()
     _require_source_shape(directory, shape="directory")

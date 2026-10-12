@@ -67,7 +67,7 @@ FILE_BACKED_KINDS = frozenset({"psyche", "service", "prompt"})
 DIR_NAME_BY_KIND: dict[EntryKind, str] = CAP_DIR_BY_KIND
 KIND_BY_DIR_NAME: dict[str, EntryKind] = CAP_KIND_BY_DIR
 REMOTE_CAP_MATERIALIZE_WORKERS = 4
-_FLOW_FILENAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]{0,63}$")
+_RUNNABLE_FILENAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]{0,63}$")
 _WINDOWS_RESERVED_FILENAMES = {
     "aux",
     "clock$",
@@ -391,7 +391,12 @@ def public_runnable_index(
 
     def add(name: str, module: str, declaration: AgicDecl | FlowDecl) -> None:
         if name in result:
-            raise ValueError(f"Public runnable name is not unique: {name}")
+            previous = result[name]
+            raise ValueError(
+                f"Public runnable name is not unique: {name} "
+                f"({module_sources[owners[name]]}:{previous.span.line} and "
+                f"{module_sources[module]}:{declaration.span.line})"
+            )
         result[name] = declaration
         owners[name] = module
 
@@ -403,7 +408,7 @@ def public_runnable_index(
     for module, program in modules.items():
         if module == "agent":
             continue
-        public_name, local_name = flow_export(module_sources[module], program)
+        public_name, local_name = runnable_export(module_sources[module], program)
         declaration = program_runnable_index(program)[local_name]
         add(public_name, module, declaration)
     return result, owners
@@ -421,16 +426,18 @@ def module_runnable_index(
     return result
 
 
-def flow_export(source: str, program: Program) -> tuple[str, str]:
+def runnable_export(source: str, program: Program) -> tuple[str, str]:
     public_name = Path(source).stem
     candidates = tuple(
         name
-        for name, flow in program_runnable_index(program).items()
-        if isinstance(flow, FlowDecl)
-        and (flow.name is None or not flow.name_explicit or flow.name == public_name)
+        for name, runnable in program_runnable_index(program).items()
+        if runnable.name is None or runnable.name == public_name
     )
     if len(candidates) != 1:
-        raise ValueError(f"flow module export does not match its program: {source}")
+        raise ValueError(
+            f"runnable module must export exactly one unnamed or "
+            f"filename-matching agic or flow: {source} (found {len(candidates)})"
+        )
     return public_name, candidates[0]
 
 
@@ -445,11 +452,11 @@ def program_term_data(
     """Serialize one source-bound Program term for the State layer document."""
 
     public_name, local_name = (
-        (None, None) if name == "agent" else flow_export(source, program)
+        (None, None) if name == "agent" else runnable_export(source, program)
     )
     return {
         "name": name,
-        "kind": "agent" if name == "agent" else "flow",
+        "kind": "agent" if name == "agent" else "runnable",
         "authored_path": source,
         "materialized_path": f"files/{source}",
         "digest": digest,
@@ -869,8 +876,8 @@ def validate_program_term(
     if name == "agent":
         if source != "agent.too":
             raise ValueError("agent Program must use agent.too")
-    elif name != flow_module_name(source):
-        raise ValueError("flow Program name must match its source path")
+    elif name != runnable_module_name(source):
+        raise ValueError("runnable Program name must match its source path")
     _require_revision(digest, name="State Program digest")
     if any(cap.scope != "here" for cap in here_caps):
         raise ValueError("State Program caps must have here scope")
@@ -879,7 +886,7 @@ def validate_program_term(
     if len({_entry_sort_key(cap) for cap in here_caps}) != len(here_caps):
         raise ValueError("State Program capabilities must be unique")
     if name != "agent":
-        flow_export(source, program)
+        runnable_export(source, program)
     for cap in here_caps:
         path = Path(cap.path)
         if path.is_absolute():
@@ -962,18 +969,22 @@ def agent_state_revision(
     return sha256(encoded).hexdigest()
 
 
-def flow_module_name(authored_path: str) -> str:
-    """Return the stable portable module name for one direct flow source."""
+def runnable_module_name(authored_path: str) -> str:
+    """Return the stable portable module name for one direct runnable source."""
 
     path = Path(authored_path)
-    if len(path.parts) != 2 or path.parts[0] != "flows" or path.suffix != ".too":
-        raise ValueError(f"Flow module source path is invalid: {authored_path!r}")
+    if len(path.parts) != 2 or path.parts[0] != "runnables" or path.suffix != ".too":
+        raise ValueError(f"Runnable module source path is invalid: {authored_path!r}")
     stem = path.stem
-    if _FLOW_FILENAME_RE.fullmatch(stem) is None:
-        raise ValueError(f"Flow module filename is not portable: {stem!r}")
+    if stem == "_":
+        raise ValueError(
+            "Runnable module filename is reserved for the unnamed entry alias: '_'"
+        )
+    if _RUNNABLE_FILENAME_RE.fullmatch(stem) is None:
+        raise ValueError(f"Runnable module filename is not portable: {stem!r}")
     if stem.casefold() in _WINDOWS_RESERVED_FILENAMES:
-        raise ValueError(f"Flow module filename is reserved on Windows: {stem!r}")
-    return f"flows::{stem}"
+        raise ValueError(f"Runnable module filename is reserved on Windows: {stem!r}")
+    return f"runnables::{stem}"
 
 
 def effective_caps(

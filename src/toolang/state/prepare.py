@@ -12,15 +12,15 @@ import re
 from toolang.common.layout import AgentLayout, ensure_scratch_workspace
 
 from ..common.progress import ProgressSink, emit_progress
-from ..lang.ast import FlowDecl, Program, parse_cap_declarations
+from ..lang.ast import AgicDecl, FlowDecl, Program, parse_cap_declarations
 from .state import (
     AgentState,
     agent_state_revision,
     KIND_BY_DIR_NAME,
     compose_agent_state,
     effective_caps,
-    flow_export,
-    flow_module_name,
+    runnable_export,
+    runnable_module_name,
     public_runnable_index,
     program_runnable_index,
     _allowed_caps,
@@ -721,23 +721,24 @@ def _program_drafts(
     sources = authored.load_programs()
     programs: list[tuple[ProgramSource, Program]] = []
     diagnostics: list[StateDiagnostic] = []
-    external_flows: dict[str, FlowDecl] = {}
+    external_runnables: dict[str, tuple[Program, AgicDecl | FlowDecl]] = {}
     for source in sorted(sources, key=lambda source: source.kind == "agent"):
         try:
             program = (
-                source.parse(external_flows=external_flows)
-                if source.kind == "agent" and external_flows
+                source.parse(external_runnables=external_runnables)
+                if source.kind == "agent" and external_runnables
                 else source.parse()
             )
             programs.append((source, program))
-            if source.kind == "flow":
+            if source.kind == "runnable":
                 try:
-                    public_name, local_name = flow_export(source.authored_path, program)
+                    public_name, local_name = runnable_export(
+                        source.authored_path, program
+                    )
                 except ValueError:
-                    continue  # Report invalid exports at the flow-extension layer below.
+                    continue  # Report invalid exports at the runnable-extension layer below.
                 declaration = program_runnable_index(program)[local_name]
-                assert isinstance(declaration, FlowDecl)
-                external_flows[public_name] = declaration
+                external_runnables[public_name] = (program, declaration)
         except Exception as exc:
             diagnostics.append(
                 _diagnostic(
@@ -750,10 +751,10 @@ def _program_drafts(
     if diagnostics:
         raise StatePreparationError(*diagnostics)
 
-    flow_sources = tuple(
-        source for source, _program in programs if source.kind == "flow"
+    runnable_sources = tuple(
+        source for source, _program in programs if source.kind == "runnable"
     )
-    _validate_flow_source_names(flow_sources)
+    _validate_runnable_source_names(runnable_sources)
 
     drafts: list[tuple[str, ProgramSource, Program]] = []
     extension_diagnostics: list[StateDiagnostic] = []
@@ -762,18 +763,18 @@ def _program_drafts(
             drafts.append(("agent", source, program))
             continue
         try:
-            flow_export(source.authored_path, program)
+            runnable_export(source.authored_path, program)
         except ValueError as exc:
             extension_diagnostics.append(
                 _diagnostic(
                     source,
-                    layer="flow-extension",
-                    code="invalid-flow-export",
+                    layer="runnable-extension",
+                    code="invalid-runnable-export",
                     error=exc,
                 )
             )
             continue
-        drafts.append((flow_module_name(source.authored_path), source, program))
+        drafts.append((runnable_module_name(source.authored_path), source, program))
     if extension_diagnostics:
         raise StatePreparationError(*extension_diagnostics)
 
@@ -794,19 +795,19 @@ def _program_drafts(
     return tuple(drafts)
 
 
-def _validate_flow_source_names(sources: tuple[ProgramSource, ...]) -> None:
+def _validate_runnable_source_names(sources: tuple[ProgramSource, ...]) -> None:
     seen: dict[str, str] = {}
     diagnostics: list[StateDiagnostic] = []
     for source in sources:
         name = Path(source.authored_path).stem
         error: ValueError | None = None
         try:
-            flow_module_name(source.authored_path)
+            runnable_module_name(source.authored_path)
         except ValueError as exc:
             error = exc
         if error is None and (existing := seen.get(name.casefold())):
             error = ValueError(
-                f"Flow module filenames collide under case folding: "
+                f"Runnable module filenames collide under case folding: "
                 f"{existing!r} and {name!r}"
             )
         elif error is None:
@@ -815,8 +816,8 @@ def _validate_flow_source_names(sources: tuple[ProgramSource, ...]) -> None:
             diagnostics.append(
                 _diagnostic(
                     source,
-                    layer="flow-extension",
-                    code="invalid-flow-filename",
+                    layer="runnable-extension",
+                    code="invalid-runnable-filename",
                     error=error,
                 )
             )

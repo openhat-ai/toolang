@@ -128,7 +128,7 @@ flow child(_: Number, count: Number) -> Number:
 @pytest.mark.parametrize("changed_revision", [False, True])
 def test_rerun_preserves_native_module_values_and_absence(tmp_path, changed_revision):
     layout = AgentLayout.resident(tmp_path, "alice")
-    flows = layout.home / "flows"
+    flows = layout.home / "runnables"
     flows.mkdir(parents=True)
     target = flows / "relay.too"
     source = """
@@ -1380,7 +1380,7 @@ flow fail(_: Part[]) -> Number:
 
 def test_home_flow_module_executes_with_local_types_and_helpers(tmp_path: Path) -> None:
     home = tmp_path / "agents" / "alice"
-    flows = home / "flows"
+    flows = home / "runnables"
     flows.mkdir(parents=True)
     agent_source = "# Agent alice\n"
     (home / "agent.too").write_text(agent_source, encoding="utf-8")
@@ -1425,7 +1425,7 @@ flow research(brief: Brief) -> Text:
             accepted = harness.store.get_run_control(run_id=root.id, index=0)
             assert accepted is not None
             assert isinstance(accepted.payload, RunControlPayload)
-            assert accepted.payload.runnable == "flows::research::flow:research"
+            assert accepted.payload.runnable == "runnables::research::flow:research"
             child = next(
                 run
                 for run in harness.store.list_runs(thread_id=thread, limit=None)
@@ -1434,7 +1434,9 @@ flow research(brief: Brief) -> Text:
             child_run_control = harness.store.get_run_control(run_id=child.id, index=0)
             assert child_run_control is not None
             assert isinstance(child_run_control.payload, RunControlPayload)
-            assert child_run_control.payload.runnable == "flows::research::agic:echo"
+            assert (
+                child_run_control.payload.runnable == "runnables::research::agic:echo"
+            )
             assert "Module-local input" == message_text(
                 without_runtime_snapshots(harness.adapter.invocations[0].call.messages)[
                     0

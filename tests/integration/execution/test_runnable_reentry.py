@@ -235,9 +235,9 @@ agic worker() -> Text:
   Delegate from the agent worker.
 """
     layout = AgentLayout.resident(tmp_path, "alice")
-    (layout.home / "flows").mkdir(parents=True)
+    (layout.home / "runnables").mkdir(parents=True)
     layout.program.write_text(source)
-    (layout.home / "flows/research.too").write_text("""
+    (layout.home / "runnables/research.too").write_text("""
 agic worker() -> Text:
   context = none
   Private module worker.

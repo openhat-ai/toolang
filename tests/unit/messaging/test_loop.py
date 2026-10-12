@@ -15,6 +15,7 @@ from tests.support.execution_harness import (
 from toolang.base.types.message import Message as ModelMessage
 from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.common.layout import AgentLayout
+from toolang.execution.records import RunControlPayload
 from toolang.teaming.messaging import MessagingClient
 from toolang.teaming.backend.valkey import ValkeyBackend
 from toolang.teaming.backend.valkey.keys import convo_key
@@ -22,6 +23,7 @@ from toolang.teaming.config import BackendConfig, TeamingHomeConfig, TeamingRoot
 from toolang.plugin.toolsets.msg import MsgToolset
 from toolang.plugin.toolsets.loading import tools_from_toolsets
 from toolang.plugin.types import LoadedPlugin
+from toolang.state.prepare import prepare_agent_state
 from toolang.work.messaging import MessagingLoop
 
 CONFIG = BackendConfig("redis://test")
@@ -59,16 +61,19 @@ def make_loop(path, client, harness=None):
     )
 
 
-def harness_with_msg(path, server, responses, source="agic:\n  {{_}}\n"):
+def harness_with_msg(path, server, responses, source="agic:\n  {{_}}\n", state=None):
     msg = MsgToolset({"root": str(path)})
     setattr(msg, "connection", lambda context: make_client(server))
     tools = tools_from_toolsets({"msg": LoadedPlugin("msg", "msg", msg, "built-in")})
     return ExecutionHarness.create(
-        path, source=source, responses=responses, tools=tools
+        path, source=source, responses=responses, tools=tools, state=state
     )
 
 
-@pytest.mark.parametrize("custom", [False, True])
+@pytest.mark.parametrize(
+    "custom",
+    [False, True, "agic-module", "flow-module", "flow-module-run", "flow-module-async"],
+)
 def test_tool_reply_receipt_context_and_restart(tmp_path, custom):
     server = FakeServer(server_type="valkey")
     reply = ModelCallResult(
@@ -81,6 +86,26 @@ def test_tool_reply_receipt_context_and_restart(tmp_path, custom):
             ),
         )
     )
+    state = None
+    source = "agic talk(_: Json):\n  {{_}}\n" if custom is True else "agic:\n  {{_}}\n"
+    if isinstance(custom, str):
+        layout = AgentLayout.resident(tmp_path, "alice")
+        (layout.home / "runnables").mkdir(parents=True)
+        layout.program.write_text(source)
+        (layout.home / "runnables/talk.too").write_text(
+            "agic(_: Json):\n  {{_}}\n"
+            if custom == "agic-module"
+            else "flow(_: Json):\n"
+            + (
+                "  run helper\n"
+                if custom == "flow-module-run"
+                else "  let reply = async run helper\n  await reply\n"
+                if custom == "flow-module-async"
+                else "  exec helper\n"
+            )
+            + "agic helper(_: Json):\n  {{_}}\n"
+        )
+        state = prepare_agent_state(layout)
     harness = harness_with_msg(
         tmp_path,
         server,
@@ -89,7 +114,8 @@ def test_tool_reply_receipt_context_and_restart(tmp_path, custom):
             ModelCallResult(message=ModelMessage.assistant("Handled.")),
             ModelCallResult(message=ModelMessage.assistant("Noted.")),
         ],
-        source="agic talk(_: Json):\n  {{_}}\n" if custom else "agic:\n  {{_}}\n",
+        source=source,
+        state=state,
     )
 
     async def scenario():
@@ -104,15 +130,33 @@ def test_tool_reply_receipt_context_and_restart(tmp_path, custom):
             await loop.poll()
             saved = loop.saved["gc_00000001"]
             assert saved["result"]["status"] == "succeeded"
+            assert len(saved["result"]["replies"]) == 1
             receipt = saved["result"]["replies"][0]
             assert len(harness.store.list_threads()) == 1
             assert harness.store.list_threads()[0].id.startswith("talk_")
             handled = harness.store.get_run(run_id=saved["result"]["run"])
             assert handled is not None
-            assert receipt["message"]["origin"] == {
-                "thread": handled.thread.id,
-                "run": saved["result"]["run"],
-            }
+            if custom:
+                entry = harness.store.get_run_control(run_id=handled.id, index=0)
+                assert entry is not None and isinstance(
+                    entry.payload, RunControlPayload
+                )
+                prefix = "runnables::talk::" if isinstance(custom, str) else ""
+                kind = (
+                    "flow"
+                    if isinstance(custom, str) and custom.startswith("flow-module")
+                    else "agic"
+                )
+                assert entry.payload.runnable == f"{prefix}{kind}:talk"
+            origin = receipt["message"]["origin"]
+            assert origin["thread"] == handled.thread.id
+            sender_run = harness.store.get_run(run_id=origin["run"])
+            assert sender_run is not None
+            if custom in {"flow-module-run", "flow-module-async"}:
+                assert sender_run.parent is not None
+                assert sender_run.parent.run_id == handled.id
+            else:
+                assert sender_run.id == handled.id
             assert receipt["message"]["in_reply_to"] == REPLY_TO
             assert len(await client.history("gc_00000001")) == 2
             await loop.poll()  # Own reply is context, never another model invocation.
@@ -176,9 +220,20 @@ def test_failed_batches_skip_bad_entries_and_rotate_groups(tmp_path):
     asyncio.run(scenario())
 
 
-def test_arrivals_during_handling_and_cancellation_save_delivered_receipts(tmp_path):
+@pytest.mark.parametrize("module_handler", [False, True])
+def test_arrivals_during_handling_and_cancellation_save_delivered_receipts(
+    tmp_path, module_handler
+):
     server = FakeServer(server_type="valkey")
     gate = AsyncGate()
+    state = None
+    if module_handler:
+        layout = AgentLayout.resident(tmp_path, "alice")
+        (layout.home / "runnables").mkdir(parents=True)
+        (layout.home / "runnables/talk.too").write_text(
+            "flow(_: Json):\n  run helper\nagic helper(_: Json):\n  {{_}}\n"
+        )
+        state = prepare_agent_state(layout)
     harness = harness_with_msg(
         tmp_path,
         server,
@@ -198,6 +253,7 @@ def test_arrivals_during_handling_and_cancellation_save_delivered_receipts(tmp_p
                 gate=gate,
             ),
         ],
+        state=state,
     )
 
     async def scenario():

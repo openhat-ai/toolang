@@ -29,7 +29,7 @@ def tool_parameters(operation: Operation) -> dict[str, Any]:
     required = []
     key_schema = {
         "type": "string",
-        "description": "Canonical home-relative file path, e.g. agent.too or flows/research.too.",
+        "description": "Canonical home-relative file path, e.g. agent.too or runnables/research.too.",
     }
     if operation not in {"list", "sync"}:
         properties["key"] = key_schema

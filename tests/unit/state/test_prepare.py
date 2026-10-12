@@ -41,7 +41,7 @@ from toolang.state.cache import (
 from toolang.state.errors import StatePreparationError
 from toolang.state.schemas import CapDetail
 from toolang.state.prepare import (
-    _validate_flow_source_names,
+    _validate_runnable_source_names,
     compose_layer_state,
     load_agent_state,
     prepare_agent_state,
@@ -49,7 +49,7 @@ from toolang.state.prepare import (
     refresh_agent_state,
 )
 from toolang.state.source import ProgramSource
-from toolang.state.state import flow_module_name
+from toolang.state.state import runnable_module_name
 
 
 def _layout(root: Path, name: str = "alice") -> AgentLayout:
@@ -64,14 +64,14 @@ def test_authored_default_flow_takes_precedence_over_synthetic_default(
     layout.home.mkdir(parents=True)
     if exported:
         layout.program.write_text("agic():\n  Main.\n")
-        source = layout.home / "flows" / "default.too"
+        source = layout.home / "runnables" / "default.too"
         source.parent.mkdir()
         source.write_text("flow():\n  pass\n")
     else:
         layout.program.write_text("flow default():\n  pass\n")
     state = prepare_agent_state(layout)
     module, runnable = resolve_state_runnable(state, "default", kind="flow")
-    assert module == ("flows::default" if exported else "agent")
+    assert module == ("runnables::default" if exported else "agent")
     assert runnable.name == (None if exported else "default")
     assert state.runnables["default"].kind == "flow"
 
@@ -137,12 +137,14 @@ def test_prepare_rebuilds_old_unnamed_agic_without_rewriting_history(
 
 def test_unnamed_flow_export_is_locally_entry(tmp_path):
     layout = _layout(tmp_path)
-    source = layout.home / "flows" / "research.too"
+    source = layout.home / "runnables" / "research.too"
     source.parent.mkdir(parents=True)
     source.write_text("flow:\n  pass\n")
     state = prepare_agent_state(layout)
     assert state.runnables["research"].name is None
-    assert state.module_runnable("flows::research", "_") is state.runnables["research"]
+    assert (
+        state.module_runnable("runnables::research", "_") is state.runnables["research"]
+    )
 
 
 def test_prepare_reports_main_conflict_in_legacy_cached_source(tmp_path, monkeypatch):
@@ -431,7 +433,7 @@ def test_prepare_does_not_create_missing_agent_program(tmp_path: Path) -> None:
 def test_flow_module_keeps_inline_caps_without_agent_program(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     home = toolang_root / "agents" / "alice"
-    flows = home / "flows"
+    flows = home / "runnables"
     flows.mkdir(parents=True)
     (flows / "report.too").write_text(
         "prompt style:\n  Flow style.\n\nflow:\n  pass\n",
@@ -440,7 +442,7 @@ def test_flow_module_keeps_inline_caps_without_agent_program(tmp_path: Path) -> 
 
     state = prepare_agent_state(_layout(toolang_root))
 
-    cap = state.module_caps["flows::report"][0]
+    cap = state.module_caps["runnables::report"][0]
     assert cap.name == "style"
     assert cap.read_content() == "Flow style."
     assert not (home / "agent.too").exists()
@@ -829,9 +831,9 @@ def test_inline_skill_materialization_preserves_source_and_snapshots(
     tmp_path: Path, source_kind: str
 ) -> None:
     layout = _layout(tmp_path / "toolang")
-    module = "flows::review" if source_kind == "flow" else "agent"
+    module = "runnables::review" if source_kind == "flow" else "agent"
     source = layout.home / (
-        "flows/review.too" if source_kind == "flow" else "agent.too"
+        "runnables/review.too" if source_kind == "flow" else "agent.too"
     )
     if source_kind == "script":
         source = tmp_path / "review.too"
@@ -859,7 +861,7 @@ def test_inline_skill_materialization_preserves_source_and_snapshots(
     assert entry.source.form == "inline"
     assert entry.source.line == 1
     assert entry.source.path == f"agents/{layout.name}/" + (
-        "flows/review.too" if source_kind == "flow" else "agent.too"
+        "runnables/review.too" if source_kind == "flow" else "agent.too"
     )
     assert Path(entry.path) == (
         layer_revision_dir(layout, "home", state.home_revision)
@@ -895,33 +897,33 @@ def test_inline_skill_materialization_preserves_source_and_snapshots(
 @pytest.mark.parametrize("scope", ["root", "home"])
 def test_inline_skill_precedence_is_module_local(tmp_path: Path, scope: str) -> None:
     layout = _layout(tmp_path)
-    (layout.home / "flows").mkdir(parents=True)
+    (layout.home / "runnables").mkdir(parents=True)
     skill = (layout.root if scope == "root" else layout.home) / "skills/review/SKILL.md"
     skill.parent.mkdir(parents=True)
     skill.write_text("---\ndescription: Shared review\n---\nShared guidance.\n")
     for filename, body in (
         ("agent.too", "Agent guidance."),
-        ("flows/review.too", "Flow guidance."),
+        ("runnables/review.too", "Flow guidance."),
     ):
         (layout.home / filename).write_text(
             f"skill review:\n  description = Review changes.\n\n  {body}\n"
             "\nflow:\n  pass\n"
         )
-    (layout.home / "flows/other.too").write_text("flow:\n  pass\n")
+    (layout.home / "runnables/other.too").write_text("flow:\n  pass\n")
 
     state = prepare_agent_state(layout)
 
     for module, body, expected_scope in (
         ("agent", "Agent guidance.", "here"),
-        ("flows::review", "Flow guidance.", "here"),
-        ("flows::other", "Shared guidance.", scope),
+        ("runnables::review", "Flow guidance.", "here"),
+        ("runnables::other", "Shared guidance.", scope),
     ):
         (entry,) = state.caps_for(module)
         assert entry.read_content() == body
         assert entry.scope == expected_scope
 
 
-@pytest.mark.parametrize("module_file", ["agent.too", "flows/review.too"])
+@pytest.mark.parametrize("module_file", ["agent.too", "runnables/review.too"])
 @pytest.mark.parametrize("allowed", [True, False])
 def test_inline_skill_rebuilds_old_cache_without_rewriting_history(
     tmp_path: Path, monkeypatch, module_file: str, allowed: bool
@@ -944,7 +946,7 @@ def test_inline_skill_rebuilds_old_cache_without_rewriting_history(
     with monkeypatch.context() as legacy:
         legacy.setattr(cap_state, "_collect_program_embedded_entries", without_skills)
         old = prepare_agent_state(layout)
-    module = "agent" if module_file == "agent.too" else "flows::review"
+    module = "agent" if module_file == "agent.too" else "runnables::review"
     assert not old.module_caps[module]
     old_layer = layer_revision_dir(layout, "home", old.home_revision) / "layer.json"
     old_bytes = old_layer.read_bytes()
@@ -1356,10 +1358,37 @@ def test_declared_ref_change_refreshes_remote_materialization(
     assert second.resolutions[0].declared_ref == "acme/rewrite-v2"
 
 
+@pytest.mark.parametrize("kind", ["agic", "flow"])
+@pytest.mark.parametrize("named", [False, True])
+def test_prepare_discovers_and_reloads_runnable_exports(tmp_path, kind, named):
+    layout = _layout(tmp_path)
+    modules = layout.home / "runnables"
+    modules.mkdir(parents=True)
+    layout.program.write_text("agic chat():\n  Chat.\n")
+    source = modules / "research.too"
+    source.write_text(
+        f"{kind}{' research' if named else ''}():\n  pass\nagic helper():\n  Private.\n"
+    )
+
+    state = prepare_agent_state(layout)
+    owner, exported = resolve_state_runnable(state, "research", kind=kind)
+    assert owner == "runnables::research"
+    assert exported.name == ("research" if named else None)
+    assert set(state.runnables) == {"chat", "research"}
+    assert state.module_runnable(owner, "helper", kind="agic") is not None
+
+    # Prepared snapshots retain the owning Program without authored files.
+    source.unlink()
+    loaded = load_agent_state(layout, state.revision)
+    assert loaded.runnable_modules == state.runnable_modules
+    assert loaded.modules == state.modules
+    assert resolve_state_runnable(loaded, "research", kind=kind)[1] == exported
+
+
 def test_prepare_discovers_independent_flow_module_exports(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     home = toolang_root / "agents" / "alice"
-    flows = home / "flows"
+    flows = home / "runnables"
     flows.mkdir(parents=True)
     (home / "agent.too").write_text("# Agent alice\n", encoding="utf-8")
     (flows / "research.too").write_text(
@@ -1374,35 +1403,36 @@ def test_prepare_discovers_independent_flow_module_exports(tmp_path: Path) -> No
     ]
     assert tuple(state.agics) == ()
     assert tuple(state.flows) == ("research",)
-    program = state.modules["flows::research"]
+    program = state.modules["runnables::research"]
     assert not hasattr(state, "program")
-    assert tuple(state.modules) == ("agent", "flows::research")
-    assert state.module_sources["flows::research"] == "flows/research.too"
+    assert tuple(state.modules) == ("agent", "runnables::research")
+    assert state.module_sources["runnables::research"] == "runnables/research.too"
     assert program.find_agic("helper") is not None
     assert "helper" not in state.runnables
-    helper = state.module_runnable("flows::research", "helper", kind="agic")
+    helper = state.module_runnable("runnables::research", "helper", kind="agic")
     assert helper is not None
     assert helper is program.find_agic("helper")
     exported = state.runnables["research"]
-    assert state.runnable_modules["research"] == "flows::research"
+    assert state.runnable_modules["research"] == "runnables::research"
     assert exported is program.flows[0]
     assert exported.name is None
-    assert state.runnable_modules["research"] == "flows::research"
+    assert state.runnable_modules["research"] == "runnables::research"
 
 
-def test_unnamed_flow_export_renames_with_its_file(tmp_path: Path) -> None:
+@pytest.mark.parametrize("kind", ["agic", "flow"])
+def test_unnamed_runnable_export_renames_with_its_file(tmp_path: Path, kind) -> None:
     toolang_root = tmp_path / "toolang"
     home = toolang_root / "agents" / "alice"
-    flows = home / "flows"
+    flows = home / "runnables"
     flows.mkdir(parents=True)
     (home / "agent.too").write_text("# Agent alice\n", encoding="utf-8")
     source = flows / "research.too"
-    source.write_text("flow:\n  pass\n", encoding="utf-8")
+    source.write_text(f"{kind}:\n  pass\n", encoding="utf-8")
     first = prepare_agent_state(_layout(toolang_root))
 
-    public_module, public = resolve_state_runnable(first, "research", kind="flow")
-    local = resolve_bound_runnable(first, "flows::research", "flow:research")
-    assert public_module == "flows::research"
+    public_module, public = resolve_state_runnable(first, "research", kind=kind)
+    local = resolve_bound_runnable(first, "runnables::research", f"{kind}:research")
+    assert public_module == "runnables::research"
     assert public is local
     assert public.name is local.name is None
 
@@ -1418,26 +1448,26 @@ def test_unnamed_flow_export_renames_with_its_file(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     "authored_path",
     (
-        "flows/1report.too",
-        "flows/bad name.too",
-        "flows/con.too",
-        f"flows/{'a' * 65}.too",
-        "nested/flows/report.too",
+        "runnables/1report.too",
+        "runnables/bad name.too",
+        "runnables/con.too",
+        f"runnables/{'a' * 65}.too",
+        "nested/runnables/report.too",
     ),
 )
-def test_flow_module_names_reject_nonportable_source_paths(
+def test_runnable_module_names_reject_nonportable_source_paths(
     authored_path: str,
 ) -> None:
     with pytest.raises(ValueError):
-        flow_module_name(authored_path)
+        runnable_module_name(authored_path)
 
 
-def test_flow_module_names_reject_casefold_collisions() -> None:
+def test_runnable_module_names_reject_casefold_collisions() -> None:
     def source(path: str) -> ProgramSource:
         text = "flow:\n  pass\n"
         return ProgramSource(
             agent_name="alice",
-            kind="flow",
+            kind="runnable",
             authored_path=path,
             source_path=f"agents/alice/{path}",
             source_text=text,
@@ -1445,29 +1475,33 @@ def test_flow_module_names_reject_casefold_collisions() -> None:
         )
 
     with pytest.raises(StatePreparationError) as raised:
-        _validate_flow_source_names(
-            (source("flows/Report.too"), source("flows/report.too"))
+        _validate_runnable_source_names(
+            (source("runnables/Report.too"), source("runnables/report.too"))
         )
 
-    assert raised.value.diagnostics[0].code == "invalid-flow-filename"
+    assert raised.value.diagnostics[0].code == "invalid-runnable-filename"
 
 
 @pytest.mark.parametrize(
     ("source", "layer"),
     [
         ("flow research:\n  reduce using missing\n", "program"),
-        ("flow other:\n  pass\n", "flow-extension"),
-        ("flow:\n  pass\n\nflow research:\n  pass\n", "flow-extension"),
+        ("flow other:\n  pass\n", "runnable-extension"),
+        ("flow:\n  pass\n\nflow research:\n  pass\n", "runnable-extension"),
+        ("agic other:\n  Help.\n", "runnable-extension"),
+        ("agic:\n  Help.\n\nagic research:\n  Help.\n", "runnable-extension"),
+        ("flow:\n  pass\n\nagic research:\n  Help.\n", "runnable-extension"),
+        ("agic:\n  Help.\n\nflow research:\n  pass\n", "runnable-extension"),
     ],
 )
-def test_prepare_rejects_flow_module_at_the_correct_layer(
+def test_prepare_rejects_runnable_module_at_the_correct_layer(
     tmp_path: Path,
     source: str,
     layer: str,
 ) -> None:
     toolang_root = tmp_path / "toolang"
     home = toolang_root / "agents" / "alice"
-    flows = home / "flows"
+    flows = home / "runnables"
     flows.mkdir(parents=True)
     (home / "agent.too").write_text("# Agent alice\n", encoding="utf-8")
     (flows / "research.too").write_text(source, encoding="utf-8")
@@ -1477,21 +1511,25 @@ def test_prepare_rejects_flow_module_at_the_correct_layer(
 
     diagnostic = raised.value.diagnostics[0]
     assert diagnostic.layer == layer
-    assert diagnostic.module_kind == "flow"
-    assert diagnostic.authored_path == "flows/research.too"
+    assert diagnostic.module_kind == "runnable"
+    assert diagnostic.authored_path == "runnables/research.too"
 
 
-def test_prepare_rejects_public_runnable_collisions(tmp_path: Path) -> None:
+@pytest.mark.parametrize("root_kind", ["agic", "flow"])
+@pytest.mark.parametrize("module_kind", ["agic", "flow"])
+def test_prepare_rejects_public_runnable_collisions(
+    tmp_path: Path, root_kind, module_kind
+) -> None:
     toolang_root = tmp_path / "toolang"
     home = toolang_root / "agents" / "alice"
-    flows = home / "flows"
+    flows = home / "runnables"
     flows.mkdir(parents=True)
     (home / "agent.too").write_text(
-        "# Agent alice\n\nflow research:\n  pass\n",
+        f"# Agent alice\n\n{root_kind} research:\n  pass\n",
         encoding="utf-8",
     )
     (flows / "research.too").write_text(
-        "flow research:\n  pass\n",
+        f"{module_kind} research:\n  pass\n",
         encoding="utf-8",
     )
 
@@ -1499,12 +1537,14 @@ def test_prepare_rejects_public_runnable_collisions(tmp_path: Path) -> None:
         prepare_agent_state(_layout(toolang_root))
 
     assert raised.value.diagnostics[0].layer == "state-composition"
+    assert "agent.too:3" in str(raised.value)
+    assert "runnables/research.too:1" in str(raised.value)
 
 
 def test_module_here_caps_are_isolated_and_reload_from_cache(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     home = toolang_root / "agents" / "alice"
-    flows = home / "flows"
+    flows = home / "runnables"
     flows.mkdir(parents=True)
     (home / "agent.too").write_text(
         (
@@ -1523,16 +1563,18 @@ def test_module_here_caps_are_isolated_and_reload_from_cache(tmp_path: Path) -> 
 
     agent_cap = next(item for item in state.caps_for("agent") if item.name == "style")
     flow_cap = next(
-        item for item in state.caps_for("flows::research") if item.name == "style"
+        item for item in state.caps_for("runnables::research") if item.name == "style"
     )
     assert agent_cap.read_content() == "Agent style."
     assert flow_cap.read_content() == "Flow style."
     assert agent_cap.path != flow_cap.path
-    assert all(item.name != "only_agent" for item in state.caps_for("flows::research"))
+    assert all(
+        item.name != "only_agent" for item in state.caps_for("runnables::research")
+    )
 
     flow_path.write_text("invalid", encoding="utf-8")
     loaded = load_home_layer(_layout(toolang_root), state.home_revision)
-    assert loaded.modules["flows::research"].flows[0].name is None
+    assert loaded.modules["runnables::research"].flows[0].name is None
 
 
 def test_flow_modules_can_reference_the_same_cap(
@@ -1541,7 +1583,7 @@ def test_flow_modules_can_reference_the_same_cap(
 ) -> None:
     toolang_root = tmp_path / "toolang"
     home = toolang_root / "agents" / "alice"
-    flows = home / "flows"
+    flows = home / "runnables"
     flows.mkdir(parents=True)
     source = "with skill acme/reviewer\n\nflow:\n  pass\n"
     (flows / "one.too").write_text(source, encoding="utf-8")
@@ -1562,8 +1604,8 @@ def test_flow_modules_can_reference_the_same_cap(
 
     state = prepare_agent_state(_layout(toolang_root))
 
-    one = state.module_caps["flows::one"][0]
-    two = state.module_caps["flows::two"][0]
+    one = state.module_caps["runnables::one"][0]
+    two = state.module_caps["runnables::two"][0]
     assert one.ref == two.ref
     assert one.path != two.path
     assert one.read_content() == "Review carefully."
@@ -1571,7 +1613,7 @@ def test_flow_modules_can_reference_the_same_cap(
     assert not (home / "agent.too").exists()
 
 
-@pytest.mark.parametrize("module_file", ["agent.too", "flows/review.too"])
+@pytest.mark.parametrize("module_file", ["agent.too", "runnables/review.too"])
 def test_prepare_rebinds_parameter_docs_without_rewriting_history(
     tmp_path, monkeypatch, module_file
 ):
@@ -1609,7 +1651,7 @@ def test_prepare_rebinds_parameter_docs_without_rewriting_history(
     old_home = layer_revision_dir(layout, "home", old.home_revision) / "layer.json"
     old_document = old_home.read_bytes()
     current = prepare_agent_state(layout)
-    module = "agent" if module_file == "agent.too" else "flows::review"
+    module = "agent" if module_file == "agent.too" else "runnables::review"
     program = current.modules[module]
     runnable = program.flows[0]
     assert current.home_revision != old.home_revision
@@ -1626,18 +1668,18 @@ def test_prepare_rebinds_parameter_docs_without_rewriting_history(
 @pytest.mark.parametrize("target", ["research", "private_helper"])
 def test_flow_modules_cannot_import_other_module_runnables(tmp_path, target):
     layout = _layout(tmp_path)
-    (layout.home / "flows").mkdir(parents=True)
+    (layout.home / "runnables").mkdir(parents=True)
     layout.program.write_text("agic private_helper():\n  Main helper.\n")
-    (layout.home / "flows" / "research.too").write_text("flow():\n  pass\n")
-    (layout.home / "flows" / "review.too").write_text(f"flow():\n  run {target}\n")
+    (layout.home / "runnables" / "research.too").write_text("flow():\n  pass\n")
+    (layout.home / "runnables" / "review.too").write_text(f"flow():\n  run {target}\n")
     with pytest.raises(StatePreparationError, match="unknown runnable"):
         prepare_agent_state(layout)
 
 
 def test_main_composition_does_not_import_private_helpers_or_types(tmp_path):
     layout = _layout(tmp_path)
-    (layout.home / "flows").mkdir(parents=True)
-    (layout.home / "flows" / "research.too").write_text(
+    (layout.home / "runnables").mkdir(parents=True)
+    (layout.home / "runnables" / "research.too").write_text(
         "struct Secret:\n  value: Text\nagic private_helper():\n  Help.\nflow():\n  run private_helper\n"
     )
     layout.program.write_text("flow parent():\n  run private_helper\n")

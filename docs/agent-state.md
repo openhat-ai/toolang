@@ -23,7 +23,7 @@ file.
 State has two persistent layers and one composition:
 
 - the `root` layer contains root config and root capabilities;
-- the `home` layer contains agent config, the agent and flow modules, home
+- the `home` layer contains agent config, the agent and runnable modules, home
   capabilities, and module-local capabilities; and
 - the `agent` composition identifies one exact root/home revision pair.
 
@@ -70,7 +70,7 @@ ${TOOLANG_ROOT}/agents/<agent>/.state/home/
     files/
       agent.too
       config.toml
-      flows/<flow-name>.too
+      runnables/<name>.too
       caps/
         authored/<kind>/<name>/...
         configured/<kind>/<name>/...
@@ -157,13 +157,15 @@ provider.
 ## Programs And Module Terms
 
 `agent.too` is the special `agent` module term. Each direct
-`flows/<name>.too` file contributes an independent module term named
-`_flow_<name>`. The module name is an opaque, single filesystem segment.
+`runnables/<name>.too` file contributes an independent module term named
+`runnables::<name>`. Prepared Program kinds are `agent` and `runnable`;
+the exported declaration determines whether it executes as an agic or flow.
 
-Flow filename stems must match `^[A-Za-z_][A-Za-z0-9_-]{0,63}$`, must not be a
-Windows reserved device name, and must be unique under Unicode `casefold()`.
-A flow module exports the unnamed flow or the flow whose name matches the file
-stem. Renaming an unnamed-flow file therefore renames its public runnable
+Runnable filename stems must match `^[A-Za-z_][A-Za-z0-9_-]{0,63}$`, must not be a
+Windows reserved device name or the unnamed-entry alias `_`, and must be unique
+under Unicode `casefold()`.
+A runnable module exports exactly one unnamed or filename-matching agic or flow.
+Renaming an unnamed-entry file therefore renames its public runnable
 without editing its source.
 
 Module-local capability files include the module name in their path:

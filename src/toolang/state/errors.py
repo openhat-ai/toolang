@@ -7,7 +7,7 @@ from typing import Literal
 
 from .types import ProgramKind
 
-StateValidationLayer = Literal["program", "flow-extension", "state-composition"]
+StateValidationLayer = Literal["program", "runnable-extension", "state-composition"]
 
 
 @dataclass(frozen=True, slots=True)

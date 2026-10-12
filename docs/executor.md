@@ -379,7 +379,7 @@ other modules' private signatures through ancestry. Tool results durably preserv
 the snapshot; querying does not read or publish home sources.
 
 Invocation still uses its Model Call's captured authority and module-visible
-targets; main sees public exports and a flow module sees local declarations.
+targets; main sees public exports and a runnable module sees local declarations.
 Acceptance selects latest State and checks the captured contract. The next Model
 Call refreshes targets within the Run's bound authority. Discovery is descriptive,
 not a reservation or a replacement for these checks.

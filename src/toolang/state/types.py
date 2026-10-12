@@ -15,7 +15,7 @@ EntryKind = Literal["psyche", "skill", "service", "prompt"]
 EntryShape = Literal["file", "dir"]
 SourceOrigin = Literal["local", "remote"]
 CapForm = Literal["authored", "inline", "configured", "referenced"]
-ProgramKind = Literal["agent", "flow"]
+ProgramKind = Literal["agent", "runnable"]
 RunnableKind = Literal["agic", "flow"]
 
 
