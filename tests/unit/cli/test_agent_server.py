@@ -304,7 +304,7 @@ def test_agent_server_opens_embedded_host_and_releases_stopped_state(
 
 def test_agent_server_wraps_management_lock_failure(tmp_path: Path) -> None:
     layout = AgentLayout.resident(tmp_path, "alice")
-    lock_path = layout.sandbox_state.with_suffix(".lock")
+    lock_path = layout.sandbox_state.with_name("state.json.lock")
     lock_path.mkdir(parents=True)
 
     with pytest.raises(agent_server.AgentServerAcquisitionError) as captured:

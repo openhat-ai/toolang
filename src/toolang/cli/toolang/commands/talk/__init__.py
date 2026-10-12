@@ -12,6 +12,7 @@ from typer._click.exceptions import ClickException
 from toolang.cli.common.context import context_root
 from toolang.cli.common.execution_progress.config import resolve_progress_max_width
 from toolang.cli.common.input import resolve_inputbox_max_width
+from toolang.cli.common.input_history import import_legacy_file
 from toolang.cli.common.messaging import settings, talk_context, talk_identity
 from toolang.cli.common.parameters import TitlePrefixOption
 from toolang.cli.common.terminal_session import prepare_terminal
@@ -98,18 +99,22 @@ def talk_command(
             raise ClickException(
                 "Interactive Talk requires a TTY; provide a message to send and exit"
             )
-        identity = talk_identity(root, config.identity, human)
+        resolved = conversation_id(resolved)
         from .tui import TalkTui
         from toolang.cli.common.terminal_surfaces import resolve_terminal_surfaces
 
-        # Persist drafts and input history per dataset, viewer, and conversation.
-        state = (
+        directory = root / ".runtime" / "talk-history"
+        history_path = directory / f"{resolved}.jsonl"
+        draft_path = directory / f"{resolved}.draft.txt"
+        legacy = (
             root
             / ".runtime"
             / "talk-v2"
-            / identity
+            / talk_identity(root, config.identity, human)
             / sha256(resolved.encode()).hexdigest()[:20]
         )
+        import_legacy_file(legacy / "input.jsonl", history_path)
+        import_legacy_file(legacy / "draft.txt", draft_path)
         max_width = resolve_progress_max_width(os.environ)
         inputbox_max_width = resolve_inputbox_max_width(os.environ, fallback=max_width)
         surfaces = resolve_terminal_surfaces()
@@ -125,7 +130,8 @@ def talk_command(
                     client,
                     info,
                     human,
-                    state,
+                    history_path,
+                    draft_path,
                     surfaces,
                     read_only=not info.allows_sender(human),
                     client_version=toolang_version(),

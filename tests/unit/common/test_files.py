@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 import toolang.common.files as files
-from toolang.common.files import atomic_write_text, file_write_lock
+from toolang.common.files import atomic_write_text, file_lock_path, file_write_lock
 
 
 def test_atomic_write_text_replaces_content_and_preserves_mode(tmp_path: Path) -> None:
@@ -28,6 +28,16 @@ def test_file_write_lock_is_reentrant(tmp_path: Path) -> None:
     with file_write_lock(lock_path):
         with file_write_lock(lock_path):
             assert lock_path.is_file()
+
+
+def test_file_lock_path_preserves_filename_and_released_inode(tmp_path: Path) -> None:
+    path = file_lock_path(tmp_path / "config.toml")
+    assert path.name == "config.toml.lock"
+    with file_write_lock(path):
+        inode = path.stat().st_ino
+    with file_write_lock(path):
+        assert path.stat().st_ino == inode
+        assert path.stat().st_size == 0
 
 
 def test_atomic_write_text_cleans_up_after_replace_failure(

@@ -114,7 +114,7 @@ class AuthoredChores:
 
     @property
     def lock_path(self) -> Path:
-        return self.directory / ".chores.lock"
+        return self.directory / "chores.lock"
 
     def write_lock(self) -> AbstractContextManager[None]:
         return file_write_lock(self.lock_path)

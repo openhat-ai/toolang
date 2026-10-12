@@ -465,12 +465,6 @@ class RunStore:
                 if owner:
                     self._conn.commit()
 
-    @property
-    def thread_lock_path(self) -> Path:
-        """Return the shared lock that serializes thread history mutations."""
-
-        return self.db_path.with_name(f"{self.db_path.name}.threads.lock")
-
     def publish_compaction(
         self, horizon: RunRef | StepRef, *, roots: Sequence[RunRef]
     ) -> None:

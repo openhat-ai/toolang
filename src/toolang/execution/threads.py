@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import logging
+import threading
 from collections.abc import Callable
-from pathlib import Path
 from typing import TypeVar
 
-from toolang.common.files import file_write_lock
 from toolang.common.ids import IdIssuer
 from toolang.common.time import utc_now
 
@@ -47,6 +46,7 @@ class ThreadManager:
         self.ids = ids
         self.listener = listener
         self.stream = stream
+        self._mutation_lock = threading.RLock()
 
     def _apply(self, operation: Callable[[], tuple[_Result, ThreadEvent]]) -> _Result:
         if self.stream is not None:
@@ -56,8 +56,11 @@ class ThreadManager:
                     self.store.record_event_cursor(event.control, publication.cursor)
                     publication.append(event)
             return result
-        result, event = operation()
-        self._notify(event)
+        # Commit before callbacks, keeping one manager's listener delivery ordered.
+        with self._mutation_lock:
+            with self.store.write_transaction():
+                result, event = operation()
+            self._notify(event)
         return result
 
     def create(
@@ -94,20 +97,6 @@ class ThreadManager:
 
         return self._apply(operation)
 
-    def talk_thread(self) -> str:
-        """Return this agent store's unique durable incoming-message context."""
-        with file_write_lock(self._lock_path):
-            threads = [
-                thread
-                for thread in self.store.list_threads()
-                if thread.origin == "talk"
-            ]
-            if len(threads) > 1:
-                raise ValueError("multiple talk threads exist for this agent")
-            if threads:
-                return threads[0].id
-            return self.create(prefix=ThreadPrefix.TALK)
-
     def fork(
         self,
         *,
@@ -118,44 +107,6 @@ class ThreadManager:
     ) -> str:
         """Fork after one terminal visible run and return the new thread id."""
 
-        with file_write_lock(self._lock_path):
-            return self._fork_locked(
-                thread_id=thread_id,
-                run_id=run_id,
-                request_id=request_id,
-                client_id=client_id,
-            )
-
-    def rewind(
-        self,
-        *,
-        thread_id: str,
-        run_id: str | None = None,
-        request_id: str | None = None,
-        client_id: str | None = None,
-    ) -> None:
-        """Discard a terminal anchor and suffix from one idle thread."""
-
-        with file_write_lock(self._lock_path):
-            self._rewind_locked(
-                thread_id=thread_id,
-                run_id=run_id,
-                request_id=request_id,
-                client_id=client_id,
-            )
-
-    @property
-    def _lock_path(self) -> Path:
-        return self.store.thread_lock_path
-
-    def _fork_locked(
-        self,
-        *,
-        thread_id: str,
-        run_id: str | None,
-        request_id: str | None,
-        client_id: str | None = None,
-    ) -> str:
         source = self._branchable_thread(thread_id)
         try:
             prefix = ThreadPrefix(source.id.split("_", 1)[0])
@@ -165,6 +116,7 @@ class ThreadManager:
         created_at = utc_now()
 
         def operation() -> tuple[str, ThreadEvent]:
+            source = self._branchable_thread(thread_id)
             thread, control = self.store.fork_thread(
                 thread_id=result_thread_id,
                 source=source.id,
@@ -186,18 +138,20 @@ class ThreadManager:
 
         return self._apply(operation)
 
-    def _rewind_locked(
+    def rewind(
         self,
         *,
         thread_id: str,
-        run_id: str | None,
-        request_id: str | None,
+        run_id: str | None = None,
+        request_id: str | None = None,
         client_id: str | None = None,
     ) -> None:
-        thread = self._branchable_thread(thread_id)
+        """Discard a terminal anchor and suffix from one idle thread."""
+
         created_at = utc_now()
 
         def operation() -> tuple[None, ThreadEvent]:
+            thread = self._branchable_thread(thread_id)
             updated, control, ejected = self.store.rewind_thread(
                 thread_id=thread.id,
                 anchor=run_id,

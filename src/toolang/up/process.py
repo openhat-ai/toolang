@@ -21,7 +21,7 @@ from toolang.common.github import (
     parse_github_file_url,
     parse_github_ref,
 )
-from toolang.common.files import atomic_write_text, file_write_lock
+from toolang.common.files import atomic_write_text, file_lock_path, file_write_lock
 from toolang.common.layout import AgentLayout
 from ..common.progress import ProgressSink, emit_progress
 from toolang.up.records import SandboxState
@@ -776,7 +776,8 @@ def write_runtime_state(
         payload["sandbox_instance"] = sandbox_instance
     if sandbox_description is not None:
         payload["sandbox_description"] = sandbox_description
-    _save_runtime_state(path, payload)
+    with file_write_lock(file_lock_path(path)):
+        _save_runtime_state(path, payload)
     return path
 
 
@@ -789,7 +790,7 @@ def stop_runtime_state(
     """Mark one runtime state as stopped while keeping the last endpoint."""
 
     path = layout.runtime_status
-    with file_write_lock(path.with_suffix(".lock")):
+    with file_write_lock(file_lock_path(path)):
         runtime_state = _load_runtime_state(path)
         if runtime_state is None:
             return False

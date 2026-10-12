@@ -25,7 +25,7 @@ _LOCK_STATES_MUTEX = threading.Lock()
 
 def file_lock_path(path: Path) -> Path:
     """Return the lock name shared by writers of an authored target."""
-    return path.with_name(f".{path.name}.lock")
+    return path.with_name(f"{path.name}.lock")
 
 
 @contextmanager

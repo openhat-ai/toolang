@@ -625,7 +625,7 @@ def test_waiting_compact_reprepares_after_controls(tmp_path, action):
     async def scenario():
         async with harness:
             thread, end = await seed(harness)
-            lock = harness.store.db_path.with_name(f"runs.db.{thread}.compact.lock")
+            lock = harness.store.db_path.with_name(f"{thread}.compact.lock")
             async with permit(lock):
                 handle = harness.executor.run(
                     spec(harness, thread, "current"), tracer=hooked

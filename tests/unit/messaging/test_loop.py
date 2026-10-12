@@ -174,8 +174,15 @@ def test_tool_reply_receipt_context_and_restart(tmp_path, custom):
             restarted = make_loop(tmp_path, client, harness)
             restarted.load()
             await restarted.poll()
-            assert len(harness.store.list_threads()) == 1
-            assert harness.store.list_threads()[0].id == handled.thread.id
+            threads = harness.store.list_threads()
+            assert len(threads) == 2
+            assert all(thread.origin == "talk" for thread in threads)
+            assert len({thread.id for thread in threads}) == 2
+            latest = harness.store.get_run(
+                run_id=restarted.saved["gc_00000001"]["result"]["run"]
+            )
+            assert latest is not None and latest.thread.id != handled.thread.id
+            assert not harness.store.db_path.with_name("runs.db.threads.lock").exists()
             prompt = repr(harness.adapter.invocations[-1].call.messages)
             assert (
                 "Handled." in prompt
