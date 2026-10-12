@@ -1,7 +1,10 @@
 """Root Hub routing and concrete port resolution for both lifecycle commands."""
 
 from types import SimpleNamespace
+import os
 
+import httpx
+import psutil
 import pytest
 
 from toolang.cli.toolang import main as cli
@@ -9,6 +12,111 @@ from toolang.cli.toolang.commands import hub
 from toolang.cli.common.ports import agent_port
 from toolang.common.layout import AgentLayout
 from toolang.up.config import resolve_port_override
+from toolang.up.records import HubRecord
+
+
+@pytest.mark.parametrize(
+    "version,label",
+    [
+        ("0.4.0a5-3-g12345678*", "v0.4.0a5-3-g12345678*"),
+        ("v0.4.0a5-3-g12345678*", "v0.4.0a5-3-g12345678*"),
+        ("unknown", "unknown"),
+    ],
+)
+@pytest.mark.parametrize("healthy", [True, False])
+def test_hub_status_shows_server_version_inline(
+    tmp_path, monkeypatch, capsys, version, label, healthy
+):
+    import toolang.up.hub as module
+
+    saved = HubRecord(
+        pid=os.getpid(),
+        created=psutil.Process().create_time(),
+        port=7123,
+        human="human:owner",
+        identity="backend",
+    )
+    saved.save(hub.HubProcess(tmp_path).path)
+    client_type = httpx.Client
+    requests = []
+
+    def respond(request):
+        requests.append(request.url.path)
+        if request.url.path == "/healthz":
+            return httpx.Response(200 if healthy else 503, json={"ok": healthy})
+        assert request.url.path == "/info"
+        return httpx.Response(200, json={"version": version})
+
+    monkeypatch.setattr(
+        module.httpx,
+        "Client",
+        lambda **kwargs: client_type(**kwargs, transport=httpx.MockTransport(respond)),
+    )
+    assert cli.main(["--root", str(tmp_path), "hub", "status"]) == 0
+    state = "running" if healthy else "unavailable"
+    assert capsys.readouterr().out == (f"Hub {state}: http://127.0.0.1:7123, {label}\n")
+    assert requests == ["/healthz", "/info"]
+
+
+@pytest.mark.parametrize("healthy", [True, False])
+def test_hub_status_missing_metadata_keeps_readiness(
+    tmp_path, monkeypatch, capsys, healthy
+):
+    import toolang.up.hub as module
+
+    saved = HubRecord(
+        pid=os.getpid(),
+        created=psutil.Process().create_time(),
+        port=7123,
+        human="human:owner",
+        identity="backend",
+    )
+    saved.save(hub.HubProcess(tmp_path).path)
+    client_type = httpx.Client
+
+    def respond(request):
+        if request.url.path == "/healthz":
+            return httpx.Response(200 if healthy else 503, json={"ok": healthy})
+        return httpx.Response(404)
+
+    monkeypatch.setattr(
+        module.httpx,
+        "Client",
+        lambda **kwargs: client_type(**kwargs, transport=httpx.MockTransport(respond)),
+    )
+    assert cli.main(["--root", str(tmp_path), "hub", "status"]) == 0
+    state = "running" if healthy else "unavailable"
+    assert capsys.readouterr().out == (f"Hub {state}: http://127.0.0.1:7123, unknown\n")
+
+
+@pytest.mark.parametrize("state", ["starting", "stopped", "stale"])
+def test_hub_status_without_ready_process_skips_http(
+    tmp_path, monkeypatch, capsys, state
+):
+    import toolang.up.hub as module
+
+    if state != "stopped":
+        saved = HubRecord(
+            pid=os.getpid(),
+            created=psutil.Process().create_time() - (10 if state == "stale" else 0),
+            port=7123,
+            human="human:owner",
+            identity="backend",
+            status="starting" if state == "starting" else "running",
+        )
+        saved.save(hub.HubProcess(tmp_path).path)
+
+    def fail(**kwargs):
+        pytest.fail("Status must not query a stopped, stale, or starting Hub")
+
+    monkeypatch.setattr(module.httpx, "Client", fail)
+    assert cli.main(["--root", str(tmp_path), "hub", "status"]) == 0
+    expected = (
+        "Hub starting: http://127.0.0.1:7123, unknown\n"
+        if state == "starting"
+        else "Hub stopped\n"
+    )
+    assert capsys.readouterr().out == expected
 
 
 @pytest.mark.parametrize("command", ["start", "serve"])
