@@ -100,8 +100,10 @@ class ValkeyBackend:
         await self._call("PING")
 
     async def _call(self, command: str, *args: Any) -> Any:
+        caller = asyncio.current_task()
+        cancelling = caller.cancelling() if caller is not None else 0
         try:
-            return await self._client.execute_command(command, *args)
+            result = await self._client.execute_command(command, *args)
         except (ConnectionError, TimeoutError) as exc:
             raise BackendUnavailable("Teaming backend is unavailable") from exc
         except ValkeyError as exc:
@@ -116,6 +118,10 @@ class ValkeyBackend:
                     "Agent is not a member of this conversation"
                 ) from exc
             raise MessagingError(str(exc)) from exc
+        # Python 3.11 wait_for can lose cancellation when a socket write completes.
+        if caller is not None and caller.cancelling() > cancelling:
+            raise asyncio.CancelledError
+        return result
 
     async def _eval(self, script: str, keys: list[str], args: list[object]) -> Any:
         return await self._call("EVAL", script, len(keys), *keys, *args)
