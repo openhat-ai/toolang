@@ -28,9 +28,10 @@ share its guard; startup currently bypasses the stop operation's lock.
 ## Use database transactions
 
 Remove file guards around thread fork/rewind. Their store mutations already use
-`BEGIN IMMEDIATE`; put dependent head reads in that same transaction. Preserve
-source validation, request uniqueness, head checks, and commit/event ordering.
-Keep model/network work outside transactions.
+`BEGIN IMMEDIATE`; include dependent source/head reads in that same transaction,
+including the path without a publication stream. Allocate IDs before entering
+it and notify listeners after commit. Preserve request uniqueness, head checks,
+and stream/event ordering; keep model/network work outside transactions.
 
 ## Remove unnecessary logic or locks
 
@@ -47,7 +48,7 @@ Keep model/network work outside transactions.
 
 | Lock | Why it remains necessary |
 | --- | --- |
-| `<db-name>.init.lock` | WAL activation precedes the database write transaction |
+| `<db-name>.init.lock` | WAL activation precedes the write transaction; retain the guard rather than redesign initialization |
 | `prepare.lock`, `check.lock` | State directory installation/repair and publication span multiple files |
 | `hub.lock` | Excludes concurrent Hub processes for one root throughout their lifetimes |
 | Descriptor lock on `ids.json` | Serializes allocator read/update of the same inode; no `ids.json.lock` sidecar is needed |
