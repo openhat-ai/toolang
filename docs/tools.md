@@ -375,23 +375,6 @@ an indented error line on failure and no result blocks. Run/exec preserve their
 child/handoff hierarchy and their saved action descriptions. Compact retains
 its elapsed timer. Flow descriptions are unchanged.
 
-## Conversations
-
-The selectable `convo` toolset provides `team`, `list`, `peek`, `write`, `create`,
-`rename`, `join`, and `leave`. See [messaging](messaging.md#agent-messaging)
-for parameters, compact results, target resolution, and read/write semantics.
-
-## Migration
-
-Replace `me` with `state`, `_toolang` with `runtime`, and `msg` with `convo` in
-selections, plugin configuration, and calls. Split targets into team/list, replace
-resolve with list/peek, and rename send to write (`body` → `message`,
-`in_reply_to` → `reply_to`, `agent:alice` → `alice`). Management leaves become
-create/rename/join/leave. Human and pair destinations require a conversation ID.
-Restart hosts and prepare fresh Setup; do not resume pre-upgrade runs. Existing
-records, summaries, and plugin rooms remain untouched, and history still recognizes
-old runtime names, including `_toolang__execute`.
-
 ### Spawn independent work
 
 `runtime/spawn({runnable, input?})` starts an independent root in a new empty
@@ -472,3 +455,20 @@ Flow and agic share admission, ownership, and waiting services. Python `ToolRunt
 implementations provide `run(..., asynchronous=False)` and `await_target(target)`.
 Background children are canceled/drained when their parent ends or executes a
 handoff; spawned roots remain independent. Waiting itself never adopts ownership.
+
+## Conversations
+
+The selectable `convo` toolset provides `team`, `list`, `peek`, `write`, `create`,
+`rename`, `join`, and `leave`. See [messaging](messaging.md#agent-messaging)
+for parameters, compact results, target resolution, and read/write semantics.
+
+## Migration
+
+Replace `me` with `state`, `_toolang` with `runtime`, and `msg` with `convo` in
+selections, plugin configuration, and calls. Split targets into team/list, replace
+resolve with list/peek, and rename send to write (`body` → `message`,
+`in_reply_to` → `reply_to`, `agent:alice` → `alice`). Management leaves become
+create/rename/join/leave. Human and pair destinations require a conversation ID.
+Restart hosts and prepare fresh Setup; do not resume pre-upgrade runs. Existing
+records, summaries, and plugin rooms remain untouched, and history still recognizes
+old runtime names, including `_toolang__execute`.

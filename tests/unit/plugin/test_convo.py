@@ -12,13 +12,14 @@ from tests.unit.messaging.test_protocol import client
 from toolang.base.errors import ToolangError
 from toolang.base.types.tool import ConvoToolContext
 from toolang.plugin.toolsets.convo import ConvoToolset
+from toolang.teaming.agent_client import AgentClient
 from toolang.teaming.api import create_app
 from toolang.teaming.errors import MessagingError, SendUnconfirmed
 from toolang.teaming.schemas import Message
 
 
 @asynccontextmanager
-async def environment(tmp_path):
+async def environment(tmp_path, peer="bob"):
     human = client(FakeServer(server_type="valkey"), CONNECTION.human)
     app = create_app(human, version="test")
     context = ConvoToolContext(
@@ -27,7 +28,7 @@ async def environment(tmp_path):
     async with (
         app.router.lifespan_context(app),
         agent(app, tmp_path) as alice,
-        agent(app, tmp_path, "agent:bob", "bob-lease") as bob,
+        agent(app, tmp_path, f"agent:{peer}", "peer-lease") as bob,
     ):
         await alice.register(CONNECTION.human)
         await bob.register(CONNECTION.human)
@@ -166,6 +167,29 @@ def test_targets_never_fall_back_to_names_or_self(tmp_path, target, operation):
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("name", ["gc_zzzzzzzz", "dm_zzzzzzzz"])
+@pytest.mark.parametrize("operation", ["write", "peek"])
+def test_conversation_ids_take_precedence_over_registered_agent_names(
+    tmp_path, name, operation
+):
+    async def scenario():
+        async with environment(tmp_path, peer=name) as (tools, context, alice, _):
+            dm = await alice.create_conversation(
+                participants=["agent:alice", f"agent:{name}"]
+            )
+            await tools["write"].invoke(
+                {"target": dm.id, "message": "explicit ID works"}, context
+            )
+            args = {"target": name}
+            if operation == "write":
+                args["message"] = "must not reach the agent"
+            with pytest.raises(MessagingError):
+                await tools[operation].invoke(args, context)
+            assert len(await alice.history(dm.id)) == 1
+
+    asyncio.run(scenario())
+
+
 def test_rename_reports_captured_name_and_rejects_stale_revision(tmp_path):
     async def scenario():
         async with environment(tmp_path) as (tools, context, alice, _):
@@ -191,6 +215,79 @@ def test_rename_reports_captured_name_and_rejects_stale_revision(tmp_path):
                     context,
                 )
             assert (await alice.conversation(group.id)).name == "after"
+
+    asyncio.run(scenario())
+
+
+def test_rename_preserves_a_concurrent_change_without_retrying(tmp_path):
+    async def scenario():
+        async with environment(tmp_path) as (tools, context, alice, bob):
+            group = await alice.create_conversation("before")
+            await bob.join_conversation(group.id)
+            original = AgentClient.conversation
+
+            async def read_then_race(client, conversation):
+                info = await original(client, conversation)
+                await bob.rename_conversation(
+                    conversation, "concurrent", revision=info.revision
+                )
+                return info
+
+            with patch.object(AgentClient, "conversation", read_then_race):
+                with pytest.raises(MessagingError, match="revision"):
+                    await tools["rename"].invoke(
+                        {
+                            "conversation": group.id,
+                            "name": "must not overwrite",
+                            "revision": (await original(alice, group.id)).revision,
+                        },
+                        context,
+                    )
+            current = await alice.conversation(group.id)
+            assert current.name == "concurrent"
+
+    asyncio.run(scenario())
+
+
+def test_rename_read_failure_never_attempts_a_mutation(tmp_path):
+    async def scenario():
+        async with environment(tmp_path) as (tools, context, alice, _):
+            group = await alice.create_conversation("before")
+            with (
+                patch.object(
+                    AgentClient,
+                    "conversation",
+                    side_effect=MessagingError("unavailable"),
+                ),
+                patch.object(AgentClient, "rename_conversation") as rename,
+            ):
+                with pytest.raises(MessagingError, match="unavailable"):
+                    await tools["rename"].invoke(
+                        {
+                            "conversation": group.id,
+                            "name": "after",
+                            "revision": group.revision,
+                        },
+                        context,
+                    )
+                rename.assert_not_awaited()
+            assert (await alice.conversation(group.id)).name == "before"
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("limit", [0, 50])
+def test_peek_cannot_read_another_agents_dm(tmp_path, limit):
+    async def scenario():
+        async with environment(tmp_path) as (tools, context, _, bob):
+            private = await bob.create_conversation(
+                participants=["agent:bob", "human:owner"]
+            )
+            await bob.send(private.id, body="private message")
+            with pytest.raises(MessagingError):
+                await tools["peek"].invoke(
+                    {"target": private.id, "limit": limit}, context
+                )
 
     asyncio.run(scenario())
 

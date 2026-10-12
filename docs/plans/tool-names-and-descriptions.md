@@ -1,10 +1,10 @@
 # Tool names and descriptions
 
-Status: proposed; awaiting human approval. Definition only.
+Status: approved in [PR #771](https://github.com/openhat-ai/toolang/pull/771).
 
 ## Goal and scope
 
-Give all 49 proposed built-in tools concise progress text, separate textual
+Give all 49 built-in tools concise progress text, separate textual
 toolset prefixes, and consistent model instructions. Rename three toolsets and
 simplify conversation discovery, inspection, and writing. Keep resource access,
 runtime semantics, CLI commands, tool-name grammar, and teaming service contracts unchanged.
@@ -16,7 +16,7 @@ Other contracts remain in force.
 
 ## Names and representations
 
-| Current | New | Implementation module |
+| Previous | Approved | Implementation module |
 | --- | --- | --- |
 | `me` | `state` | `execution/tools/state/` |
 | `_toolang` | `runtime` | `execution/tools/runtime.py` |
@@ -52,8 +52,8 @@ replace seven messaging leaves; the complete built-in catalog grows from 48 to 4
 
 | Display signature | Result |
 | --- | --- |
-| `convo.team()` | `[{id, name, online}]`: agents and humans |
-| `convo.list(name: string? = null, members: string[]? = null, exact: boolean = false)` | `[{id, name, members}]` |
+| `convo.team()` | `{value: [{id, name, online}]}`: agents and humans |
+| `convo.list(name: string? = null, members: string[]? = null, exact: boolean = false)` | `{value: [{id, name, members}]}` |
 | `convo.peek(target: string, limit: integer = 50)` | `{conversation: Conversation, messages: Message[]}` |
 | `convo.write(target: string, message: string, reply_to: string? = null)` | `{conversation: string, message: Message}` |
 | `convo.create(name = null, participants = null)` | Existing create/reuse result |
@@ -217,9 +217,10 @@ Special cases:
   `Canceled: {command}` through the executor's existing lifecycle formatter.
   Preserve the masked command preview; never use success wording.
 - Preserve URI/path labels, command/query quoting, and guidance formatting.
-  Summaries use isolated, masked inputs/results and perform no I/O. Omit contents,
+  Summaries receive isolated inputs/results with sensitive arguments masked and
+  perform no I/O. Omit contents,
   message bodies, nested service inputs, auth URLs/tokens, digests, result dumps,
-  and counts. Malformed/missing fields retain the object label or fall back;
+  and counts. Malformed/missing fields retain the object label or a safe fallback;
   never display `None` or raise into execution.
 
 ### Tool identity and rendering
@@ -296,9 +297,9 @@ Paths below are relative to `src/toolang`, except `pyproject.toml` and documenta
 
 | Area | Touchpoints |
 | --- | --- |
-| Rename and authority | `pyproject.toml`; `execution/tools/{me,_toolang.py}`; `plugin/toolsets/{registry,loading,collections}.py`; setup selection; executor dispatch/control; `execution/assembly/tool_replies.py` |
-| Identity and descriptions | `base/utils/{tools,workspace_paths,tool_descriptions}.py`; `plugin/toolsets/{fs,shell,web,history,service,msg}.py`; `execution/{assembly/prompting,executor/steps/tool}.py`; adapter serialization |
-| Conversation tools | `plugin/toolsets/msg.py` → `plugin/toolsets/convo.py`; `base/types/tool.py`; `setup/{tools,watcher}.py`; existing teaming clients/schemas; `work/messaging.py` instructions use exact new names and `message`/`reply_to` |
+| Rename and authority | `pyproject.toml`; `execution/tools/state/`; `execution/tools/runtime.py`; `plugin/toolsets/{registry,loading,collections}.py`; setup selection; executor dispatch/control; `execution/assembly/tool_replies.py` |
+| Identity and descriptions | `base/utils/{tools,workspace_paths,tool_descriptions}.py`; `plugin/toolsets/{fs,shell,web,history,service,convo}.py`; `execution/{assembly/prompting,executor/steps/tool}.py`; adapter serialization |
+| Conversation tools | `plugin/toolsets/convo.py`; `base/types/tool.py`; `setup/{tools,watcher}.py`; existing teaming clients/schemas; `work/messaging.py` instructions use exact new names and `message`/`reply_to` |
 | Rendering and docs | `cli/common/execution_progress/{types,operations,step_projection,projector,state,rich_rendering}.py`; `execution/assembly/prompts/protocol.md`; active docs/examples/config fixtures; generated references via their existing workflow |
 
 | Acceptance scenario | Pass condition |
@@ -318,5 +319,3 @@ authority, confusing source edits with State publication, and coupling history
 inspection to talk delivery. Reuse existing registry, summary, progress, history,
 and messaging suites; run all default checks for implementation. For this document,
 verify source claims, links/examples, catalog coverage, and `git diff --check`.
-
-Open question: final human approval of this definition before implementation.

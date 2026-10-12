@@ -245,7 +245,7 @@ class _FilesystemTool(Tool):
 
     def summary(
         self, arguments: Mapping[str, Any], result: ToolResult | None = None
-    ) -> str | None:
+    ) -> str:
         verbs = {
             "list": ("list", "Listing", "Listed"),
             "read": ("read", "Reading", "Read"),
@@ -256,23 +256,6 @@ class _FilesystemTool(Tool):
             "mkdir": ("create", "Creating", "Created"),
             "remove": ("remove", "Removing", "Removed"),
         }[self.name]
-        path = arguments.get("path", "." if self.name in {"list", "glob"} else None)
-        if not isinstance(path, str) or "workspace" in arguments or "cwd" in arguments:
-            return None
-        try:
-            name, relative = parse_cwd(path)
-            target = (
-                workspace_label(name, relative) if name is not None else f"“{path}”"
-            )
-        except ToolangError:
-            if "://" in path or path.startswith(":"):
-                return None
-            target = f"“{path}”"
-        if self.name == "glob":
-            pattern = arguments.get("pattern", "*")
-            if not isinstance(pattern, str):
-                return None
-            target = f"{pattern} in {target}"
         label = {
             "list": "files",
             "read": "file",
@@ -283,6 +266,21 @@ class _FilesystemTool(Tool):
             "mkdir": "directory",
             "remove": "path",
         }[self.name]
+        path = arguments.get("path", "." if self.name in {"list", "glob"} else None)
+        # Keep the object even for malformed calls; generic fallback could show content.
+        if not isinstance(path, str):
+            return action_summary(result, verbs, label)
+        try:
+            name, relative = parse_cwd(path)
+            target = (
+                workspace_label(name, relative) if name is not None else f"“{path}”"
+            )
+        except ToolangError:
+            target = f"“{path}”"
+        if self.name == "glob":
+            pattern = arguments.get("pattern", "*")
+            if isinstance(pattern, str):
+                target = f"{pattern} in {target}"
         return action_summary(result, verbs, f"{label}: {target}")
 
     async def invoke(

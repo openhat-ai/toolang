@@ -233,7 +233,43 @@ def test_description_failure_or_empty_value_uses_generic_fallback(outcome, caplo
 def test_invalid_workspace_input_can_still_be_described_as_a_failure(arguments):
     call = ToolCall("tool-1", "call-1", "fs__read", arguments)
     context = _tool_summary_context(call, FilesystemToolset({}).tools()["read"])
-    assert _tool_summary(context, "failed").startswith("Failed read")
+    assert _tool_summary(
+        context, "failed", ToolResult(error="invalid path")
+    ).startswith("Failed to read file")
+    assert call.input == arguments
+
+
+@pytest.mark.parametrize(
+    "operation,verbs",
+    [
+        ("write", ("Writing", "Wrote", "Failed to write", "Canceled: Writing")),
+        (
+            "append",
+            (
+                "Appending to",
+                "Appended to",
+                "Failed to append to",
+                "Canceled: Appending to",
+            ),
+        ),
+    ],
+)
+@pytest.mark.parametrize("path", [None, 1, {}])
+def test_malformed_file_write_summaries_never_fall_back_to_content(
+    operation, verbs, path
+):
+    arguments = {"content": "PRIVATE FILE CONTENT"}
+    if path is not None:
+        arguments["path"] = path
+    call = ToolCall("tool-1", "call-1", f"fs__{operation}", arguments)
+    context = _tool_summary_context(call, FilesystemToolset({}).tools()[operation])
+    for status, verb in zip(("running", "succeeded", "failed", "canceled"), verbs):
+        result = (
+            None
+            if status == "running"
+            else ToolResult(error="invalid path" if status == "failed" else None)
+        )
+        assert _tool_summary(context, status, result) == f"{verb} file"
     assert call.input == arguments
 
 
