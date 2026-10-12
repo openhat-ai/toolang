@@ -5,8 +5,9 @@ Status: proposed; awaiting human approval. Definition only.
 ## Goal and scope
 
 Make each built-in tool recognizable from a short progress sentence, including
-when several toolsets perform similar operations. Rename `me` to `state` and
-`_toolang` to `runtime`, and align model descriptions with that vocabulary.
+when several toolsets perform similar operations. Rename `me` to `state`,
+`_toolang` to `runtime`, and `msg` to `convo`; align model descriptions with that
+vocabulary and shorten conversation-management leaf names.
 
 Success means all 48 current built-in leaves have explicit lifecycle summaries;
 the action and object identify the operation without a repeated tool-name prefix.
@@ -16,9 +17,11 @@ same wording, and otherwise-supported saved history remains readable.
 This definition supersedes the corresponding identity and wording decisions in
 [internal toolsets](internal-toolsets.md),
 [plugin layout](plugin-listing-visibility.md), and
-[tool progress](tool-progress.md). Keep their other contracts.
+[tool progress](tool-progress.md), plus the tool names in [teaming](teaming.md).
+Keep their other contracts.
 No changes to tool arguments, results, execution semantics, resource access,
-tool-name grammar, or CLI command names are included. Existing leaf names stay.
+tool-name grammar, or CLI command names are included. Only the four conversation
+leaf names mapped below change.
 
 ## Verified baseline
 
@@ -43,25 +46,36 @@ tool-name grammar, or CLI command names are included. Existing leaf names stay.
 | --- | --- | --- | --- |
 | `me` | `state` | Current agent source files and State publication | `execution/tools/state/` |
 | `_toolang` | `runtime` | Run execution, workdir, guidance, and history compaction | `execution/tools/runtime.py` |
+| `msg` | `convo` | Conversation discovery, messaging, and membership | `plugin/toolsets/convo.py` |
+
+Under `convo`, shorten `create_conversation`, `rename_conversation`,
+`join_conversation`, and `leave_conversation` to `create`, `rename`, `join`, and
+`leave`. Keep `targets`, `send`, and `resolve`. `convo.targets` lists both participants
+and accessible conversations; it is not a conversation-only list. Send still
+accepts participant or conversation targets, and resolve creates nothing.
 
 Update entry points, plugin/toolset identities, owned class/context names,
 selectors (`state/get`, `runtime/run`), model names (`state__get`,
 `runtime__run`), configuration keys, internal dispatch, errors, and bundled
 instructions together. Retain `<toolset>/<leaf>` and `<toolset>__<leaf>` encoding.
-Keep `fs`, `shell`, `web`, `history`, `service`, and `msg` unchanged.
+Keep `fs`, `shell`, `web`, `history`, and `service` unchanged. Rename the messaging
+toolset class/context to `ConvoToolset`/`ConvoToolContext`, including setup config
+injection and executor dispatch. The underlying teaming API, `/msg` HTTP routes,
+client method names, conversation IDs/storage, and message receipts do not change.
 The unrelated provider/model metadata field `_toolang` is unchanged.
 
 `runtime` remains Toolang-owned and selected independently of user tool ceilings;
-`state` remains an ordinary selectable toolset. Reserve `runtime` against external
-registration, both as a plugin name and an explicit toolset key, using existing
-distribution provenance. A public-looking name must not grant runtime authority.
+`state` and `convo` remain ordinary selectable toolsets. Reserve `runtime` against
+external registration, both as a plugin name and an explicit toolset key, using
+existing distribution provenance. A public-looking name must not grant runtime authority.
 Honor and compact remain runtime-only, excluded from model definitions/calls.
 Existing underscore-name restrictions remain available for other internal names.
 
-No callable aliases for `me` or `_toolang` are added. Migration replaces these
-names in authored tool selections, plugin configuration, and direct tool calls;
-restart hosts and prepare fresh Setup before starting new Runs. Existing leaf
-arguments and receipts need no conversion. Neither renamed toolset currently
+No callable aliases for `me`, `_toolang`, `msg`, or the four old conversation leaf
+names are added. Migration replaces toolset and leaf names in authored tool
+selections, plugin configuration, and direct tool calls; restart hosts and prepare
+fresh Setup before starting new Runs. Existing leaf
+arguments and receipts need no conversion. None of the renamed toolsets currently
 stores durable data in its plugin room; leave old rooms alone.
 
 Do not rewrite saved records, model exchanges, or summaries. Readers that classify
@@ -144,7 +158,7 @@ not literal text. The optional colon and target disappear together when absent.
 | `state/create` | `Creating / Created agent file: {key}` |
 | `state/update` | `Updating / Updated agent file: {key}` |
 | `state/delete` | `Deleting / Deleted agent file: {key}` |
-| `state/sync` | `Syncing / Synced agent State` |
+| `state/sync` | `Syncing / Synced agent state` |
 | `fs/list` | `Listing / Listed files: {path}` |
 | `fs/read` | `Reading / Read file: {path}` |
 | `fs/write` | `Writing / Wrote file: {path}` |
@@ -162,10 +176,10 @@ not literal text. The optional colon and target disappear together when absent.
 | `runtime/runnables` | `Discovering / Discovered runnables` (or `runnable: {name}`) |
 | `runtime/chdir` | `Changing / Changed workdir: {path}` |
 | `runtime/run` | `Running / Completed child run: {runnable}` |
-| `runtime/run` with `async=true` | `Starting / Started background run: {runnable}` |
-| `runtime/spawn` | `Spawning / Spawned independent run: {runnable}` |
+| `runtime/run` with `async=true` | `Starting / Started child run: {runnable}` |
+| `runtime/spawn` | `Spawning / Spawned new run: {runnable}` |
 | `runtime/await` | `Waiting for / Received run result: {target}` |
-| `runtime/exec` | `Transferring / Transferred execution: {runnable}` |
+| `runtime/exec` | `Switching to / Switched to runnable: {runnable}` |
 | `runtime/pick` | `Loading / Loaded guidance: {kind}/{ref}` |
 | `runtime/honor` | `Loading / Loaded rules` (successful result may add `: {files}`) |
 | `runtime/compact` | `Compacting / Compacted thread history` |
@@ -181,16 +195,19 @@ not literal text. The optional colon and target disappear together when absent.
 | `service/read_resource` | `Reading / Read service resource: {service} {resource_uri}` |
 | `service/list_prompts` | `Listing / Listed service prompts: {service}` |
 | `service/get_prompt` | `Getting / Got service prompt: {service}/{prompt_name}` |
-| `msg/targets` | `Listing / Listed message targets` |
-| `msg/send` | `Sending / Sent message: {target}` |
-| `msg/create_conversation` | `Creating conversation: {name}` / `Opened conversation: {id}` |
-| `msg/rename_conversation` | `Renaming / Renamed conversation: {conversation}` |
-| `msg/join_conversation` | `Joining / Joined conversation: {conversation}` |
-| `msg/leave_conversation` | `Leaving / Left conversation: {conversation}` |
-| `msg/resolve` | `Resolving / Resolved message target: {target}` |
+| `convo/targets` | `Listing / Listed message targets` |
+| `convo/send` | `Sending / Sent message: {target}` |
+| `convo/create` | `Creating conversation: {name}` / `Opened conversation: {id}` |
+| `convo/rename` | `Renaming / Renamed conversation: {conversation}` |
+| `convo/join` | `Joining / Joined conversation: {conversation}` |
+| `convo/leave` | `Leaving / Left conversation: {conversation}` |
+| `convo/resolve` | `Resolving / Resolved message target: {target}` |
 
-For create_conversation, a DM may be reused; use the returned canonical ID on
+For `convo.create`, a DM may be reused; use the returned canonical ID on
 success when present, otherwise the supplied name or no target.
+`runtime.exec` switches the runnable within the current Run; the caller does not
+resume. Its success sentence means the switch was committed, not that the target
+completed.
 On history cursor pages use `Reading/Read more threads`,
 `more runs`, or `more steps`; never display the opaque cursor. Stop_bridge's
 broader object covers both stdio bridge shutdown and HTTP session/auth cleanup.
@@ -265,6 +282,9 @@ rows retain the distinction. Replays never call live tool formatters.
 - `plugin/toolsets/{fs,shell,web,history,service,msg}.py`,
   `base/utils/tool_descriptions.py`, and `execution/executor/steps/tool.py`:
   vocabulary, lifecycle summaries, and qualified fallback.
+- `plugin/toolsets/msg.py` to `convo.py`, `base/types/tool.py`, and
+  `setup/{tools,watcher}.py`: messaging identity, shortened leaves, owned context,
+  and setup configuration injection; preserve teaming service contracts.
 - `cli/common/execution_progress/{operations,step_projection}.py`: new runtime
   recognition and saved summary use with existing presentation structure.
 - `execution/assembly/prompts/protocol.md`, active tool/plugin documentation,
@@ -276,7 +296,7 @@ rows retain the distinction. Replays never call live tool formatters.
 
 1. Registration exposes exactly the mapped names and the same 48 leaves. Old
    names are not callable. External attempts to register `runtime` as a plugin
-   or explicit toolset fail; ordinary state selectors still constrain state.
+   or explicit toolset fail; ordinary state/convo selectors still constrain access.
    Runtime-only leaves stay hidden and uncallable by models.
 2. A catalog-driven test requires every built-in leaf to provide running,
    success, and failure summaries. Representative snapshots assert the table,
@@ -307,8 +327,12 @@ rows retain the distinction. Replays never call live tool formatters.
    all adapters retain `__`; fallback labels use `.`. Actionable built-in model
    instructions use exact callable names. Dot/slash calls invoke nothing and
    suggest only an exact currently advertised counterpart. Unknown, unavailable,
-   runtime-only, and old namespace names get no suggestion. Failed exchange
+   runtime-only, and old namespace/leaf names get no suggestion. Failed exchange
    identities and arbitrary prose/code remain unchanged.
+8. Fresh and refreshed Setup injects convo configuration; renamed calls receive
+   run/thread provenance and retain disabled-teaming errors. All seven leaves
+   keep their argument/result schemas and behavior, including target discovery,
+   DM reuse, revision-checked rename, membership rules, and send receipts.
 
 Primary risks are missing an identity-dependent dispatch/reader, granting an
 external plugin runtime authority, and implying that writing an agent file
