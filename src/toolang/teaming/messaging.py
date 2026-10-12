@@ -118,6 +118,11 @@ class MessagingClient:
     async def resolve(
         self, value: str, *, kind: str | None = None, create: bool = False
     ) -> Resolution:
+        if kind == "system":
+            if value != "all":
+                raise MessagingError("Unknown system conversation shortcut")
+            info = await self.conversation(await self.backend.system_conversation())
+            return Resolution(info.id, info.participants, True)
         if kind == "name":
             matches = []
             for ref in await self.backend.named(value):

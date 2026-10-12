@@ -21,6 +21,31 @@ from toolang.teaming.schemas import HubConnection, Message
 CONNECTION = HubConnection("http://hub", "human:owner", CONFIG.identity)
 
 
+def test_explicit_system_lookup_survives_name_collisions_and_rename():
+    async def scenario():
+        server = FakeServer(server_type="valkey")
+        human = client(server, CONNECTION.human)
+        app = create_app(human, version="0.4.0-test")
+        async with (
+            client(server, "agent:all") as agent,
+            app.router.lifespan_context(app),
+            HubClient(CONNECTION, transport=httpx.ASGITransport(app)) as hub,
+        ):
+            await agent.register(CONNECTION.human)
+            system = await hub.resolve("all", kind="system")
+            assert system.exists
+            assert (await hub.conversation(system.conversation)).kind == "gc"
+            assert (await hub.resolve("all")).conversation != system.conversation
+            info = await hub.conversation(system.conversation)
+            await hub.rename_conversation(info.id, "renamed", revision=info.revision)
+            await hub.create_conversation("all")
+            assert (await hub.resolve("all", kind="system")).conversation == info.id
+            with pytest.raises(MessagingError, match="Unknown system"):
+                await hub.resolve("alice", kind="system")
+
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize(
     "after",
     [

@@ -106,7 +106,7 @@ def test_input_and_footer_share_input_width_after_resize_and_clear(
                         for column in range(columns)
                     ).rstrip()
                     assert len(footer) <= width
-                    assert footer.startswith("  #dev(3)")
+                    assert footer.startswith("  #dev(?/3)")
                     assert footer.endswith("bryan")
                     assert len(footer) == width - 2
 
@@ -239,12 +239,12 @@ def test_footer_keeps_identity_after_send_and_prioritizes_reconnection(tmp_path)
         (
             conversation_record("gc_00000000", "gc", ("human:bryan",), name="all"),
             False,
-            "#all(1)",
+            "#all(1/1)",
         ),
         (
             conversation_record("gc_00000003", "gc", ("human:bryan",), name="design"),
             False,
-            "#design(1)",
+            "#design(1/1)",
         ),
         (
             conversation_record("dm_00000001", "dm", ("agent:alice", "human:bryan")),

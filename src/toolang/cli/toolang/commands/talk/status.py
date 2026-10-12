@@ -17,9 +17,19 @@ def conversation_label(info: ConversationView, viewer: str) -> str:
     return "@" + ",".join(target(member).name for member in others)
 
 
-def conversation_status(info: ConversationView, viewer: str) -> StyleAndTextTuples:
+def conversation_status(
+    info: ConversationView, viewer: str, *, online_agents: set[str] | None = None
+) -> StyleAndTextTuples:
     label = conversation_label(info, viewer)
-    count = f"({len(info.participants)})" if info.kind == "gc" else ""
+    count = ""
+    if info.kind == "gc":
+        agents = {member for member in info.participants if member.startswith("agent:")}
+        humans = len(info.participants) - len(agents)
+        if online_agents is None and agents:
+            online = "?"
+        else:
+            online = str(humans + len(agents & (online_agents or set())))
+        count = f"({online}/{len(info.participants)})"
     return [
         (
             "class:status" if info.allows_sender(viewer) else "class:status dim",

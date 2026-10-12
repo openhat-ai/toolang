@@ -7,7 +7,27 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ## [Unreleased]
 
+### Added
+
+- Talk's group status line shows online and total members, such as `#dev(2/3)`:
+  human members always count as online and agents count while they hold a live
+  Hub lease, presence refreshes independently of messages from Hub team
+  deadlines and presence notifications with a half-second fallback and a
+  one-second lookup timeout, agent presence starts unknown and returns to
+  unknown after lookup failures as `#dev(?/3)`, empty groups show `(0/0)`,
+  human-only groups show `(m/m)`, and message following and sends continue.
+
+- `too talk all` opens the system group conversation, and the Hub resolve
+  endpoint accepts `kind="system"` with `target="all"`, using the stored
+  system GC mapping so the shortcut survives a rename or a name collision.
+
 ### Changed
+
+- Talk target parsing reserves `all` for the system group conversation, so
+  `too talk all` no longer opens a direct conversation with an agent named
+  `all`: use that agent's canonical `dm_...` ID. A target beginning with `dm_`
+  or `gc_` must now be a valid conversation ID and never falls back to agent
+  lookup.
 
 - `too hub status` now appends the Hub process's Toolang source version after
   its endpoint, for example `Hub running: http://127.0.0.1:7000, v0.4.0a5`,

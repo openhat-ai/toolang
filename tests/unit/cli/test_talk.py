@@ -150,6 +150,105 @@ def test_directory_lists_conversations_and_interactive_requires_tty(
     assert cli.main(["--root", str(tmp_path), "alice,", "hello"]) != 0
 
 
+def test_system_shortcut_and_id_share_sends_drafts_and_terminal_identity(
+    tmp_path, capsys, monkeypatch, messaging_cli
+):
+    async def prepare():
+        async with messaging_cli() as human, messaging_cli(actor="agent:all") as agent:
+            await agent.register("human:bryan")
+            system = await human.resolve("all", kind="system")
+            info = await human.conversation(system.conversation)
+            await human.rename_conversation(info.id, "renamed", revision=info.revision)
+            await human.create_conversation("all")
+            return info.id
+
+    ref = asyncio.run(prepare())
+    assert cli.main(["--root", str(tmp_path), "talk", "all", "--help", "literal"]) == 0
+    assert ref in capsys.readouterr().out
+    monkeypatch.setattr(talk.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(talk.sys.stdout, "isatty", lambda: True)
+    states = []
+
+    async def inspect_ui(ui):
+        assert ui.conversation_id == ref
+        assert ui._title_label(ui.conversation) == "#renamed"
+        states.append(ui.draft)
+
+    monkeypatch.setattr(TalkTui, "run", inspect_ui)
+    with (
+        create_pipe_input() as pipe,
+        create_app_session(input=pipe, output=DummyOutput()),
+    ):
+        for selection in ("all", ref):
+            assert cli.main(["--root", str(tmp_path), "talk", selection]) == 0
+    assert states[0] == states[1]
+
+    async def check():
+        async with messaging_cli() as human:
+            entries = await human.history(ref)
+            assert len(entries) == 1
+            assert Message.decode(entries[0][1]["data"]).body == "--help literal"
+            assert not (await human.resolve("all")).exists
+
+    asyncio.run(check())
+
+
+@pytest.mark.parametrize(
+    "selection",
+    [
+        "dm_bad",
+        "gc_bad",
+        "gc_zzzzzzzz",
+        '"alice,bob"',
+        "alice,alice",
+        "alice,bob,alice",
+    ],
+)
+def test_invalid_talk_targets_do_not_create_conversations(
+    tmp_path, capsys, messaging_cli, selection
+):
+    async def snapshot():
+        async with messaging_cli() as human:
+            return await human.statistics()
+
+    before = asyncio.run(snapshot())
+    assert cli.main(["--root", str(tmp_path), "talk", selection, "hello"]) == 1
+    assert "Error" in capsys.readouterr().err
+    assert asyncio.run(snapshot()) == before
+
+
+@pytest.mark.parametrize("name", ["dm_alice", "gc_alice"])
+def test_agent_pair_shortcuts_accept_prefixed_agent_names_in_both_orders(
+    tmp_path, monkeypatch, messaging_cli, name
+):
+    async def prepare():
+        async with (
+            messaging_cli(actor=f"agent:{name}") as alice,
+            messaging_cli(actor="agent:bob") as bob,
+        ):
+            await alice.register("human:bryan")
+            await bob.register("human:bryan")
+            return (await alice.resolve("bob", create=True)).conversation
+
+    ref = asyncio.run(prepare())
+    monkeypatch.setattr(talk.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(talk.sys.stdout, "isatty", lambda: True)
+    opened = []
+
+    async def inspect_ui(ui):
+        assert ui.conversation_id == ref and ui.read_only
+        opened.append(ref)
+
+    monkeypatch.setattr(TalkTui, "run", inspect_ui)
+    with (
+        create_pipe_input() as pipe,
+        create_app_session(input=pipe, output=DummyOutput()),
+    ):
+        for selection in (f"bob,{name}", f"{name},bob"):
+            assert cli.main(["--root", str(tmp_path), "talk", selection]) == 0
+    assert opened == [ref, ref]
+
+
 def test_talk_restores_saved_drafts_and_input_history(
     tmp_path, messaging_cli, monkeypatch
 ):
@@ -200,9 +299,10 @@ async def agent_pair(factory, *, messages=False):
         return group
 
 
-def test_human_cannot_send_into_agent_dm(tmp_path, capsys, messaging_cli):
+@pytest.mark.parametrize("shortcut", [None, "alice,bob", "bob,alice"])
+def test_human_cannot_send_into_agent_dm(tmp_path, capsys, messaging_cli, shortcut):
     group = asyncio.run(agent_pair(messaging_cli))
-    assert cli.main(["--root", str(tmp_path), "talk", group, "join"]) == 1
+    assert cli.main(["--root", str(tmp_path), "talk", shortcut or group, "join"]) == 1
     assert "read-only" in capsys.readouterr().err.lower()
 
     async def check():
@@ -212,8 +312,9 @@ def test_human_cannot_send_into_agent_dm(tmp_path, capsys, messaging_cli):
     asyncio.run(check())
 
 
+@pytest.mark.parametrize("shortcut", [None, "alice,bob", "bob,alice"])
 def test_human_observer_sees_both_agents_left_without_a_composer(
-    tmp_path, messaging_cli, monkeypatch
+    tmp_path, messaging_cli, monkeypatch, shortcut
 ):
     group = asyncio.run(agent_pair(messaging_cli, messages=True))
     monkeypatch.setattr(talk.sys.stdin, "isatty", lambda: True)
@@ -256,7 +357,7 @@ def test_human_observer_sees_both_agents_left_without_a_composer(
         create_pipe_input() as pipe,
         create_app_session(input=pipe, output=DummyOutput()),
     ):
-        assert cli.main(["--root", str(tmp_path), "talk", group]) == 0
+        assert cli.main(["--root", str(tmp_path), "talk", shortcut or group]) == 0
 
 
 def test_directory_shows_previews_without_loading_agents_or_creating_conversations(
