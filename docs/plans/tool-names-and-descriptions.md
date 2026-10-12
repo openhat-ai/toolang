@@ -8,6 +8,8 @@ Make each built-in tool recognizable from a short progress sentence, including
 when several toolsets perform similar operations. Rename `me` to `state`,
 `_toolang` to `runtime`, and `msg` to `convo`; align model descriptions with that
 vocabulary and shorten conversation-management leaf names.
+Make conversation discovery explicit and allow sending by ID or conversation
+name in one tool call.
 
 Success means all 48 current built-in leaves have explicit lifecycle summaries;
 the action and object identify the operation without a repeated tool-name prefix.
@@ -17,11 +19,11 @@ same wording, and otherwise-supported saved history remains readable.
 This definition supersedes the corresponding identity and wording decisions in
 [internal toolsets](internal-toolsets.md),
 [plugin layout](plugin-listing-visibility.md), and
-[tool progress](tool-progress.md), plus the tool names in [teaming](teaming.md).
+[tool progress](tool-progress.md), plus the tool surface in [teaming](teaming.md).
 Keep their other contracts.
-No changes to tool arguments, results, execution semantics, resource access,
-tool-name grammar, or CLI command names are included. Only the four conversation
-leaf names mapped below change.
+Changes to arguments and results are limited to conversation query and send as
+defined below. Resource access, runtime execution semantics, tool-name grammar,
+CLI commands, and the underlying teaming service contracts remain unchanged.
 
 ## Verified baseline
 
@@ -39,6 +41,10 @@ leaf names mapped below change.
   only sync checks and publishes State. It does not switch active Run code.
 - Model tool definitions use `__`, but workspace/shell errors instruct models to
   use `_toolang.chdir`. Human documentation also uses dotted call notation.
+- `msg.targets` returns participant and accessible-conversation directories.
+  `msg.resolve` returns a single Resolution, supports explicit conversation-name
+  lookup, and rejects duplicate names. `msg.send` accepts canonical targets and
+  bare-agent shorthand, but does not look up conversation names.
 
 ## Names and compatibility
 
@@ -50,9 +56,8 @@ leaf names mapped below change.
 
 Under `convo`, shorten `create_conversation`, `rename_conversation`,
 `join_conversation`, and `leave_conversation` to `create`, `rename`, `join`, and
-`leave`. Keep `targets`, `send`, and `resolve`. `convo.targets` lists both participants
-and accessible conversations; it is not a conversation-only list. Send still
-accepts participant or conversation targets, and resolve creates nothing.
+`leave`; rename `targets` to `list` and replace `resolve` with `query`. Keep `send`.
+The query and send contract below defines their selectors and matching behavior.
 
 Update entry points, plugin/toolset identities, owned class/context names,
 selectors (`state/get`, `runtime/run`), model names (`state__get`,
@@ -71,12 +76,15 @@ existing distribution provenance. A public-looking name must not grant runtime a
 Honor and compact remain runtime-only, excluded from model definitions/calls.
 Existing underscore-name restrictions remain available for other internal names.
 
-No callable aliases for `me`, `_toolang`, `msg`, or the four old conversation leaf
+No callable aliases for `me`, `_toolang`, `msg`, or the six old conversation leaf
 names are added. Migration replaces toolset and leaf names in authored tool
 selections, plugin configuration, and direct tool calls; restart hosts and prepare
-fresh Setup before starting new Runs. Existing leaf
-arguments and receipts need no conversion. None of the renamed toolsets currently
-stores durable data in its plugin room; leave old rooms alone.
+fresh Setup before starting new Runs. For send, replace `target` with `id` for a
+canonical target or `name` for a conversation label; convert bare-agent shorthand
+to `agent:<name>`. Replace resolve calls with query and consume its candidate
+directory instead of Resolution's `conversation`/`participants`/`exists` fields.
+Other leaf arguments and send receipts need no conversion. None of the renamed
+toolsets stores durable data in its plugin room; leave old rooms alone.
 
 Do not rewrite saved records, model exchanges, or summaries. Readers that classify
 old `_toolang` operations must continue recognizing them, including the existing
@@ -84,6 +92,50 @@ old `_toolang` operations must continue recognizing them, including the existing
 This is read compatibility, not permission to invoke old names. Resuming an
 in-flight pre-upgrade execution is outside scope. Document the rename as breaking
 in the implementation changelog using the repository's runnable workflow.
+
+## Conversation discovery and sending
+
+| Display name | Arguments | Result |
+| --- | --- | --- |
+| `convo.list` | None | Existing Targets directory: `participants` and `conversations` |
+| `convo.query` | Exactly one non-null `id` or `name` | Same directory shape, filtered to matching entries |
+| `convo.send` | `body`, exactly one non-null `id` or `name`, optional `in_reply_to` | Existing send receipt with canonical `conversation`, `stream_id`, and `message` |
+
+`id` accepts an exact `agent:<name>`, `human:<name>`, `dm_...`, or `gc_...` target;
+reject malformed IDs and bare names instead of interpreting them as labels or
+defaulting to an agent. `name` means an existing conversation's explicit name,
+not a participant display name or an unnamed conversation's fallback label.
+Match case-sensitively and exactly using existing conversation-name validation;
+do not trim, normalize, match substrings, or accept patterns. Omitted/null means
+unselected; both or neither selected, and empty strings, are invalid.
+
+List retains the current directory metadata and visibility. Query returns all
+matching accessible entries, including duplicates; no match is a successful
+empty directory. An ID query selects either the participant entry or an existing
+conversation entry. A name query returns conversation entries and an empty
+participant list. Reads never create a DM or predict an absent DM's ID. This is
+directory filtering, not a general query language or message-history search.
+
+Send by ID uses the existing canonical-target delivery path. A participant ID
+can still create/reuse a DM through the existing send contract. Send by name
+performs the same accessible-name match internally: zero matches is an unknown
+name error; multiple matches is an ambiguity error carrying accessible candidate
+IDs, names, kinds, and participants. Neither case sends or creates anything.
+Exactly one match sends once to that canonical conversation ID. The model does
+not need a preceding query call; internal reads may use existing Hub requests.
+
+Resolve a name once per send invocation and keep that ID through delivery. A
+rename or newly matching conversation after lookup does not redirect the send;
+membership and live-lease checks still apply at append time. Retain run/thread
+provenance, reply handling, receipts, and unconfirmed-send behavior. Never retry
+or select another recipient automatically after a delivery failure.
+
+Implement matching once within the convo toolset, using the existing scoped
+AgentClient directory; query and name-send share it. Keep `/msg` routes, client
+methods, and backend schemas unchanged. Direct ID sends need no directory read.
+For example, model calls use `convo__query` with `{"name":"Development"}`,
+or `convo__send` with either `{"id":"gc_00000001","body":"Ready"}` or
+`{"name":"Development","body":"Ready"}`.
 
 ## Identity at each boundary
 
@@ -195,16 +247,19 @@ not literal text. The optional colon and target disappear together when absent.
 | `service/read_resource` | `Reading / Read service resource: {service} {resource_uri}` |
 | `service/list_prompts` | `Listing / Listed service prompts: {service}` |
 | `service/get_prompt` | `Getting / Got service prompt: {service}/{prompt_name}` |
-| `convo/targets` | `Listing / Listed message targets` |
-| `convo/send` | `Sending / Sent message: {target}` |
+| `convo/list` | `Listing / Listed message targets` |
+| `convo/send` | `Sending message: {id_or_name}` / `Sent message: {conversation}` |
 | `convo/create` | `Creating conversation: {name}` / `Opened conversation: {id}` |
 | `convo/rename` | `Renaming / Renamed conversation: {conversation}` |
 | `convo/join` | `Joining / Joined conversation: {conversation}` |
 | `convo/leave` | `Leaving / Left conversation: {conversation}` |
-| `convo/resolve` | `Resolving / Resolved message target: {target}` |
+| `convo/query` | `Querying / Queried message targets: {id_or_name}` |
 
 For `convo.create`, a DM may be reused; use the returned canonical ID on
 success when present, otherwise the supplied name or no target.
+Query and send running/failure summaries use the supplied selector. Send success
+uses the receipt's canonical conversation ID, falling back to the selector if
+that display field is absent. Query success does not imply a match was found.
 `runtime.exec` switches the runnable within the current Run; the caller does not
 resume. Its success sentence means the switch was committed, not that the target
 completed.
@@ -283,8 +338,11 @@ rows retain the distinction. Replays never call live tool formatters.
   `base/utils/tool_descriptions.py`, and `execution/executor/steps/tool.py`:
   vocabulary, lifecycle summaries, and qualified fallback.
 - `plugin/toolsets/msg.py` to `convo.py`, `base/types/tool.py`, and
-  `setup/{tools,watcher}.py`: messaging identity, shortened leaves, owned context,
-  and setup configuration injection; preserve teaming service contracts.
+  `setup/{tools,watcher}.py`: messaging identity, query/send selectors and shared
+  candidate matching, shortened leaves, owned context, and setup configuration
+  injection. Verify against `teaming/{client,agent_client,messaging,schemas}.py`
+  and the existing unit/integration messaging suites without changing service
+  contracts.
 - `cli/common/execution_progress/{operations,step_projection}.py`: new runtime
   recognition and saved summary use with existing presentation structure.
 - `execution/assembly/prompts/protocol.md`, active tool/plugin documentation,
@@ -330,13 +388,25 @@ rows retain the distinction. Replays never call live tool formatters.
    runtime-only, and old namespace/leaf names get no suggestion. Failed exchange
    identities and arbitrary prose/code remain unchanged.
 8. Fresh and refreshed Setup injects convo configuration; renamed calls receive
-   run/thread provenance and retain disabled-teaming errors. All seven leaves
-   keep their argument/result schemas and behavior, including target discovery,
-   DM reuse, revision-checked rename, membership rules, and send receipts.
+   run/thread provenance and retain disabled-teaming errors. List retains directory
+   metadata; create/rename/join/leave preserve their schemas and behavior.
+9. Query covers participant IDs, existing/absent conversation IDs, exact names,
+   zero/multiple matches, invalid selectors, and inaccessible entries. Results
+   keep the directory shape and reads create nothing. Case differences and
+   ID-shaped names demonstrate that the selector determines interpretation.
+10. ID and unique-name sends deliver once to the expected canonical conversation
+    with unchanged provenance, replies, and receipts. Participant-ID sends retain
+    DM creation/reuse. Unknown/duplicate names and invalid selectors deliver
+    nothing; ambiguity candidates expose only accessible entries. A rename after
+    lookup never redirects delivery, membership/lease loss still rejects the
+    send, and unconfirmed delivery never triggers automatic retry. Query and
+    name-send select the same candidates; a model can send by name in one call.
 
 Primary risks are missing an identity-dependent dispatch/reader, granting an
 external plugin runtime authority, and implying that writing an agent file
-publishes or activates State. The tests above cover these boundaries. Reuse
+publishes or activates State. Name-based sending also risks selecting an unintended
+recipient if matching or ambiguity handling diverges; query and send share the
+same exact-match contract. The tests above cover these boundaries. Reuse
 existing tool-description, registry, context, progress, and execution-history
 suites; run all default repository checks for implementation. For this definition,
 verify source claims, relative links, catalog coverage, and `git diff --check`.
