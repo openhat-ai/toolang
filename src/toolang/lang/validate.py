@@ -47,7 +47,8 @@ _PARAM_NAME_RE = re.compile(r"^[A-Za-z_][\w-]*$")
 def _validate(
     program: ast.Program,
     *,
-    external_runnables: Mapping[str, ast.AgicDecl | ast.FlowDecl] | None = None,
+    external_runnables: Mapping[str, tuple[ast.Program, ast.AgicDecl | ast.FlowDecl]]
+    | None = None,
 ) -> None:
     """Validate one complete semantic AST."""
 
@@ -63,8 +64,15 @@ def _validate(
                 validate_template(cap.body)
     contexts = _namespace(program.contexts, label="context")
     instructs = _namespace(program.instructs, label="instruct")
-    runnables = {**(external_runnables or {}), **_runnable_namespace(program)}
-    runnables.update(_adhoc_runnables(program))
+    local_runnables = {**_runnable_namespace(program), **_adhoc_runnables(program)}
+    runnables = {
+        **{name: item for name, (_, item) in (external_runnables or {}).items()},
+        **local_runnables,
+    }
+    runnable_programs = {
+        **{name: owner for name, (owner, _) in (external_runnables or {}).items()},
+        **{name: program for name in local_runnables},
+    }
 
     for runnable in (*program.agics, *program.flows):
         owner = (
@@ -94,7 +102,7 @@ def _validate(
 
     from .flow_validation import validate_flows
 
-    validate_flows(program, runnables)
+    validate_flows(program, runnables, runnable_programs)
 
 
 def _validate_type_references(program: ast.Program) -> None:

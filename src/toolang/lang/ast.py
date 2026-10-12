@@ -411,7 +411,8 @@ class Program(Node):
         cls,
         source: str,
         *,
-        external_runnables: Mapping[str, AgicDecl | FlowDecl] | None = None,
+        external_runnables: Mapping[str, tuple[Program, AgicDecl | FlowDecl]]
+        | None = None,
     ) -> Program:
         from .lower import _lower
         from .validate import _validate

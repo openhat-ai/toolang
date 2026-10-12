@@ -477,7 +477,10 @@ class ProgramSource:
     digest: str
 
     def parse(
-        self, *, external_runnables: Mapping[str, AgicDecl | FlowDecl] | None = None
+        self,
+        *,
+        external_runnables: Mapping[str, tuple[Program, AgicDecl | FlowDecl]]
+        | None = None,
     ) -> Program:
         return Program.from_source(
             self.source_text, external_runnables=external_runnables

@@ -721,7 +721,7 @@ def _program_drafts(
     sources = authored.load_programs()
     programs: list[tuple[ProgramSource, Program]] = []
     diagnostics: list[StateDiagnostic] = []
-    external_runnables: dict[str, AgicDecl | FlowDecl] = {}
+    external_runnables: dict[str, tuple[Program, AgicDecl | FlowDecl]] = {}
     for source in sorted(sources, key=lambda source: source.kind == "agent"):
         try:
             program = (
@@ -738,7 +738,7 @@ def _program_drafts(
                 except ValueError:
                     continue  # Report invalid exports at the runnable-extension layer below.
                 declaration = program_runnable_index(program)[local_name]
-                external_runnables[public_name] = declaration
+                external_runnables[public_name] = (program, declaration)
         except Exception as exc:
             diagnostics.append(
                 _diagnostic(

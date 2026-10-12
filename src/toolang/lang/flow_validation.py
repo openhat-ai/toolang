@@ -12,6 +12,7 @@ from toolang.common.template import (
 from . import ast
 from .contracts import operation_transform
 from .errors import ToolangValidationError, source_location
+from .types import parse_runnable_ref_parts
 
 
 @dataclass(frozen=True)
@@ -27,8 +28,12 @@ _Locals = dict[str, _Local]
 _Runnables = Mapping[str, ast.AgicDecl | ast.FlowDecl]
 
 
-def validate_flows(program: ast.Program, runnables: _Runnables) -> None:
-    checker = _FlowChecker(program, runnables)
+def validate_flows(
+    program: ast.Program,
+    runnables: _Runnables,
+    runnable_programs: Mapping[str, ast.Program],
+) -> None:
+    checker = _FlowChecker(program, runnables, runnable_programs)
     for flow in program.flows:
         locals = {p.name: _Local(p.type_name) for p in flow.params}
         if flow.input is not None:
@@ -59,9 +64,15 @@ def _join(left: _Locals, right: _Locals) -> _Locals:
 
 
 class _FlowChecker:
-    def __init__(self, program: ast.Program, runnables: _Runnables):
+    def __init__(
+        self,
+        program: ast.Program,
+        runnables: _Runnables,
+        runnable_programs: Mapping[str, ast.Program],
+    ):
         self.program = program
         self.runnables = runnables
+        self.runnable_programs = runnable_programs
 
     def content(self, text: str, locals: _Locals, window: int | None) -> None:
         require_template_inputs(text, locals)
@@ -77,19 +88,21 @@ class _FlowChecker:
 
     def inputs(
         self,
-        runnable: ast.AgicDecl | ast.FlowDecl,
+        reference: str,
         locals: _Locals,
     ) -> None:
+        runnable = self.runnables[reference]
+        inline = parse_runnable_ref_parts(reference).role == "adhoc"
         for parameter in (
             *runnable.params,
             *((runnable.input,) if runnable.input else ()),
         ):
             if not parameter.optional and parameter.name not in locals:
                 raise ToolangValidationError(
-                    f"Missing input {parameter.name!r} for {runnable.name or 'inline agic'!r}"
+                    f"Missing input {parameter.name!r} for {'inline agic' if inline else reference!r}"
                 )
             if (
-                runnable.name is not None
+                not inline
                 and parameter.name in locals
                 and locals[parameter.name].handle
             ):
@@ -99,21 +112,23 @@ class _FlowChecker:
 
     def history(
         self,
-        runnable: ast.AgicDecl | ast.FlowDecl,
+        reference: str,
         window: int | None,
         settings: Mapping[str, str | None],
     ) -> None:
+        runnable = self.runnables[reference]
         # Flow signatures are checked locally. Do not descend through callees.
         if not isinstance(runnable, ast.AgicDecl) or window is None:
             return
         templates = [message.content for message in runnable.messages]
-        for kind, declarations in (
-            ("instruct", self.program.instructs),
-            ("context", self.program.contexts),
-        ):
+        for kind in ("instruct", "context"):
             own = getattr(runnable, kind)
             selection = own if own is not None else settings.get(kind)
-            # An omitted inherited selection may belong to another module.
+            # Explicit templates belong to the callee; inherited ones to the caller.
+            owner = (
+                self.runnable_programs[reference] if own is not None else self.program
+            )
+            declarations = owner.instructs if kind == "instruct" else owner.contexts
             if selection is not None and selection != "none":
                 templates.extend(d.body for d in declarations if d.name == selection)
         for template in templates:
@@ -152,7 +167,7 @@ class _FlowChecker:
     ) -> _Locals | None:
         # Runtime preflights the condition window even when the body is skipped.
         if stmt.runnable is not None:
-            self.history(self.runnables[stmt.runnable], stmt.window, settings)
+            self.history(stmt.runnable, stmt.window, settings)
         if stmt.count == 0:
             return locals
 
@@ -166,7 +181,7 @@ class _FlowChecker:
                 return None, None
             exit_locals = None
             if stmt.runnable is not None:
-                self.inputs(self.runnables[stmt.runnable], prefix)
+                self.inputs(stmt.runnable, prefix)
                 exit_locals = prefix
             suffix = self.statements(
                 stmt.stmts[index:], prefix, window=stmt.window, settings=settings
@@ -248,11 +263,10 @@ class _FlowChecker:
 
         child_name = getattr(stmt, "runnable", None)
         child = self.runnables.get(child_name) if child_name else None
-        if (
-            isinstance(stmt, ast.SeekStmt)
-            and child is not None
-            and child.name is not None
-        ):
+        inline = bool(
+            child_name and parse_runnable_ref_parts(child_name).role == "adhoc"
+        )
+        if isinstance(stmt, ast.SeekStmt) and not inline:
             # Named seek targets belong to the remote agent, even when a local
             # runnable happens to have the same name.
             child = None
@@ -294,15 +308,16 @@ class _FlowChecker:
             and source.length == 1
         )
         if child is not None:
+            assert child_name is not None
             # Zero-call operations still preflight inputs, but never render the
             # child's history templates (including implicit-seed singleton reduce).
-            self.inputs(child, child_locals)
-            if isinstance(child, ast.AgicDecl) and child.name is None:
+            self.inputs(child_name, child_locals)
+            if isinstance(child, ast.AgicDecl) and inline:
                 for message in child.messages:
                     self.content(message.content, child_locals, None)
             if not no_calls:
                 self.history(
-                    child,
+                    child_name,
                     1 if isinstance(stmt, ast.ReduceStmt) else window,
                     settings,
                 )

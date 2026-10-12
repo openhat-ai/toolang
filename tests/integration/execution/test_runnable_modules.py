@@ -20,9 +20,9 @@ def test_root_flow_calls_export_with_private_helper(tmp_path, kind, named):
     root_source = "flow parent(_: Text) -> Text:\n  run research\n"
     layout.program.write_text(root_source)
     module_source = (
-        f"{kind}{' research' if named else ''}(_: Text) -> Text:\n"
+        f"{kind}{' research' if named else ''}(_: Text, extra?: Text) -> Text:\n"
         + (
-            "  hands = helper\n  Use the local helper. {{_}}\n"
+            "  hands = helper\n  Use the local helper. {{_}} {{#extra}}{{extra}}{{/extra}}\n"
             if kind == "agic"
             else "  run helper\n"
         )
