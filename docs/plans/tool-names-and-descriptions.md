@@ -53,15 +53,17 @@ replace seven messaging leaves; the complete built-in catalog grows from 48 to 4
 | Display signature | Result |
 | --- | --- |
 | `convo.team()` | Existing `TeamMember[]`: agents and humans, including presence |
-| `convo.list(name: string? = null)` | Existing `ConversationSummary[]`, without message previews |
-| `convo.peek(target: string, limit: integer = 50)` | `{conversation: Conversation, messages: [{stream_id, message: Message}]}` |
-| `convo.write(target: string, message: string, reply_to: string? = null)` | Existing `{conversation: string, stream_id: string, message: Message}` receipt |
+| `convo.list(name: string? = null)` | `[{id, name, members}]` |
+| `convo.peek(target: string, limit: integer = 50)` | `{conversation: Conversation, messages: Message[]}` |
+| `convo.write(target: string, message: string, reply_to: string? = null)` | `{conversation: string, message: Message}` |
 | `convo.create(name = null, participants = null)` | Existing create/reuse result |
 | `convo.rename(conversation, name, revision)` | Existing rename result |
 | `convo.join(conversation)` | Existing join result |
 | `convo.leave(conversation)` | Existing leave result |
 
-- **Discovery:** team/list preserve existing metadata and visibility. List's
+- **Discovery:** team preserves existing member metadata; both directories retain
+  visibility rules. List returns only `id`, nullable `name`, and `members`
+  (canonical participant IDs), mapped from conversation ID/name/participants. Its
   omitted/null name returns all accessible conversations; a supplied name uses
   existing validation and exact, case-sensitive matching, returning all matches
   or an empty list. No separate query, extra filters, or pagination.
@@ -75,12 +77,17 @@ replace seven messaging leaves; the complete built-in catalog grows from 48 to 4
 - **Write:** append once as the current agent. An agent-name target creates/reuses
   the implicit DM; first creation and append remain atomic. An explicit
   conversation ID must exist. Preserve message validation, membership/live-lease
-  checks, run/thread provenance, receipts, and unconfirmed-delivery behavior;
-  never auto-join, retry, or redirect on failure.
+  checks, internal run/thread provenance, receipt validation, and unconfirmed
+  delivery behavior; never auto-join, retry, or redirect on failure.
 - **Parameters:** plain-text `message` maps to stored `body`; optional `reply_to`
   maps to `in_reply_to`. Its description is "ID of the message being replied to.
   Omit for a new message." Use the original Message UUID, not a conversation or
   stream ID. Only `target` selects the destination. Stored fields stay unchanged.
+- **Public messages:** expose only `{id, sender, message, reply_to}` in peek/write,
+  mapping stored `body`/`in_reply_to` to the public names. `id` is the existing
+  application-generated UUID, independent of the backend and stable across write,
+  peek, and reply references. Never expose backend stream IDs/cursors or internal
+  origin data in these results or progress; retain backend receipt checks internally.
 - **Peek:** return metadata and the latest `limit` retained messages in
   chronological order. Accept integers `0..1000`; zero returns metadata and an
   empty messages array. Decode with the existing Message contract; invalid stored
@@ -89,7 +96,7 @@ replace seven messaging leaves; the complete built-in catalog grows from 48 to 4
   checkpoints, or trigger the talk handler; talk-thread processing is unchanged.
   No recv, subscription, or pagination.
 - **Ownership:** implement target interpretation, list filtering, and result
-  assembly in convo, reusing AgentClient's existing methods. Keep `/msg` routes,
+  projection in convo after AgentClient validation. Keep `/msg` routes,
   client APIs, storage, and talk delivery unchanged.
 
 Model-call examples: `convo__list` with `{"name":"Development"}`;
@@ -214,6 +221,8 @@ restart hosts and prepare fresh Setup. Split targets consumers into team/list;
 replace resolve with list/peek. Send becomes write: `body` → `message`,
 `in_reply_to` → `reply_to`, and `agent:alice` → `alice`. Human/pair targets require
 an explicit conversation ID from list/create. Management arguments stay unchanged.
+Result consumers must use the compact directory/message shapes above; backend
+receipt fields are no longer part of the tool result.
 
 Preserve saved names, exchanges, summaries, and plugin rooms; the renamed toolsets
 have no durable room data to migrate. Readers still recognize old `_toolang`
@@ -239,9 +248,9 @@ Paths below are relative to `src/toolang`, except `pyproject.toml` and documenta
 | Summaries | Catalog coverage for running/success/failure; table and special cases match; masked isolated data, no I/O or payload leaks; malformed fields/cancellation remain safe |
 | External plugins | Class/function plugins with absent or broken hooks still run; all fallback states retain identity and argument preview across ordering, missing-ref, masking, truncation, and empty-value cases |
 | Rendering/history | Chat/Script, TTY/non-TTY, parallel/narrow layouts preserve hierarchy and saved wording; old runtime records replay correctly without formatters or record rewrites |
-| Discovery/setup | Fresh/refreshed Setup and disabled-teaming behavior work; directories preserve metadata/access; name filtering covers zero/duplicate/case/invalid inputs; management behavior is unchanged |
+| Discovery/setup | Fresh/refreshed Setup and disabled-teaming behavior work; team metadata and directory access hold; list exposes exactly id/name/members; name filtering covers zero/duplicate/case/invalid inputs; management behavior is unchanged |
 | Message targeting | Caller-based DM derivation works in either participant order; labels never route messages; ID-shaped/unknown/self/typed/pair targets follow the contract; first write creates once, absent-DM read creates nothing |
-| Inspection/delivery | Metadata-only/default/bounded histories preserve order; bad limits/records and denied access fail; reads leave talk checkpoints/delivery untouched; writes preserve parameter mapping, replies, provenance, receipts, and failure behavior |
+| Inspection/delivery | Metadata-only/default/bounded histories preserve order; bad limits/records and denied access fail; reads leave talk checkpoints/delivery untouched; writes preserve parameter mapping, replies, internal provenance, receipt checks, and failure behavior; public results expose only the specified fields and stable logical message IDs |
 
 Main risks are missed identity-dependent dispatch/history paths, accidental runtime
 authority, confusing source edits with State publication, and coupling history
