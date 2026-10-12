@@ -52,8 +52,8 @@ replace seven messaging leaves; the complete built-in catalog grows from 48 to 4
 
 | Display signature | Result |
 | --- | --- |
-| `convo.team()` | Existing `TeamMember[]`: agents and humans, including presence |
-| `convo.list(name: string? = null)` | `[{id, name, members}]` |
+| `convo.team()` | `[{id, name, online}]`: agents and humans |
+| `convo.list(name: string? = null, members: string[]? = null, exact: boolean = false)` | `[{id, name, members}]` |
 | `convo.peek(target: string, limit: integer = 50)` | `{conversation: Conversation, messages: Message[]}` |
 | `convo.write(target: string, message: string, reply_to: string? = null)` | `{conversation: string, message: Message}` |
 | `convo.create(name = null, participants = null)` | Existing create/reuse result |
@@ -61,12 +61,21 @@ replace seven messaging leaves; the complete built-in catalog grows from 48 to 4
 | `convo.join(conversation)` | Existing join result |
 | `convo.leave(conversation)` | Existing leave result |
 
-- **Discovery:** team preserves existing member metadata; both directories retain
-  visibility rules. List returns only `id`, nullable `name`, and `members`
-  (canonical participant IDs), mapped from conversation ID/name/participants. Its
-  omitted/null name returns all accessible conversations; a supplied name uses
-  existing validation and exact, case-sensitive matching, returning all matches
-  or an empty list. No separate query, extra filters, or pagination.
+- **Team:** expose only `id` (canonical participant ID), `name` (its unprefixed
+  identifier), and `online` (existing agent presence; null for humans). Agent names
+  are valid write targets; human names require a conversation ID. Omit owner,
+  display-name metadata, creation time, and lease deadline.
+- **List:** expose only `id`, nullable `name`, and `members` (canonical participant
+  IDs), mapped from conversation ID/name/participants. Both directories retain
+  visibility rules. Omitted/null filters return all accessible conversations;
+  combine supplied filters with AND. Name uses existing validation and exact,
+  case-sensitive matching. Members accepts bare agent names or canonical
+  `agent:`/`human:` IDs; normalize and deduplicate before matching all supplied
+  members. Extra members are allowed unless `exact=true`, which compares the full
+  set, including the caller; never add the caller implicitly. Order is irrelevant.
+  Reject empty member arrays, malformed members, and exact without members;
+  unmatched names or valid unknown members return an empty list. No separate
+  query or pagination.
 - **Target:** peek/write accept a canonical `dm_...`/`gc_...` ID or bare agent
   name. `alice` means the symmetric DM between the context's agent and
   `agent:alice`, regardless of conversation labels. Canonical-ID syntax takes
@@ -99,7 +108,9 @@ replace seven messaging leaves; the complete built-in catalog grows from 48 to 4
   projection in convo after AgentClient validation. Keep `/msg` routes,
   client APIs, storage, and talk delivery unchanged.
 
-Model-call examples: `convo__list` with `{"name":"Development"}`;
+Model-call examples: `convo__list` with `{"name":"Development"}`,
+`{"members":["alice","bob"]}`, or
+`{"members":["alice","bob","human:bryan"],"exact":true}`;
 `convo__peek` with `{"target":"alice","limit":20}`;
 `convo__write` with `{"target":"alice","message":"Ready"}` or
 `{"target":"gc_00000001","message":"Ready"}`.
@@ -161,7 +172,7 @@ data; omit the colon with an absent target.
 | `service/list_prompts` | `Listing / Listed service prompts: {service}` |
 | `service/get_prompt` | `Getting / Got service prompt: {service}/{prompt_name}` |
 | `convo/team` | `Listing / Listed team members` |
-| `convo/list` | `Listing / Listed conversations: {name}` |
+| `convo/list` | `Listing / Listed conversations: {filter}` |
 | `convo/peek` | `Reading / Read conversation messages: {target}` (`conversation: {target}` when `limit=0`) |
 | `convo/write` | `Writing message: {target}` / `Wrote message: {conversation}` |
 | `convo/create` | `Creating conversation: {name}` / `Opened conversation: {id}` |
@@ -175,6 +186,8 @@ Special cases:
   no target. Write success uses the receipt's conversation ID, then input target;
   peek/write running and failure text uses input target. List may return zero
   matches. Exec success means the same-Run switch committed; the caller never resumes.
+- List filter text combines supplied name and members, e.g. `Development; with
+  alice, bob` or `only alice, bob`; omit it when unfiltered.
 - History cursor pages say `Reading/Read more threads/runs/steps`, never the cursor.
   Stop_bridge covers both stdio shutdown and HTTP session/auth cleanup.
 - Failure uses `Failed to <base action> <object/target>`; cancellation keeps
@@ -248,7 +261,7 @@ Paths below are relative to `src/toolang`, except `pyproject.toml` and documenta
 | Summaries | Catalog coverage for running/success/failure; table and special cases match; masked isolated data, no I/O or payload leaks; malformed fields/cancellation remain safe |
 | External plugins | Class/function plugins with absent or broken hooks still run; all fallback states retain identity and argument preview across ordering, missing-ref, masking, truncation, and empty-value cases |
 | Rendering/history | Chat/Script, TTY/non-TTY, parallel/narrow layouts preserve hierarchy and saved wording; old runtime records replay correctly without formatters or record rewrites |
-| Discovery/setup | Fresh/refreshed Setup and disabled-teaming behavior work; team metadata and directory access hold; list exposes exactly id/name/members; name filtering covers zero/duplicate/case/invalid inputs; management behavior is unchanged |
+| Discovery/setup | Fresh/refreshed Setup and disabled-teaming behavior work; directory access holds; team exposes only id/name/online with agent/human presence semantics; list exposes only id/name/members; name filters cover zero/duplicate/case/invalid inputs; member filters cover contains/exact, name combinations, normalized duplicates/order, explicit self, unknown/invalid/empty members, and exact without members; management behavior is unchanged |
 | Message targeting | Caller-based DM derivation works in either participant order; labels never route messages; ID-shaped/unknown/self/typed/pair targets follow the contract; first write creates once, absent-DM read creates nothing |
 | Inspection/delivery | Metadata-only/default/bounded histories preserve order; bad limits/records and denied access fail; reads leave talk checkpoints/delivery untouched; writes preserve parameter mapping, replies, internal provenance, receipt checks, and failure behavior; public results expose only the specified fields and stable logical message IDs |
 
