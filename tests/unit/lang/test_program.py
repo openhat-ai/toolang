@@ -1012,9 +1012,9 @@ def test_parse_runnable_ref_parts_accepts_module_kind_and_unnamed() -> None:
         "entry",
         3,
     )
-    adhoc = parse_runnable_ref_parts("flows::research::agic:<adhoc:5>")
+    adhoc = parse_runnable_ref_parts("runnables::research::agic:<adhoc:5>")
     assert (adhoc.module, adhoc.kind, adhoc.role, adhoc.line) == (
-        "flows::research",
+        "runnables::research",
         "agic",
         "adhoc",
         5,
@@ -1052,7 +1052,7 @@ def test_display_runnable_ref_uses_surface_specific_unnamed_labels() -> None:
         display_runnable_ref("agent::agic:<adhoc:5>", surface="chat") == "agic:<adhoc>"
     )
     assert (
-        display_runnable_ref("flows::research::agic:<adhoc:5>", surface="progress")
+        display_runnable_ref("runnables::research::agic:<adhoc:5>", surface="progress")
         == "agic:<adhoc:5>"
     )
     assert display_runnable_ref("agic:chat", surface="progress") == "agic:chat"

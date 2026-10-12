@@ -61,7 +61,8 @@ def test_six_closed_me_schemas():
     ("key", "content"),
     [
         ("config.toml", '# Keep comments\r\n[default]\r\nmodel = "test/model"\r\n'),
-        ("flows/research.too", "flow:\n  pass\n"),
+        ("runnables/research.too", "flow:\n  pass\n"),
+        ("runnables/talk.too", "agic(_: Json):\n  {{_}}\n"),
         ("psyches/careful.md", "Think carefully.\n"),
         ("prompts/ask.md", "Ask café.\r\n"),
         (
@@ -136,13 +137,13 @@ def test_complete_file_crud_and_exact_bytes(context, key, content):
 @pytest.mark.parametrize(
     ("key", "alias"),
     [
-        ("flows/research.too", "flows/RESEARCH.too"),
+        ("runnables/research.too", "runnables/RESEARCH.too"),
         ("skills/review/assets/note.txt", "skills/REVIEW/assets/note.txt"),
         ("skills/review/assets/notes/a.txt", "skills/review/assets/NOTES/a.txt"),
     ],
 )
 def test_file_aliases_cannot_produce_receipts(context, operation, key, alias):
-    content = "flow:\n  pass\n" if key.startswith("flows/") else "A note.\n"
+    content = "flow:\n  pass\n" if key.startswith("runnables/") else "A note.\n"
     created = invoke(context, "create", key=key, content=content)
     assert created.error is None, created.output
     if not (context.home / alias).exists():
@@ -487,16 +488,17 @@ def test_bad_requests_do_not_mutate(context, operation, arguments, code):
         "../agent.too",
         "home:agent.too",
         "root:psyches/a.md",
-        "flows/../agent.too",
+        "runnables/../agent.too",
         "./agent.too",
-        "flows//a.too",
-        "flows/a.too/",
+        "runnables//a.too",
+        "runnables/a.too/",
         "agent.too\x00",
         "flows\\a.too",
         "agents/bob/agent.too",
         ".runtime/execution.db",
         "catalog.json",
-        "flows/nested/a.too",
+        "runnables/nested/a.too",
+        "flows/a.too",
         "skills/a/scripts/run.py",
         "archive/chores/a.md",
         "drafts/chores/a.md",
@@ -575,7 +577,7 @@ def test_loader_rejects_bad_source_from_either_writer_and_recovers(
         ("services/a.md", "No metadata."),
         ("skills/a/SKILL.md", "No description."),
         ("chores/a.md", "---\nschedule: invalid\n---\nCheck."),
-        ("flows/bad-name.extra.too", "Not a program."),
+        ("runnables/bad-name.extra.too", "Not a program."),
     ],
 )
 def test_content_validation_is_owned_by_loaders(context, key, content):
@@ -626,7 +628,7 @@ def test_can_read_digest_and_repair_corrupt_main_source(context, broken):
 def test_flow_deletion_is_saved_and_composition_errors_belong_to_watcher(context):
     assert (
         invoke(
-            context, "create", key="flows/research.too", content="flow:\n  pass\n"
+            context, "create", key="runnables/research.too", content="flow:\n  pass\n"
         ).error
         is None
     )
@@ -641,7 +643,7 @@ def test_flow_deletion_is_saved_and_composition_errors_belong_to_watcher(context
         ).error
         is None
     )
-    flow = read(context, "flows/research.too")
+    flow = read(context, "runnables/research.too")
     state = prepare_agent_state(context.layout)
     watcher = StateWatcher(context.layout, initial_state=state)
     result = invoke(context, "delete", key=flow["key"], if_digest=flow["digest"])
@@ -651,7 +653,7 @@ def test_flow_deletion_is_saved_and_composition_errors_belong_to_watcher(context
     assert rejected.state.revision == state.revision
     assert rejected.diagnostics
     assert (context.home / ".agent.too.lock").is_file()
-    assert (context.home / ".flows.lock").is_file()
+    assert (context.home / ".runnables.lock").is_file()
     assert not (context.home / ".authored-flows.lock").exists()
 
 
@@ -791,7 +793,7 @@ def test_independent_files_can_be_saved_before_composition_is_valid(context):
             invoke,
             context,
             "create",
-            key="flows/research.too",
+            key="runnables/research.too",
             content="flow:\n  pass\n",
         )
         results = [main.result(), flow.result()]
@@ -912,7 +914,7 @@ def test_sync_publishes_file_changes_and_deletion(context):
         content="agic alice():\n  Changed.\n",
     )
     created = invoke(
-        context, "create", key="flows/research.too", content="flow:\n  pass\n"
+        context, "create", key="runnables/research.too", content="flow:\n  pass\n"
     )
     after = invoke(context, "sync")
     assert after.error is None
@@ -923,7 +925,10 @@ def test_sync_publishes_file_changes_and_deletion(context):
     ]
     assert invoke(context, "sync").output == after.output
     invoke(
-        context, "delete", key="flows/research.too", if_digest=created.output["digest"]
+        context,
+        "delete",
+        key="runnables/research.too",
+        if_digest=created.output["digest"],
     )
     final = invoke(context, "sync")
     assert final.error is None
@@ -1031,13 +1036,17 @@ def test_flat_file_errors_and_digest_conflicts(context):
         "actual_digest": original["digest"],
     }
     for operation, arguments, code in (
-        ("get", {"key": "flows/missing.too"}, "not_found"),
+        ("get", {"key": "runnables/missing.too"}, "not_found"),
         (
             "update",
-            {"key": "flows/missing.too", "content": "", "if_digest": "0" * 64},
+            {"key": "runnables/missing.too", "content": "", "if_digest": "0" * 64},
             "not_found",
         ),
-        ("delete", {"key": "flows/missing.too", "if_digest": "0" * 64}, "not_found"),
+        (
+            "delete",
+            {"key": "runnables/missing.too", "if_digest": "0" * 64},
+            "not_found",
+        ),
         ("create", {"key": "agent.too", "content": ""}, "already_exists"),
     ):
         result = invoke(context, operation, **arguments)

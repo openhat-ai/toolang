@@ -910,7 +910,7 @@ flow -> Text:
     layout = AgentLayout.resident(tmp_path, "alice")
     layout.home.mkdir(parents=True, exist_ok=True)
     layout.program.write_text(source, encoding="utf-8")
-    flows = layout.home / "flows"
+    flows = layout.home / "runnables"
     flows.mkdir(parents=True, exist_ok=True)
     flow_source = flows / "outer.too"
     flow_source.write_text(initial_flow, encoding="utf-8")
@@ -1373,7 +1373,7 @@ agic parent(_: Text) -> Text:
     layout = AgentLayout.resident(tmp_path, "alice")
     layout.home.mkdir(parents=True, exist_ok=True)
     layout.program.write_text(source, encoding="utf-8")
-    flows = layout.home / "flows"
+    flows = layout.home / "runnables"
     flows.mkdir(parents=True, exist_ok=True)
     (flows / "research.too").write_text(
         """struct Brief:
@@ -1445,7 +1445,7 @@ flow research(brief: Brief, prefix?: Text) -> Text:
             accepted = harness.store.get_run_control(run_id=child.id, index=0)
             assert accepted is not None
             assert isinstance(accepted.payload, RunControlPayload)
-            assert accepted.payload.runnable == "flows::research::flow:research"
+            assert accepted.payload.runnable == "runnables::research::flow:research"
             result = last_tool_result(harness.adapter.invocations[2].call)
             assert isinstance(result, ToolResultPart)
             assert result.error is None

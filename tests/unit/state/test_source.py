@@ -188,7 +188,7 @@ def test_home_source_rejects_symbolic_linked_flow_directory(tmp_path: Path) -> N
     home.mkdir(parents=True)
     external.mkdir()
     (external / "research.too").write_text("flow:\n  pass\n", encoding="utf-8")
-    (home / "flows").symlink_to(external, target_is_directory=True)
+    (home / "runnables").symlink_to(external, target_is_directory=True)
 
     with pytest.raises(ValueError, match="symbolic-link directories"):
         scan_home_source(root, "alice")
@@ -269,9 +269,11 @@ def test_manifest_builder_reuses_only_unchanged_file_digests(
     assert after != before
 
 
-def test_home_source_discovers_only_direct_lowercase_too_flows(tmp_path: Path) -> None:
+def test_home_source_discovers_only_direct_lowercase_too_runnables(
+    tmp_path: Path,
+) -> None:
     root = tmp_path / "toolang"
-    flows = root / "agents" / "alice" / "flows"
+    flows = root / "agents" / "alice" / "runnables"
     nested = flows / "nested"
     nested.mkdir(parents=True)
     direct = flows / "research.too"
@@ -279,16 +281,26 @@ def test_home_source_discovers_only_direct_lowercase_too_flows(tmp_path: Path) -
     (flows / "notes.txt").write_text("ignored", encoding="utf-8")
     (flows / "upper.TOO").write_text("flow:\n  pass\n", encoding="utf-8")
     (nested / "hidden.too").write_text("flow:\n  pass\n", encoding="utf-8")
-    root_flow = root / "flows" / "shared.too"
+    root_flow = root / "runnables" / "shared.too"
     root_flow.parent.mkdir()
     root_flow.write_text("flow:\n  pass\n", encoding="utf-8")
+    home = flows.parent
+    ignored = (
+        home / "research.too",
+        home / "flows/research.too",
+        home / "agics/research.too",
+    )
+    for path in ignored:
+        path.parent.mkdir(exist_ok=True)
+        path.write_text("invalid ignored source", encoding="utf-8")
 
     source = scan_home_source(root, "alice")
 
-    assert [item.path for item in source.files] == ["flows/research.too"]
+    assert [item.path for item in source.files] == ["runnables/research.too"]
     assert is_source_path(root, "alice", direct)
     assert not is_source_path(root, "alice", nested / "hidden.too")
     assert not is_source_path(root, "alice", root_flow)
+    assert all(not is_source_path(root, "alice", path) for path in ignored)
 
 
 def test_current_source_requires_raw_digests_and_legacy_scan_upgrades(tmp_path):

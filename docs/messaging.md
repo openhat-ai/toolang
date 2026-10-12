@@ -196,6 +196,12 @@ receipts provide context. Final model output is a summary; replies use `msg/send
 Own messages do not trigger another handler. Failed/malformed batches are logged
 and skipped. Agent origin records contain context-derived thread/run IDs.
 
+A shared handler can live in `runnables/talk.too`, exporting an unnamed or
+filename-matching agic or flow. Its primary input receives the JSON message
+batch without the built-in fallback instructions. Private helpers and inline
+caps stay in the same file; required models and services come from the receiving
+environment. A public `talk` in `agent.too` conflicts with this export.
+
 An independent heartbeat runs every 5 seconds. Agent presence is a ZSet deadline
 in backend Unix milliseconds, renewed to at least 15 seconds ahead. Expired
 leases grant no authority even before cleanup; graceful stop releases the lease.

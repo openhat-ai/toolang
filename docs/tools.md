@@ -167,7 +167,7 @@ Keys are canonical paths relative to the current home:
 | Files | Operations |
 | --- | --- |
 | `agent.too`, `config.toml` | Full-file CRUD |
-| `flows/<name>.too` | Full-file CRUD |
+| `runnables/<name>.too` | Full-file CRUD for agic or flow modules |
 | `psyches/<name>.md`, `services/<name>.md`, `prompts/<name>.md` | Full-file CRUD |
 | `skills/<name>/SKILL.md`, `skills/<name>/assets/**` | Full-file CRUD |
 | `chores/<name>.md` | Full-file CRUD on current chore definitions |
@@ -226,10 +226,9 @@ operations are excluded. Symlinks are rejected except the canonical roaming
 `agent.too` link to its own original script; that link is preserved when editing.
 Linked config files are not writable through me.
 
-Main operations use `.agent.too.lock`; flows use `.flows.lock`. Config writers,
-including configured caps, workspaces, and roaming projection, share
+Main operations use `.agent.too.lock`; runnable modules use `.runnables.lock`.
+Config writers, including configured caps, workspaces, and roaming projection, share
 `.config.toml.lock`; caps/assets use `.caps.lock`, and chores use `.chores.lock`.
-Restart older writers when upgrading from `.authored-flows.lock` or `.project.lock`.
 Locks coordinate participating writers; filesystem edits that bypass these locks
 can still race a save.
 

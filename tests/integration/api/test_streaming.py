@@ -109,14 +109,17 @@ class _Snapshot:
         return self.value
 
 
-def test_flow_module_is_listed_from_the_public_state_catalog(tmp_path: Path) -> None:
+@pytest.mark.parametrize("kind", ["agic", "flow"])
+def test_runnable_module_is_listed_from_the_public_state_catalog(
+    tmp_path: Path, kind
+) -> None:
     harness = ExecutionHarness.create(tmp_path, source="", responses=[])
     home = harness.setup.layout.home
-    flows = home / "flows"
+    flows = home / "runnables"
     flows.mkdir(parents=True)
     (home / "agent.too").write_text("# Agent alice\n", encoding="utf-8")
     (flows / "research.too").write_text(
-        "agic helper:\n  Private.\n\nflow:\n  run helper\n",
+        f"agic helper:\n  Private.\n\n{kind}:\n  pass\n",
         encoding="utf-8",
     )
     state = prepare_agent_state(harness.setup.layout)
@@ -136,9 +139,13 @@ def test_flow_module_is_listed_from_the_public_state_catalog(tmp_path: Path) -> 
             agics = client.get("/api/v1/agics")
             flows_response = client.get("/api/v1/flows")
 
-        assert agics.json()["items"] == []
+        assert agics.json()["items"] == (
+            [{"name": "research"}] if kind == "agic" else []
+        )
         assert agics.json()["default"] is None
-        assert flows_response.json()["items"] == [{"name": "research"}]
+        assert flows_response.json()["items"] == (
+            [{"name": "research"}] if kind == "flow" else []
+        )
     finally:
         asyncio.run(core.close())
 

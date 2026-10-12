@@ -602,9 +602,9 @@ flow main(_: Text):
   run research
 """
     layout = AgentLayout.resident(tmp_path, "alice")
-    (layout.home / "flows").mkdir(parents=True)
+    (layout.home / "runnables").mkdir(parents=True)
     layout.program.write_text(source)
-    (layout.home / "flows/research.too").write_text("""instruct check:
+    (layout.home / "runnables/research.too").write_text("""instruct check:
   Previous={{_1._}}.
 agic ready(_: Text) -> Boolean:
   instruct = check

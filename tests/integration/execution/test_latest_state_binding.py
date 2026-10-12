@@ -310,8 +310,8 @@ def test_main_calls_unnamed_export_and_flow_calls_private_helper(tmp_path):
     gate = AsyncGate()
     # Compose authored main and external modules through the State preparer.
     home = tmp_path / "agents" / "alice"
-    (home / "flows").mkdir(parents=True)
-    flow = home / "flows" / "research.too"
+    (home / "runnables").mkdir(parents=True)
+    flow = home / "runnables" / "research.too"
     flow.write_text("agic helper():\n  Old helper.\nflow():\n  run helper\n")
     (home / "agent.too").write_text(source)
     from toolang.common.layout import AgentLayout
@@ -351,7 +351,7 @@ def test_main_calls_unnamed_export_and_flow_calls_private_helper(tmp_path):
                 for e in entries
                 if e is not None
                 and isinstance(e.payload, RunControlPayload)
-                and e.payload.runnable == "flows::research::agic:helper"
+                and e.payload.runnable == "runnables::research::agic:helper"
             ]
             assert {e.state for e in helper} == {state.revision, updated.revision}
             assert "New helper" in str(harness.adapter.invocations[1].call.messages)
@@ -683,7 +683,7 @@ def test_flow_model_routes_are_local_and_keep_advertised_identity(
     from toolang.common.layout import AgentLayout
 
     home = tmp_path / "agents/alice"
-    (home / "flows").mkdir(parents=True)
+    (home / "runnables").mkdir(parents=True)
     source = "agic helper() -> Text:\n  Main helper.\nflow parent() -> Text:\n  run research\n"
     module_source = (
         "agic driver() -> Text:\n"
@@ -692,9 +692,9 @@ def test_flow_model_routes_are_local_and_keep_advertised_identity(
         "agic helper() -> Text:\n  context = none\n  Old local helper.\n"
         "flow() -> Text:\n  run driver\n"
     )
-    module = home / "flows/research.too"
+    module = home / "runnables/research.too"
     module.write_text(module_source)
-    (home / "flows/other.too").write_text("flow:\n  pass\n")
+    (home / "runnables/other.too").write_text("flow:\n  pass\n")
     (home / "agent.too").write_text(source)
     initial = prepare_agent_state(AgentLayout.resident(tmp_path, "alice"))
     gate = AsyncGate()
@@ -739,7 +739,7 @@ def test_flow_model_routes_are_local_and_keep_advertised_identity(
             advertised = route_scopes(harness.adapter.invocations[0].call)
             enabled = "hands" if operation == "run" else "handoffs"
             assert advertised[enabled] == (
-                "ALL" if selector == "*" else "flows::research::agic:helper"
+                "ALL" if selector == "*" else "runnables::research::agic:helper"
             )
             helper_call = harness.adapter.invocations[1].call
             if operation == "run":
@@ -756,10 +756,10 @@ def test_deleted_flow_module_discovery_keeps_only_the_bound_agic(tmp_path, route
     from toolang.common.layout import AgentLayout
 
     home = tmp_path / "agents/alice"
-    (home / "flows").mkdir(parents=True)
+    (home / "runnables").mkdir(parents=True)
     source = "agic default:\n  Ready.\n"
     (home / "agent.too").write_text(source)
-    module = home / "flows/research.too"
+    module = home / "runnables/research.too"
     module.write_text(
         f"agic driver() -> Text:\n{routes}  context = none\n  Bound driver.\n"
         "agic helper() -> Text:\n  Work.\nflow() -> Text:\n  run driver\n"
@@ -805,13 +805,13 @@ def test_deleted_flow_module_discovery_keeps_only_the_bound_agic(tmp_path, route
             entries = {item["ref"]: item for item in before.output["runnables"]}
             assert set(entries) == {
                 "flow:research",
-                "flows::research::agic:driver",
-                "flows::research::agic:helper",
+                "runnables::research::agic:driver",
+                "runnables::research::agic:helper",
             }
             assert after.output["runnables"] == [
-                entries["flows::research::agic:driver"]
+                entries["runnables::research::agic:driver"]
             ]
-            assert after.output["current"] == "flows::research::agic:driver"
+            assert after.output["current"] == "runnables::research::agic:driver"
             assert "Bound driver." in str(harness.adapter.invocations[3].call.messages)
 
     asyncio.run(scenario())
@@ -1040,10 +1040,10 @@ agic helper() -> Text:
   Agent helper must not run.
 """
     home = tmp_path / "agents/alice"
-    (home / "flows").mkdir(parents=True)
+    (home / "runnables").mkdir(parents=True)
     (home / "psyches").mkdir()
     (home / "psyches/common.md").write_text("Excluded external advice.")
-    module = home / "flows/research.too"
+    module = home / "runnables/research.too"
     module.write_text("""
 psyche local:
   Module advice.

@@ -638,7 +638,7 @@ def test_pick_applies_scoped_rules_to_target_module_caps(tmp_path: Path, operati
     home_ref, module_ref = "service/github", "service/github"
     module_guidance = "Use the target module's guidance."
     layout = AgentLayout.resident(tmp_path, "alice")
-    module = layout.home / "flows/research.too"
+    module = layout.home / "runnables/research.too"
     module.parent.mkdir(parents=True)
     module.write_text(
         f"""service github:

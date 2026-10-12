@@ -395,7 +395,7 @@ def resolve_bound_runnable(
 def resolve_call_target(
     state: AgentState, module: str, reference: str
 ) -> ResolvedRunnable:
-    """Resolve an authored call without crossing a flow module's boundary."""
+    """Resolve an authored call within its module or the root's public catalog."""
 
     parsed = parse_runnable_ref_parts(reference)
     if parsed.module is None or parsed.module == module:
@@ -408,9 +408,7 @@ def resolve_call_target(
             if not str(exc).startswith("Runnable not found:"):
                 raise
     target = resolve_public_runnable(state, reference)
-    if target.module == module or (
-        module == "agent" and isinstance(target.executable, FlowDecl)
-    ):
+    if target.module == module or module == "agent":
         return target
     raise ToolangError(f"Runnable not found in module {module}: {reference}")
 

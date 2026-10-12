@@ -19,7 +19,7 @@ _SINGLE_FILES: dict[str, HomeFileCategory] = {
     "config.toml": "config",
 }
 _DIRECTORIES: dict[str, tuple[str, HomeFileCategory]] = {
-    "flows": (".too", "program"),
+    "runnables": (".too", "program"),
     **{
         directory: (".md", "cap")
         for directory, kind in CAP_KIND_BY_DIR.items()
@@ -179,7 +179,7 @@ class HomeFiles:
         targets = {
             "program": ("agent.too",)
             if file and file.key == "agent.too"
-            else ("flows",),
+            else ("runnables",),
             "config": ("config.toml",),
             "cap": ("caps",),
             "asset": ("caps",),
@@ -188,7 +188,7 @@ class HomeFiles:
         names = (
             targets[file.category]
             if file is not None
-            else ("agent.too", "flows", "config.toml", "caps", "chores")
+            else ("agent.too", "runnables", "config.toml", "caps", "chores")
         )
         self._directory(self.home)
         with ExitStack() as stack:

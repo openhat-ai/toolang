@@ -7,6 +7,31 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking:** home program modules move from `flows/<name>.too` to
+  `runnables/<name>.too`. Modules are now identified as `runnables::<name>`,
+  as in the private reference `runnables::talk::agic:helper`, while public
+  references keep `name`, `agic:name`, and `flow:name`. There is no
+  compatibility discovery or automatic migration: move each `flows/*.too` file
+  into `runnables/`; leftover `flows/` files are ignored. `flows/`, `agics/`,
+  other home-level `.too` files, nested files, and Toolang-root modules are
+  ignored.
+
+- Each module exports exactly one unnamed or filename-matching agic or flow, so
+  `runnables/talk.too` can share an `agic talk` handler that messaging selects,
+  and root flow statements, agic routes, and messaging can call either exported
+  kind. A named entry must be renamed with its file, and two candidates,
+  including an unnamed entry beside a filename-matching declaration, are
+  ambiguous even across kinds. A public name already exported by `agent.too` or
+  another module is rejected by a diagnostic naming both sources, and
+  nonportable or case-folded filenames and invalid exports report the
+  `runnable-extension` layer with the `invalid-runnable-filename` and
+  `invalid-runnable-export` codes.
+
+- Home authoring tools accept `runnables/*.too` and reject `flows/*.too`,
+  writing through `.runnables.lock` instead of `.flows.lock`.
+
 ## [0.4.0a4] - 2026-10-11
 
 ### Added

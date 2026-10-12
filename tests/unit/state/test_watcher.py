@@ -369,7 +369,7 @@ def test_rejected_candidate_does_not_retry_partially_published_layers(
         root_prompt.parent.mkdir(parents=True)
         root_prompt.write_text("Review once.\n", encoding="utf-8")
         home = toolang_root / "agents" / "alice"
-        flows = home / "flows"
+        flows = home / "runnables"
         flows.mkdir(parents=True)
         (home / "agent.too").write_text("# Agent alice\n", encoding="utf-8")
         flow = flows / "research.too"
@@ -405,7 +405,7 @@ def test_rejected_candidate_does_not_retry_partially_published_layers(
         assert observed == []
         assert watcher.current() is initial
         assert calls == 1
-        assert watcher.diagnostics()[0].code == "invalid-flow-export"
+        assert watcher.diagnostics()[0].code == "invalid-runnable-export"
 
     asyncio.run(run())
 
@@ -532,7 +532,7 @@ def test_invalid_flow_candidate_retains_last_valid_state_until_repaired(
     async def run() -> None:
         toolang_root = tmp_path / "toolang"
         home = toolang_root / "agents" / "alice"
-        flows = home / "flows"
+        flows = home / "runnables"
         flows.mkdir(parents=True)
         (home / "agent.too").write_text("# Agent alice\n", encoding="utf-8")
         flow = flows / "research.too"
@@ -549,8 +549,8 @@ def test_invalid_flow_candidate_retains_last_valid_state_until_repaired(
         assert rejected is initial
         assert rejected.revision == initial.revision
         assert refresh.diagnostics == watcher.diagnostics()
-        assert watcher.diagnostics()[0].layer == "flow-extension"
-        assert watcher.diagnostics()[0].authored_path == "flows/research.too"
+        assert watcher.diagnostics()[0].layer == "runnable-extension"
+        assert watcher.diagnostics()[0].authored_path == "runnables/research.too"
 
         retried = await watcher.refresh_result()
 
@@ -572,7 +572,7 @@ def test_watcher_bootstraps_last_good_state_before_rejecting_current_source(
 ) -> None:
     toolang_root = tmp_path / "toolang"
     home = toolang_root / "agents" / "alice"
-    flows = home / "flows"
+    flows = home / "runnables"
     flows.mkdir(parents=True)
     (home / "agent.too").write_text("# Agent alice\n", encoding="utf-8")
     flow = flows / "research.too"
@@ -585,7 +585,7 @@ def test_watcher_bootstraps_last_good_state_before_rejecting_current_source(
     rejected = asyncio.run(watcher.refresh())
 
     assert rejected.revision == previous.revision
-    assert watcher.diagnostics()[0].code == "invalid-flow-export"
+    assert watcher.diagnostics()[0].code == "invalid-runnable-export"
 
 
 def test_watcher_loads_an_older_persisted_state_after_publishing_a_new_one(

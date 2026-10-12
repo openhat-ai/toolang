@@ -35,24 +35,26 @@ paths:
 
 ```text
 agent.too
-flows/<name>.too
+runnables/<name>.too
 ```
 
 Every file has its own declarations and private type namespace. State composition
-also validates main-module calls to exported flows. A flow module cannot use
+also validates main-module calls to exported runnables. An extension cannot use
 structs, contexts, instructs, caps, agics, or flows declared in another file.
 
-The agent module publicly exports all of its agics and flows. A flow module
-exports exactly one Flow: either an unnamed `flow:` or `flow <name>:`, where
-`<name>` exactly matches its filename stem. State uses the filename as the
-public name and binds the unnamed Flow locally as its lined entry identity
-`<entry:LINE>`, so renaming the file also renames the public Flow. Other
-declarations in that module are private helpers, available to its flow statements
-and model routing.
+The agent module publicly exports all of its agics and flows. Each runnable
+module exports exactly one agic or flow whose name is absent or exactly matches
+the filename stem. An unnamed entry and a filename-matching declaration are
+ambiguous, even across kinds. State uses the filename as the public name and
+binds unnamed declarations locally as `<entry:LINE>`. Renaming an unnamed
+entry's file renames its public runnable; a named entry must also be renamed.
+Other declarations remain private helpers for flow statements and model routing.
+For example, `runnables/talk.too` containing `agic(_: Json):` exports `agic:talk`.
 
 Public runnable names must be unique across the complete home. Direct files
-under `flows/` are discovered; nested files, non-`.too` files, and a root-level
-`${TOOLANG_ROOT}/flows/` directory are not.
+under `runnables/` are discovered. Other HOME-level `.too` files, `flows/`,
+`agics/`, nested files, non-`.too` files, and Toolang-root modules are ignored.
+There is no compatibility discovery or automatic source migration.
 
 
 ## Documentation Comments
@@ -235,8 +237,8 @@ The AST preserves omitted names as `None` and keeps the declaration's source
 line. State binds the unnamed entry under the lined lookup key `<entry:LINE>`
 without writing a name onto the AST. Two unnamed top-level declarations in one
 module collide. An explicit `main` is an ordinary named declaration and may
-coexist with the unnamed entry. In a home flow module, State binds the unnamed
-Flow's public name from the filename as described above.
+coexist with the unnamed entry. In a home runnable module, State binds the
+unnamed runnable's public name from the filename as described above.
 
 State's entry bindings do not add source declarations. Flow statements must
 reference explicitly named runnables or use inline agics; the unnamed entry is
@@ -478,8 +480,8 @@ these variables explicitly. Compaction updates subsequent frames throughout
 the run tree.
 
 `hands` and `handoffs` select exact runnable references with `=`. The main module
-can select its own runnables and exported flows; a flow module can select only
-its own declarations, including private helpers. `none` disables routes; `*`
+can select its own runnables and exported agics or flows; an extension can select
+only its own declarations, including private helpers. `none` disables routes; `*`
 selects all visible runnables. They do not accept queries. An explicit
 selection replaces inherited routes independently of resource restrictions:
 
@@ -521,9 +523,9 @@ its signature against the caller's bound definition or the invoking Model Call's
 captured State.
 Missing targets and changed signatures reject the call. Accepted Runs retain
 their code, types, and directives; inline Agics belong to that same plan.
-Collection items select independently when accepted. Main-module
-flows can call their own runnables and exported flow modules; a flow module can
-call only its own runnables. Same-Run handoffs follow the same resolution rules.
+Collection items select independently when accepted. Main-module flows can call
+their own runnables and exported agic or flow modules; an extension can call only
+its own runnables. Same-Run handoffs follow the same resolution rules.
 
 Configuration changes affect newly accepted runnables without mutating active
 parents or siblings. Lane defaults are 4 per parallel operation; a statement

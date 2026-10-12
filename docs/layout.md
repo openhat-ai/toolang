@@ -30,7 +30,7 @@ ${TOOLANG_ROOT}/
   agents/
     <agent>/
       agent.too
-      flows/
+      runnables/
         <name>.too
       config.toml
       psyches/
@@ -67,7 +67,7 @@ Key paths:
 | Path | Purpose |
 | --- | --- |
 | `agent.too` | Agent program |
-| `flows/<name>.too` | Independently validated home flow module |
+| `runnables/<name>.too` | Independent module exporting one agic or flow |
 | `config.toml` | Agent-local configuration |
 | `psyches/`, `skills/`, `services/`, `prompts/` | Agent-local cap definitions |
 | `chores/` | Current chore definitions |

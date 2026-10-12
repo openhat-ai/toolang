@@ -682,7 +682,7 @@ def test_chore_list_does_not_resolve_runnables_or_prepare_state(
     root = tmp_path / "toolang"
     _create_agent(root)
     layout = AgentLayout.resident(root, "alice")
-    flows = layout.home / "flows"
+    flows = layout.home / "runnables"
     if external_flow is not None:
         flows.mkdir()
         (flows / "research.too").write_text(external_flow)

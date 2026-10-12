@@ -54,20 +54,21 @@ def _render(state: AgentState, routes: AgicRoutes) -> str:
 )
 @pytest.mark.parametrize("qualified", [False, True])
 @pytest.mark.parametrize("directive,action", [("hands", "run"), ("handoffs", "exec")])
-def test_routes_resolve_portable_exported_flow_names(
-    name, qualified, directive, action
+@pytest.mark.parametrize("kind", ["agic", "flow"])
+def test_routes_resolve_portable_exported_runnable_names(
+    name, qualified, directive, action, kind
 ):
-    module = f"flows::{name}"
-    reference = f"{module}::flow:{name}" if qualified else name
+    module = f"runnables::{name}"
+    reference = f"{module}::{kind}:{name}" if qualified else name
     other = "handoffs" if directive == "hands" else "hands"
     state = _state(
         f"agic caller:\n  {directive} = {reference}\n  {other} = none\n  Work.\n"
     )
-    source = "flow:\n  pass\n"
+    source = f"{kind}:\n  pass\n"
     state = replace(
         state,
         modules={**state.modules, module: Program.from_source(source)},
-        module_sources={**state.module_sources, module: f"flows/{name}.too"},
+        module_sources={**state.module_sources, module: f"runnables/{name}.too"},
         module_digests={
             **state.module_digests,
             module: sha256(source.encode()).hexdigest(),
@@ -82,7 +83,7 @@ def test_routes_resolve_portable_exported_flow_names(
     assert target.runnable.module == module
     assert (
         dict(zip(("hands", "handoffs", "spawns"), routes.scopes(state)))[directive]
-        == f"flow:{name}"
+        == f"{kind}:{name}"
     )
     assert target.actions == (("run", "spawn") if action == "run" else (action,))
 
@@ -375,16 +376,16 @@ def test_fallback_keeps_an_exported_flows_public_name(binding):
 
     state = _state("agic:\n  General request.\n")
     flow = Program.from_source("flow:\n  pass\n")
-    modules = {"agent": state.modules["agent"], "flows::chat": flow}
+    modules = {"agent": state.modules["agent"], "runnables::chat": flow}
     state = replace(
         state,
         modules=modules,
-        module_sources={"agent": "agent.too", "flows::chat": "flows/chat.too"},
+        module_sources={"agent": "agent.too", "runnables::chat": "runnables/chat.too"},
         module_digests={
             "agent": state.module_digests["agent"],
-            "flows::chat": sha256(b"chat").hexdigest(),
+            "runnables::chat": sha256(b"chat").hexdigest(),
         },
-        module_caps={"agent": (), "flows::chat": ()},
+        module_caps={"agent": (), "runnables::chat": ()},
     )
     assert runnable_binding_defaults(state, binding, fallback_agic="chat") == (
         None,
@@ -466,12 +467,12 @@ agic target:
 
 def test_default_routes_preserve_public_exports_and_module_boundaries():
     state = _state("agic caller:\n  Call.\n")
-    module = "flows::report"
+    module = "runnables::report"
     source = "flow report:\n  run helper\n\nagic helper:\n  Help.\n"
     state = replace(
         state,
         modules={**state.modules, module: Program.from_source(source)},
-        module_sources={**state.module_sources, module: "flows/report.too"},
+        module_sources={**state.module_sources, module: "runnables/report.too"},
         module_digests={
             **state.module_digests,
             module: sha256(source.encode()).hexdigest(),
@@ -482,15 +483,15 @@ def test_default_routes_preserve_public_exports_and_module_boundaries():
     public = resolve_agic_routes(state, caller)
     assert {route.runnable.qualified for route in public.resolved} == {
         "agent::agic:caller",
-        "flows::report::flow:report",
+        "runnables::report::flow:report",
     }
     assert public.scopes(state) == ("ALL", "ALL", "ALL")
     assert all(route.actions == ("run", "spawn", "exec") for route in public.resolved)
     helper = state.modules[module].agics[0]
     private = resolve_agic_routes(state, helper, module=module)
     assert {route.runnable.qualified for route in private.resolved} == {
-        "flows::report::flow:report",
-        "flows::report::agic:helper",
+        "runnables::report::flow:report",
+        "runnables::report::agic:helper",
     }
     assert private.scopes(state) == ("ALL", "ALL", "ALL")
     assert all(route.actions == ("run", "spawn", "exec") for route in private.resolved)

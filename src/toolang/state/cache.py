@@ -37,7 +37,7 @@ from .state import (
 )
 
 LayerScope = Literal["root", "home"]
-LAYER_SCHEMA = 18
+LAYER_SCHEMA = 19
 _LAYER_FILE = "layer.json"
 _LAYERS_FILE = "layers.json"
 _FILES_DIR = "files"
@@ -816,7 +816,7 @@ def _program_indexes(
         source = str(data["authored_path"])
         digest = str(data["digest"])
         materialized = str(data["materialized_path"])
-        if kind not in {"agent", "flow"}:
+        if kind not in {"agent", "runnable"}:
             raise ValueError(f"invalid State Program kind: {kind!r}")
         if (name == "agent") != (kind == "agent"):
             raise ValueError("State Program name and kind do not match")

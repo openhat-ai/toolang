@@ -57,7 +57,7 @@ def test_prepare_linked_state_source_mounts_covers_root_and_home_sources(
         local_home / "agent.too": external / "agent.too",
         local_home / "config.toml": external / "config.toml",
         local_root / "prompts" / "review.md": external / "review.md",
-        local_home / "flows" / "research.too": external / "research.too",
+        local_home / "runnables" / "research.too": external / "research.too",
         local_home / "skills" / "pdf" / "SKILL.md": external / "SKILL.md",
     }
     for logical, target in sources.items():

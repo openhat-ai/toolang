@@ -408,7 +408,10 @@ class Program(Node):
 
     @classmethod
     def from_source(
-        cls, source: str, *, external_flows: Mapping[str, FlowDecl] | None = None
+        cls,
+        source: str,
+        *,
+        external_runnables: Mapping[str, AgicDecl | FlowDecl] | None = None,
     ) -> Program:
         from .lower import _lower
         from .validate import _validate
@@ -417,7 +420,7 @@ class Program(Node):
         try:
             with source_location(None):
                 program = _lower(_parse_source(source))
-                _validate(program, external_flows=external_flows)
+                _validate(program, external_runnables=external_runnables)
         except ToolangSourceError as exc:
             if exc.column is None:
                 lines = source_lines(source)

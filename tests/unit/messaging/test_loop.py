@@ -15,6 +15,7 @@ from tests.support.execution_harness import (
 from toolang.base.types.message import Message as ModelMessage
 from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.common.layout import AgentLayout
+from toolang.execution.records import RunControlPayload
 from toolang.teaming.messaging import MessagingClient
 from toolang.teaming.backend.valkey import ValkeyBackend
 from toolang.teaming.backend.valkey.keys import convo_key
@@ -22,6 +23,7 @@ from toolang.teaming.config import BackendConfig, TeamingHomeConfig, TeamingRoot
 from toolang.plugin.toolsets.msg import MsgToolset
 from toolang.plugin.toolsets.loading import tools_from_toolsets
 from toolang.plugin.types import LoadedPlugin
+from toolang.state.prepare import prepare_agent_state
 from toolang.work.messaging import MessagingLoop
 
 CONFIG = BackendConfig("redis://test")
@@ -59,16 +61,16 @@ def make_loop(path, client, harness=None):
     )
 
 
-def harness_with_msg(path, server, responses, source="agic:\n  {{_}}\n"):
+def harness_with_msg(path, server, responses, source="agic:\n  {{_}}\n", state=None):
     msg = MsgToolset({"root": str(path)})
     setattr(msg, "connection", lambda context: make_client(server))
     tools = tools_from_toolsets({"msg": LoadedPlugin("msg", "msg", msg, "built-in")})
     return ExecutionHarness.create(
-        path, source=source, responses=responses, tools=tools
+        path, source=source, responses=responses, tools=tools, state=state
     )
 
 
-@pytest.mark.parametrize("custom", [False, True])
+@pytest.mark.parametrize("custom", [False, True, "agic-module", "flow-module"])
 def test_tool_reply_receipt_context_and_restart(tmp_path, custom):
     server = FakeServer(server_type="valkey")
     reply = ModelCallResult(
@@ -81,6 +83,18 @@ def test_tool_reply_receipt_context_and_restart(tmp_path, custom):
             ),
         )
     )
+    state = None
+    source = "agic talk(_: Json):\n  {{_}}\n" if custom is True else "agic:\n  {{_}}\n"
+    if isinstance(custom, str):
+        layout = AgentLayout.resident(tmp_path, "alice")
+        (layout.home / "runnables").mkdir(parents=True)
+        layout.program.write_text(source)
+        (layout.home / "runnables/talk.too").write_text(
+            "agic(_: Json):\n  {{_}}\n"
+            if custom == "agic-module"
+            else "flow(_: Json):\n  exec helper\nagic helper(_: Json):\n  {{_}}\n"
+        )
+        state = prepare_agent_state(layout)
     harness = harness_with_msg(
         tmp_path,
         server,
@@ -89,7 +103,8 @@ def test_tool_reply_receipt_context_and_restart(tmp_path, custom):
             ModelCallResult(message=ModelMessage.assistant("Handled.")),
             ModelCallResult(message=ModelMessage.assistant("Noted.")),
         ],
-        source="agic talk(_: Json):\n  {{_}}\n" if custom else "agic:\n  {{_}}\n",
+        source=source,
+        state=state,
     )
 
     async def scenario():
@@ -109,6 +124,14 @@ def test_tool_reply_receipt_context_and_restart(tmp_path, custom):
             assert harness.store.list_threads()[0].id.startswith("talk_")
             handled = harness.store.get_run(run_id=saved["result"]["run"])
             assert handled is not None
+            if custom:
+                entry = harness.store.get_run_control(run_id=handled.id, index=0)
+                assert entry is not None and isinstance(
+                    entry.payload, RunControlPayload
+                )
+                prefix = "runnables::talk::" if isinstance(custom, str) else ""
+                kind = "flow" if custom == "flow-module" else "agic"
+                assert entry.payload.runnable == f"{prefix}{kind}:talk"
             assert receipt["message"]["origin"] == {
                 "thread": handled.thread.id,
                 "run": saved["result"]["run"],

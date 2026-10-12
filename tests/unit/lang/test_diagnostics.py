@@ -413,7 +413,7 @@ def test_program_wraps_unlocated_failures_without_inventing_a_location(monkeypat
 
     cause = ToolangError("Opaque failure at line 12.")
 
-    def fail(program, *, external_flows=None):
+    def fail(program, *, external_runnables=None):
         raise cause
 
     monkeypatch.setattr("toolang.lang.validate._validate", fail)

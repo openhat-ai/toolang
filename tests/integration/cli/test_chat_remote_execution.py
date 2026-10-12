@@ -65,7 +65,7 @@ agic chat(_: Part[]) -> Part[]:
     core.setup = _Snapshot(harness.setup)
     state = harness.state
     if entry == "flow:chat":
-        flows = harness.setup.layout.home / "flows"
+        flows = harness.setup.layout.home / "runnables"
         flows.mkdir()
         (flows / "chat.too").write_text(source)
         state = prepare_agent_state(harness.setup.layout)

@@ -946,7 +946,7 @@ def test_inline_capture_preserves_module_local_structs(
 
     harness = _create(tmp_path, source="", responses=['{"count":7}', "done"])
     home = harness.setup.layout.home
-    (home / "flows").mkdir(parents=True, exist_ok=True)
+    (home / "runnables").mkdir(parents=True, exist_ok=True)
     (home / "agent.too").write_text(
         f"""
 {declaration}
@@ -956,7 +956,7 @@ flow main():
 """,
         encoding="utf-8",
     )
-    (home / "flows" / "research.too").write_text(
+    (home / "runnables" / "research.too").write_text(
         """
 struct Result:
   count: Number

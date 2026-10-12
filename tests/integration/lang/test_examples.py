@@ -14,7 +14,7 @@ from tests import PROJECT_ROOT
 from tests.support.examples import example_sources
 from toolang.lang import Program, format_source
 from toolang.execution.runnables import resolve_runnable_reference
-from toolang.state.state import flow_export, program_runnable_index
+from toolang.state.state import runnable_export, program_runnable_index
 
 
 EXAMPLES_ROOT = PROJECT_ROOT / "examples"
@@ -100,4 +100,4 @@ def test_flow_module_exports_exactly_one_flow(path: Path) -> None:
     program = Program.from_source(_source(path))
 
     # Raises when the module does not export exactly one qualifying flow.
-    flow_export(path.name, program)
+    runnable_export(path.name, program)
