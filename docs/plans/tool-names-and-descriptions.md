@@ -10,7 +10,7 @@ when several toolsets perform similar operations. Rename `me` to `state` and
 
 Success means all 48 current built-in leaves have explicit lifecycle summaries;
 the action and object identify the operation without a repeated tool-name prefix.
-Generic fallback retains the full selector identity. Chat and Script show the
+Generic fallback retains the qualified tool display name. Chat and Script show the
 same wording, and otherwise-supported saved history remains readable.
 
 This definition supersedes the corresponding identity and wording decisions in
@@ -34,6 +34,8 @@ tool-name grammar, or CLI command names are included. Existing leaf names stay.
   summaries, so changing a tool hook alone does not update those rows.
 - `me` edits supported home files, including Markdown chores outside State;
   only sync checks and publishes State. It does not switch active Run code.
+- Model tool definitions use `__`, but workspace/shell errors instruct models to
+  use `_toolang.chdir`. Human documentation also uses dotted call notation.
 
 ## Names and compatibility
 
@@ -69,6 +71,51 @@ This is read compatibility, not permission to invoke old names. Resuming an
 in-flight pre-upgrade execution is outside scope. Document the rename as breaking
 in the implementation changelog using the repository's runnable workflow.
 
+## Identity at each boundary
+
+One structured `ToolRef` owns plugin provenance, toolset, and leaf identity.
+Derive the three spellings from its components; do not maintain parallel
+registrations or use a parser that accepts every spelling everywhere.
+
+| Context | Spelling | Rule |
+| --- | --- | --- |
+| Resource ref, query, configuration, CLI `REF`/JSON | `state/get` | Canonical ref; preserve copyable selector syntax |
+| Model tool definition/call/result name | `state__get` | Exact declared protocol name; shared across adapters |
+| Human tool label, explanatory prose, progress fallback | `state.get` | Display only; not a selector or callable alias |
+
+Keep `ToolRef.identity` and `model_name`; add a derived `display_name` using the
+same components. Share formatting helpers for boundaries without a loaded
+ToolRef. Do not persist an additional display-name field. Existing event/history
+fields that contain model names retain their contract; this is not a storage
+migration. Query examples and tables explicitly headed `REF` retain slash names,
+even in human documentation. Dotted call notation in prose is explanatory, not
+executable Toolang syntax.
+
+Model tool names are already encoded by LoadedTool before adapters serialize
+them. Adapters preserve those names and never independently choose a separator.
+Tool definitions, bundled model instructions, and actionable error hints use
+the exact model name when directing a call, for example `runtime__chdir`.
+Resource-ref values and query arguments remain slash-form data. Audit current
+cross-tool references such as `use _toolang.chdir`, not just tool registration.
+
+Add one protocol instruction: copy tool-call names exactly from the tools
+provided for the current Model Call; selector refs and display labels are not
+callable names. Normal narration uses action/object wording. When discussing a
+tool by name, prose may use the dotted label; code/query examples use the syntax
+required by their destination. Do not rewrite model text, quoted content, code,
+or saved tool exchanges with separator replacements.
+
+If an actual call uses `state.get` or `state/get`, retain exact-name rejection;
+do not normalize and execute it silently. When that exact display/ref spelling
+identifies one tool advertised in the current Model Call, return an actionable
+error such as `Unknown tool name 'state.get'; call 'state__get' instead.` No tool
+is invoked; the model may submit a corrected call. Build suggestions from that
+call's advertised tool set, not the global registry: unavailable/runtime-only
+tools receive no suggestion. Do not use fuzzy matching, leaf-only matching,
+old namespace aliases, or automatic retries. Preserve original call names and
+IDs in the failed exchange. This keeps protocol mistakes visible and avoids
+changing execution semantics to accommodate display notation.
+
 ## Description rules
 
 Model descriptions start with the operation, concrete object, and access scope.
@@ -86,11 +133,11 @@ describe individual inputs; do not discard operational constraints for brevity.
 
 Progress uses `Action object[: target]`, with the discriminating object before
 the potentially long target. Avoid `Executing list`, raw leaf names, repeated
-`state/get` prefixes, and implementation names in normal built-in summaries.
+`state.get` prefixes, and implementation names in normal built-in summaries.
 The following table fixes the running/success vocabulary; `{...}` denotes data,
 not literal text. The optional colon and target disappear together when absent.
 
-| Tool | Running / succeeded sentence |
+| Tool ref | Running / succeeded sentence |
 | --- | --- |
 | `state/list` | `Listing / Listed agent files` |
 | `state/get` | `Reading / Read agent file: {key}` |
@@ -169,10 +216,11 @@ Existing plugins and function tools require no new method, metadata, dependency,
 or registration changes. Do not require custom summaries during plugin loading.
 The catalog-wide coverage requirement applies only to Toolang's built-ins.
 
-Executor fallback uses the structured ToolRef identity, or decodes the call name
-when that ref is unavailable. If no family can be recovered, retain the original
-call name. Every lifecycle fallback must include the first supplied argument's
-preview after the identity; omit the preview only when the call has no arguments.
+Executor fallback uses the ToolRef's dotted display name, or derives that display
+name from a valid encoded call name when the ref is unavailable. If no family
+can be recovered, retain the original call name. Every lifecycle fallback must
+include the first supplied argument's preview after the identity; omit the
+preview only when the call has no arguments.
 Select the first supplied property in schema order. If the schema is unavailable
 or none of its properties is supplied, use the first argument in call input order.
 Do not insert omitted defaults. Preserve masking, single-line formatting, and
@@ -181,10 +229,10 @@ empty strings, null, false, and zero still have previews. For example:
 
 | Lifecycle | Plugin with no custom summary |
 | --- | --- |
-| Running | `Executing acme/list projects` |
-| Succeeded | `Executed acme/list projects` |
-| Failed | `Failed acme/list projects` |
-| Canceled | `Canceled acme/list projects` |
+| Running | `Executing acme.list projects` |
+| Succeeded | `Executed acme.list projects` |
+| Failed | `Failed acme.list projects` |
+| Canceled | `Canceled acme.list projects` |
 
 This same fallback applies to inherited/default hooks, None, empty/whitespace
 or non-text returns, and formatter exceptions. A missing or broken formatter
@@ -210,6 +258,10 @@ rows retain the distinction. Replays never call live tool formatters.
   `execution/assembly/tool_replies.py`: authority, canonical names, and saved
   history classification. Audit exact old-name references, not global `_toolang`
   replacement across unrelated model metadata.
+- `base/utils/tools.py`, `base/utils/workspace_paths.py`, model-facing tool
+  descriptions/errors, and `execution/assembly/prompting.py`: shared identity
+  formatting and consistent call instructions. Check adapter serialization and
+  invalid-name responses against the actual advertised tool definitions.
 - `plugin/toolsets/{fs,shell,web,history,service,msg}.py`,
   `base/utils/tool_descriptions.py`, and `execution/executor/steps/tool.py`:
   vocabulary, lifecycle summaries, and qualified fallback.
@@ -250,6 +302,13 @@ rows retain the distinction. Replays never call live tool formatters.
    including honor interception, compact, chdir, handoffs, and async result
    reconstruction. Stored names/summaries remain unchanged and no live tools run
    during replay. Fresh executions use only canonical identities.
+7. One ToolRef yields the specified ref, model name, and display name, including
+   components containing single underscores. Queries/CLI REF fields retain `/`;
+   all adapters retain `__`; fallback labels use `.`. Actionable built-in model
+   instructions use exact callable names. Dot/slash calls invoke nothing and
+   suggest only an exact currently advertised counterpart. Unknown, unavailable,
+   runtime-only, and old namespace names get no suggestion. Failed exchange
+   identities and arbitrary prose/code remain unchanged.
 
 Primary risks are missing an identity-dependent dispatch/reader, granting an
 external plugin runtime authority, and implying that writing an agent file
@@ -258,5 +317,5 @@ existing tool-description, registry, context, progress, and execution-history
 suites; run all default repository checks for implementation. For this definition,
 verify source claims, relative links, catalog coverage, and `git diff --check`.
 
-Open questions: human approval of this naming, wording, and no-alias migration
-policy. Implementation starts only after approval.
+Open questions: human approval of this naming, wording, representation boundaries,
+and no-alias migration policy. Implementation starts only after approval.
