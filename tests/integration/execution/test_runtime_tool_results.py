@@ -51,11 +51,11 @@ def call(name: str, *, id: str = "first") -> ToolCall:
         tool_call_id=id,
         call_id=f"provider-{id}",
         name=name,
-        input={"runnable": "agic:child"} if name == "_toolang__run" else {},
+        input={"runnable": "agic:child"} if name == "runtime__run" else {},
     )
 
 
-@pytest.mark.parametrize("tool_name", ["_toolang__run", "_toolang__unknown"])
+@pytest.mark.parametrize("tool_name", ["runtime__run", "runtime__unknown"])
 def test_runtime_result_survives_restart_without_followup_model(
     tmp_path: Path, tool_name: str
 ) -> None:
@@ -67,7 +67,7 @@ def test_runtime_result_survives_restart_without_followup_model(
             ModelCallResult(tool_calls=(request,)),
             *(
                 [ModelCallResult(message=Message.assistant("child output"))]
-                if tool_name == "_toolang__run"
+                if tool_name == "runtime__run"
                 else []
             ),
         ],
@@ -116,7 +116,7 @@ def test_runtime_result_survives_restart_without_followup_model(
                 str(model.ref),
                 str(tool.ref),
             ]
-            if tool_name == "_toolang__run":
+            if tool_name == "runtime__run":
                 assert tool.status == "succeeded"
                 child = next(
                     r
@@ -139,7 +139,7 @@ def test_runtime_result_survives_restart_without_followup_model(
                 assert Message.user("Child task.") not in conversation
             else:
                 assert tool.status == "failed"
-                assert part.error == "unknown tool call: _toolang__unknown"
+                assert part.error == "unknown tool call: runtime__unknown"
         finally:
             reopened.close()
 
@@ -148,7 +148,7 @@ def test_runtime_result_survives_restart_without_followup_model(
 
 @pytest.mark.parametrize("boundary", ["part_begin", "part_end", "step_end"])
 @pytest.mark.parametrize(
-    "tool_name", ["math__double", "_toolang__run", "_toolang__unknown"]
+    "tool_name", ["math__double", "runtime__run", "runtime__unknown"]
 )
 def test_steer_during_result_delivery_preserves_result_once(
     tmp_path: Path, boundary: str, tool_name: str
@@ -176,7 +176,7 @@ def test_steer_during_result_delivery_preserves_result_once(
             ModelCallResult(tool_calls=requests),
             *(
                 [ModelCallResult(message=Message.assistant("child output"))]
-                if tool_name == "_toolang__run"
+                if tool_name == "runtime__run"
                 else []
             ),
             ModelCallResult(message=Message.assistant("revised")),
@@ -207,7 +207,7 @@ def test_steer_during_result_delivery_preserves_result_once(
             assert isinstance(first_part, ToolResultPart)
             assert first_part.error != "canceled by steer"
             expected_status = (
-                ("failed" if tool_name == "_toolang__unknown" else "succeeded")
+                ("failed" if tool_name == "runtime__unknown" else "succeeded")
                 if boundary == "step_end"
                 else "canceled"
             )
@@ -242,7 +242,7 @@ def test_steer_during_result_delivery_preserves_result_once(
 
 @pytest.mark.parametrize("interruption", ["steer", "cancel"])
 @pytest.mark.parametrize(
-    "tool_name", ["math__double", "_toolang__run", "_toolang__unknown"]
+    "tool_name", ["math__double", "runtime__run", "runtime__unknown"]
 )
 def test_interruption_before_result_commit_preserves_completed_result(
     tmp_path: Path, interruption: str, tool_name: str
@@ -275,7 +275,7 @@ def test_interruption_before_result_commit_preserves_completed_result(
             ModelCallResult(tool_calls=(call(tool_name),)),
             *(
                 [ModelCallResult(message=Message.assistant("child output"))]
-                if tool_name == "_toolang__run"
+                if tool_name == "runtime__run"
                 else []
             ),
             ModelCallResult(message=Message.assistant("revised")),
@@ -325,7 +325,7 @@ def test_interruption_before_result_commit_preserves_completed_result(
                     for part in message.parts
                     if isinstance(part, ToolResultPart)
                 ] == [completed]
-            if tool_name == "_toolang__run":
+            if tool_name == "runtime__run":
                 child = next(
                     r
                     for r in harness.store.list_run_tree(root_run_id=root.id)
@@ -359,7 +359,7 @@ def test_interrupting_runtime_child_cancels_its_tool_step(
         tmp_path,
         source=SOURCE,
         responses=[
-            ModelCallResult(tool_calls=(call("_toolang__run"),)),
+            ModelCallResult(tool_calls=(call("runtime__run"),)),
             ScriptedModelTurn(
                 result=ModelCallResult(message=Message.assistant("unused")), gate=gate
             ),
@@ -430,10 +430,10 @@ def test_retry_replaces_runtime_results_and_owned_child(tmp_path: Path) -> None:
         tmp_path,
         source=SOURCE,
         responses=[
-            ModelCallResult(tool_calls=(call("_toolang__run", id="old"),)),
+            ModelCallResult(tool_calls=(call("runtime__run", id="old"),)),
             ModelCallResult(message=Message.assistant("old output")),
             RuntimeError("retry me"),
-            ModelCallResult(tool_calls=(call("_toolang__run", id="new"),)),
+            ModelCallResult(tool_calls=(call("runtime__run", id="new"),)),
             ModelCallResult(message=Message.assistant("new output")),
             ModelCallResult(message=Message.assistant("done")),
         ],
@@ -481,7 +481,7 @@ def test_skipped_batch_is_durable_and_does_not_consume_call_budget(
     tmp_path: Path, followup: bool
 ) -> None:
     gate = AsyncGate()
-    requests = (call("_toolang__run"), call("math__double", id="second"))
+    requests = (call("runtime__run"), call("math__double", id="second"))
     tool = RecordingTool("math__double", output={"value": 6})
     harness = ExecutionHarness.create(
         tmp_path,
@@ -570,7 +570,7 @@ def test_steer_during_execute_delivery_keeps_committed_transfer(tmp_path: Path) 
                     ToolCall(
                         tool_call_id="transfer",
                         call_id="provider-transfer",
-                        name="_toolang__exec",
+                        name="runtime__exec",
                         input={"runnable": "agic:child"},
                     ),
                 )
@@ -628,7 +628,7 @@ def test_steer_during_execute_delivery_keeps_committed_transfer(tmp_path: Path) 
 
 
 @pytest.mark.parametrize(
-    "tool_name", ["math__double", "_toolang__run", "_toolang__unknown"]
+    "tool_name", ["math__double", "runtime__run", "runtime__unknown"]
 )
 @pytest.mark.parametrize(
     "boundary", ["step_begin", "queued_begin", "cancel_queued_begin"]

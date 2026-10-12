@@ -30,6 +30,7 @@ from toolang.execution.types import (
     RunStatus,
     RunRef,
     StepRef,
+    ToolStepNoted,
 )
 from toolang.lang.ast import (
     DropStmt,
@@ -486,6 +487,8 @@ class ProgressProjector:
             self._set_lane_activity(
                 state.lane_owner,
                 activity,
+                identity=state.operation.tool_identity,
+                status="running" if event.kind == "tool" else None,
             )
             return None
         block_key = self._block_key(state)
@@ -587,6 +590,7 @@ class ProgressProjector:
                             terminal,
                             status=event.status,
                             tool=event.kind == "tool",
+                            identity=state.operation.tool_identity,
                         )
         elif execute is not None and execute.ready:
             self._release_boundaries(state.boundaries)
@@ -905,6 +909,8 @@ class ProgressProjector:
                     f"{prefix}{terminal[0]}",
                     "progress" if lane.terminal_tool else "error",
                     surface="tool_summary" if lane.terminal_tool else "none",
+                    tool_identity=lane.terminal_identity,
+                    tool_status=lane.terminal_status if lane.terminal_tool else None,
                 )
             )
             continuation = " " * (len(prefix) + 2)
@@ -957,7 +963,10 @@ class ProgressProjector:
         for state in self._steps.values():
             if state.lane_owner is not None and state.operation.timed:
                 self._set_lane_activity(
-                    state.lane_owner, lane_live_text(state.operation, "", now=now)
+                    state.lane_owner,
+                    lane_live_text(state.operation, "", now=now),
+                    identity=state.operation.tool_identity,
+                    status="running",
                 )
         for state in self._steps.values():
             if self._runs[state.begin.step.run_id].internal:
@@ -1039,13 +1048,15 @@ class ProgressProjector:
         lane_width = len(str(max(state.par.lanes)))
         item_width = len(str(max(lane.item for lane in state.par.lanes.values())))
         for lane_index, lane in sorted(state.par.lanes.items()):
-            tool = lane.activity.startswith(("› ", "✧ "))
+            tool = lane.activity_status is not None
             rows.append(
                 ProgressRow(
                     f"  {lane_index:>{lane_width}} | #{lane.item:>{item_width}} | "
                     f"{lane.activity}",
                     "progress" if tool and lane.activity_finished else "active",
                     surface="tool_summary" if tool else "none",
+                    tool_identity=lane.activity_identity,
+                    tool_status=lane.activity_status,
                 )
             )
         return tuple(rows)
@@ -1183,8 +1194,12 @@ class ProgressProjector:
         rows = (
             *self._rows_for_boundaries(state.boundaries),
             ProgressRow(
-                f"Run {self._dynamic_runnable_label(state)}",
+                state.operation.tool.summary
+                if state.operation.tool and state.operation.tool.summary
+                else f"Run {self._dynamic_runnable_label(state)}",
                 leader="run",
+                tool_identity=state.operation.tool_identity,
+                tool_status="running" if state.operation.tool else None,
             ),
             ProgressRow(""),
         )
@@ -1213,8 +1228,14 @@ class ProgressProjector:
         )
         return (
             ProgressRow(
-                "",
+                event.noted.summary
+                if state.operation.tool
+                and isinstance(event, StepEnd)
+                and isinstance(event.noted, ToolStepNoted)
+                else "",
                 leader="run",
+                tool_identity=state.operation.tool_identity,
+                tool_status=event.status if state.operation.tool else None,
                 facts=facts,
                 right_status=event.status,
                 right_identity=state.dynamic_child_run_id or "",
@@ -1384,10 +1405,15 @@ class ProgressProjector:
         self,
         owner: LaneOwner,
         activity: str,
+        *,
+        identity: tuple[str, str] | None = None,
+        status: RunStatus | None = None,
     ) -> None:
         lane = self._lane_state(owner)
         if lane is not None:
             lane.activity = one_line(activity)
+            lane.activity_identity = identity
+            lane.activity_status = status
             lane.activity_finished = False
 
     def _set_lane_terminal(
@@ -1397,15 +1423,19 @@ class ProgressProjector:
         *,
         status: RunStatus,
         tool: bool = False,
+        identity: tuple[str, str] | None = None,
     ) -> None:
         lane = self._lane_state(owner)
         if lane is not None:
             lane.terminal = terminal
             lane.terminal_status = status
             lane.terminal_tool = tool
+            lane.terminal_identity = identity
             if terminal:
                 lane.activity = one_line(" · ".join(terminal))
                 lane.activity_finished = True
+                lane.activity_identity = identity
+                lane.activity_status = status if tool else None
 
     def _lane_state(self, owner: LaneOwner) -> LaneState | None:
         par = self._steps.get(owner.step)
@@ -1422,6 +1452,8 @@ class ProgressProjector:
         for lane in state.par.lanes.values():
             if lane.active:
                 lane.activity = "• canceling"
+                lane.activity_identity = None
+                lane.activity_status = None
                 lane.activity_finished = False
 
     def _mark_cancellation_reported(self, path: StepRef) -> None:

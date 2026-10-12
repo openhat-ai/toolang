@@ -209,7 +209,7 @@ agic review:
 ```
 
 The model first receives the description. It loads the body on demand through
-`_toolang__pick` with `kind="skill"` and `ref="skill/code_review"`; selecting a
+`runtime__pick` with `kind="skill"` and `ref="skill/code_review"`; selecting a
 skill alone does not load its body. Resource ceilings still apply. Inline skills
 contain text only; use directory-backed skills for bundled scripts and assets.
 
@@ -503,8 +503,8 @@ within their module until a child explicitly replaces them. Additional user
 restrictions further constrain model use.
 
 For a named invocation with no requested follow-up, the model uses
-`_toolang/exec`. When asked to summarize, compare, or otherwise process the
-result afterward, it uses `_toolang/run`. Asking about parameters alone does not
+`runtime/exec`. When asked to summarize, compare, or otherwise process the
+result afterward, it uses `runtime/run`. Asking about parameters alone does not
 execute the target. When the user delegates test-input choice, the model chooses
 a reasonable value; it asks only for required values it cannot establish or choose.
 Scope conflicts are reported without silently changing the target or operation.
@@ -515,7 +515,7 @@ A handoff replaces the current runnable in the same Run: the target continues
 at the next Step and owns the Run's result. Missing but well-formed refs
 remain authored routes and become available in the next model-call scope after
 the watcher publishes them. No explicit refresh action is needed.
-Flows pass these route defaults to descendants. `_toolang` inner runtime tools cannot be selected
+Flows pass these route defaults to descendants. `runtime` inner runtime tools cannot be selected
 through `tools`; use `hands` or `handoffs` to authorize targets. Runtime tool
 definitions remain available independently of these lists.
 
@@ -764,7 +764,7 @@ Scopes do not filter active-path targets: runtime guards still reject run to sel
 or ancestors, exec to ancestors, and child self-exec. An authorized root with no
 active descendants can exec itself.
 
-Use `_toolang__runnables` to discover targets and complete signatures:
+Use `runtime__runnables` to discover targets and complete signatures:
 `{}` returns all module-visible declarations; `{"name":"agic:review"}` or
 `{"name":"review"}` returns exactly one. Unknown, inaccessible, empty, whitespace,
 and null names fail; there is no wildcard or multi-name query. Results include
@@ -804,7 +804,7 @@ separately.
 Default instruct contains the stable agent name. Default context contains only
 `date`, `timezone`, `model_provider`, and `model_name` attributes. Authored
 default replacements and named contexts retain their bodies. Agent home is not exposed there;
-use `me` tools for agent resources. Version, paths, and selected resources do not
+use `state` tools for agent resources. Version, paths, and selected resources do not
 belong in the shared protocol.
 
 Models without tool support and calls repairing output receive no tool
@@ -814,7 +814,7 @@ definitions, but retain the base runtime protocol.
 
 Triggers describe when an available capability is useful. Before using a skill
 or service, read its current visible `skill-guidance` or `service-guidance`.
-If missing or stale, call `_toolang__pick` with its kind and exact trigger ref
+If missing or stale, call `runtime__pick` with its kind and exact trigger ref
 (for example, `skill/testing`), then wait for the guidance user message. The tool
 receipt is not loaded guidance. Picking a service neither connects to it nor
 grants service tools.

@@ -10,7 +10,8 @@ from .types import StepOperation
 
 _RUNTIME_MARKERS = {"spawn", "pick", "honor", "compact"}
 _TOOL_OPERATIONS: dict[str, str] = {
-    f"_toolang__{name}": name
+    f"{namespace}__{name}": name
+    for namespace in ("runtime", "_toolang")
     for name in ("run", "spawn", "await", "exec", "chdir", "pick", "honor", "compact")
 }
 # Preserve the existing presentation reader for the former tool spelling.
@@ -31,10 +32,13 @@ def normalize_operation(
     given = begin.given
     if isinstance(given, ToolStepGiven):
         name = runtime_operation_name(given.call.name)
-        if given.plugin != "_toolang" and name not in {"run", "exec"}:
+        if given.plugin not in {"runtime", "_toolang"} and name not in {"run", "exec"}:
             name = None
         # Keep existing short-name recognition for runtime progress summaries.
-        if given.plugin == "_toolang" and given.call.name in _RUNTIME_MARKERS:
+        if (
+            given.plugin in {"runtime", "_toolang"}
+            and given.call.name in _RUNTIME_MARKERS
+        ):
             name = given.call.name
         if name == "run" and given.call.input.get("async") is True:
             name = "async run"
@@ -48,7 +52,8 @@ def normalize_operation(
             ),
             run_scope=name == "run",
             tool_marker="✧"
-            if given.plugin == "_toolang" and name in _RUNTIME_MARKERS
+            if given.plugin in {"runtime", "_toolang"}
+            and name in {"pick", "honor", "compact"}
             else "›",
         )
     if isinstance(given, ModelStepGiven):

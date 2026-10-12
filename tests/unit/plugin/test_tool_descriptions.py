@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from toolang.base.types.tool import ToolResult
-from toolang.execution.tools._toolang import ToolangToolset
+from toolang.execution.tools.runtime import RuntimeToolset
 from toolang.plugin.toolsets.fs import FilesystemToolset
 from toolang.plugin.toolsets.history import HistoryToolset
 from toolang.plugin.toolsets.shell import ShellToolset
@@ -23,9 +23,9 @@ from toolang.plugin.toolsets.web import WebToolset
 @pytest.mark.parametrize(
     "status,expected",
     [
-        ("running", "Reading repo://src/file.txt"),
-        ("succeeded", "Read repo://src/file.txt"),
-        ("failed", "Failed to read repo://src/file.txt"),
+        ("running", "Reading file: repo://src/file.txt"),
+        ("succeeded", "Read file: repo://src/file.txt"),
+        ("failed", "Failed to read file: repo://src/file.txt"),
     ],
 )
 def test_workspace_descriptions_do_not_resolve_paths(
@@ -61,18 +61,18 @@ def test_workspace_descriptions_do_not_resolve_paths(
 )
 def test_workspace_root_and_catalog_descriptions(arguments, target):
     tool = FilesystemToolset({}).tools()["list"]
-    assert tool.summary(arguments, ToolResult()) == f"Listed {target}"
+    assert tool.summary(arguments, ToolResult()) == f"Listed files: {target}"
 
 
 @pytest.mark.parametrize(
     "name,expected",
     [
-        ("write", "Wrote repo://file"),
-        ("append", "Appended to repo://file"),
-        ("glob", "Matched *.py in repo://file"),
-        ("stat", "Inspected repo://file"),
-        ("mkdir", "Created directory repo://file"),
-        ("remove", "Removed repo://file"),
+        ("write", "Wrote file: repo://file"),
+        ("append", "Appended to file: repo://file"),
+        ("glob", "Matched files: *.py in repo://file"),
+        ("stat", "Inspected path: repo://file"),
+        ("mkdir", "Created directory: repo://file"),
+        ("remove", "Removed path: repo://file"),
     ],
 )
 def test_fs_verbs(name, expected):
@@ -92,7 +92,7 @@ def test_fs_verbs(name, expected):
     [
         ("running", "Running"),
         ("succeeded", "Ran"),
-        ("failed", "Failed to run"),
+        ("failed", "Failed"),
     ],
 )
 @pytest.mark.parametrize("command", ["echo hello", "echo ..."])
@@ -110,15 +110,15 @@ def test_shell_describes_command_not_output_or_exit_status(status, prefix, comma
             ),
         )
     )
-    assert text == f"{prefix} “{command}”"
+    assert text == f"{prefix}: “{command}”"
 
 
 @pytest.mark.parametrize(
     "status,expected",
     [
-        ("running", "Searching for “abc”"),
-        ("succeeded", "Searched for “abc”"),
-        ("failed", "Failed to search for “abc”"),
+        ("running", "Searching: “abc”"),
+        ("succeeded", "Searched: “abc”"),
+        ("failed", "Failed to search: “abc”"),
     ],
 )
 def test_web_search_describes_query_without_running_search(
@@ -145,9 +145,9 @@ def test_web_search_describes_query_without_running_search(
     [
         ("read_threads", {}, "threads"),
         ("read_runs", {}, "runs"),
-        ("read_runs", {"thread": "thread_abc"}, "runs from thread_abc"),
-        ("read_steps", {"run": "run_abc"}, "steps from run_abc"),
-        ("read_output", {"run": "run_abc"}, "output from run_abc"),
+        ("read_runs", {"thread": "thread_abc"}, "runs: thread_abc"),
+        ("read_steps", {"run": "run_abc"}, "steps: run_abc"),
+        ("read_output", {"run": "run_abc"}, "run output: run_abc"),
         ("read_threads", {"cursor": "opaque-token"}, "more threads"),
         ("read_runs", {"cursor": "opaque-token"}, "more runs"),
         ("read_steps", {"cursor": "opaque-token"}, "more steps"),
@@ -172,11 +172,14 @@ def test_history_describes_the_target_without_displaying_cursors_or_records(
     assert summary == f"{prefix} {target}"
 
 
-def test_honor_only_describes_rule_files_when_result_supplies_them():
-    tool = ToolangToolset().tools()["honor"]
+def test_honor_preserves_input_paths_across_result_changes():
+    tool = RuntimeToolset().tools()["honor"]
     arguments = {"paths": [{"workspace": "repo", "path": "/src/file"}]}
-    assert tool.summary(arguments) == "Loading rules"
-    assert tool.summary(arguments, ToolResult(error="failed")) == "Failed to load rules"
+    assert tool.summary(arguments) == "Loading rules for repo://src/file"
+    assert (
+        tool.summary(arguments, ToolResult(error="failed"))
+        == "Failed to load rules for repo://src/file"
+    )
     output = {
         "controls": [
             {
@@ -192,7 +195,7 @@ def test_honor_only_describes_rule_files_when_result_supplies_them():
     }
     assert (
         tool.summary(arguments, ToolResult(output))
-        == "Loaded rules: repo://src/AGENTS.md"
+        == "Loaded rules for repo://src/file"
     )
 
 
@@ -218,18 +221,18 @@ def test_pick_uses_a_display_label_without_changing_the_resource_ref(
         "failed": f"Failed to load guidance: {kind}/testing",
     }
     assert (
-        ToolangToolset().tools()["pick"].summary(arguments, result) == wording[status]
+        RuntimeToolset().tools()["pick"].summary(arguments, result) == wording[status]
     )
     assert arguments == {"kind": kind, "ref": f"{scope}://{kind}s/testing"}
 
 
 def test_pick_keeps_remote_resource_identity_in_its_label():
     arguments = {"kind": "skill", "ref": "https://example.com/team/testing"}
-    assert ToolangToolset().tools()["pick"].summary(arguments, ToolResult()) == (
+    assert RuntimeToolset().tools()["pick"].summary(arguments, ToolResult()) == (
         "Loaded guidance: skill/https://example.com/team/testing"
     )
 
 
 def test_running_file_summary_preserves_authored_trailing_dots():
     tool = FilesystemToolset({}).tools()["read"]
-    assert tool.summary({"path": "repo://file..."}) == ("Reading repo://file...")
+    assert tool.summary({"path": "repo://file..."}) == ("Reading file: repo://file...")

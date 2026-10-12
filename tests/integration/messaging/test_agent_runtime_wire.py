@@ -23,7 +23,7 @@ from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.execution.schemas import StreamFrame
 from toolang.execution.types import ThreadPrefix
 from toolang.plugin.toolsets.loading import tools_from_toolsets
-from toolang.plugin.toolsets.msg import MsgToolset
+from toolang.plugin.toolsets.convo import ConvoToolset
 from toolang.plugin.types import LoadedPlugin
 from toolang.teaming.agent_client import AgentClient, AgentEventClient
 from toolang.teaming.backend.valkey.keys import TEAM, PRESENCE
@@ -48,9 +48,9 @@ def test_inflight_message_survives_hub_restart_and_scoped_fanout(
                 if c["name"] == "all"
             )
         gate = AsyncGate()
-        msg = MsgToolset({"root": str(tmp_path)})
+        msg = ConvoToolset({"root": str(tmp_path)})
         tools = tools_from_toolsets(
-            {"msg": LoadedPlugin("msg", "msg", msg, "built-in")}
+            {"convo": LoadedPlugin("convo", "convo", msg, "built-in")}
         )
         harness = ExecutionHarness.create(
             tmp_path,
@@ -64,8 +64,8 @@ def test_inflight_message_survives_hub_restart_and_scoped_fanout(
                             ToolCall(
                                 "reply",
                                 "reply",
-                                "msg__send",
-                                {"target": system, "body": "handled once"},
+                                "convo__write",
+                                {"target": system, "message": "handled once"},
                             ),
                         )
                     ),

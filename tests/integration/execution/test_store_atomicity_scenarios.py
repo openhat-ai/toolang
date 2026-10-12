@@ -628,8 +628,8 @@ def test_retry_rejects_applied_execute_history_without_mutation(
             output=(
                 ToolCallPart(
                     tool_call_id="execute",
-                    tool_name="_toolang__exec",
-                    tool_family="_toolang__exec",
+                    tool_name="runtime__exec",
+                    tool_family="runtime__exec",
                     input={"runnable": "target", "input": {"_": "work"}},
                 ),
             ),
@@ -649,7 +649,7 @@ def test_retry_rejects_applied_execute_history_without_mutation(
                 call=ToolCall(
                     "execute",
                     "execute",
-                    "_toolang__exec",
+                    "runtime__exec",
                     {"runnable": "target", "input": {"_": "work"}},
                 ),
             ),

@@ -179,7 +179,7 @@ def test_compact_before_model_and_freeze_horizon_for_next_root(
             ]
             assert any(
                 isinstance(s.given, ToolStepGiven)
-                and s.given.call.name == "_toolang__compact_read"
+                and s.given.call.name == "runtime__compact_read"
                 and s.given.trigger == "runtime"
                 for s in compact_steps
             )
@@ -203,7 +203,7 @@ def test_compact_before_model_and_freeze_horizon_for_next_root(
                 and "recent input" in text
                 and "current input" in text
             )
-            assert "old input" not in text and "_toolang__compact" not in text
+            assert "old input" not in text and "runtime__compact" not in text
             later = await (
                 harness.executor.run(spec(harness, thread, "later input"))
                 if next_root == "run"
@@ -309,7 +309,7 @@ def test_compact_between_model_calls_preserves_now_and_prior_call(tmp_path):
             text = str([m.to_data() for m in after.messages])
             assert "Earlier facts." in text and "old old" not in text
             assert "recent" in text and "current input" in text
-            assert "_toolang__compact" not in text
+            assert "runtime__compact" not in text
             exchange = [
                 part
                 for message in after.messages
@@ -1470,7 +1470,7 @@ def test_batched_tool_replies_remain_in_their_own_step_units(tmp_path, skipped):
         ToolCall(f"lookup-{i}", f"lookup-{i}", tool.name, {}) for i in range(2)
     )
     if skipped:
-        calls = (ToolCall("chdir", "chdir", "_toolang__chdir", {"path": "/"}), calls[1])
+        calls = (ToolCall("chdir", "chdir", "runtime__chdir", {"path": "/"}), calls[1])
     h = ExecutionHarness.create(
         tmp_path,
         source=SOURCE,

@@ -1326,12 +1326,42 @@ def test_agic_omits_tools_for_model_without_tool_support() -> None:
     result = _run_agic(
         replace(
             _prepared_agic(provider, route, model),
-            tools=load_tools(queries=("_toolang/*",)),
+            tools=load_tools(queries=("runtime/*",)),
         )
     )
 
     assert result == Message.assistant("done")
     assert provider.requests[0].tools == ()
+
+
+def test_unknown_name_does_not_suggest_tools_when_model_support_is_disabled() -> None:
+    provider = _FakeModels(
+        name="ollama",
+        responses=[
+            ModelCallResult(
+                tool_calls=(ToolCall("call", "provider", "runtime.runnables", {}),)
+            ),
+            ModelCallResult(message=Message.assistant("done")),
+        ],
+    )
+    route = _route(provider=provider.name, adapter="responses", api=None, options={})
+    model = _model("gemma4:latest", provider=provider.name, name="gemma4:latest")
+    result = _run_agic(
+        replace(
+            _prepared_agic(provider, route, model),
+            tools=load_tools(queries=("runtime/*",)),
+        )
+    )
+    assert result == Message.assistant("done")
+    assert provider.requests[0].tools == ()
+    replies = [
+        part
+        for message in provider.requests[1].messages
+        for part in message.parts
+        if isinstance(part, ToolResultPart)
+    ]
+    assert len(replies) == 1
+    assert replies[0].error == "unknown tool call: runtime.runnables"
 
 
 @pytest.mark.parametrize("model_tools", [False, True])

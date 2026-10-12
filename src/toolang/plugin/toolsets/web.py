@@ -18,7 +18,6 @@ from toolang.base.errors import ToolangError
 from toolang.base.protocols.tool import Tool, Toolset
 from toolang.base.types.tool import ToolResult
 from toolang.base.utils.function_tools import create_function_tool, tool
-from toolang.base.utils.tool_descriptions import action_summary
 
 logger = logging.getLogger(__name__)
 
@@ -172,9 +171,14 @@ def _summary(
     query = arguments.get("query")
     if not isinstance(query, str):
         return None
-    return action_summary(
-        result, ("search for", "Searching for", "Searched for"), f"“{query}”"
+    verb = (
+        "Searching"
+        if result is None
+        else "Failed to search"
+        if result.error is not None
+        else "Searched"
     )
+    return f"{verb}: “{query}”"
 
 
 def create_toolset(config: Mapping[str, Any]) -> Toolset:

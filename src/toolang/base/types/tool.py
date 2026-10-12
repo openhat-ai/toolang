@@ -119,7 +119,7 @@ class ServiceToolContext(ToolContext):
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class MsgToolContext(ToolContext):
+class ConvoToolContext(ToolContext):
     """Execution identity supplied only to the messaging toolset."""
 
     run_id: str | None = None

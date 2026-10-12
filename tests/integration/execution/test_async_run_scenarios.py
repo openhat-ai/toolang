@@ -321,7 +321,7 @@ flow child(_: Text) -> Text:
                     ToolCall(
                         "start",
                         "start",
-                        "_toolang__run",
+                        "runtime__run",
                         {
                             "runnable": "flow:child",
                             "input": {"_": "result"},
@@ -336,7 +336,7 @@ flow child(_: Text) -> Text:
             return ModelCallResult(
                 tool_calls=(
                     ToolCall(
-                        "wait", "wait", "_toolang__await", {"target": handle["id"]}
+                        "wait", "wait", "runtime__await", {"target": handle["id"]}
                     ),
                 )
             )

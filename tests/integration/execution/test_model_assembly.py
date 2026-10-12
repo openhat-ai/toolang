@@ -309,7 +309,7 @@ def test_execution_reset_uses_the_surviving_horizon(
     next_result = (
         ModelCallResult(
             tool_calls=(
-                ToolCall("next", "next", "_toolang__exec", {"runnable": "agic:next"}),
+                ToolCall("next", "next", "runtime__exec", {"runnable": "agic:next"}),
             )
         )
         if action == "execute"
@@ -825,7 +825,7 @@ agic child() -> Text:
     def child_call(name):
         return ModelCallResult(
             tool_calls=(
-                ToolCall(name, name, "_toolang__run", {"runnable": "agic:child"}),
+                ToolCall(name, name, "runtime__run", {"runnable": "agic:child"}),
             )
         )
 

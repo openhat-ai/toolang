@@ -118,7 +118,7 @@ class ToolCollection(Mapping[str, Tool]):
         """Registered runtime tools, independent of user resource selectors."""
 
         return self._derive(
-            tuple(entry for entry in self.entries if entry.ref.startswith("_toolang/"))
+            tuple(entry for entry in self.entries if entry.ref.startswith("runtime/"))
         )
 
     @property
@@ -127,7 +127,7 @@ class ToolCollection(Mapping[str, Tool]):
 
         return self._derive(
             tuple(
-                entry for entry in self.entries if not entry.ref.startswith("_toolang/")
+                entry for entry in self.entries if not entry.ref.startswith("runtime/")
             )
         )
 

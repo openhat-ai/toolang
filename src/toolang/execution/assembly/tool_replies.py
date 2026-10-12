@@ -75,7 +75,7 @@ def workspace_reply_from_step(
     if not (
         isinstance(given, ToolStepGiven)
         and given.trigger == "runtime"
-        and given.call.name == "_toolang__honor"
+        and given.call.name in {"runtime__honor", "_toolang__honor"}
         and step.input
     ):
         return None

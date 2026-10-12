@@ -782,7 +782,7 @@ class RunStore:
                 or (
                     isinstance(step.given, ToolStepGiven)
                     and step.given.trigger == "model"
-                    and step.given.call.name == "_toolang__spawn"
+                    and step.given.call.name == "runtime__spawn"
                 )
             ):
                 raise ValueError("spawn requires a flow spawn or model Tool Step")
@@ -974,7 +974,7 @@ class RunStore:
             else:
                 given = _step_from_row(step).given
                 if not isinstance(given, ToolStepGiven) or (
-                    given.trigger != "model" or given.call.name != "_toolang__exec"
+                    given.trigger != "model" or given.call.name != "runtime__exec"
                 ):
                     raise ValueError("tool exec requires a model exec Tool Step")
                 call = given.call
@@ -3331,9 +3331,9 @@ class RunStore:
                 or (
                     isinstance(existing_step.given, ToolStepGiven)
                     and existing_step.given.call.name
-                    in {"_toolang__spawn", "_toolang__exec"}
+                    in {"runtime__spawn", "runtime__exec"}
                     or isinstance(existing_step.given, ToolStepGiven)
-                    and existing_step.given.call.name == "_toolang__run"
+                    and existing_step.given.call.name == "runtime__run"
                     and existing_step.given.call.input.get("async") is True
                 )
             ):
@@ -3363,7 +3363,7 @@ class RunStore:
                     kind == "tool"
                     and status == "succeeded"
                     and isinstance(existing_step.given, ToolStepGiven)
-                    and existing_step.given.call.name == "_toolang__chdir"
+                    and existing_step.given.call.name == "runtime__chdir"
                     and output is not None
                     and isinstance(output.value, ToolResultPart)
                 ):

@@ -17,7 +17,7 @@ from toolang.base.protocols.tool import Tool, ToolHistory, ToolRuntime
 from toolang.base.types.message import Message, ToolResultPart
 from toolang.base.types.run import ToolCall, ToolCallResult
 from toolang.base.types.tool import (
-    MsgToolContext,
+    ConvoToolContext,
     ToolContext,
     ToolResult,
     ToolService,
@@ -27,7 +27,6 @@ from toolang.base.types.tool import (
 )
 from toolang.common.errors import ToolangError
 from toolang.common.layout import AgentLayout
-from toolang.common.template import render_text_template
 from toolang.common.time import elapsed_ms, utc_now
 from toolang.state.state import AgentState
 
@@ -35,7 +34,7 @@ from ...events import PartBegin, PartEnd, StepBegin, StepEnd
 from ...records import RecallControlPayload
 from ...assembly.tool_replies import workspace_reply, workspace_reply_from_step
 from ...runnables import AgicRoutes
-from ...tools.me.types import MeToolContext
+from ...tools.state.types import StateToolContext
 from toolang.state.types import StateSync
 from ...types import (
     value_for_type,
@@ -61,12 +60,6 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 _MAX_ARGUMENT_PREVIEW_CHARS = 80
-_DEFAULT_TOOL_SUMMARY_TEMPLATES = {
-    "running": "Executing {{name}} {{args.0}}",
-    "succeeded": "Executed {{name}} {{args.0}}",
-    "failed": "Failed {{name}} {{args.0}}",
-    "canceled": "Canceled {{name}} {{args.0}}",
-}
 _SENSITIVE_ARGUMENT_MARKERS = (
     "apikey",
     "authorization",
@@ -150,7 +143,7 @@ async def execute(
         honor = ToolCall(
             tool_call_id=identity,
             call_id=identity,
-            name="_toolang__honor",
+            name="runtime__honor",
             input={
                 "paths": [{"workspace": name, "path": path} for name, path in paths]
             },
@@ -259,17 +252,22 @@ async def _execute(
         summary_context = _tool_summary_context(call, tool)
         resolved_input = step_input
         try:
-            if trigger == "model" and call.name == "_toolang__compact":
+            if trigger == "model" and call.name == "runtime__compact":
                 raise ToolangError("compact can only be initiated by model preflight")
             if tool is None:
-                raise ToolangError(f"unknown tool call: {call.name}")
+                advertised = (
+                    tools
+                    if prepared.model.tool_call and not state.repairing_output
+                    else {}
+                )
+                raise ToolangError(_unknown_tool_message(call.name, advertised))
             arguments = tool.bind_arguments(call.input)
-            if plugin_name == "_toolang":
+            if plugin_name == "runtime":
                 # Capture discovery before StepBegin delivery can publish a new
                 # State; read failures still belong to this tool's result.
                 discovery_state = agent_state
                 if (
-                    call.name == "_toolang__runnables"
+                    call.name == "runtime__runnables"
                     and state.execution is not None
                     and state.execution.executor._state is not None
                 ):
@@ -283,7 +281,7 @@ async def _execute(
                     discovery_state=discovery_state,
                 )
             if (
-                call.name == "_toolang__await"
+                call.name == "runtime__await"
                 and state.execution is not None
                 and isinstance(target := call.input.get("target"), str)
             ):
@@ -530,8 +528,8 @@ async def _cancel(
             call, reason="canceled by steer" if state.immediate_steer() else "canceled"
         )
     if (
-        call.name in {"_toolang__spawn", "_toolang__exec"}
-        or call.name == "_toolang__run"
+        call.name in {"runtime__spawn", "runtime__exec"}
+        or call.name == "runtime__run"
         and call.input.get("async") is True
     ) and state.execution is not None:
         record = state.execution.store.get_step(ref=step)
@@ -686,8 +684,9 @@ def _tool_summary_context(
         name=name,
         args=tuple(
             _format_argument_preview(arguments[key])
-            for key in properties
-            if key in arguments
+            for key in (
+                [key for key in properties if key in arguments] or list(arguments)
+            )
         ),
         arguments=arguments,
         tool=tool,
@@ -707,20 +706,42 @@ def _tool_summary(
             )
             if isinstance(summary, str) and summary.strip():
                 summary = " ".join(summary.split())
+                if (
+                    status == "canceled"
+                    and context.family == "shell"
+                    and context.name == "execute"
+                    and summary.startswith("Running:")
+                ):
+                    return "Canceled:" + summary.removeprefix("Running:")
                 return f"Canceled: {summary}" if status == "canceled" else summary
         except Exception:
             # Presentation must not change execution or log potentially secret data.
             _LOGGER.warning("Tool description failed for %s", context.name)
-    template = _DEFAULT_TOOL_SUMMARY_TEMPLATES.get(status, "{{name}} {{args.0}}")
-    rendered = render_text_template(
-        template,
-        {
-            "family": context.family,
-            "name": context.name,
-            "args": context.args,
-        },
-    )
-    return " ".join(rendered.split())
+    verb = {
+        "running": "Executing",
+        "succeeded": "Executed",
+        "failed": "Failed",
+        "canceled": "Canceled",
+    }[status]
+    preview = f": {context.args[0]}" if context.args else ""
+    return f"{verb} {context.name}{preview}"
+
+
+def _unknown_tool_message(name: str, tools: Mapping[str, Tool]) -> str:
+    from toolang.base.utils.tools import encode_tool_name
+
+    for separator in (".", "/"):
+        if name.count(separator) != 1:
+            continue
+        toolset, leaf = name.split(separator)
+        try:
+            candidate = encode_tool_name(toolset, leaf)
+        except ToolangError:
+            continue
+        tool = tools.get(candidate)
+        if tool is not None and getattr(tool, "model_callable", True):
+            return f"Unknown tool name {name!r}; call {candidate!r} instead."
+    return f"unknown tool call: {name}"
 
 
 def _tool_identity(
@@ -733,15 +754,9 @@ def _tool_identity(
     if isinstance(family, str) and family and isinstance(name, str) and name:
         return family, name
 
-    family, separator, name = call.name.partition("__")
-    if separator and family and name:
-        return family, name
+    from toolang.base.utils.tools import decode_tool_name
 
-    fallback_family = getattr(tool, "toolset", None) or getattr(tool, "plugin_name", "")
-    return (
-        fallback_family if isinstance(fallback_family, str) else "",
-        call.name or "tool",
-    )
+    return decode_tool_name(call.name) or ("", call.name or "tool")
 
 
 def _is_sensitive_argument(name: str, schema: Mapping[object, object]) -> bool:
@@ -836,14 +851,14 @@ def _tool_context(
         workspace_names,
         workspace_bindings or {},
     )
-    if plugin_name == "_toolang" and runtime is not None:
+    if plugin_name == "runtime" and runtime is not None:
         return RuntimeToolContext(*args, runtime=runtime)
     if plugin_name == "history" and history is not None:
         return HistoryToolContext(*args, history=history)
-    if plugin_name == "msg":
-        return MsgToolContext(*args, run_id=run_id, thread_id=thread_id)
+    if plugin_name == "convo":
+        return ConvoToolContext(*args, run_id=run_id, thread_id=thread_id)
     if plugin_name == "service":
         return ServiceToolContext(*args, services=services)
-    if plugin_name == "me":
-        return MeToolContext(*args, layout=layout, sync_state=sync_state)
+    if plugin_name == "state":
+        return StateToolContext(*args, layout=layout, sync_state=sync_state)
     return ToolContext(*args)

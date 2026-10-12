@@ -171,7 +171,7 @@ following visible suffix.
 
 ### Automatic History Compaction
 
-ModelCall preflight can initiate a runtime `_toolang.compact()` Step when the
+ModelCall preflight can initiate a runtime `runtime.compact()` Step when the
 assembled input exceeds its budget. The Step owns a same-thread child Run with
 the reserved identity `_:compact`. It records Step-level read/model batches and
 a cumulative text summary. A historical root can span batches and retain a suffix
@@ -1062,8 +1062,8 @@ model order follows its model array unless `allow.models` branch order ranks mat
 Resource `--all` shows the complete diagnostic view for that same scope:
 allow-excluded caps, internal and allow-excluded tools, or unready and allow-excluded models/providers
 (including empty providers). It does not grant runtime access or combine scopes.
-Default tools hide internal `_toolang` leaves. Queries and counts describe the
-selected view. `me` is not internally hidden and follows normal tool allow policy.
+Default tools hide internal `runtime` leaves. Queries and counts describe the
+selected view. `state` is not internally hidden and follows normal tool allow policy.
 
 Resource lists support `--json` inspection arrays and default human tables
 (`--human`). The two output flags cannot combine. Model/provider canonical records
@@ -1100,7 +1100,7 @@ These commands list installed entry-point `NAME` and distribution `PACKAGE`
 (such as `toolang`). They have no query, `--json`, or `--human` options. They reject agent names and do not read setup,
 configuration, or catalog files or invoke factories. An installed plugin remains
 visible even when it cannot load. `toolsets` hides internal entries such as
-`_toolang` unless `--all` is given. Plugin lists have no agent allow policy.
+`runtime` unless `--all` is given. Plugin lists have no agent allow policy.
 `tools` belongs to resource inspection, not plugin inventory.
 
 

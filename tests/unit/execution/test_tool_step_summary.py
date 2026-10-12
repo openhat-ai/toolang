@@ -66,15 +66,15 @@ def test_default_summary_uses_schema_order_instead_of_call_input_order() -> None
     assert context.family == "demo"
     assert context.name == "call"
     assert context.args == ("“primary value”", "later")
-    assert _tool_summary(context, "running") == "Executing call “primary value”"
-    assert _tool_summary(context, "canceled") == "Canceled call “primary value”"
+    assert _tool_summary(context, "running") == "Executing call: “primary value”"
+    assert _tool_summary(context, "canceled") == "Canceled call: “primary value”"
 
 
 @pytest.mark.parametrize(
     ("status", "expected"),
     [
-        ("running", "Reading repo://file..."),
-        ("canceled", "Canceled: Reading repo://file..."),
+        ("running", "Reading file: repo://file..."),
+        ("canceled", "Canceled: Reading file: repo://file..."),
     ],
 )
 def test_tool_summary_preserves_trailing_dots_in_target(status, expected) -> None:
@@ -106,7 +106,7 @@ def test_default_summary_redacts_sensitive_argument(
     context = _tool_summary_context(_call({name: "do-not-show"}), tool)
 
     assert context.args == ("<redacted>",)
-    assert _tool_summary(context, "failed") == "Failed call <redacted>"
+    assert _tool_summary(context, "failed") == "Failed call: <redacted>"
 
 
 def test_default_summary_compacts_and_bounds_argument_preview() -> None:
@@ -126,15 +126,15 @@ def test_default_summary_compacts_and_bounds_argument_preview() -> None:
     assert preview.endswith("…”")
 
 
-def test_default_summary_omits_argument_without_a_schema_property() -> None:
+def test_default_summary_uses_input_order_without_a_schema_property() -> None:
     tool = _Tool({"type": "object"})
 
     context = _tool_summary_context(_call({"value": 3}), tool)
 
     assert context.family == "demo"
     assert context.name == "call"
-    assert context.args == ()
-    assert _tool_summary(context, "succeeded") == "Executed call"
+    assert context.args == ("3",)
+    assert _tool_summary(context, "succeeded") == "Executed call: 3"
 
 
 @pytest.mark.parametrize("status", ["running", "succeeded", "failed", "canceled"])
@@ -203,7 +203,7 @@ def test_description_flows_through_factory_and_loaded_tool_without_mutating_data
     assert tool.definition().description == "Unchanged model guidance."
 
 
-@pytest.mark.parametrize("outcome", [None, "", "   ", "raises"])
+@pytest.mark.parametrize("outcome", [None, "", "   ", 42, {}, "raises"])
 def test_description_failure_or_empty_value_uses_generic_fallback(outcome, caplog):
     def summary(arguments, result):
         if outcome == "raises":
@@ -217,7 +217,7 @@ def test_description_failure_or_empty_value_uses_generic_fallback(outcome, caplo
     context = _tool_summary_context(
         _call({"value": "original"}), create_function_tool(call)
     )
-    assert _tool_summary(context, "succeeded") == "Executed call original"
+    assert _tool_summary(context, "succeeded") == "Executed call: original"
     assert "never log this secret" not in caplog.text
 
 
@@ -235,3 +235,31 @@ def test_invalid_workspace_input_can_still_be_described_as_a_failure(arguments):
     context = _tool_summary_context(call, FilesystemToolset({}).tools()["read"])
     assert _tool_summary(context, "failed").startswith("Failed read")
     assert call.input == arguments
+
+
+@pytest.mark.parametrize(
+    "value,preview", [("", "“”"), (None, "null"), (False, "false"), (0, "0")]
+)
+def test_fallback_preserves_empty_first_input(value, preview):
+    call = _call({"first": value, "second": "later"})
+    assert (
+        _tool_summary(_tool_summary_context(call, _Tool({})), "running")
+        == f"Executing call: {preview}"
+    )
+
+
+def test_loaded_tool_alias_wins_over_plugin_and_raw_call_name():
+    loaded = LoadedTool(
+        "vendor", "external", ToolRef("vendor", "issues", "list"), _Tool({})
+    )
+    context = _tool_summary_context(_call({"project": "toolang"}), loaded)
+    assert (context.family, context.name) == ("issues", "list")
+    assert _tool_summary(context, "succeeded") == "Executed list: toolang"
+
+
+@pytest.mark.parametrize("name", ["custom-name", "odd__bad__name", "not.a.call", "a/b"])
+def test_invalid_wire_names_remain_raw(name):
+    call = ToolCall("call", "provider", name, {"target": "project"})
+    context = _tool_summary_context(call, None)
+    assert context.family == "" and context.name == name
+    assert _tool_summary(context, "failed") == f"Failed {name}: project"

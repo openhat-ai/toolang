@@ -131,14 +131,14 @@ layer manifests, including shadowed inputs and skill assets. The list is immutab
 for a revision and is also included in `to_snapshot()`. It is not reconstructed
 from live files or limited to effective caps.
 
-The `me` file tools return `{key, digest}` receipts for home files; deletion uses
-`digest: null`. `me.sync()` waits for one serialized refresh and returns the
+The `state` file tools return `{key, digest}` receipts for home files; deletion uses
+`digest: null`. `state.sync()` waits for one serialized refresh and returns the
 published `{revision, files}` directly. Callers must complete all source writes
 and exclude other writers until sync returns. On rejection it returns the exact
 last-valid publication, preparation diagnostics, and differences from one raw
 source scan; unreadable differences are null. Sync does not replace active code,
 captured Setup, or the current model-call snapshot. Independent job files remain
-outside State. See [the me interface](tools.md#current-agent).
+outside State. See [the state interface](tools.md#current-agent).
 
 New layers use schema 13 and source manifest schema 4. Preparation rebuilds older
 current layers without rewriting history. Explicit historical loads retain known
@@ -248,7 +248,7 @@ and may check concurrently. Root and home layer writer locks remain narrower:
 they are acquired only when that shared or agent-local layer actually needs to
 be rebuilt. The lock order is agent check, then root layer writer, then home
 layer writer. This process-owned boundary is also the State access boundary for
-current-agent `me` tools.
+current-agent `state` tools.
 
 ## Execution Records
 

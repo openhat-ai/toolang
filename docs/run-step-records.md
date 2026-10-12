@@ -195,7 +195,7 @@ finished_at
 ```
 
 `parent` identifies the enclosing Step for a child Run. Flow `run` and
-`_toolang/run` both keep that Step open through the child's `RunEnd`. Independent
+`runtime/run` both keep that Step open through the child's `RunEnd`. Independent
 roots have no parent; their entry control's `triggered_by` records the source.
 `thread`, `control`, and `state` are typed references. `output` is an
 Output whose `value` may be concrete or a `TypedRef` to an explicit

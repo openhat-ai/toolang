@@ -6,7 +6,8 @@ from dataclasses import dataclass
 from typing import Literal
 
 from toolang.execution.events import StepBegin
-from toolang.execution.types import ToolStepGiven
+from toolang.execution.types import RunStatus, ToolStepGiven
+from toolang.base.utils.tools import decode_tool_name
 from toolang.lang.ast import FlowStmt
 
 ProgressTone = Literal["progress", "normal", "active", "error", "warning"]
@@ -27,6 +28,10 @@ class StepOperation:
     runnable: str = ""
     run_scope: bool = False
     tool_marker: Literal["›", "✧"] = "›"
+
+    @property
+    def tool_identity(self) -> tuple[str, str] | None:
+        return decode_tool_name(self.tool.call.name) if self.tool is not None else None
 
     @property
     def is_flow(self) -> bool:
@@ -53,6 +58,8 @@ class ProgressRow:
     facts: tuple[str, ...] = ()
     right_status: str = ""
     right_identity: str = ""
+    tool_identity: tuple[str, str] | None = None
+    tool_status: RunStatus | None = None
 
 
 @dataclass(frozen=True, slots=True)

@@ -44,7 +44,7 @@ agic child() -> Text:
                             ToolCall(
                                 "call",
                                 "provider",
-                                "_toolang__run",
+                                "runtime__run",
                                 {"runnable": "agic:child"},
                             ),
                         )
@@ -166,7 +166,7 @@ agic child():
             ModelCallResult(
                 tool_calls=(
                     ToolCall(
-                        "call", "provider", "_toolang__run", {"runnable": "agic:child"}
+                        "call", "provider", "runtime__run", {"runnable": "agic:child"}
                     ),
                 )
             )

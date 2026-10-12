@@ -479,7 +479,7 @@ agic calculate(_: Part[]) -> Part[]:
                 ("model", "succeeded"),
                 ("tool", "canceled"),
             ]
-            assert steps[1].noted == ToolStepNoted(summary="Canceled slow 3")
+            assert steps[1].noted == ToolStepNoted(summary="Canceled slow: 3")
             assert steps[1].aborted_by == control.ref
             stored_control = harness.store.get_run_control(
                 run_id=record.id,

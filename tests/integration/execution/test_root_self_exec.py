@@ -46,11 +46,11 @@ def test_child_update_sync_then_native_root_self_exec(tmp_path):
     until: Must not evaluate.
   run: Must not reach.
 agic evolve() -> Text:
-  tools = me/*
+  tools = state/*
   Update the root and synchronize it.
 """
     updated = "flow grow() -> Text:\n  run: New root.\n"
-    me = load_tools(queries=("me/*",))
+    me = load_tools(queries=("state/*",))
     harness = ExecutionHarness.create(
         tmp_path,
         source=source,
@@ -58,14 +58,14 @@ agic evolve() -> Text:
         tools=me,
         responses=[
             tool(
-                "me__update",
+                "state__update",
                 {
                     "key": "agent.too",
                     "if_digest": sha256(source.encode()).hexdigest(),
                     "content": updated,
                 },
             ),
-            tool("me__sync", {}),
+            tool("state__sync", {}),
             answer("updated"),
             answer("done"),
         ],
@@ -126,7 +126,7 @@ def test_model_root_self_exec_keeps_one_run(tmp_path, changed, unnamed):
         prepare_state=True,
         responses=[
             ScriptedModelTurn(
-                tool("_toolang__exec", {"runnable": reference}), gate=gate
+                tool("runtime__exec", {"runnable": reference}), gate=gate
             ),
             answer("done"),
         ],
@@ -191,9 +191,9 @@ agic grow(item: Item) -> Text:
         source=source,
         prepare_state=True,
         responses=[
-            ScriptedModelTurn(tool("_toolang__chdir", {"path": "home://"}), gate=gate),
+            ScriptedModelTurn(tool("runtime__chdir", {"path": "home://"}), gate=gate),
             tool(
-                "_toolang__exec",
+                "runtime__exec",
                 {"runnable": "grow", "input": {"item": {"text": "work"}}},
             ),
             answer("recovered"),
@@ -240,7 +240,7 @@ def test_root_self_exec_still_requires_handoff_authorization(tmp_path):
     harness = ExecutionHarness.create(
         tmp_path,
         source="agic grow():\n  hands = *\n  handoffs = none\n  Work.\n",
-        responses=[tool("_toolang__exec", {"runnable": "grow"}), answer("recovered")],
+        responses=[tool("runtime__exec", {"runnable": "grow"}), answer("recovered")],
     )
 
     async def scenario():
@@ -307,7 +307,7 @@ def test_unchanged_native_self_exec_remains_cancelable(tmp_path, monkeypatch, ti
 def test_self_exec_preserves_root_budget_and_authority(tmp_path):
     blocked = RecordingTool("web__search", output={})
     response = ModelCallResult(
-        tool_calls=(ToolCall("exec", "exec", "_toolang__exec", {"runnable": "grow"}),),
+        tool_calls=(ToolCall("exec", "exec", "runtime__exec", {"runnable": "grow"}),),
         usage=ModelUsage(input_tokens=4, output_tokens=2),
     )
     harness = ExecutionHarness.create(

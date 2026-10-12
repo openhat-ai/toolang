@@ -61,11 +61,14 @@ The two optional methods default to `None`:
   styling, markers, or timing. No result means running; `result.error`
   distinguishes failure from success. This is separate from the static
   `ToolDefinition.description`. Executor masks sensitive arguments, isolates
-  inputs, falls back on None/empty/failed summaries, and saves the wording.
+  inputs, falls back on missing/None/blank/nontext/throwing summaries, and saves the wording.
+  Fallback retains the first supplied argument in schema order or input order when
+  no schema key matches; previews are masked and bounded to 80 characters.
   Executor prefixes running wording with `Canceled:` on cancellation, falling
   back to its generic cancellation wording when no summary is available.
   Progress reads saved summaries,
-  never plugins, and displays no result blocks.
+  never plugins, and displays a separate textual `[toolset]` prefix with no result
+  blocks. Summaries need only describe the action and target.
 - `paths`: workspace names mapped to tuples of normalized root-relative
   paths, for example `{"repo": ("/src/main.py",)}`. None means unsupported;
   `{}` means this call has no workspace paths. It must not execute the operation
@@ -214,8 +217,8 @@ package named after its entry-point identity:
 
 | Family | Registered plugins | Implementation parent |
 | --- | --- | --- |
-| Toolset | `fs`, `history`, `msg`, `service`, `shell`, `web` | `toolang.plugin.toolsets` |
-| Toolset | `_toolang`, `me` | `toolang.execution.tools` |
+| Toolset | `fs`, `history`, `convo`, `service`, `shell`, `web` | `toolang.plugin.toolsets` |
+| Toolset | `runtime`, `state` | `toolang.execution.tools` |
 | Model catalog | `models_dev`, `ollama`, `llama_cpp` | `toolang.plugin.catalogs` |
 | Model adapter | `chat_completions`, `generate_content`, `messages`, `responses` | `toolang.plugin.adapters` |
 | Sandbox | `host`, `docker` | `toolang.plugin.sandboxes` |
@@ -243,8 +246,8 @@ No-agent inspection never reads an implicit default agent. Tools and model
 resources consume their published setup views; caps use capability state.
 See [tools](tools.md), [models](models.md), and [caps](caps.md) for their policies.
 
-`too tools` and `too toolsets` hide internal toolsets such as `_toolang` by
-default. Use `--all` to include them. `me` is not internally hidden, but tool
+`too tools` and `too toolsets` hide internal toolsets such as `runtime` by
+default. Use `--all` to include them. `state` is not internally hidden, but tool
 allow policy can exclude it from the default view. Resource `--all` shows the
 complete diagnostic view: caps include allow-excluded resources, tools include
 internal and allow-excluded leaves, and models/providers include unready and allow-excluded catalog entries, plus empty
@@ -287,13 +290,14 @@ toolset names, and leaf names start with an ASCII letter and contain only ASCII
 letters and underscores. They cannot contain `__`, which is reserved as the
 provider-facing separator. A toolset plugin may return either a bare leaf key or
 an explicit `<toolset>/<leaf>` key. Collection queries identify tools as
-`<toolset>/<leaf>`, while model APIs receive `<toolset>__<leaf>`.
+`<toolset>/<leaf>`, while model APIs receive `<toolset>__<leaf>`. Human labels use
+`<toolset>.<leaf>` through `ToolRef.display_name`.
 
 A toolset with exactly one leading underscore is internal to Toolang. Only
 entry points whose installed distribution metadata identifies the `toolang`
 distribution may register one; a `toolang.*` Python module target alone grants
 no authority. External plugins may register one or more public toolsets but
-cannot claim internal toolsets.
+cannot claim internal toolsets or the reserved `runtime` plugin/toolset name.
 
 ## Configuration Rule
 

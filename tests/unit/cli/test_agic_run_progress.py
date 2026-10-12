@@ -56,7 +56,7 @@ def _model_given() -> ModelStepGiven:
 
 
 def _execute_part(
-    runnable: object = "agic:abc", *, tool_name: str = "_toolang__exec"
+    runnable: object = "agic:abc", *, tool_name: str = "runtime__exec"
 ) -> ToolCallPart:
     return ToolCallPart(
         tool_call_id="execute-1",
@@ -71,7 +71,7 @@ def _execute_step(
     runnable: str = "agic:abc",
     *,
     error: str | None = None,
-    tool_name: str = "_toolang__exec",
+    tool_name: str = "runtime__exec",
 ) -> ProgressUpdate:
     step = StepRef.parse("run_root.1")
     starting = projector.handle(
@@ -79,7 +79,7 @@ def _execute_step(
             step=step,
             kind="tool",
             given=ToolStepGiven(
-                plugin="_toolang",
+                plugin="runtime",
                 call=ToolCall(
                     "execute-1",
                     "execute-1",
@@ -92,7 +92,13 @@ def _execute_step(
     )
     assert starting.committed == ()
     assert starting.live[0].rows == (
-        ProgressRow(f"› Transferring {runnable}...", "active", surface="tool_summary"),
+        ProgressRow(
+            f"› Executing {runnable}...",
+            "active",
+            surface="tool_summary",
+            tool_identity=(tool_name.split("__", 1)[0], tool_name.split("__", 1)[1]),
+            tool_status="running",
+        ),
     )
     assert len(starting.live) == 1
     result = ToolResultPart(
@@ -155,9 +161,9 @@ def test_dynamic_run_projects_a_flat_header_and_child_id_footer(source) -> None:
         _run_stmt()
         if source == "flow"
         else ToolStepGiven(
-            plugin="_toolang",
+            plugin="runtime",
             call=ToolCall(
-                "call", "call", "_toolang__run", {"runnable": "agic:summarize"}
+                "call", "call", "runtime__run", {"runnable": "agic:summarize"}
             ),
             summary="Running agic:summarize",
         )
@@ -172,7 +178,11 @@ def test_dynamic_run_projects_a_flat_header_and_child_id_footer(source) -> None:
         ProgressRow("• Running agic:summarize...", "active")
         if source == "flow"
         else ProgressRow(
-            "› Running agic:summarize...", "active", surface="tool_summary"
+            "› Running agic:summarize",
+            "active",
+            surface="tool_summary",
+            tool_identity=("runtime", "run"),
+            tool_status="running",
         ),
     )
 
@@ -188,7 +198,14 @@ def test_dynamic_run_projects_a_flat_header_and_child_id_footer(source) -> None:
     assert len(header.committed) == 1
     assert header.live == ()
     assert header.committed[0].rows == (
-        ProgressRow("Run agic:summarize", leader="run"),
+        ProgressRow("Run agic:summarize", leader="run")
+        if source == "flow"
+        else ProgressRow(
+            "Running agic:summarize",
+            leader="run",
+            tool_identity=("runtime", "run"),
+            tool_status="running",
+        ),
         ProgressRow(""),
     )
     projector.handle(
@@ -285,7 +302,7 @@ def test_dynamic_run_preaccept_failure_uses_a_trace_marker_without_boundaries() 
     ]
 
 
-@pytest.mark.parametrize("tool_name", ["_toolang__exec", "_toolang__execute"])
+@pytest.mark.parametrize("tool_name", ["runtime__exec", "_toolang__execute"])
 def test_execute_projects_a_live_marker_then_a_handoff_header(tool_name) -> None:
     projector = ProgressProjector(show_boundaries=False)
     caller = StepRef.parse("run_root.0")
@@ -438,16 +455,22 @@ def test_execute_uses_its_persisted_running_description() -> None:
             step=StepRef.parse("run_root.0"),
             kind="tool",
             given=ToolStepGiven(
-                plugin="_toolang",
+                plugin="runtime",
                 call=ToolCall(
-                    "execute-1", "execute-1", "_toolang__exec", {"runnable": "next"}
+                    "execute-1", "execute-1", "runtime__exec", {"runnable": "next"}
                 ),
                 summary="Transferring to next...",
             ),
         )
     )
     assert starting.live[0].rows == (
-        ProgressRow("› Transferring next...", "active", surface="tool_summary"),
+        ProgressRow(
+            "› Transferring to next...",
+            "active",
+            surface="tool_summary",
+            tool_identity=("runtime", "exec"),
+            tool_status="running",
+        ),
     )
 
 
@@ -469,9 +492,9 @@ def test_uncommitted_execute_uses_its_tool_outcome(
             step=step,
             kind="tool",
             given=ToolStepGiven(
-                plugin="_toolang",
+                plugin="runtime",
                 call=ToolCall(
-                    "execute-1", "execute-1", "_toolang__exec", {"runnable": "next"}
+                    "execute-1", "execute-1", "runtime__exec", {"runnable": "next"}
                 ),
             ),
         )
@@ -488,9 +511,11 @@ def test_uncommitted_execute_uses_its_tool_outcome(
     )
     expected = (
         ProgressRow(
-            f"› {status.capitalize()} exec next",
+            f"› {summary}",
             "progress",
             surface="tool_summary",
+            tool_identity=("runtime", "exec"),
+            tool_status=status,
         ),
     )
     if status == "failed":
@@ -563,9 +588,9 @@ def test_confirmed_execute_stays_in_its_parallel_lane(
             step=step,
             kind="tool",
             given=ToolStepGiven(
-                plugin="_toolang",
+                plugin="runtime",
                 call=ToolCall(
-                    "execute-1", "execute-1", "_toolang__exec", {"runnable": "next"}
+                    "execute-1", "execute-1", "runtime__exec", {"runnable": "next"}
                 ),
                 summary="Transferring to next...",
             ),
@@ -583,8 +608,8 @@ def test_confirmed_execute_stays_in_its_parallel_lane(
                     ToolResultPart(
                         tool_call_id="execute-1",
                         call_id="execute-1",
-                        tool_name="_toolang__exec",
-                        tool_family="_toolang__exec",
+                        tool_name="runtime__exec",
+                        tool_family="runtime__exec",
                         output={"controls": ["run_worker@1"]},
                     ),
                 )
@@ -592,7 +617,7 @@ def test_confirmed_execute_stays_in_its_parallel_lane(
         )
     )
     if next_tool is not None:
-        plugin = "fs" if next_tool == "read" else "_toolang"
+        plugin = "fs" if next_tool == "read" else "runtime"
         marker = "›" if next_tool == "read" else "✧"
         summary = (
             "Reading repo://file..." if next_tool == "read" else "Loading rules..."
@@ -625,7 +650,7 @@ def test_confirmed_execute_stays_in_its_parallel_lane(
     ended = projector.handle(RunEnd(run="run_worker", status=status))
 
     assert transferred.committed == ended.committed == ()
-    assert transferred.live[0].rows[-1].text == "  0 | #0 | › Transferred next"
+    assert transferred.live[0].rows[-1].text == "  0 | #0 | › Transferred to next"
     assert not projector._broken
 
 
@@ -657,7 +682,13 @@ def test_execute_prestart_failure_uses_a_correlated_trace_marker() -> None:
     )
 
     assert failed.committed[0].rows == (
-        ProgressRow("› Failed exec flow:missing", "progress", surface="tool_summary"),
+        ProgressRow(
+            "› Failed to execute flow:missing",
+            "progress",
+            surface="tool_summary",
+            tool_identity=("runtime", "exec"),
+            tool_status="failed",
+        ),
         ProgressRow("  Runnable not found: missing", "error", surface="tool_error"),
     )
     assert failed.live == ()

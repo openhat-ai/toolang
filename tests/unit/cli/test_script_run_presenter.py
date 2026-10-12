@@ -1209,7 +1209,7 @@ def test_script_context_separates_first_non_tty_compact_activity(prior_output) -
                 given=ToolStepGiven(
                     plugin="_toolang",
                     trigger="runtime",
-                    call=ToolCall("compact", "compact", "_toolang__compact", {}),
+                    call=ToolCall("compact", "compact", "runtime__compact", {}),
                     summary="Compacting thread history",
                 ),
             ),
@@ -1221,7 +1221,7 @@ def test_script_context_separates_first_non_tty_compact_activity(prior_output) -
     expected = [""]
     if prior_output:
         expected.append("• Earlier output.")
-    expected.append("✧ Compacting thread history")
+    expected.append("✧ [runtime] Compacting thread history")
     assert lines[1:] == expected
 
 

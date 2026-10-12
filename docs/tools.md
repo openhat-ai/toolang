@@ -8,6 +8,18 @@ async callables and isolate synchronous Python callables in a worker thread,
 so blocking tool implementations do not stall the run event loop.
 
 
+## Tool identity
+
+A tool has one toolset and leaf name. Queries and configuration use `toolset/tool`,
+provider calls use `toolset__tool`, and human labels use `toolset.tool`. For example:
+`convo/write`, `convo__write`, and `convo.write`. Components can contain single
+underscores; `__` is reserved as the provider separator. `ToolRef.display_name`
+derives the display form without storing another identity.
+
+A mistaken dot/slash model call fails and suggests only its exact advertised
+provider name. It never executes or retries the call. Runtime-only, unavailable,
+and old tool names get no executable aliases.
+
 ## Inspection
 
 `too [AGENT] tools [--all] [--query QUERY]` lists the effective tools published
@@ -17,18 +29,18 @@ and allow settings on root inputs. The agent need not be running, and its
 program is not parsed for this command. This describes setup-level availability;
 individual run resource declarations may narrow it further.
 
-The default list hides internal tools such as `_toolang/*`. `--all` reveals
+The default list hides internal tools such as `runtime/*`. `--all` reveals
 those tools and all allow-excluded tools from the same setup version, matching
 the diagnostic meaning of model/provider `--all`. `setup.tools()` remains the
 allow-filtered runtime collection; `setup.tools(all=True)` exposes the complete
 pre-allow set for inspection without changing run grants. Tool and toolset data
 are loaded on first accessor use and memoized within that setup revision.
-`me/*` follows normal allow policy in the default view and appears with `--all`.
+`state/*` follows normal allow policy in the default view and appears with `--all`.
 Queries and footer counts use the displayed dataset. Tools have no separate
 readiness protocol: the full view includes leaves supplied by loaded toolsets,
 not guessed tools from an unloadable plugin. Both views show `REF`, `DESCRIPTION`, and `TAGS`, taken directly from the
 record fields `ref`, `description`, and `tags`. Tags are `ready` or `not_allowed`; internal tools retain
-copyable `_toolang/name` refs. `--json` emits the same public records used for
+copyable `runtime/name` refs. `--json` emits the same public records used for
 native TQ matching. `--human` explicitly selects the default table; the flags
 cannot combine. See [Resource Queries](queries.md) for fields and syntax.
 Human summaries use `N tools, M toolsets`, omitting the toolset count for zero
@@ -46,11 +58,12 @@ Current built-in tools are:
 - `shell`
 - `web`
 - `service`
-- `me`
+- `state`
+- `convo`
 - `history`
-- `_toolang`
+- `runtime`
 
-All use the same plugin registration and invocation path. `_toolang` is a runtime
+All use the same plugin registration and invocation path. `runtime` is a runtime
 toolset; user resource selectors apply only to user tools.
 
 
@@ -149,17 +162,17 @@ Missing targets and unresolved values fail as ordinary tool errors.
 
 ## Current Agent
 
-`me` manages the current agent's latest home files and synchronizes tracked
+`state` manages the current agent's latest home files and synchronizes tracked
 root/home sources with published Agent State, subject to normal tool permissions.
 The executor supplies that home and its host's State synchronization service.
 
 ```text
-me__list()
-me__get(key)
-me__create(key, content, encoding="utf-8")
-me__update(key, content, if_digest, encoding="utf-8")
-me__delete(key, if_digest)
-me__sync()
+state__list()
+state__get(key)
+state__create(key, content, encoding="utf-8")
+state__update(key, content, if_digest, encoding="utf-8")
+state__delete(key, if_digest)
+state__sync()
 ```
 
 Keys are canonical paths relative to the current home:
@@ -198,9 +211,9 @@ from a read or successful write and check it under the owning lock. On
 if a target already exists. The receipt identifies the resulting bytes; a null
 digest identifies the requested absence of a file.
 
-Me file operations do not parse or validate content. A successful save confirms that
+State file operations do not parse or validate content. A successful save confirms that
 the bytes were written. Existing loaders/watchers handle syntax, metadata, and
-composition errors identically for me writes and direct filesystem edits. The
+composition errors identically for state writes and direct filesystem edits. The
 State watcher retains its last valid publication and reports diagnostics for
 rejected candidates; repairing the files allows a later refresh to publish.
 Reads never allocate job ids. File-operation failures return `{error, message, key?}`, where
@@ -224,7 +237,7 @@ a chore preserves its checkpoint and does not cancel an existing Run.
 Root resources, external cap content, arbitrary paths, and directory
 operations are excluded. Symlinks are rejected except the canonical roaming
 `agent.too` link to its own original script; that link is preserved when editing.
-Linked config files are not writable through me.
+Linked config files are not writable through state.
 
 Main operations use `.agent.too.lock`; runnable modules use `.runnables.lock`.
 Config writers, including configured caps, workspaces, and roaming projection, share
@@ -280,10 +293,9 @@ of every declaration. A child may edit, sync, and return so the root can self-ex
 into compatible code. Keep sources stable through exec acceptance if it must use
 that publication; the returned revision is not reserved. See [Agent State](agent-state.md).
 
-`me.loaded` and `me__loaded` have been removed. Replace receipt polling with
-`me.sync()` / `me__sync({})`, handle operational errors, and use `revision` and the
-scoped `files` manifest as the publication receipt. CRUD receipts and `if_digest`
-remain unchanged; historical tool-call records remain readable.
+Use `state.sync()` / `state__sync({})` for publication receipts; handle operational
+errors and inspect `revision` and the scoped `files` manifest. There is no loaded
+receipt-polling operation. Historical tool-call records remain readable.
 
 Reading after a save observes the saved source. Running code remains governed by
 Run binding and publication: static calls in an accepted flow use its bound
@@ -296,27 +308,17 @@ the active Run.
 
 Tools do not own the model loop.
 
-For every ordinary tool-capable Agic Model Call, the executor selects the registered
-`_toolang__run`, `_toolang__spawn`, `_toolang__exec`, `_toolang__pick`,
-`_toolang__honor`, `_toolang__compact`, and `_toolang__chdir` tools. `hands` and
-`handoffs` authorize runnable targets but do not select these definitions.
-Statement-generated Flow evaluators, output-repair
-calls, and tool-disabled models receive no runtime tools.
+For tool-capable agic calls, the executor supplies callable `runtime` operations:
+`runnables`, `run`, `spawn`, `await`, `exec`, `pick`, and `chdir`. `honor` and
+`compact` are automatic runtime-only preflights. Flow evaluators, output repair,
+and tool-disabled models do not receive runtime tools.
 
-In chat, a named invocation without further requested work uses exec; a
-request to call a target and then summarize or process its result uses run.
-Run, spawn, and exec accept `runnable` and optional `input`, whose `_` field is primary
-input and other fields are declared parameters. The model reads the latest
-hands/handoffs signatures and asks for missing required values before calling.
-Questions about parameters alone do not execute the target.
-
-Omitted hands/handoffs settings inherit within the same module. Without an
-inherited value, all module-visible targets are available for named user requests.
-Their snapshots have `requested_only="true"`, directing the model not to delegate autonomously.
-Explicit lists and `*` have `requested_only="false"`. Explicit lists and `none`
-remain runtime-enforced limits, with hands governing run/spawn and handoffs governing exec. On a conflict,
-the model reports the restriction without switching operation or target. Snapshot
-limits remain 64 unique targets and 32 KiB; narrow hands/handoffs if exceeded.
+Run, spawn, and exec accept `runnable` and optional `input`. A named invocation
+without further requested work uses exec; use run when its result is needed
+before continuing. Current `routes` declarations govern hands (run), handoffs
+(exec), and spawns (spawn), independently. Missing restrictions mean all visible
+targets; `none` disables the operation. Invocation guards still apply. See the
+[runtime protocol](../src/toolang/execution/assembly/prompts/protocol.md).
 
 `AgentSetup.tools()` retains registered runtime tools independently of user tool
 ceilings. Each invocation has an ordinary Tool Step. Trusted runtime tools receive
@@ -350,33 +352,50 @@ distinguishes failure from success. Cancellation uses executor wording.
 The running summary is stored in
 `ToolStepGiven.summary`; the terminal summary uses `ToolStepNoted.summary`.
 
-The fallback combines the leaf name and first supplied argument in the tool
-definition's parameter order; it does not display the family. Its
-running form is `Executing NAME ARG ...`; its succeeded and failed forms are
-`Executed NAME ARG` and `Failed NAME ARG`. The canceled form is
-`Canceled NAME ARG`. Argument previews are single-line and bounded.
+The fallback retains the leaf and first supplied argument: `Executing list:
+projects`, `Executed list: projects`, `Failed list: projects`, or `Canceled list:
+projects`. Schema property order takes precedence when any supplied key matches;
+otherwise input order applies. Defaults are not invented. Empty, null, false,
+and zero values remain visible; previews are masked, single-line, and at most
+80 characters. Missing, blank, nontext, or throwing hooks use this fallback.
+Valid custom wording is preserved.
 
-Fs, shell, and runtime helpers supply wording through the same hook. Progress
-owns markers, color, timing, and layout; it reads saved summaries without calling
-plugins. Tool summaries and markers are dim: `✧` for runtime helpers
-and `›` for ordinary tools. Model and Flow markers remain unstyled `•`.
-Compact elapsed time refreshes once per second in TTY/Chat; non-TTY prints
-start/end only.
-Tool traces show one summary line, plus
-an indented error line on failure, and no result blocks. Long lines are truncated.
-Run/exec retain their child and handoff hierarchy.
+Progress carries toolset/leaf identity and status separately from saved wording,
+including parallel lanes. Script and Chat add a textual `[toolset]` prefix,
+using the configured toolset rather than its implementation plugin name.
+No icon configuration is provided. Unknown call names remain raw. Replay reads
+saved summaries and call identities without invoking current formatters.
 
-Workspace paths in tool summaries use the canonical `name://path` syntax,
-for example `repo://src/file.py`. Honor says `Loading rules...` /
-`Loaded rules: repo://AGENTS.md`.
-Pick says `Loaded guidance: skill/name` or `service/name`, using the effective
-capability identity rather than its source location.
+Built-in summaries preserve the input target through success, failure, and
+cancellation. Shell uses `Running: command`, `Ran: command`, `Failed: command`,
+and `Canceled: command`; other custom summaries cancel as `Canceled: <running>`.
+State sync says `Synced agent state`. Honor describes input paths as `Loaded rules
+for repo://src/file`; pick says `Loaded guidance: skill/name`. Tool traces retain
+an indented error line on failure and no result blocks. Run/exec preserve their
+child/handoff hierarchy and their saved action descriptions. Compact retains
+its elapsed timer. Flow descriptions are unchanged.
+
+## Conversations
+
+The selectable `convo` toolset provides `team`, `list`, `peek`, `write`, `create`,
+`rename`, `join`, and `leave`. See [messaging](messaging.md#agent-messaging)
+for parameters, compact results, target resolution, and read/write semantics.
+
+## Migration
+
+Replace `me` with `state`, `_toolang` with `runtime`, and `msg` with `convo` in
+selections, plugin configuration, and calls. Split targets into team/list, replace
+resolve with list/peek, and rename send to write (`body` → `message`,
+`in_reply_to` → `reply_to`, `agent:alice` → `alice`). Management leaves become
+create/rename/join/leave. Human and pair destinations require a conversation ID.
+Restart hosts and prepare fresh Setup; do not resume pre-upgrade runs. Existing
+records, summaries, and plugin rooms remain untouched, and history still recognizes
+old runtime names, including `_toolang__execute`.
 
 ### Spawn independent work
 
-`_toolang/spawn({runnable, input?})` starts an independent root in a new empty
-thread under the same agent/executor. It shares run's input decoder and hands
-policy, including default `requested_only` guidance. It accepts no thread,
+`runtime/spawn({runnable, input?})` starts an independent root in a new empty
+thread under the same agent/executor. It shares run's input decoder and follows the current spawns route. It accepts no thread,
 identity, source-code, or execution-configuration arguments. Multiple spawn calls
 may share a tool batch; each commits independently.
 
@@ -390,7 +409,7 @@ roots. See [spawn syntax](flow-syntax.md#spawn) and
 
 ### Pick guidance
 
-`_toolang/pick({kind: "skill" | "service", ref: "<trigger ref>"})` recalls one
+`runtime/pick({kind: "skill" | "service", ref: "<trigger ref>"})` recalls one
 allowed resource's body. Use the exact ref from its `toolang:skill-trigger` or
 `toolang:service-trigger`, such as `skill/testing`, not a source path or selector.
 Pick neither grants tools nor connects, authenticates, or discovers MCP services.
@@ -417,7 +436,7 @@ without reading historical State.
 
 For model calls to path-aware tools, runtime checks applicable `AGENTS.md` files
 from the workspace root to the target's scope. Missing or changed rules cause a
-runtime-only `_toolang/honor` Step, followed by an error-only response to the
+runtime-only `runtime/honor` Step, followed by an error-only response to the
 original tool call: `Workspace rules were just loaded. This operation was not
 executed; please retry if it complies with them.` The operation has no Tool Step
 or execution events; it has not run. The next Model Call
@@ -429,7 +448,7 @@ Confirmed deletion retracts earlier rules; failed reads block the operation.
 Honor is registered normally but is neither advertised to nor callable by the
 model. Its result contains `{controls: [{ref, target, revision}]}`; target is
 `{kind: "rules", workspace, path}` with the exact rules file, such as
-`/src/AGENTS.md`, not its directory scope. Progress lists these files. Honor's
+`/src/AGENTS.md`, not its directory scope. Progress preserves the input paths being checked. Honor's
 `Step.input` references the original ToolCall, allowing history to reconstruct
 its response if no later ModelCall delta saved it. Honor's own result is durable
 but not a model message. Preparation and
@@ -442,9 +461,9 @@ control changes the horizon used by subsequent ModelCalls.
 
 ## Async Runtime Calls
 
-`_toolang/run` accepts an optional boolean `async`, defaulting to false. With true,
+`runtime/run` accepts an optional boolean `async`, defaulting to false. With true,
 it admits an owned child and returns `{id, thread, status}` immediately. Use
-`_toolang/await` with `{target: "run_id"}` for that Run's complete `{type, value}`
+`runtime/await` with `{target: "run_id"}` for that Run's complete `{type, value}`
 result. The target must have been admitted by the calling Run, including through
 spawn. Await creates no new execution, accepts one reference, and reports target
 failure/cancellation as a tool error. An absent result produces the empty reply.

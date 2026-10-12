@@ -18,7 +18,7 @@ from toolang.plugin.toolsets.loading import load_tools
 from toolang.base.types.tool import RuntimeToolContext, ToolResult
 
 
-@pytest.mark.parametrize("name", ["_toolang", "me"])
+@pytest.mark.parametrize("name", ["runtime", "state"])
 def test_builtin_toolset_module_matches_registered_name(name: str) -> None:
     (entry,) = entry_points(group="toolang.toolset", name=name)
     assert entry.value == f"toolang.execution.tools.{name}:create_toolset"
@@ -28,18 +28,18 @@ def test_builtin_toolset_module_matches_registered_name(name: str) -> None:
 def test_installed_runtime_toolset_has_no_old_aliases() -> None:
     tools = ToolCollection.from_tools(load_tools())
     assert set(tools.runtime) == {
-        "_toolang__runnables",
-        "_toolang__run",
-        "_toolang__await",
-        "_toolang__spawn",
-        "_toolang__chdir",
-        "_toolang__exec",
-        "_toolang__pick",
-        "_toolang__honor",
-        "_toolang__compact",
+        "runtime__runnables",
+        "runtime__run",
+        "runtime__await",
+        "runtime__spawn",
+        "runtime__chdir",
+        "runtime__exec",
+        "runtime__pick",
+        "runtime__honor",
+        "runtime__compact",
     }
     assert set(tools.user).isdisjoint(tools.runtime)
-    assert "me__get" in tools.user
+    assert "state__get" in tools.user
     assert not any(name.startswith(("_too__", "_me__")) for name in tools)
     for name, tool in tools.runtime.items():
         assert tool.definition().name == name
@@ -47,7 +47,7 @@ def test_installed_runtime_toolset_has_no_old_aliases() -> None:
 
 
 def test_pick_uses_the_exact_ref_from_a_capability_trigger() -> None:
-    definition = load_tools()["_toolang__pick"].definition()
+    definition = load_tools()["runtime__pick"].definition()
     assert "trigger" in definition.description
     assert "skill/testing" in str(definition.parameters)
     assert "catalog" not in definition.description + str(definition.parameters)
@@ -55,8 +55,8 @@ def test_pick_uses_the_exact_ref_from_a_capability_trigger() -> None:
 
 def test_runnable_tool_descriptions_follow_user_intent_and_scope() -> None:
     tools = load_tools()
-    run = tools["_toolang__run"].definition().description
-    execute = tools["_toolang__exec"].definition().description
+    run = tools["runtime__run"].definition().description
+    execute = tools["runtime__exec"].definition().description
     assert "further processing" in run and "routes hands restriction" in run
     assert "no requested follow-up" in execute
     assert "routes handoffs restriction" in execute
@@ -65,7 +65,7 @@ def test_runnable_tool_descriptions_follow_user_intent_and_scope() -> None:
 
 
 def test_compact_is_a_zero_argument_runtime_only_tool() -> None:
-    tool = load_tools()["_toolang__compact"]
+    tool = load_tools()["runtime__compact"]
     assert getattr(tool, "model_callable") is False
     assert tool.definition().parameters == {
         "type": "object",
@@ -132,7 +132,7 @@ class _Runtime:
 def test_shared_plugin_keeps_per_call_authority_isolated(
     tmp_path: Path, name: str
 ) -> None:
-    tool = load_tools()[f"_toolang__{name}"]
+    tool = load_tools()[f"runtime__{name}"]
     first, second = _Runtime("first"), _Runtime("second")
     context = RuntimeToolContext(tmp_path, tmp_path, runtime=first)
     arguments = (
@@ -203,7 +203,7 @@ def test_runtime_arguments_cannot_supply_authority(
     runtime = _Runtime("unused")
     context = RuntimeToolContext(tmp_path, tmp_path, runtime=runtime)
     with pytest.raises(ToolangError):
-        asyncio.run(load_tools()[f"_toolang__{name}"].invoke(arguments, context)).output
+        asyncio.run(load_tools()[f"runtime__{name}"].invoke(arguments, context)).output
     assert runtime.calls == []
 
 
@@ -224,5 +224,5 @@ def test_tool_trigger_roundtrips_in_the_record_codec(trigger) -> None:
 
 def test_execute_name_is_no_longer_callable() -> None:
     tools = load_tools()
-    assert "_toolang__exec" in tools
-    assert "_toolang__execute" not in tools
+    assert "runtime__exec" in tools
+    assert "runtime__execute" not in tools

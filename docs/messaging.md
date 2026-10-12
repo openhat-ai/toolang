@@ -45,7 +45,7 @@ too hub stop                        # Leaves agents and Redis/Valkey running.
 `too hub serve` runs in the foreground. Hub binds `127.0.0.1`; clients discover its
 actual endpoint and backend identity from the private root `.runtime/hub.json`
 file. Calls assume trusted local clients; security authentication is deferred.
-Start Hub before using Talk or `msg` tools. Agents use it for messages, presence,
+Start Hub before using Talk or `convo` tools. Agents use it for messages, presence,
 and event export. Stopping Hub leaves agents running; communication fails until
 Hub returns. Background communication resumes without an agent restart; uncertain
 message sends are never automatically repeated.
@@ -180,19 +180,48 @@ renamed. Directory listings and send-only commands publish nothing. See
 
 | Tool | Purpose |
 | --- | --- |
-| `msg/targets()` | Discover participants and joined conversations, including current metadata revisions for renaming. |
-| `msg/send(target, body, in_reply_to?)` | Send immediately and return a receipt. |
-| `msg/create_conversation(name?, participants?)` | Create a GC containing the caller, or explicitly create/reuse a two-participant DM. |
-| `msg/rename_conversation(conversation, name, revision)` | Rename or clear the name with revision checking. |
-| `msg/join_conversation(conversation)` | Join a GC. |
-| `msg/leave_conversation(conversation)` | Leave a GC without deleting its history. |
-| `msg/resolve(target, by_name=false)` | Resolve an ID/participant or explicitly look up a conversation name with `by_name=true`. |
+| `convo.team()` | Return `{value: [{id, name, online}]}`. Names are unprefixed identifiers; human online status is null. |
+| `convo.list(name?, members?, exact=false)` | Return `{value: [{id, name, members}]}` for accessible conversations. |
+| `convo.peek(target, limit=50)` | Return `{conversation, messages}`; metadata includes the revision needed to rename. |
+| `convo.write(target, message, reply_to?)` | Write immediately; return `{conversation: id, message}`. |
+| `convo.create(name?, participants?)` | Create a GC containing the caller, or create/reuse a two-participant DM. |
+| `convo.rename(conversation, name, revision)` | Rename or clear the name, returning updated metadata plus `previous_name`. |
+| `convo.join(conversation)` | Join a GC by ID. |
+| `convo.leave(conversation)` | Leave a GC without deleting history. |
+
+These are display names; models call `convo__write`, for example. Selections use
+`convo/write`. No additional tools are needed to resolve a write target.
+
+`list` combines filters with AND. Names match exactly and case-sensitively, and
+may yield multiple results. Members accept bare agent names or `agent:`/`human:`
+IDs; duplicates and order do not matter. By default all requested members must
+be present. `exact=true` requires the entire membership, including yourself
+explicitly. Empty members and exact without members are errors; valid unknown
+members return no matches.
+
+`peek` and `write` take a bare agent name (your implicit DM) or an existing
+canonical `dm_`/`gc_` ID. Canonical ID syntax wins over an agent name with the same
+spelling. Unknown IDs never fall back to name lookup. Typed participants, pairs,
+your own agent name, and conversation names are not write/peek targets. First DM
+write creates and appends atomically; peeking at an absent DM fails without creation.
+
+Messages contain only `{id, sender, message, reply_to}`. `id` is an application
+UUID shared by write and peek, independent of backend stream IDs. `reply_to` is
+the ID of the message being replied to; omit it for a new message. Backend stream
+IDs and execution origin are not exposed by these tools. `peek` returns the latest
+0–1000 retained messages in chronological order; zero returns metadata only. It
+does not acknowledge, consume, or alter talk checkpoints. There is no recv tool.
+
+Rename verifies the supplied revision before mutation and reports the captured
+old name. Concurrent revisions fail; obtain fresh metadata with peek before
+retrying. Create, join, leave, membership checks, and uncertain-delivery behavior
+continue to use the existing Hub operations.
 
 Agents with the talk driver enabled poll joined conversations in serial batches
 of up to 20 entries through the `talk` runnable, or their default runnable.
 Batches reuse one durable `talk_` thread per agent, resolving workdir afresh.
 Disabling talk leaves presence, transport, outbound tools, and observation active. Previous messages, handling results, and send
-receipts provide context. Final model output is a summary; replies use `msg/send`.
+receipts provide context. Final model output is a summary; replies use `convo.write`.
 Own messages do not trigger another handler. Failed/malformed batches are logged
 and skipped. Agent origin records contain context-derived thread/run IDs.
 
@@ -285,7 +314,7 @@ global totals. Python `HubClient` and `AgentClient` creation, lookup, and rename
 methods all return a validated `Conversation`; use attributes such as `.id`
 and `.participants`, or `dataclasses.asdict()` when a dictionary is needed.
 Creation and rename no longer return untyped dictionaries. HTTP JSON fields and
-`msg` tool outputs keep their conversation record shape.
+`convo.create`, `convo.peek` metadata, and `convo.rename` retain this conversation record shape. Directory and message tools use the compact shapes above.
 
 Conversation statistics use native Stream `entries-added` for
 accepted appends and `length` for retained messages; trimming does not reduce

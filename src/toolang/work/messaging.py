@@ -26,9 +26,9 @@ from toolang.state.state import AgentState
 logger = logging.getLogger(__name__)
 _CONTEXT = 20
 _INSTRUCTIONS = """Handle this message batch as the receiving agent.
-Use msg/targets to find agents and conversations; never inspect other agents'
+Use convo__team and convo__list to find agents and conversations; never inspect other agents'
 threads, files, configuration, or shell sessions to discover how to communicate.
-Reply using msg/send to the source conversation, with in_reply_to set to the source
+Reply using convo__write to the source conversation, with reply_to set to the source
 message ID, unless explicitly asked to contact someone elsewhere. The tool owns
 the envelope and delivery. Never resend a successful tool send. Your final output
 is a brief handling summary, not a chat message or a replies JSON object.
@@ -36,7 +36,7 @@ Previous messages/results are context only. Do not re-handle your own messages,
 acknowledgements, completed discussions, or requests addressed only to others.
 If no action is needed, simply note that. Do not send acknowledgements of acknowledgements.
 Delegate substantial work to an available spawn target, preserving source context;
-tell the worker to send its result via msg/send. Do not await it in this handler.
+tell the worker to send its result via convo__write. Do not await it in this handler.
 Batch:
 """
 
@@ -228,7 +228,7 @@ class MessagingLoop:
                     if (
                         step.kind == "tool"
                         and isinstance(result, ToolResultPart)
-                        and result.tool_name == "msg__send"
+                        and result.tool_name in {"convo__write", "msg__send"}
                         and result.error is None
                     ):
                         outcome["replies"].append(result.output)

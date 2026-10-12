@@ -45,6 +45,9 @@ class LaneState:
     terminal: tuple[str, ...] = ()
     terminal_status: RunStatus | None = None
     terminal_tool: bool = False
+    activity_identity: tuple[str, str] | None = None
+    activity_status: RunStatus | None = None
+    terminal_identity: tuple[str, str] | None = None
     status: RunStatus = "running"
     active: bool = True
 

@@ -673,7 +673,7 @@ def test_flow_accepts_routing_directives(name: str) -> None:
 
 
 @pytest.mark.parametrize(
-    "selector", ["_toolang", "_toolang/*", "_toolang/run", "_toolang__run"]
+    "selector", ["runtime", "runtime/*", "runtime/run", "runtime__run"]
 )
 def test_tools_directive_rejects_executor_actions(selector: str) -> None:
     with pytest.raises(ToolangValidationError, match="hands or handoffs"):

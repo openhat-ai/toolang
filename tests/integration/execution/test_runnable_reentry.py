@@ -143,7 +143,7 @@ flow outer() -> Text[]:
                         ToolCall(
                             "reentry",
                             "reentry",
-                            f"_toolang__{action}",
+                            f"runtime__{action}",
                             {"runnable": target, "input": {"_": "again"}},
                         ),
                     )
@@ -212,7 +212,7 @@ flow outer() -> Text[]:
             assert len(harness.adapter.invocations) == 4
             result = last_tool_result(harness.adapter.invocations[-1].call)
             assert result.error == (
-                f"_toolang/{action} cannot call the current or an ancestor runnable: {target}"
+                f"runtime/{action} cannot call the current or an ancestor runnable: {target}"
             )
             for invocation in harness.adapter.invocations[1:]:
                 assert route_scopes(invocation.call) == dict.fromkeys(
@@ -255,7 +255,7 @@ flow() -> Text:
                     ToolCall(
                         "delegate",
                         "delegate",
-                        "_toolang__run",
+                        "runtime__run",
                         {"runnable": "research"},
                     ),
                 )

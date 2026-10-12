@@ -516,9 +516,9 @@ def _validate_directives(
         internal = [
             value
             for value in directive.values
-            if value == "_toolang"
-            or value.startswith("_toolang/")
-            or value.startswith("_toolang__")
+            if value == "runtime"
+            or value.startswith("runtime/")
+            or value.startswith("runtime__")
         ]
         if internal:
             raise ToolangValidationError(

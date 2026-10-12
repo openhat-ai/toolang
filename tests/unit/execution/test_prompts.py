@@ -38,6 +38,7 @@ def test_protocol_is_one_literal_body_with_action_focused_sections() -> None:
     assert sections == [
         "Role and instruction sources",
         "Runtime facts and resource messages",
+        "Tool names and conversations",
         "Choosing and completing work",
         "Workspaces and paths",
         "Authoring Toolang",
@@ -48,7 +49,7 @@ def test_protocol_preserves_guidance_and_execution_boundaries() -> None:
     prompt = " ".join(prompts.load("protocol.md").split())
     for requirement in (
         "A pick receipt is not guidance",
-        "call _toolang__pick",
+        "call runtime__pick",
         "wait for the guidance user message",
         "A trigger change or removal invalidates",
         "Setup, which stays fixed within a root Run",
@@ -57,9 +58,9 @@ def test_protocol_preserves_guidance_and_execution_boundaries() -> None:
         "child self-exec is forbidden",
         'entered_by="exec"',
         "the handoff has already succeeded",
-        "_toolang__runnables",
+        "runtime__runnables",
         "Missing routes means ALL",
-        "_toolang__chdir alone",
+        "runtime__chdir alone",
         "Shell preflight checks cwd, not paths inside commands",
     ):
         assert requirement in prompt

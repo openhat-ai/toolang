@@ -305,13 +305,13 @@ flow blocked(_: Text) -> Text:
                     ToolCall(
                         "blocked",
                         "blocked",
-                        "_toolang__run",
+                        "runtime__run",
                         {"runnable": "flow:blocked", "input": {"_": "blocked"}},
                     ),
                     ToolCall(
                         "permitted",
                         "permitted",
-                        "_toolang__run",
+                        "runtime__run",
                         {"runnable": "flow:permitted", "input": {"_": "permitted"}},
                     ),
                 )
@@ -321,7 +321,7 @@ flow blocked(_: Text) -> Text:
                     ToolCall(
                         "next",
                         "next",
-                        "_toolang__run",
+                        "runtime__run",
                         {"runnable": "flow:blocked", "input": {"_": "blocked"}},
                     ),
                 )

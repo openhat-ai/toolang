@@ -11,7 +11,7 @@ HomeFileCategory = Literal["program", "config", "cap", "asset", "chore"]
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class MeToolContext(ToolContext):
+class StateToolContext(ToolContext):
     layout: AgentLayout
     sync_state: StateSync | None = None
 

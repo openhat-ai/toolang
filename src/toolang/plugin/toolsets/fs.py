@@ -253,7 +253,7 @@ class _FilesystemTool(Tool):
             "append": ("append to", "Appending to", "Appended to"),
             "glob": ("match", "Matching", "Matched"),
             "stat": ("inspect", "Inspecting", "Inspected"),
-            "mkdir": ("create directory", "Creating directory", "Created directory"),
+            "mkdir": ("create", "Creating", "Created"),
             "remove": ("remove", "Removing", "Removed"),
         }[self.name]
         path = arguments.get("path", "." if self.name in {"list", "glob"} else None)
@@ -269,8 +269,21 @@ class _FilesystemTool(Tool):
                 return None
             target = f"“{path}”"
         if self.name == "glob":
-            target = f"{arguments.get('pattern', '*')} in {target}"
-        return action_summary(result, verbs, target)
+            pattern = arguments.get("pattern", "*")
+            if not isinstance(pattern, str):
+                return None
+            target = f"{pattern} in {target}"
+        label = {
+            "list": "files",
+            "read": "file",
+            "write": "file",
+            "append": "file",
+            "glob": "files",
+            "stat": "path",
+            "mkdir": "directory",
+            "remove": "path",
+        }[self.name]
+        return action_summary(result, verbs, f"{label}: {target}")
 
     async def invoke(
         self, arguments: Mapping[str, Any], context: ToolContext

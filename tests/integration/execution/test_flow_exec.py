@@ -45,7 +45,7 @@ def test_repeated_handoffs_do_not_reload_step_history(tmp_path, monkeypatch, kin
                     ToolCall(
                         str(i),
                         str(i),
-                        "_toolang__exec",
+                        "runtime__exec",
                         {"runnable": f"stage_{i + 1}", "input": {"_": "work"}},
                     ),
                 )
@@ -517,7 +517,7 @@ agic successor() -> Text:
                         ToolCall(
                             "restart",
                             "restart",
-                            "_toolang__exec",
+                            "runtime__exec",
                             {"runnable": "successor"},
                         ),
                     )

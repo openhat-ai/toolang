@@ -38,7 +38,7 @@ def test_root_flow_calls_export_with_private_helper(tmp_path, kind, named):
                     ToolCall(
                         "helper",
                         "helper",
-                        "_toolang__run",
+                        "runtime__run",
                         {"runnable": "helper", "input": {"_": "input"}},
                     ),
                 )

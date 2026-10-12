@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from rich.console import Console, ConsoleOptions, Group, RenderableType, RenderResult
 from rich.segment import Segment
@@ -64,6 +64,12 @@ def _row_renderable(
     inline_code_background: str,
     code_foreground: str | None,
 ) -> RenderableType:
+    if row.tool_identity is not None:
+        prefix, description = split_hanging_prefix(row.text)
+        # Leave room for the action/target even for a long configured toolset key.
+        available = max(1, max_width - display_width(prefix))
+        label = truncate(row.tool_identity[0], max(1, available // 3))
+        row = replace(row, text=f"{prefix}[{label}] {description}")
     if row.leader in {"run", "handoff", "iteration"}:
         renderable: RenderableType = _DividerRow(row, max_width=max_width)
     elif row.format == "plain" and row.right_text:

@@ -146,7 +146,7 @@ canceling a waiting HTTP request or TUI action does not cancel the durable run.
 
 ## Owned Async Work
 
-Flow async run and `_toolang/run(async=true)` share child admission and root budgets.
+Flow async run and `runtime/run(async=true)` share child admission and root budgets.
 Admission commits the target and launch receipt together; execution registration
 precedes successful delivery. The immediate parent owns cleanup on return, failure,
 cancellation, or exec. Await shields target work from observer cancellation and
@@ -163,7 +163,7 @@ captured `LaunchContext` stored as `launch_context` on their entry controls.
 
 Binding validates explicit runtime inputs and asks `IdIssuer` for a run ID when
 `run()` does not receive one. `RunSpec.thread` must identify an existing
-thread. Language `spawn` and `_toolang/spawn` use the internal
+thread. Language `spawn` and `runtime/spawn` use the internal
 [spawn admission contract](plans/flow-spawn.md#commit-boundaries-and-records),
 which creates the independent root's thread in the same transaction.
 
@@ -292,7 +292,7 @@ Instructions contain `toolang:protocol`, optional `toolang:instruct`, resident
 descriptions in attributes. Non-description metadata is a JSON `metadata`
 attribute, omitted when empty. Triggers advertise availability, not loaded guidance.
 Using a skill or service requires its current visible `skill-guidance` or
-`service-guidance` user message; `_toolang__pick` loads it on demand.
+`service-guidance` user message; `runtime__pick` loads it on demand.
 Revisions derive from immutable definition fingerprints and metadata, without
 reading skill/service bodies during assembly.
 
@@ -338,7 +338,7 @@ only lightweight types and helpers, so basic inspection does not load tree
 projection. Persistence and model-call reconstruction remain in `RunStore`.
 
 Built-in tool modules match their registered toolset names:
-`execution/tools/_toolang.py` and `execution/tools/me/`.
+`execution/tools/runtime.py` and `execution/tools/state/`.
 
 `build_agic_frame()` produces one private `_AgicFrame` consumed directly by the agic
 run. Adapters never observe that frame; their boundary remains one
@@ -352,8 +352,8 @@ There is no loop plugin, public run-context protocol, or separate
 effective-resource, invocation, or tool-snapshot layer.
 
 The frame holds selected tools and effective Agic routes. Ordinary tool-capable
-calls receive `_toolang__runnables`, `_toolang__run`, `_toolang__await`,
-`_toolang__spawn`, `_toolang__exec`, `_toolang__chdir`, and `_toolang__pick`
+calls receive `runtime__runnables`, `runtime__run`, `runtime__await`,
+`runtime__spawn`, `runtime__exec`, `runtime__chdir`, and `runtime__pick`
 independently of route lists, using the normal plugin and Tool Step lifecycle.
 Honor and compact remain automatic preflights.
 
@@ -366,7 +366,7 @@ other calls without runtime tools declare all scopes NONE. Routes have no resour
 revision and do not participate in recall. Signatures and docs are not repeated
 in these messages.
 
-`_toolang__runnables` accepts an optional exact `name`; omission returns all
+`runtime__runnables` accepts an optional exact `name`; omission returns all
 module-visible declarations, sorted by ref without truncation. It returns current
 identity, active ancestors excluding the leaf, and entries containing ref,
 State revision, full doc, and complete signature including recursive struct/field
@@ -472,7 +472,7 @@ StepEnd(run)
 This distinction is made at the event source. The sink and tracer observe the
 same canonical event sequence and never filter a synthetic top-level step.
 
-A model `_toolang__run` call validates its target and atomically records a pending
+A model `runtime__run` call validates its target and atomically records a pending
 child Run and applied entry control. Its Tool Step stays open until the child ends,
 matching a flow Run Step:
 
@@ -499,7 +499,7 @@ and provider signatures removed. Caller history contains the paired tool reply;
 child internals remain in the child Run. Explicit retry replaces the caller agic's
 Step history and children. Restart/resume remains outside this contract.
 
-A successful `_toolang__exec` atomically records an applied exec control and
+A successful `runtime__exec` atomically records an applied exec control and
 its succeeded Tool Step, including output and finish time, before transferring
 to the target. Interrupted delivery cannot change that committed outcome. It creates
 no child Run, extra transition Step, or additional `RunBegin`:
@@ -541,7 +541,7 @@ types, and referenced structs. A newer model catalog cannot relax that check.
 Successful replacement preserves the Run, captured Setup, authority ceilings,
 root totals/time limit, and original entry output contract. Unchanged revisions
 are allowed; repeated execs add no ancestry and remain subject to cancellation
-and root limits. `me.sync()` publishes sources; self-exec explicitly adopts the
+and root limits. `state.sync()` publishes sources; self-exec explicitly adopts the
 compatible root implementation. A child must finish before its root does this.
 
 Progress starts the exec marker at Tool Step begin, confirms the transfer from

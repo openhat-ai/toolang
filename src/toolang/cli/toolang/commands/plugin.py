@@ -66,7 +66,9 @@ def list_tools(
     records = [
         tool_record(view, allowed=view.model_name in allowed)
         for view in tools.query()
-        if all_ or not is_internal_toolset_name(view.toolset)
+        if all_
+        or view.toolset != "runtime"
+        and not is_internal_toolset_name(view.toolset)
     ]
     if query:
         parsed = user_call(lambda: Query.parse(query).validate({"key": "ref"}))
@@ -120,7 +122,11 @@ def _list_plugins(
 ) -> None:
     rows = plugin_info_rows(group)
     if not include_internal:
-        rows = [row for row in rows if not is_internal_toolset_name(row[0])]
+        rows = [
+            row
+            for row in rows
+            if row[0] != "runtime" and not is_internal_toolset_name(row[0])
+        ]
     if rows:
         echo_table(("NAME", "PACKAGE"), rows)
     echo_collection_summary(len(rows), noun)

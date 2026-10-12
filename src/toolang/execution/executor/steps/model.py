@@ -506,7 +506,7 @@ async def execute(state: _AgicState) -> ModelCallResult:
                 ToolCall(
                     tool_call_id=identity,
                     call_id=identity,
-                    name="_toolang__compact",
+                    name="runtime__compact",
                     input={},
                 ),
                 trigger="runtime",
