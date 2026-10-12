@@ -7,6 +7,8 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ## [Unreleased]
 
+## [0.4.0a5] - 2026-10-12
+
 ### Changed
 
 - **Breaking:** independent spawned work now uses `work` instead of `worker`:
@@ -1273,7 +1275,8 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 - The formatter normalizes `exec` statements consistently with other flow
   statements. (#676)
 
-[Unreleased]: https://github.com/openhat-ai/toolang/compare/v0.4.0a4...HEAD
+[Unreleased]: https://github.com/openhat-ai/toolang/compare/v0.4.0a5...HEAD
+[0.4.0a5]: https://github.com/openhat-ai/toolang/compare/v0.4.0a4...v0.4.0a5
 [0.4.0a4]: https://github.com/openhat-ai/toolang/compare/v0.4.0a3...v0.4.0a4
 [0.4.0a3]: https://github.com/openhat-ai/toolang/compare/v0.4.0a2...v0.4.0a3
 [0.4.0a2]: https://github.com/openhat-ai/toolang/compare/v0.4.0a1...v0.4.0a2

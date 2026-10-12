@@ -264,7 +264,12 @@ def test_ctrl_selection_during_slow_details_and_terminal_restore(
 
 @pytest.mark.skipif(shutil.which("tmux") is None, reason="tmux is not installed")
 @pytest.mark.parametrize("local", [False, True])
-def test_top_terminal_grid_resize_and_markdown_pages(tmp_path, local):
+@pytest.mark.parametrize(
+    "size_environment",
+    [{}, {"COLUMNS": "80", "LINES": "24"}],
+    ids=["terminal-size", "stale-size-environment"],
+)
+def test_top_terminal_grid_resize_and_markdown_pages(tmp_path, local, size_environment):
     """Inspect the current screen, including reflow and Markdown beyond page one."""
     result = (
         "# Review result\n\n**Verified** configuration.\n\n"
@@ -279,11 +284,23 @@ def test_top_terminal_grid_resize_and_markdown_pages(tmp_path, local):
             session_name="top",
             start_directory=PROJECT_ROOT,
             window_command=shlex.join(
-                [sys.executable, "-m", "tests.support.top_tui_e2e", str(tmp_path)]
+                [
+                    # Readline can export native-only dimensions; use the PTY size.
+                    "env",
+                    "-u",
+                    "COLUMNS",
+                    "-u",
+                    "LINES",
+                    sys.executable,
+                    "-m",
+                    "tests.support.top_tui_e2e",
+                    str(tmp_path),
+                ]
             ),
             x=160,
             y=30,
             environment={
+                **size_environment,
                 "TERM": "xterm-256color",
                 "TOOLANG_TEST_LOCAL": "1" if local else "0",
                 "TOOLANG_TEST_RESULT": result,
