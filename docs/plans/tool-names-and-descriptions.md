@@ -84,8 +84,9 @@ are added. Migration replaces toolset and leaf names in authored tool
 selections, plugin configuration, and direct tool calls; restart hosts and prepare
 fresh Setup before starting new Runs. Split targets consumers between team and
 list; use list's name filter for discovery and messages for conversation information
-instead of resolve. Send becomes write: rename `body` to `message`, preserve
-`target`/`in_reply_to`, strip `agent:` from agent targets, and keep canonical IDs. Human
+instead of resolve. Send becomes write: rename `body` to `message` and
+`in_reply_to` to `reply_to`, preserve `target`, strip `agent:` from agent targets,
+and keep canonical IDs. Human
 targets and explicit participant pairs must use a conversation ID obtained from
 list or create. Other leaf arguments and write receipts need no conversion.
 None of the renamed toolsets stores durable data in its plugin room; leave old
@@ -105,7 +106,7 @@ in the implementation changelog using the repository's runnable workflow.
 | `convo.team` | None | Existing `TeamMember[]`, including agents and humans |
 | `convo.list` | `name: string \| null = null` | Existing `ConversationSummary[]` for accessible conversations |
 | `convo.messages` | `target: string`, `limit: integer = 50` | `{conversation: Conversation, messages: [{stream_id, message: Message}]}` |
-| `convo.write` | `target: string`, `message: string`, `in_reply_to: string \| null = null` | Existing receipt: `{conversation: string, stream_id: string, message: Message}` |
+| `convo.write` | `target: string`, `message: string`, `reply_to: string \| null = null` | Existing receipt: `{conversation: string, stream_id: string, message: Message}` |
 
 Team retains registered member IDs, display names, owners, and presence. List
 returns only conversations, retaining IDs, names, kinds, members, revisions, and
@@ -133,10 +134,12 @@ exist and permit the caller to write. Preserve body/reply validation, membership
 and live-lease checks, run/thread provenance, receipt identity, and unconfirmed
 delivery behavior. Never auto-join, retry, or choose another target on failure.
 The required `message` argument is plain text mapped to the existing message
-record's `body`; stored records and receipts keep their fields. Optional
-`in_reply_to` is the replied-to Message's UUID `id`, not a conversation ID or
-`stream_id`. It records a reply reference; `target` alone selects the destination.
-Ordinary writes omit it; talk replies can retain their source-message reference.
+record's `body`; stored records and receipts keep their fields. Optional `reply_to`
+maps to the existing `in_reply_to` field and is described as: "ID of the message
+being replied to. Omit for a new message." Its value is the original Message's
+UUID `id`, not a conversation ID or `stream_id`. It records a reply reference;
+`target` alone selects the destination. Talk replies retain their source-message
+reference using `reply_to`.
 
 Messages returns conversation metadata and at most the latest `limit` retained
 messages, ordered oldest to newest. Accept integers `0..1000`; `0` fetches only
@@ -362,7 +365,8 @@ rows retain the distinction. Replays never call live tool formatters.
   shared target interpretation, owned context, and setup configuration
   injection. Verify against `teaming/{client,agent_client,messaging,schemas}.py`
   and the existing unit/integration messaging suites. Update `work/messaging.py`
-  call instructions to `convo__team`, `convo__list`, and `convo__write`; preserve
+  call instructions to `convo__team`, `convo__list`, and `convo__write` with
+  `message`/`reply_to` arguments; preserve
   polling, checkpoints, and talk-delivery behavior.
 - `cli/common/execution_progress/{operations,step_projection}.py`: new runtime
   recognition and saved summary use with existing presentation structure.
