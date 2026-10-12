@@ -156,9 +156,10 @@ responses or nonzero shell exits. Sync failure must never say State was synced.
 Retain existing workspace URI/relative-path labels, command/query quoting, and
 guidance/rules identity formatting. Summaries use only isolated, masked call data
 and existing result fields; no filesystem, network, Store, or State reads.
-Do not include file contents, message bodies, nested service inputs, auth URLs,
-tokens, digests, result dumps, or counts. Missing/malformed display fields retain
-the object label or fall back; never display `None` or raise into execution.
+Built-in summaries omit file contents, message bodies, nested service inputs,
+auth URLs, tokens, digests, result dumps, and counts. Missing/malformed display
+fields retain the object label or fall back; never display `None` or raise into
+execution.
 
 ## Progress integration and fallback
 
@@ -170,8 +171,13 @@ The catalog-wide coverage requirement applies only to Toolang's built-ins.
 
 Executor fallback uses the structured ToolRef identity, or decodes the call name
 when that ref is unavailable. If no family can be recovered, retain the original
-call name. Preserve the existing masked, bounded first-argument preview after
-the identity, omitting it when absent. For example:
+call name. Every lifecycle fallback must include the first supplied argument's
+preview after the identity; omit the preview only when the call has no arguments.
+Select the first supplied property in schema order. If the schema is unavailable
+or none of its properties is supplied, use the first argument in call input order.
+Do not insert omitted defaults. Preserve masking, single-line formatting, and
+the existing 80-character preview limit. Sensitive values display `<redacted>`;
+empty strings, null, false, and zero still have previews. For example:
 
 | Lifecycle | Plugin with no custom summary |
 | --- | --- |
@@ -225,13 +231,16 @@ rows retain the distinction. Replays never call live tool formatters.
    including state/fs reads, every list operation, service/tool pairs, message
    operations, sync errors, async runs, and reused conversations.
 3. Legacy class and function plugins with no custom summaries still load and run.
-   Two external `list` tools have distinct qualified fallback text in all four
-   lifecycle states. Default/None/empty/non-text/throwing hooks, absent arguments,
+   Two external `list` tools have distinct qualified fallback text and include
+   the first supplied argument in all four lifecycle states. Verify schema-order
+   selection, call-order fallback without matching schema properties, omitted
+   defaults, empty/null/false/zero values, redaction, truncation, and omission only
+   for argument-free calls. Default/None/empty/non-text/throwing hooks,
    explicit toolset keys differing from plugin names, and missing ToolRefs use
    the specified fallback. Valid custom summaries are not prefixed or rewritten.
    Malformed arguments, optional targets, cursor pages, and cancellation cannot
    break execution or erase built-in object labels.
-4. Summaries perform no I/O and omit sensitive/content payloads. Existing
+4. Summaries perform no I/O; built-in summaries omit content payloads. Existing
    argument masking, input/result isolation, whitespace normalization, and
    bounded previews continue passing.
 5. Chat and Script, TTY/non-TTY, parallel lanes, and narrow widths identify the
