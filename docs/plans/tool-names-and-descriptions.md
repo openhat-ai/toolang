@@ -4,8 +4,8 @@ Status: proposed; awaiting human approval. Definition only.
 
 ## Goal and scope
 
-Give all 49 proposed built-in tools concise progress text, separate tool identity
-for UI labels/icons, and consistent model instructions. Rename three toolsets and
+Give all 49 proposed built-in tools concise progress text, separate textual
+toolset prefixes, and consistent model instructions. Rename three toolsets and
 simplify conversation discovery, inspection, and writing. Keep resource access,
 runtime semantics, CLI commands, tool-name grammar, and teaming service contracts unchanged.
 
@@ -126,7 +126,7 @@ writes do not publish State, chores are outside State, and sync does not switch
 active Run code. Keep digest, sync, service-session/auth, and runtime restrictions.
 
 Use the existing optional `summary()` hook for action/object/target text only;
-keep tool identity and icons outside it. Every built-in supplies lifecycle
+keep tool identity outside it. Every built-in supplies lifecycle
 summaries; plugins need no new interface or registration metadata. Objects such
 as files, messages, and child runs still distinguish leaves within a toolset.
 `{...}` is display data; omit the colon with an absent target. Preserve the same
@@ -232,14 +232,13 @@ use ToolRef where already available. A plugin implementation name is not its
 configured toolset key. Preserve unknown/malformed raw names rather than guessing.
 
 Carry optional `tool_identity` (toolset/name) and `tool_status` on progress rows,
-including parallel lane/terminal projections. Render the badge separately from
-summary text; never parse a summary to recover identity or strip presumed prefixes.
-Renderers choose text or icon presentation. CLI defaults to `[shell] Running: ls`;
-icon-capable UIs may replace the badge with a mapped icon and retain `shell.execute`
-as its accessible label/tooltip. Missing icons and plain-text output use the
-toolset text; when identity is unknown, retain the raw call name in the fallback.
-Keep status indicators distinct from toolset icons and reserve width for both
-identity and target. No new CLI flags or plugin icon requirements in this scope.
+including parallel lane/terminal projections. Render a textual `[toolset]` prefix
+separately from summary text in both TTY and plain-text output, e.g.
+`[shell] Running: ls`. Never parse a summary to recover identity or strip presumed
+prefixes. When identity is unknown, retain the raw call name in the fallback.
+Preserve existing status markers and reserve width for both identity and target.
+The separation permits future icon presentation; icon rendering, assets, mappings,
+switches, configuration, and plugin icon metadata are outside this scope.
 
 ### Plugin fallback
 
@@ -259,9 +258,9 @@ for empty strings, null, false, and zero.
 | --- | --- | --- | --- |
 | `Executing list: projects` | `Executed list: projects` | `Failed list: projects` | `Canceled list: projects` |
 
-These summaries render with the separate `acme` badge, e.g.
+These summaries render with the separate `acme` text prefix, e.g.
 `[acme] Executed list: projects`. Custom/plugin summaries receive the same UI
-identity treatment without requiring summary or icon metadata.
+identity treatment without requiring extra plugin metadata.
 
 Chat/Script runtime tool rows must use saved summaries, including run/async run,
 spawn, await, and exec. Preserve child/handle rows, handoff behavior, markers,
@@ -308,7 +307,7 @@ Paths below are relative to `src/toolang`, except `pyproject.toml` and documenta
 | Identity | `/`, `__`, and `.` remain boundary-specific, including single-underscore components; mistaken calls suggest only an exact advertised counterpart and invoke nothing |
 | Summaries | Every catalog row matches all lifecycle text, including sync/async run and compact shell cancellation; input targets survive result-ID/resolved-label changes, missing result fields, and narrow rendering; cover agent/ID writes, named/unnamed/participant-based create/reuse, rename fallback, honor paths, and runnable results; ToolResult error boundaries, special cases, masking, isolation, no I/O, malformed-field safety, and no raw-error leaks hold |
 | External plugins | Class/function plugins with absent or broken hooks still run; separate identity plus fallback retains owner, leaf, and argument preview across ordering, missing-ref, masking, truncation, and empty values; valid custom wording is untouched |
-| Rendering/history | Text/icon and missing-icon fallback retain tool identity/status independently of summary; configured aliases never use plugin names as labels; Chat/Script, TTY/non-TTY, parallel/narrow layouts preserve metadata, hierarchy, and saved wording; old runtime records replay correctly without formatters or record rewrites |
+| Rendering/history | Text toolset prefixes retain identity/status independently of summary; configured aliases never use plugin names as labels; Chat/Script, TTY/non-TTY, parallel/narrow layouts preserve metadata, hierarchy, and saved wording; old runtime records replay correctly without formatters or record rewrites |
 | Discovery/setup | Fresh/refreshed Setup and disabled-teaming behavior work; directory access holds; team exposes only id/name/online with agent/human presence semantics; list exposes only id/name/members; name filters cover zero/duplicate/case/invalid inputs; member filters cover contains/exact, name combinations, normalized duplicates/order, explicit self, unknown/invalid/empty members, and exact without members |
 | Conversation management | Create/reuse reports Created; rename success shows the verified old and requested new names, including setting/clearing names and no-op renames; read failure or stale/concurrent revisions cannot produce a false success or wrong old name; malformed summary data falls back safely; join/leave behavior is unchanged |
 | Message targeting | Caller-based DM derivation works in either participant order; labels never route messages; ID-shaped/unknown/self/typed/pair targets follow the contract; first write creates once, absent-DM read creates nothing |
