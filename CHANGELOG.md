@@ -7,6 +7,8 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ## [Unreleased]
 
+## [0.4.0a6] - 2026-10-12
+
 ### Added
 
 - Talk's group status line shows online and total members, such as `#dev(2/3)`:
@@ -1336,7 +1338,8 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 - The formatter normalizes `exec` statements consistently with other flow
   statements. (#676)
 
-[Unreleased]: https://github.com/openhat-ai/toolang/compare/v0.4.0a5...HEAD
+[Unreleased]: https://github.com/openhat-ai/toolang/compare/v0.4.0a6...HEAD
+[0.4.0a6]: https://github.com/openhat-ai/toolang/compare/v0.4.0a5...v0.4.0a6
 [0.4.0a5]: https://github.com/openhat-ai/toolang/compare/v0.4.0a4...v0.4.0a5
 [0.4.0a4]: https://github.com/openhat-ai/toolang/compare/v0.4.0a3...v0.4.0a4
 [0.4.0a3]: https://github.com/openhat-ai/toolang/compare/v0.4.0a2...v0.4.0a3
