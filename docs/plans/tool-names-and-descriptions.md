@@ -22,7 +22,7 @@ This definition supersedes the corresponding identity and wording decisions in
 [tool progress](tool-progress.md), plus the tool surface in [teaming](teaming.md).
 Keep their other contracts.
 Changes to capabilities, arguments, and results are limited to conversation
-discovery, read, and write as defined below. Resource access, runtime execution
+discovery, message inspection, and write as defined below. Resource access, runtime execution
 semantics, tool-name grammar, CLI commands, and underlying teaming service
 contracts remain unchanged. Message reception remains owned by the talk handler.
 
@@ -58,7 +58,7 @@ contracts remain unchanged. Message reception remains owned by the talk handler.
 Under `convo`, shorten `create_conversation`, `rename_conversation`,
 `join_conversation`, and `leave_conversation` to `create`, `rename`, `join`, and
 `leave`. Replace `targets` with `team` and `list`, rename `send` to `write`, remove
-`resolve`, and add `read`. The eight-leaf surface below replaces seven messaging
+`resolve`, and add `messages`. The eight-leaf surface below replaces seven messaging
 leaves, increasing the built-in catalog from 48 to 49. No separate `query` or
 `recv` tool is exposed.
 
@@ -83,9 +83,9 @@ No callable aliases for `me`, `_toolang`, `msg`, or replaced messaging leaf name
 are added. Migration replaces toolset and leaf names in authored tool
 selections, plugin configuration, and direct tool calls; restart hosts and prepare
 fresh Setup before starting new Runs. Split targets consumers between team and
-list; use list's name filter for discovery and read for conversation information
-instead of resolve. Send becomes write: preserve `target`/`body`/`in_reply_to`,
-strip `agent:` from agent targets, and keep canonical conversation IDs. Human
+list; use list's name filter for discovery and messages for conversation information
+instead of resolve. Send becomes write: rename `body` to `message`, preserve
+`target`/`in_reply_to`, strip `agent:` from agent targets, and keep canonical IDs. Human
 targets and explicit participant pairs must use a conversation ID obtained from
 list or create. Other leaf arguments and write receipts need no conversion.
 None of the renamed toolsets stores durable data in its plugin room; leave old
@@ -104,8 +104,8 @@ in the implementation changelog using the repository's runnable workflow.
 | --- | --- | --- |
 | `convo.team` | None | Existing `TeamMember[]`, including agents and humans |
 | `convo.list` | `name: string \| null = null` | Existing `ConversationSummary[]` for accessible conversations |
-| `convo.read` | `target: string`, `limit: integer = 50` | `{conversation: Conversation, messages: [{stream_id, message: Message}]}` |
-| `convo.write` | `target: string`, `body: string`, `in_reply_to: string \| null = null` | Existing receipt: `{conversation: string, stream_id: string, message: Message}` |
+| `convo.messages` | `target: string`, `limit: integer = 50` | `{conversation: Conversation, messages: [{stream_id, message: Message}]}` |
+| `convo.write` | `target: string`, `message: string`, `in_reply_to: string \| null = null` | Existing receipt: `{conversation: string, stream_id: string, message: Message}` |
 
 Team retains registered member IDs, display names, owners, and presence. List
 returns only conversations, retaining IDs, names, kinds, members, revisions, and
@@ -115,7 +115,7 @@ validation. Return all duplicates or an empty list. This one optional filter
 covers name lookup without a separate query method or mixed member/conversation
 result. No substring, pattern, pagination, or other filters are added.
 
-Read and write share one `target` parameter: a canonical `dm_...`/`gc_...` ID
+Messages and write share one `target` parameter: a canonical `dm_...`/`gc_...` ID
 selects that exact conversation; otherwise a validated bare agent name such as
 `alice` selects the DM between the current agent and `agent:alice`. Use the
 existing symmetric DM-ID derivation. The caller comes exclusively from tool
@@ -132,13 +132,18 @@ created atomically with its first message. A conversation-ID target must already
 exist and permit the caller to write. Preserve body/reply validation, membership
 and live-lease checks, run/thread provenance, receipt identity, and unconfirmed
 delivery behavior. Never auto-join, retry, or choose another target on failure.
+The required `message` argument is plain text mapped to the existing message
+record's `body`; stored records and receipts keep their fields. Optional
+`in_reply_to` is the replied-to Message's UUID `id`, not a conversation ID or
+`stream_id`. It records a reply reference; `target` alone selects the destination.
+Ordinary writes omit it; talk replies can retain their source-message reference.
 
-Read returns conversation metadata and at most the latest `limit` retained
+Messages returns conversation metadata and at most the latest `limit` retained
 messages, ordered oldest to newest. Accept integers `0..1000`; `0` fetches only
 metadata and returns an empty messages array. Decode messages using the existing
 Message contract and report invalid stored entries rather than silently dropping
 them. An unknown/inaccessible conversation or not-yet-created implicit DM is an
-error; reading never creates a conversation. Read is an immediate history lookup:
+error; reading never creates a conversation. Messages is an immediate history lookup:
 it does not wait for new messages, advance a cursor, acknowledge delivery, mark
 messages consumed, or invoke the talk handler. No recv/subscription or read
 pagination is introduced, and talk delivery remains unchanged after a read.
@@ -147,9 +152,9 @@ Implement target interpretation once in the convo toolset. Reuse AgentClient's
 team, contacts, resolve, conversation, history, and send methods; no `/msg` route,
 client API, or backend schema changes are needed. List filtering and read result
 assembly belong to the toolset. For example, model calls use `convo__list` with
-`{"name":"Development"}`, `convo__read` with `{"target":"alice","limit":20}`,
-or `convo__write` with either `{"target":"alice","body":"Ready"}` or
-`{"target":"gc_00000001","body":"Ready"}`.
+`{"name":"Development"}`, `convo__messages` with `{"target":"alice","limit":20}`,
+or `convo__write` with either `{"target":"alice","message":"Ready"}` or
+`{"target":"gc_00000001","message":"Ready"}`.
 
 ## Identity at each boundary
 
@@ -263,7 +268,7 @@ not literal text. The optional colon and target disappear together when absent.
 | `service/get_prompt` | `Getting / Got service prompt: {service}/{prompt_name}` |
 | `convo/team` | `Listing / Listed team members` |
 | `convo/list` | `Listing / Listed conversations: {name}` |
-| `convo/read` | `Reading / Read conversation: {target}` |
+| `convo/messages` | `Reading / Read conversation messages: {target}` (`conversation: {target}` when `limit=0`) |
 | `convo/write` | `Writing message: {target}` / `Wrote message: {conversation}` |
 | `convo/create` | `Creating conversation: {name}` / `Opened conversation: {id}` |
 | `convo/rename` | `Renaming / Renamed conversation: {conversation}` |
@@ -272,7 +277,7 @@ not literal text. The optional colon and target disappear together when absent.
 
 For `convo.create`, a DM may be reused; use the returned canonical ID on
 success when present, otherwise the supplied name or no target.
-Read/write running and failure summaries use the supplied target. Write success
+Messages/write running and failure summaries use the supplied target. Write success
 uses the receipt's canonical conversation ID, falling back to the target if that
 display field is absent. List success does not imply a match was found.
 `runtime.exec` switches the runnable within the current Run; the caller does not
@@ -353,7 +358,7 @@ rows retain the distinction. Replays never call live tool formatters.
   `base/utils/tool_descriptions.py`, and `execution/executor/steps/tool.py`:
   vocabulary, lifecycle summaries, and qualified fallback.
 - `plugin/toolsets/msg.py` to `convo.py`, `base/types/tool.py`, and
-  `setup/{tools,watcher}.py`: messaging identity, discovery/read/write contracts,
+  `setup/{tools,watcher}.py`: messaging identity, discovery/messages/write contracts,
   shared target interpretation, owned context, and setup configuration
   injection. Verify against `teaming/{client,agent_client,messaging,schemas}.py`
   and the existing unit/integration messaging suites. Update `work/messaging.py`
@@ -408,17 +413,18 @@ rows retain the distinction. Replays never call live tool formatters.
    their respective directory metadata and visibility; create/rename/join/leave
    preserve their schemas and behavior. List covers absent, unique, duplicate,
    case-sensitive, and invalid name filters without exposing inaccessible entries.
-9. Read/write interpret an agent name as the caller's DM, regardless of a matching
+9. Messages/write interpret an agent name as the caller's DM, regardless of a matching
    conversation label. Canonical IDs select exact conversations; failed ID access
    never redirects. Cover reversed DM participants, ID-shaped agent names,
    unknown/self agents, rejected typed/pair targets, and no conversation-name
    lookup. A first write creates the implicit DM once, while read of an absent
    DM creates nothing. Existing DM/GC writes retain replies and receipts.
-10. Read covers metadata-only, default and bounded history, chronological order,
+10. Messages covers metadata-only, default and bounded history, chronological order,
     malformed stored messages, invalid limits, and inaccessible conversations.
     Reads leave messages, delivery checkpoints, and talk-handler execution
     unchanged; subsequent talk delivery still sees unread messages. Write retains
-    membership/lease checks, provenance, and unconfirmed-delivery behavior without
+    membership/lease checks, provenance, text-to-body mapping, optional source
+    message-ID replies, and unconfirmed-delivery behavior without
     automatic retries. No recv or subscription operation is registered.
 
 Primary risks are missing an identity-dependent dispatch/reader, granting an
