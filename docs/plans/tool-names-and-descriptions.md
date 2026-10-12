@@ -128,7 +128,10 @@ active Run code. Keep digest, sync, service-session/auth, and runtime restrictio
 Use the existing optional `summary()` hook. Every built-in supplies lifecycle
 summaries; plugins need no new interface or registration metadata. Normal summaries
 use action plus explicit object, without a tool-name prefix. `{...}` is display
-data; omit the colon with an absent target.
+data; omit the colon with an absent target. Preserve the same input-derived target
+across running, success, failure, and cancellation. Result IDs or resolved labels
+may supplement that target, never replace it. Keep the target before optional
+result details when truncating; retain existing masking and display normalization.
 
 | Tool ref | Running / succeeded sentence | Failed sentence |
 | --- | --- | --- |
@@ -160,7 +163,7 @@ data; omit the colon with an absent target.
 | `runtime/await` | `Waiting for / Received run result: {target}` | `Failed to receive run result: {target}` |
 | `runtime/exec` | `Switching to / Switched to runnable: {runnable}` | `Failed to switch to runnable: {runnable}` |
 | `runtime/pick` | `Loading / Loaded guidance: {kind}/{ref}` | `Failed to load guidance: {kind}/{ref}` |
-| `runtime/honor` | `Loading / Loaded rules` (successful result may add `: {files}`) | `Failed to load rules` |
+| `runtime/honor` | `Loading / Loaded rules for {paths}` | `Failed to load rules for {paths}` |
 | `runtime/compact` | `Compacting / Compacted thread history` | `Failed to compact thread history` |
 | `service/start_bridge` | `Starting / Started service bridge: {service}` | `Failed to start service bridge: {service}` |
 | `service/stop_bridge` | `Stopping / Stopped service connection: {service}` | `Failed to stop service connection: {service}` |
@@ -177,24 +180,31 @@ data; omit the colon with an absent target.
 | `convo/team` | `Listing / Listed team members` | `Failed to list team members` |
 | `convo/list` | `Listing / Listed conversations: {filter}` | `Failed to list conversations: {filter}` |
 | `convo/peek` | `Reading / Read conversation messages: {target}` (`conversation: {target}` when `limit=0`) | `Failed to read conversation messages: {target}` (`conversation: {target}` when `limit=0`) |
-| `convo/write` | `Writing message: {target}` / `Wrote message: {conversation}` | `Failed to write message: {target}` |
-| `convo/create` | `Creating conversation: {name}` / `Created conversation: {id}` | `Failed to create conversation: {name}` |
-| `convo/rename` | `Renaming conversation: {conversation}` / `Renamed conversation: {old_name} → {name} ({conversation})` | `Failed to rename conversation: {conversation} → {name}` |
+| `convo/write` | `Writing / Wrote message: {target}` | `Failed to write message: {target}` |
+| `convo/create` | `Creating conversation: {label}` / `Created conversation: {label} ({id})` | `Failed to create conversation: {label}` |
+| `convo/rename` | `Renaming conversation: {conversation} → {name}` / `Renamed conversation: {old_name} → {name} ({conversation})` | `Failed to rename conversation: {conversation} → {name}` |
 | `convo/join` | `Joining / Joined conversation: {conversation}` | `Failed to join conversation: {conversation}` |
 | `convo/leave` | `Leaving / Left conversation: {conversation}` | `Failed to leave conversation: {conversation}` |
 
 Special cases:
 
-- Create may reuse a DM: success uses its returned ID, then supplied name, then
-  no target. Write success uses the receipt's conversation ID, then input target;
-  peek/write running and failure text uses input target. List may return zero
-  matches. Exec success means the same-Run switch committed; the caller never resumes.
+- Peek/write always use the input target: writing to `alice` completes as
+  `Wrote message: alice`; an explicit conversation ID stays that ID. Receipt IDs
+  remain in the result without replacing or repeating the target in progress.
+- Create's label combines the supplied name and participants when present, e.g.
+  `Development with agent:alice, human:bryan`; keep it on success and append the
+  returned ID. Without a label, success uses only the ID; without an ID, retain
+  the label; without either, keep the action/object. DM reuse follows the same rule.
+- Honor retains input paths as workspace labels in every state; loaded rule files
+  stay in the result. Run/spawn retain the runnable, not returned run/thread IDs.
+  Exec success means the same-Run switch committed; the caller never resumes.
 - List filter text combines supplied name and members, e.g. `Development; with
   alice, bob` or `only alice, bob`; omit it when unfiltered.
 - Rename success uses `previous_name` and the requested new name; quote names and
   render null as `unnamed`. Missing/malformed prior-name data falls back to the
-  conversation ID. Failure uses the input ID and requested name, without assuming
-  an old name was retrieved. Formatters perform no metadata reads.
+  input ID and new name: `Renamed conversation: {conversation} → {name}`. Failure
+  uses those same inputs without assuming an old name was retrieved. Keep the ID
+  and new name when shortening the optional old name. Formatters perform no reads.
 - History cursor pages say `Reading/Read/Failed to read more threads/runs/steps`, never the cursor.
   Stop_bridge covers both stdio shutdown and HTTP session/auth cleanup.
 - Failure uses the table's explicit text and input targets, never success-only
@@ -204,7 +214,7 @@ Special cases:
   raw errors to summaries or imply rollback/non-delivery after an uncertain result.
   Cancellation uses `Canceled: <running summary>` for every built-in, e.g.
   `Canceled: Creating conversation: Development`; never use success wording.
-- Preserve URI/path labels, command/query quoting, and guidance/rules formatting.
+- Preserve URI/path labels, command/query quoting, and guidance formatting.
   Summaries use isolated, masked inputs/results and perform no I/O. Omit contents,
   message bodies, nested service inputs, auth URLs/tokens, digests, result dumps,
   and counts. Malformed/missing fields retain the object label or fall back;
@@ -269,7 +279,7 @@ Paths below are relative to `src/toolang`, except `pyproject.toml` and documenta
 | --- | --- |
 | Registration/authority | Exactly 49 mapped leaves; old names fail, reserved runtime cannot be registered externally, ceilings and runtime-only visibility hold |
 | Identity | `/`, `__`, and `.` remain boundary-specific, including single-underscore components; mistaken calls suggest only an exact advertised counterpart and invoke nothing |
-| Summaries | Every catalog row matches running/success/failure text, including sync/async run; cancellation wraps the running summary; failures before a result retain input targets, no success-only fields or raw-error leaks; ToolResult error boundaries, special cases, masking, isolation, no I/O, and malformed-field safety hold |
+| Summaries | Every catalog row matches all lifecycle text, including sync/async run; input targets survive result-ID/resolved-label changes, missing result fields, and narrow rendering; cover agent/ID writes, named/unnamed/participant-based create/reuse, rename fallback, honor paths, and runnable results; cancellation wraps running text; ToolResult error boundaries, special cases, masking, isolation, no I/O, malformed-field safety, and no raw-error leaks hold |
 | External plugins | Class/function plugins with absent or broken hooks still run; all fallback states retain identity and argument preview across ordering, missing-ref, masking, truncation, and empty-value cases |
 | Rendering/history | Chat/Script, TTY/non-TTY, parallel/narrow layouts preserve hierarchy and saved wording; old runtime records replay correctly without formatters or record rewrites |
 | Discovery/setup | Fresh/refreshed Setup and disabled-teaming behavior work; directory access holds; team exposes only id/name/online with agent/human presence semantics; list exposes only id/name/members; name filters cover zero/duplicate/case/invalid inputs; member filters cover contains/exact, name combinations, normalized duplicates/order, explicit self, unknown/invalid/empty members, and exact without members |
