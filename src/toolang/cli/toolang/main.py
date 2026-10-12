@@ -404,6 +404,7 @@ _registered_command(
         "\nExamples:\n"
         "  too talk                     List conversations\n"
         "  too talk alice               Talk to an agent\n"
+        "  too talk all                 Open the system group\n"
         "  too talk alice,bob           View a conversation between agents\n"
         "  too talk gc_abcd1234         Open a conversation by ID\n"
         '  too talk alice "Hello"       Send a message and exit'

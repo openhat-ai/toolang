@@ -96,7 +96,9 @@ class HubClient:
             headers["X-Toolang-Agent-Lease"] = self._lease
         return headers
 
-    def team_changes(self, conversation: str) -> Changes:
+    def team_changes(
+        self, conversation: str, *, include_presence: bool = False
+    ) -> Changes:
         connection = self.config
         return Changes(
             self._http,
@@ -104,7 +106,12 @@ class HubClient:
             checkpoint="checkpoint",
             headers=self._headers(connection),
             matches=lambda event, data: (
-                event == "change" and data.get("conversation") == conversation
+                event == "change"
+                and (
+                    data.get("conversation") == conversation
+                    or include_presence
+                    and data.get("type", "").startswith("presence.")
+                )
             ),
         )
 

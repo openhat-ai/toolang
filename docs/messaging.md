@@ -85,14 +85,19 @@ Either kind can have an editable name (1–128 characters), or no name. Names ma
 repeat. Members can rename a conversation with its current revision; stale
 revisions fail. Human observers can read all conversations; agents can read only
 joined conversations. Sending and renaming require membership. The system GC is
-listed with the initial name `all`; open its ID from the directory. Its membership
-is maintained by Hub, while its name can change.
+listed with the initial name `all`; open it with `too talk all` or its ID from the
+directory. Its membership is maintained by Hub, while its name can change.
 
 Talk accepts positional targets: `alice` selects the current human's DM with that
 agent; `alice,bob` observes an existing agent-agent DM; a canonical `dm_...` or
 `gc_...` selects that existing conversation. Missing agent-agent DMs and unknown
-IDs fail without creation. Bare names always select agents, including `all`;
-conversation names are directory labels, not CLI targets. Selector flags such as
+IDs fail without creation. `all` is a reserved CLI shortcut for the system GC,
+even after it is renamed or another conversation uses that name. Other bare
+names select agents; other conversation names are directory labels, not CLI
+targets. Access an agent named `all` through its canonical DM ID. Targets starting
+with `dm_` or `gc_` must be valid conversation IDs and never fall back to agent
+lookup. The pair syntax is `alice,bob`; shell quoting is outside the target
+grammar, and literal quote characters are invalid. Selector flags such as
 `--dm` and `--group` are not supported. Arguments after the target are literal
 message text.
 
@@ -101,6 +106,9 @@ The first accepted send atomically creates the conversation and appends its firs
 message. Closing without sending writes no conversation, counters, or events.
 Explicit creation, rename, and name lookup are available through API/tools;
 ambiguous name lookup returns candidate IDs rather than choosing one.
+The Hub resolve endpoint also accepts `kind="system"` with `target="all"` to
+select the stored system GC mapping. Default API/tool bare-name resolution is
+unchanged.
 
 ## Interactive Talk
 
@@ -137,12 +145,17 @@ ID in the center, and the viewer's login on the right. Examples for login `brice
 | --- | --- | --- | --- | --- |
 | Direct with `alice` | `@alice` | Its canonical `dm_...` | `brice` | Allowed |
 | Direct between `alice` and `bob` | `@alice,bob` | Its canonical `dm_...` | `brice` | Read-only; `@` is dim |
-| Group `dev`, three members including `brice` | `#dev(3)` | Its canonical `gc_...` | `brice` | Allowed |
-| The same group viewed by a nonmember | `#dev(3)` | Its canonical `gc_...` | The viewer's login | Read-only; `#` is dim |
+| Group `dev`, one human and two agents, one agent online | `#dev(2/3)` | Its canonical `gc_...` | `brice` | Allowed |
+| The same group viewed by a nonmember | `#dev(2/3)` | Its canonical `gc_...` | The viewer's login | Read-only; `#` is dim |
 
 Only the permission marker dims; names and counts use normal foreground.
-Conversation metadata and team deadlines refresh in the receive loop. The
-interactive footer does not display presence. The separate `too talk` directory
+Conversation metadata refreshes in the receive loop. GC presence refreshes
+independently, using Hub team deadlines and presence notifications with a
+half-second fallback and a one-second lookup timeout. Human members always count
+as online; an agent requires a live Hub lease. Only this conversation's members
+count. Agent presence starts unknown and becomes unknown after lookup failures,
+displayed as `#dev(?/3)`; message following and sends continue. Empty groups show
+`(0/0)` and human-only groups show `(m/m)`. The separate `too talk` directory
 lists conversations with CONVERSATION, NAME, MEMBERS, UPDATED, and MESSAGE
 columns, followed by a count. It runs once without requiring a TTY.
 On narrow terminals, the footer prioritizes the login and hides a canonical ID

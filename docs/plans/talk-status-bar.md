@@ -12,7 +12,7 @@ system GC, initially named `all`. Use `convo` for abbreviated metadata.
 
 ## Command and message flow
 
-- `too talk` lists Team and Convos. `too talk TARGET` opens an interactive view;
+- `too talk` lists conversations. `too talk TARGET` opens an interactive view;
   `too talk TARGET MESSAGE...` sends once and exits with a receipt or error.
   Positional agent names, agent pairs, and IDs follow the
   [messaging contract](../messaging.md); selector flags are unsupported.
@@ -42,12 +42,13 @@ content width follows Chat's limit: 120 cells by default, configurable with
 | Segment | Content |
 | --- | --- |
 | Left, DM | `@` plus the other participant names in stable comma-separated order, excluding the viewer. An observer sees both names. |
-| Left, GC | `#` plus the conversation's display name and total member count, such as `#dev(3)`. Preserve the name as supplied. |
+| Left, GC | `#` plus the conversation's display name and online/total members, such as `#dev(2/3)`. Human members always count as online; agents require live Hub leases. Show `?/total` while agent presence is unknown. Preserve the name as supplied. |
 | Center | Complete canonical conversation ID, centered by terminal cells. |
 | Right | Plain viewer login name; `Connecting…` during initial connection. |
 
 Only the `@` or `#` marker dims when the viewer cannot send. Names and counts use
-normal foreground. The interactive view does not display presence. On narrow
+normal foreground. Refresh GC presence independently of messages, following the
+[member presence and shortcut definition](talk-member-presence.md). On narrow
 terminals, prioritize the login, hide an ID that cannot fit intact, then truncate
 the left label. Reduce the insets only below five cells; never wrap the footer.
 
@@ -91,7 +92,7 @@ A Talk pane is managed by the launcher and can be reopened after it exits.
 | --- | --- |
 | Command and targeting | Help, directory, interactive view, one-shot send, typed targets, and literal arguments match the messaging contract. |
 | Membership | A member can send; an observer sees the same messages with a dim permission marker and no composer. |
-| Footer | DM/GC names, total members, login, Unicode widths, and complete centered IDs fit the configured width. |
+| Footer | DM/GC names, online/total GC members, login, Unicode widths, and complete centered IDs fit the configured width. |
 | Errors | Terminal read, send, and draft errors show their detail in Chat's full error row; failed sends retain drafts and make one request. |
 | Receive recovery | Resume from the last displayed cursor without replaying history or requesting full directories. |
 | Rendering | Markdown, sender colors, header alignment, dividers, and message widths satisfy the message layout contract. |
@@ -103,5 +104,5 @@ and `talk/status.py` owns labels and footer geometry. `common/status.py` owns th
 shared error row; `common/tmux.py` owns placement. Hub retains permission and
 configuration checks. Run the repository's default checks and isolated tmux tests.
 
-Limits: metadata reflects entry time, narrow screens may hide the canonical ID or
-clip error detail, and terminal settings may suppress titles. No open questions.
+Limits: narrow screens may hide the canonical ID or clip error detail, and
+terminal settings may suppress titles. No open questions.

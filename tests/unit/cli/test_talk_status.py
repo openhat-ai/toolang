@@ -20,6 +20,84 @@ from toolang.teaming.errors import (
     SendUnconfirmed,
 )
 from toolang.teaming.schemas import HubConnection
+from toolang.teaming.notifications import Changes
+from toolang.cli.toolang.commands.talk import tui
+
+
+@pytest.mark.parametrize(
+    "members,online,expected",
+    [
+        (
+            ("human:bryan", "agent:alice", "agent:bob", "agent:carol"),
+            {"agent:alice", "agent:bob", "agent:other"},
+            "#all(3/4)",
+        ),
+        (("human:bryan", "human:other"), None, "#all(2/2)"),
+        ((), None, "#all(0/0)"),
+        (("human:bryan", "agent:alice"), set(), "#all(1/2)"),
+        (("agent:alice",), {"agent:alice"}, "#all(1/1)"),
+        (("human:bryan", "agent:alice"), None, "#all(?/2)"),
+    ],
+)
+def test_group_ratio_counts_humans_and_only_participating_online_agents(
+    members, online, expected
+):
+    info = conversation_record("gc_00000001", "gc", members, name="all")
+    assert (
+        fragment_list_to_text(
+            conversation_status(info, "human:bryan", online_agents=online)
+        )
+        == expected
+    )
+
+
+def test_presence_refresh_recovers_expires_and_follows_membership(
+    tmp_path, monkeypatch
+):
+    async def scenario():
+        clock = 100.0
+        monkeypatch.setattr(tui.time, "time", lambda: clock)
+        async with talk_app(tmp_path) as (ui, _):
+            rows = [{"member": "agent:alice", "deadline": 101_000}]
+            ui.client.team.side_effect = [rows, BackendUnavailable("offline"), rows, []]
+            changes = AsyncMock(spec=Changes)
+            checks = 0
+
+            async def check(timeout=None):
+                nonlocal checks, clock
+                checks += 1
+                footer = fragment_list_to_text(ui.status_text())
+                if checks == 1:
+                    assert "#dev(2/3)" in footer
+                elif checks == 2:
+                    assert "#dev(?/3)" in footer
+                    await ui.send("still sending")
+                    ui.client.send.assert_awaited_once()
+                elif checks == 3:
+                    assert "#dev(2/3)" in footer
+                    clock = 102.0
+                    assert "#dev(1/3)" in fragment_list_to_text(ui.status_text())
+                    ui.conversation = conversation_record(
+                        ui.conversation_id, "gc", ("human:bryan",), name="dev"
+                    )
+                elif checks == 4:
+                    assert "#dev(1/1)" in footer
+                    assert ui.client.team.await_count == 3
+                    ui.conversation = conversation_record(
+                        ui.conversation_id, "gc", ("agent:bob",), name="dev"
+                    )
+                else:
+                    assert "#dev(0/1)" in footer
+                    assert ui.status == ""
+                    raise asyncio.CancelledError
+                assert timeout == 0.5
+
+            changes.wait.side_effect = check
+            with pytest.raises(asyncio.CancelledError):
+                await ui.follow_presence(changes)
+            assert checks == 5 and ui.client.team.await_count == 4
+
+    asyncio.run(scenario())
 
 
 @pytest.mark.parametrize("width", [1, 2, 3, 4, 5, 8, 12, 20, 40, 60, 120])
@@ -39,14 +117,14 @@ def test_status_sides_fit_cells_and_preserve_margins(width, right):
 
 def test_status_sides_sanitize_terminal_controls():
     fragments = status_line(
-        [("class:status", "#\x1b]52;c;secret\x07dev(2)")],
+        [("class:status", "#\x1b]52;c;secret\x07dev(1/2)")],
         "Reconnect\x1b[2J\nnow",
         width=80,
     )
     text = fragment_list_to_text(fragments)
     assert "\x1b" not in text and "secret" not in text and "\n" not in text
     assert ("class:status", "Reconnect now") in fragments
-    assert ("class:status", "#dev(2)") in fragments
+    assert ("class:status", "#dev(1/2)") in fragments
     assert text.endswith("Reconnect now  ")
 
 
@@ -119,7 +197,7 @@ def test_send_errors_keep_the_draft_and_show_returned_detail_without_retry(
 def test_group_display_name_is_preserved(name):
     conversation = conversation_record("gc_00000001", "gc", ("human:bryan",), name=name)
     assert fragment_list_to_text(conversation_status(conversation, "human:bryan")) == (
-        f"#{name}(1)"
+        f"#{name}(1/1)"
     )
 
 
@@ -149,22 +227,22 @@ def test_group_display_name_is_preserved(name):
                 ("human:bryan", "agent:alice", "agent:bob"),
                 name="dev",
             ),
-            "#dev(3)",
+            "#dev(?/3)",
         ),
         (
             conversation_record(
                 "gc_00000001", "gc", ("human:bryan", "agent:alice"), name="dev"
             ),
-            "#dev(2)",
+            "#dev(?/2)",
         ),
-        (conversation_record("gc_00000004", "gc", (), name="empty"), "#empty(0)"),
+        (conversation_record("gc_00000004", "gc", (), name="empty"), "#empty(0/0)"),
         (
             conversation_record("gc_00000005", "gc", ("agent:alice",), name="observed"),
-            "#observed(1)",
+            "#observed(?/1)",
         ),
     ],
 )
-def test_conversation_formats_dim_only_read_only_markers_without_presence(
+def test_conversation_formats_dim_only_read_only_markers_with_unknown_presence(
     tmp_path, conversation, expected
 ):
     async def scenario():
@@ -186,13 +264,13 @@ def test_conversation_formats_dim_only_read_only_markers_without_presence(
 @pytest.mark.parametrize("canonical", ["gc_00000001", "gc_abcdef01"])
 def test_full_canonical_id_is_centered_by_terminal_cells(width, canonical):
     fragments = status_line(
-        [("class:status", "#dev(3)")],
+        [("class:status", "#dev(?/3)")],
         "bryan",
         center=canonical,
         width=width,
     )
     text = fragment_list_to_text(fragments)
-    assert text.startswith("  #dev(3)") and text.endswith("bryan  ")
+    assert text.startswith("  #dev(?/3)") and text.endswith("bryan  ")
     assert display_width(text) == width
     assert (
         display_width(text[: text.index(canonical)])
@@ -236,7 +314,7 @@ def test_footer_uses_viewer_identity_and_survives_configured_width(
                 output.columns = columns
                 footer = fragment_list_to_text(ui.status_text())
                 width = min(columns, inputbox_max_width or 72)
-                assert footer.startswith("  #dev(3)")
+                assert footer.startswith("  #dev(?/3)")
                 assert footer.endswith(human.split(":")[1] + "  ")
                 assert "from " not in footer
                 assert display_width(footer) == width
@@ -252,7 +330,7 @@ def test_footer_displays_connection_progress_or_error(tmp_path, connection):
             text = fragment_list_to_text(ui.status_text())
             assert "bryan" not in text and "Connected" not in text
             if connection == "Connecting…":
-                assert text.startswith("  #dev(3)")
+                assert text.startswith("  #dev(?/3)")
                 assert text.endswith(connection + "  ")
             else:
                 assert text.rstrip() == "! " + connection

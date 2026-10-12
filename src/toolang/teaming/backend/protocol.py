@@ -117,6 +117,8 @@ class Backend(Protocol):
 
     # Conversations and messages
 
+    async def system_conversation(self) -> str: ...
+
     async def conversation(
         self, conversation: str, actor: str, *, pair: tuple[str, ...] = ()
     ) -> Conversation | None: ...

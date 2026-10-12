@@ -64,15 +64,19 @@ def talk_command(
     try:
         config, human = settings(root)
 
-        try:
+        if target.startswith(("dm_", "gc_")):
             conversation_id(target)
-        except TeamingError:
+        else:
             for name in target.split(","):
                 identifier(name)
 
         async def resolve_or_send() -> Resolution:
             async with HubClient(config) as client:
-                resolved = await client.resolve(target)
+                resolved = (
+                    await client.resolve(target, kind="system")
+                    if target == "all"
+                    else await client.resolve(target)
+                )
                 if words:
                     receipt = await client.send(
                         resolved.conversation,

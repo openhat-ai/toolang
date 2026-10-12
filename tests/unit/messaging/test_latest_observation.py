@@ -305,14 +305,19 @@ def test_idle_activity_refreshes_without_execution_notifications():
     asyncio.run(scenario())
 
 
-def test_talk_member_subscription_filters_unrelated_changes_and_preserves_headers():
+@pytest.mark.parametrize("include_presence", [False, True])
+def test_talk_member_subscription_filters_unrelated_changes_and_preserves_headers(
+    include_presence,
+):
     async def scenario():
         hub = Hub()
         connection = HubConnection("http://hub", "human:owner", "backend")
         async with HubClient(
             connection, transport=httpx.MockTransport(hub.request)
         ) as client:
-            async with client.team_changes("gc_00000001") as changes:
+            async with client.team_changes(
+                "gc_00000001", include_presence=include_presence
+            ) as changes:
                 async with asyncio.timeout(2):
                     await changes.wait()
                 assert changes.connected
@@ -322,6 +327,11 @@ def test_talk_member_subscription_filters_unrelated_changes_and_preserves_header
                     {"type": "conversation.member_added", "conversation": "other"},
                 )
                 assert not changes.changed.is_set()
+                await stream.send(
+                    "change", {"type": "presence.offline", "conversation": None}
+                )
+                assert changes.changed.is_set() == include_presence
+                changes.changed.clear()
                 await stream.send(
                     "change",
                     {

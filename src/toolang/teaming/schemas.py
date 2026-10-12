@@ -462,7 +462,7 @@ class HubRequest(BaseModel):
 
 class ResolveRequest(HubRequest):
     target: str
-    kind: Literal["name"] | None = None
+    kind: Literal["name", "system"] | None = None
     create: bool = False
 
 
