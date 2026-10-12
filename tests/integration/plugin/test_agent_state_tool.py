@@ -1,4 +1,4 @@
-"""The me toolset reads and atomically replaces current home files."""
+"""The state toolset reads and atomically replaces current home files."""
 
 from __future__ import annotations
 
@@ -12,21 +12,21 @@ import pytest
 
 from toolang.base.types.tool import ToolContext
 from toolang.common.layout import AgentLayout
-from toolang.execution.tools.me import create_toolset
-from toolang.execution.tools.me.types import MeToolContext
+from toolang.execution.tools.state import create_toolset
+from toolang.execution.tools.state.types import StateToolContext
 from toolang.state.errors import StatePreparationError
 from toolang.state.prepare import prepare_agent_state
 from toolang.state.watcher import StateWatcher
 
 
 @pytest.fixture
-def context(tmp_path: Path) -> MeToolContext:
+def context(tmp_path: Path) -> StateToolContext:
     layout = AgentLayout.resident(tmp_path / "toolang", "alice")
     layout.home.mkdir(parents=True)
     layout.program.write_text("agic alice():\n  Hello.\n")
-    return MeToolContext(
+    return StateToolContext(
         home=layout.home,
-        room=layout.tool_room("me"),
+        room=layout.tool_room("state"),
         layout=layout,
         sync_state=StateWatcher(layout).sync,
     )
@@ -274,22 +274,22 @@ def test_active_run_reads_and_repairs_latest_file_without_switching_revision(tmp
     from toolang.execution.types import ThreadPrefix
     from toolang.plugin.toolsets.loading import load_tools
 
-    source = "agic inspect():\n  tools = me/*\n  Inspect.\n"
+    source = "agic inspect():\n  tools = state/*\n  Inspect.\n"
     broken = "agic ("
-    repaired = "agic inspect():\n  tools = me/*\n  Repaired.\n"
+    repaired = "agic inspect():\n  tools = state/*\n  Repaired.\n"
     gate = AsyncGate()
     sync_gate = AsyncGate()
     harness = ExecutionHarness.create(
         tmp_path,
         source=source,
         prepare_state=True,
-        tools=load_tools(queries=("me/*",)),
+        tools=load_tools(queries=("state/*",)),
         responses=[
             ScriptedModelTurn(
                 gate=gate,
                 result=ModelCallResult(
                     tool_calls=(
-                        ToolCall("read", "read", "me__get", {"key": "agent.too"}),
+                        ToolCall("read", "read", "state__get", {"key": "agent.too"}),
                     )
                 ),
             ),
@@ -298,7 +298,7 @@ def test_active_run_reads_and_repairs_latest_file_without_switching_revision(tmp
                     ToolCall(
                         "write",
                         "write",
-                        "me__update",
+                        "state__update",
                         {
                             "key": "agent.too",
                             "content": repaired,
@@ -314,13 +314,13 @@ def test_active_run_reads_and_repairs_latest_file_without_switching_revision(tmp
                         ToolCall(
                             "sync",
                             "sync",
-                            "me__sync",
+                            "state__sync",
                             {},
                         ),
                     )
                 ),
             ),
-            ModelCallResult(tool_calls=(ToolCall("list", "list", "me__list", {}),)),
+            ModelCallResult(tool_calls=(ToolCall("list", "list", "state__list", {}),)),
             ModelCallResult(message=Message.assistant("done")),
         ],
     )
@@ -536,14 +536,14 @@ def test_context_cannot_select_another_home(context):
     assert invoke(generic, "list").output["error"] == "invalid_request"
 
 
-@pytest.mark.parametrize("writer", ["me", "filesystem"])
+@pytest.mark.parametrize("writer", ["state", "filesystem"])
 @pytest.mark.parametrize("source", ["agic (", "flow main:\n  run missing\n"])
 def test_loader_rejects_bad_source_from_either_writer_and_recovers(
     context, writer, source
 ):
     state = prepare_agent_state(context.layout)
     watcher = StateWatcher(context.layout, initial_state=state)
-    if writer == "me":
+    if writer == "state":
         result = invoke(
             context,
             "update",
@@ -810,9 +810,9 @@ def test_roaming_main_preserves_canonical_link_and_source_mode(tmp_path, source_
     source.write_text("agic:\n  Original.\n")
     source.chmod(0o755)
     layout = materialize_roaming_program(source)
-    context = MeToolContext(
+    context = StateToolContext(
         home=layout.home,
-        room=layout.tool_room("me"),
+        room=layout.tool_room("state"),
         layout=layout,
         sync_state=StateWatcher(layout).sync,
     )
@@ -860,8 +860,8 @@ def test_roaming_link_loop_returns_a_structured_error(tmp_path, operation):
     source = tmp_path / "parrot.too"
     source.write_text("agic:\n  Original.\n")
     layout = materialize_roaming_program(source)
-    context = MeToolContext(
-        home=layout.home, room=layout.tool_room("me"), layout=layout
+    context = StateToolContext(
+        home=layout.home, room=layout.tool_room("state"), layout=layout
     )
     layout.program.unlink()
     layout.program.symlink_to("agent.too")
@@ -883,8 +883,8 @@ def test_roaming_program_cannot_edit_another_home_source(tmp_path, relative):
     source = tmp_path / "parrot.too"
     source.write_text("agic:\n  Original.\n")
     layout = materialize_roaming_program(source)
-    context = MeToolContext(
-        home=layout.home, room=layout.tool_room("me"), layout=layout
+    context = StateToolContext(
+        home=layout.home, room=layout.tool_room("state"), layout=layout
     )
     other = tmp_path / relative
     other.parent.mkdir(parents=True, exist_ok=True)

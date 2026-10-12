@@ -31,7 +31,7 @@ from toolang.state.prepare import prepare_agent_state
 
 def query(arguments=None, *, id="query"):
     return ModelCallResult(
-        tool_calls=(ToolCall(id, id, "_toolang__runnables", arguments or {}),)
+        tool_calls=(ToolCall(id, id, "runtime__runnables", arguments or {}),)
     )
 
 
@@ -229,7 +229,7 @@ agic target():
             ModelCallResult(
                 tool_calls=(
                     ToolCall(
-                        "transfer", "transfer", "_toolang__exec", {"runnable": "target"}
+                        "transfer", "transfer", "runtime__exec", {"runnable": "target"}
                     ),
                 )
             ),
@@ -380,7 +380,7 @@ def test_discovery_keeps_the_state_captured_before_tool_step_delivery(tmp_path):
             if (
                 isinstance(event, StepBegin)
                 and isinstance(event.given, ToolStepGiven)
-                and event.given.call.name == "_toolang__runnables"
+                and event.given.call.name == "runtime__runnables"
                 and harness.published is None
             ):
                 harness.setup.layout.program.write_text(
@@ -485,7 +485,7 @@ agic target():
             ModelCallResult(
                 tool_calls=(
                     ToolCall(
-                        "transfer", "transfer", "_toolang__exec", {"runnable": "target"}
+                        "transfer", "transfer", "runtime__exec", {"runnable": "target"}
                     ),
                 )
             ),

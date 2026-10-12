@@ -88,7 +88,7 @@ def test_runtime_calls_persist_bound_inputs(
     call = ToolCall(
         "start",
         "provider-start",
-        f"_toolang__{'run' if action == 'async run' else action}",
+        f"runtime__{'run' if action == 'async run' else action}",
         arguments,
     )
     harness = ExecutionHarness.create(
@@ -120,7 +120,7 @@ flow target(_: {type_name}, note: Part[]) -> {type_name}:
                     ToolCall(
                         "wait",
                         "provider-wait",
-                        "_toolang__await",
+                        "runtime__await",
                         {"target": result.output["id"]},
                     ),
                 )
@@ -208,7 +208,7 @@ flow target(_: Number, count: Number) -> Number:
                     ToolCall(
                         "bad",
                         "bad",
-                        f"_toolang__{'run' if action == 'async run' else action}",
+                        f"runtime__{'run' if action == 'async run' else action}",
                         arguments,
                     ),
                 )
@@ -265,7 +265,7 @@ agic helper() -> Text:
                 ToolCall(
                     "main-call",
                     "main-call",
-                    f"_toolang__{action}",
+                    f"runtime__{action}",
                     {"runnable": f"{kind}:main"},
                 ),
             )
@@ -338,7 +338,7 @@ agic child(_: Text) -> Text:
                     ToolCall(
                         tool_call_id="call-run",
                         call_id="provider-run",
-                        name="_toolang__run",
+                        name="runtime__run",
                         input={
                             "runnable": "agic:child",
                             "input": {"_": "topic"},
@@ -415,13 +415,13 @@ agic child(_: Text) -> Text:
             assert {
                 tool.name for tool in harness.adapter.invocations[1].call.tools
             } == {
-                "_toolang__chdir",
-                "_toolang__runnables",
-                "_toolang__exec",
-                "_toolang__pick",
-                "_toolang__run",
-                "_toolang__spawn",
-                "_toolang__await",
+                "runtime__chdir",
+                "runtime__runnables",
+                "runtime__exec",
+                "runtime__pick",
+                "runtime__run",
+                "runtime__spawn",
+                "runtime__await",
             }
             assert_run_event_integrity(tracer.events)
 
@@ -464,7 +464,7 @@ flow check(_: Part[]) -> Text:
                     ToolCall(
                         tool_call_id="run-check",
                         call_id="provider-run-check",
-                        name="_toolang__run",
+                        name="runtime__run",
                         input={
                             "runnable": "flow:check",
                             "input": {"_": primary},
@@ -526,7 +526,7 @@ flow check(_: Text, threshold: Number) -> Text:
                     ToolCall(
                         tool_call_id="run-check",
                         call_id="provider-run-check",
-                        name="_toolang__run",
+                        name="runtime__run",
                         input={
                             "runnable": "flow:check",
                             "input": {"_": "candidate"},
@@ -604,7 +604,7 @@ flow check(_: Text, threshold: Number) -> Text:
                     ToolCall(
                         tool_call_id="run-check-invalid",
                         call_id="provider-run-check-invalid",
-                        name="_toolang__run",
+                        name="runtime__run",
                         input={
                             "runnable": "flow:check",
                             "input": {"_": "candidate"},
@@ -617,7 +617,7 @@ flow check(_: Text, threshold: Number) -> Text:
                     ToolCall(
                         tool_call_id="run-check-corrected",
                         call_id="provider-run-check-corrected",
-                        name="_toolang__run",
+                        name="runtime__run",
                         input={
                             "runnable": "flow:check",
                             "input": {"_": "candidate", "threshold": 0.8},
@@ -668,7 +668,7 @@ def test_wildcard_routes_hide_active_lineage_and_keep_completed_children(
                         ToolCall(
                             f"run-{index}",
                             f"provider-{index}",
-                            "_toolang__run",
+                            "runtime__run",
                             {"runnable": "helper"},
                         ),
                     )
@@ -765,7 +765,7 @@ agic parent(_: Text, threshold: Number) -> Text:
                     ToolCall(
                         tool_call_id="run-self",
                         call_id="provider-run-self",
-                        name="_toolang__run",
+                        name="runtime__run",
                         input={
                             "runnable": "agic:parent",
                             "input": {"_": "again"},
@@ -800,7 +800,7 @@ agic parent(_: Text, threshold: Number) -> Text:
             result = last_tool_result(harness.adapter.invocations[1].call)
             assert isinstance(result, ToolResultPart)
             assert result.error == (
-                "_toolang/run cannot call the current or an ancestor runnable: agic:parent"
+                "runtime/run cannot call the current or an ancestor runnable: agic:parent"
             )
             assert result.output == {}
             for invocation in harness.adapter.invocations:
@@ -832,7 +832,7 @@ flow outer(_: Text) -> Text:
                     ToolCall(
                         tool_call_id="run-ancestor",
                         call_id="provider-run-ancestor",
-                        name="_toolang__run",
+                        name="runtime__run",
                         input={
                             "runnable": "flow:outer",
                             "input": {"_": "again"},
@@ -869,11 +869,10 @@ flow outer(_: Text) -> Text:
                 part
                 for message in harness.adapter.invocations[1].call.messages
                 for part in message.parts
-                if isinstance(part, ToolResultPart)
-                and part.tool_name == "_toolang__run"
+                if isinstance(part, ToolResultPart) and part.tool_name == "runtime__run"
             )
             assert result.error == (
-                "_toolang/run cannot call the current or an ancestor runnable: flow:outer"
+                "runtime/run cannot call the current or an ancestor runnable: flow:outer"
             )
             assert result.output == {}
             for invocation in harness.adapter.invocations:
@@ -932,7 +931,7 @@ flow -> Text:
                     ToolCall(
                         tool_call_id="run-published-ancestor",
                         call_id="provider-run-published-ancestor",
-                        name="_toolang__run",
+                        name="runtime__run",
                         input={
                             "runnable": "flow:outer",
                             "input": {"_": "again"},
@@ -977,12 +976,11 @@ flow -> Text:
                 part
                 for message in harness.adapter.invocations[1].call.messages
                 for part in message.parts
-                if isinstance(part, ToolResultPart)
-                and part.tool_name == "_toolang__run"
+                if isinstance(part, ToolResultPart) and part.tool_name == "runtime__run"
             )
             assert isinstance(result, ToolResultPart)
             assert result.error == (
-                "_toolang/run cannot call the current or an ancestor runnable: flow:outer"
+                "runtime/run cannot call the current or an ancestor runnable: flow:outer"
             )
             for invocation in harness.adapter.invocations:
                 assert route_scopes(invocation.call) == {
@@ -997,12 +995,12 @@ flow -> Text:
 def test_generic_dispatch_requires_per_call_runtime_authority(tmp_path: Path) -> None:
     from toolang.plugin.toolsets.loading import load_tools
 
-    call = ToolCall("execute", "provider-execute", "_toolang__exec", {})
+    call = ToolCall("execute", "provider-execute", "runtime__exec", {})
     context = ToolContext(tmp_path, tmp_path)
     result = asyncio.run(
         invoke_tool_call(
             call=call,
-            tool=load_tools(queries=("_toolang/*",))[call.name],
+            tool=load_tools(queries=("runtime/*",))[call.name],
             context=context,
         )
     )
@@ -1030,7 +1028,7 @@ agic parent(_: Text) -> Text:
                     ToolCall(
                         tool_call_id="bad-run",
                         call_id="provider-bad-run",
-                        name="_toolang__run",
+                        name="runtime__run",
                         input={"input": {}},
                     ),
                 )
@@ -1060,7 +1058,7 @@ agic parent(_: Text) -> Text:
             result = last_tool_result(harness.adapter.invocations[1].call)
             assert isinstance(result, ToolResultPart)
             assert result.tool_call_id == "bad-run"
-            assert result.error == "_toolang/run requires a non-empty runnable ref"
+            assert result.error == "runtime/run requires a non-empty runnable ref"
 
     asyncio.run(scenario())
 
@@ -1090,7 +1088,7 @@ agic child(_: Text) -> Text:
                     ToolCall(
                         tool_call_id="failed-child",
                         call_id="provider-failed-child",
-                        name="_toolang__run",
+                        name="runtime__run",
                         input={
                             "runnable": "agic:child",
                             "input": {"_": "topic"},
@@ -1181,7 +1179,7 @@ flow target(_: Text) -> Text:
                     ToolCall(
                         tool_call_id="run-after-publication",
                         call_id="provider-run-after-publication",
-                        name="_toolang__run",
+                        name="runtime__run",
                         input={
                             "runnable": "flow:target",
                             "input": {"_": "topic"},
@@ -1257,7 +1255,7 @@ agic parent(_: Text) -> Text:
                     ToolCall(
                         tool_call_id="incompatible-publication",
                         call_id="provider-incompatible",
-                        name="_toolang__chdir",
+                        name="runtime__chdir",
                         input={"path": "lab://"},
                     ),
                 )
@@ -1314,7 +1312,7 @@ flow child(_: Text) -> Text:
                     ToolCall(
                         tool_call_id="run-with-store-failure",
                         call_id="provider-run-with-store-failure",
-                        name="_toolang__run",
+                        name="runtime__run",
                         input={
                             "runnable": "flow:child",
                             "input": {"_": "topic"},
@@ -1402,7 +1400,7 @@ flow research(brief: Brief, prefix?: Text) -> Text:
                     ToolCall(
                         tool_call_id="module-run",
                         call_id="provider-module-run",
-                        name="_toolang__run",
+                        name="runtime__run",
                         input={
                             "runnable": "research",
                             "input": {
@@ -1480,7 +1478,7 @@ agic target(_: Text) -> Text:
                     ToolCall(
                         tool_call_id="handoff",
                         call_id="provider-handoff",
-                        name="_toolang__exec",
+                        name="runtime__exec",
                         input={"runnable": "target", "input": {"_": "work"}},
                     ),
                 ),
@@ -1541,35 +1539,35 @@ agic target(_: Text) -> Text:
             assert {
                 tool.name for tool in harness.adapter.invocations[0].call.tools
             } == {
-                "_toolang__chdir",
-                "_toolang__runnables",
-                "_toolang__exec",
-                "_toolang__pick",
-                "_toolang__run",
-                "_toolang__spawn",
-                "_toolang__await",
+                "runtime__chdir",
+                "runtime__runnables",
+                "runtime__exec",
+                "runtime__pick",
+                "runtime__run",
+                "runtime__spawn",
+                "runtime__await",
                 "web__search",
             }
             assert {tool.name for tool in target_call.tools} == {
-                "_toolang__chdir",
-                "_toolang__runnables",
-                "_toolang__exec",
-                "_toolang__pick",
-                "_toolang__run",
-                "_toolang__spawn",
-                "_toolang__await",
+                "runtime__chdir",
+                "runtime__runnables",
+                "runtime__exec",
+                "runtime__pick",
+                "runtime__run",
+                "runtime__spawn",
+                "runtime__await",
                 "web__search",
             }
             assert {
                 tool.name for tool in harness.adapter.invocations[2].call.tools
             } == {
-                "_toolang__chdir",
-                "_toolang__runnables",
-                "_toolang__exec",
-                "_toolang__pick",
-                "_toolang__run",
-                "_toolang__spawn",
-                "_toolang__await",
+                "runtime__chdir",
+                "runtime__runnables",
+                "runtime__exec",
+                "runtime__pick",
+                "runtime__run",
+                "runtime__spawn",
+                "runtime__await",
                 "web__search",
             }
             assert len(web.calls) == 1
@@ -1607,7 +1605,7 @@ agic target(_: Text) -> Boolean:
                     ToolCall(
                         tool_call_id="handoff",
                         call_id="provider-handoff",
-                        name="_toolang__exec",
+                        name="runtime__exec",
                         input={"runnable": "target", "input": {"_": "work"}},
                     ),
                 ),
@@ -1663,7 +1661,7 @@ agic blocked -> Text:
                     ToolCall(
                         tool_call_id="blocked-handoff",
                         call_id="provider-blocked",
-                        name="_toolang__exec",
+                        name="runtime__exec",
                         input={"runnable": "agic:blocked"},
                     ),
                 )
@@ -1721,7 +1719,7 @@ agic caller() -> Text:
                     ToolCall(
                         "unavailable",
                         "provider-unavailable",
-                        "_toolang__exec",
+                        "runtime__exec",
                         {"runnable": "target"},
                     ),
                 )
@@ -1745,13 +1743,13 @@ agic caller() -> Text:
             ]
             first_call = harness.adapter.invocations[0].call
             assert {tool.name for tool in first_call.tools} == {
-                "_toolang__chdir",
-                "_toolang__runnables",
-                "_toolang__exec",
-                "_toolang__pick",
-                "_toolang__run",
-                "_toolang__spawn",
-                "_toolang__await",
+                "runtime__chdir",
+                "runtime__runnables",
+                "runtime__exec",
+                "runtime__pick",
+                "runtime__run",
+                "runtime__spawn",
+                "runtime__await",
             }
             assert route_scopes(first_call) == dict.fromkeys(
                 ("hands", "handoffs", "spawns"), "NONE"
@@ -1786,13 +1784,13 @@ agic target() -> Text:
                     ToolCall(
                         "first",
                         "provider-first",
-                        "_toolang__exec",
+                        "runtime__exec",
                         {"runnable": "target"},
                     ),
                     ToolCall(
                         "second",
                         "provider-second",
-                        "_toolang__exec",
+                        "runtime__exec",
                         {"runnable": "target"},
                     ),
                 )
@@ -1827,7 +1825,7 @@ agic target() -> Text:
             assert all(
                 isinstance(item, ToolResultPart)
                 and item.error
-                == "_toolang/exec must be the only tool call in its Model Call"
+                == "runtime/exec must be the only tool call in its Model Call"
                 for item in results
             )
 
@@ -1860,7 +1858,7 @@ agic target() -> Text:
                     ToolCall(
                         "to-target",
                         "provider-target",
-                        "_toolang__exec",
+                        "runtime__exec",
                         {"runnable": "target"},
                     ),
                 )
@@ -1870,7 +1868,7 @@ agic target() -> Text:
                     ToolCall(
                         "to-caller",
                         "provider-caller",
-                        "_toolang__exec",
+                        "runtime__exec",
                         {"runnable": "caller"},
                     ),
                 )
@@ -1944,7 +1942,7 @@ flow deliver(_: Text) -> Text:
                     ToolCall(
                         "to-middle",
                         "provider-middle",
-                        "_toolang__exec",
+                        "runtime__exec",
                         {"runnable": "middle", "input": {"_": "work"}},
                     ),
                 )
@@ -1954,7 +1952,7 @@ flow deliver(_: Text) -> Text:
                     ToolCall(
                         "to-deliver",
                         "provider-deliver",
-                        "_toolang__exec",
+                        "runtime__exec",
                         {"runnable": "flow:deliver", "input": {"_": "work"}},
                     ),
                 )
@@ -2012,7 +2010,7 @@ agic inner() -> Text:
                     ToolCall(
                         "run-ancestor",
                         "provider-ancestor",
-                        "_toolang__run",
+                        "runtime__run",
                         {"runnable": "flow:outer"},
                     ),
                 )
@@ -2041,7 +2039,7 @@ agic inner() -> Text:
             result = last_tool_result(harness.adapter.invocations[1].call)
             assert isinstance(result, ToolResultPart)
             assert result.error == (
-                "_toolang/run cannot call the current or an ancestor runnable: flow:outer"
+                "runtime/run cannot call the current or an ancestor runnable: flow:outer"
             )
 
     asyncio.run(scenario())
@@ -2064,7 +2062,7 @@ agic target() -> Text:
                     ToolCall(
                         "handoff",
                         "provider-handoff",
-                        "_toolang__exec",
+                        "runtime__exec",
                         {"runnable": "target"},
                     ),
                 )
@@ -2113,7 +2111,7 @@ agic target() -> Text:
                     ToolCall(
                         "handoff",
                         "provider-handoff",
-                        "_toolang__exec",
+                        "runtime__exec",
                         {"runnable": "target"},
                     ),
                 )
@@ -2184,7 +2182,7 @@ agic target(_: Text) -> Text:
                     ToolCall(
                         tool_call_id="run-public-target",
                         call_id="provider-run-public-target",
-                        name="_toolang__run",
+                        name="runtime__run",
                         input={
                             "runnable": f"agic:{target}",
                             "input": {"_": "topic"},
@@ -2197,7 +2195,7 @@ agic target(_: Text) -> Text:
                     ToolCall(
                         tool_call_id="publication-public-target",
                         call_id="provider-publication-public-target",
-                        name="_toolang__chdir",
+                        name="runtime__chdir",
                         input={"path": "lab://"},
                     ),
                 )
@@ -2232,23 +2230,23 @@ agic target(_: Text) -> Text:
             before_publication = harness.adapter.invocations[1].call
             after_publication = harness.adapter.invocations[2].call
             assert {tool.name for tool in before_publication.tools} == {
-                "_toolang__chdir",
-                "_toolang__runnables",
-                "_toolang__exec",
-                "_toolang__pick",
-                "_toolang__run",
-                "_toolang__spawn",
-                "_toolang__await",
+                "runtime__chdir",
+                "runtime__runnables",
+                "runtime__exec",
+                "runtime__pick",
+                "runtime__run",
+                "runtime__spawn",
+                "runtime__await",
                 "beta__use",
             }
             assert {tool.name for tool in after_publication.tools} == {
-                "_toolang__chdir",
-                "_toolang__runnables",
-                "_toolang__exec",
-                "_toolang__pick",
-                "_toolang__run",
-                "_toolang__spawn",
-                "_toolang__await",
+                "runtime__chdir",
+                "runtime__runnables",
+                "runtime__exec",
+                "runtime__pick",
+                "runtime__run",
+                "runtime__spawn",
+                "runtime__await",
                 "beta__use",
             }
             assert "old target state" in before_publication.instructions
@@ -2302,7 +2300,7 @@ agic other() -> Text:
                 ToolCall(
                     "named",
                     "named",
-                    f"_toolang__{operation}",
+                    f"runtime__{operation}",
                     {
                         "runnable": f"{kind}:target",
                         "input": {"_": "payload", "count": 3},
@@ -2335,7 +2333,7 @@ agic other() -> Text:
             assert root.status == "succeeded", root.error
             runs = harness.store.list_run_tree(root_run_id=root.id)
             first = harness.adapter.invocations[0].call
-            assert {"_toolang__run", "_toolang__exec"} <= {t.name for t in first.tools}
+            assert {"runtime__run", "runtime__exec"} <= {t.name for t in first.tools}
             snapshots = route_scopes(first)
             assert snapshots[other] == "NONE"
             assert snapshots[directive] == (

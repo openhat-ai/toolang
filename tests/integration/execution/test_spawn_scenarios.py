@@ -165,7 +165,7 @@ flow child(_: Text) -> Text:
                     ToolCall(
                         "spawn-call",
                         "spawn-call",
-                        "_toolang__spawn",
+                        "runtime__spawn",
                         {"runnable": "flow:child", "input": {"_": "task"}},
                     ),
                 )
@@ -310,7 +310,7 @@ flow child(_: Text):
                     ToolCall(
                         "spawn-call",
                         "spawn-call",
-                        "_toolang__spawn",
+                        "runtime__spawn",
                         {"runnable": "flow:child", "input": {"_": "task"}},
                     ),
                 )
@@ -435,7 +435,8 @@ flow child(_: Text):
                     "status": "pending",
                 }
                 assert isinstance(step.noted, ToolStepNoted)
-                assert step.noted.summary == f"Spawned {root.id} in {root.thread}"
+                assert step.noted.summary == "Spawned new run: flow:child"
+                assert end.noted == step.noted
             if failure == "dispatch":
                 assert root.status == "failed"
                 assert root.error is not None
@@ -701,7 +702,7 @@ flow child(_: Text) -> Text:
                     ToolCall(
                         "spawn",
                         "spawn",
-                        "_toolang__spawn",
+                        "runtime__spawn",
                         {"runnable": "flow:child", "input": {"_": "task"}},
                     ),
                 )
@@ -722,7 +723,7 @@ flow child(_: Text) -> Text:
                 s
                 for s in steps
                 if isinstance(s.given, ToolStepGiven)
-                and s.given.call.name == "_toolang__spawn"
+                and s.given.call.name == "runtime__spawn"
             )
             reply = last_tool_result(harness.adapter.invocations[-1].call)
             assert origin.output is not None and isinstance(

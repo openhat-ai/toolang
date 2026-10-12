@@ -47,7 +47,7 @@ flow child(_: Text) -> Text:
                     ToolCall(
                         "launch",
                         "launch",
-                        f"_toolang__{operation}",
+                        f"runtime__{operation}",
                         {"runnable": "flow:child", "input": {"_": "work"}},
                     ),
                 )
@@ -148,7 +148,7 @@ flow child() -> Text:
             ModelCallResult(
                 tool_calls=(
                     ToolCall(
-                        "exec", "exec", "_toolang__exec", {"runnable": "flow:child"}
+                        "exec", "exec", "runtime__exec", {"runnable": "flow:child"}
                     ),
                 )
             )
@@ -216,7 +216,7 @@ agic child() -> Text:
                     ToolCall(
                         "launch",
                         "launch",
-                        f"_toolang__{operation}",
+                        f"runtime__{operation}",
                         {"runnable": "agic:child"},
                     ),
                 )

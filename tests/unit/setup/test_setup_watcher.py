@@ -543,12 +543,12 @@ def test_teaming_config_is_shared_and_frozen_until_restart(tmp_path, monkeypatch
     assert first.teaming is not None
     initial = first.teaming.root.backend
     assert initial.url == "redis://first"
-    assert captured[-1]["msg"] == {"root": str(tmp_path)}
+    assert captured[-1]["convo"] == {"root": str(tmp_path)}
     config.write_text('[teaming.backend]\nurl = "redis://second"\n')
     second = asyncio.run(watcher.refresh())
     second.toolsets()
     assert second.teaming is first.teaming
-    assert captured[-1]["msg"] == {"root": str(tmp_path)}
+    assert captured[-1]["convo"] == {"root": str(tmp_path)}
     restarted, _ = _watcher(monkeypatch, tmp_path)
     restarted = SetupWatcher(
         restarted.layout,
@@ -565,7 +565,7 @@ def test_teaming_config_is_shared_and_frozen_until_restart(tmp_path, monkeypatch
 def test_teaming_consumers_share_scoped_configuration(tmp_path, monkeypatch, enabled):
     from toolang.setup.teaming import load_teaming_root
     from toolang.teaming.config import BackendConfig
-    from toolang.plugin.toolsets.msg import MsgToolset
+    from toolang.plugin.toolsets.convo import ConvoToolset
     from toolang.plugin.types import LoadedPlugin
 
     watcher, _ = _watcher(monkeypatch, tmp_path)
@@ -580,14 +580,16 @@ def test_teaming_consumers_share_scoped_configuration(tmp_path, monkeypatch, ena
 
     def load_toolsets(*, config):
         return {
-            "msg": LoadedPlugin("msg", "msg", MsgToolset(config["msg"]), "built-in")
+            "convo": LoadedPlugin(
+                "convo", "convo", ConvoToolset(config["convo"]), "built-in"
+            )
         }
 
     monkeypatch.setattr("toolang.setup.tools.load_toolsets_with_sources", load_toolsets)
     setup = asyncio.run(watcher.refresh())
     assert setup.teaming is not None
-    msg = setup.toolsets()["msg"]
-    assert isinstance(msg, MsgToolset)
+    msg = setup.toolsets()["convo"]
+    assert isinstance(msg, ConvoToolset)
     assert setup.teaming.home.enabled is (enabled is not False)
     assert msg.root == (tmp_path if enabled is not False else None)
     resolved = load_teaming_root(tmp_path)

@@ -17,7 +17,7 @@ from toolang.plugin.toolsets.loading import load_tools
 @pytest.mark.parametrize("named", [False, True])
 def test_model_creates_discovers_calls_edits_and_deletes_module(tmp_path, kind, named):
     key = "runnables/research.too"
-    source = "agic manage():\n  tools = me/*\n  context = none\n  Manage modules.\n"
+    source = "agic manage():\n  tools = state/*\n  context = none\n  Manage modules.\n"
     module = (
         "## Research version one.\n"
         f"{kind}{' research' if named else ''}(_: Text) -> Text:\n"
@@ -40,61 +40,61 @@ def test_model_creates_discovers_calls_edits_and_deletes_module(tmp_path, kind, 
         )
 
     def invoke(id, ref, answer):
-        call(id, "_toolang__run", runnable=ref, input={"_": "input"})
+        call(id, "runtime__run", runnable=ref, input={"_": "input"})
         responses.append(ModelCallResult(message=Message.assistant(answer)))
 
-    call("create", "me__create", key=key, content=module)
-    call("list_created", "me__list")
-    call("get_created", "me__get", key=key)
-    call("unpublished", "_toolang__runnables")
-    call("publish", "me__sync")
-    call("discover", "_toolang__runnables")
+    call("create", "state__create", key=key, content=module)
+    call("list_created", "state__list")
+    call("get_created", "state__get", key=key)
+    call("unpublished", "runtime__runnables")
+    call("publish", "state__sync")
+    call("discover", "runtime__runnables")
     invoke("first", "research", "first result")
-    call("update", "me__update", key=key, content=updated, if_digest=original_digest)
-    call("stale", "me__update", key=key, content=module, if_digest=original_digest)
-    call("list_updated", "me__list")
-    call("get_updated", "me__get", key=key)
-    call("before_sync", "_toolang__runnables", name="research")
+    call("update", "state__update", key=key, content=updated, if_digest=original_digest)
+    call("stale", "state__update", key=key, content=module, if_digest=original_digest)
+    call("list_updated", "state__list")
+    call("get_updated", "state__get", key=key)
+    call("before_sync", "runtime__runnables", name="research")
     invoke("before_sync_run", "research", "still first version")
-    call("republish", "me__sync")
-    call("rediscover", "_toolang__runnables", name=f"{kind}:research")
+    call("republish", "state__sync")
+    call("rediscover", "runtime__runnables", name=f"{kind}:research")
     invoke("second", f"{kind}:research", "second result")
-    call("break", "me__update", key=key, content=broken, if_digest=updated_digest)
-    call("reject", "me__sync")
-    call("get_broken", "me__get", key=key)
-    call("after_reject", "_toolang__runnables", name="research")
+    call("break", "state__update", key=key, content=broken, if_digest=updated_digest)
+    call("reject", "state__sync")
+    call("get_broken", "state__get", key=key)
+    call("after_reject", "runtime__runnables", name="research")
     invoke("after_reject_run", "research", "last valid version")
     call(
         "repair",
-        "me__update",
+        "state__update",
         key=key,
         content=updated,
         if_digest=sha256(broken.encode()).hexdigest(),
     )
-    call("recover", "me__sync")
+    call("recover", "state__sync")
     call(
         "private_discovery",
-        "_toolang__runnables",
+        "runtime__runnables",
         name="runnables::research::agic:helper",
     )
     call(
         "private_run",
-        "_toolang__run",
+        "runtime__run",
         runnable="runnables::research::agic:helper",
         input={"_": "input"},
     )
-    call("delete", "me__delete", key=key, if_digest=updated_digest)
-    call("publish_delete", "me__sync")
-    call("list_deleted", "me__list")
-    call("discover_deleted", "_toolang__runnables")
-    call("get_deleted", "me__get", key=key)
-    call("run_deleted", "_toolang__run", runnable="research", input={"_": "input"})
+    call("delete", "state__delete", key=key, if_digest=updated_digest)
+    call("publish_delete", "state__sync")
+    call("list_deleted", "state__list")
+    call("discover_deleted", "runtime__runnables")
+    call("get_deleted", "state__get", key=key)
+    call("run_deleted", "runtime__run", runnable="research", input={"_": "input"})
     responses.append(ModelCallResult(message=Message.assistant("done")))
     harness = ExecutionHarness.create(
         tmp_path,
         source=source,
         prepare_state=True,
-        tools=load_tools(queries=("me/*",)),
+        tools=load_tools(queries=("state/*",)),
         responses=responses,
     )
 

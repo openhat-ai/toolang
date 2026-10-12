@@ -3048,8 +3048,8 @@ def plugin_inventory(monkeypatch: pytest.MonkeyPatch, offline_model_setup):
         )
 
     entries = [
-        entry("_toolang", "toolang"),
-        entry("me", "toolang"),
+        entry("runtime", "toolang"),
+        entry("state", "toolang"),
         entry("shell", "toolang"),
         entry("vendor", "external-package"),
     ]
@@ -3071,10 +3071,10 @@ def plugin_inventory(monkeypatch: pytest.MonkeyPatch, offline_model_setup):
 @pytest.mark.parametrize(
     ("options", "visible"),
     [
-        ((), ("me", "shell", "vendor")),
-        (("--all",), ("_toolang", "me", "shell", "vendor")),
-        (("--query", "_toolang/*"), ()),
-        (("--all", "--query", "_toolang/*"), ("_toolang",)),
+        ((), ("state", "shell", "vendor")),
+        (("--all",), ("runtime", "state", "shell", "vendor")),
+        (("--query", "runtime/*"), ()),
+        (("--all", "--query", "runtime/*"), ("runtime",)),
         (("--query", "shell/*"), ("shell",)),
     ],
 )
@@ -3086,12 +3086,12 @@ def test_tools_visibility_queries_and_counts(
     assert result.exit_code == 0, result.stderr
     assert len(plugin_inventory) == 4
     assert {name for name, _config in plugin_inventory} == {
-        "_toolang",
-        "me",
+        "runtime",
+        "state",
         "shell",
         "vendor",
     }
-    for name in ("_toolang", "me", "shell", "vendor"):
+    for name in ("runtime", "state", "shell", "vendor"):
         assert (f"{name}/echo" in result.stdout) == (name in visible)
     if not visible:
         assert result.stdout.strip() == "0 tools"
@@ -3164,9 +3164,9 @@ def test_toolsets_inventory_does_not_construct_plugins(
     result = _invoke(tmp_path / "toolang", "toolsets", *(("--all",) if all_ else ()))
 
     assert result.exit_code == 0, result.stderr
-    assert ("_toolang" in result.stdout) == all_
-    assert all(name in result.stdout for name in ("me", "shell", "vendor"))
-    assert result.stdout.count("_toolang") == int(all_)
+    assert ("runtime" in result.stdout) == all_
+    assert all(name in result.stdout for name in ("state", "shell", "vendor"))
+    assert result.stdout.count("runtime") == int(all_)
     assert "INTERNAL" not in result.stdout
     assert result.stdout.strip().endswith("4 toolsets" if all_ else "3 toolsets")
     assert "external" in result.stdout
@@ -3197,8 +3197,8 @@ def test_tools_uses_selected_scope_and_effective_allow(
     assert ("shell/echo" in result.stdout) is (all_ or not target)
     assert ("vendor/echo" in result.stdout) is (all_ or bool(target))
     assert ("shell/repeat" in result.stdout) is all_
-    assert ("me/echo" in result.stdout) is all_
-    assert ("_toolang/echo" in result.stdout) is all_
+    assert ("state/echo" in result.stdout) is all_
+    assert ("runtime/echo" in result.stdout) is all_
     summary = "5 tools, 4 toolsets" if all_ else "1 tool"
     assert result.stdout.strip().endswith(summary)
     assert dict(plugin_inventory)["shell"] == {
@@ -3220,9 +3220,9 @@ def test_tools_all_bypasses_empty_allow_for_inspection(
 
     assert result.exit_code == 0, result.stderr
     if all_:
-        assert "_toolang/echo" in result.stdout
+        assert "runtime/echo" in result.stdout
         assert "shell/echo" in result.stdout
-        assert "me/echo" in result.stdout
+        assert "state/echo" in result.stdout
         assert result.stdout.strip().endswith("5 tools, 4 toolsets")
     else:
         assert result.stdout.strip() == "0 tools"
@@ -3282,9 +3282,9 @@ def test_tools_status_column_distinguishes_allow_without_internal_badges(
     if all_:
         assert by_tool["shell/echo"]["tags"] == "ready"
         assert by_tool["shell/repeat"]["tags"] == "not_allowed"
-        assert by_tool["me/echo"]["tags"] == "not_allowed"
-        assert by_tool["_toolang/echo"]["tags"] == "ready"
-        assert "INTERNAL" not in by_tool["_toolang/echo"]
+        assert by_tool["state/echo"]["tags"] == "not_allowed"
+        assert by_tool["runtime/echo"]["tags"] == "ready"
+        assert "INTERNAL" not in by_tool["runtime/echo"]
         assert "source" not in by_tool["shell/echo"]
         assert tuple(by_tool["shell/echo"]) == ("ref", "description", "tags")
     else:
@@ -3538,7 +3538,7 @@ def test_internal_only_inventory_has_an_empty_default_view(
         loading,
         "entry_points",
         lambda *, group: (
-            [entry for entry in entries if entry.name == "_toolang"]
+            [entry for entry in entries if entry.name == "runtime"]
             if group == "toolang.toolset"
             else original_entry_points(group=group)
         ),
@@ -3549,7 +3549,7 @@ def test_internal_only_inventory_has_an_empty_default_view(
 
     expanded = _invoke(tmp_path / "toolang", command, "--all")
     assert expanded.exit_code == 0, expanded.stderr
-    assert "_toolang" in expanded.stdout
+    assert "runtime" in expanded.stdout
 
 
 @pytest.mark.parametrize(

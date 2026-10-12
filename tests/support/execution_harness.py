@@ -387,7 +387,7 @@ class ExecutionHarness:
             adapters={adapter.name: adapter},
             models=provider.list_models(environ={}),
             tools=ToolCollection.from_tools(
-                {**load_tools(queries=("_toolang/*",)), **(tools or {})}
+                {**load_tools(queries=("runtime/*",)), **(tools or {})}
             ),
             envs={},
             environment=AgentEnvironment(

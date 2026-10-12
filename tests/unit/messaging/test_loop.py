@@ -20,7 +20,7 @@ from toolang.teaming.messaging import MessagingClient
 from toolang.teaming.backend.valkey import ValkeyBackend
 from toolang.teaming.backend.valkey.keys import convo_key
 from toolang.teaming.config import BackendConfig, TeamingHomeConfig, TeamingRootConfig
-from toolang.plugin.toolsets.msg import MsgToolset
+from toolang.plugin.toolsets.convo import ConvoToolset
 from toolang.plugin.toolsets.loading import tools_from_toolsets
 from toolang.plugin.types import LoadedPlugin
 from toolang.state.prepare import prepare_agent_state
@@ -62,9 +62,11 @@ def make_loop(path, client, harness=None):
 
 
 def harness_with_msg(path, server, responses, source="agic:\n  {{_}}\n", state=None):
-    msg = MsgToolset({"root": str(path)})
+    msg = ConvoToolset({"root": str(path)})
     setattr(msg, "connection", lambda context: make_client(server))
-    tools = tools_from_toolsets({"msg": LoadedPlugin("msg", "msg", msg, "built-in")})
+    tools = tools_from_toolsets(
+        {"convo": LoadedPlugin("convo", "convo", msg, "built-in")}
+    )
     return ExecutionHarness.create(
         path, source=source, responses=responses, tools=tools, state=state
     )
@@ -81,8 +83,8 @@ def test_tool_reply_receipt_context_and_restart(tmp_path, custom):
             ToolCall(
                 "call-1",
                 "call-1",
-                "msg__send",
-                {"target": "gc_00000001", "body": "done", "in_reply_to": REPLY_TO},
+                "convo__write",
+                {"target": "gc_00000001", "message": "done", "reply_to": REPLY_TO},
             ),
         )
     )
@@ -148,7 +150,14 @@ def test_tool_reply_receipt_context_and_restart(tmp_path, custom):
                     else "agic"
                 )
                 assert entry.payload.runnable == f"{prefix}{kind}:talk"
-            origin = receipt["message"]["origin"]
+            from toolang.teaming.schemas import Message
+
+            stored = Message.decode(
+                (await client.history("gc_00000001"))[-1][1]["data"]
+            )
+            assert stored.id == receipt["message"]["id"]
+            origin = stored.origin
+            assert origin is not None
             assert origin["thread"] == handled.thread.id
             sender_run = harness.store.get_run(run_id=origin["run"])
             assert sender_run is not None
@@ -157,7 +166,7 @@ def test_tool_reply_receipt_context_and_restart(tmp_path, custom):
                 assert sender_run.parent.run_id == handled.id
             else:
                 assert sender_run.id == handled.id
-            assert receipt["message"]["in_reply_to"] == REPLY_TO
+            assert receipt["message"]["reply_to"] == REPLY_TO
             assert len(await client.history("gc_00000001")) == 2
             await loop.poll()  # Own reply is context, never another model invocation.
             assert len(harness.adapter.invocations) == 2
@@ -243,8 +252,8 @@ def test_arrivals_during_handling_and_cancellation_save_delivered_receipts(
                     ToolCall(
                         "send",
                         "send",
-                        "msg__send",
-                        {"target": "gc_00000001", "body": "delivered"},
+                        "convo__write",
+                        {"target": "gc_00000001", "message": "delivered"},
                     ),
                 )
             ),
@@ -453,8 +462,8 @@ def test_spawned_worker_sends_with_its_own_run_origin(tmp_path):
                     ToolCall(
                         "send",
                         "send",
-                        "msg__send",
-                        {"target": "gc_00000001", "body": "Worker result"},
+                        "convo__write",
+                        {"target": "gc_00000001", "message": "Worker result"},
                     ),
                 )
             ),
@@ -495,7 +504,7 @@ def test_spawned_worker_sends_with_its_own_run_origin(tmp_path):
     asyncio.run(scenario())
 
 
-def test_msg_is_unavailable_without_configuration_and_fences_offline_sends(tmp_path):
+def test_convo_is_unavailable_without_configuration_and_fences_offline_sends(tmp_path):
     from toolang.base.types.tool import ToolContext
     from toolang.teaming.errors import MessagingError
 
@@ -503,77 +512,75 @@ def test_msg_is_unavailable_without_configuration_and_fences_offline_sends(tmp_p
         context = ToolContext(tmp_path / "alice", tmp_path / "room")
         with pytest.raises(MessagingError, match="disabled"):
             await (
-                MsgToolset({})
-                .tools()["send"]
-                .invoke({"target": "gc_00000000", "body": "hi"}, context)
+                ConvoToolset({})
+                .tools()["write"]
+                .invoke({"target": "gc_00000000", "message": "hi"}, context)
             )
         server = FakeServer(server_type="valkey")
         async with make_client(server) as agent:
             await agent.register("human:owner")
             await agent.unregister()
-        msg = MsgToolset({"root": str(tmp_path)})
+        msg = ConvoToolset({"root": str(tmp_path)})
         setattr(msg, "connection", lambda context: make_client(server))
         assert set(msg.tools()) == {
-            "targets",
-            "send",
-            "create_conversation",
-            "join_conversation",
-            "leave_conversation",
-            "rename_conversation",
-            "resolve",
+            "team",
+            "list",
+            "peek",
+            "write",
+            "create",
+            "join",
+            "leave",
+            "rename",
         }
         with pytest.raises(MessagingError, match="lease lost"):
-            await msg.tools()["send"].invoke(
-                {"target": "gc_00000000", "body": "hi"}, context
+            await msg.tools()["write"].invoke(
+                {"target": "gc_00000000", "message": "hi"}, context
             )
 
     asyncio.run(scenario())
 
 
-def test_all_msg_tools_use_the_context_identity(tmp_path):
-    from toolang.base.types.tool import MsgToolContext
+def test_all_convo_tools_use_the_context_identity(tmp_path):
+    from toolang.base.types.tool import ConvoToolContext
     from toolang.teaming.errors import MessagingError
 
     async def scenario():
         server = FakeServer(server_type="valkey")
         async with make_client(server) as agent:
             await agent.register("human:owner")
-        msg = MsgToolset({"root": str(tmp_path)})
+        msg = ConvoToolset({"root": str(tmp_path)})
         setattr(
             msg,
             "connection",
             lambda context: make_client(server, f"agent:{context.home.name}"),
         )
-        context = MsgToolContext(
+        context = ConvoToolContext(
             tmp_path / "alice",
             tmp_path / "room",
             run_id="run_test",
             thread_id="term_test",
         )
         tools = msg.tools()
-        result = await tools["targets"].invoke({}, context)
-        assert "human:owner" in {row["member"] for row in result.output["participants"]}
-        created = await tools["create_conversation"].invoke({"name": "dev"}, context)
+        result = await tools["team"].invoke({}, context)
+        assert "human:owner" in {row["id"] for row in result.output["value"]}
+        created = await tools["create"].invoke({"name": "dev"}, context)
         assert created.output["id"] == "gc_00000001"
         assert created.output["participants"] == ("agent:alice",)
-        sent = await tools["send"].invoke(
-            {"target": "gc_00000001", "body": "hello"}, context
+        sent = await tools["write"].invoke(
+            {"target": "gc_00000001", "message": "hello"}, context
         )
         assert sent.output["message"]["sender"] == "agent:alice"
-        assert sent.output["message"]["origin"] == {
-            "run": "run_test",
-            "thread": "term_test",
-        }
-        left = await tools["leave_conversation"].invoke(
-            {"conversation": "gc_00000001"}, context
-        )
+        peeked = await tools["peek"].invoke({"target": "gc_00000001"}, context)
+        assert peeked.output["messages"] == [sent.output["message"]]
+        assert "origin" not in sent.output["message"]
+        left = await tools["leave"].invoke({"conversation": "gc_00000001"}, context)
         assert left.output == {"conversation": "gc_00000001"}
-        joined = await tools["join_conversation"].invoke(
-            {"conversation": "gc_00000001"}, context
-        )
+        joined = await tools["join"].invoke({"conversation": "gc_00000001"}, context)
         assert joined.output["participants"] == ["agent:alice"]
         with pytest.raises(MessagingError, match="Unknown participant"):
-            await tools["send"].invoke({"target": "dev", "body": "ambiguous"}, context)
+            await tools["write"].invoke(
+                {"target": "dev", "message": "ambiguous"}, context
+            )
 
     asyncio.run(scenario())
 

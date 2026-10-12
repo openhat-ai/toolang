@@ -9,6 +9,7 @@ from typing import Any
 
 from toolang.base.protocols.tool import Tool, Toolset
 from toolang.base.types.tool import ToolContext, ToolDefinition, ToolResult
+from toolang.base.utils.tool_descriptions import action_summary
 
 from .handlers import execute, synchronize
 from .schemas import Operation, decode_request, tool_parameters
@@ -36,7 +37,7 @@ _DESCRIPTIONS: dict[Operation, str] = {
 
 
 @dataclass(frozen=True, slots=True)
-class MeTool(Tool):
+class StateTool(Tool):
     """One operation over the compact current-agent resource protocol."""
 
     operation: Operation
@@ -51,6 +52,23 @@ class MeTool(Tool):
             description=_DESCRIPTIONS[self.operation],
             parameters=tool_parameters(self.operation),
         )
+
+    def summary(
+        self, arguments: Mapping[str, Any], result: ToolResult | None = None
+    ) -> str:
+        verbs, label = {
+            "list": (("list", "Listing", "Listed"), "agent files"),
+            "get": (("read", "Reading", "Read"), "agent file"),
+            "create": (("create", "Creating", "Created"), "agent file"),
+            "update": (("update", "Updating", "Updated"), "agent file"),
+            "delete": (("delete", "Deleting", "Deleted"), "agent file"),
+            "sync": (("sync", "Syncing", "Synced"), "agent state"),
+        }[self.operation]
+        if self.operation not in {"list", "sync"} and isinstance(
+            key := arguments.get("key"), str
+        ):
+            label += f": {key}"
+        return action_summary(result, verbs, label)
 
     async def invoke(
         self,
@@ -67,11 +85,11 @@ class MeTool(Tool):
 
 
 @dataclass(slots=True)
-class MeToolset:
+class StateToolset:
     """Tools for managing the current agent's authored resources."""
 
     config: dict[str, Any]
-    name: str = "me"
+    name: str = "state"
     description: str | None = (
         "Manage current home files and synchronize authored sources with Agent State."
     )
@@ -86,16 +104,16 @@ class MeToolset:
             "delete",
             "sync",
         )
-        self._tools = {operation: MeTool(operation) for operation in operations}
+        self._tools = {operation: StateTool(operation) for operation in operations}
 
     def tools(self) -> Mapping[str, Tool]:
         return dict(self._tools)
 
 
 def create_toolset(config: Mapping[str, Any]) -> Toolset:
-    """Create the `me` toolset plugin."""
+    """Create the `state` toolset plugin."""
 
-    return MeToolset(config=dict(config))
+    return StateToolset(config=dict(config))
 
 
-__all__ = ["MeTool", "MeToolset", "create_toolset"]
+__all__ = ["StateTool", "StateToolset", "create_toolset"]

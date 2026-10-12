@@ -29,7 +29,7 @@ def test_cd_persists_location_and_relative_fs_uses_it(tmp_path):
             ModelCallResult(
                 tool_calls=(
                     ToolCall(
-                        "chdir", "chdir", "_toolang__chdir", {"path": "repo://src"}
+                        "chdir", "chdir", "runtime__chdir", {"path": "repo://src"}
                     ),
                 )
             ),
@@ -103,7 +103,7 @@ def test_publication_preserves_committed_cwd_before_next_model_call(tmp_path, ch
         responses=[
             ModelCallResult(
                 tool_calls=(
-                    ToolCall("chdir", "chdir", "_toolang__chdir", {"path": "repo://"}),
+                    ToolCall("chdir", "chdir", "runtime__chdir", {"path": "repo://"}),
                 )
             ),
             ScriptedModelTurn(
@@ -148,7 +148,7 @@ def test_publication_preserves_committed_cwd_before_next_model_call(tmp_path, ch
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("operation", ["run", "exec", "_toolang/run", "_toolang/exec"])
+@pytest.mark.parametrize("operation", ["run", "exec", "runtime/run", "runtime/exec"])
 def test_new_runnable_state_preserves_root_workspace_grants(tmp_path, operation):
     from tests.support.execution_harness import AsyncGate, ScriptedModelTurn
     from toolang.state.prepare import prepare_agent_state
@@ -162,7 +162,7 @@ def test_new_runnable_state_preserves_root_workspace_grants(tmp_path, operation)
     config = home / "config.toml"
     config.write_text(tomlkit.dumps({"workspaces": {"repo": str(repo)}}))
     gate = AsyncGate()
-    runtime = operation.startswith("_toolang/")
+    runtime = operation.startswith("runtime/")
     entry = (
         "agic grow() -> Text:\n  hands = *\n  handoffs = *\n  Wait for publication.\n"
         if runtime
@@ -208,7 +208,7 @@ agic successor() -> Text:
         ]
         + (
             [ModelCallResult(message=Message.assistant("finished"))]
-            if operation == "_toolang/run"
+            if operation == "runtime/run"
             else []
         ),
     )
@@ -418,9 +418,7 @@ def test_root_run_workdir_continues_from_previous_root_final_value(tmp_path):
         prepare_state=True,
         responses=[
             ModelCallResult(
-                tool_calls=(
-                    ToolCall("cd", "cd", "_toolang__chdir", {"path": "lab://"}),
-                )
+                tool_calls=(ToolCall("cd", "cd", "runtime__chdir", {"path": "lab://"}),)
             ),
             ModelCallResult(message=Message.assistant("first")),
             ModelCallResult(message=Message.assistant("second")),
@@ -469,7 +467,7 @@ def test_new_session_inherits_latest_finished_root_workdir_across_threads(tmp_pa
             ModelCallResult(
                 tool_calls=(
                     ToolCall(
-                        "first", "first", "_toolang__chdir", {"path": "repo://first"}
+                        "first", "first", "runtime__chdir", {"path": "repo://first"}
                     ),
                 )
             ),
@@ -477,7 +475,7 @@ def test_new_session_inherits_latest_finished_root_workdir_across_threads(tmp_pa
             ModelCallResult(
                 tool_calls=(
                     ToolCall(
-                        "second", "second", "_toolang__chdir", {"path": "repo://second"}
+                        "second", "second", "runtime__chdir", {"path": "repo://second"}
                     ),
                 )
             ),
@@ -485,7 +483,7 @@ def test_new_session_inherits_latest_finished_root_workdir_across_threads(tmp_pa
             ModelCallResult(
                 tool_calls=(
                     ToolCall(
-                        "active", "active", "_toolang__chdir", {"path": "repo://active"}
+                        "active", "active", "runtime__chdir", {"path": "repo://active"}
                     ),
                 )
             ),
@@ -553,7 +551,7 @@ agic child(_: Text) -> Text:
             ModelCallResult(
                 tool_calls=(
                     ToolCall(
-                        "parent", "parent", "_toolang__chdir", {"path": "repo://parent"}
+                        "parent", "parent", "runtime__chdir", {"path": "repo://parent"}
                     ),
                 )
             ),
@@ -562,7 +560,7 @@ agic child(_: Text) -> Text:
                     ToolCall(
                         "run-child",
                         "run-child",
-                        "_toolang__run",
+                        "runtime__run",
                         {
                             "runnable": "agic:child",
                             "input": {"_": "child"},
@@ -573,7 +571,7 @@ agic child(_: Text) -> Text:
             ModelCallResult(
                 tool_calls=(
                     ToolCall(
-                        "child", "child", "_toolang__chdir", {"path": "repo://child"}
+                        "child", "child", "runtime__chdir", {"path": "repo://child"}
                     ),
                 )
             ),
@@ -625,7 +623,7 @@ def test_cd_mixed_batch_is_rejected_before_filesystem_mutation(tmp_path):
         responses=[
             ModelCallResult(
                 tool_calls=(
-                    ToolCall("chdir", "chdir", "_toolang__chdir", {"path": "repo://"}),
+                    ToolCall("chdir", "chdir", "runtime__chdir", {"path": "repo://"}),
                     ToolCall(
                         "write",
                         "write",
@@ -755,7 +753,7 @@ flow parent:
             ModelCallResult(
                 tool_calls=(
                     ToolCall(
-                        "chdir", "chdir", "_toolang__chdir", {"path": "repo://src"}
+                        "chdir", "chdir", "runtime__chdir", {"path": "repo://src"}
                     ),
                 )
             ),
@@ -800,7 +798,7 @@ def test_cd_and_shell_use_run_location_without_persisting_command_cd(tmp_path):
             ModelCallResult(
                 tool_calls=(
                     ToolCall(
-                        "chdir", "chdir", "_toolang__chdir", {"path": "repo://src"}
+                        "chdir", "chdir", "runtime__chdir", {"path": "repo://src"}
                     ),
                 )
             ),
@@ -862,7 +860,7 @@ def test_retry_discards_cd_control_at_agic_restart_anchor(tmp_path):
             ModelCallResult(
                 tool_calls=(
                     ToolCall(
-                        "chdir", "chdir", "_toolang__chdir", {"path": "repo://src"}
+                        "chdir", "chdir", "runtime__chdir", {"path": "repo://src"}
                     ),
                 )
             ),
@@ -937,7 +935,7 @@ def test_chdir_loads_rules_only_when_a_path_operation_follows(tmp_path):
             ModelCallResult(
                 tool_calls=(
                     ToolCall(
-                        "chdir", "chdir", "_toolang__chdir", {"path": "repo://src"}
+                        "chdir", "chdir", "runtime__chdir", {"path": "repo://src"}
                     ),
                 )
             ),
@@ -981,7 +979,7 @@ def test_chdir_loads_rules_only_when_a_path_operation_follows(tmp_path):
                 for step in harness.store.list_steps(run_id=run.id)
                 if isinstance(step.given, ToolStepGiven)
             ]
-            assert tool_names == ["_toolang__chdir", "_toolang__honor", "fs__write"]
+            assert tool_names == ["runtime__chdir", "runtime__honor", "fs__write"]
             results = [
                 part
                 for message in harness.adapter.invocations[2].call.messages
@@ -1004,20 +1002,20 @@ def test_chdir_loads_rules_only_when_a_path_operation_follows(tmp_path):
 
 def test_failed_and_canceled_cd_never_change_the_run_location(tmp_path, monkeypatch):
     from tests.support.execution_harness import AsyncGate
-    from toolang.execution.tools._toolang import ToolangTool
+    from toolang.execution.tools.runtime import RuntimeTool
 
     repo = tmp_path / "repo"
     (repo / "src").mkdir(parents=True)
     _configured_home(tmp_path, {"repo": repo})
     gate = AsyncGate()
-    original_invoke = ToolangTool.invoke
+    original_invoke = RuntimeTool.invoke
 
     async def invoke(self, arguments, context):
         if self.name == "chdir" and arguments.get("path") == "repo://src":
             await gate.wait()
         return await original_invoke(self, arguments, context)
 
-    monkeypatch.setattr(ToolangTool, "invoke", invoke)
+    monkeypatch.setattr(RuntimeTool, "invoke", invoke)
     harness = ExecutionHarness.create(
         tmp_path,
         source="agic chat() -> Text:\n  context = none\n  user: Start.\n",
@@ -1026,13 +1024,13 @@ def test_failed_and_canceled_cd_never_change_the_run_location(tmp_path, monkeypa
             ModelCallResult(
                 tool_calls=(
                     ToolCall(
-                        "bad", "bad", "_toolang__chdir", {"path": "repo://missing"}
+                        "bad", "bad", "runtime__chdir", {"path": "repo://missing"}
                     ),
                 )
             ),
             ModelCallResult(
                 tool_calls=(
-                    ToolCall("slow", "slow", "_toolang__chdir", {"path": "repo://src"}),
+                    ToolCall("slow", "slow", "runtime__chdir", {"path": "repo://src"}),
                 )
             ),
         ],
@@ -1084,7 +1082,7 @@ def test_explicit_path_without_cwd_and_unicode_cwd_declaration(tmp_path):
                     ToolCall(
                         "cd",
                         "cd",
-                        "_toolang__chdir",
+                        "runtime__chdir",
                         {"path": "repo://a%20b%25%E4%B8%AD"},
                     ),
                 )
@@ -1208,7 +1206,7 @@ flow parent:
             ModelCallResult(
                 tool_calls=(
                     ToolCall(
-                        "chdir", "chdir", "_toolang__chdir", {"path": "repo://src"}
+                        "chdir", "chdir", "runtime__chdir", {"path": "repo://src"}
                     ),
                 )
             ),
@@ -1278,7 +1276,7 @@ agic target() -> Text:
             ModelCallResult(
                 tool_calls=(
                     ToolCall(
-                        "chdir", "chdir", "_toolang__chdir", {"path": "repo://src"}
+                        "chdir", "chdir", "runtime__chdir", {"path": "repo://src"}
                     ),
                 )
             ),
@@ -1287,7 +1285,7 @@ agic target() -> Text:
                     ToolCall(
                         "execute",
                         "execute",
-                        "_toolang__exec",
+                        "runtime__exec",
                         {"runnable": "target", "input": {}},
                     ),
                 )

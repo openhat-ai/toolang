@@ -768,6 +768,7 @@ class RunStore:
         cwd: str,
         created_at: str,
         context: LaunchContext,
+        tool_noted: ToolStepNoted | None,
     ) -> tuple[AwaitableHandle, bool]:
         """Commit a new thread, independent root, and successful source Step."""
 
@@ -782,7 +783,7 @@ class RunStore:
                 or (
                     isinstance(step.given, ToolStepGiven)
                     and step.given.trigger == "model"
-                    and step.given.call.name == "_toolang__spawn"
+                    and step.given.call.name == "runtime__spawn"
                 )
             ):
                 raise ValueError("spawn requires a flow spawn or model Tool Step")
@@ -865,7 +866,9 @@ class RunStore:
                         },
                     )
                 )
-                noted = ToolStepNoted(summary=f"Spawned {handle.id} in {handle.thread}")
+                if tool_noted is None:
+                    raise ValueError("tool spawn requires an admission summary")
+                noted = tool_noted
             self.finish_step(
                 ref=source,
                 kind=step.kind,
@@ -886,6 +889,7 @@ class RunStore:
         triggered_by: StepRef,
         input: CallInput[Value | TypedRef],
         created_at: str,
+        tool_noted: ToolStepNoted | None,
         loops: Sequence[tuple[StepRef, LoopStepNoted]] = (),
     ) -> ControlRecord:
         """Atomically record one applied same-Run runnable replacement."""
@@ -974,10 +978,12 @@ class RunStore:
             else:
                 given = _step_from_row(step).given
                 if not isinstance(given, ToolStepGiven) or (
-                    given.trigger != "model" or given.call.name != "_toolang__exec"
+                    given.trigger != "model" or given.call.name != "runtime__exec"
                 ):
                     raise ValueError("tool exec requires a model exec Tool Step")
                 call = given.call
+                if tool_noted is None:
+                    raise ValueError("tool exec requires an admission summary")
                 self.finish_step(
                     ref=triggered_by,
                     kind="tool",
@@ -991,7 +997,7 @@ class RunStore:
                             output={"controls": [str(control_ref)]},
                         )
                     ),
-                    noted=ToolStepNoted(summary=f"Executed exec {runnable}"),
+                    noted=tool_noted,
                     error=None,
                     finished_at=created_at,
                 )
@@ -3331,9 +3337,9 @@ class RunStore:
                 or (
                     isinstance(existing_step.given, ToolStepGiven)
                     and existing_step.given.call.name
-                    in {"_toolang__spawn", "_toolang__exec"}
+                    in {"runtime__spawn", "runtime__exec"}
                     or isinstance(existing_step.given, ToolStepGiven)
-                    and existing_step.given.call.name == "_toolang__run"
+                    and existing_step.given.call.name == "runtime__run"
                     and existing_step.given.call.input.get("async") is True
                 )
             ):
@@ -3363,7 +3369,7 @@ class RunStore:
                     kind == "tool"
                     and status == "succeeded"
                     and isinstance(existing_step.given, ToolStepGiven)
-                    and existing_step.given.call.name == "_toolang__chdir"
+                    and existing_step.given.call.name == "runtime__chdir"
                     and output is not None
                     and isinstance(output.value, ToolResultPart)
                 ):

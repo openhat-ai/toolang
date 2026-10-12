@@ -34,14 +34,14 @@ class HistoryTool(Tool):
             "read_threads": ("threads", None),
             "read_runs": ("runs", "thread"),
             "read_steps": ("steps", "run"),
-            "read_output": ("output", "run"),
+            "read_output": ("run output", "run"),
         }[self.name]
         if self.name != "read_output" and arguments.get("cursor"):
             target = f"more {target}"
         elif reference_key and isinstance(
             reference := arguments.get(reference_key), str
         ):
-            target += f" from {reference}"
+            target += f": {reference}"
         return action_summary(result, ("read", "Reading", "Read"), target)
 
     async def invoke(

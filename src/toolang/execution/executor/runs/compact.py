@@ -60,7 +60,7 @@ async def invoke(state: _AgicState, step: StepRef) -> dict[str, Any]:
         owner is None
         or not isinstance(owner.given, ToolStepGiven)
         or owner.given.trigger != "runtime"
-        or owner.given.call.name != "_toolang__compact"
+        or owner.given.call.name != "runtime__compact"
     ):
         raise ToolangError("compact can only be initiated by model preflight")
     history = execution.message_history()
@@ -279,7 +279,7 @@ async def execute(
                 StepBegin(
                     step=read,
                     kind="tool",
-                    given=ToolStepGiven("_toolang", tool, trigger="runtime"),
+                    given=ToolStepGiven("runtime", tool, trigger="runtime"),
                     started_at=utc_now(),
                 )
             )

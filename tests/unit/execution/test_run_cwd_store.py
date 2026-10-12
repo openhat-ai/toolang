@@ -33,7 +33,7 @@ def test_cd_step_end_and_cwd_control_commit_atomically(tmp_path, monkeypatch):
             input=Message.user("start"),
         )
         ref = StepRef.from_local(run.id, (0,))
-        call = ToolCall("chdir", "chdir", "_toolang__chdir", {"path": "repo://src"})
+        call = ToolCall("chdir", "chdir", "runtime__chdir", {"path": "repo://src"})
         store.begin_step(
             ref=ref,
             kind="tool",
@@ -42,7 +42,7 @@ def test_cd_step_end_and_cwd_control_commit_atomically(tmp_path, monkeypatch):
             started_at="2026-09-27T00:00:00Z",
         )
         part = ToolResultPart(
-            "chdir", "_toolang__chdir", "_toolang__chdir", {"cwd": "repo://src"}
+            "chdir", "runtime__chdir", "runtime__chdir", {"cwd": "repo://src"}
         )
 
         def finish():

@@ -168,6 +168,7 @@ async def accept(
                     sandbox=_setup_sandbox(bound.setup),
                     cwd=bound.cwd,
                     created_at=bound.created_at,
+                    tool_noted=execution.tool_admission_noted(step),
                     context=LaunchContext(
                         bound.settings,
                         bound.workspaces,

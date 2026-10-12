@@ -7,6 +7,8 @@ from xml.etree import ElementTree
 import pytest
 
 from toolang.execution.assembly import prompts
+from toolang.plugin.toolsets.loading import load_tools
+from toolang.work.messaging import _INSTRUCTIONS
 
 
 @pytest.mark.parametrize(
@@ -28,6 +30,17 @@ def test_bundled_prompt_loading_does_not_depend_on_package_metadata(
     assert prompt.startswith("<toolang:protocol>")
 
 
+@pytest.mark.parametrize(
+    "text", [prompts.load("protocol.md"), _INSTRUCTIONS], ids=["protocol", "talk"]
+)
+def test_prompt_tool_calls_reference_registered_model_callable_tools(text: str) -> None:
+    names = set(re.findall(r"\b[A-Za-z_][A-Za-z_]*__[A-Za-z][A-Za-z_]*\b", text))
+    tools = load_tools()
+    assert names
+    assert names <= set(tools)
+    assert all(getattr(tools[name], "model_callable", True) for name in names)
+
+
 def test_protocol_is_one_literal_body_with_action_focused_sections() -> None:
     root = ElementTree.fromstring(
         '<root xmlns:toolang="urn:test">' + prompts.load("protocol.md") + "</root>"
@@ -38,6 +51,7 @@ def test_protocol_is_one_literal_body_with_action_focused_sections() -> None:
     assert sections == [
         "Role and instruction sources",
         "Runtime facts and resource messages",
+        "Tool names and conversations",
         "Choosing and completing work",
         "Workspaces and paths",
         "Authoring Toolang",
@@ -48,7 +62,7 @@ def test_protocol_preserves_guidance_and_execution_boundaries() -> None:
     prompt = " ".join(prompts.load("protocol.md").split())
     for requirement in (
         "A pick receipt is not guidance",
-        "call _toolang__pick",
+        "call runtime__pick",
         "wait for the guidance user message",
         "A trigger change or removal invalidates",
         "Setup, which stays fixed within a root Run",
@@ -57,9 +71,9 @@ def test_protocol_preserves_guidance_and_execution_boundaries() -> None:
         "child self-exec is forbidden",
         'entered_by="exec"',
         "the handoff has already succeeded",
-        "_toolang__runnables",
+        "runtime__runnables",
         "Missing routes means ALL",
-        "_toolang__chdir alone",
+        "runtime__chdir alone",
         "Shell preflight checks cwd, not paths inside commands",
     ):
         assert requirement in prompt

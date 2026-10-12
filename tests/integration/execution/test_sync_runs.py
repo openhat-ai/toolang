@@ -58,7 +58,7 @@ agic child() -> Text:
 
 
 def run_call(id: str) -> ToolCall:
-    return ToolCall(id, f"provider-{id}", "_toolang__run", {"runnable": "agic:child"})
+    return ToolCall(id, f"provider-{id}", "runtime__run", {"runnable": "agic:child"})
 
 
 def tool_results(messages: Iterable[Message]) -> list[ToolResultPart]:
@@ -379,7 +379,7 @@ flow child(_: Part[]) -> Part[]:
                     ToolCall(
                         "scheduled",
                         "provider",
-                        "_toolang__run",
+                        "runtime__run",
                         {"runnable": "flow:child", "input": {"_": primary}},
                     ),
                 )

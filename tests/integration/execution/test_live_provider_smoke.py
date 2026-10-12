@@ -188,9 +188,9 @@ def test_real_provider_executes_requested_agic_once_with_chat_history(
             tool_calls = [
                 s.given.call for s in steps if isinstance(s.given, ToolStepGiven)
             ]
-            assert sum(t.name == "_toolang__exec" for t in tool_calls) == 1
+            assert sum(t.name == "runtime__exec" for t in tool_calls) == 1
             assert all(
-                t.name in {"_toolang__runnables", "_toolang__exec"} for t in tool_calls
+                t.name in {"runtime__runnables", "runtime__exec"} for t in tool_calls
             )
             assert steps[-1].kind == "model"
 
@@ -241,7 +241,7 @@ def test_real_provider_executes_flow_with_nested_agic(
             "exec",
         ),
         (
-            "Use _toolang__run to invoke agic:review for a smoke test; choose the input yourself and return its result.",
+            "Use runtime__run to invoke agic:review for a smoke test; choose the input yourself and return its result.",
             "agic:review",
             "run",
         ),
@@ -311,7 +311,7 @@ flow check(_: Text) -> Text:
                 step for run in runs for step in runtime.store.list_steps(run_id=run.id)
             ]
             tools = [s.given.call for s in steps if isinstance(s.given, ToolStepGiven)]
-            discoveries = [t for t in tools if t.name == "_toolang__runnables"]
+            discoveries = [t for t in tools if t.name == "runtime__runnables"]
             assert discoveries, output
             if target and operation != "run":
                 assert discoveries[0].input.get("name") in {
@@ -321,7 +321,7 @@ flow check(_: Text) -> Text:
             invocations = [
                 t
                 for t in tools
-                if t.name in {"_toolang__run", "_toolang__exec", "_toolang__spawn"}
+                if t.name in {"runtime__run", "runtime__exec", "runtime__spawn"}
             ]
             if operation is None:
                 assert invocations == [], output
@@ -329,7 +329,7 @@ flow check(_: Text) -> Text:
             else:
                 assert target is not None
                 assert len(invocations) == 1, invocations
-                assert invocations[0].name == f"_toolang__{operation}"
+                assert invocations[0].name == f"runtime__{operation}"
                 assert invocations[0].input["runnable"] in {
                     target,
                     target.split(":")[1],

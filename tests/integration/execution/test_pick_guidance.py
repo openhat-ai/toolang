@@ -54,7 +54,7 @@ def _pick(identity="pick", *, kind="skill", ref=None):
     return ToolCall(
         identity,
         identity,
-        "_toolang__pick",
+        "runtime__pick",
         {
             "kind": kind,
             "ref": ref or ("skill/testing" if kind == "skill" else "service/github"),
@@ -271,7 +271,7 @@ def test_instruct_selection_preserves_layers_and_guidance_delivery(
             assert 'ref="service/github"' not in protocol
             assert '<toolang:skill-trigger ref="skill/testing"' in other
             assert '<toolang:service-trigger ref="service/github"' in other
-            assert "_toolang__pick" in protocol
+            assert "runtime__pick" in protocol
             assert "Unselected behavior." not in instructions
             assert "Apply the precise psyche." not in protocol
             assert '<toolang:psyche ref="psyche/precise"' in other
@@ -286,7 +286,7 @@ def test_instruct_selection_preserves_layers_and_guidance_delivery(
                 assert other.index("</toolang:instruct>") < other.index(
                     "<toolang:psyche "
                 )
-            assert "_toolang__pick" in {tool.name for tool in first.tools}
+            assert "runtime__pick" in {tool.name for tool in first.tools}
             assert without_runtime_snapshots(first.messages) == [
                 Message.user("Complete the task.")
             ]
@@ -517,7 +517,7 @@ def test_pick_reuses_pending_then_visible_guidance(
                 adopted[0].given, StoredModelStepGiven
             )
             first = harness.adapter.invocations[0].call
-            assert "_toolang__pick" in first.instructions
+            assert "runtime__pick" in first.instructions
             if content:
                 assert content not in first.instructions
             for invocation in harness.adapter.invocations[1:]:
@@ -669,7 +669,7 @@ flow research() -> Text:
                 ToolCall(
                     "transfer",
                     "transfer",
-                    f"_toolang__{operation}",
+                    f"runtime__{operation}",
                     {"runnable": "research"},
                 )
             ),
@@ -1072,7 +1072,7 @@ agic target() -> Text:
             _calls(_pick("before")),
             _calls(
                 ToolCall(
-                    "transfer", "transfer", "_toolang__exec", {"runnable": "target"}
+                    "transfer", "transfer", "runtime__exec", {"runnable": "target"}
                 )
             ),
             _calls(_pick("after")),

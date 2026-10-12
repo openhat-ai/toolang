@@ -16,7 +16,7 @@ from tests.unit.messaging.test_protocol import CONFIG, client
 from toolang.base.types.tool import ToolContext
 from toolang.common.layout import AgentLayout
 from toolang.execution.errors import SnapshotLimitError
-from toolang.plugin.toolsets.msg import MsgToolset
+from toolang.plugin.toolsets.convo import ConvoToolset
 from toolang.teaming.agent_client import AgentClient, AgentEventClient
 from toolang.teaming.api import create_app
 from toolang.teaming.config import BackendConfig
@@ -87,19 +87,19 @@ def test_agent_messaging_uses_hub_authority_and_context(tmp_path):
 
 def test_agent_tools_without_hub_never_construct_backend(tmp_path):
     async def scenario():
-        msg = MsgToolset({"root": str(tmp_path)})
+        msg = ConvoToolset({"root": str(tmp_path)})
         context = ToolContext(tmp_path / "alice", tmp_path / "room")
         with patch(
             "toolang.teaming.backend.valkey.ValkeyBackend.__init__",
             side_effect=AssertionError("agent opened backend"),
         ):
             with pytest.raises(BackendUnavailable, match="hub start"):
-                await msg.tools()["targets"].invoke({}, context)
+                await msg.tools()["team"].invoke({}, context)
 
     asyncio.run(scenario())
 
 
-def test_msg_targets_expose_current_revision_for_renaming(tmp_path, monkeypatch):
+def test_convo_peek_exposes_current_revision_for_renaming(tmp_path, monkeypatch):
     async def scenario():
         human = client(FakeServer(server_type="valkey"), CONNECTION.human)
         app = create_app(human, version="0.4.0-test")
@@ -111,20 +111,18 @@ def test_msg_targets_expose_current_revision_for_renaming(tmp_path, monkeypatch)
             conversation = await human.create_conversation("Original")
             await alice.join_conversation(conversation.id)
             await human.rename_conversation(conversation.id, "Current", revision=1)
-            msg = MsgToolset({"root": str(tmp_path)})
+            msg = ConvoToolset({"root": str(tmp_path)})
             monkeypatch.setattr(msg, "connection", lambda _: agent(app, tmp_path))
             context = ToolContext(tmp_path / "alice", tmp_path / "room")
             tools = msg.tools()
-            result = await tools["targets"].invoke({}, context)
-            row = next(
-                row
-                for row in result.output["conversations"]
-                if row["conversation"] == conversation.id
+            result = await tools["peek"].invoke(
+                {"target": conversation.id, "limit": 0}, context
             )
+            row = result.output["conversation"]
             assert row["revision"] == 2
-            renamed = await tools["rename_conversation"].invoke(
+            renamed = await tools["rename"].invoke(
                 {
-                    "conversation": row["conversation"],
+                    "conversation": row["id"],
                     "name": "From the tool",
                     "revision": row["revision"],
                 },

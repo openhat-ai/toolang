@@ -20,6 +20,7 @@ from toolang.base.types.tool import (
     ToolResult,
     ServiceToolContext,
 )
+from toolang.base.utils.tool_descriptions import action_summary
 
 ServiceTransport = Literal["http", "stdio"]
 ConnectionFileWriter = Callable[[str, dict[str, Any]], None]
@@ -55,6 +56,38 @@ class _LeafTool(Tool):
 
     def definition(self) -> ToolDefinition:
         return self._definition
+
+    def summary(
+        self, arguments: Mapping[str, Any], result: ToolResult | None = None
+    ) -> str:
+        verbs, label = {
+            "start_bridge": (("start", "Starting", "Started"), "bridge"),
+            "stop_bridge": (("stop", "Stopping", "Stopped"), "connection"),
+            "init": (("initialize", "Initializing", "Initialized"), "session"),
+            "start_auth": (("start", "Starting", "Started"), "authorization"),
+            "complete_auth": (("complete", "Completing", "Completed"), "authorization"),
+            "list_tools": (("list", "Listing", "Listed"), "tools"),
+            "call_tool": (("call", "Calling", "Called"), "tool"),
+            "list_resources": (("list", "Listing", "Listed"), "resources"),
+            "list_resource_templates": (
+                ("list", "Listing", "Listed"),
+                "resource templates",
+            ),
+            "read_resource": (("read", "Reading", "Read"), "resource"),
+            "list_prompts": (("list", "Listing", "Listed"), "prompts"),
+            "get_prompt": (("get", "Getting", "Got"), "prompt"),
+        }[self.name]
+        service = arguments.get("service")
+        if isinstance(service, str):
+            label += f": {service}"
+            key = {
+                "call_tool": "tool_name",
+                "get_prompt": "prompt_name",
+                "read_resource": "resource_uri",
+            }.get(self.name)
+            if key and isinstance(value := arguments.get(key), str):
+                label += (" " if key == "resource_uri" else "/") + value
+        return action_summary(result, verbs, label)
 
     async def invoke(
         self,

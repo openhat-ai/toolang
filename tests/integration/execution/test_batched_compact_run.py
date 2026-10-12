@@ -605,7 +605,7 @@ def test_model_cannot_invoke_compaction_tool(tmp_path):
         source=SOURCE,
         responses=[
             ModelCallResult(
-                tool_calls=(ToolCall("compact", "compact", "_toolang__compact", {}),)
+                tool_calls=(ToolCall("compact", "compact", "runtime__compact", {}),)
             ),
             reply("done"),
         ],

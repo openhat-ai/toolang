@@ -28,7 +28,7 @@ def test_builtin_entry_points_only_register_supported_plugin_families() -> None:
     [
         (
             "toolset",
-            {"_toolang", "msg", "fs", "history", "me", "service", "shell", "web"},
+            {"runtime", "convo", "fs", "history", "state", "service", "shell", "web"},
         ),
         ("model_catalog", {"models_dev", "ollama", "llama_cpp"}),
         (

@@ -24,6 +24,26 @@ def join_tool_name(toolset_name: str, tool_name: str) -> str:
     return encode_tool_name(toolset_name, tool_name)
 
 
+def decode_tool_name(value: str) -> tuple[str, str] | None:
+    """Read a canonical provider name without guessing unknown identities."""
+    # The leaf starts with a letter; a toolset may end with one underscore.
+    toolset, separator, name = value.rpartition("__")
+    if not separator:
+        return None
+    try:
+        require_toolset_name(toolset)
+        require_public_tool_name(name, kind="tool")
+    except ToolangError:
+        return None
+    return toolset, name
+
+
+def display_tool_name(toolset: str, name: str) -> str:
+    """Format a human identity from its validated components."""
+    encode_tool_name(toolset, name)
+    return f"{toolset}.{name}"
+
+
 def require_public_tool_name(value: str, *, kind: str) -> None:
     """Require one public tool identity component."""
 

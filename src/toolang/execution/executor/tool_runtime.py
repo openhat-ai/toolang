@@ -120,7 +120,7 @@ class _ToolRuntime(ToolRuntime):
     async def chdir(self, path: str, context: ToolContext) -> ToolResult:
         if self.tool_call_count != 1:
             raise ToolangError(
-                "_toolang/chdir must be the only tool call in its Model Call"
+                "runtime/chdir must be the only tool call in its Model Call"
             )
         target, name, relative = resolve_input_path(path, context)
         if not target.is_dir():
@@ -170,7 +170,7 @@ class _ToolRuntime(ToolRuntime):
         captured = self.state.prepared.run
         context = ToolContext(
             home=self.state.layout.home,
-            room=self.state.layout.tool_room("_toolang"),
+            room=self.state.layout.tool_room("runtime"),
             workspaces=self.state.prepared.run.setup.workspace_roots(
                 captured.workspaces
             ),
@@ -322,7 +322,7 @@ class _ToolRuntime(ToolRuntime):
             raise ToolangError("exec requires a model ToolCall source")
         if self.tool_call_count != 1:
             raise ToolangError(
-                "_toolang/exec must be the only tool call in its Model Call"
+                "runtime/exec must be the only tool call in its Model Call"
             )
         state = self.state
         execution = state.execution
@@ -335,7 +335,7 @@ class _ToolRuntime(ToolRuntime):
             runnable,
             baseline_state=captured,
             authorize=lambda target: self._authorize("exec", target),
-            action="_toolang/exec",
+            action="runtime/exec",
         )
         try:
             values = execution.resolve_public_input(

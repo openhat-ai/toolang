@@ -444,7 +444,7 @@ corner and the session model plus effort in its right corner. The center anchor
 is the Chat agent and workspace in `agent@workspace` form; it is fixed at the
 status line's absolute center. The workspace comes from session settings while
 idle and from the active root run while running. The active runnable is never
-duplicated beside the model. Successful root `_toolang.chdir` changes update
+duplicated beside the model. Successful root `runtime.chdir` changes update
 the workspace. `:workdir` changes the session workspace for subsequent runs; after
 the current run ends, the center returns to the latest session workspace. Only
 the workspace name is shown, not the path. If the full status line overflows,

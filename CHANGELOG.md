@@ -9,6 +9,40 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Changed
 
+- **Breaking:** built-in toolsets are renamed: `me` becomes `state`, `msg`
+  becomes `convo`, and `_toolang` becomes `runtime`. Refs, queries, and
+  configuration use `state/get` and `convo/write`, model calls use
+  `state__get` and `convo__write`, and human labels use `ToolRef.display_name`
+  as `state.get`. The `runtime` plugin and toolset name is reserved for
+  Toolang, so external plugins cannot claim it, and the public
+  `MsgToolContext` is renamed `ConvoToolContext`. No old name is aliased:
+  update authored selections, configuration, and tool calls, then restart
+  hosts and prepare a fresh Setup. Saved exchanges remain readable.
+
+- **Breaking:** the conversation tools are renamed and reshaped: `msg/targets`
+  becomes `convo/team` and `convo/list`, `msg/send` becomes `convo/write`,
+  `msg/resolve` is removed in favor of `convo/list` and the new `convo/peek`,
+  and `create`, `rename`, `join`, and `leave` drop their `_conversation`
+  suffix. `send` renames `body` to `message` and `in_reply_to` to `reply_to`,
+  and an agent target is a bare name (`alice`, not `agent:alice`). Directories
+  return `{id, name, members}` and `{id, name, online}`, messages expose only
+  `{id, sender, message, reply_to}`, and `rename` returns `previous_name`, so
+  consumers must map the renamed fields and drop the removed backend receipt
+  fields. Human and pair targets require an explicit conversation ID from
+  `convo/list` or `convo/create`.
+
+- A dot or slash model call is rejected with a message naming the exact
+  advertised counterpart, such as `Unknown tool name 'state.get'; call
+  'state__get' instead.`; old, runtime-only, and unavailable names are never
+  matched, aliased, or retried.
+
+- Tool progress shows a separate `[toolset]` prefix beside each tool's
+  lifecycle summary, for example `[shell] Running: ls`: every built-in tool
+  describes its own running, succeeded, and failed states, cancellation reuses
+  that action text, and a plugin tool without its own summary falls back to
+  `Executing <leaf>: <first argument>` using schema order, then input order,
+  with masking and the 80-character preview limit.
+
 - A runnable module filename may not be `_`, the root's unnamed-entry alias:
   `runnables/_.too` is rejected with `invalid-runnable-filename` instead of
   exporting a runnable that shadows the unnamed entry.

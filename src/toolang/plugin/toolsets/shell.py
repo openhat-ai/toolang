@@ -21,7 +21,6 @@ from toolang.base.utils.workspace_paths import (
     resolve_input_path,
     workspace_uri,
 )
-from toolang.base.utils.tool_descriptions import action_summary
 
 DEFAULT_TIMEOUT_SEC = 30
 DEFAULT_MAX_OUTPUT_CHARS = 20_000
@@ -124,7 +123,10 @@ def _summary(
     command = arguments.get("command")
     if not isinstance(command, str):
         return None
-    return action_summary(result, ("run", "Running", "Ran"), f"“{command}”")
+    verb = (
+        "Running" if result is None else "Failed" if result.error is not None else "Ran"
+    )
+    return f"{verb}: “{command}”"
 
 
 async def _stop_command(launch: asyncio.Task[asyncio.subprocess.Process]) -> None:
@@ -152,7 +154,7 @@ def create_toolset(config: Mapping[str, Any]) -> Toolset:
 def _location(context: ToolContext) -> tuple[Path, str, str]:
     workspace, relative = parse_cwd(context.cwd)
     if workspace is None:
-        raise ToolangError("shell requires a current workspace; use _toolang.chdir")
+        raise ToolangError("shell requires a current workspace; use runtime__chdir")
     return resolve_input_path(workspace_uri(workspace, relative), context)
 
 

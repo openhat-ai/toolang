@@ -238,7 +238,7 @@ agic xyz(_: Text) -> Text:
                 ToolCall(
                     "named",
                     "named",
-                    f"_toolang__{operation}",
+                    f"runtime__{operation}",
                     {"runnable": target, "input": {"_": "payload"}},
                 ),
             )
@@ -329,7 +329,7 @@ agic xyz(_: Text) -> Text:
         assert route_scopes(calls[0]) == dict.fromkeys(
             ("hands", "handoffs", "spawns"), "ALL"
         )
-        assert {"_toolang__run", "_toolang__exec"} <= {
+        assert {"runtime__run", "runtime__exec"} <= {
             tool.name for tool in calls[0].tools
         }
         assert without_runtime_snapshots(calls[-1].messages) == [

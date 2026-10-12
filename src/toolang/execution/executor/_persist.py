@@ -100,7 +100,7 @@ class _PersistSink:
         if isinstance(error, ErrorRef) and (
             isinstance(step.given, AwaitStmt)
             or isinstance(step.given, ToolStepGiven)
-            and step.given.call.name == "_toolang__await"
+            and step.given.call.name in {"runtime__await", "_toolang__await"}
         ):
             error = ErrorMessage(self._store.resolve_error(error))
         return replace(

@@ -151,7 +151,7 @@ def test_large_route_lists_remain_complete_without_repeating_signatures() -> Non
 
 def test_protocol_explains_task_directed_calls_and_signature_discovery() -> None:
     instruction = " ".join(prompts.load("protocol.md").split())
-    assert "_toolang__runnables" in instruction
+    assert "runtime__runnables" in instruction
     assert (
         "Availability or a matching description alone does not request execution"
         in instruction

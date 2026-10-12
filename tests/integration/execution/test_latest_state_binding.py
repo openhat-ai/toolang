@@ -35,7 +35,7 @@ def discover(name=None):
             ToolCall(
                 "discovery",
                 "discovery",
-                "_toolang__runnables",
+                "runtime__runnables",
                 {"name": name} if name is not None else {},
             ),
         )
@@ -147,7 +147,7 @@ agic child() -> Text:
                     ToolCall(
                         "child",
                         "child",
-                        "_toolang__run",
+                        "runtime__run",
                         {"runnable": "child", "input": {}},
                     ),
                 )
@@ -416,7 +416,7 @@ def test_model_frame_is_frozen_but_acceptance_selects_latest(
     call = ModelCallResult(
         tool_calls=(
             ToolCall(
-                "run", "run", "_toolang__run", {"runnable": "flow:worker", "input": {}}
+                "run", "run", "runtime__run", {"runnable": "flow:worker", "input": {}}
             ),
         )
     )
@@ -501,7 +501,7 @@ def test_new_target_waits_for_next_model_frame_and_becomes_discoverable(
                         ToolCall(
                             "run",
                             "run",
-                            f"_toolang__{operation}",
+                            f"runtime__{operation}",
                             {"runnable": "worker", "input": {}},
                         ),
                     )
@@ -560,7 +560,7 @@ def test_tool_batch_reuses_frame_and_next_model_adopts_publication(tmp_path, rou
                         ToolCall(
                             "pick",
                             "pick",
-                            "_toolang__pick",
+                            "runtime__pick",
                             {"kind": "skill", "ref": "skill/testing"},
                         ),
                     )
@@ -638,7 +638,7 @@ def test_exec_uses_latest_snapshot_and_records_explicit_binding(tmp_path):
                         ToolCall(
                             "execute",
                             "execute",
-                            "_toolang__exec",
+                            "runtime__exec",
                             {"runnable": "worker", "input": {}},
                         ),
                     )
@@ -710,7 +710,7 @@ def test_flow_model_routes_are_local_and_keep_advertised_identity(
                         ToolCall(
                             "delegate",
                             "delegate",
-                            f"_toolang__{operation}",
+                            f"runtime__{operation}",
                             {"runnable": "agic:helper"},
                         ),
                     )
@@ -937,7 +937,7 @@ agic grow() -> Text:
                 ToolCall(
                     identity,
                     identity,
-                    "_toolang__pick",
+                    "runtime__pick",
                     {"kind": "skill", "ref": "skill/testing"},
                 ),
             )
@@ -1069,7 +1069,7 @@ flow() -> Text:
                 ModelCallResult(
                     tool_calls=(
                         ToolCall(
-                            "helper", "helper", "_toolang__run", {"runnable": "helper"}
+                            "helper", "helper", "runtime__run", {"runnable": "helper"}
                         ),
                     )
                 ),
@@ -1156,7 +1156,7 @@ agic worker() -> Text:
         return ToolCall(
             identity,
             identity,
-            "_toolang__pick",
+            "runtime__pick",
             {"kind": kind, "ref": f"{kind}/{name}"},
         )
 

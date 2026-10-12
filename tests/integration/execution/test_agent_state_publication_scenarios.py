@@ -209,7 +209,7 @@ flow parent:
                     ToolCall(
                         tool_call_id="handoff",
                         call_id="provider-handoff",
-                        name="_toolang__exec",
+                        name="runtime__exec",
                         input={"runnable": "flow:target", "input": {"_": "work"}},
                     ),
                 ),
@@ -287,7 +287,7 @@ agic parent:
                     ToolCall(
                         tool_call_id="delegate",
                         call_id="provider-delegate",
-                        name="_toolang__run",
+                        name="runtime__run",
                         input={"runnable": "flow:middle", "input": {"_": "work"}},
                     ),
                 ),

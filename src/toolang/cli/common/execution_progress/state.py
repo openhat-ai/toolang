@@ -21,7 +21,7 @@ from toolang.execution.types import (
 from toolang.lang.ast import FlowStmt
 
 from .facts import cost_fact, execution_count_fact, token_fact
-from .types import StepOperation
+from .types import ProgressRow, StepOperation
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,6 +45,9 @@ class LaneState:
     terminal: tuple[str, ...] = ()
     terminal_status: RunStatus | None = None
     terminal_tool: bool = False
+    activity_identity: tuple[str, str] | None = None
+    activity_status: RunStatus | None = None
+    terminal_identity: tuple[str, str] | None = None
     status: RunStatus = "running"
     active: bool = True
 
@@ -95,6 +98,7 @@ class PendingExecute:
     step: StepRef
     runnable: str
     ready: bool = False
+    row: ProgressRow | None = None
 
 
 @dataclass(frozen=True, slots=True)

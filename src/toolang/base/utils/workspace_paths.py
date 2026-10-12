@@ -130,7 +130,7 @@ def resolve_input_path(
         name, current = parse_cwd(context.cwd)
         if name is None:
             raise ToolangError(
-                "relative path requires a current workspace; use _toolang.chdir"
+                "relative path requires a current workspace; use runtime__chdir"
             )
         path = str(Path(current) / value)
     assert name is not None

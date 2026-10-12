@@ -12,13 +12,13 @@ from toolang.base.types.tool import ToolContext
 from .errors import DigestMismatchError, ResourceError, UnsafeAuthoringPathError
 from .schemas import ResourceRequest, fail
 from .storage import HomeFiles, classify
-from .types import MeToolContext
+from .types import StateToolContext
 
 
 def execute(request: ResourceRequest, context: ToolContext) -> dict[str, Any]:
     try:
-        if not isinstance(context, MeToolContext):
-            fail("invalid_request", "me requires a current agent context")
+        if not isinstance(context, StateToolContext):
+            fail("invalid_request", "state requires a current agent context")
         storage = _storage(context)
         if request.operation == "list":
             with storage.lock():
@@ -79,8 +79,8 @@ def execute(request: ResourceRequest, context: ToolContext) -> dict[str, Any]:
 
 
 async def synchronize(context: ToolContext) -> dict[str, object]:
-    if not isinstance(context, MeToolContext):
-        fail("invalid_request", "me requires a current agent context")
+    if not isinstance(context, StateToolContext):
+        fail("invalid_request", "state requires a current agent context")
     if context.sync_state is None:
         fail(
             "sync_unavailable",
@@ -97,7 +97,7 @@ async def synchronize(context: ToolContext) -> dict[str, object]:
     return data
 
 
-def _storage(context: MeToolContext) -> HomeFiles:
+def _storage(context: StateToolContext) -> HomeFiles:
     home = context.home.expanduser()
     if (
         home.is_symlink()
@@ -106,7 +106,7 @@ def _storage(context: MeToolContext) -> HomeFiles:
         or home.resolve() != context.layout.home.resolve()
         or home.parent.name != "agents"
     ):
-        raise UnsafeAuthoringPathError("me requires the current agent's own home")
+        raise UnsafeAuthoringPathError("state requires the current agent's own home")
     return HomeFiles(context.layout)
 
 

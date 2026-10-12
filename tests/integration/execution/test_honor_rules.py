@@ -233,7 +233,7 @@ def test_honor_precedes_blocked_batch_and_retry_executes_once(
             else:
                 assert steps[-1].output.value.output["text"] == "Scoped rules."
             call = harness.adapter.invocations[1].call
-            assert "_toolang__honor" not in {t.name for t in call.tools}
+            assert "runtime__honor" not in {t.name for t in call.tools}
             messages = call.messages
             tool_positions = [i for i, m in enumerate(messages) if m.role == "tool"]
             rule_positions = [
@@ -339,8 +339,8 @@ def test_failed_rule_reads_block_the_operation_without_retraction(tmp_path, fail
             (original,) = _results(harness.adapter.invocations[-1].call.messages)
             assert "operation not executed" in original.error
             assert "were just loaded" not in original.error
-            assert honor.given.summary == "Loading rules"
-            assert honor.noted.summary == "Failed to load rules"
+            assert honor.given.summary == "Loading rules for repo://src/result"
+            assert honor.noted.summary == "Failed to load rules for repo://src/result"
             assert not _recalls(harness, run)
             assert not (repo / "src/result").exists()
             assert all(
@@ -401,11 +401,14 @@ def test_interrupted_honor_closes_every_announced_tool_call(
                 "succeeded" if event_type is StepEnd else "canceled"
             )
             assert steps[1].status == "canceled"
-            assert steps[1].noted.summary == "Canceled: Writing repo://src/result"
+            assert steps[1].noted.summary == "Canceled: Writing file: repo://src/result"
             if event_type is StepEnd:
-                assert "repo://src/AGENTS.md" in steps[0].noted.summary
+                assert "repo://src/result" in steps[0].noted.summary
             else:
-                assert steps[0].noted.summary == "Canceled: Loading rules"
+                assert (
+                    steps[0].noted.summary
+                    == "Canceled: Loading rules for repo://src/result"
+                )
             messages = harness.store.recent_conversation_messages(
                 thread_id=run.thread.id
             )
@@ -434,7 +437,7 @@ def test_model_cannot_call_honor_and_unscoped_fs_is_rejected(tmp_path):
             _calls(
                 _call(
                     "spoof",
-                    "_toolang__honor",
+                    "runtime__honor",
                     paths=[{"workspace": "repo", "path": "/"}],
                 ),
                 _call("unscoped", path="../notes", text="okay"),
@@ -480,7 +483,7 @@ def test_mixed_batch_and_changed_retry_leave_the_original_operation_unexecuted(
             assert [part.tool_call_id for part in results] == ["blocked"]
             assert results[0].error == RETRY_MESSAGE
             assert [step.given.call.name for step in _tool_steps(harness, run)] == [
-                "_toolang__honor",
+                "runtime__honor",
                 "fs__write",
             ]
             assert_run_event_integrity(tracer.events)

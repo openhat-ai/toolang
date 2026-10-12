@@ -40,7 +40,7 @@ agic target() -> Text:
                     ToolCall(
                         "execute",
                         "execute",
-                        "_toolang__exec",
+                        "runtime__exec",
                         {"runnable": "agic:target"},
                     ),
                 )
@@ -113,7 +113,7 @@ agic child() -> Text:
             result=ModelCallResult(
                 tool_calls=(
                     ToolCall(
-                        "execute", "execute", "_toolang__exec", {"runnable": target}
+                        "execute", "execute", "runtime__exec", {"runnable": target}
                     ),
                 )
             ),
@@ -128,7 +128,7 @@ agic child() -> Text:
                         ToolCall(
                             "child",
                             "child",
-                            "_toolang__run",
+                            "runtime__run",
                             {"runnable": "agic:child"},
                         ),
                     )
@@ -175,7 +175,7 @@ agic child() -> Text:
                 if (
                     isinstance(event, StepBegin)
                     and isinstance(event.given, ToolStepGiven)
-                    and event.given.call.name == "_toolang__exec"
+                    and event.given.call.name == "runtime__exec"
                 ):
                     execute_step = event.step
                 if isinstance(event, StepEnd) and event.step == execute_step:
@@ -193,9 +193,12 @@ agic child() -> Text:
             assert projector._root_ended
             if outcome == "succeeded":
                 assert len(handoffs) == 1
-                assert handoffs[0].text == f"exec → {target}"
+                assert handoffs[0].text == f"Switched to runnable: {target}"
+                assert handoffs[0].tool_identity == ("runtime", "exec")
                 if target_kind == "agic":
-                    assert any(row.text == "Run agic:child" for row in rows)
+                    assert any(
+                        row.text == "Running child run: agic:child" for row in rows
+                    )
                     child = harness.store.list_run_tree(root_run_id=root.id)[1]
                     assert any(row.right_identity == child.id for row in rows)
                 else:
@@ -203,13 +206,18 @@ agic child() -> Text:
             else:
                 assert handoffs == []
                 if outcome == "failed":
-                    assert any("Failed exec" in row.text for row in rows)
+                    assert any(
+                        "Failed to switch to runnable:" in row.text for row in rows
+                    )
                 else:
                     assert execute_step is not None
                     skipped = harness.store.get_step(ref=execute_step)
                     assert skipped is not None and skipped.status == "canceled"
                     assert isinstance(skipped.noted, ToolStepNoted)
-                    assert any(row.text == f"› Canceled exec {target}" for row in rows)
+                    assert any(
+                        row.text == f"› Canceled: Switching to runnable: {target}"
+                        for row in rows
+                    )
                     assert not any("Failed" in row.text for row in rows)
 
     asyncio.run(scenario())

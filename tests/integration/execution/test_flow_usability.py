@@ -780,7 +780,7 @@ agic worker():
         responses=[
             ModelCallResult(
                 tool_calls=(
-                    ToolCall("child", "child", "_toolang__run", {"runnable": "worker"}),
+                    ToolCall("child", "child", "runtime__run", {"runnable": "worker"}),
                 )
             ),
             ModelCallResult(message=Message.assistant("handled")),

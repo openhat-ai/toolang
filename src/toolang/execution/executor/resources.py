@@ -65,7 +65,7 @@ def workspace_context(setup: AgentSetup, state: AgentState, cwd: str) -> ToolCon
     grants = setup.workspace_grants(state.workspaces)
     return ToolContext(
         home=setup.layout.home,
-        room=setup.layout.tool_room("_toolang"),
+        room=setup.layout.tool_room("runtime"),
         workspaces=setup.workspace_roots(state.workspaces),
         workspace_names=tuple(grants),
         workspace_bindings=grants,

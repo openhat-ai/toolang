@@ -19,9 +19,9 @@ from toolang.plugin.toolsets.loading import load_tools
         ("web__search", None),
         ("service__init", "services"),
         ("history__read_runs", "history"),
-        ("_toolang__pick", "runtime"),
-        ("me__get", "layout"),
-        ("me__sync", "layout"),
+        ("runtime__pick", "runtime"),
+        ("state__get", "layout"),
+        ("state__sync", "layout"),
     ],
 )
 def test_only_the_selected_toolset_receives_special_dependencies(tmp_path, name, extra):

@@ -61,7 +61,12 @@ RunEvent -> ProgressProjector -> ProgressUpdate -> surface presenter
 
 At `StepBegin`, `operations.normalize_operation` maps Flow statements and runtime
 Tool Steps to one presentation-only `StepOperation`: operation name, source,
-target label, run scope, and tool marker. Active Step state retains that projection;
+target label, run scope, and tool marker. Progress rows carry derived
+`tool_identity` (toolset/leaf) and `tool_status` independently of saved text.
+Parallel activity and terminal rows retain both fields. Renderers add a textual
+`[toolset]` prefix from the call identity, never from the implementation plugin
+or by parsing summary text. Long toolset labels leave room for the description.
+No icons or icon configuration are implemented. Active Step state retains that projection;
 headers, lanes, timers, and terminal rows consume it. The same module recognizes
 committed exec outcomes from either `ExecStepNoted` or a tool reply. Raw tool-name
 matching belongs there, including result-only UI updates such as Chat's cwd label.
@@ -192,7 +197,7 @@ Flow headers also start in column zero and are followed by one blank line.
 Iteration and condition headers create the same kind of stable boundary.
 
 Automatic compaction emits a normal `_:compact` child Run beneath the runtime
-`_toolang.compact` Tool Step. The projector tracks its Steps, errors, and usage,
+`runtime.compact` Tool Step. The projector tracks its Steps, errors, and usage,
 but the default view shows only the outer operation's elapsed time and outcome.
 Internal summary text is available through execution inspection and does not
 appear as an assistant reply. Child success does not finish the outer item until
@@ -234,10 +239,12 @@ identified by the enclosing `RunBegin.runnable`, while the existing `RunStmt`
 provides the target label. Its header begins in column zero and uses the
 canonical resolved runnable ref:
 
-For synchronous `_toolang/run`, the child names the still-running Tool Step as
+For synchronous `runtime/run`, the child names the still-running Tool Step as
 its parent, using the same event nesting as a flow Run Step. Open the divider at
 the child's `RunBegin`, accumulate child metrics at `RunEnd`, and close it at the
 enclosing `StepEnd`. The footer reflects the enclosing operation's status.
+Runtime tool headers and footers use their saved summaries when present, with
+the separate toolset prefix; native Flow retains its own captions.
 
 ```text
 ┌ Run agic:summarize ───────────────────────────────────────────────────
@@ -278,15 +285,16 @@ and complete status-plus-ID field. Long captions and identities fold by display
 cells without truncation. Exactly one blank row follows the header, precedes the
 footer, and follows the footer; adjacent child-owned gaps coalesce.
 
-A confirmed `execute` transfer displays one dim boundary before the target's
-first Step:
+A confirmed tool `exec` displays its saved terminal summary and toolset in one
+dim boundary before the target's first Step (or at Run end if no Step starts):
 
 ```text
-- Execute agic:delegate ────────────────────────────────────────────────
+- [runtime] Switched to runnable: agic:delegate ─────────────────────────
 ```
 
-Execute boundaries use a short `-` followed by one space. Run and Execute
-captions start in the third column, use sentence case, and extend with thin
+Native Flow exec and historical records without a summary retain the
+`exec → target` caption. Exec boundaries use a short `-` followed by one space.
+Run and exec captions start in the third column, use sentence case, and extend with thin
 rules to the same right edge. Long target names wrap under a two-cell indent
 without truncation. Script and Chat share the projector and renderer.
 
@@ -391,8 +399,8 @@ Built-in tool summaries and the default fallback do not append progress dots;
 argument punctuation and width-driven truncation ellipses remain intact:
 
 ```text
-› Searching for “Toolang plugin protocol”
-› Searched for “Toolang plugin protocol”
+› [web] Searching: “Toolang plugin protocol”
+› [web] Searched: “Toolang plugin protocol”
 ```
 
 Active tool markers and their full summaries use normal intensity, matching
@@ -402,13 +410,13 @@ only. Tool-owned descriptions can provide clearer wording and logical workspace
 labels:
 
 ```text
-› Listed workspaces
-✧ Loaded rules: repo://src/AGENTS.md
-✧ Loaded guidance: skill/python-testing
-› Wrote repo://src/example.py
-› Read steps from run_abc
-› Read more steps
-› Failed to read repo://missing.txt
+› [fs] Listed files: repo://
+✧ [runtime] Loaded rules for repo://src/file.py
+✧ [runtime] Loaded guidance: skill/python-testing
+› [fs] Wrote file: repo://src/example.py
+› [history] Read steps: run_abc
+› [history] Read more steps
+› [fs] Failed to read file: repo://missing.txt
   File not found
 ```
 
@@ -433,17 +441,17 @@ another when it ends. A leaf tool may supply
 failure from success, while cancellation uses executor wording.
 The hook receives isolated call/result data with sensitive
 arguments masked. It performs no I/O and supplies no markers, styling, or timing.
-The executor uses generic wording when the hook is absent, empty, or raises.
+The executor uses generic wording when the hook is absent, blank, nontext, or raises.
 Progress reads the saved summaries; it never invokes plugins during replay.
 
-The default summary uses the leaf `name` and first supplied argument in
-tool-schema declaration order; it does not repeat the tool family.
-The default running form is `Executing NAME ARG`; the succeeded and failed
-forms are `Executed NAME ARG` and `Failed NAME ARG`; the canceled form is
-`Canceled NAME ARG`. Argument previews are single-line, bounded, and redact
-sensitive fields. Only failure adds a diagnostic continuation; cancellation
-remains one line. Honor's running description is generic; its terminal
-description identifies the workspace and rules files available in its result.
+The default summary uses the leaf and first supplied argument in schema order,
+or input order when no schema key matches. Its forms are `Executing NAME: ARG`,
+`Executed NAME: ARG`, `Failed NAME: ARG`, and `Canceled NAME: ARG`. Supplied empty,
+null, false, and zero values remain visible. Previews are masked, single-line,
+and at most 80 characters. No arguments means no colon or invented defaults.
+Only failure adds a diagnostic continuation. Custom summaries cancel as
+`Canceled: <running summary>`, except shell uses `Canceled: command`.
+Honor retains the input paths in all states; its result keeps the loaded rule files.
 
 Historical Steps without summaries retain the compatibility forms `executing
 TOOL`, `executed TOOL`, `failed TOOL`, and `canceled TOOL`.
@@ -514,7 +522,7 @@ are truncated rather than wrapped:
 ```text
 • Running · 3 active · 4/18 succeeded
   0 | #4 | • Thinking
-  1 | #5 | › Searching for “agent runtimes”
+  1 | #5 | › [web] Searching: “agent runtimes”
   2 | #6 | • Source summary prepared
 ```
 
@@ -793,7 +801,7 @@ model.
 The absolute center anchor is the Chat agent and current workspace in
 `agent@workspace` form. The agent stays constant for the session. The
 workspace is the session workspace while idle and the active root run's
-effective workspace while running. Successful `_toolang.chdir` calls in the
+effective workspace while running. Successful `runtime.chdir` calls in the
 root run update this workspace; child run changes do not. `:workdir` updates the
 session setting for subsequent runs without changing the active run's
 workspace. When the run ends, the center returns to the latest session

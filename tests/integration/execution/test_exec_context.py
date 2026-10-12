@@ -36,14 +36,14 @@ def test_exec_successor_declares_current_identity_with_chat_history(
                     ToolCall(
                         "exec",
                         "exec",
-                        "_toolang__exec",
+                        "runtime__exec",
                         {"runnable": "agic:test", "input": {"_": "SMOKE_MARKER"}},
                     ),
                 ),
             ),
             ModelCallResult(
                 tool_calls=(
-                    ToolCall("cwd", "cwd", "_toolang__chdir", {"path": "lab://"}),
+                    ToolCall("cwd", "cwd", "runtime__chdir", {"path": "lab://"}),
                 ),
             ),
             ModelCallResult(message=Message.assistant("Confirmed: SMOKE_MARKER")),

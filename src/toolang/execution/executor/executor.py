@@ -1234,7 +1234,7 @@ class RunExecutor:
             if (
                 stored is not None
                 and isinstance(stored.given, ToolStepGiven)
-                and stored.given.call.name == "_toolang__chdir"
+                and stored.given.call.name == "runtime__chdir"
             ):
                 active.execution._cwd_cache[event.step.run_id] = self.store.current_cwd(
                     event.step.run_id
@@ -2038,7 +2038,7 @@ class _Execution:
     def require_inactive_runnable(
         self, parent: BoundRun, target: ResolvedRunnable, *, action: str
     ) -> None:
-        if action in {"exec", "_toolang/exec"} and self.can_self_exec(parent, target):
+        if action in {"exec", "runtime/exec"} and self.can_self_exec(parent, target):
             return
         if target.identity in self.active_runnable_identities(parent):
             raise ToolangError(
@@ -2075,7 +2075,7 @@ class _Execution:
             return baseline_state, baseline
         contract_state = baseline_state
         contract_runnable = baseline.executable
-        if action in {"exec", "_toolang/exec"} and self.can_self_exec(parent, baseline):
+        if action in {"exec", "runtime/exec"} and self.can_self_exec(parent, baseline):
             contract_state = parent.state
             contract_runnable = resolve_bound_runnable(
                 parent.state, parent.module, _bound_runnable(parent)
@@ -2153,7 +2153,7 @@ class _Execution:
     ) -> tuple[BoundRun, dict[str, Local]]:
         """Prepare a same-Run replacement without committing the transition."""
 
-        self.require_inactive_runnable(parent, target, action="_toolang/exec")
+        self.require_inactive_runnable(parent, target, action="runtime/exec")
         ancestor = (
             self._active_bindings[parent.parent.run_id]
             if parent.parent is not None
@@ -2192,6 +2192,25 @@ class _Execution:
             )
         return binding, _execute_locals(input, runnable, control_input)
 
+    def tool_admission_noted(self, source: StepRef) -> ToolStepNoted | None:
+        """Format successful runtime admission before its atomic Step completion."""
+        from toolang.base.types.tool import ToolResult
+        from .steps.tool import _tool_summary, _tool_summary_context
+
+        step = self.store.get_step(ref=source)
+        if step is None:
+            raise RuntimeError(f"admission requires its source Step: {source}")
+        if not isinstance(step.given, ToolStepGiven):
+            return None
+        call = step.given.call
+        return ToolStepNoted(
+            _tool_summary(
+                _tool_summary_context(call, self.setup.tools().get(call.name)),
+                "succeeded",
+                ToolResult(),
+            )
+        )
+
     def commit_execute(
         self,
         binding: BoundRun,
@@ -2211,6 +2230,7 @@ class _Execution:
                     triggered_by=triggered_by,
                     input=binding.control_input,
                     created_at=utc_now(),
+                    tool_noted=self.tool_admission_noted(triggered_by),
                     loops=loops,
                 )
                 self.executor._publish_step_ends(
@@ -2594,7 +2614,7 @@ class _Execution:
                 name,
                 baseline_state=state if resolution == "state" else parent.state,
                 authorize=authorize,
-                action="_toolang/run" if resolution == "state" else "run",
+                action="runtime/run" if resolution == "state" else "run",
                 candidate_state=candidate_state,
             )
             runnable = target.executable

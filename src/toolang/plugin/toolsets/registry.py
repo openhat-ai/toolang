@@ -8,6 +8,7 @@ from toolang.base.errors import ToolangError
 from toolang.base.protocols.tool import Tool
 from toolang.base.utils.tools import (
     encode_tool_name,
+    display_tool_name,
     is_internal_toolset_name,
     require_public_tool_name,
     require_toolset_name,
@@ -30,6 +31,10 @@ class ToolRef:
     @property
     def model_name(self) -> str:
         return encode_tool_name(self.toolset, self.name)
+
+    @property
+    def display_name(self) -> str:
+        return display_tool_name(self.toolset, self.name)
 
 
 def parse_tool_registration_key(
@@ -63,9 +68,11 @@ def parse_tool_registration_key(
             f"{text!r} != {leaf_tool_name!r}"
         )
     require_toolset_name(toolset)
-    if source == "external" and is_internal_toolset_name(toolset):
+    if source == "external" and (
+        toolset == "runtime" or is_internal_toolset_name(toolset)
+    ):
         raise ToolangError(
-            f"external toolset plugin {plugin_name!r} cannot register internal "
+            f"external toolset plugin {plugin_name!r} cannot register internal or reserved "
             f"toolset {toolset!r}"
         )
     require_public_tool_name(name, kind="tool")
@@ -78,6 +85,8 @@ def require_toolset_plugin_name(plugin_name: str, *, source: PluginSource) -> No
     if source == "built-in":
         require_toolset_name(plugin_name)
         return
+    if plugin_name == "runtime":
+        raise ToolangError("toolset plugin name is reserved by Toolang: runtime")
     require_public_tool_name(plugin_name, kind="toolset plugin")
 
 

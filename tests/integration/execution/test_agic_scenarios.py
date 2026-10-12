@@ -185,13 +185,13 @@ agic helper(_: Text) -> Boolean:
             assert {
                 tool.name for tool in harness.adapter.invocations[0].call.tools
             } == {
-                "_toolang__chdir",
-                "_toolang__runnables",
-                "_toolang__exec",
-                "_toolang__pick",
-                "_toolang__run",
-                "_toolang__spawn",
-                "_toolang__await",
+                "runtime__chdir",
+                "runtime__runnables",
+                "runtime__exec",
+                "runtime__pick",
+                "runtime__run",
+                "runtime__spawn",
+                "runtime__await",
                 "lookup__value",
             }
             initial = harness.adapter.invocations[0].call
@@ -1095,7 +1095,7 @@ def test_streaming_completed_images_preserve_order_without_duplicates(
 
 
 @pytest.mark.parametrize("boundary", ["part_begin", "part_end"])
-@pytest.mark.parametrize("tool_name", ["math__double", "_toolang__exec"])
+@pytest.mark.parametrize("tool_name", ["math__double", "runtime__exec"])
 def test_cancel_during_tool_result_delivery_preserves_output(
     tmp_path: Path, monkeypatch, boundary: str, tool_name: str
 ) -> None:
@@ -1114,7 +1114,7 @@ def test_cancel_during_tool_result_delivery_preserves_output(
                         call_id="provider-1",
                         name=tool_name,
                         input={"runnable": "agic:target"}
-                        if tool_name == "_toolang__exec"
+                        if tool_name == "runtime__exec"
                         else {},
                     ),
                 )
@@ -1153,7 +1153,7 @@ def test_cancel_during_tool_result_delivery_preserves_output(
             run = await asyncio.wait_for(handle, timeout=2)
             assert run.status == "canceled"
             step = harness.store.list_steps(run_id=run.id)[1]
-            if tool_name == "_toolang__exec":
+            if tool_name == "runtime__exec":
                 assert step.status == "succeeded" and step.aborted_by is None
             else:
                 assert step.status == "canceled" and step.aborted_by == control.ref
@@ -1163,7 +1163,7 @@ def test_cancel_during_tool_result_delivery_preserves_output(
             assert part.tool_call_id == "call-1" and part.tool_name == tool_name
             if tool_name == "math__double":
                 assert part.output == {"value": 6}
-            elif tool_name == "_toolang__exec":
+            elif tool_name == "runtime__exec":
                 control = next(
                     c
                     for c in harness.store.list_run_controls(run_id=run.id)
@@ -1451,9 +1451,9 @@ agic calculate(_: Text) -> Text:
                 ErrorMessage("unknown tool call: missing__tool"),
             ]
             assert [step.noted for step in steps[1:4]] == [
-                ToolStepNoted(summary="Failed broken 3"),
+                ToolStepNoted(summary="Failed broken: 3"),
                 ToolStepNoted(summary="Failed silent"),
-                ToolStepNoted(summary="Failed tool"),
+                ToolStepNoted(summary="Failed tool: 4"),
             ]
             followup = without_runtime_snapshots(
                 harness.adapter.invocations[1].call.messages

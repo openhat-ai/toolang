@@ -53,11 +53,17 @@ def _execution_rows(
     )
     tool = operation.source == "tool"
     marker = "›" if tool else "•"
+    summary = (
+        event.noted.summary if tool and isinstance(event.noted, ToolStepNoted) else ""
+    )
+    summary = summary or f"{label} {operation.runnable or 'runnable'}"
     rows = [
         ProgressRow(
-            f"{marker} {label} {operation.runnable or 'runnable'}",
+            f"{marker} {summary}",
             "progress" if tool else _tone(event.status),
             surface="tool_summary" if tool else "none",
+            tool_identity=operation.tool_identity,
+            tool_status=event.status if tool else None,
         )
     ]
     handle = event.output.value if event.output is not None else None
@@ -98,7 +104,9 @@ def live_row(
 
     begin = operation.begin
 
-    if operation.name in _EXECUTION_STATES:
+    if operation.name in _EXECUTION_STATES and not (
+        operation.tool and operation.tool.summary
+    ):
         label = _EXECUTION_STATES[operation.name][0]
         tool = operation.source == "tool"
         marker = "›" if tool else "•"
@@ -106,6 +114,8 @@ def live_row(
             f"{marker} {label} {operation.runnable or 'runnable'}...",
             "active",
             surface="tool_summary" if tool else "none",
+            tool_identity=operation.tool_identity,
+            tool_status="running" if tool else None,
         )
     if begin.kind == "model":
         detail = one_line(preview)
@@ -123,7 +133,13 @@ def live_row(
         ):
             summary += f" · {elapsed}"
         text = f"{operation.tool_marker} {summary}"
-        return ProgressRow(text, "active", surface="tool_summary")
+        return ProgressRow(
+            text,
+            "active",
+            surface="tool_summary",
+            tool_identity=operation.tool_identity,
+            tool_status="running",
+        )
     else:
         text = f"• running {begin.kind}"
     return ProgressRow(text, "active")
@@ -209,6 +225,8 @@ def trace_terminal_rows(
                 f"{marker} {summary or f'executed {label}'}",
                 tone,
                 surface="tool_summary",
+                tool_identity=operation.tool_identity,
+                tool_status=event.status,
             ),
         )
     status = "failed" if event.status == "failed" else "canceled"
@@ -217,6 +235,8 @@ def trace_terminal_rows(
             f"{marker} {summary or f'{status} {label}'}",
             tone,
             surface="tool_summary",
+            tool_identity=operation.tool_identity,
+            tool_status=event.status,
         )
     ]
     if event.status == "failed":

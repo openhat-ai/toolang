@@ -987,7 +987,8 @@ def _visible_tools(
     return tuple(
         item
         for item in items
-        if not (as_text(item.get("toolset")) or "").startswith("_")
+        if item.get("toolset") != "runtime"
+        and not (as_text(item.get("toolset")) or "").startswith("_")
     )
 
 
