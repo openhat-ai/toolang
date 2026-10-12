@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from collections.abc import Callable
 from typing import TypeVar
 
@@ -45,6 +46,7 @@ class ThreadManager:
         self.ids = ids
         self.listener = listener
         self.stream = stream
+        self._mutation_lock = threading.RLock()
 
     def _apply(self, operation: Callable[[], tuple[_Result, ThreadEvent]]) -> _Result:
         if self.stream is not None:
@@ -54,9 +56,11 @@ class ThreadManager:
                     self.store.record_event_cursor(event.control, publication.cursor)
                     publication.append(event)
             return result
-        with self.store.write_transaction():
-            result, event = operation()
-        self._notify(event)
+        # Commit before callbacks, keeping one manager's listener delivery ordered.
+        with self._mutation_lock:
+            with self.store.write_transaction():
+                result, event = operation()
+            self._notify(event)
         return result
 
     def create(

@@ -634,3 +634,56 @@ def test_concurrent_process_forks_commit_one_request_without_sidecar(tmp_path):
         result.close()
     assert all(worker.exitcode == 0 for worker in workers)
     assert not harness.store.db_path.with_name("runs.db.threads.lock").exists()
+
+
+def test_fork_listener_notifications_follow_commit_order(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=_CHAT_SOURCE,
+        responses=[ModelCallResult(message=Message.assistant("answer"))],
+    )
+    first_notifying, release_first, second_notified = Event(), Event(), Event()
+    notifications = []
+
+    class Listener(ThreadListener):
+        def on_event(self, event):
+            control = harness.store.get_thread_control(
+                thread_id=str(event.control.target), index=event.control.index
+            )
+            assert control is not None
+            if control.request == "first-fork":
+                first_notifying.set()
+                assert release_first.wait(timeout=10)
+            else:
+                second_notified.set()
+            notifications.append(control.request)
+
+    async def scenario():
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            await harness.executor.run(
+                harness.run_spec(
+                    thread=thread, runnable="chat", primary=resolve_input_parts("hello")
+                )
+            )
+            manager = ThreadManager(harness.store, harness.ids, listener=Listener())
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                first = pool.submit(
+                    manager.fork, thread_id=thread, request_id="first-fork"
+                )
+                try:
+                    assert first_notifying.wait(timeout=5)
+                    second = pool.submit(
+                        manager.fork, thread_id=thread, request_id="second-fork"
+                    )
+                    assert not second_notified.wait(timeout=0.5)
+                finally:
+                    release_first.set()
+                first.result(timeout=5)
+                second.result(timeout=5)
+            assert notifications == ["first-fork", "second-fork"]
+
+    asyncio.run(scenario())
