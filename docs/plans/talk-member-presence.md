@@ -32,9 +32,12 @@ retain their existing behavior.
   its display name changes or another conversation is named `all`. An agent
   named `all` is accessed through its canonical DM ID. Other conversation names
   are not positional shortcuts.
-- Values starting with `dm_` or `gc_` must be valid canonical IDs. Malformed or
-  unknown IDs fail without falling back to agent/name lookup or creating data.
-  Reject malformed pairs and unknown agents using the existing validation rules.
+- Single targets starting with `dm_` or `gc_` must be valid canonical IDs.
+  Malformed or unknown IDs fail without falling back to agent/name lookup or
+  creating data. Reject malformed pairs and unknown agents using the existing
+  validation rules.
+  A comma-separated pair always selects agents, including names with these
+  prefixes, in either order.
 - Translate `all` explicitly at the Talk call site via the existing Hub resolve
   endpoint with a new `kind="system"` lookup for `target="all"`. Hub resolves
   its existing backend system mapping and returns normal `Resolution` metadata.

@@ -388,7 +388,7 @@ class TalkTui:
                 except (MessagingError, TimeoutError):
                     self.presence = None
             else:
-                self.presence = []
+                self.presence = None
             self.invalidate()
             await changes.wait(timeout=0.5)
 

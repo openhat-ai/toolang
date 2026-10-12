@@ -217,6 +217,38 @@ def test_invalid_talk_targets_do_not_create_conversations(
     assert asyncio.run(snapshot()) == before
 
 
+@pytest.mark.parametrize("name", ["dm_alice", "gc_alice"])
+def test_agent_pair_shortcuts_accept_prefixed_agent_names_in_both_orders(
+    tmp_path, monkeypatch, messaging_cli, name
+):
+    async def prepare():
+        async with (
+            messaging_cli(actor=f"agent:{name}") as alice,
+            messaging_cli(actor="agent:bob") as bob,
+        ):
+            await alice.register("human:bryan")
+            await bob.register("human:bryan")
+            return (await alice.resolve("bob", create=True)).conversation
+
+    ref = asyncio.run(prepare())
+    monkeypatch.setattr(talk.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(talk.sys.stdout, "isatty", lambda: True)
+    opened = []
+
+    async def inspect_ui(ui):
+        assert ui.conversation_id == ref and ui.read_only
+        opened.append(ref)
+
+    monkeypatch.setattr(TalkTui, "run", inspect_ui)
+    with (
+        create_pipe_input() as pipe,
+        create_app_session(input=pipe, output=DummyOutput()),
+    ):
+        for selection in (f"bob,{name}", f"{name},bob"):
+            assert cli.main(["--root", str(tmp_path), "talk", selection]) == 0
+    assert opened == [ref, ref]
+
+
 def test_talk_restores_saved_drafts_and_input_history(
     tmp_path, messaging_cli, monkeypatch
 ):

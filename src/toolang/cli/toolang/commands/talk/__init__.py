@@ -64,7 +64,7 @@ def talk_command(
     try:
         config, human = settings(root)
 
-        if target.startswith(("dm_", "gc_")):
+        if "," not in target and target.startswith(("dm_", "gc_")):
             conversation_id(target)
         else:
             for name in target.split(","):

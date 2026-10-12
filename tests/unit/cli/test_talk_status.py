@@ -86,6 +86,7 @@ def test_presence_refresh_recovers_expires_and_follows_membership(
                     ui.conversation = conversation_record(
                         ui.conversation_id, "gc", ("agent:bob",), name="dev"
                     )
+                    assert "#dev(?/1)" in fragment_list_to_text(ui.status_text())
                 else:
                     assert "#dev(0/1)" in footer
                     assert ui.status == ""

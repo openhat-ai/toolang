@@ -94,12 +94,13 @@ agent; `alice,bob` observes an existing agent-agent DM; a canonical `dm_...` or
 IDs fail without creation. `all` is a reserved CLI shortcut for the system GC,
 even after it is renamed or another conversation uses that name. Other bare
 names select agents; other conversation names are directory labels, not CLI
-targets. Access an agent named `all` through its canonical DM ID. Targets starting
-with `dm_` or `gc_` must be valid conversation IDs and never fall back to agent
-lookup. The pair syntax is `alice,bob`; shell quoting is outside the target
-grammar, and literal quote characters are invalid. Selector flags such as
-`--dm` and `--group` are not supported. Arguments after the target are literal
-message text.
+targets. Access an agent named `all` through its canonical DM ID. Single targets
+starting with `dm_` or `gc_` must be valid conversation IDs and never fall back
+to agent lookup. Comma-separated pairs always select agents in either order,
+including agent names with these prefixes. The pair syntax is `alice,bob`; shell
+quoting is outside the target grammar, and literal quote characters are invalid.
+Selector flags such as `--dm` and `--group` are not supported. Arguments after
+the target are literal message text.
 
 Opening a missing human-agent DM keeps its ID and pair locally with empty history.
 The first accepted send atomically creates the conversation and appends its first
