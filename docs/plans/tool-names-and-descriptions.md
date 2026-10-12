@@ -57,7 +57,7 @@ replace seven messaging leaves; the complete built-in catalog grows from 48 to 4
 | `convo.peek(target: string, limit: integer = 50)` | `{conversation: Conversation, messages: Message[]}` |
 | `convo.write(target: string, message: string, reply_to: string? = null)` | `{conversation: string, message: Message}` |
 | `convo.create(name = null, participants = null)` | Existing create/reuse result |
-| `convo.rename(conversation, name, revision)` | Existing rename result |
+| `convo.rename(conversation, name, revision)` | Existing rename result plus nullable `previous_name` |
 | `convo.join(conversation)` | Existing join result |
 | `convo.leave(conversation)` | Existing leave result |
 
@@ -104,6 +104,9 @@ replace seven messaging leaves; the complete built-in catalog grows from 48 to 4
   are errors, with no creation. Reads never wait, consume, acknowledge, advance
   checkpoints, or trigger the talk handler; talk-thread processing is unchanged.
   No recv, subscription, or pagination.
+- **Rename:** read metadata before mutation, require its revision to match the
+  supplied revision, then rename with that same revision. Return the captured
+  name as `previous_name` for progress; preserve revision conflicts without retries.
 - **Ownership:** implement target interpretation, list filtering, and result
   projection in convo after AgentClient validation. Keep `/msg` routes,
   client APIs, storage, and talk delivery unchanged.
@@ -175,8 +178,8 @@ data; omit the colon with an absent target.
 | `convo/list` | `Listing / Listed conversations: {filter}` |
 | `convo/peek` | `Reading / Read conversation messages: {target}` (`conversation: {target}` when `limit=0`) |
 | `convo/write` | `Writing message: {target}` / `Wrote message: {conversation}` |
-| `convo/create` | `Creating conversation: {name}` / `Opened conversation: {id}` |
-| `convo/rename` | `Renaming / Renamed conversation: {conversation}` |
+| `convo/create` | `Creating conversation: {name}` / `Created conversation: {id}` |
+| `convo/rename` | `Renaming conversation: {conversation}` / `Renamed conversation: {old_name} → {name} ({conversation})` |
 | `convo/join` | `Joining / Joined conversation: {conversation}` |
 | `convo/leave` | `Leaving / Left conversation: {conversation}` |
 
@@ -188,6 +191,10 @@ Special cases:
   matches. Exec success means the same-Run switch committed; the caller never resumes.
 - List filter text combines supplied name and members, e.g. `Development; with
   alice, bob` or `only alice, bob`; omit it when unfiltered.
+- Rename success uses `previous_name` and the requested new name; quote names and
+  render null as `unnamed`. Missing/malformed prior-name data falls back to the
+  conversation ID; failure never claims the rename succeeded. Formatters perform
+  no metadata reads.
 - History cursor pages say `Reading/Read more threads/runs/steps`, never the cursor.
   Stop_bridge covers both stdio shutdown and HTTP session/auth cleanup.
 - Failure uses `Failed to <base action> <object/target>`; cancellation keeps
@@ -261,7 +268,8 @@ Paths below are relative to `src/toolang`, except `pyproject.toml` and documenta
 | Summaries | Catalog coverage for running/success/failure; table and special cases match; masked isolated data, no I/O or payload leaks; malformed fields/cancellation remain safe |
 | External plugins | Class/function plugins with absent or broken hooks still run; all fallback states retain identity and argument preview across ordering, missing-ref, masking, truncation, and empty-value cases |
 | Rendering/history | Chat/Script, TTY/non-TTY, parallel/narrow layouts preserve hierarchy and saved wording; old runtime records replay correctly without formatters or record rewrites |
-| Discovery/setup | Fresh/refreshed Setup and disabled-teaming behavior work; directory access holds; team exposes only id/name/online with agent/human presence semantics; list exposes only id/name/members; name filters cover zero/duplicate/case/invalid inputs; member filters cover contains/exact, name combinations, normalized duplicates/order, explicit self, unknown/invalid/empty members, and exact without members; management behavior is unchanged |
+| Discovery/setup | Fresh/refreshed Setup and disabled-teaming behavior work; directory access holds; team exposes only id/name/online with agent/human presence semantics; list exposes only id/name/members; name filters cover zero/duplicate/case/invalid inputs; member filters cover contains/exact, name combinations, normalized duplicates/order, explicit self, unknown/invalid/empty members, and exact without members |
+| Conversation management | Create/reuse reports Created; rename success shows the verified old and requested new names, including setting/clearing names and no-op renames; read failure or stale/concurrent revisions cannot produce a false success or wrong old name; malformed summary data falls back safely; join/leave behavior is unchanged |
 | Message targeting | Caller-based DM derivation works in either participant order; labels never route messages; ID-shaped/unknown/self/typed/pair targets follow the contract; first write creates once, absent-DM read creates nothing |
 | Inspection/delivery | Metadata-only/default/bounded histories preserve order; bad limits/records and denied access fail; reads leave talk checkpoints/delivery untouched; writes preserve parameter mapping, replies, internal provenance, receipt checks, and failure behavior; public results expose only the specified fields and stable logical message IDs |
 
