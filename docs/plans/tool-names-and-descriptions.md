@@ -1,0 +1,253 @@
+# Tool names and descriptions
+
+Status: proposed; awaiting human approval. Definition only.
+
+## Goal and scope
+
+Make each built-in tool recognizable from a short progress sentence, including
+when several toolsets perform similar operations. Rename `me` to `state` and
+`_toolang` to `runtime`, and align model descriptions with that vocabulary.
+
+Success means all 48 current built-in leaves have explicit lifecycle summaries;
+the action and object identify the operation without a repeated tool-name prefix.
+Generic fallback retains the full selector identity. Chat and Script show the
+same wording, and otherwise-supported saved history remains readable.
+
+This definition supersedes the corresponding identity and wording decisions in
+[internal toolsets](internal-toolsets.md),
+[plugin layout](plugin-listing-visibility.md), and
+[tool progress](tool-progress.md). Keep their other contracts.
+No changes to tool arguments, results, execution semantics, resource access,
+tool-name grammar, or CLI command names are included. Existing leaf names stay.
+
+## Verified baseline
+
+- `pyproject.toml` registers eight toolsets: `me`, `_toolang`, `fs`, `shell`,
+  `web`, `history`, `service`, and `msg`.
+- `ToolDefinition.description` guides models; `Tool.summary()` supplies progress
+  text. They are separate contracts.
+- `me`, `service`, and `msg` have no custom summaries. Runtime supplies summaries
+  for only spawn, pick, honor, and compact. Executor fallback is
+  `Executing/Executed <leaf> <first argument>`, omitting the toolset.
+- Fs summaries such as `Listed repo://src` omit the object category. Runtime
+  run/async run/exec/spawn/await rows use CLI-owned wording instead of saved
+  summaries, so changing a tool hook alone does not update those rows.
+- `me` edits supported home files, including Markdown chores outside State;
+  only sync checks and publishes State. It does not switch active Run code.
+
+## Names and compatibility
+
+| Current | Canonical | Meaning | Implementation module |
+| --- | --- | --- | --- |
+| `me` | `state` | Current agent source files and State publication | `execution/tools/state/` |
+| `_toolang` | `runtime` | Run execution, workdir, guidance, and history compaction | `execution/tools/runtime.py` |
+
+Update entry points, plugin/toolset identities, owned class/context names,
+selectors (`state/get`, `runtime/run`), model names (`state__get`,
+`runtime__run`), configuration keys, internal dispatch, errors, and bundled
+instructions together. Retain `<toolset>/<leaf>` and `<toolset>__<leaf>` encoding.
+Keep `fs`, `shell`, `web`, `history`, `service`, and `msg` unchanged.
+The unrelated provider/model metadata field `_toolang` is unchanged.
+
+`runtime` remains Toolang-owned and selected independently of user tool ceilings;
+`state` remains an ordinary selectable toolset. Reserve `runtime` against external
+registration, both as a plugin name and an explicit toolset key, using existing
+distribution provenance. A public-looking name must not grant runtime authority.
+Honor and compact remain runtime-only, excluded from model definitions/calls.
+Existing underscore-name restrictions remain available for other internal names.
+
+No callable aliases for `me` or `_toolang` are added. Migration replaces these
+names in authored tool selections, plugin configuration, and direct tool calls;
+restart hosts and prepare fresh Setup before starting new Runs. Existing leaf
+arguments and receipts need no conversion. Neither renamed toolset currently
+stores durable data in its plugin room; leave old rooms alone.
+
+Do not rewrite saved records, model exchanges, or summaries. Readers that classify
+old `_toolang` operations must continue recognizing them, including the existing
+`_toolang__execute` spelling, for history assembly and progress reconstruction.
+This is read compatibility, not permission to invoke old names. Resuming an
+in-flight pre-upgrade execution is outside scope. Document the rename as breaking
+in the implementation changelog using the repository's runnable workflow.
+
+## Description rules
+
+Model descriptions start with the operation, concrete object, and access scope.
+Follow with only the selection, input, result, and failure details needed to use
+the tool correctly. Update cross-tool references to canonical names. Preserve
+digest checks, sync stability requirements, service auth/session/schema reuse,
+message delivery rules, and runtime route/ownership restrictions.
+
+Use **agent file** for state CRUD, **State** for publication, **file/directory/path**
+for workspace operations, **service tool/resource/prompt** for MCP operations,
+and **message/conversation** for messaging. State's toolset description must say
+that files are authored sources, writes do not publish State, and chores are
+outside State. Keep exact protocol details in parameter descriptions when they
+describe individual inputs; do not discard operational constraints for brevity.
+
+Progress uses `Action object[: target]`, with the discriminating object before
+the potentially long target. Avoid `Executing list`, raw leaf names, repeated
+`state/get` prefixes, and implementation names in normal built-in summaries.
+The following table fixes the running/success vocabulary; `{...}` denotes data,
+not literal text. The optional colon and target disappear together when absent.
+
+| Tool | Running / succeeded sentence |
+| --- | --- |
+| `state/list` | `Listing / Listed agent files` |
+| `state/get` | `Reading / Read agent file: {key}` |
+| `state/create` | `Creating / Created agent file: {key}` |
+| `state/update` | `Updating / Updated agent file: {key}` |
+| `state/delete` | `Deleting / Deleted agent file: {key}` |
+| `state/sync` | `Syncing / Synced agent State` |
+| `fs/list` | `Listing / Listed files: {path}` |
+| `fs/read` | `Reading / Read file: {path}` |
+| `fs/write` | `Writing / Wrote file: {path}` |
+| `fs/append` | `Appending to / Appended to file: {path}` |
+| `fs/glob` | `Matching / Matched files: {pattern} in {path}` |
+| `fs/stat` | `Inspecting / Inspected path: {path}` |
+| `fs/mkdir` | `Creating / Created directory: {path}` |
+| `fs/remove` | `Removing / Removed path: {path}` |
+| `shell/execute` | `Running / Ran command: {command}` |
+| `web/search` | `Searching / Searched web: {query}` |
+| `history/read_threads` | `Reading / Read threads` |
+| `history/read_runs` | `Reading / Read runs: {thread}` |
+| `history/read_steps` | `Reading / Read steps: {run}` |
+| `history/read_output` | `Reading / Read run output: {run}` |
+| `runtime/runnables` | `Discovering / Discovered runnables` (or `runnable: {name}`) |
+| `runtime/chdir` | `Changing / Changed workdir: {path}` |
+| `runtime/run` | `Running / Completed child run: {runnable}` |
+| `runtime/run` with `async=true` | `Starting / Started background run: {runnable}` |
+| `runtime/spawn` | `Spawning / Spawned independent run: {runnable}` |
+| `runtime/await` | `Waiting for / Received run result: {target}` |
+| `runtime/exec` | `Transferring / Transferred execution: {runnable}` |
+| `runtime/pick` | `Loading / Loaded guidance: {kind}/{ref}` |
+| `runtime/honor` | `Loading / Loaded rules` (successful result may add `: {files}`) |
+| `runtime/compact` | `Compacting / Compacted thread history` |
+| `service/start_bridge` | `Starting / Started service bridge: {service}` |
+| `service/stop_bridge` | `Stopping / Stopped service connection: {service}` |
+| `service/init` | `Initializing / Initialized service session: {service}` |
+| `service/start_auth` | `Starting / Started service authorization: {service}` |
+| `service/complete_auth` | `Completing / Completed service authorization: {service}` |
+| `service/list_tools` | `Listing / Listed service tools: {service}` |
+| `service/call_tool` | `Calling / Called service tool: {service}/{tool_name}` |
+| `service/list_resources` | `Listing / Listed service resources: {service}` |
+| `service/list_resource_templates` | `Listing / Listed service resource templates: {service}` |
+| `service/read_resource` | `Reading / Read service resource: {service} {resource_uri}` |
+| `service/list_prompts` | `Listing / Listed service prompts: {service}` |
+| `service/get_prompt` | `Getting / Got service prompt: {service}/{prompt_name}` |
+| `msg/targets` | `Listing / Listed message targets` |
+| `msg/send` | `Sending / Sent message: {target}` |
+| `msg/create_conversation` | `Creating conversation: {name}` / `Opened conversation: {id}` |
+| `msg/rename_conversation` | `Renaming / Renamed conversation: {conversation}` |
+| `msg/join_conversation` | `Joining / Joined conversation: {conversation}` |
+| `msg/leave_conversation` | `Leaving / Left conversation: {conversation}` |
+| `msg/resolve` | `Resolving / Resolved message target: {target}` |
+
+For create_conversation, a DM may be reused; use the returned canonical ID on
+success when present, otherwise the supplied name or no target.
+On history cursor pages use `Reading/Read more threads`,
+`more runs`, or `more steps`; never display the opaque cursor. Stop_bridge's
+broader object covers both stdio bridge shutdown and HTTP session/auth cleanup.
+
+Failure uses `Failed to <base action> <same object and target>`; cancellation
+retains the executor's `Canceled: <running summary>` convention. Success follows
+the existing ToolResult error boundary; it does not reinterpret nested service
+responses or nonzero shell exits. Sync failure must never say State was synced.
+
+Retain existing workspace URI/relative-path labels, command/query quoting, and
+guidance/rules identity formatting. Summaries use only isolated, masked call data
+and existing result fields; no filesystem, network, Store, or State reads.
+Do not include file contents, message bodies, nested service inputs, auth URLs,
+tokens, digests, result dumps, or counts. Missing/malformed display fields retain
+the object label or fall back; never display `None` or raise into execution.
+
+## Progress integration and fallback
+
+Use the existing optional `summary()` hook, not a new description protocol or a
+renderer registry of tool names. Add missing built-in hooks at their owners.
+Existing plugins and function tools require no new method, metadata, dependency,
+or registration changes. Do not require custom summaries during plugin loading.
+The catalog-wide coverage requirement applies only to Toolang's built-ins.
+
+Executor fallback uses the structured ToolRef identity, or decodes the call name
+when that ref is unavailable. If no family can be recovered, retain the original
+call name. Preserve the existing masked, bounded first-argument preview after
+the identity, omitting it when absent. For example:
+
+| Lifecycle | Plugin with no custom summary |
+| --- | --- |
+| Running | `Executing acme/list projects` |
+| Succeeded | `Executed acme/list projects` |
+| Failed | `Failed acme/list projects` |
+| Canceled | `Canceled acme/list projects` |
+
+This same fallback applies to inherited/default hooks, None, empty/whitespace
+or non-text returns, and formatter exceptions. A missing or broken formatter
+must not change tool execution or result delivery. Do not infer an action's tense
+from a leaf name or truncate/parse the model-facing description to invent progress
+text. Custom summaries replace the fallback without an automatic family prefix;
+plugins that want natural action/object wording can opt into the existing hook.
+
+For new runtime Tool Steps, execution progress reads the saved tool summary for
+the primary row, including run, async run, spawn, await, and exec. Preserve child
+hierarchy, admission ID/thread rows, handoff behavior, markers, timing, and error
+rows. Native Flow wording and legacy runtime presentation remain unchanged.
+No extra family prefix, panels, status events, or new persistence fields are
+needed. Truncation happens after the leading action/object so ordinary narrow
+rows retain the distinction. Replays never call live tool formatters.
+
+## Implementation touchpoints
+
+- `pyproject.toml`, `execution/tools/{me,_toolang.py}` and their imports:
+  identities, module/class names, model descriptions, and owned summaries.
+- `plugin/toolsets/{registry,loading,collections}.py`, setup/resource selection,
+  executor dispatch/context injection, runtime admission/control helpers, and
+  `execution/assembly/tool_replies.py`: authority, canonical names, and saved
+  history classification. Audit exact old-name references, not global `_toolang`
+  replacement across unrelated model metadata.
+- `plugin/toolsets/{fs,shell,web,history,service,msg}.py`,
+  `base/utils/tool_descriptions.py`, and `execution/executor/steps/tool.py`:
+  vocabulary, lifecycle summaries, and qualified fallback.
+- `cli/common/execution_progress/{operations,step_projection}.py`: new runtime
+  recognition and saved summary use with existing presentation structure.
+- `execution/assembly/prompts/protocol.md`, active tool/plugin documentation,
+  affected examples/configuration fixtures, and generated references through
+  their existing workflow. Preserve historical changelog records and completed
+  plans; link superseding decisions where needed.
+
+## Acceptance and risks
+
+1. Registration exposes exactly the mapped names and the same 48 leaves. Old
+   names are not callable. External attempts to register `runtime` as a plugin
+   or explicit toolset fail; ordinary state selectors still constrain state.
+   Runtime-only leaves stay hidden and uncallable by models.
+2. A catalog-driven test requires every built-in leaf to provide running,
+   success, and failure summaries. Representative snapshots assert the table,
+   including state/fs reads, every list operation, service/tool pairs, message
+   operations, sync errors, async runs, and reused conversations.
+3. Legacy class and function plugins with no custom summaries still load and run.
+   Two external `list` tools have distinct qualified fallback text in all four
+   lifecycle states. Default/None/empty/non-text/throwing hooks, absent arguments,
+   explicit toolset keys differing from plugin names, and missing ToolRefs use
+   the specified fallback. Valid custom summaries are not prefixed or rewritten.
+   Malformed arguments, optional targets, cursor pages, and cancellation cannot
+   break execution or erase built-in object labels.
+4. Summaries perform no I/O and omit sensitive/content payloads. Existing
+   argument masking, input/result isolation, whitespace normalization, and
+   bounded previews continue passing.
+5. Chat and Script, TTY/non-TTY, parallel lanes, and narrow widths identify the
+   same operation. New runtime rows consume persisted summaries; child/handle
+   structure, compact timing, errors, and native Flow rows remain correct.
+6. Otherwise-supported saved old-name events and tool exchanges remain readable,
+   including honor interception, compact, chdir, handoffs, and async result
+   reconstruction. Stored names/summaries remain unchanged and no live tools run
+   during replay. Fresh executions use only canonical identities.
+
+Primary risks are missing an identity-dependent dispatch/reader, granting an
+external plugin runtime authority, and implying that writing an agent file
+publishes or activates State. The tests above cover these boundaries. Reuse
+existing tool-description, registry, context, progress, and execution-history
+suites; run all default repository checks for implementation. For this definition,
+verify source claims, relative links, catalog coverage, and `git diff --check`.
+
+Open questions: human approval of this naming, wording, and no-alias migration
+policy. Implementation starts only after approval.
