@@ -70,7 +70,10 @@ def harness_with_msg(path, server, responses, source="agic:\n  {{_}}\n", state=N
     )
 
 
-@pytest.mark.parametrize("custom", [False, True, "agic-module", "flow-module"])
+@pytest.mark.parametrize(
+    "custom",
+    [False, True, "agic-module", "flow-module", "flow-module-run", "flow-module-async"],
+)
 def test_tool_reply_receipt_context_and_restart(tmp_path, custom):
     server = FakeServer(server_type="valkey")
     reply = ModelCallResult(
@@ -92,7 +95,15 @@ def test_tool_reply_receipt_context_and_restart(tmp_path, custom):
         (layout.home / "runnables/talk.too").write_text(
             "agic(_: Json):\n  {{_}}\n"
             if custom == "agic-module"
-            else "flow(_: Json):\n  exec helper\nagic helper(_: Json):\n  {{_}}\n"
+            else "flow(_: Json):\n"
+            + (
+                "  run helper\n"
+                if custom == "flow-module-run"
+                else "  let reply = async run helper\n  await reply\n"
+                if custom == "flow-module-async"
+                else "  exec helper\n"
+            )
+            + "agic helper(_: Json):\n  {{_}}\n"
         )
         state = prepare_agent_state(layout)
     harness = harness_with_msg(
@@ -119,6 +130,7 @@ def test_tool_reply_receipt_context_and_restart(tmp_path, custom):
             await loop.poll()
             saved = loop.saved["gc_00000001"]
             assert saved["result"]["status"] == "succeeded"
+            assert len(saved["result"]["replies"]) == 1
             receipt = saved["result"]["replies"][0]
             assert len(harness.store.list_threads()) == 1
             assert harness.store.list_threads()[0].id.startswith("talk_")
@@ -130,12 +142,21 @@ def test_tool_reply_receipt_context_and_restart(tmp_path, custom):
                     entry.payload, RunControlPayload
                 )
                 prefix = "runnables::talk::" if isinstance(custom, str) else ""
-                kind = "flow" if custom == "flow-module" else "agic"
+                kind = (
+                    "flow"
+                    if isinstance(custom, str) and custom.startswith("flow-module")
+                    else "agic"
+                )
                 assert entry.payload.runnable == f"{prefix}{kind}:talk"
-            assert receipt["message"]["origin"] == {
-                "thread": handled.thread.id,
-                "run": saved["result"]["run"],
-            }
+            origin = receipt["message"]["origin"]
+            assert origin["thread"] == handled.thread.id
+            sender_run = harness.store.get_run(run_id=origin["run"])
+            assert sender_run is not None
+            if custom in {"flow-module-run", "flow-module-async"}:
+                assert sender_run.parent is not None
+                assert sender_run.parent.run_id == handled.id
+            else:
+                assert sender_run.id == handled.id
             assert receipt["message"]["in_reply_to"] == REPLY_TO
             assert len(await client.history("gc_00000001")) == 2
             await loop.poll()  # Own reply is context, never another model invocation.
@@ -199,9 +220,20 @@ def test_failed_batches_skip_bad_entries_and_rotate_groups(tmp_path):
     asyncio.run(scenario())
 
 
-def test_arrivals_during_handling_and_cancellation_save_delivered_receipts(tmp_path):
+@pytest.mark.parametrize("module_handler", [False, True])
+def test_arrivals_during_handling_and_cancellation_save_delivered_receipts(
+    tmp_path, module_handler
+):
     server = FakeServer(server_type="valkey")
     gate = AsyncGate()
+    state = None
+    if module_handler:
+        layout = AgentLayout.resident(tmp_path, "alice")
+        (layout.home / "runnables").mkdir(parents=True)
+        (layout.home / "runnables/talk.too").write_text(
+            "flow(_: Json):\n  run helper\nagic helper(_: Json):\n  {{_}}\n"
+        )
+        state = prepare_agent_state(layout)
     harness = harness_with_msg(
         tmp_path,
         server,
@@ -221,6 +253,7 @@ def test_arrivals_during_handling_and_cancellation_save_delivered_receipts(tmp_p
                 gate=gate,
             ),
         ],
+        state=state,
     )
 
     async def scenario():

@@ -9,6 +9,10 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Changed
 
+- A runnable module filename may not be `_`, the root's unnamed-entry alias:
+  `runnables/_.too` is rejected with `invalid-runnable-filename` instead of
+  exporting a runnable that shadows the unnamed entry.
+
 - **Breaking:** home program modules move from `flows/<name>.too` to
   `runnables/<name>.too`. Modules are now identified as `runnables::<name>`,
   as in the private reference `runnables::talk::agic:helper`, while public
@@ -31,6 +35,13 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 - Home authoring tools accept `runnables/*.too` and reject `flows/*.too`,
   writing through `.runnables.lock` instead of `.flows.lock`.
+
+### Fixed
+
+- Message handling records retain successful send receipts from the handler and
+  its owned child Runs, including async children and replies delivered before
+  cancellation, so replies sent by a handler's delegated child runs stay in the
+  context of later batches instead of being dropped.
 
 ## [0.4.0a4] - 2026-10-11
 

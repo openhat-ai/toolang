@@ -51,7 +51,8 @@ entry's file renames its public runnable; a named entry must also be renamed.
 Other declarations remain private helpers for flow statements and model routing.
 For example, `runnables/talk.too` containing `agic(_: Json):` exports `agic:talk`.
 
-Public runnable names must be unique across the complete home. Direct files
+Public runnable names must be unique across the complete home. The filename
+`_.too` is rejected because `_` refers to the root's unnamed entry. Direct files
 under `runnables/` are discovered. Other HOME-level `.too` files, `flows/`,
 `agics/`, nested files, non-`.too` files, and Toolang-root modules are ignored.
 There is no compatibility discovery or automatic source migration.

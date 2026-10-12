@@ -36,7 +36,8 @@ migration, and old flow-module compatibility.
    lined identities for unnamed declarations.
 4. Keep the current portable filename rules: ASCII letter or underscore first,
    then letters, digits, underscores, or hyphens, at most 64 characters, excluding
-   reserved device names. Reject case-folded filename collisions. Reject public
+   reserved device names and `_`, which remains the unnamed-entry alias. Reject
+   case-folded filename collisions. Reject public
    collisions with `agent.too` across either kind and identify both sources.
    No lookup priority or silent shadowing is introduced.
 5. Root flow statements and agic routes can call either kind of public export.
@@ -88,6 +89,7 @@ agic(_: Json):
   keep language validation independent of State and runtime services.
 - `src/toolang/execution/runnables.py`: root calls to either exported kind.
 - `src/toolang/execution/tools/me/`: allowed paths, locking, tool descriptions.
+- `src/toolang/work/messaging.py`: receipts from the handler's owned Run tree.
 - Existing watcher, messaging, CLI, and API consumers share the public index.
 - Focused module, layout, State, messaging, execution, and home-authoring docs;
   generate the user-facing change record with `too aide.too update_changelog`.
@@ -101,7 +103,8 @@ agic(_: Json):
 3. Root calls and routes execute exported agics and flows with their own
    helpers, input contracts, and capabilities; extension isolation is preserved.
 4. Messaging selects file-based agic/flow `talk` handlers and retains its batch,
-   reply, context, and restart behavior with fake providers.
+   reply, context, and restart behavior with fake providers, including receipts
+   from owned child Runs and sends completed before cancellation.
 5. Watcher changes, deletion, rename, rejection, and repair retain existing
    publication behavior for the new source location.
 6. Ignored locations contribute no Programs or source events. A root-level

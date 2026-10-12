@@ -200,7 +200,9 @@ A shared handler can live in `runnables/talk.too`, exporting an unnamed or
 filename-matching agic or flow. Its primary input receives the JSON message
 batch without the built-in fallback instructions. Private helpers and inline
 caps stay in the same file; required models and services come from the receiving
-environment. A public `talk` in `agent.too` conflicts with this export.
+environment. A public `talk` in `agent.too` conflicts with this export. Handling
+records retain successful send receipts from the handler and its owned child
+Runs, including async children and replies delivered before cancellation.
 
 An independent heartbeat runs every 5 seconds. Agent presence is a ZSet deadline
 in backend Unix milliseconds, renewed to at least 15 seconds ahead. Expired

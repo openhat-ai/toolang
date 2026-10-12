@@ -15,6 +15,23 @@ def _prepare(tmp_path, root_source, module_source):
     return prepare_agent_state(layout)
 
 
+@pytest.mark.parametrize("kind", ["agic", "flow"])
+@pytest.mark.parametrize("root_entry", [False, True])
+def test_module_filename_cannot_shadow_the_unnamed_entry_alias(
+    tmp_path, kind, root_entry
+):
+    layout = AgentLayout.resident(tmp_path, "alice")
+    (layout.home / "runnables").mkdir(parents=True)
+    layout.program.write_text("agic:\n  Root.\n" if root_entry else "")
+    (layout.home / "runnables/_.too").write_text(f"{kind}:\n  pass\n")
+
+    with pytest.raises(StatePreparationError, match="reserved.*unnamed entry") as error:
+        prepare_agent_state(layout)
+
+    assert error.value.diagnostics[0].code == "invalid-runnable-filename"
+    assert error.value.diagnostics[0].authored_path == "runnables/_.too"
+
+
 @pytest.mark.parametrize("named", [False, True])
 @pytest.mark.parametrize("kind", ["agic", "flow"])
 def test_exported_runnables_reject_whole_handle_arguments(tmp_path, kind, named):

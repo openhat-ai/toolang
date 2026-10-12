@@ -526,8 +526,10 @@ def test_only_one_filesystem_monitor_can_run(
     asyncio.run(run())
 
 
-def test_invalid_flow_candidate_retains_last_valid_state_until_repaired(
+@pytest.mark.parametrize("kind", ["agic", "flow"])
+def test_invalid_runnable_candidate_retains_last_valid_state_until_repaired(
     tmp_path: Path,
+    kind: str,
 ) -> None:
     async def run() -> None:
         toolang_root = tmp_path / "toolang"
@@ -536,13 +538,13 @@ def test_invalid_flow_candidate_retains_last_valid_state_until_repaired(
         flows.mkdir(parents=True)
         (home / "agent.too").write_text("# Agent alice\n", encoding="utf-8")
         flow = flows / "research.too"
-        flow.write_text("flow research:\n  pass\n", encoding="utf-8")
+        flow.write_text(f"{kind} research:\n  pass\n", encoding="utf-8")
         watcher = state_watcher.StateWatcher(
             AgentLayout.resident(toolang_root, "alice")
         )
         initial = await watcher.refresh()
 
-        flow.write_text("flow other:\n  pass\n", encoding="utf-8")
+        flow.write_text(f"{kind} other:\n  pass\n", encoding="utf-8")
         refresh = await watcher.refresh_result()
         rejected = refresh.state
 
@@ -557,11 +559,50 @@ def test_invalid_flow_candidate_retains_last_valid_state_until_repaired(
         assert retried.state is initial
         assert retried.diagnostics == refresh.diagnostics
 
-        flow.write_text("flow research:\n  pass\n", encoding="utf-8")
+        flow.write_text(f"{kind} research:\n  pass\n", encoding="utf-8")
         repaired = await watcher.refresh()
 
         assert repaired is initial
         assert "research" in repaired.runnables
+        assert watcher.diagnostics() == ()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("kind", ["agic", "flow"])
+def test_watcher_tracks_module_rename_and_deletion(tmp_path, monkeypatch, kind):
+    layout = AgentLayout.resident(tmp_path, "alice")
+    source = layout.home / "runnables/research.too"
+    renamed = source.with_name("report.too")
+    source.parent.mkdir(parents=True)
+    source.write_text(f"{kind}:\n  pass\n")
+    watcher = state_watcher.StateWatcher(layout)
+
+    async def edits(*_args, **_kwargs):
+        source.rename(renamed)
+        yield {
+            (state_watcher.Change.deleted, str(source)),
+            (state_watcher.Change.added, str(renamed)),
+        }
+        renamed.unlink()
+        yield {(state_watcher.Change.deleted, str(renamed))}
+        ignored = layout.home / "flows/research.too"
+        ignored.parent.mkdir()
+        ignored.write_text("Invalid ignored source.")
+        yield {(state_watcher.Change.added, str(ignored))}
+        yield set()
+
+    monkeypatch.setattr(state_watcher, "awatch", edits)
+
+    async def run():
+        initial = await watcher.refresh()
+        updates = [
+            state async for state in watcher.updates(stop_signal=asyncio.Event())
+        ]
+        assert [set(state.runnables) for state in updates] == [{"report"}, set()]
+        assert updates[0].runnables["report"].kind == kind
+        assert set(initial.runnables) == {"research"}
+        assert watcher.current() is updates[-1]
         assert watcher.diagnostics() == ()
 
     asyncio.run(run())

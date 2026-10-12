@@ -218,14 +218,20 @@ class MessagingLoop:
             await handle
             raise
         finally:
-            for step in self.executor.store.list_steps(run_id=handle.run_id):
-                result = step.output.value if step.output is not None else None
-                if (
-                    isinstance(result, ToolResultPart)
-                    and result.tool_name == "msg__send"
-                    and result.error is None
-                ):
-                    outcome["replies"].append(result.output)
+            runs = self.executor.store.list_run_tree(root_run_id=handle.run_id)
+            steps_by_run = self.executor.store.list_steps_for_runs(
+                run_ids=[run.id for run in runs]
+            )
+            for steps in steps_by_run.values():
+                for step in steps:
+                    result = step.output.value if step.output is not None else None
+                    if (
+                        step.kind == "tool"
+                        and isinstance(result, ToolResultPart)
+                        and result.tool_name == "msg__send"
+                        and result.error is None
+                    ):
+                        outcome["replies"].append(result.output)
         if record.status != "succeeded":
             raise MessagingError(f"Message handler {record.id}: {record.status}")
         outcome.update(

@@ -162,7 +162,8 @@ provider.
 the exported declaration determines whether it executes as an agic or flow.
 
 Runnable filename stems must match `^[A-Za-z_][A-Za-z0-9_-]{0,63}$`, must not be a
-Windows reserved device name, and must be unique under Unicode `casefold()`.
+Windows reserved device name or the unnamed-entry alias `_`, and must be unique
+under Unicode `casefold()`.
 A runnable module exports exactly one unnamed or filename-matching agic or flow.
 Renaming an unnamed-entry file therefore renames its public runnable
 without editing its source.

@@ -976,6 +976,10 @@ def runnable_module_name(authored_path: str) -> str:
     if len(path.parts) != 2 or path.parts[0] != "runnables" or path.suffix != ".too":
         raise ValueError(f"Runnable module source path is invalid: {authored_path!r}")
     stem = path.stem
+    if stem == "_":
+        raise ValueError(
+            "Runnable module filename is reserved for the unnamed entry alias: '_'"
+        )
     if _RUNNABLE_FILENAME_RE.fullmatch(stem) is None:
         raise ValueError(f"Runnable module filename is not portable: {stem!r}")
     if stem.casefold() in _WINDOWS_RESERVED_FILENAMES:
