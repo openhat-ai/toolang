@@ -23,6 +23,32 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Changed
 
+- **Breaking:** sidecar lock files are renamed to an unprefixed name beside the
+  protected object: `.config.toml.lock`, `.agent.too.lock`, `.caps.lock`,
+  `.chores.lock`, and `.runnables.lock` become `config.toml.lock`,
+  `agent.too.lock`, `caps.lock`, `chores.lock`, and `runnables.lock`, the
+  runtime `status.lock` and `state.lock` become `status.json.lock` and
+  `state.json.lock`, and thread compaction uses `<thread-id>.compact.lock`;
+  `runs.db.threads.lock` is gone because thread fork and rewind now run inside
+  the store's write transaction. Mixed versions do not coordinate where names
+  change, so stop every writer sharing the storage, upgrade together, then
+  restart; remove the old sidecars only while the whole scope is offline.
+
+- Chat and Talk input history move to per-runtime and per-conversation files:
+  Chat reads `<agent-runtime>/chat-history.jsonl` instead of
+  `chat-input-history.jsonl`, and human Talk reads
+  `<root>/.runtime/talk-history/<conversation-id>.jsonl` and
+  `<conversation-id>.draft.txt` instead of
+  `talk-v2/<identity>/<conversation-hash>/`. On first use an absent destination
+  imports the legacy file and leaves the source untouched, so recall history
+  and drafts carry over once, and humans sharing a root and conversation ID now
+  share one history file.
+
+- Incoming message batches now create a fresh `talk` thread per handled batch
+  instead of reusing a shared execution thread; each batch keeps the transport's
+  per-conversation checkpoint context, but the shared thread's earlier model
+  history is no longer inherited.
+
 - Talk target parsing reserves `all` for the system group conversation, so
   `too talk all` no longer opens a direct conversation with an agent named
   `all`: use that agent's canonical `dm_...` ID. A target beginning with `dm_`
@@ -35,6 +61,12 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   even when the invoking CLI differs; a stopped Hub still prints only
   `Hub stopped`, and missing, rejected, malformed, or timed-out metadata
   prints `unknown` without changing the readiness state or exit code.
+
+### Fixed
+
+- Runtime registration and conditional stop now share `status.json.lock`,
+  preventing an old stop from overwriting a concurrently registered runtime
+  report.
 
 ## [0.4.0a5] - 2026-10-12
 
