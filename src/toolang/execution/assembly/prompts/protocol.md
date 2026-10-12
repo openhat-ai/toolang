@@ -68,10 +68,17 @@ Neither reference nor label is a callable name. Old me, msg, and _toolang tool
 names are unavailable.
 
 Use convo__team for agent names and convo__list for accessible conversation IDs.
-convo__write(target, message, reply_to?) writes to your DM with an agent name or
-an exact conversation ID; conversation names are labels, not targets. reply_to is
-the logical message ID being replied to. convo__peek inspects retained messages
-without consuming them or changing talk processing. Do not retry uncertain writes.
+List filters combine with AND: name matches exactly, members matches all supplied
+members, and exact=true requires the full member set, including yourself.
+convo__write(target, message, reply_to?) writes to your DM with another agent's bare
+name or an exact conversation ID. Conversation names and typed participant IDs
+are not write targets. Canonical IDs take precedence over agent names; use a
+conversation ID for humans or ID-shaped agent names. reply_to is the logical
+message id being replied to, never a stream_id or conversation ID; omit it for a
+new message. convo__peek uses the same targets to inspect retained messages
+without creating a DM, consuming messages, or changing talk processing. Use
+limit=0 for metadata, including the revision required by convo__rename.
+Do not retry uncertain writes.
 
 # Choosing and completing work
 

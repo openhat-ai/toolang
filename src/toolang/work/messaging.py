@@ -28,10 +28,13 @@ _CONTEXT = 20
 _INSTRUCTIONS = """Handle this message batch as the receiving agent.
 Use convo__team and convo__list to find agents and conversations; never inspect other agents'
 threads, files, configuration, or shell sessions to discover how to communicate.
-Reply using convo__write to the source conversation, with reply_to set to the source
-message ID, unless explicitly asked to contact someone elsewhere. The tool owns
-the envelope and delivery. Never resend a successful tool send. Your final output
-is a brief handling summary, not a chat message or a replies JSON object.
+Unless explicitly asked to contact someone elsewhere, reply using convo__write
+with target set to the source conversation ID from this batch, message set to
+your reply text, and reply_to set to the source message's id. Never use stream_id
+as reply_to. convo__peek inspects history without consuming messages. The tool
+owns the envelope and delivery. Never resend a confirmed write or retry uncertain
+delivery. Your final output is a brief handling summary, not a chat message or a
+replies JSON object.
 Previous messages/results are context only. Do not re-handle your own messages,
 acknowledgements, completed discussions, or requests addressed only to others.
 If no action is needed, simply note that. Do not send acknowledgements of acknowledgements.

@@ -21,6 +21,13 @@ from toolang.teaming.schemas import (
     participant,
 )
 
+_TARGET_DESCRIPTION = (
+    "Canonical dm_/gc_ conversation ID or another agent's bare name. "
+    "Canonical IDs take precedence; use a conversation ID for humans or "
+    "ID-shaped agent names. Conversation names, typed participant IDs, "
+    "and participant pairs are not accepted."
+)
+
 
 class ConvoToolset:
     name = "convo"
@@ -38,7 +45,7 @@ class ConvoToolset:
 
     def tools(self) -> Mapping[str, Tool]:
         @tool(
-            description="List team members as id, name, and online. Agent names are write targets; humans require a conversation ID. Human online status is null.",
+            description="List team members as id, name, and online in a value array. Agent names are write targets; humans require a conversation ID. Human online status is null.",
             summary=partial(_summary, "team"),
         )
         async def team(context: ToolContext | None = None) -> list[dict[str, Any]]:
@@ -55,7 +62,7 @@ class ConvoToolset:
 
         @tool(
             name="list",
-            description="List accessible conversations as id, name, and members. Name matches exactly. Members accepts agent names or agent:/human: IDs and matches all supplied members; exact requires the complete set, including yourself. Combine filters with AND. No filters lists all.",
+            description="List accessible conversations as id, name, and members in a value array. Name matches exactly. Members accepts a nonempty array of agent names or agent:/human: IDs and matches all supplied members; exact=true requires members and compares the complete set, including yourself. Combine filters with AND. No filters lists all.",
             summary=partial(_summary, "list"),
         )
         async def list_conversations(
@@ -99,12 +106,12 @@ class ConvoToolset:
                 ]
 
         @tool(
-            description="Peek at an accessible conversation by ID or your existing DM with an agent name. Return metadata and the latest limit messages in chronological order; 0 returns metadata only. Does not consume messages or affect talk processing. Never creates a DM.",
+            description="Peek at an accessible conversation or your existing DM. Return conversation metadata and the latest limit messages in chronological order; 0 returns metadata only. Message fields are id, sender, message, and reply_to. Does not consume messages, affect talk processing, or create a DM.",
             summary=partial(_summary, "peek"),
             parameters={
                 "type": "object",
                 "properties": {
-                    "target": {"type": "string"},
+                    "target": {"type": "string", "description": _TARGET_DESCRIPTION},
                     "limit": {
                         "type": "integer",
                         "minimum": 0,
@@ -141,12 +148,12 @@ class ConvoToolset:
                 return {"conversation": asdict(info), "messages": messages}
 
         @tool(
-            description="Write plain text to an agent name (your implicit DM) or an exact dm_/gc_ conversation ID. Names of conversations and typed participant targets are not accepted. A first DM write creates it atomically. Do not resend a confirmed write or automatically retry uncertain delivery.",
+            description="Write plain text as the current agent. A first DM write creates it atomically. Returns {conversation, message: {id, sender, message, reply_to}}. Do not resend a confirmed write or automatically retry uncertain delivery.",
             summary=partial(_summary, "write"),
             parameters={
                 "type": "object",
                 "properties": {
-                    "target": {"type": "string"},
+                    "target": {"type": "string", "description": _TARGET_DESCRIPTION},
                     "message": {"type": "string"},
                     "reply_to": {
                         "type": ["string", "null"],
