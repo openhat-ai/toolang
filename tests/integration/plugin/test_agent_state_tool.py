@@ -402,8 +402,8 @@ def test_failed_atomic_save_preserves_original_file_and_digest(context, monkeypa
     assert result.output["error"] == "io_error"
     assert read(context, "agent.too") == item
     assert sorted(path.name for path in context.home.iterdir()) == [
-        ".agent.too.lock",
         "agent.too",
+        "agent.too.lock",
     ]
 
 
@@ -652,8 +652,8 @@ def test_flow_deletion_is_saved_and_composition_errors_belong_to_watcher(context
     rejected = asyncio.run(watcher.refresh_result())
     assert rejected.state.revision == state.revision
     assert rejected.diagnostics
-    assert (context.home / ".agent.too.lock").is_file()
-    assert (context.home / ".runnables.lock").is_file()
+    assert (context.home / "agent.too.lock").is_file()
+    assert (context.home / "runnables.lock").is_file()
     assert not (context.home / ".authored-flows.lock").exists()
 
 
@@ -690,7 +690,7 @@ def test_config_writes_preserve_original_fields_and_relative_paths(context):
 
     config = context.home / "config.toml"
     assert ConfiguredCaps(config).lock_path == ConfiguredWorkspaces(config).lock_path
-    assert ConfiguredCaps(config).lock_path == context.home / ".config.toml.lock"
+    assert ConfiguredCaps(config).lock_path == context.home / "config.toml.lock"
 
 
 def test_job_reads_never_allocate_and_crud_preserves_full_text(context):
@@ -748,7 +748,7 @@ def test_symlinks_cannot_escape(context, tmp_path, target):
         (context.home / "config.toml").symlink_to(external)
         key = "config.toml"
     else:
-        (context.home / ".caps.lock").symlink_to(external)
+        (context.home / "caps.lock").symlink_to(external)
         key = "prompts/new.md"
     result = invoke(context, "create", key=key, content="changed")
     assert result.output["error"] == "io_error"
@@ -831,7 +831,7 @@ def test_roaming_main_preserves_canonical_link_and_source_mode(tmp_path, source_
     assert layout.program.is_symlink()
     assert sha256(source.read_bytes()).hexdigest() == result.output["digest"]
     assert source.stat().st_mode & 0o777 == 0o755
-    assert (layout.home / ".config.toml.lock").exists()
+    assert (layout.home / "config.toml.lock").exists()
     assert not (layout.home / ".project.lock").exists()
 
 

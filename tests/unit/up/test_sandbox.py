@@ -1238,7 +1238,7 @@ def test_management_lock_reports_waiting_before_the_lock_is_available(tmp_path):
             assert events[-1].status == "ok"
 
     with ThreadPoolExecutor(max_workers=1) as pool:
-        with file_write_lock(layout.sandbox_state.with_suffix(".lock")):
+        with file_write_lock(layout.sandbox_state.with_name("state.json.lock")):
             future = pool.submit(acquire)
             assert waiting.wait(timeout=2)
             assert [event.status for event in events] == ["running"]
@@ -1272,7 +1272,7 @@ def test_shutdown_reports_management_lock_contention(tmp_path, owned_handle):
         return asyncio.run(sandbox.stop(layout, progress=progress))
 
     with ThreadPoolExecutor(max_workers=1) as pool:
-        with file_write_lock(layout.sandbox_state.with_suffix(".lock")):
+        with file_write_lock(layout.sandbox_state.with_name("state.json.lock")):
             future = pool.submit(stop)
             assert waiting.wait(timeout=1), "Shutdown blocked without progress"
             assert not future.done()

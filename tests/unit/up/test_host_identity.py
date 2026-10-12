@@ -43,7 +43,7 @@ def test_managed_ack_does_not_wait_for_parent_lock(tmp_path: Path) -> None:
     )
     SandboxState("host", ref).save(layout.sandbox_state)
     with ThreadPoolExecutor() as pool:
-        with file_write_lock(layout.sandbox_state.with_suffix(".lock")):
+        with file_write_lock(layout.sandbox_state.with_name("state.json.lock")):
             result = pool.submit(
                 asyncio.run,
                 sandbox.register_host_server(
@@ -109,7 +109,7 @@ def test_removal_retains_control_lock_and_clears_stale_ref(tmp_path: Path) -> No
     ref = host.process_ref(os.getpid(), "http://localhost:1")
     ref = replace(ref, meta={**ref.meta, "created": 0.0})
     SandboxState("host", ref).save(layout.sandbox_state)
-    lock = layout.sandbox_state.with_suffix(".lock")
+    lock = layout.sandbox_state.with_name("state.json.lock")
     inode = lock.stat().st_ino
     asyncio.run(sandbox.remove_agent(layout))
     assert not layout.home.exists() and not layout.sandbox_state.exists()

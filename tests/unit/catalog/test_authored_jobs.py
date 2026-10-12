@@ -131,4 +131,4 @@ def test_authoring_lock_is_reentrant(tmp_path: Path) -> None:
     with catalog.write_lock():
         item = catalog.create(ChoreFile.parse("Work.", name="cleanup"))
         catalog.update(item.with_body("Updated."))
-    assert catalog.lock_path == tmp_path / ".chores.lock"
+    assert catalog.lock_path == tmp_path / "chores.lock"

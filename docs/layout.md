@@ -121,6 +121,7 @@ Key paths:
 | `logs/<agic>/<run_id>.log` | Per-run script logs when `PY_LOG` is set |
 | `runs.db` | Threads, controls, runs, steps, model inputs, and chore checkpoints   |
 | `ids.json`     | Local id allocator state                                     |
+| `chat-history.jsonl` | Chat input recall history                               |
 | `tools/`       | Per-toolset plugin working directories                       |
 | `channels/messaging/` | Hub/Talk transport checkpoints                        |
 
@@ -129,8 +130,44 @@ Server ownership lives separately in
 reference. Host references contain PID, process creation time, and signal scope;
 guest references retain the sandbox adapter's instance identity. `status.json`
 is a descriptive report and does not establish ownership. The adjacent
-`state.lock` serializes management operations and remains outside the agent home
+`state.json.lock` serializes management operations and remains outside the agent home
 so removal cannot replace a lock held by another operation.
+
+Human Talk stores input history and drafts under the root's
+`.runtime/talk-history/<conversation-id>.jsonl` and
+`.runtime/talk-history/<conversation-id>.draft.txt`. These files are shared by
+human viewers of the same conversation ID in one root. Chat history follows the
+selected agent runtime, including its instance directory. Neither file is the
+conversation message store or execution history.
+
+On first use, absent destinations import the old `chat-input-history.jsonl` or
+the current viewer/dataset's `talk-v2/<identity>/<conversation-hash>/` files.
+Existing destinations win and legacy files remain untouched.
+
+## File Locks
+
+Locks remain beside their protected objects, without a dedicated lock directory:
+
+| Lock | Purpose |
+| --- | --- |
+| `config.toml.lock`, `agent.too.lock` | Authored file updates |
+| `caps.lock`, `chores.lock`, `runnables.lock` | Authored collection updates |
+| `<database-name>.init.lock` | SQLite initialization |
+| `<thread-id>.compact.lock` | Thread compaction across model calls |
+| `status.json.lock` | Runtime status updates |
+| `state.json.lock` | Sandbox lifecycle |
+| `prepare.lock`, `check.lock` | State preparation and publication |
+| `hub.lock` | One Hub process per root for its lifetime |
+
+Thread fork/rewind use SQLite transactions, without `runs.db.threads.lock`.
+Incoming message batches create separate `talk` threads and retain the transport's
+per-conversation checkpoint context rather than a shared execution thread.
+ID allocation locks `ids.json` directly; there is no separate ID lock file.
+
+Stop all writers sharing storage before upgrading across these lock-name changes.
+Released sidecars remain empty files; existence does not mean a lock is held.
+Do not delete them while processes may use them. Legacy lock files remain in
+place and may be removed only while the entire affected scope is offline.
 
 
 ## Agent State

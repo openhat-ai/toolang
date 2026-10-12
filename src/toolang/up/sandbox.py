@@ -27,7 +27,7 @@ from toolang.base.types.progress import (
     ProgressStatus,
 )
 from toolang.base.types.sandbox import SandboxOutput, SandboxRef, SandboxRequest
-from toolang.common.files import file_write_lock
+from toolang.common.files import file_lock_path, file_write_lock
 from toolang.common.progress import emit_progress
 from toolang.common.layout import AgentLayout
 from toolang.common.config_sources import config_sources
@@ -177,7 +177,7 @@ async def launch(
 ) -> SandboxHandle:
     """Launch an AgentServer and return after it becomes ready."""
 
-    lock_path = spec.serve.layout.sandbox_state.with_suffix(".lock")
+    lock_path = file_lock_path(spec.serve.layout.sandbox_state)
     async with _task_lock(lock_path):
         with management_lock(spec.serve.layout, progress=progress):
             return await _launch_locked(spec, progress=progress)
@@ -207,7 +207,7 @@ def management_lock(
             detail=layout.name,
         )
 
-    with file_write_lock(layout.sandbox_state.with_suffix(".lock"), on_wait=on_wait):
+    with file_write_lock(file_lock_path(layout.sandbox_state), on_wait=on_wait):
         if waiting:
             emit_progress(
                 progress,
@@ -634,7 +634,7 @@ async def stop(
 ) -> bool:
     """Stop and release the currently hosted AgentServer."""
 
-    lock_path = layout.sandbox_state.with_suffix(".lock")
+    lock_path = file_lock_path(layout.sandbox_state)
     async with _task_lock(lock_path):
         with management_lock(layout, stage="stop", progress=progress):
             _reject_legacy_state(layout)
@@ -665,7 +665,7 @@ async def stop_handle(
 ) -> bool:
     """Stop and release one exact process-owned sandbox workload."""
 
-    lock_path = layout.sandbox_state.with_suffix(".lock")
+    lock_path = file_lock_path(layout.sandbox_state)
     async with _task_lock(lock_path):
         with management_lock(layout, stage="stop", progress=progress):
             _reject_legacy_state(layout)
@@ -849,7 +849,7 @@ def _health_ready(url: str) -> bool:
 
 def _clear_state(layout: AgentLayout, *, expected: SandboxState) -> None:
     path = layout.sandbox_state
-    with file_write_lock(path.with_suffix(".lock")):
+    with file_write_lock(file_lock_path(path)):
         current = SandboxState.load(path)
         if current == expected:
             from toolang.up.process import _load_runtime_state, stop_runtime_state
@@ -869,7 +869,7 @@ async def register_host_server(
     if launch_id is not None:
         deadline = time.monotonic() + HOST_ACK_TIMEOUT_SEC
         while time.monotonic() < deadline:
-            # The parent holds state.lock until readiness: only read atomic snapshots.
+            # The parent holds state.json.lock until readiness: only read atomic snapshots.
             state = SandboxState.snapshot(layout.sandbox_state)
             if state is not None:
                 ref = state.ref
@@ -884,7 +884,7 @@ async def register_host_server(
             await asyncio.sleep(0.02)
         raise TimeoutError("host launcher did not register the server")
 
-    lock_path = layout.sandbox_state.with_suffix(".lock")
+    lock_path = file_lock_path(layout.sandbox_state)
     async with _task_lock(lock_path):
         with file_write_lock(lock_path):
             await _release_stopped_locked(layout)
@@ -897,7 +897,7 @@ async def register_host_server(
 async def remove_agent(layout: AgentLayout) -> None:
     """Keep the final stopped check and home deletion in one management operation."""
 
-    lock_path = layout.sandbox_state.with_suffix(".lock")
+    lock_path = file_lock_path(layout.sandbox_state)
     async with _task_lock(lock_path):
         with file_write_lock(lock_path):
             await _release_stopped_locked(layout)
@@ -907,7 +907,7 @@ async def remove_agent(layout: AgentLayout) -> None:
 async def release_stopped(layout: AgentLayout) -> None:
     """Release any stopped sandbox resources before embedded execution."""
 
-    lock_path = layout.sandbox_state.with_suffix(".lock")
+    lock_path = file_lock_path(layout.sandbox_state)
     async with _task_lock(lock_path):
         with file_write_lock(lock_path):
             await _release_stopped_locked(layout)

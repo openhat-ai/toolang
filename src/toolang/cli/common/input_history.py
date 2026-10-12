@@ -5,8 +5,36 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime
 import json
+import os
 from pathlib import Path
+import tempfile
 from typing import Any
+
+
+def import_legacy_file(source: Path, destination: Path) -> None:
+    """Import a local history or draft without replacing any existing target."""
+
+    if os.path.lexists(destination):
+        return
+    try:
+        content = source.read_bytes()
+    except FileNotFoundError:
+        return
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary = tempfile.mkstemp(
+        dir=destination.parent, prefix=".toolang-history-"
+    )
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        try:
+            os.link(temporary, destination)
+        except FileExistsError:
+            pass
+    finally:
+        Path(temporary).unlink()
 
 
 @dataclass(frozen=True, slots=True)

@@ -16,6 +16,7 @@ from toolang.common.layout import AgentLayout
 from toolang.execution.executor import RunExecutor, RunSpec
 from toolang.execution.runnables import resolve_runnable_reference, runnable_fallback
 from toolang.execution.threads import ThreadManager
+from toolang.execution.types import ThreadPrefix
 from toolang.lang.input import resolve_runnable_input
 from toolang.teaming.types import MessageReceiver
 from toolang.teaming.errors import ConversationAccessDenied, MessagingError
@@ -196,7 +197,7 @@ class MessagingLoop:
         spec = RunSpec(
             setup=setup,
             state=state,
-            thread=self.threads.talk_thread(),
+            thread=self.threads.create(prefix=ThreadPrefix.TALK),
             workdir=self.executor.resolve_workdir(
                 setup, state, workdir=None, inherit_thread_workdir=False
             ),

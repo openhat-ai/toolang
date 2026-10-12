@@ -10,7 +10,7 @@ from typing import Any
 
 import msgspec
 
-from toolang.common.files import atomic_write_text, file_write_lock
+from toolang.common.files import atomic_write_text
 from toolang.common.json import dumps
 
 CACHE_SCHEMA = 10
@@ -76,8 +76,7 @@ def store_document(
         return False
     if scan_content and _serialized_data_is_unsafe(content, payload):
         return False
-    with file_write_lock(path.with_name(f".{path.name}.lock"), inherit_owner=True):
-        atomic_write_text(path, content, inherit_owner=True)
+    atomic_write_text(path, content, inherit_owner=True)
     return True
 
 

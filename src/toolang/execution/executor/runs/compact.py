@@ -65,7 +65,7 @@ async def invoke(state: _AgicState, step: StepRef) -> dict[str, Any]:
         raise ToolangError("compact can only be initiated by model preflight")
     history = execution.message_history()
     target = ThreadRef.parse(history.thread)
-    lock = store.db_path.with_name(f"{store.db_path.name}.{target}.compact.lock")
+    lock = store.db_path.with_name(f"{target}.compact.lock")
     async with compaction.permit(lock):
         execution.raise_if_canceling(step.run_id, call=True)
         end = compaction_boundary(state)

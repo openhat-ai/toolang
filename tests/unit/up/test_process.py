@@ -152,3 +152,57 @@ def test_container_reports_match_the_instance_not_guest_pid(
     )
     report = process.AgentProcess(layout).state()
     assert (report is not None) is (instance == "a" * 12)
+
+
+def test_runtime_registration_waits_for_conditional_stop(tmp_path, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from contextlib import contextmanager
+    from threading import Event
+
+    from toolang.common.files import file_write_lock
+
+    layout = AgentLayout.resident(tmp_path, "alice")
+    process.write_runtime_state(layout, endpoint="http://old", started_at="old", pid=1)
+    read = Event()
+    finish_stop = Event()
+    waiting = Event()
+    load = process._load_runtime_state
+
+    def pause_read(path):
+        state = load(path)
+        read.set()
+        assert finish_stop.wait(timeout=5)
+        return state
+
+    @contextmanager
+    def observed_lock(path):
+        assert path == layout.runtime_status.with_name("status.json.lock")
+        with file_write_lock(path, on_wait=waiting.set):
+            yield
+
+    monkeypatch.setattr(process, "_load_runtime_state", pause_read)
+    monkeypatch.setattr(process, "file_write_lock", observed_lock)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        stopping = pool.submit(
+            process.stop_runtime_state,
+            layout,
+            expected_pid=1,
+            expected_started_at="old",
+        )
+        try:
+            assert read.wait(timeout=5)
+            registering = pool.submit(
+                process.write_runtime_state,
+                layout,
+                endpoint="http://new",
+                started_at="new",
+                pid=2,
+            )
+            assert waiting.wait(timeout=2)
+        finally:
+            finish_stop.set()
+        assert stopping.result(timeout=5)
+        registering.result(timeout=5)
+    state = load(layout.runtime_status)
+    assert state is not None and state["pid"] == 2 and state["status"] == "running"
+    assert not process.stop_runtime_state(layout, expected_pid=1)

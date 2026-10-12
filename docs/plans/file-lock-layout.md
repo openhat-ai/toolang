@@ -1,6 +1,6 @@
 # File lock simplification
 
-Status: Proposed; awaiting human approval. Definition only.
+Status: Approved on 2026-10-12.
 
 ## Goal
 
@@ -78,7 +78,6 @@ contention, fresh incoming-message threads with checkpoint context, readable
 concurrent cache replacements, conditional status updates, per-ID compaction
 exclusion/cancellation, unique IDs without a sidecar, unchanged source revisions,
 lock inode/ownership safety, and offline upgrade. Run default repository checks.
-The audit verified implementation and call sites; concurrency tests have not run.
 
 Risks: missed cooperating writers, mixed versions, sidecar-name conflicts,
 intentional compaction exclusion for matching IDs across same-directory stores,

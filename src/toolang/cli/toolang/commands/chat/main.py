@@ -21,6 +21,7 @@ from toolang.cli.common.policy import (
     resolve_ceiling_overrides,
     resolve_limit_overrides,
 )
+from toolang.cli.common.input_history import import_legacy_file
 from toolang.common.errors import ToolangError
 from toolang.execution.events import RunObservation, RunSnapshot
 from toolang.execution.events import PartDelta, RunBegin, RunEnd, StepEnd
@@ -288,7 +289,12 @@ def _chat_input_history_store(ctx: typer.Context) -> ChatInputHistoryStore | Non
         layout = context_layout(ctx)
     except (AttributeError, KeyError, TypeError):
         return None
-    return ChatInputHistoryStore(layout.runtime / "chat-input-history.jsonl")
+    path = layout.runtime / "chat-history.jsonl"
+    try:
+        import_legacy_file(layout.runtime / "chat-input-history.jsonl", path)
+    except OSError as exc:
+        raise ClickException(f"Cannot import Chat input history: {exc}") from exc
+    return ChatInputHistoryStore(path)
 
 
 def _chat_interactive_prompt_toolkit(

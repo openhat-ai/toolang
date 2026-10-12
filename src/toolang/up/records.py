@@ -8,7 +8,7 @@ from pathlib import Path
 
 
 from toolang.base.types.sandbox import SandboxRef
-from toolang.common.files import atomic_write_text, file_write_lock
+from toolang.common.files import atomic_write_text, file_lock_path, file_write_lock
 from toolang.teaming.records import HubRecord as HubRecord
 
 SANDBOX_STATE_VERSION = 1
@@ -33,7 +33,7 @@ class SandboxState:
             "sandbox": self.sandbox,
             "ref": self.ref.to_data(),
         }
-        with file_write_lock(path.with_suffix(".lock")):
+        with file_write_lock(file_lock_path(path)):
             atomic_write_text(
                 path,
                 json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)
@@ -42,7 +42,7 @@ class SandboxState:
 
     @classmethod
     def load(cls, path: Path) -> SandboxState | None:
-        with file_write_lock(path.with_suffix(".lock")):
+        with file_write_lock(file_lock_path(path)):
             return cls.snapshot(path)
 
     @classmethod

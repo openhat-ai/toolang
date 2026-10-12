@@ -1013,17 +1013,32 @@ def test_chat_runtime_does_not_fall_back_after_remote_health_failure(
             raise AssertionError("failed remote must not open Chat")
 
 
+@pytest.mark.parametrize("instance", [None, "guest"])
 def test_chat_ui_paths_follow_the_selected_layout(
     tmp_path: Path,
     monkeypatch: Any,
+    instance: str | None,
 ) -> None:
     layout = AgentLayout.roaming(tmp_path / "alice.too")
+    if instance is not None:
+        from dataclasses import replace
+
+        layout = replace(layout, instance=instance)
+    legacy = layout.runtime / "chat-input-history.jsonl"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text('{"text":"previous"}\n', encoding="utf-8")
     monkeypatch.setattr(chat, "context_layout", lambda _ctx: layout)
 
     history = chat._chat_input_history_store(object())  # type: ignore[arg-type]
 
     assert history is not None
-    assert history.path == layout.runtime / "chat-input-history.jsonl"
+    assert history.path == layout.runtime / "chat-history.jsonl"
+    assert history.load() == ["previous"]
+    history.append("new")
+    reopened = chat._chat_input_history_store(object())  # type: ignore[arg-type]
+    assert reopened is not None
+    assert reopened.load() == ["previous", "new"]
+    assert legacy.read_text() == '{"text":"previous"}\n'
 
 
 def test_chat_runtime_forwards_dev_when_acquiring_a_guest(

@@ -1,6 +1,6 @@
 # CLI input history paths
 
-Status: Proposed; awaiting human approval. Definition only.
+Status: Approved on 2026-10-12.
 
 ## Paths
 

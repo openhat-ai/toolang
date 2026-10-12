@@ -49,7 +49,8 @@ class TalkTui:
         client: HubClient,
         conversation: ConversationView,
         human: str,
-        state: Path,
+        history_path: Path,
+        draft_path: Path,
         surfaces: TerminalSurfaces,
         *,
         read_only: bool,
@@ -76,7 +77,7 @@ class TalkTui:
         self.inputbox_max_width = (
             max_width if inputbox_max_width is None else inputbox_max_width
         )
-        self.draft = state / "draft.txt"
+        self.draft = draft_path
         self._draft_loaded = False
         self.connection = "Connecting…"
         self.status = ""
@@ -86,7 +87,7 @@ class TalkTui:
         self._input_gap_visible = True
         self.prompt = InputBox(
             self.invalidate,
-            history_store=InputHistoryStore(state / "input.jsonl"),
+            history_store=InputHistoryStore(history_path),
             on_input=self.save_draft,
             normalize=lambda text: text,
             get_max_rows=lambda: max(

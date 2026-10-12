@@ -551,3 +551,86 @@ def test_listener_failure_does_not_roll_back_a_thread_control(
             )
 
     asyncio.run(scenario())
+
+
+def _fork_same_request(db_path, state_path, thread, ready, gate, result):
+    from toolang.common.ids import IdIssuer
+
+    store = RunStore(Path(db_path))
+    try:
+        manager = ThreadManager(store, IdIssuer(Path(state_path), "alice"))
+        ready.put(True)
+        if not gate.wait(timeout=20):
+            raise TimeoutError("fork workers did not start")
+        try:
+            forked = manager.fork(thread_id=thread, request_id="shared-request")
+        except ValueError as exc:
+            result.put(("rejected", str(exc)))
+        else:
+            result.put(("applied", forked))
+    finally:
+        store.close()
+
+
+def test_concurrent_process_forks_commit_one_request_without_sidecar(tmp_path):
+    import multiprocessing
+
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=_CHAT_SOURCE,
+        responses=[ModelCallResult(message=Message.assistant("answer"))],
+    )
+
+    async def prepare():
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            await harness.executor.run(
+                harness.run_spec(
+                    thread=thread, runnable="chat", primary=resolve_input_parts("hello")
+                )
+            )
+            return thread
+
+    thread = asyncio.run(prepare())
+    context = multiprocessing.get_context("spawn")
+    ready, result, gate = context.Queue(), context.Queue(), context.Event()
+    workers = [
+        context.Process(
+            target=_fork_same_request,
+            args=(
+                str(harness.store.db_path),
+                str(harness.ids.state_path),
+                thread,
+                ready,
+                gate,
+                result,
+            ),
+        )
+        for _ in range(2)
+    ]
+    try:
+        for worker in workers:
+            worker.start()
+        assert ready.get(timeout=20) and ready.get(timeout=20)
+        gate.set()
+        outcomes = [result.get(timeout=20) for _ in workers]
+        assert sorted(status for status, _ in outcomes) == ["applied", "rejected"]
+        assert "request already exists" in next(
+            value for status, value in outcomes if status == "rejected"
+        )
+        store = RunStore(harness.store.db_path)
+        try:
+            assert len(store.list_threads()) == 2
+        finally:
+            store.close()
+    finally:
+        gate.set()
+        for worker in workers:
+            worker.join(timeout=5)
+            if worker.is_alive():
+                worker.terminate()
+                worker.join(timeout=5)
+        ready.close()
+        result.close()
+    assert all(worker.exitcode == 0 for worker in workers)
+    assert not harness.store.db_path.with_name("runs.db.threads.lock").exists()
