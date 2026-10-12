@@ -130,58 +130,58 @@ summaries; plugins need no new interface or registration metadata. Normal summar
 use action plus explicit object, without a tool-name prefix. `{...}` is display
 data; omit the colon with an absent target.
 
-| Tool ref | Running / succeeded sentence |
-| --- | --- |
-| `state/list` | `Listing / Listed agent files` |
-| `state/get` | `Reading / Read agent file: {key}` |
-| `state/create` | `Creating / Created agent file: {key}` |
-| `state/update` | `Updating / Updated agent file: {key}` |
-| `state/delete` | `Deleting / Deleted agent file: {key}` |
-| `state/sync` | `Syncing / Synced agent state` |
-| `fs/list` | `Listing / Listed files: {path}` |
-| `fs/read` | `Reading / Read file: {path}` |
-| `fs/write` | `Writing / Wrote file: {path}` |
-| `fs/append` | `Appending to / Appended to file: {path}` |
-| `fs/glob` | `Matching / Matched files: {pattern} in {path}` |
-| `fs/stat` | `Inspecting / Inspected path: {path}` |
-| `fs/mkdir` | `Creating / Created directory: {path}` |
-| `fs/remove` | `Removing / Removed path: {path}` |
-| `shell/execute` | `Running / Ran command: {command}` |
-| `web/search` | `Searching / Searched web: {query}` |
-| `history/read_threads` | `Reading / Read threads` |
-| `history/read_runs` | `Reading / Read runs: {thread}` |
-| `history/read_steps` | `Reading / Read steps: {run}` |
-| `history/read_output` | `Reading / Read run output: {run}` |
-| `runtime/runnables` | `Discovering / Discovered runnables` (or `runnable: {name}`) |
-| `runtime/chdir` | `Changing / Changed workdir: {path}` |
-| `runtime/run` | `Running / Completed child run: {runnable}` |
-| `runtime/run` with `async=true` | `Starting / Started child run: {runnable}` |
-| `runtime/spawn` | `Spawning / Spawned new run: {runnable}` |
-| `runtime/await` | `Waiting for / Received run result: {target}` |
-| `runtime/exec` | `Switching to / Switched to runnable: {runnable}` |
-| `runtime/pick` | `Loading / Loaded guidance: {kind}/{ref}` |
-| `runtime/honor` | `Loading / Loaded rules` (successful result may add `: {files}`) |
-| `runtime/compact` | `Compacting / Compacted thread history` |
-| `service/start_bridge` | `Starting / Started service bridge: {service}` |
-| `service/stop_bridge` | `Stopping / Stopped service connection: {service}` |
-| `service/init` | `Initializing / Initialized service session: {service}` |
-| `service/start_auth` | `Starting / Started service authorization: {service}` |
-| `service/complete_auth` | `Completing / Completed service authorization: {service}` |
-| `service/list_tools` | `Listing / Listed service tools: {service}` |
-| `service/call_tool` | `Calling / Called service tool: {service}/{tool_name}` |
-| `service/list_resources` | `Listing / Listed service resources: {service}` |
-| `service/list_resource_templates` | `Listing / Listed service resource templates: {service}` |
-| `service/read_resource` | `Reading / Read service resource: {service} {resource_uri}` |
-| `service/list_prompts` | `Listing / Listed service prompts: {service}` |
-| `service/get_prompt` | `Getting / Got service prompt: {service}/{prompt_name}` |
-| `convo/team` | `Listing / Listed team members` |
-| `convo/list` | `Listing / Listed conversations: {filter}` |
-| `convo/peek` | `Reading / Read conversation messages: {target}` (`conversation: {target}` when `limit=0`) |
-| `convo/write` | `Writing message: {target}` / `Wrote message: {conversation}` |
-| `convo/create` | `Creating conversation: {name}` / `Created conversation: {id}` |
-| `convo/rename` | `Renaming conversation: {conversation}` / `Renamed conversation: {old_name} → {name} ({conversation})` |
-| `convo/join` | `Joining / Joined conversation: {conversation}` |
-| `convo/leave` | `Leaving / Left conversation: {conversation}` |
+| Tool ref | Running / succeeded sentence | Failed sentence |
+| --- | --- | --- |
+| `state/list` | `Listing / Listed agent files` | `Failed to list agent files` |
+| `state/get` | `Reading / Read agent file: {key}` | `Failed to read agent file: {key}` |
+| `state/create` | `Creating / Created agent file: {key}` | `Failed to create agent file: {key}` |
+| `state/update` | `Updating / Updated agent file: {key}` | `Failed to update agent file: {key}` |
+| `state/delete` | `Deleting / Deleted agent file: {key}` | `Failed to delete agent file: {key}` |
+| `state/sync` | `Syncing / Synced agent state` | `Failed to sync agent state` |
+| `fs/list` | `Listing / Listed files: {path}` | `Failed to list files: {path}` |
+| `fs/read` | `Reading / Read file: {path}` | `Failed to read file: {path}` |
+| `fs/write` | `Writing / Wrote file: {path}` | `Failed to write file: {path}` |
+| `fs/append` | `Appending to / Appended to file: {path}` | `Failed to append to file: {path}` |
+| `fs/glob` | `Matching / Matched files: {pattern} in {path}` | `Failed to match files: {pattern} in {path}` |
+| `fs/stat` | `Inspecting / Inspected path: {path}` | `Failed to inspect path: {path}` |
+| `fs/mkdir` | `Creating / Created directory: {path}` | `Failed to create directory: {path}` |
+| `fs/remove` | `Removing / Removed path: {path}` | `Failed to remove path: {path}` |
+| `shell/execute` | `Running / Ran command: {command}` | `Failed to run command: {command}` |
+| `web/search` | `Searching / Searched web: {query}` | `Failed to search web: {query}` |
+| `history/read_threads` | `Reading / Read threads` | `Failed to read threads` |
+| `history/read_runs` | `Reading / Read runs: {thread}` | `Failed to read runs: {thread}` |
+| `history/read_steps` | `Reading / Read steps: {run}` | `Failed to read steps: {run}` |
+| `history/read_output` | `Reading / Read run output: {run}` | `Failed to read run output: {run}` |
+| `runtime/runnables` | `Discovering / Discovered runnables` (or `runnable: {name}`) | `Failed to discover runnables` (or `runnable: {name}`) |
+| `runtime/chdir` | `Changing / Changed workdir: {path}` | `Failed to change workdir: {path}` |
+| `runtime/run` | `Running / Completed child run: {runnable}` | `Failed to complete child run: {runnable}` |
+| `runtime/run` with `async=true` | `Starting / Started child run: {runnable}` | `Failed to start child run: {runnable}` |
+| `runtime/spawn` | `Spawning / Spawned new run: {runnable}` | `Failed to spawn new run: {runnable}` |
+| `runtime/await` | `Waiting for / Received run result: {target}` | `Failed to receive run result: {target}` |
+| `runtime/exec` | `Switching to / Switched to runnable: {runnable}` | `Failed to switch to runnable: {runnable}` |
+| `runtime/pick` | `Loading / Loaded guidance: {kind}/{ref}` | `Failed to load guidance: {kind}/{ref}` |
+| `runtime/honor` | `Loading / Loaded rules` (successful result may add `: {files}`) | `Failed to load rules` |
+| `runtime/compact` | `Compacting / Compacted thread history` | `Failed to compact thread history` |
+| `service/start_bridge` | `Starting / Started service bridge: {service}` | `Failed to start service bridge: {service}` |
+| `service/stop_bridge` | `Stopping / Stopped service connection: {service}` | `Failed to stop service connection: {service}` |
+| `service/init` | `Initializing / Initialized service session: {service}` | `Failed to initialize service session: {service}` |
+| `service/start_auth` | `Starting / Started service authorization: {service}` | `Failed to start service authorization: {service}` |
+| `service/complete_auth` | `Completing / Completed service authorization: {service}` | `Failed to complete service authorization: {service}` |
+| `service/list_tools` | `Listing / Listed service tools: {service}` | `Failed to list service tools: {service}` |
+| `service/call_tool` | `Calling / Called service tool: {service}/{tool_name}` | `Failed to call service tool: {service}/{tool_name}` |
+| `service/list_resources` | `Listing / Listed service resources: {service}` | `Failed to list service resources: {service}` |
+| `service/list_resource_templates` | `Listing / Listed service resource templates: {service}` | `Failed to list service resource templates: {service}` |
+| `service/read_resource` | `Reading / Read service resource: {service} {resource_uri}` | `Failed to read service resource: {service} {resource_uri}` |
+| `service/list_prompts` | `Listing / Listed service prompts: {service}` | `Failed to list service prompts: {service}` |
+| `service/get_prompt` | `Getting / Got service prompt: {service}/{prompt_name}` | `Failed to get service prompt: {service}/{prompt_name}` |
+| `convo/team` | `Listing / Listed team members` | `Failed to list team members` |
+| `convo/list` | `Listing / Listed conversations: {filter}` | `Failed to list conversations: {filter}` |
+| `convo/peek` | `Reading / Read conversation messages: {target}` (`conversation: {target}` when `limit=0`) | `Failed to read conversation messages: {target}` (`conversation: {target}` when `limit=0`) |
+| `convo/write` | `Writing message: {target}` / `Wrote message: {conversation}` | `Failed to write message: {target}` |
+| `convo/create` | `Creating conversation: {name}` / `Created conversation: {id}` | `Failed to create conversation: {name}` |
+| `convo/rename` | `Renaming conversation: {conversation}` / `Renamed conversation: {old_name} → {name} ({conversation})` | `Failed to rename conversation: {conversation} → {name}` |
+| `convo/join` | `Joining / Joined conversation: {conversation}` | `Failed to join conversation: {conversation}` |
+| `convo/leave` | `Leaving / Left conversation: {conversation}` | `Failed to leave conversation: {conversation}` |
 
 Special cases:
 
@@ -193,13 +193,17 @@ Special cases:
   alice, bob` or `only alice, bob`; omit it when unfiltered.
 - Rename success uses `previous_name` and the requested new name; quote names and
   render null as `unnamed`. Missing/malformed prior-name data falls back to the
-  conversation ID; failure never claims the rename succeeded. Formatters perform
-  no metadata reads.
-- History cursor pages say `Reading/Read more threads/runs/steps`, never the cursor.
+  conversation ID. Failure uses the input ID and requested name, without assuming
+  an old name was retrieved. Formatters perform no metadata reads.
+- History cursor pages say `Reading/Read/Failed to read more threads/runs/steps`, never the cursor.
   Stop_bridge covers both stdio shutdown and HTTP session/auth cleanup.
-- Failure uses `Failed to <base action> <object/target>`; cancellation keeps
-  `Canceled: <running summary>`. Keep the ToolResult error boundary, including
-  nested service responses and shell exit handling. Failed sync never claims success.
+- Failure uses the table's explicit text and input targets, never success-only
+  result fields. Keep the ToolResult error boundary, including nested service
+  responses and shell exit handling; do not treat arbitrary payload fields as
+  execution failure. Error details retain their existing display; do not append
+  raw errors to summaries or imply rollback/non-delivery after an uncertain result.
+  Cancellation uses `Canceled: <running summary>` for every built-in, e.g.
+  `Canceled: Creating conversation: Development`; never use success wording.
 - Preserve URI/path labels, command/query quoting, and guidance/rules formatting.
   Summaries use isolated, masked inputs/results and perform no I/O. Omit contents,
   message bodies, nested service inputs, auth URLs/tokens, digests, result dumps,
@@ -265,7 +269,7 @@ Paths below are relative to `src/toolang`, except `pyproject.toml` and documenta
 | --- | --- |
 | Registration/authority | Exactly 49 mapped leaves; old names fail, reserved runtime cannot be registered externally, ceilings and runtime-only visibility hold |
 | Identity | `/`, `__`, and `.` remain boundary-specific, including single-underscore components; mistaken calls suggest only an exact advertised counterpart and invoke nothing |
-| Summaries | Catalog coverage for running/success/failure; table and special cases match; masked isolated data, no I/O or payload leaks; malformed fields/cancellation remain safe |
+| Summaries | Every catalog row matches running/success/failure text, including sync/async run; cancellation wraps the running summary; failures before a result retain input targets, no success-only fields or raw-error leaks; ToolResult error boundaries, special cases, masking, isolation, no I/O, and malformed-field safety hold |
 | External plugins | Class/function plugins with absent or broken hooks still run; all fallback states retain identity and argument preview across ordering, missing-ref, masking, truncation, and empty-value cases |
 | Rendering/history | Chat/Script, TTY/non-TTY, parallel/narrow layouts preserve hierarchy and saved wording; old runtime records replay correctly without formatters or record rewrites |
 | Discovery/setup | Fresh/refreshed Setup and disabled-teaming behavior work; directory access holds; team exposes only id/name/online with agent/human presence semantics; list exposes only id/name/members; name filters cover zero/duplicate/case/invalid inputs; member filters cover contains/exact, name combinations, normalized duplicates/order, explicit self, unknown/invalid/empty members, and exact without members |
