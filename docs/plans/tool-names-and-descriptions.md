@@ -146,7 +146,7 @@ data; omit the colon with an absent target.
 | `fs/stat` | `Inspecting / Inspected path: {path}` | `Failed to inspect path: {path}` |
 | `fs/mkdir` | `Creating / Created directory: {path}` | `Failed to create directory: {path}` |
 | `fs/remove` | `Removing / Removed path: {path}` | `Failed to remove path: {path}` |
-| `shell/execute` | `Running / Ran command: {command}` | `Failed to run command: {command}` |
+| `shell/execute` | `Running / Ran shell command: {command}` | `Failed to run shell command: {command}` |
 | `web/search` | `Searching / Searched web: {query}` | `Failed to search web: {query}` |
 | `history/read_threads` | `Reading / Read threads` | `Failed to read threads` |
 | `history/read_runs` | `Reading / Read runs: {thread}` | `Failed to read runs: {thread}` |
