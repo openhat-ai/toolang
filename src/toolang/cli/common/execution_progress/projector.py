@@ -1112,17 +1112,27 @@ class ProgressProjector:
             None,
         )
         target = committed_exec_target(state.operation, end)
-        if pending is not None:
-            index = run.pending_executes.index(pending)
-            if target is None:
+        if target is None:
+            if pending is not None:
+                index = run.pending_executes.index(pending)
                 run.pending_executes.pop(index)
-                return None
-            pending = PendingExecute(state.begin.step, target, ready=True)
-            run.pending_executes[index] = pending
-        elif target is not None:
-            pending = PendingExecute(state.begin.step, target, ready=True)
-            run.pending_executes.append(pending)
-        return pending
+            return None
+        row = ProgressRow(
+            end.noted.summary
+            if state.operation.tool
+            and isinstance(end.noted, ToolStepNoted)
+            and end.noted.summary
+            else f"exec → {target}",
+            leader="handoff",
+            tool_identity=state.operation.tool_identity,
+            tool_status=end.status if state.operation.tool else None,
+        )
+        completed = PendingExecute(state.begin.step, target, ready=True, row=row)
+        if pending is not None:
+            run.pending_executes[run.pending_executes.index(pending)] = completed
+        else:
+            run.pending_executes.append(completed)
+        return completed
 
     def _advance_execute(
         self,
@@ -1148,12 +1158,10 @@ class ProgressProjector:
 
         rows: list[ProgressRow] = []
         if handoff is not None and state.lane_owner is None:
+            assert handoff.row is not None
             rows.extend(
                 (
-                    ProgressRow(
-                        f"exec → {handoff.runnable}",
-                        leader="handoff",
-                    ),
+                    handoff.row,
                     ProgressRow(""),
                 )
             )
@@ -1178,12 +1186,10 @@ class ProgressProjector:
             for pending in run.pending_executes:
                 if not pending.ready:
                     continue
+                assert pending.row is not None
                 rows.extend(
                     (
-                        ProgressRow(
-                            f"exec → {pending.runnable}",
-                            leader="handoff",
-                        ),
+                        pending.row,
                         ProgressRow(""),
                     )
                 )

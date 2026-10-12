@@ -193,7 +193,8 @@ agic child() -> Text:
             assert projector._root_ended
             if outcome == "succeeded":
                 assert len(handoffs) == 1
-                assert handoffs[0].text == f"exec → {target}"
+                assert handoffs[0].text == f"Switched to runnable: {target}"
+                assert handoffs[0].tool_identity == ("runtime", "exec")
                 if target_kind == "agic":
                     assert any(
                         row.text == "Running child run: agic:child" for row in rows

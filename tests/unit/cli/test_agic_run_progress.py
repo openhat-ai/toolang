@@ -339,14 +339,16 @@ def test_execute_projects_a_live_marker_then_a_handoff_header(tool_name) -> None
 
     assert header.committed[0].rows == (
         ProgressRow(
-            "exec → agic:abc",
+            "Transferred",
             leader="handoff",
+            tool_identity=tuple(tool_name.split("__", 1)),
+            tool_status="succeeded",
         ),
         ProgressRow(""),
     )
     assert header.live[0].rows == (ProgressRow("• Thinking", "active"),)
     assert re.search(
-        r"- exec → agic:abc ─+",
+        r"- \[.*\] Transferred ─+",
         _render_progress(header.committed[0], width=72),
     )
 
@@ -542,7 +544,12 @@ def test_confirmed_execute_without_target_step_is_not_reported_as_failed(
     ended = projector.handle(RunEnd(run="run_root", status=status))
     rows = tuple(row for block in ended.committed for row in block.rows)
     assert rows == (
-        ProgressRow("exec → agic:abc", leader="handoff"),
+        ProgressRow(
+            "Transferred",
+            leader="handoff",
+            tool_identity=("runtime", "exec"),
+            tool_status="succeeded",
+        ),
         ProgressRow(""),
     )
     assert not projector._broken
@@ -734,8 +741,10 @@ def test_handoff_to_flow_keeps_the_first_run_statement_flow_owned() -> None:
     assert header.live == ()
     assert header.committed[0].rows == (
         ProgressRow(
-            "exec → flow:delegate",
+            "Transferred",
             leader="handoff",
+            tool_identity=("runtime", "exec"),
+            tool_status="succeeded",
         ),
         ProgressRow(""),
         ProgressRow("[0] Run agic:worker"),

@@ -21,7 +21,7 @@ from toolang.execution.types import (
 from toolang.lang.ast import FlowStmt
 
 from .facts import cost_fact, execution_count_fact, token_fact
-from .types import StepOperation
+from .types import ProgressRow, StepOperation
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,6 +98,7 @@ class PendingExecute:
     step: StepRef
     runnable: str
     ready: bool = False
+    row: ProgressRow | None = None
 
 
 @dataclass(frozen=True, slots=True)

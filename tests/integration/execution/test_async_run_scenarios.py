@@ -297,6 +297,7 @@ agic child() -> Text:
 
 def test_agic_async_run_and_await_share_results(tmp_path, monkeypatch):
     from toolang.base.types.run import ToolCall
+    from toolang.execution.types import ToolStepNoted
     from tests.support.execution_assertions import last_tool_result
 
     harness = ExecutionHarness.create(
@@ -323,7 +324,7 @@ flow child(_: Text) -> Text:
                         "start",
                         "runtime__run",
                         {
-                            "runnable": "flow:child",
+                            "runnable": "child",
                             "input": {"_": "result"},
                             "async": True,
                         },
@@ -357,6 +358,20 @@ flow child(_: Text) -> Text:
                 harness.store.resolve_error(parent.error) if parent.error else None
             )
             assert len(calls) == 3
+            launch = next(
+                step
+                for step in harness.store.list_steps(run_id=parent.id)
+                if step.kind == "tool"
+            )
+            assert launch.noted == ToolStepNoted("Started child run: child")
+            assert (
+                next(
+                    event.noted
+                    for event in tracer.events
+                    if isinstance(event, StepEnd) and event.step == launch.ref
+                )
+                == launch.noted
+            )
             projector = ProgressProjector()
             for event in tracer.events:
                 update = projector.handle(event)

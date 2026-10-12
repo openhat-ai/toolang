@@ -285,15 +285,16 @@ and complete status-plus-ID field. Long captions and identities fold by display
 cells without truncation. Exactly one blank row follows the header, precedes the
 footer, and follows the footer; adjacent child-owned gaps coalesce.
 
-A confirmed `execute` transfer displays one dim boundary before the target's
-first Step:
+A confirmed tool `exec` displays its saved terminal summary and toolset in one
+dim boundary before the target's first Step (or at Run end if no Step starts):
 
 ```text
-- Execute agic:delegate ────────────────────────────────────────────────
+- [runtime] Switched to runnable: agic:delegate ─────────────────────────
 ```
 
-Execute boundaries use a short `-` followed by one space. Run and Execute
-captions start in the third column, use sentence case, and extend with thin
+Native Flow exec and historical records without a summary retain the
+`exec → target` caption. Exec boundaries use a short `-` followed by one space.
+Run and exec captions start in the third column, use sentence case, and extend with thin
 rules to the same right edge. Long target names wrap under a two-cell indent
 without truncation. Script and Chat share the projector and renderer.
 

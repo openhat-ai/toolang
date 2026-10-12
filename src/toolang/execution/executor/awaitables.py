@@ -20,7 +20,6 @@ from ..types import (
     Output,
     RunRef,
     ToolStepGiven,
-    ToolStepNoted,
     TypedRef,
 )
 from .common import BoundRun, Local, _ExecutionFailed
@@ -111,7 +110,7 @@ def admission(
                         },
                     )
                 )
-                noted = ToolStepNoted(summary=f"Started {handle.id} in {handle.thread}")
+                noted = execution.tool_admission_noted(source.ref)
             else:
                 raise RuntimeError("async admission requires an async run Step")
             execution.store.finish_step(

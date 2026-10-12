@@ -435,7 +435,8 @@ flow child(_: Text):
                     "status": "pending",
                 }
                 assert isinstance(step.noted, ToolStepNoted)
-                assert step.noted.summary == f"Spawned {root.id} in {root.thread}"
+                assert step.noted.summary == "Spawned new run: flow:child"
+                assert end.noted == step.noted
             if failure == "dispatch":
                 assert root.status == "failed"
                 assert root.error is not None

@@ -26,7 +26,8 @@ def join_tool_name(toolset_name: str, tool_name: str) -> str:
 
 def decode_tool_name(value: str) -> tuple[str, str] | None:
     """Read a canonical provider name without guessing unknown identities."""
-    toolset, separator, name = value.partition("__")
+    # The leaf starts with a letter; a toolset may end with one underscore.
+    toolset, separator, name = value.rpartition("__")
     if not separator:
         return None
     try:

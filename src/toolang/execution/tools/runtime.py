@@ -1,4 +1,4 @@
-"""The _toolang toolset: validation and per-call runtime operations."""
+"""The runtime toolset: validation and per-call runtime operations."""
 
 from __future__ import annotations
 

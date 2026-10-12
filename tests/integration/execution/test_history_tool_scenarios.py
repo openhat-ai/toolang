@@ -35,6 +35,7 @@ from toolang.execution.types import (
     StepRef,
     ThreadPrefix,
     ToolStepGiven,
+    ToolStepNoted,
     TypedRef,
 )
 from toolang.lang.input import CallInput
@@ -372,6 +373,7 @@ def test_execute_input_is_resolved_in_entries_and_dependencies(store):
             }
         ),
         created_at="2026-01-01T00:00:04Z",
+        tool_noted=ToolStepNoted("Switched to runnable: target"),
     )
     committed = store.get_step(ref=trigger.ref)
     assert committed.status == "succeeded"

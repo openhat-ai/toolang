@@ -33,6 +33,7 @@ from toolang.execution.types import (
     RunStatus,
     StepRef,
     ToolStepGiven,
+    ToolStepNoted,
 )
 from toolang.lang.input import CallInput
 from toolang.lang.types import Array
@@ -664,6 +665,7 @@ def test_retry_rejects_applied_execute_history_without_mutation(
                 {"_": TypedRef(source.select("input", "input", "_"), "Json")}
             ),
             created_at="2026-01-01T00:00:03Z",
+            tool_noted=ToolStepNoted("Switched to runnable: target"),
         )
         assert execute.status == "applied"
         project_run_end(store, run_id=run.id)

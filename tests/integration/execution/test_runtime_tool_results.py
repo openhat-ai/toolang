@@ -23,7 +23,16 @@ from toolang.base.types.message import Message, ToolResultPart
 from toolang.base.types.policy import RunLimits
 from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.cli.common.execution_progress import ProgressProjector
-from toolang.execution.events import PartBegin, PartEnd, RunEvent, StepBegin, StepEnd
+from toolang.execution.events import (
+    PartBegin,
+    PartDelta,
+    PartEnd,
+    RunBegin,
+    RunEnd,
+    RunEvent,
+    StepBegin,
+    StepEnd,
+)
 from toolang.execution.inspection.history import RunHistory
 from toolang.execution.store import RunStore
 from toolang.execution.inspection.trees import build_execution_tree
@@ -613,15 +622,37 @@ def test_steer_during_execute_delivery_keeps_committed_transfer(tmp_path: Path) 
             assert execute.finished_at == execute.created_at == steps[1].finished_at
             assert steer.ref in steps[2].preceded_by
             assert_run_event_integrity(tracer.events)
+            # The fault probe sees disposable delivery events. Progress consumes
+            # the canonical stream, where admission already committed success.
+            with harness.executor.stream.boundary() as (_, _, frames):
+                published = [
+                    frame.event
+                    for frame in frames
+                    if frame.root_run_id == root.id
+                    and isinstance(
+                        frame.event,
+                        RunBegin
+                        | StepBegin
+                        | PartBegin
+                        | PartDelta
+                        | PartEnd
+                        | StepEnd
+                        | RunEnd,
+                    )
+                ]
             projector = ProgressProjector()
             rows = [
                 row
-                for event in tracer.events
+                for event in published
                 for block in projector.handle(event).committed
                 for row in block.rows
             ]
             assert not projector._broken
-            assert any(row.text == "exec → agic:child" for row in rows)
+            assert any(
+                row.text == "Switched to runnable: agic:child"
+                and row.tool_identity == ("runtime", "exec")
+                for row in rows
+            ), (steps[1].noted, rows)
             assert not any("Failed to execute" in row.text for row in rows)
 
     asyncio.run(scenario())

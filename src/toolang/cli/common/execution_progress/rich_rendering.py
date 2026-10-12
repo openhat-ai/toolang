@@ -42,7 +42,7 @@ def progress_block_renderable(
         code_background if inline_code_background is None else inline_code_background
     )
     rows = (
-        _row_renderable(
+        _ProgressRow(
             row,
             live=live,
             max_width=max_width,
@@ -55,36 +55,40 @@ def progress_block_renderable(
     return Group(Text(), *rows) if block.gap_before else Group(*rows)
 
 
-def _row_renderable(
-    row: ProgressRow,
-    *,
-    live: bool,
-    max_width: int,
-    code_background: str,
-    inline_code_background: str,
-    code_foreground: str | None,
-) -> RenderableType:
-    if row.tool_identity is not None:
-        prefix, description = split_hanging_prefix(row.text)
-        # Leave room for the action/target even for a long configured toolset key.
-        available = max(1, max_width - display_width(prefix))
-        label = truncate(row.tool_identity[0], max(1, available // 3))
-        row = replace(row, text=f"{prefix}[{label}] {description}")
-    if row.leader in {"run", "handoff", "iteration"}:
-        renderable: RenderableType = _DividerRow(row, max_width=max_width)
-    elif row.format == "plain" and row.right_text:
-        renderable = _TwoEndedPlainRow(row, live=live, max_width=max_width)
-    elif row.format == "markdown":
-        renderable = _MarkdownRow(
-            row,
-            max_width=max_width,
-            code_background=code_background,
-            inline_code_background=inline_code_background,
-            code_foreground=code_foreground,
-        )
-    else:
-        renderable = _PlainRow(row, live=live, max_width=max_width)
-    return renderable
+@dataclass(frozen=True, slots=True)
+class _ProgressRow:
+    row: ProgressRow
+    live: bool
+    max_width: int
+    code_background: str
+    inline_code_background: str
+    code_foreground: str | None
+
+    def __rich_console__(
+        self, console: Console, options: ConsoleOptions
+    ) -> RenderResult:
+        width = max(1, min(options.max_width, self.max_width))
+        row = self.row
+        if row.tool_identity is not None:
+            prefix, description = split_hanging_prefix(row.text)
+            # Use the current viewport, which may be narrower than the configured cap.
+            available = max(1, width - display_width(prefix))
+            label = truncate(row.tool_identity[0], max(1, available // 3))
+            row = replace(row, text=f"{prefix}[{label}] {description}")
+        if row.leader in {"run", "handoff", "iteration"}:
+            yield _DividerRow(row, max_width=width)
+        elif row.format == "plain" and row.right_text:
+            yield _TwoEndedPlainRow(row, live=self.live, max_width=width)
+        elif row.format == "markdown":
+            yield _MarkdownRow(
+                row,
+                max_width=width,
+                code_background=self.code_background,
+                inline_code_background=self.inline_code_background,
+                code_foreground=self.code_foreground,
+            )
+        else:
+            yield _PlainRow(row, live=self.live, max_width=width)
 
 
 def run_footer_renderable(
@@ -444,7 +448,8 @@ class _DividerRow:
         prefix = "└ "
         prefix_width = display_width(prefix)
         border_style = "dim"
-        facts = " · ".join(self.row.facts)
+        captions = ((self.row.text,) if self.row.text else ()) + self.row.facts
+        facts = " · ".join(captions)
         left = f"{prefix}{facts}"
         right = self.row.right_status
         if self.row.right_identity:
@@ -477,7 +482,7 @@ class _DividerRow:
             if width > 1:
                 marker.append(prefix[1], style="dim")
             yield marker
-            for fact_line in _wrap_divider_facts(self.row.facts, width):
+            for fact_line in _wrap_divider_facts(captions, width):
                 yield Text(fact_line, style="dim", no_wrap=True)
             yield Text("─" * width, style=border_style, no_wrap=True)
             for status_line in wrap_display(self.row.right_status, width):
@@ -493,7 +498,7 @@ class _DividerRow:
 
         indent = " " * prefix_width
         content_width = max(1, width - display_width(indent))
-        fact_lines = _wrap_divider_facts(self.row.facts, content_width)
+        fact_lines = _wrap_divider_facts(captions, content_width)
         if fact_lines:
             for index, fact_line in enumerate(fact_lines):
                 line = Text(no_wrap=True)

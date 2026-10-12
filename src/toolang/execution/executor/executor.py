@@ -2192,6 +2192,25 @@ class _Execution:
             )
         return binding, _execute_locals(input, runnable, control_input)
 
+    def tool_admission_noted(self, source: StepRef) -> ToolStepNoted | None:
+        """Format successful runtime admission before its atomic Step completion."""
+        from toolang.base.types.tool import ToolResult
+        from .steps.tool import _tool_summary, _tool_summary_context
+
+        step = self.store.get_step(ref=source)
+        if step is None:
+            raise RuntimeError(f"admission requires its source Step: {source}")
+        if not isinstance(step.given, ToolStepGiven):
+            return None
+        call = step.given.call
+        return ToolStepNoted(
+            _tool_summary(
+                _tool_summary_context(call, self.setup.tools().get(call.name)),
+                "succeeded",
+                ToolResult(),
+            )
+        )
+
     def commit_execute(
         self,
         binding: BoundRun,
@@ -2211,6 +2230,7 @@ class _Execution:
                     triggered_by=triggered_by,
                     input=binding.control_input,
                     created_at=utc_now(),
+                    tool_noted=self.tool_admission_noted(triggered_by),
                     loops=loops,
                 )
                 self.executor._publish_step_ends(
