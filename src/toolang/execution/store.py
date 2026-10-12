@@ -825,7 +825,7 @@ class RunStore:
                 raise ValueError("spawn requires an unacknowledged running Step")
             self.create_thread(
                 thread_id=handle.thread,
-                origin="worker",
+                origin="work",
                 peer=peer,
                 created_at=created_at,
                 triggered_by=source,

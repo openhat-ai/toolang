@@ -18,7 +18,7 @@ from toolang.up.server import build_serve_argv, resolve_serve
 from toolang.execution.types import ThreadPrefix
 
 
-@pytest.mark.parametrize("prefix", ["web", "term", "spawn"])
+@pytest.mark.parametrize("prefix", ["web", "term", "spawn", "worker"])
 def test_obsolete_thread_prefixes_cannot_create_contexts(tmp_path, prefix):
     core = AgentCore(AgentLayout.resident(tmp_path, "alice"))
     try:
@@ -29,7 +29,7 @@ def test_obsolete_thread_prefixes_cannot_create_contexts(tmp_path, prefix):
             "chat",
             "talk",
             "chore",
-            "worker",
+            "work",
             "script",
         }
     finally:

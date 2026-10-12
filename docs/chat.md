@@ -173,7 +173,7 @@ Examples:
 - `talk_3nprht9x`
 - `chore_xy1234ab`
 - `chat_def456gh`
-- `worker_jk789mnp`
+- `work_jk789mnp`
 - `script_pqr234st`
 - `tg_123456789`
 

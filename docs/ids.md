@@ -73,7 +73,7 @@ The current full identities are:
 - chat context: `chat_<allocated-id>`
 - incoming-message context: `talk_<allocated-id>` (one per durable agent)
 - chore context: `chore_<name-derived-id>`
-- independent spawned context: `worker_<allocated-id>`
+- independent spawned context: `work_<allocated-id>`
 - standalone script context: `script_<allocated-id>`
 - run: `run_<allocated-id>`
 

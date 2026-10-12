@@ -9,6 +9,15 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Changed
 
+- **Breaking:** independent spawned work now uses `work` instead of `worker`:
+  flow and agic `spawn` issue `work_` thread IDs, persist `origin="work"`, and
+  publish that origin in thread events; `ThreadPrefix.WORKER` becomes
+  `ThreadPrefix.WORK`, and the profile metric key `threads.worker` becomes
+  `threads.work`. There are no old-prefix aliases, compatibility conversion, or
+  data migration, and historical record IDs are not rewritten, so integrations
+  that read the old prefix, origin, enum member, or metric key must switch to
+  the new names.
+
 - **Breaking:** built-in toolsets are renamed: `me` becomes `state`, `msg`
   becomes `convo`, and `_toolang` becomes `runtime`. Refs, queries, and
   configuration use `state/get` and `convo/write`, model calls use
