@@ -38,6 +38,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Fixed
 
+- Teaming backend calls now propagate a cancellation that arrives while a
+  Redis/Valkey command is in flight, so a cancelled or timed-out Hub
+  operation stops instead of completing and silently dropping the
+  cancellation.
+
 - Message handling records retain successful send receipts from the handler and
   its owned child Runs, including async children and replies delivered before
   cancellation, so replies sent by a handler's delegated child runs stay in the
