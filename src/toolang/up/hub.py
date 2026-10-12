@@ -9,6 +9,7 @@ from pathlib import Path
 import socket
 import subprocess
 import time
+from urllib.parse import quote
 
 import httpx
 import psutil
@@ -21,7 +22,7 @@ from toolang.teaming.api import create_app
 from toolang.teaming.config import TeamingRootConfig
 from toolang.teaming.errors import TeamingError
 from toolang.teaming.messaging import MessagingClient
-from toolang.teaming.schemas import HubConnection
+from toolang.teaming.schemas import HubConnection, HubInfo
 from .records import HubRecord
 from .discovery import agent_roster
 from toolang.teaming.roster import Roster
@@ -74,6 +75,25 @@ class HubProcess:
             return response.status_code == 200 and response.json() == {"ok": True}
         except (httpx.HTTPError, ValueError):
             return False
+
+    @staticmethod
+    def version(record: HubRecord) -> str:
+        """Read the recorded Hub's source version without requiring readiness."""
+        if record.status == "starting":
+            return "unknown"
+        try:
+            with httpx.Client(trust_env=False, timeout=1) as client:
+                response = client.get(
+                    record.connection.endpoint + "/info",
+                    headers={
+                        "X-Toolang-Backend": record.identity,
+                        "X-Toolang-Human": quote(record.human, safe=""),
+                    },
+                )
+            response.raise_for_status()
+            return HubInfo.model_validate(response.json()).version
+        except (httpx.HTTPError, ValueError):
+            return "unknown"
 
     def start(self, command: Sequence[str], *, timeout: float = 20) -> HubRecord:
         if self.current() is not None:

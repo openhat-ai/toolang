@@ -10,6 +10,7 @@ import sys
 import time
 from unittest.mock import Mock
 
+import httpx
 import psutil
 import pytest
 
@@ -29,6 +30,85 @@ def record(**changes):
         identity="backend",
     )
     return HubRecord.model_validate(values | changes)
+
+
+def test_hub_version_uses_recorded_endpoint_and_identity(monkeypatch):
+    import toolang.up.hub as module
+
+    saved = record(port=7123, human="human:owner")
+    client_type = httpx.Client
+
+    def respond(request):
+        assert str(request.url) == "http://127.0.0.1:7123/info"
+        assert request.headers["X-Toolang-Backend"] == saved.identity
+        assert request.headers["X-Toolang-Human"] == "human%3Aowner"
+        assert request.extensions["timeout"] == dict.fromkeys(
+            ["connect", "read", "write", "pool"], 1
+        )
+        return httpx.Response(200, json={"version": "0.4.0a5-3-g12345678*"})
+
+    def client(**kwargs):
+        assert kwargs == {"trust_env": False, "timeout": 1}
+        return client_type(**kwargs, transport=httpx.MockTransport(respond))
+
+    monkeypatch.setattr(module.httpx, "Client", client)
+    assert HubProcess.version(saved) == "0.4.0a5-3-g12345678*"
+
+
+@pytest.mark.parametrize(
+    "status,body",
+    [
+        (404, b"{}"),
+        (409, b"{}"),
+        (503, b"{}"),
+        (200, b"not-json"),
+        (200, b"{}"),
+        (200, b"null"),
+        (200, b'{"version": 123}'),
+        (200, b'{"version": ""}'),
+        (200, b'{"version": " invalid "}'),
+        (200, b'{"version": "bad\\nlabel"}'),
+    ],
+)
+def test_hub_version_unavailable_metadata_is_unknown(monkeypatch, status, body):
+    import toolang.up.hub as module
+
+    client_type = httpx.Client
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(status, content=body)
+    )
+    monkeypatch.setattr(
+        module.httpx,
+        "Client",
+        lambda **kwargs: client_type(**kwargs, transport=transport),
+    )
+    assert HubProcess.version(record()) == "unknown"
+
+
+@pytest.mark.parametrize("error", [httpx.ConnectError, httpx.ReadTimeout])
+def test_hub_version_transport_failure_is_unknown(monkeypatch, error):
+    import toolang.up.hub as module
+
+    client_type = httpx.Client
+
+    def fail(request):
+        raise error("unavailable", request=request)
+
+    monkeypatch.setattr(
+        module.httpx,
+        "Client",
+        lambda **kwargs: client_type(**kwargs, transport=httpx.MockTransport(fail)),
+    )
+    assert HubProcess.version(record()) == "unknown"
+
+
+def test_starting_hub_version_skips_http(monkeypatch):
+    import toolang.up.hub as module
+
+    client = Mock(side_effect=AssertionError("Starting Hub must not query metadata"))
+    monkeypatch.setattr(module.httpx, "Client", client)
+    assert HubProcess.version(record(status="starting")) == "unknown"
+    client.assert_not_called()
 
 
 def test_private_discovery_uses_actual_endpoint_and_ignores_stale_pid(

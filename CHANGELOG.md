@@ -7,6 +7,15 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ## [Unreleased]
 
+### Changed
+
+- `too hub status` now appends the Hub process's Toolang source version after
+  its endpoint, for example `Hub running: http://127.0.0.1:7000, v0.4.0a5`,
+  read from the Hub's `/info` metadata so it reports the server's version
+  even when the invoking CLI differs; a stopped Hub still prints only
+  `Hub stopped`, and missing, rejected, malformed, or timed-out metadata
+  prints `unknown` without changing the readiness state or exit code.
+
 ## [0.4.0a5] - 2026-10-12
 
 ### Changed

@@ -8,6 +8,7 @@ import typer
 from typer._click.exceptions import ClickException
 
 from toolang.cli.common.context import context_root, user_call
+from toolang.cli.common.banner import version_label
 from toolang.cli.common.parameters import TitlePrefixOption
 from toolang.cli.common.terminal_session import prepare_terminal
 from toolang.cli.common.help import CliCommand, CliGroup
@@ -101,7 +102,7 @@ def stop(
 
 
 def status(ctx: typer.Context) -> None:
-    """Show the Hub's endpoint and current backend readiness"""
+    """Show the Hub's endpoint, version, and current backend readiness"""
     hub = HubProcess(context_root(ctx))
     record = user_call(hub.current)
     if record is None:
@@ -114,4 +115,5 @@ def status(ctx: typer.Context) -> None:
         if hub.ready(record)
         else "unavailable"
     )
-    typer.echo(f"Hub {state}: {record.connection.endpoint}")
+    version = version_label(hub.version(record))
+    typer.echo(f"Hub {state}: {record.connection.endpoint}, {version}")
