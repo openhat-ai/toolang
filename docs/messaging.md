@@ -14,7 +14,7 @@ human = "brice" # Defaults to the OS username.
 url = "redis://localhost:6379/0"
 
 [teaming.hub]
-port = 7000
+port = 7001
 ```
 
 Teaming is enabled by default. Agents reconnect when Hub becomes available;
@@ -59,12 +59,19 @@ schema. Old datasets remain untouched; history, drafts, and checkpoints are not
 migrated or imported.
 
 Hub `start`/`serve` ports resolve as `--port` > `TOOLANG_HUB_PORT` >
-`teaming.hub.port` > `7000`. Resident agent `start`/`serve` uses `--port` >
-`TOOLANG_AGENT_PORT` > home `[api] port` > recorded/available `7001`–`7999`.
+`teaming.hub.port` > `7001`. Resident agent `start`/`serve` uses `--port` >
+`TOOLANG_AGENT_PORT` > home `[api] port` > recorded/available port. Automatic
+allocation scans `7002`–`7999`. A recorded agent port of `7001` is not reused
+without an explicit override; its next default start selects a new port.
 Explicit ports must be `1..65535`; an occupied explicit port fails. Overrides do
 not change configuration. Restart to apply configuration changes; reopen Talk
 if its endpoint, backend, or human changes. Temporary agents keep their existing
 port selection.
+
+When upgrading, stop an agent using `7001` and restart it without an explicit
+port before restarting Hub on its new default. Running processes and saved
+configuration are not moved automatically. An explicit Hub port of `7000`
+continues to use `7000`; remove it to adopt the new default.
 
 ## Conversations and targets
 

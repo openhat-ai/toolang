@@ -123,7 +123,7 @@ def test_hub_status_without_ready_process_skips_http(
 @pytest.mark.parametrize(
     "option,env,configured,expected",
     [
-        (None, None, None, 7000),
+        (None, None, None, 7001),
         (None, None, 7200, 7200),
         (None, "7300", 7200, 7300),
         (7400, "invalid", 7200, 7400),

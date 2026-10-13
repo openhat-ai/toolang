@@ -59,7 +59,7 @@ from toolang.teaming.agent_client import AgentClient, AgentEventClient
 DEFAULT_WATCH_DEBOUNCE_MS = state_watcher.DEFAULT_DEBOUNCE_MS
 RUNTIME_SHUTDOWN_TASK_TIMEOUT_SEC = 1.0
 UVICORN_GRACEFUL_SHUTDOWN_SEC = 1
-AUTO_RUNTIME_PORT_MIN = 7001
+AUTO_RUNTIME_PORT_MIN = 7002
 AUTO_RUNTIME_PORT_MAX = 7999
 logger = logging.getLogger(__name__)
 
@@ -648,8 +648,10 @@ def resolve_runtime_port(
         layout.root,
         exclude_agent=layout.name,
     )
+    # Reassign pre-upgrade agent records on the default Hub port.
     if (
         preferred is not None
+        and preferred != 7001
         and preferred not in assigned
         and _port_is_available(host, preferred)
     ):

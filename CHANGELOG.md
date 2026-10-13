@@ -9,6 +9,15 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Changed
 
+- **Breaking:** the default Hub port changes from `7000` to `7001`, and resident
+  agent ports are allocated from `7002`–`7999` instead of `7001`–`7999`, so an
+  agent recorded on `7001` gets a new port on its next default start. Explicit
+  `--port`, `TOOLANG_HUB_PORT`/`TOOLANG_AGENT_PORT`, and `teaming.hub.port`
+  values still take precedence, and an explicit Hub port of `7000` keeps using
+  `7000`. Stop an agent on `7001` and restart it without an explicit port
+  before restarting the Hub on its new default; running processes and saved
+  configuration are not migrated automatically.
+
 - **Breaking:** `state.sync` reports one acceptance receipt per source: each
   `files` entry has `scope`, `key`, `observed_digest`, and `accepted_digest`,
   excluded sources add flat `code`, `message`, and optional `line`, and the

@@ -94,7 +94,7 @@ def root_config(
         raise TeamingError(f"{source}: teaming.backend.url must be text")
     hub = _table(raw.get("hub", {}), "teaming.hub", source)
     _fields(hub, {"port"}, "teaming.hub", source, "root")
-    port = hub.get("port", 7000)
+    port = hub.get("port", 7001)
     if type(port) is not int or not 1 <= port <= 65535:
         raise TeamingError(f"{source}: teaming.hub.port must be an integer in 1..65535")
     try:
