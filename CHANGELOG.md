@@ -36,6 +36,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Fixed
 
+- Tool call summaries and tool errors in execution progress now end two
+  cells before the available progress width's right edge, matching execution
+  footers and other progress rows, while narrow parallel-lane rows keep
+  their full width.
+
 - Remote run and chat streams ignore a comment-only keep-alive that follows an
   identified event instead of failing with `remote run stream returned invalid
   event JSON` or advancing the committed cursor.

@@ -983,7 +983,7 @@ def test_chat_tool_failure_stays_two_lines_without_result_surfaces(width: int) -
     marker = next(segment for segment in segments if "›" in segment.text)
     assert marker.style is not None and marker.style.dim
     assert lines[1].startswith("  ")
-    assert lines[1].endswith("…")
+    assert all("…" not in line for line in lines)
     assert all(
         segment.style is None or segment.style.bgcolor is None for segment in segments
     )

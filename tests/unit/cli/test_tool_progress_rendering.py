@@ -9,6 +9,7 @@ from rich.style import Style
 from toolang.cli.common.execution_progress import ProgressBlock, ProgressRow
 from toolang.cli.common.execution_progress.formatting import display_width
 from toolang.cli.common.execution_progress.rich_rendering import (
+    PROGRESS_RIGHT_INSET,
     progress_block_renderable,
 )
 
@@ -35,10 +36,11 @@ def test_tool_summary_intensity_follows_activity_not_live_region(
     segments = list(console.render(rendered))
     text = "".join(s.text for s in segments)
     assert len(text.splitlines()) == 1
-    assert display_width(text.rstrip()) <= width
-    assert text.rstrip().endswith("…")
+    right_inset = PROGRESS_RIGHT_INSET if not prefix else 0
+    assert display_width(text.rstrip()) <= width - right_inset
+    assert "…" not in text
     mark = next(s for s in segments if marker in s.text)
-    body = next(s for s in segments if "…" in s.text)
+    body = next(s for s in segments if "R" in s.text)
     for segment in (mark, body):
         style = segment.style or Style.null()
         assert bool(style.dim) is (tone == "progress")
@@ -112,3 +114,36 @@ def test_lane_identity_styles_are_independent_of_activity(
         body = next(style for char, style in characters if char == "A")
         assert bool(body.dim) is (tone == "progress")
         assert (body.color is not None) is (tone == "error")
+
+
+@pytest.mark.parametrize(
+    ("surface", "text", "tone"),
+    [
+        (
+            "tool_summary",
+            "› " + "Completed a long running tool operation " * 2,
+            "progress",
+        ),
+        (
+            "tool_error",
+            "  " + "Tool call failed with a long diagnostic " * 2,
+            "error",
+        ),
+    ],
+)
+def test_tool_progress_rows_reserve_the_right_output_inset(surface, text, tone):
+    width = 40
+    console = Console(width=width)
+    rendered = progress_block_renderable(
+        ProgressBlock("tool", (ProgressRow(text, tone, surface=surface),)),
+        live=False,
+        max_width=width,
+    )
+    segments = list(console.render(rendered))
+    lines = "".join(segment.text for segment in segments).splitlines()
+
+    assert lines
+    assert all("…" not in line for line in lines)
+    assert all(
+        display_width(line.rstrip()) <= width - PROGRESS_RIGHT_INSET for line in lines
+    )
