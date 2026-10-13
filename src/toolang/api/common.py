@@ -22,7 +22,7 @@ from toolang.execution.subscriptions import (
 )
 
 RUN_ID_HEADER = "X-Toolang-Run-ID"
-KEEP_ALIVE_SEC = 15.0
+CHECKPOINT_INTERVAL_SEC = 15.0
 
 
 async def reserve_stream(
@@ -54,12 +54,13 @@ async def sse_stream(
             if signal is not None and signal.is_set():
                 return
             try:
-                frame = await asyncio.wait_for(subscription.receive(), KEEP_ALIVE_SEC)
+                frame = await asyncio.wait_for(
+                    subscription.receive(), CHECKPOINT_INTERVAL_SEC
+                )
             except TimeoutError:
                 frame = subscription.checkpoint()
                 if frame is None:
-                    yield ServerSentEvent(comment="keep-alive")
-                    continue
+                    continue  # FastAPI provides the idle SSE ping.
             yield ServerSentEvent(event=frame.event, data=frame.data, id=frame.id)
     except (StreamOverflowError, SnapshotLimitError) as exc:
         code = "overflow" if isinstance(exc, StreamOverflowError) else "snapshot_limit"

@@ -7,6 +7,22 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ## [Unreleased]
 
+### Changed
+
+- Remote run and chat streams log a redacted diagnostic line when a stream is
+  interrupted, resumed, or a terminal detail fails: phase, run ID, error type,
+  and HTTP status, never response bodies, endpoints, or payloads.
+
+- Server-sent event streams now use the framework's idle ping (`: ping`) rather
+  than manually yielding `: keep-alive` comments, so the runtime and Hub APIs
+  emit a frame only for real events or checkpoints.
+
+### Fixed
+
+- Remote run and chat streams ignore a comment-only keep-alive that follows an
+  identified event instead of failing with `remote run stream returned invalid
+  event JSON` or advancing the committed cursor.
+
 ## [0.4.0a6] - 2026-10-12
 
 ### Added

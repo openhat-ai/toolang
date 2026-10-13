@@ -7,6 +7,7 @@ from collections.abc import Callable, Coroutine, Mapping, Sequence
 from concurrent.futures import Future
 from dataclasses import dataclass, replace
 import json
+import logging
 from pathlib import Path
 from toolang.cli.common.attachments import capture_attachments
 import threading
@@ -60,6 +61,7 @@ from .policy import (
 )
 
 
+_LOGGER = logging.getLogger(__name__)
 _RUN_DETAIL_ADAPTER = TypeAdapter(RunDetail)
 _THREAD_INFO_ADAPTER = TypeAdapter(ThreadInfo)
 _RUN_POLICY_ADAPTER = TypeAdapter(RunPolicy)
@@ -824,9 +826,16 @@ class RemoteChatSession:
             if on_state is not None and (workdir := final_workdir(detail)) is not None:
                 _emit_state(on_state, RunWorkdirUpdated(handle.run_id, workdir))
             return
-        except RemoteRunClientError:
+        except RemoteRunClientError as exc:
             if self._closed:
                 return
+            _LOGGER.error(
+                "remote chat run disconnected run=%s error=%s status=%s cause=%s",
+                handle.run_id,
+                type(exc).__name__,
+                exc.status_code,
+                type(exc.__cause__).__name__ if exc.__cause__ else None,
+            )
         message_text = (
             "Connection to the executor was lost; waiting for durable run state."
         )
