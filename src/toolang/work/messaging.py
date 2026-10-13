@@ -173,25 +173,11 @@ class MessagingLoop:
                 raise
             except Exception as exc:
                 logger.exception("Messaging batch failed; skipping %s", conversation)
-                source = next(
-                    (m for m in reversed(messages) if m["sender"] != self.agent),
-                    None,
-                )
-                if source is not None:
-                    try:
-                        await self.client.send(
-                            conversation,
-                            body=f"Message handling failed: {exc}"[:2048],
-                            in_reply_to=source["id"],
-                        )
-                    except asyncio.CancelledError:
-                        cancelled = True
-                        raise
-                    except Exception:
-                        logger.exception(
-                            "Unable to send message-handler failure reply: %s",
-                            conversation,
-                        )
+                try:
+                    await self._send_failure_reply(conversation, messages, exc)
+                except asyncio.CancelledError:
+                    cancelled = True
+                    raise
             finally:
                 self.pending = conversation, entries[-1][0]
                 try:
@@ -207,6 +193,33 @@ class MessagingLoop:
                         exc_info=True,
                     )
             return
+
+    async def _send_failure_reply(
+        self,
+        conversation: str,
+        messages: list[dict[str, Any]],
+        error: Exception,
+    ) -> None:
+        """Reply to the latest external message when its handler fails."""
+
+        source = next(
+            (message for message in reversed(messages) if message["sender"] != self.agent),
+            None,
+        )
+        if source is None:
+            return
+        try:
+            await self.client.send(
+                conversation,
+                body=f"Message handling failed: {error}"[:2048],
+                in_reply_to=source["id"],
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception(
+                "Unable to send message-handler failure reply: %s", conversation
+            )
 
     async def handle(self, batch: dict[str, Any]) -> None:
         setup, state = self.get_setup(), self.get_state()

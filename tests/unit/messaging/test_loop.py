@@ -272,6 +272,10 @@ def test_failed_message_handler_sends_visible_error_reply(tmp_path, model_availa
             assert len(result["replies"]) == 1
             assert len(harness.adapter.invocations) == int(model_available)
 
+            await loop.poll()  # The agent's error reply must not trigger another run.
+            assert len(await human.history("gc_00000001")) == 2
+            assert len(harness.adapter.invocations) == int(model_available)
+
     asyncio.run(scenario())
 
 
