@@ -7,6 +7,8 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ## [Unreleased]
 
+## [0.4.0a7] - 2026-10-14
+
 ### Changed
 
 - **Breaking:** the default Hub port changes from `7000` to `7001`, and resident
@@ -1487,7 +1489,8 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 - The formatter normalizes `exec` statements consistently with other flow
   statements. (#676)
 
-[Unreleased]: https://github.com/openhat-ai/toolang/compare/v0.4.0a6...HEAD
+[Unreleased]: https://github.com/openhat-ai/toolang/compare/v0.4.0a7...HEAD
+[0.4.0a7]: https://github.com/openhat-ai/toolang/compare/v0.4.0a6...v0.4.0a7
 [0.4.0a6]: https://github.com/openhat-ai/toolang/compare/v0.4.0a5...v0.4.0a6
 [0.4.0a5]: https://github.com/openhat-ai/toolang/compare/v0.4.0a4...v0.4.0a5
 [0.4.0a4]: https://github.com/openhat-ai/toolang/compare/v0.4.0a3...v0.4.0a4
