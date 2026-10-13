@@ -3,16 +3,15 @@ from __future__ import annotations
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from functools import partial
 import multiprocessing
-import operator
 from pathlib import Path
 import random
-from typing import Any, cast
+import sqlite3
 
 import pytest
 
 from toolang.common.ids import (
-    AllocatorSnapshot,
     AllocatorState,
     IdFamily,
     IdIssuer,
@@ -24,6 +23,12 @@ from toolang.common.ids import (
     encode_id,
     reserve_next_id,
 )
+from toolang.execution.store import RunStore
+
+
+def _database(path: Path) -> Path:
+    RunStore(path).close()
+    return path
 
 
 def _allocate_ids(
@@ -98,7 +103,10 @@ def test_agent_identity_is_independent_of_allocator_path(
     now = datetime(2026, 10, 9, 2, tzinfo=UTC)
     values = [
         allocate_id(
-            tmp_path / path / "ids.json", family=family, agent_name=name, now=now
+            _database(tmp_path / path / "runs.db"),
+            family=family,
+            agent_name=name,
+            now=now,
         )
         for path, name in (("host", "alice"), ("guest", "alice"), ("other", "bob"))
     ]
@@ -120,8 +128,9 @@ def test_decoded_records_can_reconstruct_a_persisted_high_water_mark(
         decode_id(value, family=RUN_ID_FAMILY, agent_name="alice") for value in records
     ]
     tick, seq = max((value.tick, value.seq) for value in decoded)
-    state_path = tmp_path / "ids.json"
-    AllocatorSnapshot(families={"run": AllocatorState(tick, seq)}).save(state_path)
+    state_path = _database(tmp_path / "runs.db")
+    with sqlite3.connect(state_path) as connection:
+        connection.execute("INSERT INTO seqs VALUES ('run', ?, ?)", (tick, seq))
 
     resumed = allocate_id(
         state_path,
@@ -214,7 +223,7 @@ def test_reserve_next_id_uses_exists_callback_as_safety_belt() -> None:
 
 
 def test_allocate_id_persists_state_by_family(tmp_path: Path) -> None:
-    state_path = tmp_path / ".meta" / "ids.json"
+    state_path = _database(tmp_path / ".runtime" / "runs.db")
     now = datetime(2026, 1, 2, 4, 0, tzinfo=UTC)
 
     first = allocate_id(state_path, family=LOCAL_ID_FAMILY, now=now, agent_name="alice")
@@ -222,21 +231,20 @@ def test_allocate_id_persists_state_by_family(tmp_path: Path) -> None:
         state_path, family=LOCAL_ID_FAMILY, now=now, agent_name="alice"
     )
     run = allocate_id(state_path, family=RUN_ID_FAMILY, now=now, agent_name="alice")
-    snapshot = AllocatorSnapshot.load(state_path)
+    with sqlite3.connect(state_path) as connection:
+        rows = connection.execute(
+            "SELECT family, last_tick, last_seq FROM seqs ORDER BY family"
+        ).fetchall()
 
     assert first.seq == 0
     assert second.seq == 1
     assert run.seq == 0
-    assert snapshot.state_for(LOCAL_ID_FAMILY) == AllocatorState(
-        last_tick=first.tick, last_seq=1
-    )
-    assert snapshot.state_for(RUN_ID_FAMILY) == AllocatorState(
-        last_tick=run.tick, last_seq=0
-    )
+    assert rows == [("local", first.tick, 1), ("run", run.tick, 0)]
+    assert not state_path.with_name("ids.json").exists()
 
 
 def test_id_issuer_uses_explicit_canonical_prefixes(tmp_path: Path) -> None:
-    ids = IdIssuer(tmp_path / ".meta" / "ids.json", agent_name="alice")
+    ids = IdIssuer(_database(tmp_path / ".runtime" / "runs.db"), agent_name="alice")
 
     run_id = ids.issue_run()
     thread_id = ids.issue_thread("term")
@@ -250,7 +258,7 @@ def test_id_issuer_uses_explicit_canonical_prefixes(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("family", [LOCAL_ID_FAMILY, RUN_ID_FAMILY])
 def test_allocate_id_is_process_safe(tmp_path: Path, family: IdFamily) -> None:
-    state_path = tmp_path / ".meta" / "ids.json"
+    state_path = _database(tmp_path / ".runtime" / "runs.db")
     now = datetime(2026, 1, 2, 4, 0, tzinfo=UTC)
     process_context = multiprocessing.get_context("spawn")
 
@@ -270,51 +278,115 @@ def test_allocate_id_is_process_safe(tmp_path: Path, family: IdFamily) -> None:
     assert resumed.seq == 32
 
 
-def test_allocator_snapshot_rejects_invalid_persisted_state() -> None:
-    with pytest.raises(ValueError, match="families must be a mapping"):
-        AllocatorSnapshot.from_data({"families": []})
+@pytest.mark.parametrize(
+    ("tick", "seq"),
+    [
+        (-2, 0),
+        (-1, 4),
+        (0, -2),
+        (0, "broken"),
+        (0, 1.5),
+        (LOCAL_ID_FAMILY.tick_modulus, 0),
+        (0, LOCAL_ID_FAMILY.seq_modulus),
+    ],
+)
+def test_allocate_id_rejects_invalid_persisted_state(tmp_path, tick, seq) -> None:
+    path = _database(tmp_path / "runs.db")
+    with sqlite3.connect(path) as connection:
+        connection.execute("PRAGMA ignore_check_constraints=ON")
+        connection.execute("INSERT INTO seqs VALUES ('local', ?, ?)", (tick, seq))
+    with pytest.raises(ValueError):
+        allocate_id(path, family=LOCAL_ID_FAMILY, agent_name="alice")
+    with sqlite3.connect(path) as connection:
+        assert connection.execute(
+            "SELECT last_tick, last_seq FROM seqs"
+        ).fetchone() == (tick, seq)
 
-    with pytest.raises(ValueError, match="families must be a mapping"):
-        AllocatorSnapshot.from_data({"families": None})
 
-    with pytest.raises(ValueError, match="family name cannot be empty"):
-        AllocatorSnapshot.from_data({"families": {"": {}}})
-
-    with pytest.raises(ValueError, match="must be a mapping"):
-        AllocatorSnapshot.from_data({"families": {"run": "broken"}})
-
-    with pytest.raises(ValueError, match="last_seq requires"):
-        AllocatorSnapshot.from_data({"families": {"run": {"last_seq": 4}}})
-
-    with pytest.raises(TypeError, match="boolean values"):
-        AllocatorSnapshot.from_data({"families": {"run": {"last_tick": True}}})
-
-    with pytest.raises(TypeError, match="null values"):
-        AllocatorSnapshot.from_data({"families": {"run": {"last_tick": None}}})
+def test_allocate_id_requires_an_initialized_database(tmp_path: Path) -> None:
+    path = tmp_path / "runs.db"
+    with pytest.raises(sqlite3.OperationalError, match="unable to open"):
+        allocate_id(path, family=LOCAL_ID_FAMILY, agent_name="alice")
+    assert not path.exists()
+    with sqlite3.connect(path):
+        pass
+    with pytest.raises(sqlite3.OperationalError, match="no such table"):
+        allocate_id(path, family=LOCAL_ID_FAMILY, agent_name="alice")
+    with sqlite3.connect(path) as connection:
+        assert connection.execute("SELECT name FROM sqlite_master").fetchall() == []
 
 
-def test_allocator_snapshot_save_load_round_trip(tmp_path: Path) -> None:
-    path = tmp_path / ".meta" / "ids.json"
-    snapshot = AllocatorSnapshot(
-        families={"local": AllocatorState(last_tick=12, last_seq=3)}
+def test_reservation_survives_business_rollback_and_history_deletion(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        "toolang.common.ids.allocate_id",
+        partial(allocate_id, now=LOCAL_ID_FAMILY.bucket_started_at(100)),
     )
-
-    snapshot.save(path)
-
-    assert AllocatorSnapshot.load(path) == snapshot
-    assert AllocatorSnapshot.load(tmp_path / "missing.json") == AllocatorSnapshot()
-
-
-def test_allocator_snapshot_copies_and_freezes_family_state() -> None:
-    families = {"local": AllocatorState(last_tick=1, last_seq=2)}
-    snapshot = AllocatorSnapshot(families=families)
-    families.clear()
-
-    assert snapshot.state_for(LOCAL_ID_FAMILY) == AllocatorState(
-        last_tick=1, last_seq=2
+    path = tmp_path / "runs.db"
+    store = RunStore(path)
+    try:
+        ids = IdIssuer(path, agent_name="alice")
+        first = ids.issue_thread("chat")
+        with pytest.raises(RuntimeError, match="creation failed"):
+            with store.write_transaction():
+                store.create_thread(thread_id=first, origin="chat")
+                raise RuntimeError("creation failed")
+        assert store.get_thread(thread_id=first) is None
+        store.create_thread(thread_id=ids.issue_thread("work"), origin="spawn")
+    finally:
+        store.close()
+    with sqlite3.connect(path) as connection:
+        connection.execute("DELETE FROM threads")
+    third = IdIssuer(path, agent_name="alice").issue_thread("script")
+    decoded = decode_id(
+        third.split("_", 1)[1], family=LOCAL_ID_FAMILY, agent_name="alice"
     )
-    with pytest.raises(TypeError):
-        operator.setitem(cast(Any, snapshot.families), "run", AllocatorState())
+    assert decoded.seq == 2
+
+
+@pytest.mark.parametrize("failure", ["callback", "collision", "exhaustion", "write"])
+def test_failed_reservations_preserve_state_and_release_the_transaction(
+    tmp_path, failure
+) -> None:
+    path = _database(tmp_path / "runs.db")
+    now = LOCAL_ID_FAMILY.bucket_started_at(100)
+    first = allocate_id(path, family=LOCAL_ID_FAMILY, agent_name="alice", now=now)
+    if failure == "write":
+        with sqlite3.connect(path) as connection:
+            connection.execute(
+                "CREATE TRIGGER reject_reservation BEFORE UPDATE ON seqs "
+                "BEGIN SELECT RAISE(ABORT, 'write failed'); END"
+            )
+
+    def exists(_value: str) -> bool:
+        if failure == "callback":
+            raise RuntimeError("callback failed")
+        return failure == "collision"
+
+    later = (
+        LOCAL_ID_FAMILY.epoch + timedelta(hours=LOCAL_ID_FAMILY.tick_modulus)
+        if failure == "exhaustion"
+        else now
+    )
+    with pytest.raises((RuntimeError, OverflowError, sqlite3.IntegrityError)):
+        allocate_id(
+            path,
+            family=LOCAL_ID_FAMILY,
+            agent_name="alice",
+            now=later,
+            exists=exists,
+            max_attempts=2,
+        )
+    with sqlite3.connect(path) as connection:
+        assert connection.execute(
+            "SELECT last_tick, last_seq FROM seqs"
+        ).fetchone() == (first.tick, first.seq)
+        if failure == "write":
+            connection.execute("DROP TRIGGER reject_reservation")
+    assert (
+        allocate_id(path, family=LOCAL_ID_FAMILY, agent_name="alice", now=now).seq == 1
+    )
 
 
 @pytest.mark.parametrize(

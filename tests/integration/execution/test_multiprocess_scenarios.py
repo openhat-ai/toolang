@@ -487,7 +487,7 @@ def test_remote_process_can_cancel_a_pending_steer(tmp_path: Path) -> None:
                 target=_cancel_remote_control,
                 args=(
                     str(harness.store.db_path),
-                    str(harness.ids.state_path),
+                    str(harness.ids.db_path),
                     handle.run_id,
                     steer.index,
                 ),
@@ -753,7 +753,7 @@ def test_concurrent_forks_preserve_one_terminal_anchor(
     tmp_path: Path,
 ) -> None:
     db_path = tmp_path / "runs.db"
-    id_path = tmp_path / "ids.json"
+    id_path = tmp_path / "runs.db"
     store = RunStore(db_path)
     try:
         project_run_start(

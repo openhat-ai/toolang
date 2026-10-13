@@ -51,7 +51,6 @@ def test_independent_script_instances_have_separate_execution_and_sandbox_state(
     assert one.run_store != two.run_store
     assert one.chore_store == one.run_store
     assert one.chore_store != two.chore_store
-    assert one.id_state != two.id_state
     assert one.sandbox_state != two.sandbox_state
     store = RunStore(one.run_store)
     store.create_thread(thread_id="talk_existing", origin="talk")

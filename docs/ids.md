@@ -127,54 +127,56 @@ references must still include the agent identity. Within one agent/family,
 distinct tick/sequence pairs remain distinct IDs.
 
 This codec does not decode historical unkeyed IDs. Existing records keep their
-IDs, and the `ids.json` format is unchanged. New allocations continue from its
-saved counters. Code integrations must supply `agent_name` to ID helpers and
-`IdIssuer`; manual decoding requires the original agent name and codec.
+IDs. Allocation state now lives in the `seqs` table in `runs.db`; legacy JSON
+counters are not imported. Code integrations must supply `agent_name` to ID
+helpers and `IdIssuer`; manual decoding requires the original agent name and
+codec.
 
 
 ## Allocation
 
 Allocator state is durable and per-agent. It is not runtime-only state.
 
-One shared snapshot file stores one monotonic `(last_tick, last_seq)` pair for
-each id family:
+The `seqs` table in each agent's `runs.db` stores one monotonic
+`(last_tick, last_seq)` pair per family. Rows are created on first successful
+allocation; a missing family starts from `(-1, -1)`.
 
-```json
-{
-  "families": {
-    "local": {
-      "last_tick": 42,
-      "last_seq": 3
-    },
-    "run": {
-      "last_tick": 42,
-      "last_seq": 14
-    }
-  }
-}
-```
+| family | last_tick | last_seq |
+| --- | --- | --- |
+| local | 42 | 3 |
+| run | 42 | 14 |
 
-Allocation steps:
+Allocation opens a dedicated SQLite connection to an initialized database:
 
-1. compute the current tick from the configured epoch and bucket size
-2. load the current family state
-3. keep the tick monotonic with `max(now_tick, last_tick)`
-4. increment the per-tick seq
-5. encode the id
-6. persist the updated state
+1. acquire the write transaction with `BEGIN IMMEDIATE`;
+2. load and validate the current family state;
+3. keep the tick monotonic with `max(now_tick, last_tick)`;
+4. increment the per-tick sequence and encode the ID;
+5. upsert the updated state and commit before returning the ID.
 
-The allocator uses one POSIX file lock around the snapshot update so multiple
-CLI and runtime processes can share one allocator safely.
-Host and sandbox writers must share that same file and a supported locking
-domain. Independent copies of an agent's allocator file are not coordinated.
-Malformed snapshots are rejected instead of being treated as empty allocator
-state, which prevents silent sequence reuse after state corruption.
+Allocation uses `synchronous=FULL` and a 30-second SQLite busy timeout. Failures
+roll back the reservation and propagate without an allocation fallback.
+Reservations precede business write transactions and remain committed when
+subsequent run, thread, or authored-file creation fails. Deleting execution
+history does not reset counters. Invalid stored states are rejected rather than
+treated as empty state.
 
-State-loss recovery remains manual. Stop writers before reconstructing the
-snapshot. Decoding retained IDs and taking the maximum `(tick, seq)` per family
-can recover a persisted high-water mark; timestamp or insertion order does not
-necessarily match allocation order. `runs.db` is not a complete allocation log:
-deleted or unpersisted allocated IDs cannot be reconstructed from it. No automatic scan or repair is performed.
+Host and sandbox writers must share the same database, including its WAL and
+shared-memory files, on storage supporting SQLite's locking requirements.
+Independent database copies do not coordinate allocations.
+
+This storage change supports fresh data only. Writable execution opens reject
+old schemas and adjacent legacy `ids.json` files; no counter import or history
+scan occurs. Stop all writers, preserve the complete old runtime, and explicitly
+start with fresh runtime data. Supported old stores remain available for
+read-only inspection. Resetting an allocator does not guarantee disjoint IDs
+from earlier allocations with the same agent name.
+
+State-loss recovery remains manual. Decoding retained IDs and taking the maximum
+`(tick, seq)` per family can help reconstruct a high-water mark after stopping
+writers. Timestamp or insertion order does not necessarily match allocation
+order. Historical records cannot recover deleted or unpersisted reservations;
+there is no automatic scan or repair.
 
 
 ## Collision Handling
@@ -205,8 +207,7 @@ Chores have no archive stage.
 - `LOCAL_ID_FAMILY`
 - `RUN_ID_FAMILY`
 - `AllocatorState`
-- `AllocatorSnapshot`
-- `IdIssuer(state_path, agent_name=...)`
+- `IdIssuer(db_path, agent_name=...)`
 - `encode_id(...)`
 - `decode_id(...)`
 - `reserve_next_id(...)`
@@ -216,13 +217,17 @@ Chores have no archive stage.
 The encode, decode, reserve, allocate, and archive-prefix helpers require
 `agent_name`. `IdIssuer.issue_run()` and `IdIssuer.issue_thread(prefix)` retain
 their existing signatures and prepend the full-ID prefix after allocation.
-These helpers are used by local task, chore, thread, and run creation.
+Pass the initialized `runs.db` path to `allocate_id` and `IdIssuer` (the path
+parameter is now `db_path`). `AllocatorSnapshot` and `AgentLayout.id_state` have
+been removed. These helpers are used for generated chore names, threads, and
+runs; chore identities remain name-derived.
 
 
 ## Conversation IDs
 
 Conversations use eight characters from the same base32 alphabet, prefixed by
-`dm_` or `gc_`. Execution/thread outputs and per-agent allocator files are unchanged.
+`dm_` or `gc_`. Execution/thread ID formats are unchanged; conversation allocation
+does not use `seqs`.
 
 DM IDs hash compact UTF-8 JSON `["toolang:dm:v1", a, b]`, where `a` and `b` are
 the exact typed participant names sorted by UTF-8 bytes. The first five SHA-256

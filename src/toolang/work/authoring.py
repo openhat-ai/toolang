@@ -8,6 +8,7 @@ from toolang.catalog.chore import AuthoredChores, ChoreFile
 from toolang.catalog.errors import CatalogConflictError, CatalogNotFoundError
 from toolang.common.ids import LOCAL_ID_FAMILY, allocate_id
 from toolang.common.layout import AgentLayout
+from toolang.execution.store import RunStore
 
 from .state import load_chores
 
@@ -16,10 +17,11 @@ def allocate_authored_chore_name(
     layout: AgentLayout, *, catalog: AuthoredChores | None = None
 ) -> str:
     """Allocate a filename when the caller did not supply a declaration name."""
+    RunStore(layout.run_store).close()
     effective = catalog or AuthoredChores(layout.home)
     with effective.write_lock():
         return allocate_id(
-            layout.id_state,
+            layout.run_store,
             family=LOCAL_ID_FAMILY,
             agent_name=layout.name,
             exists=effective.contains_name,

@@ -131,8 +131,7 @@ Key paths:
 | `status.json` | Runtime status, endpoint, sandbox summary, and selected models |
 | `agent.log`    | Runtime log                                                  |
 | `logs/<agic>/<run_id>.log` | Per-run script logs when `PY_LOG` is set |
-| `runs.db` | Threads, controls, runs, steps, model inputs, and chore checkpoints   |
-| `ids.json`     | Local id allocator state                                     |
+| `runs.db` | Threads, controls, runs, steps, model inputs, chore checkpoints, and ID sequences |
 | `chat-history.jsonl` | Chat input recall history                               |
 | `tools/`       | Per-toolset plugin working directories                       |
 
@@ -174,7 +173,8 @@ Thread fork/rewind use SQLite transactions, without `runs.db.threads.lock`.
 Incoming message batches create separate `talk` threads. Each agent's per-conversation
 talk cursor lives in the teaming backend; agents generate no `.runtime/channels/`
 files and retain no previous-message batch context.
-ID allocation locks `ids.json` directly; there is no separate ID lock file.
+ID allocation updates the `seqs` table in `runs.db` under a short SQLite write
+transaction; there is no separate allocator file or lock.
 
 Stop all writers sharing storage before upgrading across these lock-name changes.
 Released sidecars remain empty files; existence does not mean a lock is held.

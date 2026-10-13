@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from concurrent.futures import ProcessPoolExecutor
 import multiprocessing
+import sqlite3
 from pathlib import Path
 
 import frontmatter
@@ -12,12 +13,11 @@ from toolang.catalog.config import CapRef, ConfiguredCaps
 from toolang.catalog.errors import CatalogConflictError
 from toolang.catalog.chore import AuthoredChores, ChoreFile
 from toolang.common.ids import (
-    AllocatorSnapshot,
-    AllocatorState,
     LOCAL_ID_FAMILY,
     decode_id,
 )
 from toolang.common.layout import AgentLayout
+from toolang.execution.store import RunStore
 from toolang.work.authoring import (
     allocate_authored_chore_name,
     new_chore_file,
@@ -79,7 +79,9 @@ def test_authored_job_ids_use_the_layout_agent_name(
     layout = AgentLayout.resident(tmp_path, agent_name)
     # Pin the saved tick beyond wall time so all agents allocate the same pair.
     tick = LOCAL_ID_FAMILY.tick_modulus - 1
-    AllocatorSnapshot(families={"local": AllocatorState(tick, 6)}).save(layout.id_state)
+    RunStore(layout.run_store).close()
+    with sqlite3.connect(layout.run_store) as connection:
+        connection.execute("INSERT INTO seqs VALUES ('local', ?, 6)", (tick,))
 
     job_id = allocate_authored_chore_name(layout)
 
@@ -162,3 +164,20 @@ def test_job_state_assignment_and_api_allocation_share_lock_order(
     jobs = AuthoredChores(root / "agents" / "alice").list()
     assert len(jobs) == 2
     assert len({job.id for job in jobs}) == 2
+
+
+def test_generated_chore_names_initialize_execution_storage(tmp_path: Path) -> None:
+    layout = AgentLayout.resident(tmp_path, "alice")
+    name = allocate_authored_chore_name(layout)
+    assert len(name) == 8
+    assert layout.run_store.is_file()
+    assert not (layout.runtime / "ids.json").exists()
+    with sqlite3.connect(layout.run_store) as connection:
+        assert connection.execute("SELECT family, last_seq FROM seqs").fetchall() == [
+            ("local", 0)
+        ]
+    readonly = RunStore(layout.run_store, read_only=True)
+    try:
+        assert readonly.list_runs() == []
+    finally:
+        readonly.close()

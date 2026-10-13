@@ -129,14 +129,20 @@ from .schemas import Record, RecordSelection, select_record
 from .values import parts_from_value
 from . import statistics
 
-_SCHEMA_VERSION = 56
-_SUPPORTED_SCHEMA_VERSIONS = (52, 53, 54, 55, _SCHEMA_VERSION)
+_SCHEMA_VERSION = 57
+_SUPPORTED_SCHEMA_VERSIONS = (52, 53, 54, 55, 56, _SCHEMA_VERSION)
 
 
 class RunStore:
     """Durable thread and run truth for one agent."""
 
     def __init__(self, db_path: Path, *, read_only: bool = False) -> None:
+        if not read_only and db_path.with_name("ids.json").exists():
+            raise RuntimeError(
+                "legacy ID allocator found; this build requires a fresh runtime: "
+                f"{db_path.parent}. Stop all writers and preserve the old runtime "
+                "before starting with fresh data. No allocator migration is supported."
+            )
         self.db_path = db_path
         self.read_only = read_only
         self._stream_deadline: float | None = None
@@ -4099,19 +4105,21 @@ class RunStore:
                 raise RunStoreSchemaError(
                     version,
                     current=_SCHEMA_VERSION,
-                    supported=_SUPPORTED_SCHEMA_VERSIONS,
+                    supported=(_SCHEMA_VERSION,),
                     read_only=False,
                 )
             allowed = (
-                _SUPPORTED_SCHEMA_VERSIONS
-                if self.read_only
-                else (0, *_SUPPORTED_SCHEMA_VERSIONS)
+                _SUPPORTED_SCHEMA_VERSIONS if self.read_only else (0, _SCHEMA_VERSION)
             )
             if version not in allowed:
                 raise RunStoreSchemaError(
                     version,
                     current=_SCHEMA_VERSION,
-                    supported=_SUPPORTED_SCHEMA_VERSIONS,
+                    supported=(
+                        _SUPPORTED_SCHEMA_VERSIONS
+                        if self.read_only
+                        else (_SCHEMA_VERSION,)
+                    ),
                     read_only=self.read_only,
                 )
             if self.read_only:
@@ -4122,16 +4130,26 @@ class RunStore:
             self._conn.execute("PRAGMA foreign_keys=ON;")
             self._conn.execute("BEGIN IMMEDIATE")
             version = int(self._conn.execute("PRAGMA user_version").fetchone()[0])
-            if version not in (0, *_SUPPORTED_SCHEMA_VERSIONS) or (
+            if version not in (0, _SCHEMA_VERSION) or (
                 version == 0 and _database_has_user_schema(self._conn)
             ):
                 self._conn.rollback()
                 raise RunStoreSchemaError(
                     version,
                     current=_SCHEMA_VERSION,
-                    supported=_SUPPORTED_SCHEMA_VERSIONS,
+                    supported=(_SCHEMA_VERSION,),
                     read_only=False,
                 )
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS seqs (
+                    family TEXT PRIMARY KEY NOT NULL,
+                    last_tick INTEGER NOT NULL CHECK (last_tick >= -1),
+                    last_seq INTEGER NOT NULL CHECK (last_seq >= -1),
+                    CHECK (last_tick != -1 OR last_seq = -1)
+                )
+                """
+            )
             self._conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS threads (
