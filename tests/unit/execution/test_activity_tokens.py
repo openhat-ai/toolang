@@ -59,7 +59,9 @@ def test_unknown_cache_and_inflight_usage_are_not_zero(tmp_path):
         assert page.stats.cached_tokens is None and not page.stats.tokens_complete
 
 
-def test_token_migration_preserves_consumption_and_is_idempotent(tmp_path):
+def test_current_schema_token_backfill_preserves_consumption_and_is_idempotent(
+    tmp_path,
+):
     path = tmp_path / "runs.db"
     with closing(RunStore(path)) as store:
         statistics.start_session(store, "one", at(0))
@@ -71,7 +73,6 @@ def test_token_migration_preserves_consumption_and_is_idempotent(tmp_path):
             conn.execute(f"ALTER TABLE activity_attempts DROP COLUMN {field}")
         for field in statistics.BUCKET_FIELDS[7:]:
             conn.execute(f"ALTER TABLE activity_buckets DROP COLUMN {field}")
-        conn.execute("PRAGMA user_version=54")
         conn.commit()
     for _ in range(2):
         with closing(RunStore(path)) as migrated:

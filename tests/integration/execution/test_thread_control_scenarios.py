@@ -599,7 +599,7 @@ def test_concurrent_process_forks_commit_one_request_without_sidecar(tmp_path):
             target=_fork_same_request,
             args=(
                 str(harness.store.db_path),
-                str(harness.ids.state_path),
+                str(harness.ids.db_path),
                 thread,
                 ready,
                 gate,

@@ -699,7 +699,7 @@ def test_job_reads_never_allocate_and_crud_preserves_full_text(context):
     assert created.error is None, created.output
     assert read(context, "chores/manual.md")["content"] == source
     invoke(context, "list")
-    assert not context.layout.id_state.exists()
+    assert not context.layout.run_store.exists()
     replacement = "---\nid: task-1\n---\nReview now.\n"
     assert (
         invoke(

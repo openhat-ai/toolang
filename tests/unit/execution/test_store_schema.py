@@ -15,7 +15,7 @@ from toolang.execution.types import ContentRef
     [
         pytest.param(28, id="historical"),
         pytest.param(51, id="previous"),
-        pytest.param(57, id="future"),
+        pytest.param(58, id="future"),
     ],
 )
 @pytest.mark.parametrize("read_only", (False, True))
@@ -37,7 +37,7 @@ def test_run_store_rejects_any_other_schema_without_modifying_it(
         RunStore(path, read_only=read_only)
 
     assert raised.value.version == schema_version
-    assert raised.value.current == 56
+    assert raised.value.current == 57
     assert raised.value.read_only is read_only
     assert path.read_bytes() == before
     connection = sqlite3.connect(path)
@@ -92,12 +92,12 @@ def test_run_store_opens_the_current_schema(tmp_path: Path) -> None:
 
     connection = sqlite3.connect(path)
     try:
-        assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 56
+        assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 57
         columns = {
             table: {
                 str(row[1]) for row in connection.execute(f"PRAGMA table_info({table})")
             }
-            for table in ("threads", "runs", "steps", "controls", "contents")
+            for table in ("threads", "runs", "steps", "controls", "contents", "seqs")
         }
         assert columns == {
             "threads": {
@@ -165,6 +165,7 @@ def test_run_store_opens_the_current_schema(tmp_path: Path) -> None:
                 "_revision",
             },
             "contents": {"id", "value"},
+            "seqs": {"family", "last_tick", "last_seq"},
         }
         primary_keys = {
             table: tuple(
@@ -172,7 +173,7 @@ def test_run_store_opens_the_current_schema(tmp_path: Path) -> None:
                 for row in connection.execute(f"PRAGMA table_info({table})")
                 if int(row[5]) > 0
             )
-            for table in ("threads", "runs", "steps", "controls", "contents")
+            for table in ("threads", "runs", "steps", "controls", "contents", "seqs")
         }
         assert primary_keys == {
             "threads": ("id",),
@@ -180,9 +181,78 @@ def test_run_store_opens_the_current_schema(tmp_path: Path) -> None:
             "steps": ("id",),
             "controls": ("id",),
             "contents": ("id",),
+            "seqs": ("family",),
         }
     finally:
         connection.close()
+
+
+@pytest.mark.parametrize("family_name", ("local", "run"))
+def test_missing_allocator_table_is_recreated_without_overwriting_records(
+    tmp_path: Path, family_name: str
+) -> None:
+    from tests.support.execution_fixtures import accept_run
+    from toolang.base.types.message import Message
+    from toolang.common.ids import LOCAL_ID_FAMILY, RUN_ID_FAMILY, allocate_id
+
+    family = LOCAL_ID_FAMILY if family_name == "local" else RUN_ID_FAMILY
+    prefix = "chat" if family_name == "local" else "run"
+    table = "threads" if family_name == "local" else "runs"
+    path = tmp_path / "runs.db"
+    now = family.bucket_started_at(100)
+
+    def create_record(store: RunStore, identifier: str) -> None:
+        if family_name == "local":
+            store.create_thread(thread_id=identifier, origin="chat")
+        else:
+            accept_run(
+                store,
+                run_id=identifier,
+                parent=None,
+                thread="chat_target",
+                input=Message.user("original"),
+                context={},
+                request_id=None,
+                created_at=now.isoformat(),
+            )
+
+    store = RunStore(path)
+    try:
+        if family_name == "run":
+            store.create_thread(thread_id="chat_target", origin="chat")
+        first = allocate_id(path, family=family, agent_name="alice", now=now)
+        create_record(store, f"{prefix}_{first.value}")
+        threads, runs, controls = (
+            store.list_threads(),
+            store.list_runs(),
+            store.list_controls(),
+        )
+    finally:
+        store.close()
+    with sqlite3.connect(path) as connection:
+        connection.execute("DROP TABLE seqs")
+
+    reopened = RunStore(path)
+    try:
+        with sqlite3.connect(path) as connection:
+            assert connection.execute("SELECT * FROM seqs").fetchall() == []
+        repeated = allocate_id(path, family=family, agent_name="alice", now=now)
+        assert repeated.value == first.value
+        with pytest.raises(ValueError, match="already exists"):
+            create_record(reopened, f"{prefix}_{repeated.value}")
+        with sqlite3.connect(path) as connection:
+            with pytest.raises(
+                sqlite3.IntegrityError, match="UNIQUE constraint failed"
+            ):
+                connection.execute(f"INSERT INTO {table} SELECT * FROM {table}")
+        assert reopened.list_threads() == threads
+        assert reopened.list_runs() == runs
+        assert reopened.list_controls() == controls
+        next_id = allocate_id(path, family=family, agent_name="alice", now=now)
+        assert next_id.seq == 1
+        create_record(reopened, f"{prefix}_{next_id.value}")
+    finally:
+        reopened.close()
 
 
 def test_content_store_deduplicates_and_survives_restart(tmp_path: Path) -> None:
@@ -261,7 +331,7 @@ def test_run_store_concurrent_first_open(tmp_path, monkeypatch):
             list(pool.map(open_store, [path] * 8))
 
 
-def test_schema_52_records_remain_readable_and_upgrade_without_invented_cursors(
+def test_schema_52_records_remain_readable_but_cannot_be_upgraded(
     tmp_path,
 ):
     from tests.support.execution_fixtures import project_run_start, project_step
@@ -312,24 +382,52 @@ def test_schema_52_records_remain_readable_and_upgrade_without_invented_cursors(
     readonly.close()
     assert path.read_bytes() == before
 
-    upgraded = RunStore(path)
-    assert upgraded.get_run(run_id=run.id) == run
-    assert upgraded.get_step(ref=step.ref) == step
-    assert upgraded.list_controls() == controls
-    upgraded.close()
-    connection = sqlite3.connect(path)
+    with pytest.raises(RunStoreSchemaError):
+        RunStore(path)
+    assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize("version", [52, 53, 54, 55, 56])
+def test_legacy_schemas_remain_read_only_without_empty_counters(tmp_path, version):
+    path = tmp_path / "runs.db"
+    RunStore(path).close()
+    with sqlite3.connect(path) as connection:
+        connection.execute("DROP TABLE seqs")
+        connection.execute(f"PRAGMA user_version={version}")
+    before = path.read_bytes()
+    with pytest.raises(RunStoreSchemaError) as raised:
+        RunStore(path)
+    assert raised.value.supported == (57,)
+    readonly = RunStore(path, read_only=True)
     try:
-        assert connection.execute("PRAGMA user_version").fetchone() == (56,)
-        indexes = {
-            row[0]
-            for row in connection.execute(
-                "SELECT name FROM sqlite_master WHERE type = 'index'"
-            )
-        }
-        assert all(
-            f"idx_{table}_{column}" in indexes
-            for table, columns in cursor_columns.items()
-            for column in columns
-        )
+        assert readonly.list_threads() == []
     finally:
-        connection.close()
+        readonly.close()
+    assert path.read_bytes() == before
+    with sqlite3.connect(path) as connection:
+        assert (
+            connection.execute(
+                "SELECT name FROM sqlite_master WHERE name = 'seqs'"
+            ).fetchone()
+            is None
+        )
+
+
+@pytest.mark.parametrize("database_exists", [False, True])
+def test_legacy_json_blocks_writing_without_import_or_deletion(
+    tmp_path, database_exists
+):
+    path = tmp_path / "runs.db"
+    if database_exists:
+        RunStore(path).close()
+    before = path.read_bytes() if database_exists else None
+    legacy = path.with_name("ids.json")
+    legacy.write_text("not even valid JSON")
+    with pytest.raises(RuntimeError, match="requires a fresh runtime"):
+        RunStore(path)
+    assert legacy.read_text() == "not even valid JSON"
+    assert (path.read_bytes() if path.exists() else None) == before
+    if database_exists:
+        readonly = RunStore(path, read_only=True)
+        readonly.close()
+        assert path.read_bytes() == before

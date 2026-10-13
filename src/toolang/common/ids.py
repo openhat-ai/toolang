@@ -1,35 +1,25 @@
-"""Stable local id families and file-backed allocators.
+"""Stable local id families and SQLite-backed allocation.
 
 This module defines fixed-width short-id families for Toolang-owned local
-objects and execution records, plus one file-backed allocator that can be
+objects and execution records, plus one SQLite-backed allocator that can be
 shared across CLI and runtime processes.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator, Mapping
-from contextlib import contextmanager
-from dataclasses import dataclass, field
+from collections.abc import Callable, Mapping
+from contextlib import closing
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 import hashlib
-import importlib
 import json
-import os
 from pathlib import Path
-from types import MappingProxyType, ModuleType
-from typing import TextIO, cast
-
-try:  # pragma: no cover - exercised on POSIX in tests
-    _fcntl_module = importlib.import_module("fcntl")
-except ImportError:  # pragma: no cover - platform dependent
-    _fcntl_module = None
-
+import sqlite3
 
 _ID_ALPHABET = "0123456789abcdefghjkmnpqrstvwxyz"
 _ID_EPOCH = datetime(2026, 1, 1, tzinfo=UTC)
 
 _ID_LOOKUP = {char: index for index, char in enumerate(_ID_ALPHABET)}
-_FCNTL: ModuleType | None = _fcntl_module
 _ID_FEISTEL_ROUNDS = 4
 
 
@@ -154,64 +144,6 @@ class AllocatorState:
             "last_tick": self.last_tick,
             "last_seq": self.last_seq,
         }
-
-
-@dataclass(frozen=True, slots=True)
-class AllocatorSnapshot:
-    """One persisted allocator snapshot keyed by family name."""
-
-    families: Mapping[str, AllocatorState] = field(default_factory=dict)
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "families", MappingProxyType(dict(self.families)))
-
-    @classmethod
-    def from_data(cls, payload: Mapping[str, object]) -> AllocatorSnapshot:
-        """Parse one serialized allocator snapshot."""
-
-        if "families" not in payload:
-            return cls()
-        raw_families = payload["families"]
-        if not isinstance(raw_families, Mapping):
-            raise ValueError("allocator snapshot families must be a mapping")
-        items: dict[str, AllocatorState] = {}
-        for raw_name, raw_state in raw_families.items():
-            if not isinstance(raw_name, str) or not raw_name.strip():
-                raise ValueError("allocator snapshot family name cannot be empty")
-            name = raw_name.strip()
-            if not isinstance(raw_state, Mapping):
-                raise ValueError(f"allocator state for {name!r} must be a mapping")
-            items[name] = AllocatorState.from_data(
-                cast(Mapping[str, object], raw_state)
-            )
-        return cls(families=items)
-
-    @classmethod
-    def load(cls, path: Path) -> AllocatorSnapshot:
-        """Load one persisted allocator snapshot from disk."""
-
-        if not path.is_file():
-            return cls()
-        with _locked_state_file(path) as handle:
-            return _snapshot_from_handle(handle)
-
-    def save(self, path: Path) -> None:
-        """Write this allocator snapshot to disk."""
-
-        with _locked_state_file(path) as handle:
-            _write_snapshot(handle, self)
-
-    def state_for(self, family: IdFamily) -> AllocatorState:
-        """Return the current state for one family."""
-
-        return self.families.get(family.name, AllocatorState())
-
-    def with_state(self, family: IdFamily, state: AllocatorState) -> AllocatorSnapshot:
-        """Return a copy with one family state replaced."""
-
-        items = dict(self.families)
-        items[family.name] = state
-        return AllocatorSnapshot(families=items)
 
 
 @dataclass(frozen=True, slots=True)
@@ -425,7 +357,7 @@ def reserve_next_id(
 
 
 def allocate_id(
-    state_path: Path,
+    db_path: Path,
     *,
     family: IdFamily,
     agent_name: str,
@@ -433,19 +365,40 @@ def allocate_id(
     exists: Callable[[str], bool] | None = None,
     max_attempts: int = 128,
 ) -> AllocatedId:
-    """Allocate and persist the next id for one family under one shared state file."""
+    """Commit one family reservation independently of execution writes."""
 
-    with _locked_state_file(state_path) as handle:
-        snapshot = _snapshot_from_handle(handle)
-        allocation, next_state = reserve_next_id(
-            snapshot.state_for(family),
-            family=family,
-            agent_name=agent_name,
-            now=now,
-            exists=exists,
-            max_attempts=max_attempts,
-        )
-        _write_snapshot(handle, snapshot.with_state(family, next_state))
+    target = f"{db_path.expanduser().resolve().as_uri()}?mode=rw"
+    with closing(sqlite3.connect(target, uri=True, timeout=30)) as connection:
+        connection.execute("PRAGMA synchronous=FULL")
+        with connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT last_tick, last_seq FROM seqs WHERE family = ?",
+                (family.name,),
+            ).fetchone()
+            if row is not None and any(type(value) is not int for value in row):
+                raise ValueError(f"invalid allocator state for {family.name!r}")
+            state = AllocatorState(*row) if row is not None else AllocatorState()
+            if state.last_tick != -1:
+                _check_range("last_tick", state.last_tick, family.tick_modulus)
+            if state.last_seq != -1:
+                _check_range("last_seq", state.last_seq, family.seq_modulus)
+            allocation, next_state = reserve_next_id(
+                state,
+                family=family,
+                agent_name=agent_name,
+                now=now,
+                exists=exists,
+                max_attempts=max_attempts,
+            )
+            connection.execute(
+                """
+                INSERT INTO seqs (family, last_tick, last_seq) VALUES (?, ?, ?)
+                ON CONFLICT (family) DO UPDATE
+                SET last_tick = excluded.last_tick, last_seq = excluded.last_seq
+                """,
+                (family.name, next_state.last_tick, next_state.last_seq),
+            )
         return allocation
 
 
@@ -453,14 +406,14 @@ def allocate_id(
 class IdIssuer:
     """Issue process-safe Toolang ids from one durable allocator state."""
 
-    state_path: Path
+    db_path: Path
     agent_name: str
 
     def issue_run(self) -> str:
         """Issue one run id."""
 
         value = allocate_id(
-            self.state_path, family=RUN_ID_FAMILY, agent_name=self.agent_name
+            self.db_path, family=RUN_ID_FAMILY, agent_name=self.agent_name
         ).value
         return f"run_{value}"
 
@@ -471,7 +424,7 @@ class IdIssuer:
         if normalized != prefix or not normalized or not normalized.isalnum():
             raise ValueError(f"invalid thread prefix: {prefix}")
         value = allocate_id(
-            self.state_path, family=LOCAL_ID_FAMILY, agent_name=self.agent_name
+            self.db_path, family=LOCAL_ID_FAMILY, agent_name=self.agent_name
         ).value
         return f"{prefix}_{value}"
 
@@ -614,45 +567,3 @@ def _int_value(value: object) -> int:
     if isinstance(value, int):
         return value
     return int(str(value).strip())
-
-
-@contextmanager
-def _locked_state_file(path: Path) -> Iterator[TextIO]:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    handle = path.open("a+", encoding="utf-8")
-    locked = False
-    try:
-        if _FCNTL is None:  # pragma: no cover - platform dependent
-            raise RuntimeError("file-backed id allocation requires fcntl")
-        _FCNTL.flock(handle.fileno(), _FCNTL.LOCK_EX)
-        locked = True
-        handle.seek(0)
-        yield handle
-    finally:
-        if locked and _FCNTL is not None:  # pragma: no branch - simple cleanup
-            _FCNTL.flock(handle.fileno(), _FCNTL.LOCK_UN)
-        handle.close()
-
-
-def _snapshot_from_handle(handle: TextIO) -> AllocatorSnapshot:
-    text = handle.read().strip()
-    if not text:
-        return AllocatorSnapshot()
-    data = json.loads(text)
-    if not isinstance(data, Mapping):
-        raise ValueError("invalid allocator state file")
-    return AllocatorSnapshot.from_data(data)
-
-
-def _write_snapshot(handle: TextIO, snapshot: AllocatorSnapshot) -> None:
-    payload = {
-        "families": {
-            name: state.to_data() for name, state in sorted(snapshot.families.items())
-        }
-    }
-    text = json.dumps(payload, indent=2, sort_keys=True) + "\n"
-    handle.seek(0)
-    handle.truncate()
-    handle.write(text)
-    handle.flush()
-    os.fsync(handle.fileno())

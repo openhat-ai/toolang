@@ -50,7 +50,7 @@ class AgentCore:
         self.drivers = drivers
         self.store = RunStore(layout.run_store)
         self.activity = ActivityReader(self.store.db_path, f"agent:{layout.name}")
-        self.ids = IdIssuer(layout.id_state, agent_name=layout.name)
+        self.ids = IdIssuer(layout.run_store, agent_name=layout.name)
         self.history = RunHistory(self.store)
         allow_overrides = dict(ceiling_overrides or {})
         self.setup = SetupWatcher(

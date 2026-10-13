@@ -111,7 +111,7 @@ def _executor(tmp_path: Path) -> RunExecutor:
     store = RunStore(tmp_path / ".runtime" / "runs.db")
     store.create_thread(thread_id="term_test")
     return RunExecutor(
-        store, IdIssuer(tmp_path / ".runtime" / "ids.json", agent_name="alice")
+        store, IdIssuer(tmp_path / ".runtime" / "runs.db", agent_name="alice")
     )
 
 
@@ -1575,7 +1575,8 @@ def test_run_acceptance_has_one_owner_across_processes(tmp_path: Path) -> None:
 
 
 def test_run_and_thread_ids_are_process_safe(tmp_path: Path) -> None:
-    state_path = tmp_path / "ids.json"
+    state_path = tmp_path / "runs.db"
+    RunStore(state_path).close()
     context = get_context("spawn")
     with context.Pool(4) as pool:
         groups = pool.starmap(

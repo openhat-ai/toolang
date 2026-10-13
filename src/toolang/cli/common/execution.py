@@ -48,7 +48,7 @@ def open_execution(
         ) from exc
     try:
         yield ExecutionResources(
-            store=store, ids=IdIssuer(layout.id_state, agent_name=layout.name)
+            store=store, ids=IdIssuer(layout.run_store, agent_name=layout.name)
         )
     finally:
         store.close()

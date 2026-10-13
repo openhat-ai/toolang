@@ -132,10 +132,6 @@ class AgentLayout:
         return self.run_store
 
     @property
-    def id_state(self) -> Path:
-        return self.runtime / "ids.json"
-
-    @property
     def runtime_log(self) -> Path:
         return self.runtime / "agent.log"
 

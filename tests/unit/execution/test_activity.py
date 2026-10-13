@@ -205,20 +205,21 @@ def test_pagination_keeps_all_roots_and_revision_in_one_snapshot(store):
     assert pages[0].stats.time == 2050
 
 
-def test_migration_resumes_batches_without_recounting(tmp_path, monkeypatch):
+def test_current_schema_backfill_resumes_batches_without_recounting(
+    tmp_path, monkeypatch
+):
     path = tmp_path / "runs.db"
     with closing(RunStore(path)) as original:
         root(original)
         for index in range(300):
             model(original, index=index)
         project_run_end(original, run_id="run_root", finished_at=at(100))
-        # Restore a v53-shaped database; no observation metadata existed there.
+        # Remove observation metadata to exercise current-schema backfill.
         connection = original._conn
         for kind, name in connection.execute(
             "SELECT type,name FROM sqlite_master WHERE type IN ('trigger','table') AND name LIKE 'activity_%' ORDER BY type DESC"
         ).fetchall():
             connection.execute(f'DROP {kind} "{name}"')
-        connection.execute("PRAGMA user_version=53")
         connection.commit()
     original_flush = statistics.flush
     calls = 0

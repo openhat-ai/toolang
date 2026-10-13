@@ -35,7 +35,8 @@ perform the final pure record-to-schema conversion.
 - `ThreadRecord`, `RunRecord`, and `StepRecord`;
 - one `ControlRecord` model for run- and thread-scoped controls;
 - complete typed step outputs;
-- content-addressed model instructions, messages, and toolsets.
+- content-addressed model instructions, messages, and toolsets;
+- per-family ID high-water marks in `seqs`.
 
 Run events are transient facts emitted during execution. They are never stored
 as `EventRecord` rows. A reconnecting caller reconstructs current state from
@@ -43,9 +44,11 @@ records and observes only new live events.
 
 Persistence makes completed history available after process restart and for
 later model calls. Toolang does not resume an unfinished run after its owner
-process exits. The execution store uses schema version 52: both
-read-only and writable opens reject every other version unchanged. This build
-does not migrate older stores.
+process exits. The execution store writes schema version 57 and reads versions
+52–57. Writable opens reject older schemas and adjacent legacy `ids.json` files
+without migrating or deleting them. Stop all writers and preserve the complete
+old runtime before explicitly starting with fresh runtime data. Read-only
+inspection of supported old stores remains available.
 
 
 ## IDs And Indexes
@@ -53,8 +56,11 @@ does not migrate older stores.
 Run and interactive-thread IDs are issued through one process-owned `IdIssuer`
 from `toolang.common.ids`. The process composition root gives the same issuer
 and `RunStore` to `RunExecutor` and `ThreadManager`. Separate processes use
-separate objects over the same files. Allocation is serialized with an
-inter-process file lock. Unused IDs are allowed; duplicates are not.
+separate objects over the same database. Allocation uses a dedicated connection
+and `BEGIN IMMEDIATE` to serialize updates to `seqs`. Each reservation commits
+before its ID is returned and before a business write transaction begins.
+Failed record creation leaves a gap rather than returning an ID to the pool.
+Unused IDs are allowed; duplicates are not.
 
 Control indexes are local to their Run or Thread target. They are allocated and
 inserted under `BEGIN IMMEDIATE` in `runs.db`; index reservation is never a
