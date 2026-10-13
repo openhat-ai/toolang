@@ -14,10 +14,13 @@ Store the root Hub's generated files in `<root>/hub/` instead of `<root>/.runtim
   not change the shared runtime layout or other `.runtime` data.
 - Update discovery to read only `<root>/hub/hub.json`. Do not migrate, read, or
   write legacy Hub files in `<root>/.runtime/`; keep migration guidance limited
-  to the required changelog entry, with no separate guide.
+  to the required changelog entry, with no separate guide. The changelog must
+  say to stop an old running Hub before upgrading; do not prescribe stale-file
+  cleanup.
 - Preserve Hub lifecycle, locking, record format, file privacy, and CLI behavior.
 - This plan supersedes the Hub artifact location specified in
-  [teaming](teaming.md) only; all other teaming decisions remain unchanged.
+  [teaming](teaming.md) and [agent Hub transport](agent-hub-transport.md) only;
+  all other decisions in those plans remain unchanged.
 
 ## Scope
 
