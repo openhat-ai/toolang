@@ -76,6 +76,12 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Fixed
 
+- A writable open of an existing current-schema `runs.db` that has lost its
+  `seqs` table now fails with `ID allocator state is missing from this run
+  store` instead of quietly recreating the table, so lost allocator state
+  cannot reissue IDs; the store stays readable read-only while state is
+  recovered manually.
+
 - Message-handler failure notices no longer trigger another handler,
   including on other agents in the same conversation, so a failing batch
   cannot cascade failure replies between agents; the notice stays visible
