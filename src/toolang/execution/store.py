@@ -4125,8 +4125,6 @@ class RunStore:
             if self.read_only:
                 self._conn.execute("PRAGMA query_only=ON;")
                 return
-            if version == _SCHEMA_VERSION:
-                _require_allocator_table(self._conn)
             self._conn.execute("PRAGMA journal_mode=WAL;")
             self._conn.execute("PRAGMA synchronous=NORMAL;")
             self._conn.execute("PRAGMA foreign_keys=ON;")
@@ -4142,8 +4140,6 @@ class RunStore:
                     supported=(_SCHEMA_VERSION,),
                     read_only=False,
                 )
-            if version == _SCHEMA_VERSION:
-                _require_allocator_table(self._conn)
             self._conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS seqs (
@@ -4281,19 +4277,6 @@ def _create_steps_table(connection: sqlite3.Connection) -> None:
         )
         """
     )
-
-
-def _require_allocator_table(connection: sqlite3.Connection) -> None:
-    if (
-        connection.execute(
-            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'seqs'"
-        ).fetchone()
-        is None
-    ):
-        raise RuntimeError(
-            "ID allocator state is missing from this run store; preserve the "
-            "database and recover allocator state manually before writing."
-        )
 
 
 def _database_has_user_schema(connection: sqlite3.Connection) -> bool:

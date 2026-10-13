@@ -187,29 +187,72 @@ def test_run_store_opens_the_current_schema(tmp_path: Path) -> None:
         connection.close()
 
 
-def test_missing_allocator_table_never_resets_issued_ids(tmp_path: Path) -> None:
-    from toolang.common.ids import LOCAL_ID_FAMILY, allocate_id
+@pytest.mark.parametrize("family_name", ("local", "run"))
+def test_missing_allocator_table_is_recreated_without_overwriting_records(
+    tmp_path: Path, family_name: str
+) -> None:
+    from tests.support.execution_fixtures import accept_run
+    from toolang.base.types.message import Message
+    from toolang.common.ids import LOCAL_ID_FAMILY, RUN_ID_FAMILY, allocate_id
 
+    family = LOCAL_ID_FAMILY if family_name == "local" else RUN_ID_FAMILY
+    prefix = "chat" if family_name == "local" else "run"
+    table = "threads" if family_name == "local" else "runs"
     path = tmp_path / "runs.db"
+    now = family.bucket_started_at(100)
+
+    def create_record(store: RunStore, identifier: str) -> None:
+        if family_name == "local":
+            store.create_thread(thread_id=identifier, origin="chat")
+        else:
+            accept_run(
+                store,
+                run_id=identifier,
+                parent=None,
+                thread="chat_target",
+                input=Message.user("original"),
+                context={},
+                request_id=None,
+                created_at=now.isoformat(),
+            )
+
     store = RunStore(path)
-    now = LOCAL_ID_FAMILY.bucket_started_at(100)
-    first = allocate_id(path, family=LOCAL_ID_FAMILY, agent_name="alice", now=now)
-    store.create_thread(thread_id=f"chat_{first.value}", origin="chat")
-    store.close()
+    try:
+        if family_name == "run":
+            store.create_thread(thread_id="chat_target", origin="chat")
+        first = allocate_id(path, family=family, agent_name="alice", now=now)
+        create_record(store, f"{prefix}_{first.value}")
+        threads, runs, controls = (
+            store.list_threads(),
+            store.list_runs(),
+            store.list_controls(),
+        )
+    finally:
+        store.close()
     with sqlite3.connect(path) as connection:
         connection.execute("DROP TABLE seqs")
-    before = path.read_bytes()
 
-    with pytest.raises(RuntimeError, match="allocator state is missing"):
-        RunStore(path)
-    assert path.read_bytes() == before
-    with pytest.raises(sqlite3.OperationalError, match="no such table"):
-        allocate_id(path, family=LOCAL_ID_FAMILY, agent_name="alice", now=now)
-    readonly = RunStore(path, read_only=True)
+    reopened = RunStore(path)
     try:
-        assert readonly.get_thread(thread_id=f"chat_{first.value}") is not None
+        with sqlite3.connect(path) as connection:
+            assert connection.execute("SELECT * FROM seqs").fetchall() == []
+        repeated = allocate_id(path, family=family, agent_name="alice", now=now)
+        assert repeated.value == first.value
+        with pytest.raises(ValueError, match="already exists"):
+            create_record(reopened, f"{prefix}_{repeated.value}")
+        with sqlite3.connect(path) as connection:
+            with pytest.raises(
+                sqlite3.IntegrityError, match="UNIQUE constraint failed"
+            ):
+                connection.execute(f"INSERT INTO {table} SELECT * FROM {table}")
+        assert reopened.list_threads() == threads
+        assert reopened.list_runs() == runs
+        assert reopened.list_controls() == controls
+        next_id = allocate_id(path, family=family, agent_name="alice", now=now)
+        assert next_id.seq == 1
+        create_record(reopened, f"{prefix}_{next_id.value}")
     finally:
-        readonly.close()
+        reopened.close()
 
 
 def test_content_store_deduplicates_and_survives_restart(tmp_path: Path) -> None:

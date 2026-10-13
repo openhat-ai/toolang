@@ -23,7 +23,7 @@ sequences, consistent with `last_seq` and the existing short plural table names.
 Add:
 
 ```sql
-CREATE TABLE seqs (
+CREATE TABLE IF NOT EXISTS seqs (
     family TEXT PRIMARY KEY NOT NULL,
     last_tick INTEGER NOT NULL CHECK (last_tick >= -1),
     last_seq INTEGER NOT NULL CHECK (last_seq >= -1),
@@ -35,8 +35,10 @@ Rows are created on first successful reservation, normally one each for `local`
 and `run`. A missing row represents `AllocatorState()`. Validate stored state
 before use; invalid values fail instead of resetting counters. No foreign keys
 or cleanup cascade connects allocation state to history.
-An existing current-schema database must already contain `seqs`; a missing
-table is state loss and fails writable initialization without recreating it.
+Use `CREATE TABLE IF NOT EXISTS`, matching the other execution tables. A missing
+`seqs` table is recreated empty on writable initialization; do not add a special
+missing-table guard. Existing record duplicate checks and primary keys reject
+collisions with stored full IDs. The user confirmed this policy on 2026-10-13.
 
 Keep codec and allocation behavior in `common/ids.py`. `allocate_id` accepts an
 explicit database path, opens an existing database with `mode=rw`, and closes
@@ -93,6 +95,7 @@ if old and fresh runtimes with the same agent identity coexist.
 
 | Scenario | Pass condition |
 | --- | --- |
+| Missing table | Writable reopening recreates empty `seqs`; repeated stored run/thread IDs are rejected without overwriting records, and the counter continues advancing. |
 | Fresh initialization | Execution and generated chore-name creation initialize the full supported database; allocation creates family rows and no JSON file. |
 | Existing ID behavior | Codec vectors, prefixes, family sharing, rollover, rollback, exhaustion, and duplicate checks remain unchanged. |
 | Concurrent allocation | Multiple processes sharing one database issue unique run/thread suffixes with monotonic family state. |
@@ -110,7 +113,8 @@ for SQLite WAL and its shared-memory files remains a deployment prerequisite.
 
 Allocation now competes with history and chore writes for the database write
 lock. Keep reservation transactions short. Database loss or replacement loses
-both history and counter state; deleting history rows must not reset counters.
+both history and counter state. Loss of `seqs` can reissue IDs, including IDs
+whose records no longer exist. Deleting history rows alone does not reset counters.
 Backing up only the main database file while WAL writes are active is insufficient.
 
 No unresolved design choices remain.

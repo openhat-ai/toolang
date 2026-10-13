@@ -176,10 +176,11 @@ State-loss recovery remains manual. Decoding retained IDs and taking the maximum
 `(tick, seq)` per family can help reconstruct a high-water mark after stopping
 writers. Timestamp or insertion order does not necessarily match allocation
 order. Historical records cannot recover deleted or unpersisted reservations;
-there is no automatic scan or repair.
-An existing schema 57 database with a missing `seqs` table is rejected for
-writing rather than initialized with empty counters; read-only history inspection
-remains available.
+there is no automatic counter reconstruction. Like the other execution tables,
+`seqs` is recreated empty if missing on writable initialization. Allocation can
+then reissue IDs; existing run/thread duplicate checks and primary keys reject
+creation of a record with an already stored full ID. They do not recover lost
+reservations or detect IDs whose records were deleted or never persisted.
 
 
 ## Collision Handling
