@@ -9,6 +9,30 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Changed
 
+- **Breaking:** `state.sync` reports one acceptance receipt per source: each
+  `files` entry has `scope`, `key`, `observed_digest`, and `accepted_digest`,
+  excluded sources add flat `code`, `message`, and optional `line`, and the
+  `differences` and `diagnostics` fields are gone, so a fatal failure returns
+  `{error, message, revision, files: []}`. The tool summary appends the
+  excluded source count, and successful publication no longer means every
+  file was accepted, so clients that read the removed fields must use the
+  source records.
+
+- **Breaking:** Agent State publication excludes invalid resources
+  independently instead of rejecting the whole candidate: an invalid cap,
+  chore, or Program unit is skipped with a diagnostic on its source record
+  while valid siblings still publish, root/home precedence applies to
+  accepted definitions only, and no previous definition is reused, so repair
+  a rejected resource to restore it. Home `chores/*.md` definitions are now
+  part of Agent State, while root-level `chores/*.md` definitions are
+  ignored: move them into the agent home's `chores/` directory to keep them
+  listed and scheduled.
+
+- `too AGENT chore list` and the chores API report a malformed home
+  definition with its `source_error` instead of failing the listing, and
+  `too AGENT chore delete` removes the referenced file and prints its name,
+  so a malformed definition can be deleted for repair.
+
 - **Breaking:** ID allocation state moves from each agent's `.runtime/ids.json`
   file into a `seqs` table in `runs.db`, serialized by SQLite instead of a file
   lock, and legacy counters are not imported: a writable open rejects an
@@ -75,6 +99,10 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   emit a frame only for real events or checkpoints.
 
 ### Fixed
+
+- The State watcher re-checks while a tracked source cannot be read, so a
+  temporarily unreadable definition is published once it becomes readable
+  again instead of waiting for another change.
 
 - Message-handler failure notices no longer trigger another handler,
   including on other agents in the same conversation, so a failing batch
