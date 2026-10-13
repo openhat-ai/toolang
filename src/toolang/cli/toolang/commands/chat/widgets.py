@@ -66,9 +66,7 @@ def _chat_ui_palette(
         "queue.selected": f"bg:{surfaces.input_background}",
         "queue.selected.icon": "dim",
         "queue.selected.hint": "dim",
-        "queue.hint": "dim",
         "queue.count": "dim",
-        "queue.focused-count": "",
         "control.run": rich_style_to_prompt_toolkit(Style(bgcolor=RUN_CONTROL_ACCENT)),
         "input": f"bg:{surfaces.input_background}",
         "input.placeholder": f"bg:{surfaces.input_background} dim",
@@ -199,15 +197,6 @@ class QueuePanel:
 
         return [self._accent_cell(), ("class:queue", " " * width)]
 
-    def _title_hint(self) -> str:
-        """Return the one panel action shown beside the count for this state."""
-
-        if not self._has_focus():
-            return shortcuts.SWITCH_AREA.hint_phrase("focus")
-        return shortcuts.QUEUE_TOGGLE.hint_phrase(
-            "collapse" if self.expanded else "expand"
-        )
-
     def _rows(
         self,
         items: Sequence[str],
@@ -255,12 +244,10 @@ class QueuePanel:
         preview = " ".join(source.split())
         hint = ""
         if selected:
-            actions = " · ".join(
-                (
-                    shortcuts.QUEUE_STEER.hint("Steer"),
-                    shortcuts.QUEUE_EDIT.hint("Edit"),
-                    shortcuts.QUEUE_DELETE.hint("Delete"),
-                )
+            actions = (
+                f"({shortcuts.QUEUE_STEER.hint_label})steer "
+                f"({shortcuts.QUEUE_EDIT.label})dit "
+                f"({shortcuts.QUEUE_DELETE.label})elete"
             )
             minimum_text = len(prefix) + 1 + _QUEUE_MIN_PREVIEW_WIDTH
             hint = self._truncate(
@@ -279,35 +266,16 @@ class QueuePanel:
         ]
 
     def _summary_row(self, count: int, *, width: int) -> list[tuple[str, str]]:
-        """Center the count independently of the right-aligned action hint."""
+        """Right-align the dim count, reducing padding before truncating it."""
 
-        style = "class:queue"
-        right = min(_QUEUE_ROW_PADDING, width)
-        available = width - right
-        # Count text takes priority over padding when the terminal is narrow.
         label = self._truncate(self._count_label(count), width)
         label_width = get_cwidth(label)
-        # Width excludes the leading accent. Center against the full panel,
-        # then translate back to content coordinates and clamp narrow layouts.
-        centered = (width + _QUEUE_ACCENT_WIDTH - label_width) // 2
-        start = max(0, centered - _QUEUE_ACCENT_WIDTH)
-        count_style = (
-            "class:queue.focused-count" if self._has_focus() else "class:queue.count"
-        )
-        cells: list[tuple[str, str]] = [
-            (style, " " * start),
-            (count_style, label),
+        right = min(_QUEUE_ROW_PADDING, width - label_width)
+        return [
+            ("class:queue", " " * (width - label_width - right)),
+            ("class:queue.count", label),
+            ("class:queue", " " * right),
         ]
-        used = start + label_width
-        hint = self._title_hint()
-        hint_width = get_cwidth(hint)
-        if label_width and used + _QUEUE_HINT_GAP + hint_width <= available:
-            cells.append((style, " " * (available - used - hint_width)))
-            cells.append(("class:queue.hint", hint))
-            used = available
-        if used < width:
-            cells.append((style, " " * (width - used)))
-        return cells
 
     @staticmethod
     def _count_label(count: int) -> str:

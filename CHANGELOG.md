@@ -9,6 +9,14 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Changed
 
+- Chat's queue summary now shows only a dim `N queued` count, right-aligned
+  with two cells of right padding, instead of a centered count that restyled on
+  focus and a trailing `tab to focus`, `space to expand`, or
+  `space to collapse` hint; the focused selected entry shows compact
+  `(m-enter)steer (e)dit (d)elete` hints instead of
+  `m-enter steer · e edit · d delete`, and narrow terminals reduce right
+  padding before truncating the count.
+
 - **Breaking:** agent talk progress moves from local per-runtime
   `.runtime/channels/messaging/v2-<backend-identity>.json` checkpoint files to
   the teaming backend, stored per agent and conversation with no TTL, so a
