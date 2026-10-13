@@ -10,9 +10,14 @@ import logging
 from typing import Any
 
 from toolang.base.types.message import TextPart
-from toolang.base.types.policy import RunBindings
+from toolang.base.types.model import ModelRequest
+from toolang.base.types.policy import AgentCeiling, RunBindings
 from toolang.common.layout import AgentLayout
 from toolang.execution.executor import RunExecutor, RunSpec
+from toolang.execution.executor.resources import (
+    resolve_agent_resources,
+    resolve_runnable_resources,
+)
 from toolang.execution.runnables import resolve_runnable_reference, runnable_fallback
 from toolang.execution.threads import ThreadManager
 from toolang.execution.types import ThreadPrefix
@@ -151,9 +156,16 @@ class MessagingLoop:
                     )
                     continue
                 messages.append({**message.data(), "stream_id": sid})
+            # Failure notices remain visible, but do not start new handler runs.
+            incoming = [
+                message
+                for message in messages
+                if message["sender"] != self.agent
+                and not message.get("handler_error", False)
+            ]
             cancelled = False
             try:
-                if any(m["sender"] != self.agent for m in messages):
+                if incoming:
                     await self.handle(
                         {
                             "agent": self.agent,
@@ -169,8 +181,13 @@ class MessagingLoop:
             except asyncio.CancelledError:
                 cancelled = True
                 raise
-            except Exception:
+            except Exception as exc:
                 logger.exception("Messaging batch failed; skipping %s", conversation)
+                try:
+                    await self._send_failure_reply(conversation, incoming, exc)
+                except asyncio.CancelledError:
+                    cancelled = True
+                    raise
             finally:
                 self.pending = conversation, entries[-1][0]
                 try:
@@ -187,6 +204,38 @@ class MessagingLoop:
                     )
             return
 
+    async def _send_failure_reply(
+        self,
+        conversation: str,
+        messages: list[dict[str, Any]],
+        error: Exception,
+    ) -> None:
+        """Reply to the latest external message when its handler fails."""
+
+        source = next(
+            (
+                message
+                for message in reversed(messages)
+                if message["sender"] != self.agent
+            ),
+            None,
+        )
+        if source is None:
+            return
+        try:
+            await self.client.send(
+                conversation,
+                body=f"Message handling failed: {error}"[:2048],
+                in_reply_to=source["id"],
+                handler_error=True,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception(
+                "Unable to send message-handler failure reply: %s", conversation
+            )
+
     async def handle(self, batch: dict[str, Any]) -> None:
         setup, state = self.get_setup(), self.get_state()
         preferred = "talk"
@@ -197,6 +246,22 @@ class MessagingLoop:
             else setup.defaults.runnable or runnable_fallback(state, preferred="talk")
         )
         resolved = resolve_runnable_reference(state, runnable)
+        model_request = setup.defaults.model
+        if model_request is None:
+            # Respect the handler's authored model selection, including flows
+            # that deliberately run without models.
+            resources = resolve_runnable_resources(
+                setup.models_effective(),
+                runnable=resolved.executable,
+                base=resolve_agent_resources(
+                    setup, state, AgentCeiling(), module=resolved.module
+                ),
+                setup=setup,
+                state=state,
+                module=resolved.module,
+            )
+            fallback = resources.models[0] if resources.models else None
+            model_request = ModelRequest(fallback) if fallback is not None else None
         text = ("" if custom else _INSTRUCTIONS) + json.dumps(batch, ensure_ascii=False)
         spec = RunSpec(
             setup=setup,
@@ -207,9 +272,9 @@ class MessagingLoop:
             ),
             bindings=RunBindings(
                 runnable=runnable,
-                model=setup.defaults.model.ref if setup.defaults.model else None,
+                model=model_request.ref if model_request is not None else None,
             ),
-            model_request=setup.defaults.model,
+            model_request=model_request,
             limits=setup.limits,
             input=resolve_runnable_input(
                 resolved.executable,
@@ -225,4 +290,9 @@ class MessagingLoop:
             await handle
             raise
         if record.status != "succeeded":
-            raise MessagingError(f"Message handler {record.id}: {record.status}")
+            detail = (
+                self.executor.store.resolve_error(record.error)
+                if record.error is not None
+                else record.status
+            )
+            raise MessagingError(f"Message handler {record.id}: {detail}")

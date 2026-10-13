@@ -107,9 +107,14 @@ class AgentClient(HubClient):
         run: str | None = None,
         thread: str | None = None,
         participants: list[str] | None = None,
+        handler_error: bool = False,
     ) -> dict[str, Any]:
         message = Message.create(
-            self.actor, body, in_reply_to, {"thread": thread, "run": run}
+            self.actor,
+            body,
+            in_reply_to,
+            {"thread": thread, "run": run},
+            handler_error=handler_error,
         )
         return await self._request(
             "POST",
@@ -123,6 +128,7 @@ class AgentClient(HubClient):
                 "in_reply_to": message.in_reply_to,
                 "thread": thread,
                 "run": run,
+                **({"handler_error": True} if handler_error else {}),
             },
         )
 

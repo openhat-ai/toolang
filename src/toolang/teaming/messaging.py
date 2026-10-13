@@ -267,6 +267,7 @@ class MessagingClient:
         thread: str | None = None,
         message_id: str | None = None,
         participants: list[str] | None = None,
+        handler_error: bool = False,
     ) -> dict[str, Any]:
         message = Message(
             message_id if message_id is not None else str(uuid4()),
@@ -274,6 +275,7 @@ class MessagingClient:
             body,
             in_reply_to,
             {"thread": thread, "run": run} if self._lease else None,
+            handler_error,
         )
         if participants is not None:
             if len(participants) != 2 or dm_id(*participants) != conversation_id(

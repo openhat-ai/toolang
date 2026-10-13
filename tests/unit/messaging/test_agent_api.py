@@ -30,7 +30,7 @@ from toolang.teaming.errors import (
 from toolang.teaming.events import HubScope
 from toolang.teaming.exporter import EventExporter
 from toolang.teaming.records import HubRecord, MAX_BYTES
-from toolang.teaming.schemas import HubConnection
+from toolang.teaming.schemas import HubConnection, Message
 from toolang.teaming.stream_client import HubStreamState
 from toolang.teaming.subscriptions import HubSubscription
 from toolang.work.messaging import MessagingLoop
@@ -437,3 +437,121 @@ def test_agent_api_rejects_bad_identity_lease_and_publications(tmp_path):
 
 
 pytestmark = pytest.mark.usefixtures("fixed_conversation_ids")
+
+
+def test_handler_errors_do_not_trigger_other_agents(tmp_path, monkeypatch):
+    async def scenario():
+        human = client(FakeServer(server_type="valkey"), CONNECTION.human)
+        app = create_app(human, version="0.4.0-test")
+        async with (
+            app.router.lifespan_context(app),
+            agent(app, tmp_path, "agent:alice", "alice-lease") as alice,
+            agent(app, tmp_path, "agent:bob", "bob-lease") as bob,
+        ):
+            loops = []
+            handlers = []
+            for name, receiver in (("alice", alice), ("bob", bob)):
+                await receiver.register(CONNECTION.human)
+                loop = MessagingLoop(
+                    layout=AgentLayout.resident(tmp_path, name),
+                    owner=CONNECTION.human,
+                    client=receiver,
+                    executor=MagicMock(),
+                    threads=MagicMock(),
+                    get_agent_setup=MagicMock(),
+                    get_agent_state=MagicMock(),
+                )
+                handler = AsyncMock(side_effect=RuntimeError("handler unavailable"))
+                monkeypatch.setattr(loop, "handle", handler)
+                handlers.append(handler)
+                loops.append(loop)
+            await human.send("gc_00000000", body="please handle")
+            for _ in range(3):
+                for loop in loops:
+                    await loop.poll()
+            history = await human.history("gc_00000000")
+            assert len(history) == 3  # Original message and one error per agent.
+            replies = [Message.decode(fields["data"]) for _, fields in history[1:]]
+            assert all(message.handler_error for message in replies)
+            source = Message.decode(history[0][1]["data"])
+            assert all(message.in_reply_to == source.id for message in replies)
+            assert all(handler.await_count == 1 for handler in handlers)
+            # Ordinary agent messages with the same wording still require handling.
+            ordinary = await bob.send(
+                "gc_00000000", body="Message handling failed: ordinary request"
+            )
+            for loop in loops:
+                await loop.poll()
+            assert handlers[0].await_count == 2
+            assert handlers[1].await_count == 1
+            reply = Message.decode((await human.history("gc_00000000"))[-1][1]["data"])
+            assert reply.in_reply_to == ordinary["message"]["id"]
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("fault", ["lost-ack", "rejected"])
+def test_handler_error_send_failure_is_checkpointed_without_retry(
+    tmp_path, monkeypatch, caplog, fault
+):
+    async def scenario():
+        human = client(FakeServer(server_type="valkey"), CONNECTION.human)
+        app = create_app(human, version="0.4.0-test")
+        writes = []
+
+        async def handle(request):
+            if request.url.path.endswith("/msg/messages"):
+                writes.append(json.loads(request.content))
+                if fault == "rejected":
+                    return httpx.Response(
+                        403,
+                        json={
+                            "code": "conversation_access_denied",
+                            "detail": "access denied",
+                        },
+                    )
+                response = await httpx.ASGITransport(app).handle_async_request(request)
+                await response.aread()
+                raise httpx.ReadError("response lost", request=request)
+            return await httpx.ASGITransport(app).handle_async_request(request)
+
+        async with (
+            app.router.lifespan_context(app),
+            agent(app, tmp_path, transport=httpx.MockTransport(handle)) as alice,
+        ):
+            await alice.register(CONNECTION.human)
+            loop = MessagingLoop(
+                layout=AgentLayout.resident(tmp_path, "alice"),
+                owner=CONNECTION.human,
+                client=alice,
+                executor=MagicMock(),
+                threads=MagicMock(),
+                get_agent_setup=MagicMock(),
+                get_agent_state=MagicMock(),
+            )
+            handler = AsyncMock(side_effect=RuntimeError("handler unavailable"))
+            monkeypatch.setattr(loop, "handle", handler)
+            source = await human.send("gc_00000000", body="please handle")
+            await loop.poll()
+            assert await alice.talk_cursor("gc_00000000") == source["stream_id"]
+            assert "handler unavailable" in caplog.text
+            loop = MessagingLoop(
+                layout=AgentLayout.resident(tmp_path, "alice"),
+                owner=CONNECTION.human,
+                client=alice,
+                executor=MagicMock(),
+                threads=MagicMock(),
+                get_agent_setup=MagicMock(),
+                get_agent_state=MagicMock(),
+            )
+            monkeypatch.setattr(loop, "handle", handler)
+            await loop.poll()
+            await loop.poll()
+            assert handler.await_count == 1
+            assert len(writes) == 1
+            assert writes[0]["handler_error"] is True
+            history = await human.history("gc_00000000")
+            assert len(history) == (2 if fault == "lost-ack" else 1)
+            assert "Unable to send message-handler failure reply" in caplog.text
+
+    asyncio.run(scenario())

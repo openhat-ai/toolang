@@ -190,6 +190,7 @@ def test_local_access_validation_and_backend_readiness(owner):
                 {"actor": "agent:alice"},
                 {"sender": "human:another"},
                 {"origin": {"thread": "x"}},
+                {"handler_error": True},
             ):
                 assert (
                     await http.post("/msg/messages", json=body | extra)

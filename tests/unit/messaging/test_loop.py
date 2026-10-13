@@ -1,6 +1,7 @@
 """Agent batching with real execution and the shared transport."""
 
 import asyncio
+from dataclasses import replace
 from unittest.mock import AsyncMock, MagicMock
 
 from fakeredis import FakeAsyncValkey, FakeServer
@@ -11,16 +12,21 @@ from tests.support.execution_harness import (
     AsyncGate,
     ScriptedModelTurn,
 )
+from tests.support.setup import replace_materialized_setup
 from toolang.base.types.message import Message as ModelMessage
+from toolang.base.types.model import ModelRequest
+from toolang.base.types.policy import RunDefaults
 from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.common.layout import AgentLayout
 from toolang.execution.records import RunControlPayload
 from toolang.teaming.messaging import MessagingClient
+from toolang.teaming.schemas import Message
 from toolang.teaming.backend.valkey import ValkeyBackend
 from toolang.teaming.backend.valkey.keys import convo_key
 from toolang.teaming.config import BackendConfig, TeamingHomeConfig, TeamingRootConfig
 from toolang.plugin.toolsets.convo import ConvoToolset
 from toolang.plugin.toolsets.loading import tools_from_toolsets
+from toolang.plugin.models.query import first_model_ref
 from toolang.plugin.types import LoadedPlugin
 from toolang.state.prepare import prepare_agent_state
 from toolang.work.messaging import MessagingLoop
@@ -198,6 +204,210 @@ def test_tool_reply_origin_and_backend_cursor_restart(tmp_path, custom):
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize(
+    "source",
+    [
+        "agic:\n  {{_}}\n",
+        "agic talk(_: Json):\n  {{_}}\n",
+        "flow talk(_: Json):\n  run helper\nagic helper(_: Json):\n  {{_}}\n",
+        "flow talk(_: Json):\n  exec helper\nagic helper(_: Json):\n  {{_}}\n",
+    ],
+)
+def test_message_handler_falls_back_to_available_model_without_default(
+    tmp_path, source
+):
+    server = FakeServer(server_type="valkey")
+    harness = harness_with_msg(
+        tmp_path,
+        server,
+        [ModelCallResult(message=ModelMessage.assistant("Handled."))],
+        source=source,
+    )
+    harness.setup = replace_materialized_setup(
+        harness.setup,
+        defaults=RunDefaults(),
+    )
+    fallback = first_model_ref(harness.setup.models_effective())
+    assert fallback is not None
+
+    async def scenario():
+        async with (
+            harness,
+            make_client(server) as client,
+            make_client(server, "human:owner") as human,
+        ):
+            await prepare(client, human)
+            await human.send("gc_00000001", body="please handle")
+            loop = make_loop(tmp_path, client, harness)
+            await loop.poll()
+
+            assert all(run.status == "succeeded" for run in harness.store.list_runs())
+            assert len(harness.adapter.invocations) == 1
+            assert harness.adapter.invocations[0].model.ref == fallback
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("file_handler", [False, True])
+def test_model_free_message_flow_does_not_bind_a_fallback(tmp_path, file_handler):
+    server = FakeServer(server_type="valkey")
+    source = "flow talk(_: Text) -> Text:\n  models -= *\n  let note = handled\n"
+    state = None
+    if file_handler:
+        layout = AgentLayout.resident(tmp_path, "alice")
+        (layout.home / "runnables").mkdir(parents=True)
+        layout.program.write_text("agic:\n  {{_}}\n")
+        (layout.home / "runnables/talk.too").write_text(
+            source.replace("flow talk", "flow")
+        )
+        state = prepare_agent_state(layout)
+    harness = harness_with_msg(tmp_path, server, [], source=source, state=state)
+    harness.setup = replace_materialized_setup(harness.setup, defaults=RunDefaults())
+
+    async def scenario():
+        async with (
+            harness,
+            make_client(server) as client,
+            make_client(server, "human:owner") as human,
+        ):
+            await prepare(client, human)
+            await human.send("gc_00000001", body="please handle")
+            loop = make_loop(tmp_path, client, harness)
+            await loop.poll()
+            record = next(
+                run for run in harness.store.list_runs() if run.parent is None
+            )
+            assert record.status == "succeeded", record.error
+            assert not harness.adapter.invocations
+            control = harness.store.get_run_control(run_id=record.id, index=0)
+            assert control is not None and isinstance(
+                control.payload, RunControlPayload
+            )
+            assert control.payload.model_request is None
+            assert len(await human.history("gc_00000001")) == 1
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("kind", ["agic", "flow"])
+def test_message_handler_fallback_respects_authored_model_selection(tmp_path, kind):
+    server = FakeServer(server_type="valkey")
+    body = (
+        "  {{_}}\n"
+        if kind == "agic"
+        else "  run helper\nagic helper(_: Json):\n  {{_}}\n"
+    )
+    harness = harness_with_msg(
+        tmp_path,
+        server,
+        [ModelCallResult(message=ModelMessage.assistant("Handled."))],
+        source=f"{kind} talk(_: Json):\n  models = test/preferred\n" + body,
+    )
+    first = harness.setup.models_effective()[0]
+    preferred = replace(first, id="preferred")
+    harness.setup = replace_materialized_setup(
+        harness.setup, models=(first, preferred), defaults=RunDefaults()
+    )
+
+    async def scenario():
+        async with (
+            harness,
+            make_client(server) as client,
+            make_client(server, "human:owner") as human,
+        ):
+            await prepare(client, human)
+            await human.send("gc_00000001", body="please handle")
+            loop = make_loop(tmp_path, client, harness)
+            await loop.poll()
+            record = next(
+                run for run in harness.store.list_runs() if run.parent is None
+            )
+            assert record.status == "succeeded", record.error
+            assert len(harness.adapter.invocations) == 1
+            assert harness.adapter.invocations[0].model.ref == preferred.ref
+
+    asyncio.run(scenario())
+
+
+def test_message_handler_preserves_explicit_model_and_options(tmp_path):
+    server = FakeServer(server_type="valkey")
+    harness = harness_with_msg(
+        tmp_path,
+        server,
+        [ModelCallResult(message=ModelMessage.assistant("Handled."))],
+    )
+    first = harness.setup.models_effective()[0]
+    preferred = replace(first, id="preferred")
+    request = ModelRequest(preferred.ref, max_output=128)
+    harness.setup = replace_materialized_setup(
+        harness.setup,
+        models=(first, preferred),
+        defaults=RunDefaults(model=request),
+    )
+
+    async def scenario():
+        async with (
+            harness,
+            make_client(server) as client,
+            make_client(server, "human:owner") as human,
+        ):
+            await prepare(client, human)
+            await human.send("gc_00000001", body="please handle")
+            loop = make_loop(tmp_path, client, harness)
+            await loop.poll()
+            assert all(run.status == "succeeded" for run in harness.store.list_runs())
+            invocation = harness.adapter.invocations[0]
+            assert invocation.model.ref == preferred.ref
+            assert invocation.call.max_output_tokens == 128
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("model_available", [False, True])
+def test_failed_message_handler_sends_visible_error_reply(tmp_path, model_available):
+    server = FakeServer(server_type="valkey")
+    harness = harness_with_msg(
+        tmp_path,
+        server,
+        [RuntimeError("scripted provider failure")],
+    )
+    harness.setup = replace_materialized_setup(
+        harness.setup,
+        defaults=RunDefaults(),
+        **({} if model_available else {"models": ()}),
+    )
+    expected_error = (
+        "scripted provider failure" if model_available else "run requires a model"
+    )
+
+    async def scenario():
+        async with (
+            harness,
+            make_client(server) as client,
+            make_client(server, "human:owner") as human,
+        ):
+            await prepare(client, human)
+            source = await human.send("gc_00000001", body="please handle")
+            loop = make_loop(tmp_path, client, harness)
+            await loop.poll()
+
+            assert await client.talk_cursor("gc_00000001") == source["stream_id"]
+            history = await human.history("gc_00000001")
+            reply = Message.decode(history[-1][1]["data"])
+            assert reply.sender == "agent:alice"
+            assert reply.in_reply_to == source["message"]["id"]
+            assert expected_error in reply.body
+            assert reply.handler_error
+            assert len(history) == 2
+            assert len(harness.adapter.invocations) == int(model_available)
+
+            await loop.poll()  # The agent's error reply must not trigger another run.
+            assert len(await human.history("gc_00000001")) == 2
+            assert len(harness.adapter.invocations) == int(model_available)
+
+    asyncio.run(scenario())
+
+
 def test_failed_batches_skip_bad_entries_and_rotate_groups(tmp_path):
     async def scenario():
         server = FakeServer(server_type="valkey")
@@ -225,7 +435,12 @@ def test_failed_batches_skip_bad_entries_and_rotate_groups(tmp_path):
             await loop.poll()
             batch = loop.handle.call_args[0][0]["conversations"][0]
             assert batch["conversation"] == "gc_00000001"
-            assert len(batch["messages"]) == 6
+            assert [
+                message["body"]
+                for message in batch["messages"]
+                if not message.get("handler_error", False)
+            ] == [str(i) for i in range(19, 25)]
+            assert batch["messages"][-1]["handler_error"] is True
             assert "previous" not in batch
             assert await client.talk_cursor("gc_00000001") != first_cursor
             assert not (
