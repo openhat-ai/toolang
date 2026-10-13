@@ -240,14 +240,16 @@ INITIALIZE = (
     + """
 local fresh=redis.call('EXISTS',KEYS[1])==0
 expect(KEYS[1],'string')
-local cursor='0'
-repeat
-  local page=redis.call('SCAN',cursor,'MATCH',ARGV[2]..':*','COUNT',128)
-  cursor=page[1]
-  for _,key in ipairs(page[2]) do
-    if fresh and (string.find(key,ARGV[2]..':convo:',1,true)==1 or (string.find(key,ARGV[2]..':agent:',1,true)==1 and string.sub(key,-5)==':talk')) then fail('partial conversation dataset') end
-  end
-until cursor=='0'
+if fresh then
+  local cursor='0'
+  repeat
+    local page=redis.call('SCAN',cursor,'MATCH',ARGV[2]..':*','COUNT',128)
+    cursor=page[1]
+    for _,key in ipairs(page[2]) do
+      if string.find(key,ARGV[2]..':convo:',1,true)==1 or (string.find(key,ARGV[2]..':agent:',1,true)==1 and string.sub(key,-5)==':talk') then fail('partial conversation dataset') end
+    end
+  until cursor=='0'
+end
 if not redis.call('GET',KEYS[1]) then
   if ARGV[3]=='1' then fail('missing initialized conversation schema') end
   for i=2,8 do if redis.call('EXISTS',KEYS[i])~=0 then fail('partial conversation dataset') end end

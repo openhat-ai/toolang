@@ -1,111 +1,100 @@
 # Talk cursor storage
 
-Status: proposed; implementation requires human approval.
+Status: approved on 2026-10-13. This document records the final agreed scope.
 
-## Goal and scope
+## Final goals
 
-Persist agent talk-handler progress in the backend, rename the team member key,
-and remove obsolete data handling. Success means restart/relocation resumes from
-backend cursors and talk generates no `.runtime/channels/` files or directories.
+1. Persist talk-handler progress in the backend so restart/relocation resumes
+   without local cursor files.
+2. Use `P:agent:{name}:talk` as an agent-owned Hash, mapping conversation IDs to
+   full Stream-ID cursors (`P = too:teaming:v1`). Only talk handlers advance it.
+3. Use the term `cursor` and two agent-only Hub APIs through the existing backend
+   interface/connection, without another store abstraction.
+4. Read current batches from the conversation stream, query history through
+   `convo.peek`, and retain diagnostics in execution records. Remove duplicated
+   message/result/receipt state and the `previous` input field.
+5. Rename the member directory to `P:team:members` and its constant to
+   `TEAM_MEMBERS`, preserving member records and other keys.
+6. Remove obsolete-format detection and local cursor I/O, including
+   `AgentLayout.channel_room()`. Generate no `.runtime/channels/` directories/files.
+7. Preserve current-data integrity, skip behavior, bounded save recovery, and
+   cancellation; retries must not rerun handlers or mix backends.
 
-This plan ships no implementation. Human read positions, automatic handler
-retries, consumer groups, other key renames, and unrelated legacy cleanup are
-out of scope. Preserve handler selection, batch limits, round-robin polling,
-message storage, and ordinary CLI/tool reads.
+## Cursor contract
 
-## Storage and API
+Missing cursor fields read as `0-0`. Cursors have no TTL and survive shutdown,
+disabled talk, departure/rejoining, and agent-name recreation. A cursor means
+processed or skipped through that position, rather than guaranteed success.
 
-With `P = too:teaming:v1`:
-
-| Key | Type | Field → value |
-| --- | --- | --- |
-| `P:team:members` | Hash | Member ID → existing member/lease JSON; replaces `P:team`. |
-| `P:agent:{name}:talk` | Hash | Conversation ID → cursor as a full Stream ID. |
-
-Rename `TEAM` to `TEAM_MEMBERS` everywhere, preserving record formats and Lua
-base-key ordering. Other existing keys remain unchanged.
-
-A talk cursor means processed or skipped through that position. Missing fields
-read as `0-0`. No TTL; retain progress across shutdown, disabled talk, membership
-departure, and agent-name recreation. Only the talk handler advances it.
-
-Add backend methods `talk_cursor(agent, convo_id)` and
-`advance_talk_cursor(agent, convo_id, cursor, *, token)` without a new store layer.
-Writes atomically require a live matching lease, membership, and a valid cursor
-between the saved position and stream tail. Equal-value writes are idempotent.
-
-Add agent-only Hub routes using existing authentication and lease headers:
-
-| Route | Contract |
+| Interface | Contract |
 | --- | --- |
-| `GET /agents/{agent}/talk/cursors/{convo_id}` | Check lease/membership; return `{"cursor": "<stream-id>"}`. |
-| `PUT /agents/{agent}/talk/cursors/{convo_id}` | Accept and return the same shape; advance atomically. |
+| Backend `talk_cursor(agent, convo_id)` | Read the agent's cursor. |
+| Backend `advance_talk_cursor(agent, convo_id, cursor, *, token)` | Atomically enforce a live matching lease, membership, and monotonic progress no later than the stream tail; equal writes are idempotent. |
+| `GET /agents/{agent}/talk/cursors/{convo_id}` | Check lease/membership and return `{"cursor": "<stream-id>"}`. |
+| `PUT /agents/{agent}/talk/cursors/{convo_id}` | Accept and return the same shape; use the guarded backend write. |
 
-Reuse existing access/lease errors; invalid positions fail without writes.
-Existing message reads and `/cursor?after=...` retention checks remain unchanged.
+Invalid/denied writes leave storage unchanged and use existing error types.
+Message reads and `/cursor?after=...` history-gap checks remain unchanged.
 
-## Handler and filesystem
+The processing sequence is: read cursor → check retention → read the next batch
+→ handle → advance through the last fetched ID. Preserve handler selection,
+20-entry batches, round-robin polling, and advancement on failure, cancellation,
+malformed entries, and own messages. Own messages do not invoke another handler.
+Each batch uses a separate talk thread with current messages and existing metadata.
 
-Read cursor → check retention → read the next stream batch → handle → advance
-through the last fetched ID. Preserve advancement on failure, cancellation,
-malformed entries, and own messages, plus existing retention warnings/errors.
+Keep unsaved progress in memory and retry with bounded backoff before handling
+another batch. Reconcile with backend progress: if already at or beyond pending
+progress, clear pending state; otherwise retry its write. Lease/membership loss
+rejects writes. Pin the batch connection, discard pending progress on backend
+change, and resume from the selected backend's cursor. Cursor-save failures during
+handler cancellation retain diagnostics and cannot replace the cancellation
+signal. Shutdown must stay bounded.
 
-Remove the `previous` envelope and saved messages/results. Pass current messages
-and existing agent/conversation metadata; use `convo.peek` for history and the
-execution store for diagnostics. Delete reply-receipt collection, including its
-obsolete `msg__send` branch.
+## Initialization and transition
 
-Keep unsaved progress in memory and retry transient cursor-write failures with
-bounded backoff before handling another batch. Retry only the write. Authority
-loss rejects the update. Keep batch connection pinning; discard pending progress
-on backend change and resume from that backend's cursor. Shutdown stays bounded.
+Remove obsolete `P:msg:*`, `P:participants`, `P:last_seen`, and blanket `P:agent:*`
+checks. Retain current schema/type/record/lease validation and reject fresh
+initialization with residual conversation/talk data. Healthy initialized datasets
+need no obsolete-format namespace scan.
 
-Delete local JSON loading/writing/path selection and `AgentLayout.channel_room()`
-(only messaging uses it). Ignore existing local files without migration or
-cleanup. Other runtime storage keeps its existing lifecycle.
+Rename the existing `P:team` key without fallback, migration, or dual write.
+Stop writers and reinitialize development backend data when upgrading. Existing
+local cursor files remain untouched and ignored. Human input history and other
+runtime storage retain their existing lifecycle. Custom talk runnables using
+`previous` must switch to explicit history lookup.
 
-## Obsolete data handling
-
-Remove initialization's legacy-key checks for `P:msg:*`, `P:participants`,
-`P:last_seen`, and `P:agent:*`. Add no old-team-key or local-JSON fallback,
-migration, or dual write; development datasets require reinitialization.
-
-Preserve current schema/type/record/lease integrity checks and partial-dataset
-rejection, including missing conversation schema with residual talk keys. Remove
-legacy-only test assertions while retaining current-data corruption coverage.
-
-## Implementation touchpoints
-
-- `src/toolang/teaming/backend/protocol.py` and `backend/valkey/`: key names,
-  cursor methods, atomic guards, initialization, activity/event references.
-- `src/toolang/teaming/{agent_api,agent_client,messaging,schemas,types}.py`:
-  routes, payload validation, service methods, and receiver contract.
-- `src/toolang/work/{messaging,teaming}.py` and `src/toolang/common/layout.py`:
-  batches, pending writes, shutdown, and filesystem removal.
-- Messaging unit/integration and layout tests; update `docs/messaging.md` and
-  `docs/layout.md` during implementation. Generate Unreleased coverage with
-  `too aide.too update_changelog`.
+Human read positions, consumer groups, handler retries, other key renames, and
+unrelated legacy cleanup are out of scope.
 
 ## Acceptance checks
 
 | Scenario | Pass condition |
 | --- | --- |
-| Isolation and recovery | Missing cursor is `0-0`; agents/convos are independent; restart/relocation resumes without local files. |
-| Writes and authority | Equal writes succeed; invalid/backward/beyond-tail values, stale leases, and nonmembers fail without writes; no human cursor API. |
-| Batch outcomes | Success, failure, cancellation, malformed entries, and own messages retain skip semantics; handler input has no `previous`. |
-| Save interruption | Failure/lost response retries only the write; backend changes never receive another backend's progress; shutdown remains bounded. |
-| Filesystem | Startup, processing, failure, cancellation, and restart create no channel directories/files and ignore old JSON. |
-| Team rename | Registration, presence, roster, messaging, activity, and event publication use only `P:team:members`. |
-| Initialization | Valid current data accepts talk keys; malformed/partial current data fails without writes. |
+| Ownership and isolation | A missing field is `0-0`; agent/conversation progress is independent and has no TTL; humans have no talk cursor API. |
+| Restart and relocation | A fresh process with no local runtime consumes new/offline messages without replaying already recorded progress. |
+| Authority and validation | Equal writes succeed; invalid/backward/beyond-tail positions, stale leases, and nonmembers fail without writes. |
+| Batch behavior | Success, failure, cancellation, malformed entries, and own messages retain the agreed skip behavior; input has no `previous`. |
+| Interrupted saves | Lost responses and newer backend progress never rerun the pending handler or block later work; backend switches never receive old pending state. |
+| Cancellation | Saving cannot obscure cancellation or make shutdown unbounded. |
+| Filesystem | Startup, processing, failures, cancellation, and restart create no channel directories/files and ignore old JSON. |
+| Member directory | Registration, presence, roster, messaging, activity, and event publication use only `P:team:members`. |
+| Initialization | Fresh partial data and corrupt current records fail without writes; valid existing datasets avoid obsolete-format namespace scans. |
 
-Use offline deterministic tests and run the repository's default Ruff, type, and
-pytest checks for implementation. Plan-only verification checks source paths and
-runs `git diff --check`.
+## Touchpoints and verification
 
-## Risks and open questions
+- `src/toolang/teaming/backend/protocol.py` and `backend/valkey/`: storage, keys,
+  atomic guards, initialization, and activity/event references.
+- `src/toolang/teaming/{agent_api,agent_client,messaging,schemas,types}.py`:
+  routes, payloads, services, and receiver contract.
+- `src/toolang/work/{messaging,teaming}.py`, `src/toolang/common/layout.py`,
+  messaging/layout tests, `docs/messaging.md`, and `docs/layout.md`.
 
-- Crash/forced stop before cursor persistence can replay messages; exactly-once
-  execution is not promised. Skipped failures receive no automatic retry.
-- Fresh cursors replay retained history. Custom talk runnables using `previous`
-  must switch to explicit history lookup; reinitialization loses backend history.
-- Open questions: none. Human confirmation of this definition is pending.
+Keep default tests offline/deterministic. Run repository Ruff, type, and pytest
+checks, plus `git diff --check`. Generate user-visible Unreleased coverage through
+`too aide.too update_changelog`.
+
+## Risks
+
+A crash before cursor persistence can replay messages; exactly-once execution is
+not promised. Fresh cursors replay retained history, skipped failures receive no
+automatic retry, and development-dataset reinitialization discards backend history.

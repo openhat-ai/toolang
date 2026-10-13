@@ -268,9 +268,11 @@ independently per agent and conversation.
 A missing cursor starts at `0-0`, replaying retained history. Failures, cancellation,
 malformed entries, and own messages advance progress. Cursor writes require the
 current lease and membership, cannot move backwards or past the stream tail, and
-can safely repeat the same position. Transient save failures retry only the cursor
-write while the process retains pending progress; a crash before saving can replay
-a batch. Backend changes discard pending progress from the previous backend.
+can safely repeat the same position. Transient save failures retain pending
+progress and reconcile it with the backend before another write; confirmed or newer
+progress clears the pending state without rerunning the handler. Cursor-save errors
+during cancellation preserve the cancellation signal. A crash before saving can
+replay a batch. Backend changes discard pending progress from the previous backend.
 Cursors have no TTL and survive shutdown and membership departure. Humans and
 ordinary message reads do not advance them.
 

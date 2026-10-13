@@ -478,3 +478,18 @@ def test_protocol_validation_prevents_partial_membership_writes(
             assert await raw.xlen(TEAM_EVENTS) == events
 
     asyncio.run(scenario())
+
+
+def test_healthy_initialization_does_not_scan_namespace(valkey):
+    async def scenario():
+        async with (
+            MessagingClient(valkey, actor="human:owner") as human,
+            Valkey.from_url(valkey.url, decode_responses=True) as raw,
+        ):
+            before = await raw.info("commandstats")
+            scan_calls = before.get("cmdstat_scan", {}).get("calls", 0)
+            await human.check_backend()
+            after = await raw.info("commandstats")
+            assert after.get("cmdstat_scan", {}).get("calls", 0) == scan_calls
+
+    asyncio.run(scenario())
