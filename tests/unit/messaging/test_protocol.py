@@ -3,7 +3,7 @@
 import asyncio
 import json
 from random import Random
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fakeredis import FakeAsyncValkey, FakeServer
 import pytest
@@ -632,3 +632,37 @@ def test_concurrent_initialization_preserves_one_system_gc_after_rename(monkeypa
             await asyncio.gather(*(human.close() for human in clients))
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "sender,reply_to,marker",
+    [
+        ("human:owner", "ad451d5a-7465-4d2d-b0b6-f06490657d5f", True),
+        ("agent:alice", None, True),
+        ("agent:alice", "ad451d5a-7465-4d2d-b0b6-f06490657d5f", "true"),
+        ("agent:alice", "ad451d5a-7465-4d2d-b0b6-f06490657d5f", 1),
+    ],
+)
+def test_handler_error_marker_requires_agent_reply(sender, reply_to, marker):
+    with pytest.raises(MessagingError, match="Handler errors"):
+        Message.decode(
+            json.dumps(
+                {
+                    "id": str(uuid4()),
+                    "sender": sender,
+                    "body": "failure",
+                    "in_reply_to": reply_to,
+                    "handler_error": marker,
+                }
+            )
+        )
+
+
+def test_handler_error_roundtrip_and_legacy_messages():
+    message = Message.create("agent:alice", "failure", str(uuid4()), handler_error=True)
+    assert Message.decode(message.encode()) == message
+    assert message.data()["handler_error"] is True
+    ordinary = Message.create("agent:alice", "Message handling failed: ordinary text")
+    assert "handler_error" not in ordinary.data()
+    assert Message.decode(ordinary.encode()) == ordinary
+    assert not Message.decode(ordinary.encode()).handler_error

@@ -58,6 +58,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Fixed
 
+- Message-handler failure notices no longer trigger another handler,
+  including on other agents in the same conversation, so a failing batch
+  cannot cascade failure replies between agents; the notice stays visible
+  and attached to the triggering message.
+
 - Message handler failures are no longer silent: the agent posts a reply
   `Message handling failed: <detail>` attached to the triggering message,
   quoting the failed handler run's error detail.

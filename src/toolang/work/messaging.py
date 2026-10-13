@@ -153,9 +153,16 @@ class MessagingLoop:
                     )
                     continue
                 messages.append({**message.data(), "stream_id": sid})
+            # Failure notices remain visible, but do not start new handler runs.
+            incoming = [
+                message
+                for message in messages
+                if message["sender"] != self.agent
+                and not message.get("handler_error", False)
+            ]
             cancelled = False
             try:
-                if any(m["sender"] != self.agent for m in messages):
+                if incoming:
                     await self.handle(
                         {
                             "agent": self.agent,
@@ -174,7 +181,7 @@ class MessagingLoop:
             except Exception as exc:
                 logger.exception("Messaging batch failed; skipping %s", conversation)
                 try:
-                    await self._send_failure_reply(conversation, messages, exc)
+                    await self._send_failure_reply(conversation, incoming, exc)
                 except asyncio.CancelledError:
                     cancelled = True
                     raise
@@ -213,6 +220,7 @@ class MessagingLoop:
                 conversation,
                 body=f"Message handling failed: {error}"[:2048],
                 in_reply_to=source["id"],
+                handler_error=True,
             )
         except asyncio.CancelledError:
             raise

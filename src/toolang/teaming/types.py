@@ -44,6 +44,7 @@ class MessageReceiver(AgentTransport, Protocol):
         *,
         body: str,
         in_reply_to: str | None = None,
+        handler_error: bool = False,
     ) -> dict[str, Any]: ...
 
 

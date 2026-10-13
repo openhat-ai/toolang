@@ -108,18 +108,17 @@ def messaging_router(
         return {"notice": await client.check_cursor(conversation, after)}
 
     async def deliver(body: SendRequest, client: MessagingClient) -> dict[str, Any]:
-        origin = (
-            {"run": body.run, "thread": body.thread}
-            if isinstance(body, AgentSendRequest)
-            else {}
-        )
         return await client.send(
             body.target,
             body=body.body,
             in_reply_to=body.in_reply_to,
             message_id=body.id,
             participants=body.participants,
-            **origin,
+            run=body.run if isinstance(body, AgentSendRequest) else None,
+            thread=body.thread if isinstance(body, AgentSendRequest) else None,
+            handler_error=body.handler_error
+            if isinstance(body, AgentSendRequest)
+            else False,
         )
 
     if agent:

@@ -421,6 +421,9 @@ class Message:
     body: str
     in_reply_to: str | None = None
     origin: dict[str, str | None] | None = None
+    # Runtime failure replies are visible history, not new work for any agent.
+    # Older Hub/clients reject marked notices; upgrade teaming components together.
+    handler_error: bool = False
 
     def __post_init__(self) -> None:
         try:
@@ -430,6 +433,10 @@ class Message:
         except (ValueError, AttributeError, TypeError) as exc:
             raise MessagingError("Message and reply IDs must be UUIDs") from exc
         who = participant(self.sender)
+        if type(self.handler_error) is not bool or (
+            self.handler_error and (who.kind != "agent" or self.in_reply_to is None)
+        ):
+            raise MessagingError("Handler errors must be agent replies")
         if (
             not isinstance(self.body, str)
             or not self.body.strip()
@@ -453,8 +460,10 @@ class Message:
         body: str,
         in_reply_to: str | None = None,
         origin: dict[str, str | None] | None = None,
+        *,
+        handler_error: bool = False,
     ) -> Message:
-        return cls(str(uuid4()), sender, body, in_reply_to, origin)
+        return cls(str(uuid4()), sender, body, in_reply_to, origin, handler_error)
 
     @classmethod
     def decode(cls, data: str) -> Message:
@@ -464,7 +473,10 @@ class Message:
             raise MessagingError("Malformed message JSON") from exc
 
     def data(self) -> dict[str, Any]:
-        return asdict(self)
+        data = asdict(self)
+        if not self.handler_error:
+            data.pop("handler_error")
+        return data
 
     def encode(self) -> str:
         return json.dumps(self.data(), ensure_ascii=False)
@@ -501,6 +513,7 @@ class SendRequest(HubRequest):
 class AgentSendRequest(SendRequest):
     thread: str | None = None
     run: str | None = None
+    handler_error: bool = False
 
 
 class AgentRegistration(HubRequest):

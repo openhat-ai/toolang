@@ -1,6 +1,8 @@
 """Agent batching with real execution and the shared transport."""
 
 import asyncio
+from dataclasses import replace
+import json
 from unittest.mock import AsyncMock, MagicMock
 
 from fakeredis import FakeAsyncValkey, FakeServer
@@ -13,6 +15,7 @@ from tests.support.execution_harness import (
 )
 from tests.support.setup import replace_materialized_setup
 from toolang.base.types.message import Message as ModelMessage
+from toolang.base.types.model import ModelRequest
 from toolang.base.types.policy import RunDefaults
 from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.common.layout import AgentLayout
@@ -202,12 +205,24 @@ def test_tool_reply_origin_and_backend_cursor_restart(tmp_path, custom):
     asyncio.run(scenario())
 
 
-def test_message_handler_falls_back_to_available_model_without_default(tmp_path):
+@pytest.mark.parametrize(
+    "source",
+    [
+        "agic:\n  {{_}}\n",
+        "agic talk(_: Json):\n  {{_}}\n",
+        "flow talk(_: Json):\n  run helper\nagic helper(_: Json):\n  {{_}}\n",
+        "flow talk(_: Json):\n  exec helper\nagic helper(_: Json):\n  {{_}}\n",
+    ],
+)
+def test_message_handler_falls_back_to_available_model_without_default(
+    tmp_path, source
+):
     server = FakeServer(server_type="valkey")
     harness = harness_with_msg(
         tmp_path,
         server,
         [ModelCallResult(message=ModelMessage.assistant("Handled."))],
+        source=source,
     )
     harness.setup = replace_materialized_setup(
         harness.setup,
@@ -230,6 +245,40 @@ def test_message_handler_falls_back_to_available_model_without_default(tmp_path)
             assert loop.saved["gc_00000001"]["result"]["status"] == "succeeded"
             assert len(harness.adapter.invocations) == 1
             assert harness.adapter.invocations[0].model.ref == fallback
+
+    asyncio.run(scenario())
+
+
+def test_message_handler_preserves_explicit_model_and_options(tmp_path):
+    server = FakeServer(server_type="valkey")
+    harness = harness_with_msg(
+        tmp_path,
+        server,
+        [ModelCallResult(message=ModelMessage.assistant("Handled."))],
+    )
+    first = harness.setup.models_effective()[0]
+    preferred = replace(first, id="preferred")
+    request = ModelRequest(preferred.ref, max_output=128)
+    harness.setup = replace_materialized_setup(
+        harness.setup,
+        models=(first, preferred),
+        defaults=RunDefaults(model=request),
+    )
+
+    async def scenario():
+        async with (
+            harness,
+            make_client(server) as client,
+            make_client(server, "human:owner") as human,
+        ):
+            await prepare(client, human)
+            await human.send("gc_00000001", body="please handle")
+            loop = make_loop(tmp_path, client, harness)
+            await loop.poll()
+            assert loop.saved["gc_00000001"]["result"]["status"] == "succeeded"
+            invocation = harness.adapter.invocations[0]
+            assert invocation.model.ref == preferred.ref
+            assert invocation.call.max_output_tokens == 128
 
     asyncio.run(scenario())
 
