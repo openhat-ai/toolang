@@ -188,9 +188,11 @@ def test_native_sse_ping_replaces_manual_idle_keepalive(monkeypatch):
         try:
             await asyncio.wait_for(ping.wait(), timeout=1)
             await asyncio.sleep(0.03)
+            assert not task.done(), "SSE stream exited while still idle"
         finally:
             task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
+            results = await asyncio.gather(task, return_exceptions=True)
+        assert isinstance(results[0], asyncio.CancelledError)
         assert b"event: run_begin" in b"".join(chunks)
         assert b": ping\n\n" in b"".join(chunks)
         assert b": keep-alive\n\n" not in b"".join(chunks)

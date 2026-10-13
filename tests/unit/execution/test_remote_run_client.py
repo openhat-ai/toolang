@@ -528,6 +528,10 @@ def test_remote_client_rejects_invalid_endpoints(endpoint: str) -> None:
             "invalid event JSON",
         ),
         (
+            _stream_response(stream=_Bytes(b"event: run_end\ndata:\n\n")),
+            "invalid event JSON",
+        ),
+        (
             _stream_response(
                 stream=_Bytes(
                     (
@@ -633,7 +637,8 @@ def test_remote_client_recovers_overflow_without_resubmitting_or_canceling(
     )
 
 
-def test_remote_client_ignores_comment_keepalive_after_event_id():
+@pytest.mark.parametrize("comment", [b": keep-alive\n\n", b": ping\n\n"])
+def test_remote_client_ignores_comment_keepalive_after_event_id(comment: bytes):
     from toolang.execution.types import EventCursor
 
     epoch = "1" * 32
@@ -643,7 +648,7 @@ def test_remote_client_ignores_comment_keepalive_after_event_id():
     end = json.dumps(run_event_to_data(_end()))
     frames = _Bytes(
         f"id: {begin_id}\nevent: run_begin\ndata: {begin}\n\n".encode(),
-        b": keep-alive\n\n",
+        comment,
         f"id: {end_id}\nevent: run_end\ndata: {end}\n\n".encode(),
     )
 
