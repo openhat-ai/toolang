@@ -9,6 +9,13 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Changed
 
+- **Breaking:** the root Hub's generated files move from `.runtime/` to a `hub/`
+  directory beside it: `.runtime/hub.json`, `.runtime/hub.lock`, and
+  `.runtime/hub.log` become `hub/hub.json`, `hub/hub.lock`, and `hub/hub.log`.
+  Discovery reads only the new record and ignores a legacy one, and the moved
+  lock means an old and a new Hub no longer coordinate, so stop a running Hub
+  before upgrading.
+
 - Remote run and chat streams log a redacted diagnostic line when a stream is
   interrupted, resumed, or a terminal detail fails: phase, run ID, error type,
   and HTTP status, never response bodies, endpoints, or payloads.

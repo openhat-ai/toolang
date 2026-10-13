@@ -12,7 +12,7 @@ from .schemas import HubConnection
 
 def hub_connection(root: Path) -> HubConnection:
     try:
-        record = HubRecord.load(root / ".runtime" / "hub.json")
+        record = HubRecord.load(root / "hub" / "hub.json")
     except ValueError as exc:
         raise BackendUnavailable(
             "Hub discovery is invalid; check 'too hub status'"

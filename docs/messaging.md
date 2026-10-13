@@ -43,7 +43,7 @@ too hub stop                        # Leaves agents and Redis/Valkey running.
 ```
 
 `too hub serve` runs in the foreground. Hub binds `127.0.0.1`; clients discover its
-actual endpoint and backend identity from the private root `.runtime/hub.json`
+actual endpoint and backend identity from the private root `hub/hub.json`
 file. Calls assume trusted local clients; security authentication is deferred.
 Start Hub before using Talk or `convo` tools. Agents use it for messages, presence,
 and event export. Stopping Hub leaves agents running; communication fails until

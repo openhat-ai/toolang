@@ -32,6 +32,14 @@ def record(**changes):
     return HubRecord.model_validate(values | changes)
 
 
+def test_hub_artifacts_live_under_root_hub(tmp_path):
+    hub = HubProcess(tmp_path)
+    assert hub.path == tmp_path / "hub" / "hub.json"
+    assert hub.lock == tmp_path / "hub" / "hub.lock"
+    assert hub.log == tmp_path / "hub" / "hub.log"
+    assert not (tmp_path / ".runtime").exists()
+
+
 def test_hub_version_uses_recorded_endpoint_and_identity(monkeypatch):
     import toolang.up.hub as module
 
@@ -216,6 +224,8 @@ def test_client_construction_failure_removes_starting_record(tmp_path, monkeypat
     with pytest.raises(TeamingError, match="Invalid backend"):
         serve(tmp_path, config, port=port)
     assert not hub.path.exists()
+    assert hub.lock.is_file()
+    assert not (tmp_path / ".runtime").exists()
 
 
 def test_starting_hub_reserves_port_before_backend_access(tmp_path, monkeypatch):
@@ -249,6 +259,8 @@ def test_failed_and_timed_out_start_leave_no_child(tmp_path):
     with pytest.raises(TeamingError, match="startup timed out"):
         hub.start([sys.executable, "-c", script], timeout=0.5)
     assert not psutil.pid_exists(int(pidfile.read_text()))
+    assert hub.log.is_file()
+    assert not (tmp_path / ".runtime").exists()
 
 
 def test_starting_hub_is_visible_and_force_stoppable(tmp_path, capsys):

@@ -26,6 +26,7 @@ ${TOOLANG_ROOT}/
   prompts/
   .state/
   .runtime/
+  hub/
   .sandbox/
   agents/
     <agent>/
@@ -41,6 +42,17 @@ ${TOOLANG_ROOT}/
       .state/
       .runtime/
 ```
+
+
+## Hub Files
+
+The root Hub stores its process record, lock, and log at:
+
+- `${TOOLANG_ROOT}/hub/hub.json`
+- `${TOOLANG_ROOT}/hub/hub.lock`
+- `${TOOLANG_ROOT}/hub/hub.log`
+
+The record remains private.
 
 
 ## Agent Home
@@ -157,7 +169,7 @@ Locks remain beside their protected objects, without a dedicated lock directory:
 | `status.json.lock` | Runtime status updates |
 | `state.json.lock` | Sandbox lifecycle |
 | `prepare.lock`, `check.lock` | State preparation and publication |
-| `hub.lock` | One Hub process per root for its lifetime |
+| `hub/hub.lock` | One Hub process per root for its lifetime |
 
 Thread fork/rewind use SQLite transactions, without `runs.db.threads.lock`.
 Incoming message batches create separate `talk` threads and retain the transport's

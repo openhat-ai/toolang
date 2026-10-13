@@ -30,9 +30,9 @@ from toolang.teaming.roster import Roster
 
 class HubProcess:
     def __init__(self, root: Path) -> None:
-        self.path = root / ".runtime" / "hub.json"
-        self.lock = root / ".runtime" / "hub.lock"
-        self.log = root / ".runtime" / "hub.log"
+        self.path = root / "hub" / "hub.json"
+        self.lock = root / "hub" / "hub.lock"
+        self.log = root / "hub" / "hub.log"
 
     @staticmethod
     def process(record: HubRecord) -> psutil.Process | None:
