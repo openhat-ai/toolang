@@ -9,8 +9,13 @@ import pytest
 
 from tests.unit.messaging.test_agent_api import CONNECTION, agent
 from tests.unit.messaging.test_protocol import client
+from tests.support.execution_fixtures import project_run_start
 from toolang.base.errors import ToolangError
+from toolang.base.types.message import Message as RunMessage, ToolResultPart
+from toolang.base.types.run import ToolCall
 from toolang.base.types.tool import ConvoToolContext
+from toolang.execution.store import RunStore
+from toolang.execution.types import Output, StepRef, ToolStepGiven, ToolStepNoted
 from toolang.plugin.toolsets.convo import ConvoToolset
 from toolang.teaming.agent_client import AgentClient
 from toolang.teaming.api import create_app
@@ -85,6 +90,77 @@ def test_write_peek_and_reply_preserve_application_ids_and_origin(tmp_path):
             assert await alice.read(
                 before.conversation, after="0-0"
             ) == await alice.history(before.conversation)
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "operation,limit", [("peek", 0), ("peek", 50), ("create", 0), ("rename", 0)]
+)
+def test_conversation_metadata_results_persist_as_completed_tool_steps(
+    tmp_path, operation, limit
+):
+    async def scenario():
+        async with environment(tmp_path) as (tools, context, alice, _):
+            group = await alice.create_conversation("Original")
+            await alice.send(group.id, body="History")
+            arguments = (
+                {"target": group.id, "limit": limit}
+                if operation == "peek"
+                else {"name": "Created"}
+                if operation == "create"
+                else {
+                    "conversation": group.id,
+                    "name": "Renamed",
+                    "revision": group.revision,
+                }
+            )
+            result = await tools[operation].invoke(arguments, context)
+            assert result.error is None
+            name = f"convo__{operation}"
+            call = ToolCall("call_metadata", "call_metadata", name, arguments)
+            part = ToolResultPart(
+                "call_metadata",
+                name,
+                name,
+                dict(result.output),
+                call_id="call_metadata",
+            )
+            store = RunStore(tmp_path / "runs.db")
+            try:
+                run = project_run_start(
+                    store,
+                    run_id="run_metadata",
+                    thread_id="chat_metadata",
+                    origin="chat",
+                    input=RunMessage.user("Read metadata"),
+                )
+                ref = StepRef.from_local(run.id, (0,))
+                store.begin_step(
+                    ref=ref,
+                    kind="tool",
+                    input=(),
+                    given=ToolStepGiven("convo", call),
+                    started_at="2026-10-13T00:00:00Z",
+                )
+                finished = store.finish_step(
+                    ref=ref,
+                    kind="tool",
+                    status="succeeded",
+                    output=Output(part),
+                    noted=ToolStepNoted("Completed"),
+                    error=None,
+                    finished_at="2026-10-13T00:00:01Z",
+                )
+                assert finished.status == "succeeded"
+                assert finished.output == Output(part)
+                reopened = RunStore(store.db_path, read_only=True)
+                try:
+                    assert reopened.get_step(ref=ref) == finished
+                finally:
+                    reopened.close()
+            finally:
+                store.close()
 
     asyncio.run(scenario())
 

@@ -785,7 +785,7 @@ def test_all_convo_tools_use_the_context_identity(tmp_path):
         assert "human:owner" in {row["id"] for row in result.output["value"]}
         created = await tools["create"].invoke({"name": "dev"}, context)
         assert created.output["id"] == "gc_00000001"
-        assert created.output["participants"] == ("agent:alice",)
+        assert created.output["participants"] == ["agent:alice"]
         sent = await tools["write"].invoke(
             {"target": "gc_00000001", "message": "hello"}, context
         )

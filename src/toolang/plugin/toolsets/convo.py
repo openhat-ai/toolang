@@ -14,6 +14,7 @@ from toolang.base.utils.tool_descriptions import action_summary
 from toolang.teaming.agent_client import AgentClient
 from toolang.teaming.errors import MessagingError
 from toolang.teaming.schemas import (
+    Conversation,
     Message,
     conversation_id,
     conversation_name,
@@ -145,7 +146,7 @@ class ConvoToolset:
                     if "data" not in fields:
                         raise MessagingError("Malformed stored message")
                     messages.append(_message(Message.decode(fields["data"])))
-                return {"conversation": asdict(info), "messages": messages}
+                return {"conversation": _conversation_data(info), "messages": messages}
 
         @tool(
             description="Write plain text as the current agent. A first DM write creates it atomically. Returns {conversation, message: {id, sender, message, reply_to}}. Do not resend a confirmed write or automatically retry uncertain delivery.",
@@ -201,7 +202,7 @@ class ConvoToolset:
         ) -> dict[str, Any]:
             assert context is not None
             async with self.connection(context) as client:
-                return asdict(
+                return _conversation_data(
                     await client.create_conversation(name, participants=participants)
                 )
 
@@ -225,7 +226,7 @@ class ConvoToolset:
                 updated = await client.rename_conversation(
                     conversation, name, revision=revision
                 )
-                return {**asdict(updated), "previous_name": previous.name}
+                return {**_conversation_data(updated), "previous_name": previous.name}
 
         @tool(
             description="Join a custom conversation by its canonical gc_ ID. Direct and system conversations cannot be edited.",
@@ -362,6 +363,11 @@ def _summary(
                     new_target = f"{old} → {name} ({target})"
             target = new_target
     return action_summary(result, verbs, label + (f": {target}" if target else ""))
+
+
+def _conversation_data(conversation: Conversation) -> dict[str, Any]:
+    """Return metadata with JSON arrays that survive execution persistence."""
+    return {**asdict(conversation), "participants": list(conversation.participants)}
 
 
 def create_toolset(config: Mapping[str, Any]) -> Toolset:

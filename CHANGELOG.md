@@ -100,6 +100,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Fixed
 
+- Conversation metadata results from `convo/peek`, `convo/create`, and
+  `convo/rename` return `participants` as a JSON array instead of a tuple, so
+  their completed tool steps round-trip through the run store and a repeated
+  step-end delivery no longer fails with `conflicting step_end event`.
+
 - Cap authoring no longer requires valid content: the cap `edit` and `delete`
   commands and the caps API delete act on the raw authored file, so an excluded
   cap can be repaired or removed, and `too AGENT chore edit` opens a malformed
