@@ -181,7 +181,7 @@ def test_batches_and_client_projection_share_the_normal_event_tree(
                 if isinstance(e, RunBegin) and e.run == child.id
             )
             assert begin.runnable == "_:compact" and begin.parent == outer.ref
-            assert_replayed(h.store.db_path, tracer.events)
+            assert_replayed(h, tracer.events)
             projector = ProgressProjector()
             text = []
             for event in tracer.events:
@@ -472,7 +472,7 @@ def test_cancel_at_internal_event_boundaries_closes_lifecycle(
             for event in tracer.events:
                 projector.handle(event)
                 assert not projector._broken, event
-            assert_replayed(h.store.db_path, tracer.events)
+            assert_replayed(h, tracer.events)
 
     asyncio.run(scenario())
 

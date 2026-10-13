@@ -104,7 +104,7 @@ agic chat(_: Part[]) -> Part[]:
             ) == [Message.user("start")]
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 @pytest.mark.parametrize("committed", [False, True])
@@ -157,7 +157,7 @@ def test_cancel_during_model_begin_records_one_canceled_step(
             assert_run_event_integrity(tracer.events)
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 @pytest.mark.parametrize("prepared", [False, True])
@@ -257,7 +257,7 @@ def test_controls_received_before_model_begin_enter_that_call(
                 assert saved is not None and saved.status == "applied"
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 @pytest.mark.parametrize("skip_tools", [False, True])
@@ -348,7 +348,7 @@ def test_reprepared_tool_loop_preserves_messages_and_input_dependencies(
                 )
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 @pytest.mark.parametrize("child", [False, True])
@@ -433,4 +433,4 @@ flow parent() -> Text:
             assert call.call.messages[1] == steer_message("change")
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)

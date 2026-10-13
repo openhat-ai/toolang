@@ -57,6 +57,7 @@ from toolang.execution.types import (
     StepRef,
     FieldRef,
     ModelStepGiven,
+    ModelStepInfo,
     ModelStepNoted,
 )
 from toolang.lang.ast import (
@@ -675,11 +676,10 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
         assert image in adapter.requests[0].messages[0].parts
         assert store.rebuild_model_call(steps[0]) == adapter.requests[0]
         begin = next(event for event in tracer.events if isinstance(event, StepBegin))
-        assert begin.given == ModelStepGiven(
+        assert begin.given == ModelStepInfo(
             state=state.revision,
             setup="test-setup",
             model="test/model",
-            call=adapter.requests[0],
         )
         assert isinstance(steps[0].given, StoredModelStepGiven)
         assert steps[0].given.model == "test/model"
@@ -700,14 +700,19 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
             ),
             "_",
         )
-        assert detail.steps[0].given == begin.given
+        assert detail.steps[0].given == ModelStepGiven(
+            state=state.revision,
+            setup="test-setup",
+            model="test/model",
+            call=adapter.requests[0],
+        )
         payload = TypeAdapter(RunDetail).dump_python(detail, mode="json")
         serialized_call = cast(
             dict[str, Any],
             payload["steps"][0]["given"]["call"],
         )
         assert model_call_from_data(serialized_call) == adapter.requests[0]
-        _PersistSink(store).on_event(begin)
+        _PersistSink(store).on_event(replace(begin, given=detail.steps[0].given))
         connection = sqlite3.connect(store.db_path)
         try:
             assert connection.execute("SELECT COUNT(*) FROM contents").fetchone() == (

@@ -217,6 +217,15 @@ edges:
 Providers stream deltas when supported. A tracer may ignore `PartDelta` and
 observe only higher-level events.
 
+Canonical observers and HTTP streams receive model `StepBegin.given` with only
+`model`, `setup`, and optional `state` revisions. Reconnection snapshots use the
+same metadata without rebuilding instructions, messages, or tool definitions.
+The internal execution event retains the complete call for persistence. Use
+`too AGENT inspect STEP call --json` to reconstruct that call on demand.
+Clients that previously read `given.call` from observation events must use this
+inspection path instead; upgrade HTTP clients and runtimes together. The event
+decoder continues to accept earlier events containing a complete call.
+
 
 ## Run Controls
 

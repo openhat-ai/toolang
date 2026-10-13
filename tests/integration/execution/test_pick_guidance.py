@@ -137,7 +137,7 @@ def _assert_replay_without_state(harness, tracer, monkeypatch):
         raise AssertionError("replay must not read State")
 
     monkeypatch.setattr(StateCap, "read_content", forbidden)
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 @pytest.mark.parametrize("restriction", [None, "directive", "ceiling"])
@@ -560,7 +560,7 @@ def test_only_selected_near_counts_in_the_next_run(tmp_path: Path, recall):
             assert_run_event_integrity(tracer.events)
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 @pytest.mark.parametrize("ceiling", [False, True])
@@ -730,7 +730,7 @@ flow research() -> Text:
             assert_run_event_integrity(tracer.events)
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 def test_pick_retains_the_bound_resource_selection(tmp_path: Path):
@@ -791,7 +791,7 @@ def test_pick_retains_the_bound_resource_selection(tmp_path: Path):
             assert 'ref="skill/testing"' in after
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 @pytest.mark.parametrize("same_batch", [False, True])
@@ -867,7 +867,7 @@ def test_guidance_refreshes_between_batches_and_supports_revision_reversals(
             assert_run_event_integrity(tracer.events)
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 def test_canceled_delivery_keeps_recall_but_does_not_make_it_visible(tmp_path: Path):
@@ -914,7 +914,7 @@ def test_canceled_delivery_keeps_recall_but_does_not_make_it_visible(tmp_path: P
             assert_run_event_integrity(tracer.events)
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 def test_pick_sees_controls_added_at_the_tool_boundary(tmp_path: Path):
@@ -957,7 +957,7 @@ def test_pick_sees_controls_added_at_the_tool_boundary(tmp_path: Path):
             assert results["first"].output == results["again"].output
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 @pytest.mark.parametrize("at_boundary", [False, True])
@@ -1030,7 +1030,7 @@ def test_compaction_excludes_old_guidance_even_when_far_mentions_it(
             assert_run_event_integrity(tracer.events)
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 def test_fork_visibility_survives_source_rewind(tmp_path: Path):
@@ -1105,7 +1105,7 @@ agic target() -> Text:
             assert_run_event_integrity(tracer.events)
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 def test_parallel_children_keep_pending_and_adopted_recalls_isolated(tmp_path: Path):
@@ -1167,7 +1167,7 @@ flow parent(_: Part[]) -> Part[][]:
             assert_run_event_integrity(tracer.events)
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 def test_restart_recovers_visibility_from_saved_deltas(tmp_path: Path, monkeypatch):
@@ -1194,6 +1194,7 @@ def test_restart_recovers_visibility_from_saved_deltas(tmp_path: Path, monkeypat
             assert run.status == "succeeded", run.error
             assert _results(reopened, run)["pick"].output == {"controls": []}
             assert not _recalls(reopened, run)
+        first.model_calls.update(reopened.model_calls)
 
     asyncio.run(scenario())
     _assert_replay_without_state(first, tracer, monkeypatch)

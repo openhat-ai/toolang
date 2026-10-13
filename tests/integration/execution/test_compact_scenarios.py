@@ -218,7 +218,7 @@ def test_compact_before_model_and_freeze_horizon_for_next_root(
             assert [s.kind for s in harness.store.list_steps(run_id=later.id)] == [
                 "model"
             ]
-        assert_replayed(harness.store.db_path, tracer.events)
+        assert_replayed(harness, tracer.events)
 
     asyncio.run(scenario())
 
@@ -321,7 +321,7 @@ def test_compact_between_model_calls_preserves_now_and_prior_call(tmp_path):
             assert isinstance(exchange[1], ToolResultPart)
             assert exchange[1].output == tool.output
             assert len(tool.calls) == 1
-        assert_replayed(harness.store.db_path, tracer.events)
+        assert_replayed(harness, tracer.events)
 
     asyncio.run(scenario())
 
@@ -366,7 +366,7 @@ def test_unrecorded_flow_tails_remain_compactable(tmp_path):
                 Message.assistant("recent"),
                 Message.user("current"),
             ]
-        assert_replayed(harness.store.db_path, tracer.events)
+        assert_replayed(harness, tracer.events)
 
     asyncio.run(scenario())
 
@@ -674,7 +674,7 @@ def test_waiting_compact_reprepares_after_controls(tmp_path, action):
             else:
                 assert harness.store.get_thread(thread_id=f"compact_{thread}") is None
         tracer.events.extend(hooked.events)
-        assert_replayed(harness.store.db_path, tracer.events)
+        assert_replayed(harness, tracer.events)
 
     hooked = Tracer()
     asyncio.run(scenario())
@@ -729,7 +729,7 @@ def test_interrupting_compact_owner_cancels_its_child_run(tmp_path, action):
                 assert "adjusted request" in str(
                     [m.to_data() for m in harness.adapter.invocations[-1].call.messages]
                 )
-        assert_replayed(harness.store.db_path, tracer.events)
+        assert_replayed(harness, tracer.events)
 
     asyncio.run(scenario())
 
@@ -1393,7 +1393,7 @@ def test_summary_must_fit_before_publication(tmp_path, repaired):
             assert len(reads) == (2 if repaired else 3)
 
     asyncio.run(scenario())
-    assert_replayed(h.store.db_path, tracer.events)
+    assert_replayed(h, tracer.events)
 
 
 def test_provider_context_rejection_compacts_before_retry(tmp_path):

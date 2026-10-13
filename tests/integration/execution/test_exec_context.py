@@ -99,4 +99,4 @@ def test_exec_successor_declares_current_identity_with_chat_history(
                 )
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)

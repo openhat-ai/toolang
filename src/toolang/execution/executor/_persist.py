@@ -12,6 +12,7 @@ from ..types import (
     ErrorMessage,
     ErrorRef,
     Output,
+    ModelStepInfo,
     RunRef,
     ToolStepGiven,
     value_for_type,
@@ -58,6 +59,9 @@ class _PersistSink:
         return event
 
     def _begin_step(self, event: StepBegin) -> None:
+        given = event.given
+        if isinstance(given, ModelStepInfo):
+            raise TypeError("model Step persistence requires a complete ModelStepGiven")
         state = event.state
         if state is None:
             run = self._store.get_run(run_id=event.step.run_id)
@@ -72,7 +76,7 @@ class _PersistSink:
             kind=event.kind,
             input=event.input,
             occurrence=event.occurrence,
-            given=event.given,
+            given=given,
             state=state,
             started_at=event.started_at,
         )

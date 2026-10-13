@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from pathlib import Path
 from html import escape
 import re
 from xml.etree import ElementTree
@@ -20,7 +19,15 @@ from toolang.execution.events import (
     StepBegin,
     StepEnd,
 )
-from toolang.execution.types import FieldRef, RunRef, StepRef, TypedRef, ModelStepGiven
+from tests.support.execution_harness import ExecutionHarness
+from toolang.execution.types import (
+    FieldRef,
+    RunRef,
+    StepRef,
+    TypedRef,
+    ModelStepGiven,
+    ModelStepInfo,
+)
 from toolang.execution.store import RunStore
 from toolang.lang.types import Array
 
@@ -87,22 +94,27 @@ def execution_snapshot(call: ModelCall) -> dict[str, str]:
     raise AssertionError("model call has no execution snapshot")
 
 
-def assert_replayed(path: Path, events: Sequence[RunEvent]) -> None:
-    """Compare persisted replay with the exact calls captured online."""
-    expected = {
-        event.step: event.given.call
+def assert_replayed(harness: ExecutionHarness, events: Sequence[RunEvent]) -> None:
+    """Compare persisted replay with calls captured before observer projection."""
+    begins = {
+        event.step: event.given
         for event in events
-        if isinstance(event, StepBegin) and isinstance(event.given, ModelStepGiven)
+        if isinstance(event, StepBegin) and event.kind == "model"
     }
-    store = RunStore(path, read_only=True)
+    store = RunStore(harness.store.db_path, read_only=True)
     try:
-        steps = [store.get_step(ref=ref) for ref in expected]
+        steps = [store.get_step(ref=ref) for ref in begins]
         assert all(step is not None for step in steps)
         saved = [step for step in steps if step is not None]
         batch = store.rebuild_model_calls(saved)
-        assert batch == expected
+        assert set(batch) == set(begins)
         for step in saved:
-            original = expected[step.ref]
+            given = begins[step.ref]
+            assert isinstance(given, ModelStepGiven | ModelStepInfo)
+            if isinstance(given, ModelStepGiven):
+                original = given.call
+            else:
+                original = harness.model_calls[step.ref]
             for replayed in (batch[step.ref], store.rebuild_model_call(step)):
                 assert replayed == original
                 # Message equality intentionally excludes runtime metadata.

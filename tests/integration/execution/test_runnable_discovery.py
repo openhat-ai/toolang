@@ -171,7 +171,7 @@ agic chat() -> Text:
             assert len(harness.store.list_run_tree(root_run_id=run.id)) == 1
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 @pytest.mark.parametrize(
@@ -259,7 +259,7 @@ agic target():
                 }
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 @pytest.mark.parametrize("removed", [False, True])
@@ -313,7 +313,7 @@ def test_current_uses_bound_declaration_and_others_use_tool_step_state(
             ]
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 def test_discovery_state_read_error_is_a_correlated_tool_failure(tmp_path):
@@ -358,7 +358,7 @@ def test_discovery_state_read_error_is_a_correlated_tool_failure(tmp_path):
             assert result.output == {}
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 def test_discovery_keeps_the_state_captured_before_tool_step_delivery(tmp_path):
@@ -413,7 +413,7 @@ def test_discovery_keeps_the_state_captured_before_tool_step_delivery(tmp_path):
             ]
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 def test_private_module_discovery_retains_aliases_and_hides_other_private_docs(
@@ -523,7 +523,7 @@ agic target():
             )
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 def test_all_discovery_has_no_64_target_limit(tmp_path):
@@ -587,4 +587,4 @@ def test_new_root_omits_routes_even_when_history_contains_restricted_batch(tmp_p
             assert "<toolang:routes" not in message_text(runtime_message(second).parts)
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)

@@ -114,7 +114,7 @@ agic child() -> Text:
                 assert parts[0].output == {"type": "Text", "value": "child result"}
                 assert not any(m.tag == "run-result" for m in messages)
             assert_run_event_integrity(tracer.events)
-        assert_replayed(harness.store.db_path, tracer.events)
+        assert_replayed(harness, tracer.events)
 
     asyncio.run(scenario())
 
@@ -202,6 +202,6 @@ agic child():
             await asyncio.gather(*blockers)
             assert child.started_at and began
             assert_run_event_integrity(tracer.events)
-        assert_replayed(harness.store.db_path, tracer.events)
+        assert_replayed(harness, tracer.events)
 
     asyncio.run(scenario())

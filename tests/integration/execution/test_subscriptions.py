@@ -1,17 +1,95 @@
 """The same recovery contract for run, thread, and agent subscriptions."""
 
 import asyncio
+import json
 
 import pytest
 
 from tests.support.execution_harness import ExecutionHarness
 from toolang.base.types.message import Message, TextPart
-from toolang.base.types.run import ModelCallResult
+from toolang.base.types.run import ModelCall, ModelCallResult
 from toolang.execution.events import RunBegin, RunSnapshot
 from toolang.execution.stream import StreamLimits
 from toolang.execution.stream_client import StreamClientState
 from toolang.execution.subscriptions import StreamScope, Subscriptions
 from toolang.execution.types import ThreadPrefix
+
+
+@pytest.mark.parametrize("scope_kind", ["run", "thread", "agent"])
+def test_large_model_history_prefill_preserves_calls_without_expanding_them(
+    tmp_path, monkeypatch, scope_kind
+):
+    from tests.support.execution_fixtures import persist_event, project_run_start
+    from toolang.execution.events import RunEnd, StepBegin, StepEnd
+    from toolang.execution.inspection.history import RunHistory
+    from toolang.execution.store import RunStore
+    from toolang.execution.stream import CanonicalStream
+    from toolang.execution.types import ModelStepGiven, StepRef
+
+    store = RunStore(tmp_path / "runs.db")
+    call = ModelCall("context " * (256 * 1024), [Message.user("question")])
+    run = project_run_start(
+        store,
+        run_id="run_large",
+        thread_id="chat_large",
+        origin="chat",
+        input=Message.user("question"),
+    )
+    refs = [StepRef.from_local(run.id, (index,)) for index in range(10)]
+    for ref in refs:
+        persist_event(
+            store,
+            StepBegin(ref, "model", ModelStepGiven("test/model", call, setup="test")),
+        )
+        persist_event(store, StepEnd(ref, "model", "succeeded"))
+    persist_event(store, RunEnd(run.id, "succeeded"))
+    history = RunHistory(store)
+    assert history.get_model_call(refs[0]) == call
+    assert history.get_model_call(refs[-1]) == call
+
+    def unexpected_expansion(*args, **kwargs):
+        raise AssertionError("observation must not reconstruct model calls")
+
+    monkeypatch.setattr(RunStore, "rebuild_model_call", unexpected_expansion)
+    monkeypatch.setattr(RunStore, "rebuild_model_calls", unexpected_expansion)
+
+    async def scenario():
+        source = CanonicalStream()
+        service = Subscriptions(source, store.db_path)
+        scope = (
+            StreamScope(root=run.id)
+            if scope_kind == "run"
+            else StreamScope(thread="chat_large")
+            if scope_kind == "thread"
+            else StreamScope()
+        )
+        # A different epoch forces replacement from durable records.
+        attachment = await service.reserve("a" * 32 + "." + "0" * 16)
+        try:
+            subscription = attachment.attach(scope)
+            frames = []
+            while not frames or frames[-1].event != "stream_checkpoint":
+                frames.append(await subscription.receive())
+            assert sum(len(json.dumps(frame.data)) for frame in frames) < 20000
+            model_frames = [frame for frame in frames if frame.event == "step_begin"]
+            assert len(model_frames) == len(refs)
+            assert all(
+                frame.data["given"] == {"model": "test/model", "setup": "test"}
+                for frame in model_frames
+            )
+            client = StreamClientState()
+            for frame in frames:
+                client.feed(frame)
+            assert client.complete(run.id)
+            assert client.cursor == frames[-1].id
+        finally:
+            attachment.close()
+            source.close()
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        store.close()
 
 
 async def drain(subscription):

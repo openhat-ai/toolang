@@ -445,7 +445,7 @@ flow main(_: Text):
                 tracer=tracer,
             )
             assert root.status == "failed"
-            assert_replayed(harness.store.db_path, tracer.events)
+            assert_replayed(harness, tracer.events)
             retried = await harness.executor.retry(
                 root.id, setup=harness.setup, state=harness.state, tracer=retry_tracer
             )
@@ -461,7 +461,7 @@ flow main(_: Text):
         assert "kept=Committed. skipped=Original. primary=seed" in str(
             call.call.messages
         )
-    assert_replayed(harness.store.db_path, retry_tracer.events)
+    assert_replayed(harness, retry_tracer.events)
 
 
 def test_named_condition_rejects_active_runnable(tmp_path):
@@ -692,4 +692,4 @@ def test_until_refreshes_handle_status_on_each_evaluation(tmp_path, prefix):
         for call in harness.adapter.invocations[1::2]
     ]
     assert condition_prompts == ["status=running", "status=succeeded"]
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)

@@ -9,6 +9,15 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Changed
 
+- **Breaking:** canonical observers and HTTP run streams receive model
+  `StepBegin.given` with only `model`, `setup`, and optional `state`
+  revisions. The complete normalized call is no longer included, reconnection
+  snapshots carry the same metadata, and durable execution records keep the
+  full call, so clients that read `given.call` from observation events must
+  reconstruct it with `too AGENT inspect STEP call --json` and upgrade clients
+  and runtimes together. The event decoder still accepts earlier events that
+  contain a complete call.
+
 - **Breaking:** the root Hub's generated files move from `.runtime/` to a `hub/`
   directory beside it: `.runtime/hub.json`, `.runtime/hub.lock`, and
   `.runtime/hub.log` become `hub/hub.json`, `hub/hub.lock`, and `hub/hub.log`.

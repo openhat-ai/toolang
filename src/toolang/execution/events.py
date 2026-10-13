@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Annotated, Any, Literal, cast
 
 from pydantic import Field, TypeAdapter
@@ -26,6 +26,8 @@ from .types import (
     FieldRef,
     Output,
     Occurrence,
+    ModelStepGiven,
+    ModelStepInfo,
     RunStatus,
     StepGiven,
     StepKind,
@@ -63,7 +65,7 @@ class StepBegin:
 
     step: StepRef
     kind: StepKind
-    given: StepGiven
+    given: StepGiven | ModelStepInfo
     state: ControlRef | None = None
     input: tuple[FieldRef, ...] = ()
     preceded_by: tuple[ControlRef, ...] = ()
@@ -73,7 +75,11 @@ class StepBegin:
 
     def __post_init__(self) -> None:
         validate_occurrence(self.occurrence)
-        validate_step_given(self.kind, self.given)
+        if isinstance(self.given, ModelStepInfo):
+            if self.kind != "model":
+                raise TypeError("model Step info requires a model Step")
+        else:
+            validate_step_given(self.kind, self.given)
 
 
 @dataclass(frozen=True, slots=True)
@@ -235,6 +241,18 @@ ExecutionEvent = RunEvent | ThreadEvent | RunRetried
 
 _RUN_EVENT_ADAPTER = TypeAdapter(RunEvent)
 _EXECUTION_EVENT_ADAPTER = TypeAdapter(ExecutionEvent)
+_MODEL_STEP_INFO_ADAPTER = TypeAdapter(ModelStepInfo)
+
+
+def observation_event(event: ExecutionEvent) -> ExecutionEvent:
+    """Keep complete calls in execution records, not the observer's event cache."""
+    if isinstance(event, StepBegin) and isinstance(event.given, ModelStepGiven):
+        given = event.given
+        return replace(
+            event,
+            given=ModelStepInfo(given.model, setup=given.setup, state=given.state),
+        )
+    return event
 
 
 def event_to_data(event: ExecutionEvent) -> dict[str, Any]:
@@ -268,7 +286,18 @@ def run_event_from_data(data: object) -> RunEvent:
     if payload is not None and payload.get("type") == "step_begin":
         kind = _step_kind(payload.get("kind"))
         if kind is not None:
-            payload["given"] = step_given_from_data(kind, payload.get("given"))
+            given = payload.get("given")
+            if kind == "model" and isinstance(given, dict) and "call" not in given:
+                if set(given) not in (
+                    {"model", "setup"},
+                    {"model", "setup", "state"},
+                ):
+                    raise ValueError(
+                        "model Step info requires model, setup, and optional state"
+                    )
+                payload["given"] = _MODEL_STEP_INFO_ADAPTER.validate_python(given)
+            else:
+                payload["given"] = step_given_from_data(kind, given)
     if payload is not None and payload.get("type") in {"step_end", "run_end"}:
         output = payload.get("output")
         if isinstance(output, dict):
@@ -309,7 +338,18 @@ def _with_canonical_fields(
     if isinstance(event, RunBegin):
         data["occurrence"] = occurrence_to_data(event.occurrence)
     if isinstance(event, StepBegin):
-        data["given"] = step_given_to_data(event.kind, event.given)
+        if isinstance(event.given, ModelStepInfo):
+            data["given"] = {
+                "model": event.given.model,
+                "setup": event.given.setup,
+                **(
+                    {"state": event.given.state}
+                    if event.given.state is not None
+                    else {}
+                ),
+            }
+        else:
+            data["given"] = step_given_to_data(event.kind, event.given)
         data["occurrence"] = occurrence_to_data(event.occurrence)
     if isinstance(event, StepEnd):
         data["noted"] = step_noted_to_data(event.kind, event.noted)

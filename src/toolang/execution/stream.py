@@ -28,6 +28,7 @@ from .events import (
     ThreadForked,
     ThreadRewound,
     event_to_data,
+    observation_event,
 )
 from .types import EventCursor, StepRef
 
@@ -87,6 +88,7 @@ class Publication:
         thread_id: str = "",
         root_run_id: str | None = None,
     ) -> None:
+        event = observation_event(event)
         if isinstance(event, ThreadCreated | ThreadForked | ThreadRewound):
             thread_id = event.thread
         size = len(json.dumps(event_to_data(event), ensure_ascii=False).encode())

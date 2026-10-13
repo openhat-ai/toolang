@@ -103,7 +103,7 @@ def test_tool_binding_precedes_paths_and_keeps_raw_records(tmp_path, value):
             assert replies == [result]
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 @pytest.mark.parametrize("phase", ["paths", "invoke"])
@@ -159,7 +159,7 @@ def test_path_errors_and_result_failures_are_recorded(tmp_path, phase):
             assert_run_event_integrity(tracer.events)
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 @pytest.mark.parametrize("interrupt", [False, True])
@@ -248,7 +248,7 @@ agic task() -> Text:
             return first.id
 
     run_id = asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
     reopened = RunStore(harness.store.db_path, read_only=True)
     try:
         steps = RunHistory(reopened).run_view(run_id).steps()
@@ -365,4 +365,4 @@ flow blocked(_: Text) -> Text:
             assert_run_event_integrity(tracer.events)
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)

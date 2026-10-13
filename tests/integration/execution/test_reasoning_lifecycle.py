@@ -129,7 +129,8 @@ def test_reasoning_survives_reopening_new_runs_and_fork_without_continuation(
                 call = reopened.adapter.invocations[-1].call
                 assert call.continuation is None
                 assert Message("assistant", parts) in call.messages
-        assert_replayed(first.store.db_path, tracer.events)
+        first.model_calls.update(reopened.model_calls)
+        assert_replayed(first, tracer.events)
 
     asyncio.run(scenario())
 
@@ -192,7 +193,7 @@ def test_interleaved_reasoning_events_match_durable_output(tmp_path: Path):
                     == event
                 )
             assert_run_event_integrity(tracer.events)
-        assert_replayed(harness.store.db_path, tracer.events)
+        assert_replayed(harness, tracer.events)
 
     asyncio.run(scenario())
 
@@ -245,7 +246,7 @@ def test_typed_output_ignores_reasoning_without_losing_durable_parts(
         finally:
             reopened.close()
         assert_run_event_integrity(tracer.events)
-        assert_replayed(harness.store.db_path, tracer.events)
+        assert_replayed(harness, tracer.events)
 
     asyncio.run(scenario())
 

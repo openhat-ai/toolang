@@ -119,6 +119,7 @@ from ..types import (
     ModelStepNoted,
     LoopStepNoted,
     ModelStepGiven,
+    ModelStepInfo,
     ToolStepGiven,
     ToolStepNoted,
     Occurrence,
@@ -3252,7 +3253,9 @@ class _Execution:
         try:
             self.raise_if_canceling(
                 event.step.run_id,
-                call=isinstance(event.given, (ModelStepGiven, ToolStepGiven))
+                call=isinstance(
+                    event.given, (ModelStepGiven, ModelStepInfo, ToolStepGiven)
+                )
                 or statement_has_call(event.given),
             )
         except _RunCanceled as exc:

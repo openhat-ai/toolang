@@ -811,7 +811,7 @@ agic child(_: Text, label: Text) -> Text:
                 assert any(expected in message for message in observed), observed
             gate.release()
             assert (await parent).status == "succeeded"
-        assert_replayed(harness.store.db_path, tracer.events)
+        assert_replayed(harness, tracer.events)
 
     asyncio.run(scenario())
 

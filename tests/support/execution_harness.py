@@ -7,11 +7,11 @@ from tests.support.setup import materialized_setup
 import asyncio
 from collections import deque
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from hashlib import sha256
 from pathlib import Path
 from types import TracebackType
-from typing import Any, Self
+from typing import Any, Self, cast
 
 from toolang.base.protocols.tool import Tool
 from toolang.base.types.message import Part, TextPart, ToolResultPart
@@ -45,6 +45,7 @@ from toolang.execution.runnables import (
     resolve_state_runnable,
 )
 from toolang.execution.store import RunStore
+from toolang.execution.types import ModelStepGiven, StepGiven, StepRef
 from toolang.execution.threads import ThreadManager
 from toolang.lang import Program
 from toolang.lang.input import resolve_runnable_input
@@ -337,6 +338,7 @@ class ExecutionHarness:
     threads: ThreadManager
     adapter: ScriptedModelAdapter
     published: AgentState | None = None
+    model_calls: dict[StepRef, ModelCall] = field(default_factory=dict)
 
     @classmethod
     def create(
@@ -425,6 +427,16 @@ class ExecutionHarness:
             adapter=adapter,
         )
 
+        begin_step = store.begin_step
+
+        def capture_begin(*, ref: StepRef, given: StepGiven, **kwargs: Any):
+            if isinstance(given, ModelStepGiven):
+                harness.model_calls[ref] = given.call
+            return begin_step(ref=ref, given=given, **kwargs)
+
+        # Capture the complete execution input before compact persistence and
+        # observer projection, including canceled calls and custom adapters.
+        store.begin_step = cast(Any, capture_begin)
         harness.executor._state = lambda: harness.published or harness.state
         if prepare_state:
             watcher = StateWatcher(layout, initial_state=state)

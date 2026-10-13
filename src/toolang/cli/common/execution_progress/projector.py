@@ -26,6 +26,7 @@ from toolang.execution.types import (
     ErrorRef,
     FieldRef,
     ModelStepGiven,
+    ModelStepInfo,
     Occurrence,
     RunStatus,
     RunRef,
@@ -1144,7 +1145,7 @@ class ProgressProjector:
         handoff = next((item for item in run.pending_executes if item.ready), None)
         if handoff is not None:
             run.pending_executes.remove(handoff)
-            run.agic = isinstance(event.given, ModelStepGiven)
+            run.agic = isinstance(event.given, ModelStepGiven | ModelStepInfo)
             run.step_origin = event.step.index
         return handoff
 
