@@ -89,7 +89,7 @@ def editable_chore_path(layout: AgentLayout, reference: str) -> Path:
         (
             item
             for item in load_chores(layout)
-            if reference in {item.id, item.name, item.ref}
+            if reference in {item.id, item.name, item.ref, f"chores/{item.name}.md"}
         ),
         None,
     )

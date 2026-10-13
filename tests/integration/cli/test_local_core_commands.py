@@ -4314,7 +4314,11 @@ def test_caps_list_does_not_validate_unrelated_runnables(tmp_path):
     assert not layout.agent_state.exists()
 
 
-def test_chore_mutations_target_visible_definitions(tmp_path):
+@pytest.mark.parametrize("reference", ["cleanup", "chore/cleanup", "chores/cleanup.md"])
+@pytest.mark.parametrize("malformed", [False, True])
+def test_chore_mutations_target_visible_definitions(
+    tmp_path, monkeypatch, reference, malformed
+):
     root = tmp_path / "toolang"
     _create_agent(root)
     layout = AgentLayout.resident(root, "alice")
@@ -4324,8 +4328,36 @@ def test_chore_mutations_target_visible_definitions(tmp_path):
     hidden = AuthoredChores(layout.home).create(
         ChoreFile.parse("Home body.", name="cleanup")
     )
+    assert hidden.path is not None
+    content = (
+        "---\nschedule: invalid\n---\nBroken home source."
+        if malformed
+        else "Home body."
+    )
+    hidden.path.write_text(content)
+    monkeypatch.setattr(
+        "toolang.cli.toolang.commands.chore.edit_markdown",
+        lambda _: pytest.fail("inline protection must precede opening the editor"),
+    )
     for operation in ("edit", "delete"):
-        result = _invoke(root, "alice", "chore", operation, "cleanup")
+        result = _invoke(root, "alice", "chore", operation, reference)
         assert result.exit_code == 1
         assert "agent.too:1" in result.stderr
-    assert hidden.path is not None and hidden.path.read_text() == "Home body."
+        assert hidden.path.read_text() == content
+
+
+def test_chore_source_path_delete_repairs_invalid_name_without_touching_siblings(
+    tmp_path,
+):
+    root = tmp_path / "toolang"
+    _create_agent(root)
+    layout = AgentLayout.resident(root, "alice")
+    source = layout.home / "chores" / " bad.md"
+    source.parent.mkdir()
+    source.write_text("Invalid chore name.")
+    sibling = source.with_name("good.md")
+    sibling.write_text("Valid sibling.")
+    result = _invoke(root, "alice", "chore", "delete", "chores/ bad.md")
+    assert result.exit_code == 0, result.stderr
+    assert not source.exists()
+    assert sibling.read_text() == "Valid sibling."
