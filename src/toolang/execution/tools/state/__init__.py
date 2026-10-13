@@ -80,7 +80,7 @@ class StateTool(Tool):
                     for file in files
                 )
                 if count:
-                    summary += f" ({count} sources excluded)"
+                    summary += f" ({count} source{'s' if count != 1 else ''} excluded)"
         return summary
 
     async def invoke(

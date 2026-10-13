@@ -481,7 +481,9 @@ class StateWatcher:
         state = self._state
         try:
             return (
-                load_current_agent_revision(self.layout) != state.revision
+                bool(self._checked_root_source and self._checked_root_source.issues)
+                or bool(self._checked_home_source and self._checked_home_source.issues)
+                or load_current_agent_revision(self.layout) != state.revision
                 or _current_layer_revisions(self.layout)
                 != self._checked_layer_revisions
                 or root_observation != self._checked_root_observation

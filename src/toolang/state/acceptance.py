@@ -11,6 +11,7 @@ import re
 from typing import Literal
 
 from toolang.catalog.chore import ChoreFile
+from toolang.catalog.chores import file_chore, inline_chores
 from toolang.catalog.types import CAP_KIND_BY_DIR
 from toolang.lang.ast import AgicDecl, FlowDecl, Program
 from toolang.common.progress import ProgressSink
@@ -271,6 +272,31 @@ def accept_sources(
                         f"Public runnable name is not unique: {public} ({', '.join(paths)})"
                     ),
                     "public-runnable-conflict",
+                )
+    chore_owners: dict[str, list[tuple[str, str]]] = defaultdict(list)
+    for name, files in units.items():
+        if name in excluded:
+            continue
+        for file in files:
+            if file.category == "chore":
+                chore = file_chore(ChoreFile.parse(file.read_text(), path=file.path))
+                chore_owners[chore.id].append((name, chore.name))
+    for prepared in programs:
+        if prepared.name == "agent" and prepared.source.authored_path not in excluded:
+            for chore in inline_chores(
+                prepared.program.chores, path=Path(prepared.source.authored_path)
+            ):
+                chore_owners[chore.id].append(
+                    (prepared.source.authored_path, chore.name)
+                )
+    for definitions in chore_owners.values():
+        if len({name for _, name in definitions}) > 1:
+            paths = sorted({path for path, _ in definitions})
+            for path in paths:
+                reject(
+                    path,
+                    ValueError(f"Chore identity collision: {', '.join(paths)}"),
+                    "chore-identity-conflict",
                 )
     programs = [item for item in programs if item.source.authored_path not in excluded]
     if (

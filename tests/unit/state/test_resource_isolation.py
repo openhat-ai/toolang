@@ -231,3 +231,52 @@ def test_offline_cap_inspection_isolates_bad_files_without_preparing_handlers(la
     assert [entry.name for entry in entries] == ["good"]
     assert entries == allowed
     assert not layout.home_state.exists()
+
+
+def test_chore_identity_collision_excludes_all_owners_and_keeps_unrelated_sources(
+    layout, monkeypatch
+):
+    from toolang.catalog import chores
+
+    directory = layout.home / "chores"
+    directory.mkdir()
+    for name in ("first", "second"):
+        (directory / f"{name}.md").write_text("Chore body.")
+    monkeypatch.setattr(chores, "chore_id", lambda _: "shared-chore-id")
+    state = prepare_agent_state(layout)
+    assert state.chores == ()
+    assert "chat" in state.runnables
+    rejected = [file for file in state.files if not file.accepted]
+    assert [file.key for file in rejected] == ["chores/first.md", "chores/second.md"]
+    assert all(file.code == "chore-identity-conflict" for file in rejected)
+
+
+def test_timeout_check_retries_unreadable_source_without_metadata_change(
+    layout, monkeypatch
+):
+    source = layout.home / "psyches" / "review.md"
+    source.parent.mkdir()
+    source.write_text("Current guidance.")
+    blocked = True
+    read = Path.read_bytes
+
+    def guarded(path):
+        if path == source and blocked:
+            raise PermissionError("Temporarily unreadable")
+        return read(path)
+
+    monkeypatch.setattr(Path, "read_bytes", guarded)
+    watcher = StateWatcher(layout)
+
+    async def scenario():
+        nonlocal blocked
+        initial = await watcher.refresh()
+        assert not initial.psyches
+        metadata = source.stat()
+        blocked = False
+        assert source.stat() == metadata
+        result = await watcher._request_check(requested=False)
+        assert "review" in result.state.psyches
+        assert result.diagnostics == ()
+
+    asyncio.run(scenario())

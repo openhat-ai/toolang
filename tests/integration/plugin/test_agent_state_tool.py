@@ -1088,7 +1088,7 @@ def test_sync_excludes_invalid_source_with_flat_diagnostics_and_summary(context)
     assert not any(isinstance(value, (dict, list)) for value in file.values())
     assert (
         create_toolset({}).tools()["sync"].summary({}, result)
-        == "Synced agent state (1 sources excluded)"
+        == "Synced agent state (1 source excluded)"
     )
 
 

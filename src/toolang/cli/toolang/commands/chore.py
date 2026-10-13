@@ -130,7 +130,7 @@ def delete_chore(ctx: typer.Context, chore: ChoreRef) -> None:
     catalog = AuthoredChores(context_layout(ctx).home)
     user_call(editable_chore_path, context_layout(ctx), chore)
     path = user_call(catalog.remove_file, chore)
-    typer.echo(str(path))
+    typer.echo(f"chore {path.stem} deleted")
 
 
 def run_chore(ctx: typer.Context, chore: ChoreRef) -> None:
