@@ -4,6 +4,7 @@ import asyncio
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
+import pytest
 
 from tests.support.execution_harness import ExecutionHarness, TEST_MODEL_REF
 from toolang.api.app import create_app
@@ -258,5 +259,70 @@ def test_invalid_chore_name_does_not_block_api_inspection_or_sibling_deletion(tm
             assert client.get("/api/v1/chores/%20bad").status_code == 200
             assert client.delete("/api/v1/chores/good").status_code == 204
             assert client.delete("/api/v1/chores/%20bad").status_code == 204
+    finally:
+        asyncio.run(core.close())
+
+
+@pytest.mark.parametrize(
+    "changes", [{"body": "Updated body."}, {"schedule": "FREQ=DAILY"}]
+)
+def test_chore_patch_reports_reconciled_runtime_state(tmp_path, changes):
+    harness = ExecutionHarness.create(
+        tmp_path, source="flow chat():\n  pass\n", responses=[]
+    )
+    layout = harness.setup.layout
+    harness.store.close()
+    AuthoredChores(layout.home).create(ChoreFile.parse("Original body.", name="good"))
+    core = AgentCore(layout, drivers=frozenset())
+    state = asyncio.run(core.state.refresh())
+    checkpoints = ChoreStore(layout.chore_store)
+    checkpoints.reconcile(chores=state.chores)
+
+    async def refresh_driver():
+        checkpoints.reconcile(chores=core.state.current().chores)
+
+    app = create_app(
+        core, CapsManager(layout), ChoresManager(layout), cors_allowed_origins=()
+    )
+    app.state.chore_driver = SimpleNamespace(refresh=refresh_driver)
+    try:
+        with TestClient(app) as client:
+            response = client.patch("/api/v1/chores/good", json=changes)
+            assert response.status_code == 200
+            assert response.json()["runtime"]["synced"] is True
+            assert response.json() == client.get("/api/v1/chores/good").json()
+    finally:
+        checkpoints.close()
+        asyncio.run(core.close())
+
+
+def test_invalid_agent_syntax_does_not_block_home_chore_api_authoring(tmp_path):
+    harness = ExecutionHarness.create(
+        tmp_path, source="flow chat():\n  pass\n", responses=[]
+    )
+    layout = harness.setup.layout
+    harness.store.close()
+    layout.program.write_text("flow (")
+    AuthoredChores(layout.home).create(ChoreFile.parse("Original body.", name="good"))
+    core = AgentCore(layout, drivers=frozenset())
+    asyncio.run(core.state.refresh())
+    app = create_app(
+        core, CapsManager(layout), ChoresManager(layout), cors_allowed_origins=()
+    )
+    try:
+        with TestClient(app) as client:
+            assert client.get("/api/v1/chores").status_code == 200
+            created = client.post(
+                "/api/v1/chores", json={"name": "new", "body": "New body."}
+            )
+            assert created.status_code == 201
+            updated = client.patch(
+                "/api/v1/chores/good", json={"body": "Updated body."}
+            )
+            assert updated.status_code == 200
+            assert updated.json() == client.get("/api/v1/chores/good").json()
+            assert client.delete("/api/v1/chores/good").status_code == 204
+            assert client.get("/api/v1/chores/good").status_code == 404
+            assert layout.program.read_text() == "flow ("
     finally:
         asyncio.run(core.close())

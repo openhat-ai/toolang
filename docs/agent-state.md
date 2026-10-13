@@ -25,7 +25,7 @@ State has two persistent layers and one composition:
 
 - the `root` layer contains root config and root capabilities;
 - the `home` layer contains agent config, the agent and runnable modules, home
-  capabilities, and module-local capabilities; and
+  capabilities, module-local capabilities, and Markdown chore terms; and
 - the `agent` composition identifies one exact root/home revision pair.
 
 The in-memory composition exposes aggregate indexes. `modules` resolves stable
@@ -72,6 +72,7 @@ ${TOOLANG_ROOT}/agents/<agent>/.state/home/
       agent.too
       config.toml
       runnables/<name>.too
+      chores/<name>.md
       caps/
         authored/<kind>/<name>/...
         configured/<kind>/<name>/...
@@ -98,6 +99,7 @@ Locks and temporary paths are writer implementation details. Old
 - parsed config;
 - configured and referenced resolutions;
 - State capabilities;
+- accepted Markdown chore terms (name, title, body, schedule, and source path);
 - home program modules and their module-local capabilities; and
 - a sorted manifest of every file below `files/`, including path, size, and
   SHA-256.
@@ -153,9 +155,14 @@ last published revision or null. Sync performs one serialized check without an
 additional reporting scan. It does not replace active code or refresh Setup.
 See [the state interface](tools.md#current-agent).
 
-New layers use schema 20 and source manifest schema 4. Preparation rebuilds older
-current layers without rewriting history. Explicit historical loads retain known
-file identities; schema-3 config and schema-2 source trees lack reliable raw
+New layers use schema 21 and source manifest schema 4. Accepted Markdown chore
+terms are stored alongside their captured bytes and restored without parsing
+authored syntax. Explicit integrity validation checks those terms against the
+captured Markdown and acceptance records. Schema 20 histories restore Markdown
+chores from their captured bytes; older schemas have no Markdown chore index.
+Preparation rebuilds older current layers without rewriting history. Explicit
+historical loads retain known file identities; schema-3 config and schema-2 source
+trees lack reliable raw
 identities and are not exposed as tracked files.
 
 Normal loading trusts a revision to be complete and reads its persisted
@@ -164,8 +171,9 @@ Explicit validation separately requires canonical document bytes, matching
 revision digests, an exact recursive `files/` manifest, and valid capability,
 module, and resolution references. No normal runtime path implicitly requests
 that validation. Loading a revision never reads current authored source, falls
-back to `current`, reparses a program source file, or contacts a remote
-provider.
+back to `current`, or contacts a remote provider. Current-schema loading restores
+accepted terms without parsing source; legacy compatibility paths may consult
+captured bytes.
 
 ## Programs And Module Terms
 

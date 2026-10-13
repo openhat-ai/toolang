@@ -308,3 +308,98 @@ def test_internal_program_failures_reject_candidate_and_preserve_state(
     assert watcher.current() is original
     assert "chat" in watcher.current().runnables
     assert asyncio.run(watcher.sync()).error is None
+
+
+def test_historical_chore_definitions_load_without_parsing_markdown(
+    layout, monkeypatch
+):
+    from toolang.catalog.chore import ChoreFile
+
+    source = layout.home / "chores" / "good.md"
+    source.parent.mkdir()
+    source.write_text(
+        "---\ntitle: Accepted title\nschedule: FREQ=DAILY\n---\nAccepted body."
+    )
+    state = prepare_agent_state(layout)
+    source.unlink()
+
+    def reject_parser(*args, **kwargs):
+        pytest.fail("historical chore loading must restore accepted terms")
+
+    monkeypatch.setattr(ChoreFile, "parse", reject_parser)
+    loaded = load_agent_state(layout, state.revision)
+    assert loaded.chores == state.chores
+
+
+@pytest.mark.parametrize("tamper", ["body", "missing", "duplicate"])
+def test_chore_term_integrity_matches_accepted_source(layout, tamper):
+    import json
+    import shutil
+    from toolang.state.cache import canonical_json, layer_revision_dir
+
+    source = layout.home / "chores" / "good.md"
+    source.parent.mkdir()
+    source.write_text("Accepted body.")
+    state = prepare_agent_state(layout)
+    directory = layer_revision_dir(layout, "home", state.home_revision)
+    document = json.loads((directory / "layer.json").read_text())
+    if tamper == "body":
+        document["chores"][0]["body"] = "Unaccepted body."
+    elif tamper == "missing":
+        document["chores"] = []
+    else:
+        document["chores"].append(document["chores"][0])
+    encoded = canonical_json(document)
+    revision = sha256(encoded).hexdigest()
+    forged = layer_revision_dir(layout, "home", revision)
+    shutil.copytree(directory, forged)
+    (forged / "layer.json").write_bytes(encoded)
+    with pytest.raises(ValueError):
+        validate_layer_revision(layout, "home", revision)
+
+
+def test_schema_20_chore_history_remains_loadable_and_current_is_rebuilt(layout):
+    import json
+    import shutil
+    from toolang.state.cache import (
+        LAYER_SCHEMA,
+        _agent_check_lock,
+        _persist_agent_revision,
+        canonical_json,
+        layer_revision_dir,
+        load_home_layer,
+        publish_layer_current,
+    )
+
+    source = layout.home / "chores" / "good.md"
+    source.parent.mkdir()
+    source.write_text("Historical definition.")
+    original = prepare_agent_state(layout)
+    directory = layer_revision_dir(layout, "home", original.home_revision)
+    document = json.loads((directory / "layer.json").read_text())
+    document["schema"] = 20
+    document.pop("chores", None)
+    encoded = canonical_json(document)
+    revision = sha256(encoded).hexdigest()
+    legacy = layer_revision_dir(layout, "home", revision)
+    if legacy != directory:
+        shutil.copytree(directory, legacy)
+        (legacy / "layer.json").write_bytes(encoded)
+    publish_layer_current(layout, "home", revision)
+    with _agent_check_lock(layout):
+        historical = _persist_agent_revision(
+            layout, root_revision=original.root_revision, home_revision=revision
+        )
+    with pytest.raises(ValueError, match="outdated layer schema"):
+        load_agent_state(layout)
+    source.write_text("Current definition.")
+    layout.program.write_text("flow (")
+    loaded = load_agent_state(layout, historical)
+    assert loaded.chores[0].body == "Historical definition."
+    assert loaded.files == original.files
+    rebuilt = prepare_agent_state(layout)
+    assert load_home_layer(layout, rebuilt.home_revision).schema == LAYER_SCHEMA
+    assert rebuilt.chores[0].body == "Current definition."
+    assert rebuilt.home_revision != revision
+    assert load_agent_state(layout, historical).chores == loaded.chores
+    assert (legacy / "layer.json").read_bytes() == encoded

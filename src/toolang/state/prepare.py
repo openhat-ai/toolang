@@ -659,6 +659,7 @@ def _prepare_layer_revision(
             module_caps=module_caps,
             files=files,
             records=accepted.records,
+            chores=accepted.chores,
         )
         publish_layer_current(
             layout,

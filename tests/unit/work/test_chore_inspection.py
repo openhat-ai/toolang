@@ -74,3 +74,23 @@ def test_invalid_chore_name_is_inspected_by_source_without_execution_identity(tm
     assert catalog.raw_path("good") == directory / "good.md"
     assert catalog.remove_file(invalid.ref) == directory / " bad.md"
     assert catalog.remove_file("good") == directory / "good.md"
+
+
+def test_invalid_agent_source_does_not_block_markdown_inspection_or_authoring(tmp_path):
+    from toolang.catalog.chore_authoring import create_chore, editable_chore_path
+
+    layout = AgentLayout.resident(tmp_path, "alice")
+    layout.home.mkdir(parents=True)
+    layout.program.write_text("flow (")
+    catalog = AuthoredChores(layout.home)
+    catalog.create(ChoreFile.parse("Valid home definition.", name="good"))
+
+    inspection = ChoreInspection.load(layout=layout, runs=())
+    assert [entry.name for entry in inspection.list()] == ["good"]
+    assert not layout.agent_state.exists()
+    created = create_chore(layout, ChoreFile.parse("New home definition.", name="new"))
+    assert created.path is not None and created.path.is_file()
+    path = editable_chore_path(layout, "chores/good.md")
+    assert path.read_text() == "Valid home definition."
+    catalog.remove_file("good")
+    assert not path.exists()

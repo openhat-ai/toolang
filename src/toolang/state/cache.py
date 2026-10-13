@@ -40,7 +40,8 @@ from .state import (
 )
 
 LayerScope = Literal["root", "home"]
-LAYER_SCHEMA = 20
+LAYER_SCHEMA = 21
+_SOURCE_RECEIPTS_SCHEMA = 20
 _LAYER_FILE = "layer.json"
 _LAYERS_FILE = "layers.json"
 _FILES_DIR = "files"
@@ -210,7 +211,7 @@ def load_home_layer(
         module_digests=module_digests,
         module_caps=module_caps,
         records=_source_receipts(document),
-        chores=_chore_files(document, revision_dir),
+        chores=_chore_definitions(document, revision_dir),
     )
 
 
@@ -228,6 +229,7 @@ def write_layer(
     module_caps: Mapping[str, tuple[StateCap, ...]],
     files: Mapping[str, bytes],
     records: tuple[StateFile, ...] = (),
+    chores: tuple[Chore, ...] = (),
 ) -> str:
     """Atomically store one complete immutable State layer."""
 
@@ -244,6 +246,7 @@ def write_layer(
         module_caps=module_caps,
         files=normalized_files,
         records=records,
+        chores=chores,
     )
     encoded = canonical_json(document)
     revision = sha256(encoded).hexdigest()
@@ -473,9 +476,12 @@ def _layer_document(
     module_caps: Mapping[str, tuple[StateCap, ...]],
     files: Mapping[str, bytes],
     records: tuple[StateFile, ...] = (),
+    chores: tuple[Chore, ...] = (),
 ) -> dict[str, object]:
     if scope == "root" and modules:
         raise ValueError("root State layer cannot contain program modules")
+    if scope == "root" and chores:
+        raise ValueError("root State layer cannot contain chore definitions")
     if not records:
         records = tuple(
             StateFile(scope, item.path, item.raw_digest or item.digest)
@@ -487,6 +493,10 @@ def _layer_document(
         records = tuple(sorted(records, key=lambda item: item.key))
     return {
         "caps": [cap.to_data() for cap in sorted(caps, key=_cap_key)],
+        "chores": [
+            chore.to_data()
+            for chore in sorted(chores, key=lambda item: item.path.as_posix())
+        ],
         "config": dict(config),
         "files": [
             {
@@ -538,6 +548,7 @@ def _validate_layer_dir(
         raise ValueError("State layer revision does not match layer.json")
     required = {
         "caps",
+        "chores",
         "config",
         "files",
         "modules",
@@ -644,12 +655,25 @@ def _validate_layer_dir(
                 f"resolved cap does not match exactly one State capability: "
                 f"{resolution.kind}/{resolution.name}"
             )
-    _chore_files(document, revision_dir)
+    for chore in _chore_definitions(document, revision_dir):
+        captured = file_chore(
+            ChoreFile.parse(
+                (revision_dir / "files" / chore.path).read_text(encoding="utf-8"),
+                path=chore.path,
+            )
+        )
+        if captured != chore:
+            raise ValueError("chore terms do not match accepted source bytes")
     return document
 
 
 def _source_receipts(document: Mapping[str, object]) -> tuple[StateFile, ...]:
-    if document.get("schema") != LAYER_SCHEMA:
+    if document.get("schema") not in {LAYER_SCHEMA, _SOURCE_RECEIPTS_SCHEMA}:
+        return ()
+    source = document.get("source")
+    if not isinstance(source, Mapping):
+        return ()
+    if cast(Mapping[str, object], source).get("schema") != SOURCE_SCHEMA:
         return ()
     raw = document.get("sources", [])
     if not isinstance(raw, list) or not all(isinstance(item, Mapping) for item in raw):
@@ -665,11 +689,41 @@ def _source_receipts(document: Mapping[str, object]) -> tuple[StateFile, ...]:
     return records
 
 
-def _chore_files(
+def _chore_definitions(
     document: Mapping[str, object], revision_dir: Path
 ) -> tuple[Chore, ...]:
-    if document.get("schema") != LAYER_SCHEMA or document.get("scope") != "home":
+    if document.get("schema") == LAYER_SCHEMA:
+        raw = document.get("chores")
+        if not isinstance(raw, list) or not all(
+            isinstance(item, Mapping) for item in raw
+        ):
+            raise TypeError("State chore terms must be objects")
+        chores = tuple(
+            Chore.from_data(cast(Mapping[str, object], item)) for item in raw
+        )
+        paths = tuple(chore.path.as_posix() for chore in chores)
+        if paths != tuple(sorted(set(paths))):
+            raise ValueError("State chore terms must be sorted and unique")
+        accepted = {
+            record.key
+            for record in _source_receipts(document)
+            if record.accepted
+            and Path(record.key).parent == Path("chores")
+            and Path(record.key).suffix == ".md"
+        }
+        if set(paths) != accepted:
+            raise ValueError(
+                "chore terms must cover exactly the accepted Markdown sources"
+            )
+        if document.get("scope") != "home" and chores:
+            raise ValueError("only home layers can contain chore definitions")
+        return chores
+    if (
+        document.get("schema") != _SOURCE_RECEIPTS_SCHEMA
+        or document.get("scope") != "home"
+    ):
         return ()
+    # Schema 20 captured Markdown bytes but had no serialized chore terms.
     return tuple(
         file_chore(
             ChoreFile.parse(

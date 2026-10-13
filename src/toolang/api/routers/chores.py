@@ -47,7 +47,7 @@ async def create_chore(
         create_definition, core.layout, _new_chore(payload=payload)
     )
     await _refresh_chores(core, scheduler)
-    return _chore_detail(core, saved)
+    return await asyncio.to_thread(_chore_detail, core, saved)
 
 
 @router.post("/chores/{chore_id}/run", summary="Run Chore", status_code=202)
@@ -106,16 +106,15 @@ async def update_chore(
     chore_id: str,
     payload: ChorePatchRequest,
 ) -> ChoreDetail:
-    result = await asyncio.to_thread(
+    saved = await asyncio.to_thread(
         _update_chore,
         core,
         manager,
-        scheduler,
         chore_id,
         payload,
     )
     await _refresh_chores(core, scheduler)
-    return result
+    return await asyncio.to_thread(_chore_detail, core, saved)
 
 
 @router.get("/chores", summary="List Chores", response_model=list[ChoreInfo])
@@ -216,10 +215,9 @@ def _new_chore(*, payload: ChoreCreateRequest) -> ChoreFile:
 def _update_chore(
     core: AgentCore,
     manager: ChoresManager,
-    scheduler: ChoreDriver | None,
     reference: str,
     payload: ChorePatchRequest,
-) -> ChoreDetail:
+) -> ChoreFile:
     entry = editable_chore(core.layout, reference)
     fields = ("title", "body", "schedule")
     changes = {
@@ -231,7 +229,7 @@ def _update_chore(
         saved = manager.home_authoring.update(entry.patch(changes))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return _chore_detail(core, saved)
+    return saved
 
 
 def _scheduler_call(call: Callable[..., _T], *args: object) -> _T:

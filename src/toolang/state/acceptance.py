@@ -12,7 +12,7 @@ import re
 from typing import Literal
 
 from toolang.catalog.chore import ChoreFile
-from toolang.catalog.chores import file_chore, inline_chores
+from toolang.catalog.chores import Chore, file_chore, inline_chores
 from toolang.catalog.types import CAP_KIND_BY_DIR
 from toolang.lang.ast import AgicDecl, FlowDecl, Program
 from toolang.lang.errors import ToolangSourceError
@@ -46,6 +46,7 @@ class AcceptedSources:
     snapshot: SourceSnapshot
     records: tuple[StateFile, ...]
     programs: tuple[AcceptedProgram, ...]
+    chores: tuple[Chore, ...]
 
 
 def accept_sources(
@@ -62,6 +63,7 @@ def accept_sources(
     records: dict[str, StateFile] = {}
     units: dict[str, list[SourceFile]] = defaultdict(list)
     excluded: set[str] = set()
+    chores: dict[str, Chore] = {}
 
     def key(path: str) -> str:
         return Path(path).relative_to(prefix).as_posix() if scope == "home" else path
@@ -133,7 +135,11 @@ def accept_sources(
 
             for file in files:
                 if file.category == "chore":
-                    ChoreFile.parse(file.read_text(), path=file.path)
+                    relative = key(file.relative_path)
+                    chores[relative] = replace(
+                        file_chore(ChoreFile.parse(file.read_text(), path=file.path)),
+                        path=Path(relative),
+                    )
         except (OSError, ValueError, TypeError, YAMLError) as exc:
             reject(name, exc)
 
@@ -276,13 +282,9 @@ def accept_sources(
                     "public-runnable-conflict",
                 )
     chore_owners: dict[str, list[tuple[str, str]]] = defaultdict(list)
-    for name, files in units.items():
-        if name in excluded:
-            continue
-        for file in files:
-            if file.category == "chore":
-                chore = file_chore(ChoreFile.parse(file.read_text(), path=file.path))
-                chore_owners[chore.id].append((name, chore.name))
+    for path, chore in chores.items():
+        if path not in excluded:
+            chore_owners[chore.id].append((path, chore.name))
     for prepared in programs:
         if prepared.name == "agent" and prepared.source.authored_path not in excluded:
             for chore in inline_chores(
@@ -327,5 +329,8 @@ def accept_sources(
         ),
     )
     return AcceptedSources(
-        snapshot, tuple(records[path] for path in sorted(records)), tuple(programs)
+        snapshot,
+        tuple(records[path] for path in sorted(records)),
+        tuple(programs),
+        tuple(chores[path] for path in sorted(chores) if path not in excluded),
     )
