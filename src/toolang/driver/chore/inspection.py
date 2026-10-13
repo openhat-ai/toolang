@@ -87,7 +87,7 @@ class ChoreInspection:
             (
                 chore
                 for chore in self.definitions
-                if reference in {chore.id, chore.name, chore.ref}
+                if reference in {*self._identity(chore)[:2], chore.name}
             ),
             None,
         )
@@ -100,7 +100,8 @@ class ChoreInspection:
         )
 
     def _info(self, chore: Chore) -> ChoreInfo:
-        record, last_run = self._state(chore)
+        chore_id, ref, thread_id = self._identity(chore)
+        record, last_run = self._state(chore_id=chore_id, thread_id=thread_id)
         synced = (
             chore.source_error is None
             and record is not None
@@ -112,16 +113,16 @@ class ChoreInspection:
         except ValueError:
             path = str(chore.path)
         return ChoreInfo(
-            id=chore.id,
+            id=chore_id,
             name=chore.name,
-            ref=chore.ref,
+            ref=ref,
             title=chore.display_title,
             path=path,
             line=chore.line,
             schedule=chore.schedule,
             source_error=chore.source_error,
             runtime=ChoreRuntimeInfo(
-                thread_id=chore.thread_id,
+                thread_id=thread_id,
                 synced=synced,
                 status=record.status if record else None,
                 active_run_id=record.active_run_id if record else None,
@@ -133,9 +134,20 @@ class ChoreInspection:
             ),
         )
 
-    def _state(self, chore: Chore) -> tuple[ChoreRecord | None, LastRunInfo | None]:
-        record = self.records.get(chore.id)
-        run = self.latest_runs.get(chore.thread_id)
+    def _identity(self, chore: Chore) -> tuple[str | None, str, str | None]:
+        try:
+            chore_id = chore.id
+        except ValueError:
+            if chore.source_error is None:
+                raise
+            return None, chore.path.relative_to(self.home).as_posix(), None
+        return chore_id, chore.ref, chore.thread_id
+
+    def _state(
+        self, *, chore_id: str | None, thread_id: str | None
+    ) -> tuple[ChoreRecord | None, LastRunInfo | None]:
+        record = self.records.get(chore_id) if chore_id is not None else None
+        run = self.latest_runs.get(thread_id) if thread_id is not None else None
         last_run = (
             LastRunInfo(
                 id=run.id,

@@ -280,3 +280,31 @@ def test_timeout_check_retries_unreadable_source_without_metadata_change(
         assert result.diagnostics == ()
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("stage", ["parse", "materialize"])
+@pytest.mark.parametrize("error", [RuntimeError, TypeError])
+def test_internal_program_failures_reject_candidate_and_preserve_state(
+    layout, monkeypatch, stage, error
+):
+    from toolang.state import acceptance
+
+    watcher = StateWatcher(layout)
+    original = asyncio.run(watcher.refresh())
+    layout.program.write_text("flow chat():\n  pass\n# Changed source.\n")
+
+    def fail(*args, **kwargs):
+        raise error("Internal preparation invariant failed")
+
+    with monkeypatch.context() as patch:
+        if stage == "parse":
+            patch.setattr(acceptance.ProgramSource, "parse", fail)
+        else:
+            patch.setattr(acceptance, "materialize_program_caps", fail)
+        receipt = asyncio.run(watcher.sync())
+    assert receipt.error == "state_rejected"
+    assert receipt.revision == original.revision
+    assert receipt.files == ()
+    assert watcher.current() is original
+    assert "chat" in watcher.current().runnables
+    assert asyncio.run(watcher.sync()).error is None

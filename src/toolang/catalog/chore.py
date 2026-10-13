@@ -189,11 +189,15 @@ class AuthoredChores:
         """Address an existing file without parsing its content or siblings."""
         directory = self.directory / "chores"
         paths = tuple(directory.glob("*.md")) if directory.is_dir() else ()
-        matches = [
-            path
-            for path in paths
-            if reference in {path.stem, f"chore/{path.stem}", chore_id(path.stem)}
-        ]
+        matches = []
+        for path in paths:
+            references = {path.stem, f"chore/{path.stem}", f"chores/{path.name}"}
+            try:
+                references.add(chore_id(path.stem))
+            except ValueError:
+                pass  # Invalid names remain addressable by their source path.
+            if reference in references:
+                matches.append(path)
         if len(matches) > 1:
             raise CatalogConflictError(f"ambiguous chore reference: {reference}")
         if not matches:

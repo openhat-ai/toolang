@@ -49,3 +49,28 @@ def test_inline_inspection_is_read_only_without_state_or_database(tmp_path):
     assert not info.runtime.synced
     assert not layout.run_store.exists()
     assert not layout.agent_state.exists()
+
+
+def test_invalid_chore_name_is_inspected_by_source_without_execution_identity(tmp_path):
+    layout = AgentLayout.resident(tmp_path, "alice")
+    directory = layout.home / "chores"
+    directory.mkdir(parents=True)
+    (directory / " bad.md").write_text("Invalid name, readable source.")
+    (directory / "good.md").write_text("Valid sibling.")
+
+    inspection = ChoreInspection.load(layout=layout, runs=())
+    entries = {entry.path: entry for entry in inspection.list()}
+    invalid = entries["chores/ bad.md"]
+    assert invalid.source_error
+    assert invalid.id is None
+    assert invalid.ref == "chores/ bad.md"
+    assert invalid.runtime.thread_id is None
+    assert invalid.runtime.status is None
+    assert entries["chores/good.md"].source_error is None
+    source = inspection.get(invalid.ref)
+    assert source is not None
+    assert inspection.detail(source).body == "Invalid name, readable source."
+    catalog = AuthoredChores(layout.home)
+    assert catalog.raw_path("good") == directory / "good.md"
+    assert catalog.remove_file(invalid.ref) == directory / " bad.md"
+    assert catalog.remove_file("good") == directory / "good.md"

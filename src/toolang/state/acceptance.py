@@ -6,6 +6,7 @@ from collections import defaultdict
 from dataclasses import dataclass, replace
 from pathlib import Path
 from hashlib import sha256
+from tarfile import TarError
 from yaml import YAMLError
 import re
 from typing import Literal
@@ -14,6 +15,7 @@ from toolang.catalog.chore import ChoreFile
 from toolang.catalog.chores import file_chore, inline_chores
 from toolang.catalog.types import CAP_KIND_BY_DIR
 from toolang.lang.ast import AgicDecl, FlowDecl, Program
+from toolang.lang.errors import ToolangSourceError
 from toolang.common.progress import ProgressSink
 from .source import ProgramSource, SourceFile, SourceSnapshot
 from .state import (
@@ -237,7 +239,7 @@ def accept_sources(
                     prepared.program,
                     program_runnable_index(prepared.program)[local],
                 )
-        except Exception as exc:
+        except (ToolangSourceError, ValueError, OSError, YAMLError, TarError) as exc:
             reject(
                 relative,
                 exc,

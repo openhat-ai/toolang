@@ -140,6 +140,11 @@ empty structural module; other valid modules remain available. Shared config,
 root/home access, persistence, and internal composition failures still reject
 the whole candidate. Root/home precedence applies to accepted definitions.
 
+Chore inspection keeps accepted inline definitions ahead of rejected home files.
+A rejected file with an invalid chore name remains addressable by its source
+path; its API `id` and `runtime.thread_id` are null because it has no execution
+identity.
+
 The raw `state` file tools retain `{key, digest}` write receipts and disk-digest
 checks. `state.sync()` returns `{revision, files}` with the flat source records
 above, including Markdown chores. Successful publication may contain excluded

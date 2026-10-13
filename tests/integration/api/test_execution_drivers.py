@@ -198,3 +198,65 @@ def test_chore_api_edits_visible_home_file_and_preserves_root(tmp_path):
             )
     finally:
         asyncio.run(core.close())
+
+
+def test_invalid_home_file_does_not_duplicate_accepted_inline_chore(tmp_path):
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="chore cleanup:\n  Inline wins.\nflow chat():\n  pass\n",
+        responses=[],
+    )
+    layout = harness.setup.layout
+    layout.program.write_text("chore cleanup:\n  Inline wins.\nflow chat():\n  pass\n")
+    harness.store.close()
+    source = layout.home / "chores" / "cleanup.md"
+    source.parent.mkdir()
+    source.write_text("---\nschedule: invalid\n---\nBroken file.")
+    core = AgentCore(layout, drivers=frozenset())
+    state = asyncio.run(core.state.refresh())
+    assert state.chores[0].line == 1
+    assert any(
+        file.key == "chores/cleanup.md" and not file.accepted for file in state.files
+    )
+    app = create_app(
+        core, CapsManager(layout), ChoresManager(layout), cors_allowed_origins=()
+    )
+    try:
+        with TestClient(app) as client:
+            response = client.get("/api/v1/chores")
+            assert response.status_code == 200
+            assert len(response.json()) == 1
+            assert response.json()[0]["path"] == "agent.too"
+            assert response.json()[0]["source_error"] is None
+            assert client.get("/api/v1/chores/cleanup").json()["body"] == "Inline wins."
+    finally:
+        asyncio.run(core.close())
+
+
+def test_invalid_chore_name_does_not_block_api_inspection_or_sibling_deletion(tmp_path):
+    harness = ExecutionHarness.create(
+        tmp_path, source="flow chat():\n  pass\n", responses=[]
+    )
+    layout = harness.setup.layout
+    harness.store.close()
+    directory = layout.home / "chores"
+    directory.mkdir()
+    (directory / " bad.md").write_text("Invalid name.")
+    (directory / "good.md").write_text("Valid sibling.")
+    core = AgentCore(layout, drivers=frozenset())
+    asyncio.run(core.state.refresh())
+    app = create_app(
+        core, CapsManager(layout), ChoresManager(layout), cors_allowed_origins=()
+    )
+    try:
+        with TestClient(app) as client:
+            response = client.get("/api/v1/chores")
+            assert response.status_code == 200
+            entries = {entry["path"]: entry for entry in response.json()}
+            assert entries["chores/ bad.md"]["id"] is None
+            assert entries["chores/ bad.md"]["runtime"]["thread_id"] is None
+            assert client.get("/api/v1/chores/%20bad").status_code == 200
+            assert client.delete("/api/v1/chores/good").status_code == 204
+            assert client.delete("/api/v1/chores/%20bad").status_code == 204
+    finally:
+        asyncio.run(core.close())

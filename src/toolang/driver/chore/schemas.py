@@ -20,7 +20,7 @@ class LastRunInfo:
 class ChoreRuntimeInfo:
     """Checkpoint state; synced indicates whether it describes the current definition."""
 
-    thread_id: str
+    thread_id: str | None
     synced: bool
     status: ChoreStatus | None
     active_run_id: str | None
@@ -33,7 +33,7 @@ class ChoreRuntimeInfo:
 
 @dataclass(frozen=True, slots=True)
 class ChoreInfo:
-    id: str
+    id: str | None
     name: str
     ref: str
     title: str

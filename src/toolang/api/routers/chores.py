@@ -169,6 +169,7 @@ def _require_scheduler(scheduler: ChoreDriver | None) -> ChoreDriver:
 def _inspection(core: AgentCore) -> ChoreInspection:
     runs = tuple(cast(Iterable[ChoreRun], core.store.list_runs(limit=None)))
     state = core.state.current()
+    accepted_names = {chore.name for chore in state.chores}
     invalid = tuple(
         Chore(
             Path(file.key).stem,
@@ -182,6 +183,7 @@ def _inspection(core: AgentCore) -> ChoreInspection:
         if file.scope == "home"
         and not file.accepted
         and Path(file.key).parent == Path("chores")
+        and Path(file.key).stem not in accepted_names
     )
     return ChoreInspection.load(
         layout=core.layout,

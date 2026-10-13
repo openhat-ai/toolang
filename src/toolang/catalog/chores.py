@@ -84,12 +84,13 @@ def load_chores(layout: AgentLayout) -> tuple[Chore, ...]:
 def inspect_chore_sources(layout: AgentLayout) -> tuple[Chore, ...]:
     """Include malformed authored files for inspection and raw repair."""
     valid = load_chores(layout)
+    accepted_names = {chore.name for chore in valid}
     invalid = tuple(
         Chore(path.stem, None, content, None, path, source_error=error)
         for path, content, error in AuthoredChores(layout.home).sources()
-        if error is not None
+        if error is not None and path.stem not in accepted_names
     )
-    return tuple(merge_chores(invalid, valid).values())
+    return (*invalid, *valid)
 
 
 def inline_chores(
