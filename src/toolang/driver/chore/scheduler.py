@@ -11,7 +11,7 @@ import heapq
 import itertools
 import logging
 import threading
-from typing import Literal, TypeAlias, cast
+from typing import Literal, TypeAlias
 
 from toolang.base.errors import ToolangError
 from toolang.base.types.policy import RunBindings
@@ -27,9 +27,8 @@ from toolang.setup import AgentSetup
 from toolang.state.state import AgentState
 
 from .records import ChoreRecord
-from .state import Chore, merge_chores, inline_chores
+from toolang.catalog.chores import Chore
 from .store import ChoreStore, next_activation
-from .watcher import ChoreWatcher
 
 DEFAULT_SAFETY_REFRESH_SECONDS = 30.0
 DEFAULT_STATE_POLL_SECONDS = 1.0
@@ -37,7 +36,6 @@ _LOGGER = logging.getLogger(__name__)
 
 _CommandKind: TypeAlias = Literal[
     "refresh",
-    "snapshot",
     "run_chore",
     "cancel_chore",
     "get",
@@ -79,8 +77,6 @@ class ChoreDriver:
         self._thread: threading.Thread | None = None
         self._started: Future[object] | None = None
         self._commands: asyncio.Queue[_Command] | None = None
-        self._watch_stop: asyncio.Event | None = None
-        self._watcher: ChoreWatcher | None = None
         self._store: ChoreStore | None = None
         self._chores: dict[str, Chore] = {}
         self._records: dict[str, ChoreRecord] = {}
@@ -221,17 +217,10 @@ class ChoreDriver:
 
     async def _serve(self) -> None:
         self._commands = asyncio.Queue()
-        self._watch_stop = asyncio.Event()
         self._store = ChoreStore(self.layout.chore_store)
-        watch_task: asyncio.Task[None] | None = None
         try:
-            self._watcher = ChoreWatcher(self.layout)
-            self._reconcile(self._watcher.current())
+            self._reconcile()
             await self._recover_active()
-            watch_task = asyncio.create_task(
-                self._watch_updates(),
-                name=f"toolang-chore-watch-{self.layout.name}",
-            )
             started = self._started
             if started is not None and not started.done():
                 started.set_result(None)
@@ -258,17 +247,13 @@ class ChoreDriver:
                         next_state = now + self.state_poll_seconds
                         state = self.get_agent_state()
                         if state.revision != self._state_revision:
-                            self._reconcile(self._watcher.current())
+                            self._reconcile()
                     if now >= next_safety:
                         next_safety = now + self.safety_refresh_seconds
-                        self._reconcile(self._watcher.refresh())
+                        self._reconcile()
                     continue
                 await self._handle(command)
         finally:
-            if self._watch_stop is not None:
-                self._watch_stop.set()
-            if watch_task is not None:
-                await asyncio.gather(watch_task, return_exceptions=True)
             if self._active:
                 await asyncio.gather(
                     *tuple(self._active.values()),
@@ -277,21 +262,6 @@ class ChoreDriver:
             if self._store is not None:
                 self._store.close()
             self._store = None
-            self._watcher = None
-
-    async def _watch_updates(self) -> None:
-        assert self._watcher is not None
-        assert self._watch_stop is not None
-        assert self._commands is not None
-        try:
-            async for snapshot in self._watcher.updates(
-                stop_signal=self._watch_stop,
-            ):
-                await self._commands.put(_Command("snapshot", snapshot))
-        except Exception as exc:
-            _LOGGER.error(
-                "chores.watch_failed error=%s", str(exc) or type(exc).__name__
-            )
 
     async def _handle(self, command: _Command) -> None:
         try:
@@ -313,25 +283,21 @@ class ChoreDriver:
 
     async def _apply(self, command: _Command) -> object:
         assert self._store is not None
-        assert self._watcher is not None
         if command.kind == "refresh":
-            self._reconcile(self._watcher.refresh())
-            return None
-        if command.kind == "snapshot":
-            self._reconcile(_as_chores(command.value))
+            self._reconcile()
             return None
         if command.kind in {"run_chore", "cancel_chore"}:
-            self._reconcile(self._watcher.refresh())
+            self._reconcile()
             reference = str(command.value)
             chore_id = next(
                 (
-                    item.id
-                    for item in self._chores.values()
-                    if reference in (item.id, item.name, item.ref)
+                    item.chore_id
+                    for item in self._records.values()
+                    if reference in (item.chore_id, item.name, f"chore/{item.name}")
                 ),
                 reference,
             )
-            if chore_id not in self._chores:
+            if command.kind == "run_chore" and chore_id not in self._chores:
                 raise FileNotFoundError(f"chore not found: {chore_id}")
             if command.kind == "run_chore":
                 record = self._store.request_manual_chore(chore_id=chore_id)
@@ -350,35 +316,26 @@ class ChoreDriver:
             reference = str(command.value)
             chore_id = next(
                 (
-                    item.id
-                    for item in self._chores.values()
-                    if reference in (item.id, item.name, item.ref)
+                    item.chore_id
+                    for item in self._records.values()
+                    if reference in (item.chore_id, item.name, f"chore/{item.name}")
                 ),
                 reference,
             )
             return self._records.get(chore_id)
         if command.kind == "pause":
             self._paused = True
-            if self._watch_stop is not None:
-                self._watch_stop.set()
             return None
         if command.kind == "stop":
             self._paused = True
             self._stopping = True
-            if self._watch_stop is not None:
-                self._watch_stop.set()
             return None
         raise ValueError(f"unsupported scheduler command: {command.kind}")
 
-    def _reconcile(
-        self, authored: tuple[Chore, ...], *, state: AgentState | None = None
-    ) -> None:
+    def _reconcile(self, *, state: AgentState | None = None) -> None:
         assert self._store is not None
         state = self.get_agent_state() if state is None else state
-        chores = merge_chores(
-            authored,
-            inline_chores(state.modules["agent"].chores, path=self.layout.program),
-        )
+        chores = {chore.id: chore for chore in state.chores}
         records = self._store.reconcile(chores=chores)
         self._chores = chores
         self._state_revision = state.revision
@@ -435,11 +392,10 @@ class ChoreDriver:
 
     def _dispatch_due(self) -> None:
         assert self._store is not None
-        assert self._watcher is not None
         state = self.get_agent_state()
         setup = self.get_agent_setup()
         if state.revision != self._state_revision:
-            self._reconcile(self._watcher.refresh(), state=state)
+            self._reconcile(state=state)
         now = datetime.now(timezone.utc)
         while self._heap:
             timestamp, _sequence, chore_id, token = self._heap[0]
@@ -612,11 +568,3 @@ def _as_record(value: object) -> ChoreRecord:
     if not isinstance(value, ChoreRecord):
         raise TypeError("scheduler command did not return a ChoreRecord")
     return value
-
-
-def _as_chores(value: object) -> tuple[Chore, ...]:
-    if not isinstance(value, tuple) or not all(
-        isinstance(item, Chore) for item in value
-    ):
-        raise TypeError("scheduler snapshot must contain Chore values")
-    return cast(tuple[Chore, ...], value)

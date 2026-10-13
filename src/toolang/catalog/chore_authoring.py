@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 import frontmatter
 
 from toolang.catalog.chore import AuthoredChores, ChoreFile
@@ -10,7 +11,7 @@ from toolang.common.ids import LOCAL_ID_FAMILY, allocate_id
 from toolang.common.layout import AgentLayout
 from toolang.execution.store import RunStore
 
-from .state import load_chores
+from .chores import load_chores
 
 
 def allocate_authored_chore_name(
@@ -63,7 +64,14 @@ def editable_chore(layout: AgentLayout, reference: str) -> ChoreFile:
         None,
     )
     if chore is None:
-        raise CatalogNotFoundError(f"chore not found: {reference}")
+        catalog = AuthoredChores(layout.home)
+        try:
+            path = catalog.raw_path(reference)
+        except CatalogNotFoundError:
+            raise CatalogNotFoundError(f"chore not found: {reference}") from None
+        raise CatalogConflictError(
+            f"chore source is invalid at {path}; replace the complete file with state__update"
+        )
     if chore.line is not None or chore.path.parent != layout.home / "chores":
         raise CatalogConflictError(
             f"chore {chore.name} is defined at {chore.location}; edit that source"
@@ -72,6 +80,24 @@ def editable_chore(layout: AgentLayout, reference: str) -> ChoreFile:
     if entry is None:
         raise CatalogNotFoundError(f"chore not found: {reference}")
     return entry
+
+
+def editable_chore_path(layout: AgentLayout, reference: str) -> Path:
+    """Protect inline winners while allowing raw repair of malformed home files."""
+    _require_resident(layout)
+    visible = next(
+        (
+            item
+            for item in load_chores(layout)
+            if reference in {item.id, item.name, item.ref, f"chores/{item.name}.md"}
+        ),
+        None,
+    )
+    if visible is not None and visible.line is not None:
+        raise CatalogConflictError(
+            f"chore {visible.name} is defined at {visible.location}; edit that source"
+        )
+    return AuthoredChores(layout.home).raw_path(reference)
 
 
 def _require_resident(layout: AgentLayout) -> None:

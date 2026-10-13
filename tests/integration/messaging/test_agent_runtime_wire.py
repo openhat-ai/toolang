@@ -30,8 +30,8 @@ from toolang.teaming.backend.valkey.keys import TEAM_MEMBERS, PRESENCE, talk_key
 from toolang.teaming.client import HubClient
 from toolang.teaming.events import HubScope
 from toolang.teaming.stream_client import HubStreamState
-from toolang.work.messaging import MessagingLoop
-from toolang.work.teaming import TeamingLoop
+from toolang.driver.talk import MessagingLoop
+from toolang.teaming.runtime import TeamingLoop
 
 pytestmark = pytest.mark.live_valkey
 

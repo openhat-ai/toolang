@@ -4,9 +4,9 @@ from datetime import datetime, timezone
 
 from toolang.catalog.chore import AuthoredChores, ChoreFile
 from toolang.common.layout import AgentLayout
-from toolang.work.inspection import ChoreInspection
-from toolang.work.state import load_chores
-from toolang.work.store import ChoreStore
+from toolang.driver.chore.inspection import ChoreInspection
+from toolang.catalog.chores import load_chores
+from toolang.driver.chore.store import ChoreStore
 
 
 def test_inspection_shows_pending_time_and_detects_unprocessed_edits(tmp_path):
@@ -49,3 +49,48 @@ def test_inline_inspection_is_read_only_without_state_or_database(tmp_path):
     assert not info.runtime.synced
     assert not layout.run_store.exists()
     assert not layout.agent_state.exists()
+
+
+def test_invalid_chore_name_is_inspected_by_source_without_execution_identity(tmp_path):
+    layout = AgentLayout.resident(tmp_path, "alice")
+    directory = layout.home / "chores"
+    directory.mkdir(parents=True)
+    (directory / " bad.md").write_text("Invalid name, readable source.")
+    (directory / "good.md").write_text("Valid sibling.")
+
+    inspection = ChoreInspection.load(layout=layout, runs=())
+    entries = {entry.path: entry for entry in inspection.list()}
+    invalid = entries["chores/ bad.md"]
+    assert invalid.source_error
+    assert invalid.id is None
+    assert invalid.ref == "chores/ bad.md"
+    assert invalid.runtime.thread_id is None
+    assert invalid.runtime.status is None
+    assert entries["chores/good.md"].source_error is None
+    source = inspection.get(invalid.ref)
+    assert source is not None
+    assert inspection.detail(source).body == "Invalid name, readable source."
+    catalog = AuthoredChores(layout.home)
+    assert catalog.raw_path("good") == directory / "good.md"
+    assert catalog.remove_file(invalid.ref) == directory / " bad.md"
+    assert catalog.remove_file("good") == directory / "good.md"
+
+
+def test_invalid_agent_source_does_not_block_markdown_inspection_or_authoring(tmp_path):
+    from toolang.catalog.chore_authoring import create_chore, editable_chore_path
+
+    layout = AgentLayout.resident(tmp_path, "alice")
+    layout.home.mkdir(parents=True)
+    layout.program.write_text("flow (")
+    catalog = AuthoredChores(layout.home)
+    catalog.create(ChoreFile.parse("Valid home definition.", name="good"))
+
+    inspection = ChoreInspection.load(layout=layout, runs=())
+    assert [entry.name for entry in inspection.list()] == ["good"]
+    assert not layout.agent_state.exists()
+    created = create_chore(layout, ChoreFile.parse("New home definition.", name="new"))
+    assert created.path is not None and created.path.is_file()
+    path = editable_chore_path(layout, "chores/good.md")
+    assert path.read_text() == "Valid home definition."
+    catalog.remove_file("good")
+    assert not path.exists()

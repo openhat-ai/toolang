@@ -13,6 +13,7 @@ from toolang.common.layout import AgentLayout, ensure_scratch_workspace
 
 from ..common.progress import ProgressSink, emit_progress
 from ..lang.ast import AgicDecl, FlowDecl, Program, parse_cap_declarations
+from .acceptance import accept_sources
 from .state import (
     AgentState,
     agent_state_revision,
@@ -164,10 +165,11 @@ def compose_layer_state(
         module_digests=home.module_digests,
         module_caps=home.module_caps,
         files=(
-            *_source_files("root", root.source),
-            *_source_files("home", home.source),
+            *(root.records or _source_files("root", root.source)),
+            *(home.records or _source_files("home", home.source)),
         ),
         revision_dir=revision_dir,
+        chores=home.chores,
     )
 
 
@@ -335,6 +337,13 @@ def inspect_agent_caps(
     _require_agent_home(layout)
     root = prepare_root(layout, progress=progress)
     authored = read_authored_source(layout.root, layout.name)
+    accepted = accept_sources(authored, scope="home", include_programs=False)
+    for record in accepted.records:
+        if not record.accepted:
+            logger.warning(
+                "source.excluded path=%s message=%s", record.key, record.message
+            )
+    authored = accepted.snapshot
     previous = _previous_home_layer(layout)
     home, _ = materialize_scope(
         authored,
@@ -345,18 +354,22 @@ def inspect_agent_caps(
             authored, scope="home", entries=previous.caps if previous else ()
         ),
     )
-    source = authored.load_program()
-    here, _ = materialize_program_caps(
-        authored,
-        source,
-        program=parse_cap_declarations(source.source_text),
-        progress=progress,
-        remote_cache=layer_remote_cache(
+    try:
+        source = authored.load_program()
+        here, _ = materialize_program_caps(
             authored,
-            scope="home",
-            entries=previous.module_caps.get("agent", ()) if previous else (),
-        ),
-    )
+            source,
+            program=parse_cap_declarations(source.source_text),
+            progress=progress,
+            remote_cache=layer_remote_cache(
+                authored,
+                scope="home",
+                entries=previous.module_caps.get("agent", ()) if previous else (),
+            ),
+        )
+    except Exception as exc:
+        logger.warning("source.excluded path=agent.too message=%s", exc)
+        here = ()
     entries = tuple(
         cap
         for cap in effective_caps(effective_caps(root.caps, home), here)
@@ -558,61 +571,45 @@ def _prepare_layer_revision(
             scope=cap_scope,
             entries=previous_entries,
         )
-        entries, generated_files = materialize_scope(
+        previous = _previous_home_layer(layout) if scope == "home" else None
+        accepted = accept_sources(
             authored,
+            scope=scope,
+            previous_module_caps=dict(previous.module_caps) if previous else {},
+            progress=progress,
+            reuse_remote=reuse_remote,
+        )
+        selected = accepted.snapshot
+        entries, generated_files = materialize_scope(
+            selected,
             scope=cap_scope,
             remote_cache=remote_cache or None,
             progress=progress,
-            include_program=scope == "root",
+            include_program=False,
         )
         modules: dict[str, Program] = {}
         module_sources: dict[str, str] = {}
         module_digests: dict[str, str] = {}
         module_caps: dict[str, tuple[StateCap, ...]] = {}
         module_entries: tuple[StateCap, ...] = ()
-        if scope == "home":
-            drafts = _program_drafts(authored)
-            previous = _previous_home_layer(layout)
-            all_module_entries: list[StateCap] = []
-            for name, module_source, program in drafts:
-                module_cache = layer_remote_cache(
-                    authored,
-                    scope="home",
-                    entries=(
-                        previous.module_caps.get(name, ())
-                        if previous is not None
-                        else ()
-                    ),
-                )
-                try:
-                    here_entries, here_files = materialize_program_caps(
-                        authored,
-                        module_source,
-                        program=program,
-                        remote_cache=module_cache or None,
-                        progress=progress,
-                    )
-                except Exception as exc:
-                    raise _module_error(
-                        module_source,
-                        layer="program",
-                        code="module-cap-preparation",
-                        error=exc,
-                    ) from exc
-                here_entries, here_files = _namespace_module_materialization(
-                    name,
-                    here_entries,
-                    here_files,
-                )
-                generated_files.update(here_files)
-                all_module_entries.extend(here_entries)
-                modules[name] = program
-                module_sources[name] = module_source.authored_path
-                module_digests[name] = module_source.digest
-                module_caps[name] = here_entries
-            module_entries = tuple(all_module_entries)
+        drafts = []
+        for prepared in accepted.programs:
+            name, module_source, program = (
+                prepared.name,
+                prepared.source,
+                prepared.program,
+            )
+            here_entries, here_files = _namespace_module_materialization(
+                name, prepared.caps, prepared.files
+            )
+            generated_files.update(here_files)
+            modules[name] = program
+            module_sources[name] = module_source.authored_path
+            module_digests[name] = module_source.digest
+            module_caps[name] = here_entries
+            drafts.append((name, module_source, program))
         files = _snapshot_files(
-            authored,
+            selected,
             generated_files,
             cap_scope=cap_scope,
         )
@@ -661,6 +658,8 @@ def _prepare_layer_revision(
             module_digests=module_digests,
             module_caps=module_caps,
             files=files,
+            records=accepted.records,
+            chores=accepted.chores,
         )
         publish_layer_current(
             layout,
@@ -936,7 +935,7 @@ def _authored_snapshot_path(
         if kind is None:
             raise ValueError(f"unexpected authored cap directory: {relative.parts[0]}")
         return Path("caps") / "authored" / kind / Path(*relative.parts[1:])
-    if item.category == "program":
+    if item.category in {"program", "chore"}:
         return relative
     if item.category == "config":
         return Path("config.toml")

@@ -197,7 +197,7 @@ Successful results are flat objects:
 | `get` | `{key, digest, bytes, content, encoding}` |
 | `create`, `update` | `{key, digest}` |
 | `delete` | `{key, digest: null}` |
-| `sync` | `{revision, files: [{scope, key, digest}]}` |
+| `sync` | `{revision, files: [{scope, key, observed_digest, accepted_digest, code?, message?, line?}]}` |
 
 Text is UTF-8; non-UTF-8 files are returned as base64. Create/update accept a
 complete content string; `encoding="base64"` supplies exact binary bytes.
@@ -214,9 +214,10 @@ digest identifies the requested absence of a file.
 State file operations do not parse or validate content. A successful save confirms that
 the bytes were written. Existing loaders/watchers handle syntax, metadata, and
 composition errors identically for state writes and direct filesystem edits. The
-State watcher retains its last valid publication and reports diagnostics for
-rejected candidates; repairing the files allows a later refresh to publish.
-Reads never allocate job ids. File-operation failures return `{error, message, key?}`, where
+State watcher excludes invalid resource units and publishes valid siblings,
+with diagnostics on the affected source records. Fatal shared-config or storage
+failures retain the last published State. Repairing a resource restores its
+availability. Reads never allocate chore IDs. File-operation failures return `{error, message, key?}`, where
 `error` is a stable code and `key` is included when known. Successful results
 never contain `error`.
 
@@ -251,41 +252,31 @@ modifies tracked sources until sync returns. Concurrent readers and the watcher
 may continue. The operation adds no preliminary scan, final verification, or
 retry loop; existing preparation snapshot protections remain in place.
 
-Success returns exactly `{revision, files}`. Files are the complete published
-input manifest, sorted by `(scope, key)`, including shadowed inputs, raw config,
-and skill assets. Scope is `home` or `root`, and each key is relative to its scope.
-Deleted and untracked files are absent. No changes returns the existing revision.
-Independent Markdown chores are outside State.
+Success returns `{revision, files}` with records sorted by `(scope, key)`,
+including valid shadowed inputs, raw config, skill assets, and home Markdown
+chores. Each record contains `scope`, `key`, `observed_digest`, and
+`accepted_digest`. Both digests identify exact raw authored bytes.
 
-Operational failures set the tool error and return:
+An invalid readable file has an observed digest and null accepted digest;
+`code`, `message`, and optional `line` appear directly on that record. Unreadable
+files/directories have null digests and a read diagnostic. No diagnostic objects,
+separate differences lists, or status fields are returned. Deleted/untracked
+files are absent. Identical checks return the existing revision. Publication
+success does not mean every file was accepted; the tool summary reports the
+excluded-source count when nonzero.
+
+Fatal publication failures set the tool error and return:
 
 ```json
-{
-  "error": "state_rejected",
-  "message": "<preparation error>",
-  "revision": "<last-valid-state-sha256>",
-  "files": [{"scope": "home", "key": "agent.too", "digest": "<state-sha256>"}],
-  "differences": [
-    {"scope": "home", "key": "agent.too", "disk_digest": "<disk-sha256>", "state_digest": "<state-sha256>"}
-  ],
-  "diagnostics": [
-    {"layer": "program", "module_kind": "agent", "authored_path": "agent.too", "line": 4, "code": "invalid-program", "message": "<loader diagnostic>"}
-  ]
-}
+{"error": "state_rejected", "message": "<preparation error>", "revision": "<last-published-state-sha256>", "files": []}
 ```
 
-`state_rejected` means preparation failed; `io_error` means source inspection
-failed; `sync_unavailable` means the host has no synchronization service.
-Malformed arguments use `invalid_request` without refreshing. On failure,
-`revision` and `files` identify that check's last valid publication, or null and
-an empty list if unavailable. Diagnostics preserve the actual loader details.
-
-A failure-only raw scan compares disk with that publication. `differences` is
-sorted by `(scope, key)` and includes only unequal entries: null `state_digest`
-means an addition, null `disk_digest` a deletion, and two digests a modification.
-If a complete disk manifest cannot be read, `differences` is null and the message
-reports the inspection failure without replacing the original preparation error.
-An empty difference list does not rule out a preparation error.
+`state_rejected` means a fatal preparation failure; `io_error` means required
+root/home or persistence access failed; `sync_unavailable` means the host has
+no synchronization service. The revision is null when none has been published.
+No candidate acceptance receipt is issued on failure. Malformed arguments use
+`invalid_request` without refreshing. Raw file operations can still read,
+replace, or delete malformed source without parsing it.
 
 Sync does not replace active code, captured Setup, or the current model-call
 snapshot. It confirms input inclusion, not runtime success or effective selection

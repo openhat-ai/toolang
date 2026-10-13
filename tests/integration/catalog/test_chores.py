@@ -9,24 +9,27 @@ import pytest
 from toolang.catalog.chore import AuthoredChores, ChoreFile
 from toolang.common.layout import AgentLayout
 from toolang.lang.ast import Program
-from toolang.work.state import load_chores, merge_chores, inline_chores
-from toolang.work.store import ChoreStore
-from toolang.work.watcher import ChoreWatcher
+from toolang.catalog.chores import load_chores, merge_chores, inline_chores
+from toolang.driver.chore.store import ChoreStore
+from toolang.state.watcher import StateWatcher
 
 
 def test_chore_watcher_current_returns_published_snapshot_without_rescanning(
     tmp_path: Path, monkeypatch
 ) -> None:
-    watcher = ChoreWatcher(AgentLayout.resident(tmp_path / "toolang", "alice"))
-    published = watcher.current()
-    monkeypatch.setattr(
-        "toolang.work.watcher.load_chore_files",
-        lambda *_args, **_kwargs: pytest.fail(
-            "current() must not scan authored chores"
-        ),
-    )
+    layout = AgentLayout.resident(tmp_path / "toolang", "alice")
+    layout.home.mkdir(parents=True)
+    import asyncio
 
+    watcher = StateWatcher(layout)
+    published = asyncio.run(watcher.refresh())
+    monkeypatch.setattr(
+        "toolang.state.watcher.observe_home_source",
+        lambda *_: pytest.fail("current() must not scan authored sources"),
+    )
     assert watcher.current() is published
+    assert not (layout.home / "chores").exists()
+    assert not (layout.root / "chores").exists()
 
 
 def test_inline_chore_shadows_home_and_root_without_changing_identity(

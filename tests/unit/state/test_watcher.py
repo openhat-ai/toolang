@@ -402,8 +402,10 @@ def test_rejected_candidate_does_not_retry_partially_published_layers(
             state async for state in watcher.updates(stop_signal=asyncio.Event())
         ]
 
-        assert observed == []
-        assert watcher.current() is initial
+        assert len(observed) == 1
+        assert watcher.current() is observed[0]
+        assert watcher.current().revision != initial.revision
+        assert "research" not in watcher.current().runnables
         assert calls == 1
         assert watcher.diagnostics()[0].code == "invalid-runnable-export"
 
@@ -527,7 +529,7 @@ def test_only_one_filesystem_monitor_can_run(
 
 
 @pytest.mark.parametrize("kind", ["agic", "flow"])
-def test_invalid_runnable_candidate_retains_last_valid_state_until_repaired(
+def test_invalid_runnable_is_excluded_until_repaired(
     tmp_path: Path,
     kind: str,
 ) -> None:
@@ -548,15 +550,16 @@ def test_invalid_runnable_candidate_retains_last_valid_state_until_repaired(
         refresh = await watcher.refresh_result()
         rejected = refresh.state
 
-        assert rejected is initial
-        assert rejected.revision == initial.revision
+        assert rejected is not initial
+        assert rejected.revision != initial.revision
+        assert "research" not in rejected.runnables
         assert refresh.diagnostics == watcher.diagnostics()
         assert watcher.diagnostics()[0].layer == "runnable-extension"
         assert watcher.diagnostics()[0].authored_path == "runnables/research.too"
 
         retried = await watcher.refresh_result()
 
-        assert retried.state is initial
+        assert retried.state is rejected
         assert retried.diagnostics == refresh.diagnostics
 
         flow.write_text(f"{kind} research:\n  pass\n", encoding="utf-8")
@@ -625,7 +628,9 @@ def test_watcher_bootstraps_last_good_state_before_rejecting_current_source(
     watcher = state_watcher.StateWatcher(layout)
     rejected = asyncio.run(watcher.refresh())
 
-    assert rejected.revision == previous.revision
+    assert rejected.revision != previous.revision
+    assert "research" not in rejected.runnables
+    assert "research" in watcher.load(previous.revision).runnables
     assert watcher.diagnostics()[0].code == "invalid-runnable-export"
 
 

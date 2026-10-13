@@ -264,7 +264,7 @@ def test_cursor_authority_is_checked_at_atomic_write(monkeypatch, change):
 
 
 def test_cancelled_batch_has_bounded_cursor_save(tmp_path, monkeypatch):
-    from toolang.work import messaging
+    from toolang.driver import talk as messaging
 
     async def scenario():
         server = FakeServer(server_type="valkey")

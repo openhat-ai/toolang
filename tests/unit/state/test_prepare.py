@@ -11,6 +11,7 @@ from pathlib import Path
 import shutil
 import time
 
+import re
 import pytest
 
 from toolang.base.types.progress import ProgressEvent
@@ -40,6 +41,7 @@ from toolang.state.cache import (
 )
 from toolang.state.errors import StatePreparationError
 from toolang.state.schemas import CapDetail
+from toolang.state.watcher import StateWatcher
 from toolang.state.prepare import (
     _validate_runnable_source_names,
     compose_layer_state,
@@ -50,6 +52,15 @@ from toolang.state.prepare import (
 )
 from toolang.state.source import ProgramSource
 from toolang.state.state import runnable_module_name
+
+
+def _assert_excluded(state, match=None):
+    excluded = [file for file in state.files if not file.accepted]
+    assert excluded, "invalid source must be excluded from the published State"
+    assert all(file.code and file.message for file in excluded)
+    if match is not None:
+        assert re.search(match, "; ".join(file.message or "" for file in excluded))
+    return excluded
 
 
 def _layout(root: Path, name: str = "alice") -> AgentLayout:
@@ -85,10 +96,8 @@ def test_state_rejects_colliding_unnamed_entries(tmp_path, first, second):
     program = Program.from_source(source)
     assert any(item.name is None for item in (*program.agics, *program.flows))
     layout.program.write_text(source)
-    with pytest.raises(
-        StatePreparationError, match="Runnable name is not unique: entry"
-    ):
-        prepare_agent_state(layout)
+    state = prepare_agent_state(layout)
+    _assert_excluded(state, match="Runnable name is not unique: entry")
 
 
 @pytest.mark.parametrize("kind", ["agic", "flow"])
@@ -161,10 +170,8 @@ def test_prepare_reports_main_conflict_in_legacy_cached_source(tmp_path, monkeyp
         legacy.setattr(ProgramSource, "parse", legacy_parse)
         old = prepare_agent_state(layout)
 
-    with pytest.raises(
-        StatePreparationError, match="Runnable name is not unique: entry"
-    ):
-        prepare_agent_state(layout)
+    state = prepare_agent_state(layout)
+    _assert_excluded(state, match="Runnable name is not unique: entry")
     assert load_agent_state(layout, old.revision).modules == old.modules
 
 
@@ -189,9 +196,13 @@ def test_state_rejects_headers_rejected_by_the_language(tmp_path, header):
     layout.program.write_text(source)
     with pytest.raises(ToolangError) as language_error:
         Program.from_source(source)
-    with pytest.raises(StatePreparationError) as state_error:
-        prepare_agent_state(layout)
-    assert str(language_error.value) in str(state_error.value)
+    state = prepare_agent_state(layout)
+    _assert_excluded(state)
+    assert state.toolang_root is not None
+    state_error = StateWatcher(
+        AgentLayout.resident(state.toolang_root, state.name), initial_state=state
+    ).diagnostics()
+    assert str(language_error.value) in "; ".join(item.message for item in state_error)
 
 
 def test_state_rejects_legacy_headers_in_published_cache(tmp_path, monkeypatch):
@@ -204,8 +215,8 @@ def test_state_rejects_legacy_headers_in_published_cache(tmp_path, monkeypatch):
         legacy.setattr(state_prepare, "LAYER_SCHEMA", LAYER_SCHEMA - 1)
         legacy.setattr(ProgramSource, "parse", lambda _: Program.from_source(body))
         old = prepare_agent_state(layout)
-    with pytest.raises(StatePreparationError, match="line 1:1: Parse error"):
-        prepare_agent_state(layout)
+    state = prepare_agent_state(layout)
+    _assert_excluded(state, match="line 1:1: Parse error")
     with pytest.raises(ValueError, match="source migration"):
         load_agent_state(layout, old.revision)
 
@@ -995,10 +1006,8 @@ def test_inline_skill_conflicts_with_same_name_reference(tmp_path: Path, monkeyp
             relative_entry_path.as_posix(): b"---\ndescription: Remote review\n---\nReview.\n"
         },
     )
-    with pytest.raises(
-        StatePreparationError, match="conflicting capabilities.*skill.*review"
-    ):
-        prepare_agent_state(layout)
+    state = prepare_agent_state(layout)
+    _assert_excluded(state, match="conflicting capabilities.*skill.*review")
 
 
 def test_concurrent_processes_publish_one_root_and_home_revision(
@@ -1506,10 +1515,14 @@ def test_prepare_rejects_runnable_module_at_the_correct_layer(
     (home / "agent.too").write_text("# Agent alice\n", encoding="utf-8")
     (flows / "research.too").write_text(source, encoding="utf-8")
 
-    with pytest.raises(StatePreparationError) as raised:
-        prepare_agent_state(_layout(toolang_root))
+    state = prepare_agent_state(_layout(toolang_root))
+    _assert_excluded(state)
+    assert state.toolang_root is not None
+    raised = StateWatcher(
+        AgentLayout.resident(state.toolang_root, state.name), initial_state=state
+    ).diagnostics()
 
-    diagnostic = raised.value.diagnostics[0]
+    diagnostic = raised[0]
     assert diagnostic.layer == layer
     assert diagnostic.module_kind == "runnable"
     assert diagnostic.authored_path == "runnables/research.too"
@@ -1533,12 +1546,16 @@ def test_prepare_rejects_public_runnable_collisions(
         encoding="utf-8",
     )
 
-    with pytest.raises(StatePreparationError) as raised:
-        prepare_agent_state(_layout(toolang_root))
+    state = prepare_agent_state(_layout(toolang_root))
+    _assert_excluded(state)
+    assert state.toolang_root is not None
+    raised = StateWatcher(
+        AgentLayout.resident(state.toolang_root, state.name), initial_state=state
+    ).diagnostics()
 
-    assert raised.value.diagnostics[0].layer == "state-composition"
-    assert "agent.too:3" in str(raised.value)
-    assert "runnables/research.too:1" in str(raised.value)
+    assert raised[0].layer == "state-composition"
+    assert "agent.too:3" in "; ".join(item.message for item in raised)
+    assert "runnables/research.too:1" in "; ".join(item.message for item in raised)
 
 
 def test_module_here_caps_are_isolated_and_reload_from_cache(tmp_path: Path) -> None:
@@ -1672,8 +1689,8 @@ def test_flow_modules_cannot_import_other_module_runnables(tmp_path, target):
     layout.program.write_text("agic private_helper():\n  Main helper.\n")
     (layout.home / "runnables" / "research.too").write_text("flow():\n  pass\n")
     (layout.home / "runnables" / "review.too").write_text(f"flow():\n  run {target}\n")
-    with pytest.raises(StatePreparationError, match="unknown runnable"):
-        prepare_agent_state(layout)
+    state = prepare_agent_state(layout)
+    _assert_excluded(state, match="unknown runnable")
 
 
 def test_main_composition_does_not_import_private_helpers_or_types(tmp_path):
@@ -1683,11 +1700,11 @@ def test_main_composition_does_not_import_private_helpers_or_types(tmp_path):
         "struct Secret:\n  value: Text\nagic private_helper():\n  Help.\nflow():\n  run private_helper\n"
     )
     layout.program.write_text("flow parent():\n  run private_helper\n")
-    with pytest.raises(StatePreparationError, match="unknown runnable"):
-        prepare_agent_state(layout)
+    state = prepare_agent_state(layout)
+    _assert_excluded(state, match="unknown runnable")
     layout.program.write_text("flow parent(_: Secret):\n  run research\n")
-    with pytest.raises(StatePreparationError, match="Unknown Toolang type"):
-        prepare_agent_state(layout)
+    state = prepare_agent_state(layout)
+    _assert_excluded(state, match="Unknown Toolang type")
 
 
 @pytest.mark.parametrize(
@@ -1727,8 +1744,8 @@ def test_obsolete_flow_snapshot_requires_migration_even_with_current_ast(
     }
     with pytest.raises(ValueError, match="source migration"):
         load_agent_state(layout, old.revision)
-    with pytest.raises(StatePreparationError):
-        prepare_agent_state(layout)
+    state = prepare_agent_state(layout)
+    _assert_excluded(state)
     layout.program.write_text(new_source)
     current = prepare_agent_state(layout)
     assert current.revision != old.revision

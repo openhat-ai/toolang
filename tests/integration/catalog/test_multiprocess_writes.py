@@ -18,7 +18,7 @@ from toolang.common.ids import (
 )
 from toolang.common.layout import AgentLayout
 from toolang.execution.store import RunStore
-from toolang.work.authoring import (
+from toolang.catalog.chore_authoring import (
     allocate_authored_chore_name,
     new_chore_file,
 )
@@ -55,7 +55,7 @@ def _create_same_job(directory: str, kind: str) -> str:
 
 
 def _assign_manual_job(root: str) -> None:
-    from toolang.work.state import load_chores
+    from toolang.catalog.chores import load_chores
 
     load_chores(AgentLayout.resident(Path(root), "alice"))
 

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Collection, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from hashlib import sha256
 import os
 from pathlib import Path
@@ -12,7 +12,6 @@ from typing import Literal, cast
 
 from toolang.catalog.types import CAP_DIRECTORY_NAMES
 
-from .types import StateFile
 
 from ..lang.ast import AgicDecl, FlowDecl, Program
 
@@ -21,6 +20,30 @@ SOURCE_SCHEMA = 4
 CANONICAL_SOURCE_SCHEMA = 3
 LEGACY_SOURCE_SCHEMA = 2
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+@dataclass(frozen=True, slots=True)
+class SourceIssue:
+    """Stable resource-local observation failure, relative to its scope."""
+
+    path: str
+    code: str
+    message: str
+
+    @classmethod
+    def from_data(cls, data: Mapping[str, object]) -> SourceIssue:
+        path, code, message = (str(data[key]) for key in ("path", "code", "message"))
+        _portable_relative_path(path)
+        return cls(path, code, message)
+
+
+def source_issue(path: str, error: Exception) -> SourceIssue:
+    message = (
+        f"Could not read source ({type(error).__name__})"
+        if isinstance(error, OSError)
+        else re.sub(r": /[^\n]*$", "", str(error))
+    )
+    return SourceIssue(path, "source-read", message)
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,6 +115,7 @@ class SourceObservationEntry:
     inode: int
     mtime_ns: int
     size: int
+    mode: int = 0
     link_device: int | None = None
     link_inode: int | None = None
     link_mtime_ns: int | None = None
@@ -104,6 +128,7 @@ class SourceObservation:
     """Process-local selected paths, listings, and inexpensive stat facts."""
 
     files: tuple[SourceObservationEntry, ...]
+    issues: tuple[SourceIssue, ...] = ()
 
     def __post_init__(self) -> None:
         paths = tuple(item.path for item in self.files)
@@ -170,6 +195,7 @@ class SourceManifest:
 
     files: tuple[SourceManifestEntry, ...]
     schema: int = SOURCE_SCHEMA
+    issues: tuple[SourceIssue, ...] = ()
 
     def __post_init__(self) -> None:
         if self.schema not in {SOURCE_SCHEMA, CANONICAL_SOURCE_SCHEMA}:
@@ -186,11 +212,16 @@ class SourceManifest:
         return {
             "files": [item.to_data() for item in self.files],
             "schema": self.schema,
+            **(
+                {"issues": [asdict(item) for item in self.issues]}
+                if self.issues
+                else {}
+            ),
         }
 
     @classmethod
     def from_data(cls, data: Mapping[str, object]) -> SourceManifest:
-        if set(data) != {"files", "schema"}:
+        if set(data) not in ({"files", "schema"}, {"files", "schema", "issues"}):
             raise ValueError("source manifest fields do not match schema")
         schema = _integer_field(data, "schema")
         if schema not in {SOURCE_SCHEMA, CANONICAL_SOURCE_SCHEMA}:
@@ -205,7 +236,19 @@ class SourceManifest:
         )
         if len(files) != len(raw_files):
             raise TypeError("source manifest file must be an object")
-        return cls(files=files, schema=schema)
+        raw_issues = data.get("issues", [])
+        if not isinstance(raw_issues, list) or not all(
+            isinstance(item, Mapping) for item in raw_issues
+        ):
+            raise TypeError("source issues must be objects")
+        return cls(
+            files=files,
+            schema=schema,
+            issues=tuple(
+                SourceIssue.from_data(cast(Mapping[str, object], item))
+                for item in raw_issues
+            ),
+        )
 
 
 SourceRecord = SourceManifest | LegacySourceTree
@@ -237,23 +280,57 @@ def scan_home_source(toolang_root: Path, agent_name: str) -> SourceManifest:
     return home_source_manifest(observe_home_source(toolang_root, agent_name))
 
 
-def observe_source(base: Path, paths: Sequence[str]) -> SourceObservation:
-    """Observe selected logical files without reading their contents."""
+def observe_source(
+    base: Path, paths: Sequence[str], *, isolate: bool = False
+) -> SourceObservation:
+    """Observe logical sources; isolate resource failures when requested."""
 
     selected: dict[str, Path] = {}
+    issues: list[SourceIssue] = []
+
+    def visit(path: Path) -> None:
+        logical = path.relative_to(base).as_posix()
+        try:
+            if not path.exists() and not path.is_symlink():
+                return
+            if path.is_symlink() and path.is_dir():
+                raise ValueError("source does not support symbolic-link directories")
+            if (
+                logical in {"runnables", "chores", *CAP_DIRECTORY_NAMES}
+                and not path.is_dir()
+            ):
+                raise ValueError("source must be a directory")
+            if logical in {"agent.too", "config.toml"} and not path.is_file():
+                raise ValueError("source must be a file")
+            if path.is_file():
+                selected[logical] = path
+                return
+            if not path.is_dir():
+                raise ValueError("unsupported source node")
+            for child in sorted(path.iterdir(), key=lambda item: item.name):
+                if logical in {"runnables", "chores"} and (
+                    child.suffix != (".too" if logical == "runnables" else ".md")
+                    or child.is_dir()
+                ):
+                    continue
+                visit(child)
+        except (OSError, ValueError) as exc:
+            if not isolate or logical == "config.toml":
+                raise
+            issues.append(source_issue(logical, exc))
+
     for value in sorted(set(paths)):
-        relative = _portable_relative_path(value)
-        path = base / relative
-        if not path.exists() and not path.is_symlink():
-            continue
-        for file in _selected_files(path):
-            logical = file.relative_to(base).as_posix()
-            selected[logical] = file
+        visit(base / _portable_relative_path(value))
+    files: list[SourceObservationEntry] = []
+    for logical, path in sorted(selected.items()):
+        try:
+            files.append(_observe_file(path, relative_path=logical))
+        except OSError as exc:
+            if not isolate or logical == "config.toml":
+                raise
+            issues.append(source_issue(logical, exc))
     return SourceObservation(
-        files=tuple(
-            _observe_file(path, relative_path=relative)
-            for relative, path in sorted(selected.items())
-        )
+        tuple(files), tuple(sorted(issues, key=lambda item: item.path))
     )
 
 
@@ -279,6 +356,7 @@ def build_source_manifest(
     )
     invalidated_paths = frozenset(invalidated)
     entries: list[SourceManifestEntry] = []
+    issues = list(observation.issues)
     for item in observation.files:
         if (
             item.path not in invalidated_paths
@@ -289,7 +367,13 @@ def build_source_manifest(
             if cached is not None and cached.raw_digest is not None:
                 entries.append(cached)
                 continue
-        content = item.source.read_bytes()
+        try:
+            content = item.source.read_bytes()
+        except OSError as exc:
+            if item.path == "config.toml":
+                raise
+            issues.append(source_issue(item.path, exc))
+            continue
         raw_digest = sha256(content).hexdigest()
         if item.path == "config.toml":
             from toolang.common.config_sources import rebase_config_content
@@ -307,44 +391,24 @@ def build_source_manifest(
                 raw_digest=raw_digest,
             )
         )
-    return SourceManifest(files=tuple(entries))
+    return SourceManifest(
+        files=tuple(entries), issues=tuple(sorted(issues, key=lambda item: item.path))
+    )
 
 
 def observe_root_source(toolang_root: Path) -> SourceObservation:
-    """Observe root config and capability files without reading bytes."""
-
+    """Observe shared config and independently authored capabilities."""
     _require_source_shape(toolang_root / "config.toml", shape="file")
-    for directory_name in CAP_DIRECTORY_NAMES:
-        _require_source_shape(toolang_root / directory_name, shape="directory")
-    return observe_source(toolang_root, ("config.toml", *CAP_DIRECTORY_NAMES))
+    return observe_source(
+        toolang_root, ("config.toml", *CAP_DIRECTORY_NAMES), isolate=True
+    )
 
 
 def observe_home_source(toolang_root: Path, agent_name: str) -> SourceObservation:
-    """Observe one agent home's State files without reading bytes."""
-
+    """Observe home sources without creating optional resource directories."""
     home = toolang_root / "agents" / agent_name
-    for name in ("agent.too", "config.toml"):
-        _require_source_shape(home / name, shape="file")
-    for directory_name in ("runnables", *CAP_DIRECTORY_NAMES):
-        _require_source_shape(home / directory_name, shape="directory")
-    return observe_source(home, _home_source_paths(home))
-
-
-def raw_source_files(toolang_root: Path, agent_name: str) -> tuple[StateFile, ...]:
-    """Capture tracked raw identities for failure reporting, without parsing."""
-
-    files: list[StateFile] = []
-    for scope, observation in (
-        ("home", observe_home_source(toolang_root, agent_name)),
-        ("root", observe_root_source(toolang_root)),
-    ):
-        for item in observation.files:
-            digest = sha256()
-            with item.source.open("rb") as stream:
-                while chunk := stream.read(1024 * 1024):
-                    digest.update(chunk)
-            files.append(StateFile(scope, item.path, digest.hexdigest()))
-    return tuple(files)
+    _require_source_shape(home / "config.toml", shape="file")
+    return observe_source(home, _home_source_paths(home), isolate=True)
 
 
 def root_source_manifest(
@@ -379,28 +443,7 @@ def home_source_manifest(
 
 
 def _home_source_paths(home: Path) -> tuple[str, ...]:
-    return (
-        "agent.too",
-        "config.toml",
-        *CAP_DIRECTORY_NAMES,
-        *(
-            (Path("runnables") / path.name).as_posix()
-            for path in _direct_runnable_files(home / "runnables")
-        ),
-    )
-
-
-def _selected_files(path: Path) -> tuple[Path, ...]:
-    if path.is_symlink() and path.is_dir():
-        raise ValueError(f"source does not support symbolic-link directories: {path}")
-    if path.is_file():
-        return (path,)
-    if not path.is_dir():
-        raise ValueError(f"unsupported source node: {path}")
-    files: list[Path] = []
-    for child in sorted(path.iterdir(), key=lambda item: item.name):
-        files.extend(_selected_files(child))
-    return tuple(files)
+    return ("agent.too", "config.toml", "runnables", "chores", *CAP_DIRECTORY_NAMES)
 
 
 def _observe_file(path: Path, *, relative_path: str) -> SourceObservationEntry:
@@ -413,6 +456,7 @@ def _observe_file(path: Path, *, relative_path: str) -> SourceObservationEntry:
             inode=target.st_ino,
             mtime_ns=target.st_mtime_ns,
             size=target.st_size,
+            mode=target.st_mode,
         )
     link = path.lstat()
     return SourceObservationEntry(
@@ -422,6 +466,7 @@ def _observe_file(path: Path, *, relative_path: str) -> SourceObservationEntry:
         inode=target.st_ino,
         mtime_ns=target.st_mtime_ns,
         size=target.st_size,
+        mode=target.st_mode,
         link_device=link.st_dev,
         link_inode=link.st_ino,
         link_mtime_ns=link.st_mtime_ns,
@@ -511,6 +556,7 @@ class SourceSnapshot:
     toolang_root: Path
     agent_name: str
     files: tuple[SourceFile, ...]
+    issues: tuple[SourceIssue, ...] = ()
 
     @property
     def program_path(self) -> str | None:
@@ -609,28 +655,84 @@ def source_manifest_from_snapshot(
                 raw_digest=item.raw_digest,
             )
         )
-    return SourceManifest(files=tuple(sorted(entries, key=lambda item: item.path)))
+    issues = tuple(
+        item
+        for item in snapshot.issues
+        if (scope == "root") == (not item.path.startswith("agents/"))
+    )
+    if scope == "home":
+        issues = tuple(
+            SourceIssue(
+                Path(item.path).relative_to(prefix).as_posix(), item.code, item.message
+            )
+            for item in issues
+        )
+    return SourceManifest(
+        files=tuple(sorted(entries, key=lambda item: item.path)), issues=issues
+    )
+
+
+def _read_scope_sources(
+    root: Path, agent_name: str, *, include_home: bool
+) -> SourceSnapshot:
+    files: list[SourceFile] = []
+    issues: list[SourceIssue] = []
+    observations = [(root, "root", observe_root_source(root))]
+    if include_home:
+        observations.append(
+            (
+                root / "agents" / agent_name,
+                "agent",
+                observe_home_source(root, agent_name),
+            )
+        )
+    for base, origin, observation in observations:
+        for issue in observation.issues:
+            issues.append(
+                SourceIssue(
+                    (base / issue.path).relative_to(root).as_posix(),
+                    issue.code,
+                    issue.message,
+                )
+            )
+        for entry in observation.files:
+            head = Path(entry.path).parts[0]
+            category = (
+                "config"
+                if entry.path == "config.toml"
+                else "program"
+                if entry.path == "agent.too" or head == "runnables"
+                else "chore"
+                if head == "chores"
+                else "cap"
+            )
+            try:
+                files.extend(
+                    _collect_file(root, entry.source, category=category, origin=origin)
+                )
+            except SourceChangedError:
+                raise
+            except (OSError, UnicodeError, ValueError) as exc:
+                if category == "config":
+                    raise
+                issues.append(
+                    source_issue(entry.source.relative_to(root).as_posix(), exc)
+                )
+    return SourceSnapshot(
+        root,
+        agent_name,
+        tuple(sorted(files, key=lambda item: item.relative_path)),
+        tuple(sorted(issues, key=lambda item: item.path)),
+    )
 
 
 def read_authored_source(toolang_root: Path, agent_name: str) -> SourceSnapshot:
-    """Read root and agent-home authored files with fixed contents."""
-
-    files = tuple(
-        sorted(
-            _authored_files(toolang_root, agent_name),
-            key=lambda item: item.relative_path,
-        )
-    )
-    return _authored_source(toolang_root, agent_name, files)
+    """Capture current files, isolating resource-local read failures."""
+    return _read_scope_sources(toolang_root, agent_name, include_home=True)
 
 
 def read_root_source(toolang_root: Path) -> SourceSnapshot:
-    """Read only root-authored files with fixed contents."""
-
-    files = tuple(
-        sorted(_root_authored_files(toolang_root), key=lambda item: item.relative_path)
-    )
-    return _authored_source(toolang_root, "", files)
+    return _read_scope_sources(toolang_root, "", include_home=False)
 
 
 def is_source_path(toolang_root: Path, agent_name: str, path: Path) -> bool:
@@ -664,8 +766,9 @@ def source_path_scope(
         return "home", agent_relative.as_posix()
     if (
         len(agent_relative.parts) == 2
-        and agent_relative.parts[0] == "runnables"
-        and agent_relative.suffix == ".too"
+        and agent_relative.parts[0] in {"runnables", "chores"}
+        and agent_relative.suffix
+        == (".too" if agent_relative.parts[0] == "runnables" else ".md")
     ):
         return "home", agent_relative.as_posix()
     if (
@@ -675,71 +778,6 @@ def source_path_scope(
     ):
         return "home", agent_relative.as_posix()
     return None
-
-
-def _authored_source(
-    toolang_root: Path,
-    agent_name: str,
-    files: tuple[SourceFile, ...],
-) -> SourceSnapshot:
-    return SourceSnapshot(
-        toolang_root=toolang_root,
-        agent_name=agent_name,
-        files=files,
-    )
-
-
-def _authored_files(toolang_root: Path, agent_name: str) -> list[SourceFile]:
-    agent_dir = toolang_root / "agents" / agent_name
-    files = _root_authored_files(toolang_root)
-    files.extend(
-        _collect_file(
-            toolang_root, agent_dir / "config.toml", category="config", origin="agent"
-        )
-    )
-    for path in _direct_runnable_files(agent_dir / "runnables"):
-        files.extend(
-            _collect_file(
-                toolang_root,
-                path,
-                category="program",
-                origin="agent",
-            )
-        )
-    files.extend(
-        _collect_file(
-            toolang_root,
-            agent_dir / "agent.too",
-            category="program",
-            origin="agent",
-        )
-    )
-    for directory_name in CAP_DIRECTORY_NAMES:
-        files.extend(
-            _collect_directory(
-                toolang_root, agent_dir / directory_name, category="cap", origin="agent"
-            )
-        )
-    return files
-
-
-def _root_authored_files(toolang_root: Path) -> list[SourceFile]:
-    files = _collect_file(
-        toolang_root,
-        toolang_root / "config.toml",
-        category="config",
-        origin="root",
-    )
-    for directory_name in CAP_DIRECTORY_NAMES:
-        files.extend(
-            _collect_directory(
-                toolang_root,
-                toolang_root / directory_name,
-                category="cap",
-                origin="root",
-            )
-        )
-    return files
 
 
 def _collect_file(
@@ -779,35 +817,6 @@ def _collect_file(
             raw_digest=raw_digest,
         )
     ]
-
-
-def _collect_directory(
-    toolang_root: Path,
-    directory: Path,
-    *,
-    category: str,
-    origin: str,
-) -> list[SourceFile]:
-    if not directory.exists() and not directory.is_symlink():
-        return []
-    _require_source_shape(directory, shape="directory")
-    files: list[SourceFile] = []
-    for path in _selected_files(directory):
-        files.extend(
-            _collect_file(toolang_root, path, category=category, origin=origin)
-        )
-    return files
-
-
-def _direct_runnable_files(directory: Path) -> tuple[Path, ...]:
-    if not directory.exists() and not directory.is_symlink():
-        return ()
-    _require_source_shape(directory, shape="directory")
-    return tuple(
-        path
-        for path in sorted(directory.iterdir(), key=lambda item: item.name)
-        if path.is_file() and path.suffix == ".too"
-    )
 
 
 def _relative_to_root(toolang_root: Path, path: Path) -> Path | None:

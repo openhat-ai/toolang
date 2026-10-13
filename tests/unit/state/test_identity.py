@@ -173,13 +173,18 @@ def test_raw_config_changes_have_distinct_state_identity_after_rebasing(
     expected = {
         "scope": scope,
         "key": "config.toml",
-        "digest": sha256(content).hexdigest(),
+        "observed_digest": sha256(content).hexdigest(),
+        "accepted_digest": sha256(content).hexdigest(),
     }
     before_files = before.to_snapshot()["files"]
     after_files = after.to_snapshot()["files"]
     assert isinstance(before_files, list) and isinstance(after_files, list)
     assert expected in before_files
-    assert {**expected, "digest": sha256(modified).hexdigest()} in after_files
+    assert {
+        **expected,
+        "observed_digest": sha256(modified).hexdigest(),
+        "accepted_digest": sha256(modified).hexdigest(),
+    } in after_files
     path.unlink()
     assert load_agent_state(layout, before.revision).files == before.files
     assert load_agent_state(layout, after.revision).files == after.files

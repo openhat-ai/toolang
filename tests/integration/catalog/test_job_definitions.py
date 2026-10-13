@@ -6,7 +6,7 @@ import frontmatter
 
 from toolang.catalog.chore import AuthoredChores, ChoreFile
 from toolang.common.layout import AgentLayout
-from toolang.work.state import load_chores
+from toolang.catalog.chores import load_chores
 
 
 def _job(

@@ -1,6 +1,8 @@
 """Chore inspection and authored-file management routes."""
 
+import asyncio
 from collections.abc import Callable, Iterable
+from pathlib import Path
 from typing import TypeVar, cast
 
 from fastapi import APIRouter, HTTPException
@@ -14,15 +16,16 @@ from toolang.api.schemas import (
 from toolang.catalog import ChoresManager
 from toolang.catalog.chore import ChoreFile
 from toolang.up import AgentCore
-from toolang.work.authoring import (
+from toolang.catalog.chore_authoring import (
     create_chore as create_definition,
     editable_chore,
+    editable_chore_path,
     new_chore_file,
 )
-from toolang.work.inspection import ChoreInspection, ChoreRun
-from toolang.work.schemas import ChoreDetail, ChoreInfo
-from toolang.work.scheduler import ChoreDriver
-from toolang.work.state import file_chore
+from toolang.driver.chore.inspection import ChoreInspection, ChoreRun
+from toolang.driver.chore.schemas import ChoreDetail, ChoreInfo
+from toolang.driver.chore.scheduler import ChoreDriver
+from toolang.catalog.chores import Chore, file_chore
 
 _T = TypeVar("_T")
 
@@ -35,22 +38,27 @@ router = APIRouter(tags=["chores"])
     status_code=201,
     response_model=ChoreDetail,
 )
-def create_chore(
+async def create_chore(
     core: AgentCoreDep,
     scheduler: ChoreDriverDep,
     payload: ChoreCreateRequest,
 ) -> ChoreDetail:
-    saved = create_definition(core.layout, _new_chore(payload=payload))
-    _refresh_chores(scheduler)
-    return _chore_detail(core, saved)
+    saved = await asyncio.to_thread(
+        create_definition, core.layout, _new_chore(payload=payload)
+    )
+    await _refresh_chores(core, scheduler)
+    return await asyncio.to_thread(_chore_detail, core, saved)
 
 
 @router.post("/chores/{chore_id}/run", summary="Run Chore", status_code=202)
-def run_chore(
+async def run_chore(
+    core: AgentCoreDep,
     scheduler: ChoreDriverDep,
     chore_id: str,
 ) -> None:
-    _scheduler_call(_require_scheduler(scheduler).run_chore_sync, chore_id)
+    driver = _require_scheduler(scheduler)
+    await core.state.refresh()
+    await asyncio.to_thread(_scheduler_call, driver.run_chore_sync, chore_id)
 
 
 @router.post("/chores/{chore_id}/cancel", summary="Cancel Chore")
@@ -60,7 +68,7 @@ def cancel_chore(
     chore_id: str,
 ) -> None:
     if scheduler is None:
-        from toolang.work.store import open_chore_store
+        from toolang.driver.chore.store import open_chore_store
 
         if not core.layout.chore_store.is_file():
             raise HTTPException(status_code=404, detail=f"chore not found: {chore_id}")
@@ -91,20 +99,22 @@ def cancel_chore(
 
 
 @router.patch("/chores/{chore_id}", summary="Update Chore", response_model=ChoreDetail)
-def update_chore(
+async def update_chore(
     core: AgentCoreDep,
     manager: ChoresManagerDep,
     scheduler: ChoreDriverDep,
     chore_id: str,
     payload: ChorePatchRequest,
 ) -> ChoreDetail:
-    return _update_chore(
+    saved = await asyncio.to_thread(
+        _update_chore,
         core,
         manager,
-        scheduler,
-        editable_chore(core.layout, chore_id),
+        chore_id,
         payload,
     )
+    await _refresh_chores(core, scheduler)
+    return await asyncio.to_thread(_chore_detail, core, saved)
 
 
 @router.get("/chores", summary="List Chores", response_model=list[ChoreInfo])
@@ -130,20 +140,21 @@ def chore_detail(
     status_code=204,
     response_class=Response,
 )
-def delete_chore(
+async def delete_chore(
     core: AgentCoreDep,
     manager: ChoresManagerDep,
     scheduler: ChoreDriverDep,
     chore_id: str,
 ) -> None:
-    editable_chore(core.layout, chore_id)
-    manager.home_authoring.remove(chore_id)
-    _refresh_chores(scheduler)
+    await asyncio.to_thread(editable_chore_path, core.layout, chore_id)
+    await asyncio.to_thread(manager.home_authoring.remove_file, chore_id)
+    await _refresh_chores(core, scheduler)
 
 
-def _refresh_chores(scheduler: ChoreDriver | None) -> None:
+async def _refresh_chores(core: AgentCore, scheduler: ChoreDriver | None) -> None:
+    await core.state.refresh()
     if scheduler is not None:
-        _scheduler_call(scheduler.refresh_sync)
+        await scheduler.refresh()
 
 
 def _require_scheduler(scheduler: ChoreDriver | None) -> ChoreDriver:
@@ -156,9 +167,27 @@ def _require_scheduler(scheduler: ChoreDriver | None) -> ChoreDriver:
 
 def _inspection(core: AgentCore) -> ChoreInspection:
     runs = tuple(cast(Iterable[ChoreRun], core.store.list_runs(limit=None)))
+    state = core.state.current()
+    accepted_names = {chore.name for chore in state.chores}
+    invalid = tuple(
+        Chore(
+            Path(file.key).stem,
+            None,
+            "",
+            None,
+            core.layout.home / file.key,
+            source_error=file.message,
+        )
+        for file in state.files
+        if file.scope == "home"
+        and not file.accepted
+        and Path(file.key).parent == Path("chores")
+        and Path(file.key).stem not in accepted_names
+    )
     return ChoreInspection.load(
         layout=core.layout,
         runs=runs,
+        definitions=(*state.chores, *invalid),
         error_messages={
             run.id: core.store.resolve_error(run.error)
             for run in runs
@@ -186,10 +215,10 @@ def _new_chore(*, payload: ChoreCreateRequest) -> ChoreFile:
 def _update_chore(
     core: AgentCore,
     manager: ChoresManager,
-    scheduler: ChoreDriver | None,
-    entry: ChoreFile,
+    reference: str,
     payload: ChorePatchRequest,
-) -> ChoreDetail:
+) -> ChoreFile:
+    entry = editable_chore(core.layout, reference)
     fields = ("title", "body", "schedule")
     changes = {
         field: getattr(payload, field)
@@ -200,8 +229,7 @@ def _update_chore(
         saved = manager.home_authoring.update(entry.patch(changes))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    _refresh_chores(scheduler)
-    return _chore_detail(core, saved)
+    return saved
 
 
 def _scheduler_call(call: Callable[..., _T], *args: object) -> _T:

@@ -17,7 +17,7 @@ from toolang.execution.types import RunStatus
 
 from toolang.execution.store import RunStore
 from .records import ChoreRecord
-from .state import Chore
+from toolang.catalog.chores import Chore
 from .types import ChoreStatus, ChoreTrigger
 
 

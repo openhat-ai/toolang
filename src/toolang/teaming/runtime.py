@@ -14,7 +14,7 @@ from toolang.teaming.types import AgentTransport
 
 from toolang.teaming.exporter import EventExporter
 from toolang.teaming.types import EventPublisher, RENEW_SECONDS
-from .messaging import MessagingLoop
+from toolang.driver.talk import MessagingLoop
 
 logger = logging.getLogger(__name__)
 

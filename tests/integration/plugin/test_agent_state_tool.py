@@ -14,7 +14,6 @@ from toolang.base.types.tool import ToolContext
 from toolang.common.layout import AgentLayout
 from toolang.execution.tools.state import create_toolset
 from toolang.execution.tools.state.types import StateToolContext
-from toolang.state.errors import StatePreparationError
 from toolang.state.prepare import prepare_agent_state
 from toolang.state.watcher import StateWatcher
 
@@ -34,6 +33,15 @@ def context(tmp_path: Path) -> StateToolContext:
 
 def invoke(context: ToolContext, operation: str, **arguments):
     return asyncio.run(create_toolset({}).tools()[operation].invoke(arguments, context))
+
+
+def accepted_receipt(receipt, scope="home"):
+    return {
+        "scope": scope,
+        "key": receipt["key"],
+        "observed_digest": receipt["digest"],
+        "accepted_digest": receipt["digest"],
+    }
 
 
 def read(context, key):
@@ -158,9 +166,7 @@ def test_file_aliases_cannot_produce_receipts(context, operation, key, alias):
     assert rejected.output["error"] == "invalid_request"
     assert rejected.output["key"] == alias
     assert (context.home / key).read_text() == content
-    assert {"scope": "home", **created.output} in invoke(context, "sync").output[
-        "files"
-    ]
+    assert accepted_receipt(created.output) in invoke(context, "sync").output["files"]
     deleted = invoke(context, "delete", key=key, if_digest=created.output["digest"])
     assert deleted.error is None
     assert not any(
@@ -186,9 +192,7 @@ def test_create_rejects_an_alias_of_an_existing_parent(context):
     assert not (context.home / key).exists()
     created = invoke(context, "create", key=key, content="A note.\n")
     assert created.error is None
-    assert {"scope": "home", **created.output} in invoke(context, "sync").output[
-        "files"
-    ]
+    assert accepted_receipt(created.output) in invoke(context, "sync").output["files"]
 
 
 def test_list_hashes_assets_without_reading_complete_files(context, monkeypatch):
@@ -556,7 +560,8 @@ def test_loader_rejects_bad_source_from_either_writer_and_recovers(
         context.layout.program.write_text(source)
     assert read(context, "agent.too")["content"] == source
     rejected = asyncio.run(watcher.refresh_result())
-    assert rejected.state.revision == state.revision
+    assert rejected.state.revision != state.revision
+    assert not rejected.state.runnables
     assert rejected.diagnostics
     repaired = invoke(
         context,
@@ -650,7 +655,8 @@ def test_flow_deletion_is_saved_and_composition_errors_belong_to_watcher(context
     assert result.error is None, result.output
     assert not (context.home / flow["key"]).exists()
     rejected = asyncio.run(watcher.refresh_result())
-    assert rejected.state.revision == state.revision
+    assert rejected.state.revision != state.revision
+    assert not rejected.state.runnables
     assert rejected.diagnostics
     assert (context.home / "agent.too.lock").is_file()
     assert (context.home / "runnables.lock").is_file()
@@ -798,8 +804,9 @@ def test_independent_files_can_be_saved_before_composition_is_valid(context):
         )
         results = [main.result(), flow.result()]
     assert all(result.error is None for result in results)
-    with pytest.raises(StatePreparationError):
-        prepare_agent_state(context.layout)
+    published = prepare_agent_state(context.layout)
+    assert published.runnables == {}
+    assert all(not file.accepted for file in published.files)
 
 
 @pytest.mark.parametrize("source_name", ["parrot.too", " parrot .too"])
@@ -827,7 +834,7 @@ def test_roaming_main_preserves_canonical_link_and_source_mode(tmp_path, source_
     assert result.error is None, result.output
     synced = invoke(context, "sync")
     assert synced.error is None
-    assert {"scope": "home", **result.output} in synced.output["files"]
+    assert accepted_receipt(result.output) in synced.output["files"]
     assert layout.program.is_symlink()
     assert sha256(source.read_bytes()).hexdigest() == result.output["digest"]
     assert source.stat().st_mode & 0o777 == 0o755
@@ -920,8 +927,8 @@ def test_sync_publishes_file_changes_and_deletion(context):
     assert after.error is None
     assert after.output["revision"] != before.output["revision"]
     assert after.output["files"] == [
-        {"scope": "home", **updated.output},
-        {"scope": "home", **created.output},
+        accepted_receipt(updated.output),
+        accepted_receipt(created.output),
     ]
     assert invoke(context, "sync").output == after.output
     invoke(
@@ -932,7 +939,7 @@ def test_sync_publishes_file_changes_and_deletion(context):
     )
     final = invoke(context, "sync")
     assert final.error is None
-    assert final.output["files"] == [{"scope": "home", **updated.output}]
+    assert final.output["files"] == [accepted_receipt(updated.output)]
 
 
 def test_sync_captures_raw_config_shadowed_inputs_and_assets(context):
@@ -981,18 +988,23 @@ def test_sync_captures_raw_config_shadowed_inputs_and_assets(context):
     assert [(item["scope"], item["key"]) for item in files] == sorted(
         (item["scope"], item["key"]) for item in files
     )
-    assert all({"scope": "home", **receipt} in files for receipt in receipts)
+    assert all(accepted_receipt(receipt) in files for receipt in receipts)
     assert {
         "scope": "root",
         "key": "prompts/same.md",
-        "digest": sha256(prompt.read_bytes()).hexdigest(),
+        "observed_digest": sha256(prompt.read_bytes()).hexdigest(),
+        "accepted_digest": sha256(prompt.read_bytes()).hexdigest(),
     } in files
     assert {
         "scope": "root",
         "key": "config.toml",
-        "digest": sha256(context.layout.root_config.read_bytes()).hexdigest(),
+        "observed_digest": sha256(context.layout.root_config.read_bytes()).hexdigest(),
+        "accepted_digest": sha256(context.layout.root_config.read_bytes()).hexdigest(),
     } in files
-    assert not any(item["key"].startswith(("chores/", "chores/")) for item in files)
+    assert {item["key"] for item in files if item["key"].startswith("chores/")} == {
+        "chores/one.md",
+        "chores/two.md",
+    }
 
 
 @pytest.mark.parametrize(
@@ -1016,8 +1028,6 @@ def test_sync_requires_host_service(context):
         "message": result.error,
         "revision": None,
         "files": [],
-        "differences": None,
-        "diagnostics": [],
     }
     assert not context.layout.agent_state.exists()
 
@@ -1056,7 +1066,7 @@ def test_flat_file_errors_and_digest_conflicts(context):
         assert result.output["key"] == arguments["key"]
 
 
-def test_sync_returns_preparation_error_and_last_valid_receipt(context):
+def test_sync_excludes_invalid_source_with_flat_diagnostics_and_summary(context):
     before = invoke(context, "sync")
     previous = read(context, "agent.too")
     written = invoke(
@@ -1067,20 +1077,29 @@ def test_sync_returns_preparation_error_and_last_valid_receipt(context):
         if_digest=previous["digest"],
     )
     result = invoke(context, "sync")
+    assert result.error is None
+    assert result.output["revision"] != before.output["revision"]
+    assert set(result.output) == {"revision", "files"}
+    (file,) = result.output["files"]
+    assert file["observed_digest"] == written.output["digest"]
+    assert file["accepted_digest"] is None
+    assert file["code"] == "invalid-program"
+    assert file["line"] == 1
+    assert not any(isinstance(value, (dict, list)) for value in file.values())
+    assert (
+        create_toolset({}).tools()["sync"].summary({}, result)
+        == "Synced agent state (1 source excluded)"
+    )
+
+
+def test_sync_fatal_config_error_is_a_tool_error_without_candidate_receipts(context):
+    previous = invoke(context, "sync")
+    invoke(context, "create", key="config.toml", content="[broken")
+    result = invoke(context, "sync")
     assert result.error is not None
     assert result.output == {
         "error": "state_rejected",
         "message": result.error,
-        "revision": before.output["revision"],
-        "files": before.output["files"],
-        "differences": [
-            {
-                "scope": "home",
-                "key": "agent.too",
-                "disk_digest": written.output["digest"],
-                "state_digest": previous["digest"],
-            }
-        ],
-        "diagnostics": result.output["diagnostics"],
+        "revision": previous.output["revision"],
+        "files": [],
     }
-    assert result.output["diagnostics"][0]["code"] == "invalid-program"

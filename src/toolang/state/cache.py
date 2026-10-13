@@ -19,6 +19,9 @@ from toolang.common.progress import ProgressSink, emit_progress
 
 from ..common.immutable import freeze_mapping
 from ..lang.ast import Program, program_from_data
+from .types import StateFile
+from toolang.catalog.chore import ChoreFile
+from toolang.catalog.chores import Chore, file_chore
 from .source import (
     SOURCE_SCHEMA,
     CANONICAL_SOURCE_SCHEMA,
@@ -37,7 +40,8 @@ from .state import (
 )
 
 LayerScope = Literal["root", "home"]
-LAYER_SCHEMA = 19
+LAYER_SCHEMA = 21
+_SOURCE_RECEIPTS_SCHEMA = 20
 _LAYER_FILE = "layer.json"
 _LAYERS_FILE = "layers.json"
 _FILES_DIR = "files"
@@ -55,6 +59,7 @@ class RootLayer:
     resolutions: tuple[CapResolution, ...]
     config: Mapping[str, object]
     caps: tuple[StateCap, ...]
+    records: tuple[StateFile, ...] = ()
 
     def __post_init__(self) -> None:
         _require_revision(self.revision)
@@ -83,6 +88,8 @@ class HomeLayer:
     module_sources: Mapping[str, str]
     module_digests: Mapping[str, str]
     module_caps: Mapping[str, tuple[StateCap, ...]]
+    records: tuple[StateFile, ...] = ()
+    chores: tuple[Chore, ...] = ()
 
     def __post_init__(self) -> None:
         _require_revision(self.revision)
@@ -175,6 +182,7 @@ def load_root_layer(
         resolutions=_resolutions(document),
         config=_config(document),
         caps=_caps(document, revision_dir=revision_dir),
+        records=_source_receipts(document),
     )
 
 
@@ -202,6 +210,8 @@ def load_home_layer(
         module_sources=module_sources,
         module_digests=module_digests,
         module_caps=module_caps,
+        records=_source_receipts(document),
+        chores=_chore_definitions(document, revision_dir),
     )
 
 
@@ -218,6 +228,8 @@ def write_layer(
     module_digests: Mapping[str, str],
     module_caps: Mapping[str, tuple[StateCap, ...]],
     files: Mapping[str, bytes],
+    records: tuple[StateFile, ...] = (),
+    chores: tuple[Chore, ...] = (),
 ) -> str:
     """Atomically store one complete immutable State layer."""
 
@@ -233,6 +245,8 @@ def write_layer(
         module_digests=module_digests,
         module_caps=module_caps,
         files=normalized_files,
+        records=records,
+        chores=chores,
     )
     encoded = canonical_json(document)
     revision = sha256(encoded).hexdigest()
@@ -461,11 +475,28 @@ def _layer_document(
     module_digests: Mapping[str, str],
     module_caps: Mapping[str, tuple[StateCap, ...]],
     files: Mapping[str, bytes],
+    records: tuple[StateFile, ...] = (),
+    chores: tuple[Chore, ...] = (),
 ) -> dict[str, object]:
     if scope == "root" and modules:
         raise ValueError("root State layer cannot contain program modules")
+    if scope == "root" and chores:
+        raise ValueError("root State layer cannot contain chore definitions")
+    if not records:
+        records = tuple(
+            StateFile(scope, item.path, item.raw_digest or item.digest)
+            for item in source.files
+        ) + tuple(
+            StateFile(scope, item.path, None, False, item.code, item.message)
+            for item in source.issues
+        )
+        records = tuple(sorted(records, key=lambda item: item.key))
     return {
         "caps": [cap.to_data() for cap in sorted(caps, key=_cap_key)],
+        "chores": [
+            chore.to_data()
+            for chore in sorted(chores, key=lambda item: item.path.as_posix())
+        ],
         "config": dict(config),
         "files": [
             {
@@ -491,6 +522,7 @@ def _layer_document(
         "schema": LAYER_SCHEMA,
         "scope": scope,
         "source": source.to_data(),
+        "sources": [item.to_data() for item in records],
     }
 
 
@@ -516,6 +548,7 @@ def _validate_layer_dir(
         raise ValueError("State layer revision does not match layer.json")
     required = {
         "caps",
+        "chores",
         "config",
         "files",
         "modules",
@@ -523,6 +556,7 @@ def _validate_layer_dir(
         "schema",
         "scope",
         "source",
+        "sources",
     }
     if set(document) != required:
         raise ValueError("layer.json fields do not match the State layer schema")
@@ -536,7 +570,42 @@ def _validate_layer_dir(
     if not isinstance(source, SourceManifest) or source.schema != SOURCE_SCHEMA:
         raise ValueError("current State layer requires a source manifest")
     _config(document)
+    records = _source_receipts(document)
+    observed = {item.path: item.raw_digest for item in source.files}
+    for record in records:
+        if record.digest is not None and observed.get(record.key) != record.digest:
+            raise ValueError("source receipt does not match observed manifest")
+    if {record.key for record in records} != set(observed) | {
+        issue.path for issue in source.issues
+    }:
+        raise ValueError("source receipts must cover the complete observed manifest")
     manifest = _validate_file_manifest(revision_dir, document)
+    kinds = {
+        "skills": "skill",
+        "psyches": "psyche",
+        "services": "service",
+        "prompts": "prompt",
+    }
+    for record in records:
+        key = Path(record.key)
+        head = key.parts[0]
+        stored = (
+            Path("caps/authored") / kinds[head] / Path(*key.parts[1:])
+            if head in kinds
+            else key
+        )
+        path = f"files/{stored.as_posix()}"
+        if key == Path("config.toml"):
+            continue  # Config storage contains only canonical State-owned fields.
+        if record.accepted:
+            if path not in manifest or manifest[path][1] != record.digest:
+                raise ValueError("accepted source does not match persisted bytes")
+        elif path in manifest and not (
+            key == Path("agent.too") and manifest[path][1] == sha256(b"").hexdigest()
+        ):
+            raise ValueError(
+                "excluded source must not be persisted as accepted content"
+            )
     resolutions = _resolutions(document)
     caps = _caps(document, revision_dir=revision_dir)
     modules, module_sources, module_digests, module_caps = _program_indexes(
@@ -586,7 +655,87 @@ def _validate_layer_dir(
                 f"resolved cap does not match exactly one State capability: "
                 f"{resolution.kind}/{resolution.name}"
             )
+    for chore in _chore_definitions(document, revision_dir):
+        captured = file_chore(
+            ChoreFile.parse(
+                (revision_dir / "files" / chore.path).read_text(encoding="utf-8"),
+                path=chore.path,
+            )
+        )
+        if captured != chore:
+            raise ValueError("chore terms do not match accepted source bytes")
     return document
+
+
+def _source_receipts(document: Mapping[str, object]) -> tuple[StateFile, ...]:
+    if document.get("schema") not in {LAYER_SCHEMA, _SOURCE_RECEIPTS_SCHEMA}:
+        return ()
+    source = document.get("source")
+    if not isinstance(source, Mapping):
+        return ()
+    if cast(Mapping[str, object], source).get("schema") != SOURCE_SCHEMA:
+        return ()
+    raw = document.get("sources", [])
+    if not isinstance(raw, list) or not all(isinstance(item, Mapping) for item in raw):
+        raise TypeError("State source receipts must be objects")
+    records = tuple(
+        StateFile.from_data(cast(Mapping[str, object], item)) for item in raw
+    )
+    keys = tuple((item.scope, item.key) for item in records)
+    if keys != tuple(sorted(set(keys))):
+        raise ValueError("source receipts must be sorted and unique")
+    if any(item.scope != document.get("scope") for item in records):
+        raise ValueError("source receipt scope mismatch")
+    return records
+
+
+def _chore_definitions(
+    document: Mapping[str, object], revision_dir: Path
+) -> tuple[Chore, ...]:
+    if document.get("schema") == LAYER_SCHEMA:
+        raw = document.get("chores")
+        if not isinstance(raw, list) or not all(
+            isinstance(item, Mapping) for item in raw
+        ):
+            raise TypeError("State chore terms must be objects")
+        chores = tuple(
+            Chore.from_data(cast(Mapping[str, object], item)) for item in raw
+        )
+        paths = tuple(chore.path.as_posix() for chore in chores)
+        if paths != tuple(sorted(set(paths))):
+            raise ValueError("State chore terms must be sorted and unique")
+        accepted = {
+            record.key
+            for record in _source_receipts(document)
+            if record.accepted
+            and Path(record.key).parent == Path("chores")
+            and Path(record.key).suffix == ".md"
+        }
+        if set(paths) != accepted:
+            raise ValueError(
+                "chore terms must cover exactly the accepted Markdown sources"
+            )
+        if document.get("scope") != "home" and chores:
+            raise ValueError("only home layers can contain chore definitions")
+        return chores
+    if (
+        document.get("schema") != _SOURCE_RECEIPTS_SCHEMA
+        or document.get("scope") != "home"
+    ):
+        return ()
+    # Schema 20 captured Markdown bytes but had no serialized chore terms.
+    return tuple(
+        file_chore(
+            ChoreFile.parse(
+                (revision_dir / "files" / record.key).read_text(encoding="utf-8"),
+                path=Path(record.key),
+            )
+        )
+        for record in _source_receipts(document)
+        if record.accepted
+        and Path(record.key).parent == Path("chores")
+        and Path(record.key).suffix == ".md"
+    )
 
 
 def _stored_cap_path(cap: StateCap, *, revision_dir: Path) -> str:

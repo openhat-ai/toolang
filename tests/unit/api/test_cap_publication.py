@@ -70,7 +70,7 @@ def test_rejected_write_publication_does_not_return_previous_content(tmp_path):
     core = AgentCore(layout)
     asyncio.run(core.state.refresh())
     before = core.state.current()
-    layout.program.write_text("not a valid program ???")
+    layout.config.write_text("[broken")
     try:
         with TestClient(
             create_app(core, CapsManager(layout), ChoresManager(layout)),
@@ -146,5 +146,30 @@ def test_allow_excluded_authored_write_returns_snapshot_and_delete_publishes(tmp
             assert client.delete("/api/v1/psyches/note/authored").status_code == 204
             assert core.state.current().revision != before
             assert "psyche:note" not in core.state.current().caps
+    finally:
+        asyncio.run(core.close())
+
+
+def test_valid_cap_write_publishes_beside_invalid_program_and_bad_caps_remain_repairable(
+    tmp_path,
+):
+    layout = AgentLayout.resident(tmp_path, "alice")
+    (layout.home / "psyches").mkdir(parents=True)
+    (layout.home / "psyches/broken.md").write_text("---\nname: [\n---\nBroken.")
+    layout.program.write_text("agic (")
+    core = AgentCore(layout)
+    asyncio.run(core.state.refresh())
+    try:
+        with TestClient(
+            create_app(core, CapsManager(layout), ChoresManager(layout))
+        ) as client:
+            response = client.put(
+                "/api/v1/psyches/note/authored", json={"content": "Valid sibling."}
+            )
+            assert response.status_code == 200, response.text
+            assert "note" in core.state.current().psyches
+            assert "broken" not in core.state.current().psyches
+            assert client.delete("/api/v1/psyches/broken/authored").status_code == 204
+            assert not (layout.home / "psyches/broken.md").exists()
     finally:
         asyncio.run(core.close())

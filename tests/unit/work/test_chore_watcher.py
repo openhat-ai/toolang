@@ -4,7 +4,7 @@ import pytest
 from watchfiles import Change
 
 from toolang.common.layout import AgentLayout
-from toolang.work import watcher
+from toolang.state import watcher
 
 
 @pytest.mark.parametrize(
@@ -15,12 +15,14 @@ def test_invalid_edit_does_not_end_chore_watch(tmp_path, monkeypatch, invalid):
     path = layout.home / "chores" / "cleanup.md"
     path.parent.mkdir(parents=True)
     path.write_text("Original.")
-    reader = watcher.ChoreWatcher(layout)
+    reader = watcher.StateWatcher(layout)
+    asyncio.run(reader.refresh())
 
     async def changes(*args, **kwargs):
         path.write_text(invalid)
         yield {(Change.modified, str(path))}
-        assert reader.current()[0].body == "Original."
+        assert reader.current().chores == ()
+        assert reader.diagnostics()
         path.write_text("Corrected.")
         yield {(Change.modified, str(path))}
 
@@ -32,6 +34,7 @@ def test_invalid_edit_does_not_end_chore_watch(tmp_path, monkeypatch, invalid):
         ]
 
     snapshots = asyncio.run(read())
-    assert len(snapshots) == 1
-    assert snapshots[0][0].body == "Corrected."
+    assert len(snapshots) == 2
+    assert snapshots[0].chores == ()
+    assert snapshots[1].chores[0].body == "Corrected."
     assert path.read_text() == "Corrected."
