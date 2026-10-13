@@ -109,6 +109,9 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Fixed
 
+- Talk now leaves one blank line before its startup panel and two before the
+  first message, matching Chat's startup spacing.
+
 - Conversation metadata results from `convo/peek`, `convo/create`, and
   `convo/rename` return `participants` as a JSON array instead of a tuple, so
   their completed tool steps round-trip through the run store and a repeated

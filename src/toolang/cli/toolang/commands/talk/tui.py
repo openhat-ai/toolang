@@ -369,7 +369,9 @@ class TalkTui:
 
     async def run(self) -> None:
         console = terminal_console(width=self.content_width())
+        console.print()
         console.print(self.header)
+        console.print()
         console.print()
         try:
             is_tty = os.isatty(self.app.output.fileno()) and os.isatty(
