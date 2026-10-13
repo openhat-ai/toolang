@@ -166,7 +166,7 @@ def test_pending_cursor_retries_only_write_and_ignores_old_files(tmp_path, monke
                 await loop.poll()
             await loop.poll()
             await loop.poll()
-            assert handler.await_count == 1 and attempts == 3
+            assert handler.await_count == 1 and attempts == 2
             assert await alice.talk_cursor(convo) == sent["stream_id"]
             assert loop.pending is None
             assert old.read_text() == "corrupt old JSON"
@@ -348,5 +348,80 @@ def test_pending_cursor_is_discarded_after_backend_switch(tmp_path, monkeypatch)
             await humans[1].send(new_convo, body="new backend")
             await loop.poll()
             loop.handle.assert_awaited_once()
+
+    asyncio.run(scenario())
+
+
+def test_pending_cursor_recovers_after_another_lease_advances_progress(
+    tmp_path, monkeypatch
+):
+    async def scenario():
+        server = FakeServer(server_type="valkey")
+        async with (
+            client(server, "human:owner") as human,
+            client(server, "agent:alice", token="original") as alice,
+            client(server, "agent:alice", token="replacement") as replacement,
+        ):
+            await prepare(alice, human)
+            convo = (await human.resolve("dev", kind="name")).conversation
+            first = await human.send(convo, body="handled by original")
+            loop = make_loop(tmp_path, alice)
+            loop.handle = AsyncMock()
+            advance = alice.advance_talk_cursor
+            attempts = 0
+
+            async def interrupted_save(conversation, cursor):
+                nonlocal attempts
+                attempts += 1
+                if attempts == 1:
+                    raise BackendUnavailable("first save was interrupted")
+                await advance(conversation, cursor)
+
+            monkeypatch.setattr(alice, "advance_talk_cursor", interrupted_save)
+            await loop.poll()
+            assert loop.pending == (convo, first["stream_id"])
+            await alice.unregister()
+            await replacement.register(human.actor)
+            second = await human.send(convo, body="handled by replacement")
+            await replacement.advance_talk_cursor(convo, second["stream_id"])
+            await replacement.unregister()
+            await alice.register(human.actor)
+
+            await loop.poll()
+            assert loop.pending is None
+            assert await alice.talk_cursor(convo) == second["stream_id"]
+            await loop.poll()
+            assert loop.handle.await_count == 1
+            third = await human.send(convo, body="new work after recovery")
+            await loop.poll()
+            assert loop.handle.await_count == 2
+            assert await alice.talk_cursor(convo) == third["stream_id"]
+
+    asyncio.run(scenario())
+
+
+def test_cursor_authority_loss_does_not_replace_handler_cancellation(tmp_path):
+    async def scenario():
+        server = FakeServer(server_type="valkey")
+        async with (
+            client(server, "human:owner") as human,
+            client(server, "agent:alice") as alice,
+        ):
+            await prepare(alice, human)
+            convo = (await human.resolve("dev", kind="name")).conversation
+            sent = await human.send(convo, body="cancel during lease loss")
+            loop = make_loop(tmp_path, alice)
+
+            async def lose_lease_and_cancel(batch):
+                await alice.unregister()
+                raise asyncio.CancelledError
+
+            loop.handle = lose_lease_and_cancel
+            task = asyncio.create_task(loop.poll())
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            assert task.cancelled()
+            assert loop.pending == (convo, sent["stream_id"])
+            assert await alice.talk_cursor(convo) == "0-0"
 
     asyncio.run(scenario())

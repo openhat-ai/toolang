@@ -23,7 +23,7 @@ from toolang.teaming.errors import (
     ConversationAccessDenied,
     MessagingError,
 )
-from toolang.teaming.schemas import Message
+from toolang.teaming.schemas import Message, stream_id
 from toolang.setup import AgentSetup
 from toolang.state.state import AgentState
 
@@ -95,15 +95,20 @@ class MessagingLoop:
                 self.pending = None
                 self.gaps, self.last_conversation = {}, ""
             if self.pending is not None:
-                await self._save_cursor()
+                await self._save_cursor(reconcile=True)
                 return
             await self._poll()
 
-    async def _save_cursor(self) -> None:
+    async def _save_cursor(self, *, reconcile: bool = False) -> None:
         if self.pending is None:
             return
         conversation, cursor = self.pending
         try:
+            if reconcile:
+                saved = await self.client.talk_cursor(conversation)
+                if stream_id(saved) >= stream_id(cursor):
+                    self.pending = None
+                    return
             await self.client.advance_talk_cursor(conversation, cursor)
         except ConversationAccessDenied:
             # Departure after handling must not block the remaining conversations.
@@ -146,6 +151,7 @@ class MessagingLoop:
                     )
                     continue
                 messages.append({**message.data(), "stream_id": sid})
+            cancelled = False
             try:
                 if any(m["sender"] != self.agent for m in messages):
                     await self.handle(
@@ -161,6 +167,7 @@ class MessagingLoop:
                         }
                     )
             except asyncio.CancelledError:
+                cancelled = True
                 raise
             except Exception:
                 logger.exception("Messaging batch failed; skipping %s", conversation)
@@ -171,6 +178,13 @@ class MessagingLoop:
                         await self._save_cursor()
                 except (BackendUnavailable, TimeoutError):
                     logger.warning("Talk cursor save interrupted; retaining progress")
+                except Exception:
+                    if not cancelled:
+                        raise
+                    logger.warning(
+                        "Talk cursor save failed during cancellation; retaining progress",
+                        exc_info=True,
+                    )
             return
 
     async def handle(self, batch: dict[str, Any]) -> None:
