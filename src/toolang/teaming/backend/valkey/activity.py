@@ -9,7 +9,7 @@ from toolang.execution.activity import ActivityQuery
 from toolang.execution.schemas import ActivitySnapshot
 from ...activity_cache import publication_key, select_cached
 from .activity_scripts import SAVE
-from .keys import TEAM, PRESENCE, activity_key
+from .keys import TEAM_MEMBERS, PRESENCE, activity_key
 
 if TYPE_CHECKING:
     from .backend import ValkeyBackend
@@ -30,7 +30,7 @@ class ValkeyActivity:
             await self.backend._fenced_eval(
                 agent,
                 SAVE,
-                [TEAM, activity_key(agent), PRESENCE],
+                [TEAM_MEMBERS, activity_key(agent), PRESENCE],
                 [
                     token,
                     slot,

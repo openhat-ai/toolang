@@ -5,7 +5,7 @@ import base64
 from ...schemas import conversation_id, target
 
 PREFIX = "too:teaming:v1"
-TEAM = f"{PREFIX}:team"
+TEAM_MEMBERS = f"{PREFIX}:team:members"
 PRESENCE = f"{PREFIX}:team:presence"
 TEAM_EVENTS = f"{PREFIX}:team:events"
 CONVOS = f"{PREFIX}:convos"
@@ -16,7 +16,7 @@ SYSTEM = f"{PREFIX}:convo:system"
 ROSTER = f"{PREFIX}:roster"
 BASE_KEYS = [
     SCHEMA,
-    TEAM,
+    TEAM_MEMBERS,
     PRESENCE,
     CONVOS,
     STATS,
@@ -48,3 +48,7 @@ def generation_key(agent: str, generation: str) -> str:
 
 def activity_key(agent: str) -> str:
     return f"{PREFIX}:activity:{target(agent, kind='agent').id}"
+
+
+def talk_key(agent: str) -> str:
+    return f"{PREFIX}:agent:{target(agent, kind='agent').name}:talk"

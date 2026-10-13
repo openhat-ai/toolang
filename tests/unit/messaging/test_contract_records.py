@@ -73,7 +73,7 @@ def test_changed_record_is_revalidated_before_commit(monkeypatch):
 
 def test_team_read_revalidates_a_concurrently_added_member(monkeypatch):
     from toolang.teaming.backend.valkey import scripts
-    from toolang.teaming.backend.valkey.keys import TEAM
+    from toolang.teaming.backend.valkey.keys import TEAM_MEMBERS
 
     async def scenario():
         async with client(FakeServer(server_type="valkey"), "human:owner") as human:
@@ -84,7 +84,7 @@ def test_team_read_revalidates_a_concurrently_added_member(monkeypatch):
                 nonlocal changed
                 if script == scripts.READ and not changed:
                     changed = True
-                    await human.backend._client.hset(TEAM, "agent:bad", "{}")
+                    await human.backend._client.hset(TEAM_MEMBERS, "agent:bad", "{}")
                 return await evaluate(script, keys, args)
 
             monkeypatch.setattr(human.backend, "_eval", add_after_validation)
@@ -95,7 +95,7 @@ def test_team_read_revalidates_a_concurrently_added_member(monkeypatch):
 
 
 def test_roster_is_a_team_subset_and_cas_preserves_json_semantics():
-    from toolang.teaming.backend.valkey.keys import ROSTER, TEAM
+    from toolang.teaming.backend.valkey.keys import ROSTER, TEAM_MEMBERS
     from toolang.teaming.roster import Roster
 
     async def scenario():
@@ -118,7 +118,7 @@ def test_roster_is_a_team_subset_and_cas_preserves_json_semantics():
             found.clear()
             await roster.scan()
             assert (await roster.agents())["agent:alice"]["missing"] == 1
-            await raw.hdel(TEAM, "agent:alice")
+            await raw.hdel(TEAM_MEMBERS, "agent:alice")
             before = await snapshot(raw)
             with pytest.raises(StorageIntegrityError):
                 await roster.scan()

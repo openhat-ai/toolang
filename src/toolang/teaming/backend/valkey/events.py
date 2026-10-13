@@ -9,7 +9,14 @@ from uuid import uuid4
 
 if TYPE_CHECKING:
     from .backend import ValkeyBackend
-from .keys import EVENT_META, EVENT_STREAM, EVENT_AGENTS, TEAM, PRESENCE, generation_key
+from .keys import (
+    EVENT_META,
+    EVENT_STREAM,
+    EVENT_AGENTS,
+    TEAM_MEMBERS,
+    PRESENCE,
+    generation_key,
+)
 from . import event_scripts
 from ...errors import MessagingError, EventProtocolError, EventRecoveryRequired
 from ...events import (
@@ -70,7 +77,7 @@ class ValkeyEvents:
     ) -> tuple[dict[str, str], dict[str, Any], dict[str, str]]:
         meta, agents, participants = await self._eval(
             event_scripts.CAPTURE,
-            [EVENT_META, EVENT_STREAM, EVENT_AGENTS, TEAM],
+            [EVENT_META, EVENT_STREAM, EVENT_AGENTS, TEAM_MEMBERS],
             [agent or ""],
         )
         try:
@@ -134,7 +141,7 @@ class ValkeyEvents:
             EVENT_META,
             EVENT_STREAM,
             EVENT_AGENTS,
-            TEAM,
+            TEAM_MEMBERS,
             generation_key(op["agent"], op["generation"]),
             op.get("old_key") or generation_key(op["agent"], op["generation"]),
             PRESENCE,
@@ -162,7 +169,7 @@ class ValkeyEvents:
         key = generation_key(op["agent"], op["generation"])
         response = await self._eval(
             event_scripts.STAGE,
-            [EVENT_META, EVENT_STREAM, EVENT_AGENTS, TEAM, key, key, PRESENCE],
+            [EVENT_META, EVENT_STREAM, EVENT_AGENTS, TEAM_MEMBERS, key, key, PRESENCE],
             ["", MAX_STREAM_EVENTS, MAX_STREAM_BYTES, raw],
             agent=op["agent"],
         )
@@ -177,7 +184,7 @@ class ValkeyEvents:
                 EVENT_META,
                 EVENT_STREAM,
                 EVENT_AGENTS,
-                TEAM,
+                TEAM_MEMBERS,
                 generation_key(agent, generation),
                 PRESENCE,
             ],

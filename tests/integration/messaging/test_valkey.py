@@ -19,7 +19,7 @@ from rich.console import Console
 from rich.text import Text
 
 from toolang.teaming.messaging import MessagingClient
-from toolang.teaming.backend.valkey.keys import PRESENCE, TEAM
+from toolang.teaming.backend.valkey.keys import PRESENCE, TEAM_MEMBERS
 from toolang.teaming.client import HubClient
 from toolang.teaming.config import BackendConfig
 from toolang.teaming.errors import MessagingError, StorageIntegrityError
@@ -107,9 +107,9 @@ def test_standard_backend_registration_streams_and_expiry(valkey):
                 assert len(await replacement.history(own)) == 1
                 await alice.unregister()
                 assert (
-                    json.loads(await raw.execute_command("HGET", TEAM, "agent:alice"))[
-                        "lease"
-                    ]["token"]
+                    json.loads(
+                        await raw.execute_command("HGET", TEAM_MEMBERS, "agent:alice")
+                    )["lease"]["token"]
                     == "new"
                 )
                 dev = (await replacement.create_conversation("dev")).id
@@ -476,5 +476,20 @@ def test_protocol_validation_prevents_partial_membership_writes(
                 await alice.join_conversation(convo.id)
             assert not await raw.sismember(convo_key(convo.id, "members"), alice.actor)
             assert await raw.xlen(TEAM_EVENTS) == events
+
+    asyncio.run(scenario())
+
+
+def test_healthy_initialization_does_not_scan_namespace(valkey):
+    async def scenario():
+        async with (
+            MessagingClient(valkey, actor="human:owner") as human,
+            Valkey.from_url(valkey.url, decode_responses=True) as raw,
+        ):
+            before = await raw.info("commandstats")
+            scan_calls = before.get("cmdstat_scan", {}).get("calls", 0)
+            await human.check_backend()
+            after = await raw.info("commandstats")
+            assert after.get("cmdstat_scan", {}).get("calls", 0) == scan_calls
 
     asyncio.run(scenario())

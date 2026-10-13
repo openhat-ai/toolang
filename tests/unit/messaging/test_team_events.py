@@ -9,7 +9,7 @@ import pytest
 from tests.unit.messaging.test_protocol import client, snapshot
 from toolang.teaming.client import HubClient
 from toolang.teaming.errors import BackendUnavailable, LeaseLost, StorageIntegrityError
-from toolang.teaming.backend.valkey.keys import TEAM_EVENTS, PREFIX, PRESENCE
+from toolang.teaming.backend.valkey.keys import TEAM_EVENTS, PRESENCE
 from toolang.teaming.team_events import TeamEvents
 
 
@@ -168,16 +168,10 @@ def test_replay_rejects_noncanonical_conversation_ids_before_yielding(conversati
     asyncio.run(scenario())
 
 
-def test_malformed_event_and_mixed_legacy_data_fail_without_writes():
+def test_malformed_event_fails_without_writes():
     async def scenario():
         async with client(FakeServer(server_type="valkey"), "human:owner") as human:
             raw = human.backend._client
-            await raw.hset(PREFIX + ":participants", "legacy", "old")
-            before = await snapshot(raw)
-            with pytest.raises(StorageIntegrityError):
-                await human.check_backend()
-            assert await snapshot(raw) == before
-            await raw.delete(PREFIX + ":participants")
             feed = TeamEvents(human.backend)
             cursor = await feed.checkpoint()
             epoch = cursor.split(".")[1]
