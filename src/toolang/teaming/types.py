@@ -38,6 +38,13 @@ class MessageReceiver(AgentTransport, Protocol):
     async def read(
         self, conversation: str, *, after: str = "0-0", count: int = 100
     ) -> list[tuple[str, dict[str, str]]]: ...
+    async def send(
+        self,
+        destination: str,
+        *,
+        body: str,
+        in_reply_to: str | None = None,
+    ) -> dict[str, Any]: ...
 
 
 class EventPublisher(Protocol):

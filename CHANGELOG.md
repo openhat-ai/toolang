@@ -58,6 +58,14 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Fixed
 
+- Message handler failures are no longer silent: the agent posts a reply
+  `Message handling failed: <detail>` attached to the triggering message,
+  quoting the failed handler run's error detail.
+
+- Message handling no longer fails with `run requires a model` and skips the
+  batch when the agent has no configured default model: the handler run now
+  falls back to the first available effective model.
+
 - Tool call summaries and tool errors keep one content cell at very narrow
   widths, dropping the leading marker and its indentation when fewer than
   three content cells remain instead of showing only the marker.

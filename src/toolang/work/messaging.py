@@ -10,6 +10,7 @@ import logging
 from typing import Any
 
 from toolang.base.types.message import TextPart
+from toolang.base.types.model import ModelRequest
 from toolang.base.types.policy import RunBindings
 from toolang.common.layout import AgentLayout
 from toolang.execution.executor import RunExecutor, RunSpec
@@ -17,6 +18,7 @@ from toolang.execution.runnables import resolve_runnable_reference, runnable_fal
 from toolang.execution.threads import ThreadManager
 from toolang.execution.types import ThreadPrefix
 from toolang.lang.input import resolve_runnable_input
+from toolang.plugin.models.query import first_model_ref
 from toolang.teaming.types import MessageReceiver
 from toolang.teaming.errors import (
     BackendUnavailable,
@@ -169,8 +171,27 @@ class MessagingLoop:
             except asyncio.CancelledError:
                 cancelled = True
                 raise
-            except Exception:
+            except Exception as exc:
                 logger.exception("Messaging batch failed; skipping %s", conversation)
+                source = next(
+                    (m for m in reversed(messages) if m["sender"] != self.agent),
+                    None,
+                )
+                if source is not None:
+                    try:
+                        await self.client.send(
+                            conversation,
+                            body=f"Message handling failed: {exc}"[:2048],
+                            in_reply_to=source["id"],
+                        )
+                    except asyncio.CancelledError:
+                        cancelled = True
+                        raise
+                    except Exception:
+                        logger.exception(
+                            "Unable to send message-handler failure reply: %s",
+                            conversation,
+                        )
             finally:
                 self.pending = conversation, entries[-1][0]
                 try:
@@ -197,6 +218,10 @@ class MessagingLoop:
             else setup.defaults.runnable or runnable_fallback(state, preferred="talk")
         )
         resolved = resolve_runnable_reference(state, runnable)
+        model_request = setup.defaults.model
+        if model_request is None:
+            fallback = first_model_ref(setup.models_effective())
+            model_request = ModelRequest(fallback) if fallback is not None else None
         text = ("" if custom else _INSTRUCTIONS) + json.dumps(batch, ensure_ascii=False)
         spec = RunSpec(
             setup=setup,
@@ -207,9 +232,9 @@ class MessagingLoop:
             ),
             bindings=RunBindings(
                 runnable=runnable,
-                model=setup.defaults.model.ref if setup.defaults.model else None,
+                model=model_request.ref if model_request is not None else None,
             ),
-            model_request=setup.defaults.model,
+            model_request=model_request,
             limits=setup.limits,
             input=resolve_runnable_input(
                 resolved.executable,
@@ -225,4 +250,9 @@ class MessagingLoop:
             await handle
             raise
         if record.status != "succeeded":
-            raise MessagingError(f"Message handler {record.id}: {record.status}")
+            detail = (
+                self.executor.store.resolve_error(record.error)
+                if record.error is not None
+                else record.status
+            )
+            raise MessagingError(f"Message handler {record.id}: {detail}")

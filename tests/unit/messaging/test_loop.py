@@ -11,16 +11,20 @@ from tests.support.execution_harness import (
     AsyncGate,
     ScriptedModelTurn,
 )
+from tests.support.setup import replace_materialized_setup
 from toolang.base.types.message import Message as ModelMessage
+from toolang.base.types.policy import RunDefaults
 from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.common.layout import AgentLayout
 from toolang.execution.records import RunControlPayload
 from toolang.teaming.messaging import MessagingClient
+from toolang.teaming.schemas import Message
 from toolang.teaming.backend.valkey import ValkeyBackend
 from toolang.teaming.backend.valkey.keys import convo_key
 from toolang.teaming.config import BackendConfig, TeamingHomeConfig, TeamingRootConfig
 from toolang.plugin.toolsets.convo import ConvoToolset
 from toolang.plugin.toolsets.loading import tools_from_toolsets
+from toolang.plugin.models.query import first_model_ref
 from toolang.plugin.types import LoadedPlugin
 from toolang.state.prepare import prepare_agent_state
 from toolang.work.messaging import MessagingLoop
@@ -194,6 +198,79 @@ def test_tool_reply_origin_and_backend_cursor_restart(tmp_path, custom):
             )
             assert len(await client.history("gc_00000001")) == 3
             assert not (harness.setup.layout.runtime / "channels").exists()
+
+    asyncio.run(scenario())
+
+
+def test_message_handler_falls_back_to_available_model_without_default(tmp_path):
+    server = FakeServer(server_type="valkey")
+    harness = harness_with_msg(
+        tmp_path,
+        server,
+        [ModelCallResult(message=ModelMessage.assistant("Handled."))],
+    )
+    harness.setup = replace_materialized_setup(
+        harness.setup,
+        defaults=RunDefaults(),
+    )
+    fallback = first_model_ref(harness.setup.models_effective())
+    assert fallback is not None
+
+    async def scenario():
+        async with (
+            harness,
+            make_client(server) as client,
+            make_client(server, "human:owner") as human,
+        ):
+            await prepare(client, human)
+            await human.send("gc_00000001", body="please handle")
+            loop = make_loop(tmp_path, client, harness)
+            await loop.poll()
+
+            assert loop.saved["gc_00000001"]["result"]["status"] == "succeeded"
+            assert len(harness.adapter.invocations) == 1
+            assert harness.adapter.invocations[0].model.ref == fallback
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("model_available", [False, True])
+def test_failed_message_handler_sends_visible_error_reply(tmp_path, model_available):
+    server = FakeServer(server_type="valkey")
+    harness = harness_with_msg(
+        tmp_path,
+        server,
+        [RuntimeError("scripted provider failure")],
+    )
+    harness.setup = replace_materialized_setup(
+        harness.setup,
+        defaults=RunDefaults(),
+        **({} if model_available else {"models": ()}),
+    )
+    expected_error = (
+        "scripted provider failure" if model_available else "run requires a model"
+    )
+
+    async def scenario():
+        async with (
+            harness,
+            make_client(server) as client,
+            make_client(server, "human:owner") as human,
+        ):
+            await prepare(client, human)
+            source = await human.send("gc_00000001", body="please handle")
+            loop = make_loop(tmp_path, client, harness)
+            await loop.poll()
+
+            result = loop.saved["gc_00000001"]["result"]
+            assert result["status"] == "failed"
+            history = await human.history("gc_00000001")
+            reply = Message.decode(history[-1][1]["data"])
+            assert reply.sender == "agent:alice"
+            assert reply.in_reply_to == source["message"]["id"]
+            assert expected_error in reply.body
+            assert len(result["replies"]) == 1
+            assert len(harness.adapter.invocations) == int(model_available)
 
     asyncio.run(scenario())
 
