@@ -231,14 +231,25 @@ class _PlainRow:
     ) -> RenderResult:
         style = _STYLES[self.row.tone]
         width = max(1, min(options.max_width, self.max_width))
-        if self.row.surface in {"tool_summary", "tool_error"} or (
-            self.live and not self.row.wrap_live
-        ):
-            text = _plain_text(self.row.text, style)
-            shortened = truncate(self.row.text, width)
-            if shortened != self.row.text:
-                text = text[: len(shortened) - 1]
-                text.append("…", style=style)
+        row_text = self.row.text
+        tool_surface = self.row.surface in {"tool_summary", "tool_error"}
+        if tool_surface and not _is_lane_row(row_text):
+            prefix, content = split_hanging_prefix(row_text)
+            prefix_width = display_width(prefix)
+            if prefix_width >= width:
+                row_text = content
+                prefix_width = 0
+            inset = min(PROGRESS_RIGHT_INSET, max(0, width - prefix_width - 1))
+            width = max(1, width - inset)
+        if tool_surface or (self.live and not self.row.wrap_live):
+            text = _plain_text(row_text, style)
+            if tool_surface:
+                text.truncate(width, overflow="crop")
+            else:
+                shortened = truncate(self.row.text, width)
+                if shortened != self.row.text:
+                    text = text[: len(shortened) - 1]
+                    text.append("…", style=style)
             yield text
             return
 
@@ -270,6 +281,17 @@ class _PlainRow:
                 f"{prefix if index == 0 else continuation}{line.plain}",
                 style,
             )
+
+
+def _is_lane_row(value: str) -> bool:
+    """Keep narrow parallel-lane identity from losing cells to the right inset."""
+
+    prefix, _ = split_hanging_prefix(value)
+    lane, separator, rest = prefix.partition(" | ")
+    item, closing, _ = rest.partition(" | ")
+    return bool(
+        separator and closing and lane.strip().isdigit() and item.startswith("#")
+    )
 
 
 def _plain_text(value: str, style: str) -> Text:
