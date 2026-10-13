@@ -56,7 +56,7 @@ def test_talk_sets_osc_zero_title_and_clears_it_on_exit(
                 f"\x1b]0;{label}\x07",
                 "\x1b]0;\x07",
             ]
-            assert ui.draft.read_text() == "keep this draft"
+            assert not ui.prompt.history_store.path.exists()
 
     asyncio.run(scenario())
 

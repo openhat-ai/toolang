@@ -54,7 +54,6 @@ async def talk_app(
             conversation,
             human,
             tmp_path / "input.jsonl",
-            tmp_path / "draft.txt",
             LIGHT_TERMINAL_SURFACES,
             read_only=read_only,
             max_width=max_width,
@@ -273,20 +272,22 @@ def test_footer_identifies_conversation_kind(tmp_path, conversation, read_only, 
     asyncio.run(scenario())
 
 
-def test_read_only_view_preserves_previous_draft(tmp_path):
-    (tmp_path / "draft.txt").write_text("unsent message")
+def test_talk_does_not_read_or_write_unsent_draft(tmp_path):
+    old_draft = tmp_path / "draft.txt"
+    old_draft.write_text("unsent message")
 
     async def scenario():
         async with talk_app(tmp_path, read_only=True) as (ui, _):
             assert not ui.prompt.buffer.text
             await ui.send("accidental send")
-            ui.save_draft()
-            assert (tmp_path / "draft.txt").read_text() == "unsent message"
+            ui.prompt.replace_input("typed but unsent")
+            assert old_draft.read_text() == "unsent message"
+            assert not ui.prompt.history_store.path.exists()
 
     asyncio.run(scenario())
 
 
-def test_live_membership_changes_update_input_focus_and_preserve_drafts(
+def test_live_membership_changes_update_input_focus_without_persisting_drafts(
     tmp_path, monkeypatch
 ):
     human = "human:bryan"
@@ -294,8 +295,8 @@ def test_live_membership_changes_update_input_focus_and_preserve_drafts(
     joined = conversation_record(
         "gc_00000001", "gc", (human, "agent:alice"), name="dev"
     )
-    draft = tmp_path / "draft.txt"
-    draft.write_text("saved before joining")
+    old_draft = tmp_path / "draft.txt"
+    old_draft.write_text("saved before joining")
 
     async def scenario():
         async with talk_app(tmp_path, conversation=observer, read_only=True) as (ui, _):
@@ -311,7 +312,7 @@ def test_live_membership_changes_update_input_focus_and_preserve_drafts(
                 if polls == 1:
                     assert not ui.read_only
                     assert ui.app.layout.has_focus(ui.prompt.buffer)
-                    assert ui.prompt.buffer.text == "saved before joining"
+                    assert not ui.prompt.buffer.text
                     ui.prompt.replace_input("unfinished while participating")
                     ui.client.conversation.return_value = observer
                 elif polls == 2:
@@ -319,7 +320,8 @@ def test_live_membership_changes_update_input_focus_and_preserve_drafts(
                     assert not ui.app.layout.has_focus(ui.prompt.buffer)
                     await ui.send("must not send after leaving")
                     ui.client.send.assert_not_awaited()
-                    assert draft.read_text() == "unfinished while participating"
+                    assert old_draft.read_text() == "saved before joining"
+                    assert not ui.prompt.history_store.path.exists()
                     ui.client.conversation.return_value = joined
                 else:
                     assert not ui.read_only
@@ -406,7 +408,7 @@ def test_member_notification_wakes_talk_without_polling_or_reloading_history(
                         )
                         await asyncio.wait_for(updated.wait(), 2)
                         assert ui.read_only
-                        assert ui.draft.read_text() == "keep my draft"
+                        assert not ui.prompt.history_store.path.exists()
                         assert paths.count("/team/events") == 1
                         assert "/events/stream" not in paths and "/team" not in paths
                     finally:

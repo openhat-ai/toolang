@@ -1,4 +1,4 @@
-"""Talk CLI literals, drafts, scrollback presentation, and tmux identities."""
+"""Talk CLI input history, scrollback presentation, and tmux identities."""
 
 import asyncio
 
@@ -150,7 +150,7 @@ def test_directory_lists_conversations_and_interactive_requires_tty(
     assert cli.main(["--root", str(tmp_path), "alice,", "hello"]) != 0
 
 
-def test_system_shortcut_and_id_share_sends_drafts_and_terminal_identity(
+def test_system_shortcut_and_id_share_history_and_terminal_identity(
     tmp_path, capsys, monkeypatch, messaging_cli
 ):
     async def prepare():
@@ -172,7 +172,7 @@ def test_system_shortcut_and_id_share_sends_drafts_and_terminal_identity(
     async def inspect_ui(ui):
         assert ui.conversation_id == ref
         assert ui._title_label(ui.conversation) == "#renamed"
-        states.append(ui.draft)
+        states.append(ui.prompt.history_store.path)
 
     monkeypatch.setattr(TalkTui, "run", inspect_ui)
     with (
@@ -181,7 +181,8 @@ def test_system_shortcut_and_id_share_sends_drafts_and_terminal_identity(
     ):
         for selection in ("all", ref):
             assert cli.main(["--root", str(tmp_path), "talk", selection]) == 0
-    assert states[0] == states[1]
+    expected_path = tmp_path / "human" / "talk-input" / f"{ref}.jsonl"
+    assert states == [expected_path, expected_path]
 
     async def check():
         async with messaging_cli() as human:
@@ -250,46 +251,53 @@ def test_agent_pair_shortcuts_accept_prefixed_agent_names_in_both_orders(
 
 
 @pytest.mark.parametrize("existing", [False, True])
-def test_talk_restores_saved_drafts_and_input_history(
+def test_talk_uses_canonical_input_history_without_legacy_imports(
     tmp_path, messaging_cli, monkeypatch, existing
 ):
     human = "human:bryan"
     identity = sha256(
         f"{tmp_path.resolve()}\0{BackendConfig('redis://test').identity}\0{human}".encode()
     ).hexdigest()[:20]
-    state = (
+    old_directory = tmp_path / ".runtime" / "talk-history"
+    old_directory.mkdir(parents=True)
+    old_history = old_directory / "gc_00000001.jsonl"
+    InputHistoryStore(old_history).append("old path history")
+    old_draft = old_directory / "gc_00000001.draft.txt"
+    old_draft.write_text("old path draft", encoding="utf-8")
+    legacy = (
         tmp_path
         / ".runtime"
         / "talk-v2"
         / identity
         / sha256(b"gc_00000001").hexdigest()[:20]
     )
-    state.mkdir(parents=True)
-    (state / "draft.txt").write_text("unfinished message", encoding="utf-8")
-    InputHistoryStore(state / "input.jsonl").append("previous message")
-    directory = tmp_path / ".runtime" / "talk-history"
+    legacy.mkdir(parents=True)
+    InputHistoryStore(legacy / "input.jsonl").append("legacy history")
+    (legacy / "draft.txt").write_text("legacy draft", encoding="utf-8")
+
+    directory = tmp_path / "human" / "talk-input"
     history = directory / "gc_00000001.jsonl"
-    draft = directory / "gc_00000001.draft.txt"
     if existing:
-        directory.mkdir()
-        InputHistoryStore(history).append("new history")
-        draft.write_text("new draft", encoding="utf-8")
+        InputHistoryStore(history).append("canonical history")
     monkeypatch.setattr(talk.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr(talk.sys.stdout, "isatty", lambda: True)
     monkeypatch.setattr(talk, "toolang_version", lambda: "0.4.0-client")
-    restored = []
 
     async def inspect_ui(ui):
         assert ui.header.caption == "Talk v0.4.0-client"
         assert ui.header.fields[0] == ("hub", "v0.4.0-test")
-        restored.append(ui.prompt.buffer.text)
-        assert ui.prompt.history.get_strings() == [
-            "new history" if existing else "previous message"
-        ]
+        assert ui.prompt.history_store.path == history
+        assert ui.prompt.history.get_strings() == (
+            ["canonical history"] if existing else []
+        )
+        assert not ui.prompt.buffer.text
         assert ui.prompt.placeholder == "Type a message"
-        ui.prompt.replace_input("continued message")
-        assert draft.read_text() == "continued message"
-        assert (state / "draft.txt").read_text() == "unfinished message"
+        ui.prompt.replace_input("unsent message")
+        assert InputHistoryStore(history).load() == (
+            ["canonical history"] if existing else []
+        )
+        ui.prompt.accept_submission("accepted input")
+        assert not (directory / "gc_00000001.draft.txt").exists()
 
     monkeypatch.setattr(TalkTui, "run", inspect_ui)
     with (
@@ -297,8 +305,14 @@ def test_talk_restores_saved_drafts_and_input_history(
         create_app_session(input=pipe, output=DummyOutput()),
     ):
         assert cli.main(["--root", str(tmp_path), "talk", "gc_00000001"]) == 0
-    assert restored == ["new draft" if existing else "unfinished message"]
-    assert history.is_file()
+
+    expected_history = (["canonical history"] if existing else []) + ["accepted input"]
+    assert InputHistoryStore(history).load() == expected_history
+    assert sorted(path.name for path in directory.iterdir()) == [history.name]
+    assert old_history.read_text(encoding="utf-8").count("old path history") == 1
+    assert old_draft.read_text(encoding="utf-8") == "old path draft"
+    assert InputHistoryStore(legacy / "input.jsonl").load() == ["legacy history"]
+    assert (legacy / "draft.txt").read_text(encoding="utf-8") == "legacy draft"
 
 
 async def agent_pair(factory, *, messages=False):
@@ -581,7 +595,7 @@ def test_directory_message_time_is_compact_without_losing_date(timestamp, expect
     assert directory._message_time(sid, now) == expected
 
 
-def test_failed_send_preserves_draft_and_success_does_not_erase_new_typing(
+def test_failed_send_preserves_input_and_success_does_not_erase_new_typing(
     tmp_path, monkeypatch
 ):
     async def scenario():
@@ -597,7 +611,6 @@ def test_failed_send_preserves_draft_and_success_does_not_erase_new_typing(
                 ),
                 "human:bryan",
                 tmp_path / "input.jsonl",
-                tmp_path / "draft.txt",
                 DARK_TERMINAL_SURFACES,
                 read_only=False,
             )
@@ -609,7 +622,7 @@ def test_failed_send_preserves_draft_and_success_does_not_erase_new_typing(
             )
             await ui.send("original")
             assert ui.prompt.buffer.text == "original"
-            assert ui.draft.read_text() == "original"
+            assert ui.prompt.history.get_strings() == []
             notice.assert_awaited_once_with(
                 "Send not confirmed (message recoverable-id)"
             )
@@ -902,7 +915,6 @@ def test_follow_reconnects_from_last_displayed_id_without_replaying_history(
                 ),
                 "human:bryan",
                 tmp_path / "input.jsonl",
-                tmp_path / "draft.txt",
                 DARK_TERMINAL_SURFACES,
                 read_only=False,
             )
@@ -987,7 +999,6 @@ def test_opening_empty_dm_writes_only_on_first_send(
                 row["conversation"] != ui.conversation_id
                 for row in await human.contacts()
             )
-            ui.save_draft()
             assert await snapshot(raw) == before
             if send:
                 await ui.send("first interactive message")
@@ -1039,7 +1050,6 @@ def test_empty_dm_follow_discovers_other_participants_first_send(tmp_path, monke
                 PendingDM(ref, pair),
                 "human:bryan",
                 tmp_path / "input.jsonl",
-                tmp_path / "draft.txt",
                 DARK_TERMINAL_SURFACES,
                 read_only=False,
                 selection="alice",

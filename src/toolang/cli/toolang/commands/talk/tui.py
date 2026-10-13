@@ -26,7 +26,6 @@ from toolang.cli.common.status import error_status_line
 from toolang.cli.common.terminal_surfaces import TerminalSurfaces
 from toolang.cli.common.terminal_session import TerminalSession
 from toolang.cli.common.terminal_title import label_text
-from toolang.common.files import atomic_write_text
 from toolang.teaming.client import HubClient
 from toolang.teaming.errors import BackendUnavailable, MessagingError
 from toolang.teaming.notifications import Changes
@@ -50,7 +49,6 @@ class TalkTui:
         conversation: ConversationView,
         human: str,
         history_path: Path,
-        draft_path: Path,
         surfaces: TerminalSurfaces,
         *,
         read_only: bool,
@@ -77,8 +75,6 @@ class TalkTui:
         self.inputbox_max_width = (
             max_width if inputbox_max_width is None else inputbox_max_width
         )
-        self.draft = draft_path
-        self._draft_loaded = False
         self.connection = "Connecting…"
         self.status = ""
         self.pending = False
@@ -88,14 +84,12 @@ class TalkTui:
         self.prompt = InputBox(
             self.invalidate,
             history_store=InputHistoryStore(history_path),
-            on_input=self.save_draft,
             normalize=lambda text: text,
             get_max_rows=lambda: max(
                 3, self.app.output.get_size().rows - 1 - self._input_gap_rows()
             ),
             get_width=self.input_width,
         )
-        self.restore_draft()
         keys = KeyBindings()
         focus = has_focus(self.prompt.buffer) & Condition(lambda: not self.read_only)
 
@@ -234,30 +228,11 @@ class TalkTui:
             width=self.input_width(),
         )
 
-    def save_draft(self) -> None:
-        if self.read_only:
-            return
-        try:
-            atomic_write_text(self.draft, self.prompt.buffer.text)
-        except OSError as exc:
-            self.status = f"Draft could not be saved: {exc}"
-        self.invalidate()
-
-    def restore_draft(self) -> None:
-        if self.read_only or self._draft_loaded:
-            return
-        if self.draft.exists():
-            self.prompt.replace_input(self.draft.read_text(encoding="utf-8"))
-        self._draft_loaded = True
-
     def update_membership(self, info: Conversation) -> None:
         read_only = not info.allows_sender(self.human)
         if read_only == self.read_only:
             return
-        self.save_draft()
         self.read_only = read_only
-        if not read_only:
-            self.restore_draft()
         self.app.layout.focus(self.footer if read_only else self.prompt.buffer)
 
     async def send(self, body: str) -> None:
@@ -280,7 +255,6 @@ class TalkTui:
             self.selection = None
             self.connection = "Connected"
             self.prompt.accept_submission(body)
-            self.save_draft()
         finally:
             self.pending = False
             self.invalidate()
@@ -423,7 +397,6 @@ class TalkTui:
                 await self.app.run_async(pre_run=start_following)
         finally:
             self.terminal.close()
-            self.save_draft()
 
     def _title_label(self, info: ConversationView) -> str:
         label = label_text(conversation_label(info, self.human))

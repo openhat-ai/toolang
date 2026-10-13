@@ -174,7 +174,7 @@ def test_error_replaces_all_footer_segments_and_matches_chat(tmp_path, width):
 @pytest.mark.parametrize(
     "detail", ["Delivery unavailable; reconnect manually", "Sent", "Sending…"]
 )
-def test_send_errors_keep_the_draft_and_show_returned_detail_without_retry(
+def test_send_errors_keep_unsent_input_and_show_detail_without_retry(
     tmp_path, monkeypatch, error, detail
 ):
     async def scenario():
@@ -185,7 +185,8 @@ def test_send_errors_keep_the_draft_and_show_returned_detail_without_retry(
             monkeypatch.setattr(ui, "print_notice", notice)
             await ui.send("keep this draft")
             assert fragment_list_to_text(ui.status_text()).rstrip() == ("! " + detail)
-            assert ui.prompt.buffer.text == ui.draft.read_text() == "keep this draft"
+            assert ui.prompt.buffer.text == "keep this draft"
+            assert not ui.prompt.history_store.path.exists()
             ui.client.send.assert_awaited_once_with(
                 ui.conversation_id, body="keep this draft", participants=None
             )
@@ -343,7 +344,7 @@ def test_footer_displays_connection_progress_or_error(tmp_path, connection):
 
 
 @pytest.mark.parametrize("operation", ["read", "send"])
-def test_hub_configuration_error_preserves_draft_and_uses_the_error_row(
+def test_hub_configuration_error_keeps_unsent_input_and_uses_the_error_row(
     tmp_path, monkeypatch, operation
 ):
     async def scenario():
@@ -368,7 +369,8 @@ def test_hub_configuration_error_preserves_draft_and_uses_the_error_row(
             footer = fragment_list_to_text(ui.status_text())
             assert footer.rstrip() == "! Hub identity changed; reopen Talk"
             assert "bryan" not in footer and "gc_00000001" not in footer
-            assert ui.prompt.buffer.text == ui.draft.read_text() == "keep this draft"
+            assert ui.prompt.buffer.text == "keep this draft"
+            assert not ui.prompt.history_store.path.exists()
             notice.assert_awaited_once_with("Hub identity changed; reopen Talk")
             with pytest.raises(MessagingError, match="Hub identity changed"):
                 await client.agents()
@@ -392,24 +394,15 @@ def test_other_terminal_errors_stop_following_and_show_notice(tmp_path, monkeypa
     asyncio.run(scenario())
 
 
-def test_draft_failure_remains_visible_when_connected(tmp_path, monkeypatch):
-    def fail_write(*_args):
-        raise OSError("disk full")
-
+def test_unsent_input_is_in_memory_only_when_connected(tmp_path):
     async def scenario():
         async with talk_app(tmp_path) as (ui, _):
-            monkeypatch.setattr(
-                "toolang.cli.toolang.commands.talk.tui.atomic_write_text",
-                fail_write,
+            ui.prompt.replace_input("unsent input")
+            assert ui.prompt.buffer.text == "unsent input"
+            assert not ui.prompt.history_store.path.exists()
+            assert "Draft could not be saved" not in fragment_list_to_text(
+                ui.status_text()
             )
-            ui.prompt.replace_input("draft")
-            assert fragment_list_to_text(ui.status_text()).rstrip() == (
-                "! Draft could not be saved: disk full"
-            )
-            assert (
-                "class:status.error",
-                " Draft could not be saved: disk full",
-            ) in ui.status_text()
 
     asyncio.run(scenario())
 

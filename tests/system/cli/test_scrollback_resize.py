@@ -247,7 +247,6 @@ def _run(surface: str, root: Path, draft: str, inputbox_max_width: int | None) -
             conversation,
             "human:bryan",
             root / "input.jsonl",
-            root / "draft.txt",
             DARK_TERMINAL_SURFACES,
             read_only=False,
             inputbox_max_width=inputbox_max_width,
