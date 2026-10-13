@@ -11,14 +11,17 @@ from typing import Any
 
 from toolang.base.types.message import TextPart
 from toolang.base.types.model import ModelRequest
-from toolang.base.types.policy import RunBindings
+from toolang.base.types.policy import AgentCeiling, RunBindings
 from toolang.common.layout import AgentLayout
 from toolang.execution.executor import RunExecutor, RunSpec
+from toolang.execution.executor.resources import (
+    resolve_agent_resources,
+    resolve_runnable_resources,
+)
 from toolang.execution.runnables import resolve_runnable_reference, runnable_fallback
 from toolang.execution.threads import ThreadManager
 from toolang.execution.types import ThreadPrefix
 from toolang.lang.input import resolve_runnable_input
-from toolang.plugin.models.query import first_model_ref
 from toolang.teaming.types import MessageReceiver
 from toolang.teaming.errors import (
     BackendUnavailable,
@@ -210,7 +213,11 @@ class MessagingLoop:
         """Reply to the latest external message when its handler fails."""
 
         source = next(
-            (message for message in reversed(messages) if message["sender"] != self.agent),
+            (
+                message
+                for message in reversed(messages)
+                if message["sender"] != self.agent
+            ),
             None,
         )
         if source is None:
@@ -241,7 +248,19 @@ class MessagingLoop:
         resolved = resolve_runnable_reference(state, runnable)
         model_request = setup.defaults.model
         if model_request is None:
-            fallback = first_model_ref(setup.models_effective())
+            # Respect the handler's authored model selection, including flows
+            # that deliberately run without models.
+            resources = resolve_runnable_resources(
+                setup.models_effective(),
+                runnable=resolved.executable,
+                base=resolve_agent_resources(
+                    setup, state, AgentCeiling(), module=resolved.module
+                ),
+                setup=setup,
+                state=state,
+                module=resolved.module,
+            )
+            fallback = resources.models[0] if resources.models else None
             model_request = ModelRequest(fallback) if fallback is not None else None
         text = ("" if custom else _INSTRUCTIONS) + json.dumps(batch, ensure_ascii=False)
         spec = RunSpec(

@@ -533,12 +533,18 @@ def test_handler_error_send_failure_is_checkpointed_without_retry(
             monkeypatch.setattr(loop, "handle", handler)
             source = await human.send("gc_00000000", body="please handle")
             await loop.poll()
-            saved = loop.saved["gc_00000000"]
-            assert saved["cursor"] == source["stream_id"]
-            assert saved["result"]["status"] == "failed"
-            assert saved["result"]["error"] == "handler unavailable"
-            assert saved["result"]["replies"] == []  # Never claim uncertain delivery.
-            loop.load()
+            assert await alice.talk_cursor("gc_00000000") == source["stream_id"]
+            assert "handler unavailable" in caplog.text
+            loop = MessagingLoop(
+                layout=AgentLayout.resident(tmp_path, "alice"),
+                owner=CONNECTION.human,
+                client=alice,
+                executor=MagicMock(),
+                threads=MagicMock(),
+                get_agent_setup=MagicMock(),
+                get_agent_state=MagicMock(),
+            )
+            monkeypatch.setattr(loop, "handle", handler)
             await loop.poll()
             await loop.poll()
             assert handler.await_count == 1

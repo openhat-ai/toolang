@@ -61,7 +61,9 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 - Message-handler failure notices no longer trigger another handler,
   including on other agents in the same conversation, so a failing batch
   cannot cascade failure replies between agents; the notice stays visible
-  and attached to the triggering message.
+  and attached to the triggering message. The notice carries a
+  `handler_error` marker that older Hub validators and Talk message decoders
+  reject, so upgrade the Hub, receiving agents, and Talk clients together.
 
 - Message handler failures are no longer silent: the agent posts a reply
   `Message handling failed: <detail>` attached to the triggering message,
@@ -69,7 +71,9 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 - Message handling no longer fails with `run requires a model` and skips the
   batch when the agent has no configured default model: the handler run now
-  falls back to the first available effective model.
+  resolves its own effective models, so an authored `models` selection still
+  applies, the first available model is the fallback, and model-free
+  flows that explicitly select no models remain unbound.
 
 - Tool call summaries and tool errors keep one content cell at very narrow
   widths, dropping the leading marker and its indentation when fewer than
