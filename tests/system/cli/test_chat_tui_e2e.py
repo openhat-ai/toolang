@@ -289,26 +289,26 @@ def test_chat_tui_switches_focus_and_deletes_an_active_run_queue_item(
         visible = session.wait_for(
             "1 queued",
             "↳ queued follow-up",
-            "tab to focus",
         )
         assert "Traceback" not in visible
-        assert "expand/collapse" not in visible
-        assert "e edit" not in visible
+        assert "tab to focus" not in visible
+        assert "space to collapse" not in visible
+        assert "(e)dit" not in visible
 
         session.send(b"\t")
         # Request a complete row before waiting for text that incremental
         # terminal redraws may split across cursor movements.
-        _wait_redrawn(session, "space to collapse")
+        _wait_redrawn(session, "(m-enter)steer")
         focused = session.wait_for(
             "↳ queued follow-up",
             "1 queued",
-            "space to collapse",
-            "e edit",
-            "m-enter steer",
-            "d delete",
+            "(e)dit",
+            "(m-enter)steer",
+            "(d)elete",
         )
         assert "Traceback" not in focused
-        assert "m-enter steer · e edit · d delete" in focused
+        assert "space to collapse" not in focused
+        assert "(m-enter)steer (e)dit (d)elete" in focused
 
         # Exercise collapse, expand, and delete without depending on partial redraw text.
         session.send(b"  d")
@@ -340,7 +340,7 @@ def test_chat_tui_keeps_multiple_steers_visible_until_their_step_finishes(
         session.send(b"queued steer\r")
         session.wait_for("1 queued")
         session.send(b"\t")
-        session.wait_for("m-enter steer")
+        session.wait_for("(m-enter)steer")
         session.send(b"\x1b\r")
         session.wait_for("1 steer pending")
         session.send(b"second steer\x1b\rthird steer\x1b\r")
@@ -349,10 +349,12 @@ def test_chat_tui_keeps_multiple_steers_visible_until_their_step_finishes(
         assert "▮ third steer" in steers
         session.send(b"queued follow-up\r")
         _wait_redrawn(session, "↳ queued follow-up")
+        # Require a fresh hint from this focus change, not the earlier selection.
+        session.data.clear()
         session.send(b"\t")
-        output = _wait_redrawn(session, "space to collapse")
+        output = _wait_redrawn(session, "(m-enter)steer")
         assert "queued follow-up" in output
-        assert "space to collapse" in output
+        assert "(m-enter)steer" in output
         assert "Window too small" not in output
         (tmp_path / "release-model").touch()
         output = session.wait_for("succeeded")
