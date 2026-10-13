@@ -119,6 +119,28 @@ for the rejected candidate. Existing sync errors keep their codes. Update
 inspection and tool contracts together so callers distinguish this rejection
 from successful publication containing invalid resources.
 
+## State tool contract
+
+Update `state__sync` together with State publication, not as a later follow-up:
+
+- Its description and returned payload use the flat receipt above and include
+  Markdown chores. Remove the old whole-candidate resource rejection wording
+  and `differences`/`diagnostics` response fields.
+- Publication with excluded files is a successful `ToolResult`; per-file
+  diagnostics stay on their records. Only fatal rejection or unavailable sync
+  produces a tool error. `sync_unavailable` returns the same flat failure shape
+  with `revision: null` and `files: []`.
+- The completion summary reports the excluded-file count when nonzero, so a
+  successful publication cannot be mistaken for acceptance of every file.
+- Preserve `state__list/get/create/update/delete` names, request parameters,
+  and raw-file receipts. Their `digest` and write `if_digest` still identify
+  exact disk bytes, including malformed content, not accepted State bytes.
+  Writes do not publish State or apply it to running code; sync does not
+  refresh Setup or replace running code. Retain source-path repair access.
+
+Update tool descriptions, result serialization, handler error paths, summaries,
+consumer expectations, and their focused tests together.
+
 ## Chore ownership, authoring, and directories
 
 Remove root chore loading/watching/fallback. Leave existing root files untouched;
@@ -154,7 +176,8 @@ entity.
 Likely files: `state/{source,prepare,cache,state,watcher,errors,types}.py`,
 `catalog/{chore,cap,manager}.py`, existing parsing/validation callers,
 `work/` and its new owners, `up/server.py`, CLI/API/internal state and authoring
-tools, focused tests, and `docs/agent-state.md`. Generate implementation
+tools (especially `execution/tools/state/{__init__,handlers,schemas,types}.py`),
+focused tests, and `docs/agent-state.md`. Generate implementation
 changelog entries with the repository runnable.
 
 1. Every cap kind, chore, and Program: valid sibling edits publish beside invalid
@@ -177,6 +200,12 @@ changelog entries with the repository runnable.
    Repair, one-off completion, schedules, and recovery retain their contracts.
 8. No production imports reference `toolang.work`; public commands, drivers,
    talk-disabled transport, startup, and shutdown remain functional.
+9. `state__sync` returns the flat receipt through the real tool invocation;
+   excluded resources produce success with visible diagnostics/count, while
+   fatal/unavailable sync produces a tool error. Raw state tools repair invalid
+   content with unchanged disk-digest checks; write, publish, and code application
+   remain distinct. Update authoring/execution scenarios that previously expected
+   a whole-State rejection for an invalid runnable.
 
 Implementation requires the default offline lint, format, type, and pytest
 checks. This definition requires source/link verification and `git diff --check`.
