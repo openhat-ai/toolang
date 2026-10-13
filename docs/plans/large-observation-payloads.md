@@ -5,191 +5,170 @@ observation metadata change in [PR #787](https://github.com/openhat-ai/toolang/p
 
 ## Goal and verified problem
 
-Valid tool arguments, outputs, and completed Parts must not disconnect an
-observer solely because their bodies are large. Progress and controls remain
-responsive, complete content remains available, and execution records retain
-their original values.
+Tool arguments, results, and completed Parts must not disconnect observers solely
+because their bodies are large. Preserve progress, controls, complete execution
+records, and complete user-visible answers.
 
-Current canonical readers reject an individual event above the 1 MiB batch
-budget. Offline reproduction after #787 still produces `StreamOverflowError`
-for a tool `StepBegin`, text `PartEnd`, and value `StepEnd` containing 2 MiB.
-Snapshots also load complete record bodies before applying their 16 MiB budget.
-`PartEnd` can precede persistence of its Step's output, so a reference to that
-output alone cannot safely replace its body.
+Offline reproduction after #787 still overflows a canonical reader for a tool
+`StepBegin`, text `PartEnd`, and value `StepEnd` containing 2 MiB. Snapshots also
+read complete record bodies before applying their 16 MiB budget. A `PartEnd`
+can precede its Step's persisted output, so visible-content references must be
+readable before publication rather than depending on that later output.
 
-This plan supersedes the oversized-single-event overflow rule in
-[local-subscriptions.md](local-subscriptions.md#cache-and-fanout). Its cursor,
-publication, genuine slow-reader overflow, and structural recovery contracts
-otherwise remain in force.
+This supersedes the oversized-single-event overflow rule in
+[local-subscriptions.md](local-subscriptions.md#cache-and-fanout). Keep its cursor,
+publication, genuine slow-reader overflow, and recovery contracts.
 
 ## Scope and budgets
 
 Cover canonical observers, run/thread/agent HTTP streams, replacement snapshots,
-and Chat/script presentation. Hub export forwards the same bounded observations
-without expanding references. Retain full execution inputs, outputs, normalized
-calls, and existing inspection commands. Do not add provider retries, change
-run outcomes, raise retention budgets, or introduce CLI tuning flags.
+and Chat/script presentation. Hub export forwards the same bounded observations.
+Keep execution semantics, inspection commands, and provider requests unchanged.
+No new tool-output viewer, provider retry policy, CLI tuning flags, or general
+Flow statement projection is included.
 
-Measure serialized UTF-8 event JSON, including its metadata, before admission
-to the canonical cache; check the encoded transport frame as well.
+Measure serialized UTF-8 JSON including metadata, and check encoded wire frames.
 
-| Budget | Decision |
+| Content or budget | Decision |
 | --- | --- |
-| Inline event | At most 256 KiB; equality stays inline. Larger bodies become references. |
-| Text/reasoning delta | At most 64 KiB per serialized event; emit immediately rather than waiting to fill it. |
-| Reference preview | At most 4 KiB of UTF-8 text, explicitly labeled as a preview. |
-| Reader batch | Retain 128 scanned events / 1 MiB. Covered payloads are bounded by projection before admission. |
-| Canonical cache | Retain 4,096 events / 16 MiB. |
-| Snapshot | Retain the current 16 MiB, five-second, and entity-count limits; exclude referenced bodies from reconstruction. |
-| Body retrieval | At most 64 KiB per page, two concurrent requests and two pages awaiting presentation per observer. |
+| Tool arguments/result data | Always `null` in observations, regardless of size; no previews or automatic retrieval. |
+| Inline visible event | At most 256 KiB; larger visible content uses an immutable reference. |
+| Text/reasoning delta | At most 64 KiB per encoded event, sent immediately without waiting to fill it. |
+| Reader batch/cache | Keep 128 scanned events / 1 MiB and 4,096 cached events / 16 MiB. |
+| Snapshot | Keep the 16 MiB, five-second, and entity-count limits; never expand omitted/referenced bodies. |
+| Visible-content retrieval | At most 64 KiB per page, two concurrent requests and two queued pages per observer. |
 
-Splitting preserves characters, ordering, and exact concatenation, including
-Unicode, JSON escapes, and reasoning text. Each delta fragment receives its own
-canonical cursor. References replace bodies; they do not silently drop or
-truncate the stored original. Genuine retention exhaustion or excessive
-structural entity counts can still require recovery.
+Fragments preserve Unicode, JSON escapes, ordering, and exact concatenation;
+each receives its own canonical cursor. Genuine retention or structural-count
+exhaustion still requires recovery.
 
-## Observation and persistence
+## Tool observation envelopes
 
-Add observation-only payload references containing a `ContentRef`, exact byte
-length, media type, and optional bounded preview. Store structured/binary Parts
-as canonical UTF-8 JSON in the existing content-addressed `contents` storage;
-preserve all typed Part fields and provider metadata inside it. Store visible
-text as raw UTF-8 so pages can render without assembling a giant JSON string;
-retain the enclosing Part type and Output binding in the descriptor. References are
-immutable and never point to a mutable Step field at a reused retry path.
+Keep tool-result identity (`type`, tool/call IDs, name, family), status, existing
+summary, and error information. Set the argument/result body slots to `null` in
+an observation-only representation, with `data_omitted: true` distinguishing an
+unsent body from an actual null execution value. Do not change the internal
+`ToolCall` or `ToolResultPart` types: their input/output objects remain complete.
 
-- Oversized tool Begins carry identity, plugin, trigger, summary, and an argument
-  reference. Preserve the small runtime-operation facts required for existing
-  `run`, `exec`, `spawn`, `await`, and asynchronous progress layouts.
-- Oversized Step/Run Ends retain status, binding/type information, accounting,
-  control relations, and an output reference. Keep completion independent of
-  body retrieval. Large error text follows the same preview/reference rule.
-- Oversized `PartEnd` retains Step/Part identity and original Part type with a
-  body reference. Text already delivered through deltas is not retransmitted on
-  the progress channel. Binary/structured Parts use references, not text chunks.
+Progress needs a few result facts despite not displaying tool output. Extract
+`cwd`, run/thread IDs, asynchronous-operation facts, and whether a handoff control
+was applied into bounded observation metadata. Preserve the existing workspace
+updates, spawn/run identity rows, exec handoffs, and failure rows. Never fetch a
+result body to recover these facts. Large failure text follows the visible-content
+reference policy; failure status remains available immediately.
 
-Represent multi-Part outputs as ordered Part descriptors, with a paged immutable
-manifest if the descriptor list itself exceeds the inline budget. Keep full
-authored Flow statement transmission outside this change.
+Apply the same omission to tool arguments in model `ToolCallPart` observations
+and `ToolCallDelta.text`, tool `PartEnd` results, tool `StepEnd` outputs,
+and recovery snapshots. Keep argument-delta identity/lifecycle but send no argument
+fragment text. A Run result
+containing a tool-result Part also retains only its envelope in the observation
+stream. Complete tool parameters/results remain available through existing
+`inspect STEP call --json` and output-field inspection after persistence.
 
-Full internal events reach persistence before observation projection. For
-disposable Parts, persist a referenced body before publishing its descriptor,
-without marking the Step complete early. Content preparation must not hold the
-agent-wide publication gate across encoding a large body or network I/O; commit
-the prepared body, its ownership, and required record changes before making the
-descriptor visible. No observer callback participates in that transaction.
+Chat/script progress neither displays nor downloads these bodies. Do not create
+extra content blobs, download queues, or loading indicators for omitted tool
+arguments/results. Internal persistence and the messages sent to models keep the
+original data byte-for-byte. Observation codecs explicitly accept the nullable
+body representation; do not silently turn it into an empty result object.
 
-Persist the compact current Begin/End projection alongside durable records in
-an `observation_records` table keyed by entity reference and boundary, with
-root identity, source cursor, and bounded event data. This is current structural
-state, not an additional event journal. Retry/rewind invalidation updates it in
-the same transaction as the corresponding records and cursor changes. Snapshots
-read these projections rather than `SELECT *` followed by expansion of large
-`given` or `output` fields.
+## Visible content and persistence
 
-Add an ownership association between referenced content and its root Run.
-Writable migration builds missing compact projections before stream admission,
-in bounded batches, without reconstructing model calls. Preserve existing
-records and cursors. Explicit root deletion removes its ownership/projection
-rows; cache eviction, disconnect, runtime restart, and retry do not invalidate
-already-issued immutable content references. Content reclamation remains a
-separate store concern; add no expiry policy in this change.
+Model text and final user-visible output are never replaced by null or truncated.
+Split large deltas before cache admission. Large completed text uses a
+`ContentRef`, exact byte length, and media type, with Part identity and Output
+binding preserved. Store visible text as raw UTF-8 in existing content-addressed
+storage so pages render incrementally. Structured/binary Parts preserve their
+complete canonical JSON and opaque metadata; they are fetched only when needed
+for a visible result or explicit inspection. Multi-Part results use an ordered
+manifest, itself paged if too large. No preview text is required.
 
-## Retrieval, ordering, and UX
+Full internal events reach persistence before observation projection. Prepare
+large visible bodies outside the agent-wide publication gate, then commit body,
+root ownership, and required record changes before publishing references. Do not
+mark a Step complete early or await observer/network work inside this transaction.
+Tool `PartEnd` bodies need no premature storage merely for progress omission.
 
-Provide `GET /api/v1/runs/{run_id}/observation-content/{content_ref}` with byte
-`offset` and `limit` query parameters; default and maximum limit are 64 KiB.
-Validate run ownership, canonical reference syntax, and nonnegative bounds.
-Return raw bytes with immutable digest and total-length metadata, and reject
-missing/unowned content with 404. Read bounded SQLite BLOB slices without
-loading the full value. Local observers use the equivalent store reader. Never
-accept an arbitrary URL or filesystem path from a payload descriptor.
+Persist bounded current Begin/End projections in `observation_records`, keyed by
+entity/boundary with root, cursor, and event data. This is current structural
+state, not an event journal. Retry/rewind invalidation updates it atomically with
+records and cursors. Snapshots read these projections instead of loading full
+`given`/`output` columns and then cutting them down.
 
-The receiver commits metadata/cursors independently of body downloads. Snapshot
-replacement commits at its existing checkpoint without waiting for content.
-Body hydration is a separate presentation update, not a second Begin/End or
-another metrics contribution. Apply downloads only to the matching owner,
-incarnation cursor, and content digest; discard stale responses after retry,
-rewind, replacement, or closing the view.
+Writable migration builds missing projections in bounded batches before stream
+admission, without expanding model calls. Preserve records/cursors and associate
+visible-content references with their root. Explicit root deletion removes its
+projection/ownership rows; cache eviction, retry, disconnect, and restart do not
+invalidate immutable body references. Add no content expiry or reclamation policy.
 
-Tool progress continues to show its existing summary; complete arguments and
-results remain available through existing inspection/output actions. Model and
-final text output loads automatically into its original transcript position in
-bounded presentation increments, without requiring `/output` to repair it.
-Preserve already displayed text and scroll position, append only missing text,
-and keep later run progress and composer input usable while a body loads.
-`RunEnd` records completion immediately; an in-place loading indicator may remain
-until the referenced answer has finished loading. Preserve signed reasoning and
-other opaque Part metadata exactly without rendering them as ordinary text.
+## Loading and UX
 
-Decode text pages incrementally across UTF-8 boundaries. Spool structured/binary
-JSON pages until complete before decoding their typed value; do not eagerly
-hydrate them for progress summaries. If retrieval fails, leave the original reference/preview visible and offer a
-retry plus the existing inspection path. Report a content-loading failure rather
-than a connection loss or run failure. Resume partial downloads from their byte
-offset; verify the complete digest before treating the body as complete. An
-unavailable runtime can delay content retrieval but must not erase progress.
-Hub does not mirror blobs or add a content proxy in this scope; complete content
-is retrieved from the originating Agent API or local inspection.
+Add `GET /api/v1/runs/{run_id}/observation-content/{content_ref}` with nonnegative
+byte `offset` and `limit` (default/maximum 64 KiB). Return BLOB slices, digest, and
+total length without loading the full BLOB; reject missing/unowned references
+with 404. Local observers use the equivalent store reader. Do not fetch arbitrary
+URLs/paths from descriptors. Hub does not mirror blobs or add a proxy.
 
-## Implementation touchpoints
+Commit progress metadata/cursors and snapshot checkpoints independently of
+visible-content loading. Apply content as a presentation update, not a repeated
+Begin/End or metrics contribution. Match owner, incarnation cursor, and digest;
+discard stale responses after retry, rewind, replacement, or view closure.
 
-- `execution/types.py`, `events.py`, and `schemas.py`: bounded observation
-  vocabulary, codecs, and frame budgets; retain complete internal types.
-- `execution/store.py`, `executor/_persist.py`, and `executor/executor.py`:
-  content/projection ownership, migration, atomic publication, and delta splits.
-- `execution/observation.py`, `subscriptions.py`, `stream.py`, and
-  `stream_client.py`: compact prefill, bounded caching, cursor and hydration state.
-- `api/routers/runs.py`, `execution/remote.py`, and local `TraceObserver`:
-  paged content access and independent retrieval scheduling. Terminal-state
-  recovery reads compact run/output descriptors rather than expanding all calls.
-- `cli/common/execution_progress/`, `cli/toolang/commands/chat/`, and script
-  presenters: reference-aware summaries and incremental transcript hydration.
-- `teaming/` observation codecs/exporter: preserve projected fields and budgets.
-- Focused tests in `tests/unit/execution/`, `tests/integration/execution/`,
-  `tests/integration/api/`, and `tests/unit/cli/`; document the protocol and update
-  `CHANGELOG.md` through `too aide.too update_changelog` during implementation.
+Automatically append missing answer text in its original transcript position,
+in bounded increments, preserving existing text and scroll position. Keep composer,
+controls, and other run progress responsive. Mark the run complete immediately;
+only a visible answer may show an in-place loading indicator. Do not reprint text
+already received in deltas. Decode UTF-8 across page boundaries; spool structured
+JSON until complete before typed decoding and preserve signed reasoning metadata.
 
-## Acceptance tests
+Loading failure keeps progress intact and offers retry plus existing inspection.
+Resume at the downloaded offset and verify the full digest before marking content
+complete. It must not turn a successful run into a failure or a tool result into
+an apparent empty execution result. Terminal polling must read compact status and
+output descriptors rather than reconstructing every historical model call.
 
-1. Boundary-sized Unicode/escaped payloads stay within serialized frame limits;
-   above-threshold bodies produce valid references and exact inspection values.
-2. A tool argument, result, text Part, and structured/binary Part above 1 MiB
-   each complete without size-driven overflow, false disconnection, or altered
-   tool invocation. Include a 20 MiB body above the total cache/snapshot budget.
-3. A giant single provider text/reasoning delta becomes ordered bounded fragments;
-   streaming and non-streaming responses render the complete text exactly once.
-4. Pause between `PartEnd` and `StepEnd`: the issued reference is already readable,
-   and the Step remains running. Cancellation retains the existing outcome rules.
-5. Run/thread/agent replacements containing large existing outputs fit their
-   budgets without reading body BLOBs or rebuilding calls; checkpoint and source
-   cursor behavior matches live/cached replay. Test migrated records too.
-6. Body download delay/failure does not delay another run's Begin/End, controls,
-   terminal status, or composer input. Resume fetches without duplicate text or
-   lost previews; retrieval failure never changes the run outcome.
-7. Retry at a reused Step path, rewind, restart, and out-of-order fetch completion
-   cannot inject an old body into a new incarnation or duplicate metrics.
-8. Paging validates ownership/limits and bounded reads; malformed lengths,
-   incomplete bytes, and digest mismatch produce explicit content errors.
-9. Local tracers, remote Chat, script output, and Hub metadata observe equivalent
-   structure. Complete calls/results remain inspectable after cache eviction and
-   runtime restart. Existing slow-reader overflow tests continue to pass.
-10. The default offline verification passes, with deterministic tests and no live
-    provider traffic.
+## Touchpoints and acceptance
+
+Likely files: `execution/{types,events,schemas,store,stream,stream_client,
+observation,subscriptions,remote}.py`, `execution/executor/{executor,_persist}.py`,
+`api/routers/runs.py`, local `TraceObserver`, Chat/script presenters,
+`cli/common/execution_progress/`, and teaming observation codecs/exporter.
+Keep source event parsing and store ownership in their existing packages.
+Update protocol docs and generate Unreleased through the changelog runnable
+when implementing. Tests remain offline and deterministic.
+
+1. Tool argument/result bodies of both 1 KiB and 20 MiB become null observations
+   with omission markers; real invocations, persisted results, and model messages
+   retain exact complete data. Cover giant streamed argument fragments as well
+   as completed arguments. Progress performs zero body requests.
+2. Workspace updates, spawn/run IDs, exec control handoffs, failures, and ordinary
+   tool summaries remain correct with omitted bodies, including large unrelated
+   fields in the same result.
+3. Unicode/escaped frame boundaries stay within budgets. Giant single text and
+   reasoning deltas split exactly; streaming/non-streaming answers above 16 MiB
+   render completely once without size-driven overflow or disconnection.
+4. Pause before StepEnd: a visible PartEnd reference is already readable while the
+   Step remains running; an omitted tool result causes no retrieval. Preserve
+   cancellation/persistence ordering.
+5. Run/thread/agent replacement snapshots with large existing bodies fit budgets
+   without body BLOB reads or call reconstruction. Test migrated records, cache
+   loss, checkpoint behavior, and terminal-state polling.
+6. Delayed/failed downloads cannot block input, controls, or another run's progress.
+   Retry/resume, reused Step paths, rewind, restart, and out-of-order completion
+   cannot duplicate text, metrics, or inject an old answer into a new incarnation.
+7. Validate paging/ownership, missing bytes, malformed lengths, and digest errors.
+   Complete inspection remains available after eviction/restart. Local, remote,
+   script, and Hub structural observations agree; slow-reader checks still pass.
+8. Default Ruff, formatting, type checks, and offline suite pass.
 
 ## Compatibility, risks, and open questions
 
-Reference-bearing events are a protocol change: update runtimes, CLI clients,
-and observer integrations together. New decoders accept previous inline events;
-old clients cannot consume the new descriptors. Preserve public command names
-and document complete-content access and this migration in Unreleased.
+Nullable tool bodies and visible-content descriptors change the observation
+protocol. Update runtimes/clients together; new decoders accept legacy inline
+events. Retain public commands, and document the omission marker and full-content
+inspection path in Unreleased.
 
-Derived projections and body ownership require a store migration and additional
-disk space. Migration must preserve historical inspection and retry boundaries;
-body encoding must not lengthen the publication critical section. Asynchronous
-hydration introduces ordering and rendering risks covered above. The current
-whole-Run detail endpoint must not become the status/content polling shortcut.
-
-No unresolved product decisions remain in this proposal. Human approval of the
-budgets, protocol/store migration, and automatic text loading is pending.
+Derived projections/visible-body ownership require migration and additional disk
+space; tools need no duplicate body storage. Preserve historical inspection and
+retry boundaries, keep encoding outside the publication gate, and test late body
+updates against transcript layout. No unresolved product decisions remain in this
+proposal; human approval of the complete definition is pending.
