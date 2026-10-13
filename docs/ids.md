@@ -177,6 +177,9 @@ State-loss recovery remains manual. Decoding retained IDs and taking the maximum
 writers. Timestamp or insertion order does not necessarily match allocation
 order. Historical records cannot recover deleted or unpersisted reservations;
 there is no automatic scan or repair.
+An existing schema 57 database with a missing `seqs` table is rejected for
+writing rather than initialized with empty counters; read-only history inspection
+remains available.
 
 
 ## Collision Handling

@@ -187,6 +187,31 @@ def test_run_store_opens_the_current_schema(tmp_path: Path) -> None:
         connection.close()
 
 
+def test_missing_allocator_table_never_resets_issued_ids(tmp_path: Path) -> None:
+    from toolang.common.ids import LOCAL_ID_FAMILY, allocate_id
+
+    path = tmp_path / "runs.db"
+    store = RunStore(path)
+    now = LOCAL_ID_FAMILY.bucket_started_at(100)
+    first = allocate_id(path, family=LOCAL_ID_FAMILY, agent_name="alice", now=now)
+    store.create_thread(thread_id=f"chat_{first.value}", origin="chat")
+    store.close()
+    with sqlite3.connect(path) as connection:
+        connection.execute("DROP TABLE seqs")
+    before = path.read_bytes()
+
+    with pytest.raises(RuntimeError, match="allocator state is missing"):
+        RunStore(path)
+    assert path.read_bytes() == before
+    with pytest.raises(sqlite3.OperationalError, match="no such table"):
+        allocate_id(path, family=LOCAL_ID_FAMILY, agent_name="alice", now=now)
+    readonly = RunStore(path, read_only=True)
+    try:
+        assert readonly.get_thread(thread_id=f"chat_{first.value}") is not None
+    finally:
+        readonly.close()
+
+
 def test_content_store_deduplicates_and_survives_restart(tmp_path: Path) -> None:
     path = tmp_path / "runs.db"
     value = b"durable content\x00"

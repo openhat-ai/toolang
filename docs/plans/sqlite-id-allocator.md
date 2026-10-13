@@ -35,6 +35,8 @@ Rows are created on first successful reservation, normally one each for `local`
 and `run`. A missing row represents `AllocatorState()`. Validate stored state
 before use; invalid values fail instead of resetting counters. No foreign keys
 or cleanup cascade connects allocation state to history.
+An existing current-schema database must already contain `seqs`; a missing
+table is state loss and fails writable initialization without recreating it.
 
 Keep codec and allocation behavior in `common/ids.py`. `allocate_id` accepts an
 explicit database path, opens an existing database with `mode=rw`, and closes
