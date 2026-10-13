@@ -87,11 +87,12 @@ ports are `1..65535`. Temporary agent port selection is unchanged.
 ## Hub transport
 
 One Hub per root binds `127.0.0.1`. Remote access/authentication is outside this
-delivery. Its private `.runtime/hub.json` records PID/creation time, endpoint,
+delivery. Its private `hub/hub.json` records PID/creation time, endpoint,
 human, backend identity, and status. Talk discovers this
 record; it never guesses a port or starts Hub implicitly. Configuration changes
 require restart. Lifecycle commands verify process identity and never manage
-agents or Redis/Valkey. A process lock prevents concurrent Hubs for the same root.
+agents or Redis/Valkey. `hub/hub.lock` excludes concurrent Hub processes for the
+same root, and `hub/hub.log` captures background startup output.
 
 Startup publishes a `starting` record before backend access, so status/stop remain
 available while registration is pending; readiness changes it to `running`.

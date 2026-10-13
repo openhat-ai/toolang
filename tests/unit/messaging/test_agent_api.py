@@ -20,6 +20,7 @@ from toolang.plugin.toolsets.convo import ConvoToolset
 from toolang.teaming.agent_client import AgentClient, AgentEventClient
 from toolang.teaming.api import create_app
 from toolang.teaming.config import BackendConfig
+from toolang.teaming.discovery import hub_connection
 from toolang.teaming.errors import (
     BackendUnavailable,
     EventRecoveryRequired,
@@ -99,6 +100,20 @@ def test_agent_tools_without_hub_never_construct_backend(tmp_path):
     asyncio.run(scenario())
 
 
+def test_agent_discovery_ignores_legacy_hub_record(tmp_path):
+    legacy_path = tmp_path / ".runtime" / "hub.json"
+    legacy_path.parent.mkdir()
+    HubRecord(
+        pid=1,
+        created=1.0,
+        port=7000,
+        human="human:owner",
+        identity=CONFIG.identity,
+    ).save(legacy_path)
+    with pytest.raises(BackendUnavailable, match="Hub is unavailable"):
+        hub_connection(tmp_path)
+
+
 def test_convo_peek_exposes_current_revision_for_renaming(tmp_path, monkeypatch):
     async def scenario():
         human = client(FakeServer(server_type="valkey"), CONNECTION.human)
@@ -150,7 +165,7 @@ def test_agent_discovery_pins_batch_identity_and_refreshes_connections(tmp_path)
                 port=7000,
                 human=current.human,
                 identity=current.identity,
-            ).save(tmp_path / ".runtime" / "hub.json")
+            ).save(tmp_path / "hub" / "hub.json")
 
         save()
         async with (
@@ -186,7 +201,7 @@ def test_agent_discovery_pins_batch_identity_and_refreshes_connections(tmp_path)
             assert await alice.targets()
             with alice.session() as identity:
                 assert identity == current.identity
-            (tmp_path / ".runtime" / "hub.json").unlink()
+            (tmp_path / "hub" / "hub.json").unlink()
             with pytest.raises(BackendUnavailable):
                 await alice.targets()
 

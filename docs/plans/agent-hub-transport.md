@@ -15,8 +15,8 @@ connections. Coordination and remote Hub deployment remain outside this change.
 
 ## Connection and identity
 
-- Reuse the root's private `.runtime/hub.json` endpoint and backend
-  identity. Read the current record when connecting/reconnecting; a missing or
+- Reuse the root's private `hub/hub.json` endpoint and backend identity. Read
+  the current record when connecting/reconnecting; a missing or
   starting record means unavailable. Endpoint changes are picked up on the next
   operation, without restarting the agent. Clients do not validate Hub's PID.
 - Keep process validation in `up/hub.py`; share record decoding and connection
