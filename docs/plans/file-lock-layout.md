@@ -42,6 +42,24 @@ Remove `<db-name>.init.lock` creation/use and the `file_write_lock` import from
 versions, schema SQL, and public constructor unchanged. This revision covers
 initialization only; do not change runtime transactions or chore scheduling.
 
+Safety must cover all three process arrangements against one database:
+
+| Arrangement | Minimum concurrent participants |
+| --- | --- |
+| Host only | Two independent host processes |
+| Container only | Two independent processes inside one container |
+| Host and container | Two host processes plus two container processes |
+
+Use the production directory mount, with the database, `-wal`, `-shm`, and any
+rollback journal shared together. Different host/guest paths must refer to the
+same files, with compatible permissions, cross-boundary byte-range locks, and
+coherent mmap access to the WAL index ([SQLite WAL contract](https://www.sqlite.org/wal.html)).
+Mounting only the database or synchronizing separate file copies is insufficient.
+Native Linux containers share the host kernel; macOS containers run in a VM,
+so host-only tests cannot establish host/guest safety ([Docker Desktop architecture](https://docs.docker.com/desktop/features/networking/)).
+Validate the actual engine, file-sharing backend, mount options, and SQLite builds
+on Linux and macOS. A returned `wal` mode alone does not prove these semantics.
+
 Writable opening follows one sequence:
 
 1. Enable connection-local foreign keys, then acquire `BEGIN IMMEDIATE` before
@@ -82,16 +100,18 @@ separate; neither bounds schema execution or statistics backfill.
 
 Implementation touches `src/toolang/execution/store.py`,
 `tests/unit/execution/test_store_schema.py`,
-`tests/integration/execution/test_multiprocess_scenarios.py`, and
+`tests/integration/execution/test_multiprocess_scenarios.py`,
+`tests/integration/up/test_docker_sandbox_lifecycle.py`, and
 `docs/layout.md` (remove its initialization-lock row). Update the changelog
 through the repository runnable when implementing. Leave existing `.init.lock`
 files untouched; newly opened stores neither create nor depend on them.
 
 Acceptance checks:
 
-- Synchronized threads and spawned processes open an absent database and a
-  supported older schema successfully; all see the current version and WAL,
-  existing records survive, integrity checks pass, and no init sidecar appears.
+- In each arrangement, gated independent processes simultaneously open an absent
+  database, upgrade a supported older schema, and reopen the current schema;
+  all see the current version and WAL, existing records survive, and no init
+  sidecar appears. Retain the thread test as additional coverage.
 - A writer blocks transaction admission; a reader blocks DELETE-to-WAL
   activation. Release each through explicit test gates: opening succeeds after
   release, and persistent contention fails within its retry budget. Holding a
@@ -105,12 +125,30 @@ Acceptance checks:
 - Inject early/extended `BUSY`, timeout, non-`BUSY` errors, and a non-WAL pragma
   result: verify retry selection, bounded waiting, timeout restoration, and
   failure cleanup using a controlled clock rather than 30-second sleeps.
+- In each arrangement, hold a write transaction and prove contenders cannot
+  acquire one until release; test both host-to-guest and guest-to-host contention.
+  Concurrent commits remain mutually visible with exact record counts and no
+  lost/duplicate writes. Checkpoint while readers/writers are active, terminate
+  a process with an uncommitted transaction, then reopen from both sides:
+  committed records survive, uncommitted records are absent, and integrity checks
+  pass. Synchronize through explicit IPC gates, without model-provider calls.
+
+Container cases use the existing `live_docker` opt-in and production mount
+construction; the default suite stays offline. Before completing implementation,
+run the Docker cases on Linux and macOS with
+`uv run pytest tests/integration/up/test_docker_sandbox_lifecycle.py -m live_docker --live-docker`
+and record the environment above. Skips or host-only passes do not satisfy this
+gate. If a required mount cannot provide SQLite's locking/mmap semantics, revisit
+the storage design with the human before shipping lock removal; do not silently
+exclude host/guest access or add a sidecar fallback. Neither an init sidecar nor
+BUSY retries can repair incorrect runtime filesystem coordination.
 
 Success requires a shorter initialization flow with one schema validation point
 and no file-lock dependency. Risks are WAL conversion starvation under sustained
-readers and a committed schema before WAL activation; bounded failure and safe
-reopening are intentional. Upgrade all writers together under the existing
-offline-upgrade rule. No open design questions remain; this revision needs human
+readers, a committed schema before WAL activation, and incompatible VM file
+sharing; bounded failure and safe reopening are intentional, while cross-boundary
+storage compatibility must pass the gate above. Upgrade all writers together
+under the existing offline-upgrade rule. This revision needs human
 confirmation before implementation. Run the default checks when implementing.
 
 ## Remove unnecessary logic or locks
