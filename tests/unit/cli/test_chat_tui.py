@@ -1698,7 +1698,9 @@ def test_chat_queue_panel_shows_compact_actions_only_on_the_selected_entry(
     else:
         assert selected[4:] == unselected[4:]
         assert selected.rstrip().endswith("…")
-    assert not any(action in unselected for action in ("edit", "steer", "delete"))
+    assert not any(
+        action in unselected for action in ("(m-enter)steer", "(e)dit", "(d)elete")
+    )
     assert any("queue.selected" in style for style, _text in fragments) is focused
     assert "›" not in "".join(lines)
     assert all(get_cwidth(line) == terminal_width for line in lines)

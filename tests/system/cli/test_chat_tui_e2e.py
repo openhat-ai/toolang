@@ -349,6 +349,8 @@ def test_chat_tui_keeps_multiple_steers_visible_until_their_step_finishes(
         assert "▮ third steer" in steers
         session.send(b"queued follow-up\r")
         _wait_redrawn(session, "↳ queued follow-up")
+        # Require a fresh hint from this focus change, not the earlier selection.
+        session.data.clear()
         session.send(b"\t")
         output = _wait_redrawn(session, "(m-enter)steer")
         assert "queued follow-up" in output
