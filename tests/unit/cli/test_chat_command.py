@@ -1014,7 +1014,7 @@ def test_chat_runtime_does_not_fall_back_after_remote_health_failure(
 
 
 @pytest.mark.parametrize("instance", [None, "guest"])
-def test_chat_input_history_uses_canonical_path_without_legacy_import(
+def test_chat_input_history_uses_canonical_runtime_path_without_legacy_import(
     tmp_path: Path,
     monkeypatch: Any,
     instance: str | None,
@@ -1026,7 +1026,7 @@ def test_chat_input_history_uses_canonical_path_without_legacy_import(
         layout = replace(layout, instance=instance)
     legacy = layout.runtime / "chat-input-history.jsonl"
     previous = layout.runtime / "chat-history.jsonl"
-    legacy.parent.mkdir(parents=True)
+    layout.runtime.mkdir(parents=True)
     legacy_data = '{"text":"legacy"}\n'
     previous_data = '{"text":"previous"}\n'
     legacy.write_text(legacy_data, encoding="utf-8")
@@ -1036,7 +1036,7 @@ def test_chat_input_history_uses_canonical_path_without_legacy_import(
 
     history = chat._chat_input_history_store(object())  # type: ignore[arg-type]
 
-    expected_path = layout.root / "human" / "chat-input.jsonl"
+    expected_path = layout.runtime / "chat-input.jsonl"
     assert history is not None
     assert history.path == expected_path
     assert history.load() == []
@@ -1045,13 +1045,14 @@ def test_chat_input_history_uses_canonical_path_without_legacy_import(
     assert reopened is not None
     assert reopened.path == expected_path
     assert reopened.load() == ["new"]
+    assert legacy.read_text(encoding="utf-8") == legacy_data
+    assert previous.read_text(encoding="utf-8") == previous_data
+
     selected_layout = AgentLayout.resident(layout.root, "bob")
     other_agent_history = chat._chat_input_history_store(object())  # type: ignore[arg-type]
     assert other_agent_history is not None
-    assert other_agent_history.path == expected_path
-    assert other_agent_history.load() == ["new"]
-    assert legacy.read_text(encoding="utf-8") == legacy_data
-    assert previous.read_text(encoding="utf-8") == previous_data
+    assert other_agent_history.path == selected_layout.runtime / "chat-input.jsonl"
+    assert other_agent_history.load() == []
 
 
 def test_chat_runtime_forwards_dev_when_acquiring_a_guest(

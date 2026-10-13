@@ -288,7 +288,7 @@ def _chat_input_history_store(ctx: typer.Context) -> ChatInputHistoryStore | Non
         layout = context_layout(ctx)
     except (AttributeError, KeyError, TypeError):
         return None
-    path = layout.root / "human" / "chat-input.jsonl"
+    path = layout.runtime / "chat-input.jsonl"
     return ChatInputHistoryStore(path)
 
 

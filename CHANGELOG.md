@@ -16,10 +16,10 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   lock means an old and a new Hub no longer coordinate, so stop a running Hub
   before upgrading.
 
-- **Breaking:** Chat and Talk input history moves under the Toolang root and no
-  longer imports earlier files: Chat reads `<root>/human/chat-input.jsonl`
-  instead of `<agent-runtime>/chat-history.jsonl`, shared by every Chat session
-  using that root, and human Talk reads
+- **Breaking:** Chat and Talk input history uses new paths and no longer
+  imports earlier files: Chat reads `<agent-runtime>/chat-input.jsonl`
+  instead of `<agent-runtime>/chat-history.jsonl`, staying isolated per agent
+  and runtime instance, and human Talk reads
   `<root>/human/talk-input/<conversation-id>.jsonl` instead of
   `<root>/.runtime/talk-history/<conversation-id>.jsonl`. Old files are left
   untouched and are no longer read, so copy them to the new paths to keep
