@@ -29,7 +29,7 @@ from toolang.plugin.toolsets.loading import tools_from_toolsets
 from toolang.plugin.models.query import first_model_ref
 from toolang.plugin.types import LoadedPlugin
 from toolang.state.prepare import prepare_agent_state
-from toolang.work.messaging import MessagingLoop
+from toolang.driver.talk import MessagingLoop
 
 CONFIG = BackendConfig("redis://test")
 REPLY_TO = "ad451d5a-7465-4d2d-b0b6-f06490657d5f"
@@ -510,7 +510,7 @@ def test_arrivals_during_handling_and_cancellation_advance_only_fetched_messages
 
 
 def test_heartbeat_continues_during_slow_batch_and_reconnects(tmp_path, monkeypatch):
-    from toolang.work import teaming
+    from toolang.teaming import runtime as teaming
     from toolang.teaming.errors import BackendUnavailable
 
     async def scenario():

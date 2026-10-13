@@ -322,12 +322,10 @@ def _make_edit_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
     ) -> None:
         scope, agent_name = _target_scope(ctx)
         selected_agent = context_agent(ctx)
-        existing = user_call(
-            _authored_caps(context_root(ctx), agent_name, scope).get, kind, name
-        )
-        if existing is None:
+        catalog = _authored_caps(context_root(ctx), agent_name, scope)
+        if not catalog.path(kind, name).is_file():
             raise ClickException(f"{title} {name} not found")
-        text = existing.content
+        text = user_call(catalog.read, kind, name)
         updated_text = edit_markdown(text)
         if updated_text is None or updated_text == text:
             typer.echo("No changes")
@@ -428,12 +426,12 @@ def _make_delete_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
     ) -> None:
         scope, agent_name = _target_scope(ctx)
         selected_agent = context_agent(ctx)
-        entry = user_call(
-            _authored_caps(context_root(ctx), agent_name, scope).remove,
+        path = user_call(
+            _authored_caps(context_root(ctx), agent_name, scope).remove_file,
             kind,
             name,
         )
-        deleted_path = entry.path.parent if kind == "skill" else entry.path
+        deleted_path = path.parent if kind == "skill" else path
         if selected_agent:
             _refresh_agent_state(
                 context_root(ctx),

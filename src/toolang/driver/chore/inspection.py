@@ -11,7 +11,7 @@ from toolang.common.layout import AgentLayout
 from toolang.execution.types import ErrorMessage, ErrorRef
 from .records import ChoreRecord
 from .schemas import ChoreDetail, ChoreInfo, ChoreRuntimeInfo, LastRunInfo
-from .state import Chore, load_chores
+from toolang.catalog.chores import Chore, inspect_chore_sources
 from .store import open_chore_store
 
 
@@ -52,6 +52,7 @@ class ChoreInspection:
         layout: AgentLayout,
         runs: Iterable[ChoreRun],
         error_messages: Mapping[str, str] | None = None,
+        definitions: tuple[Chore, ...] | None = None,
     ) -> ChoreInspection:
         """Load definitions and checkpoints from the owning stores."""
 
@@ -70,7 +71,9 @@ class ChoreInspection:
                 latest_runs[str(run.thread)] = run
         return cls(
             home=layout.home,
-            definitions=load_chores(layout),
+            definitions=inspect_chore_sources(layout)
+            if definitions is None
+            else definitions,
             records={record.chore_id: record for record in records},
             latest_runs=latest_runs,
             error_messages=error_messages,
@@ -99,7 +102,8 @@ class ChoreInspection:
     def _info(self, chore: Chore) -> ChoreInfo:
         record, last_run = self._state(chore)
         synced = (
-            record is not None
+            chore.source_error is None
+            and record is not None
             and record.body_hash == chore.body_hash
             and record.schedule_hash == chore.schedule_hash
         )
@@ -115,6 +119,7 @@ class ChoreInspection:
             path=path,
             line=chore.line,
             schedule=chore.schedule,
+            source_error=chore.source_error,
             runtime=ChoreRuntimeInfo(
                 thread_id=chore.thread_id,
                 synced=synced,

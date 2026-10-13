@@ -123,7 +123,7 @@ class AuthoredCaps:
 
     def create(self, cap: CapFile) -> CapFile:
         with self.write_lock():
-            if self.get(cap.kind, cap.name) is not None:
+            if self.path(cap.kind, cap.name).exists():
                 raise CatalogConflictError(
                     f"authored {cap.kind} already exists: {cap.name}"
                 )
@@ -131,7 +131,7 @@ class AuthoredCaps:
 
     def update(self, cap: CapFile) -> CapFile:
         with self.write_lock():
-            if self.get(cap.kind, cap.name) is None:
+            if not self.path(cap.kind, cap.name).is_file():
                 raise CatalogNotFoundError(f"authored {cap.kind} not found: {cap.name}")
             return self._write(cap)
 
@@ -151,6 +151,25 @@ class AuthoredCaps:
             else:
                 cap.path.unlink()
             return cap
+
+    def read(self, kind: CapKind, name: str) -> str:
+        """Read raw authored content even when its metadata is invalid."""
+        path = self.path(kind, name)
+        if not path.is_file():
+            raise CatalogNotFoundError(f"authored {kind} not found: {name}")
+        return path.read_text(encoding="utf-8")
+
+    def remove_file(self, kind: CapKind, name: str) -> Path:
+        """Remove an authored resource without parsing broken content."""
+        with self.write_lock():
+            path = self.path(kind, name)
+            if not path.is_file():
+                raise CatalogNotFoundError(f"authored {kind} not found: {name}")
+            if kind == "skill":
+                self._remove_skill_directory(path.parent)
+            else:
+                path.unlink()
+            return path
 
     def path(self, kind: CapKind, name: str) -> Path:
         _validate_kind(kind)

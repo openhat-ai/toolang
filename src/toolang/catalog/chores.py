@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
 
-from toolang.catalog.chore import AuthoredChores, ChoreFile
+from .chore import AuthoredChores, ChoreFile
 from toolang.common.ids import chore_id
 from toolang.common.layout import AgentLayout
 from toolang.lang.ast import ChoreDecl, parse_chore_declarations
@@ -23,6 +23,7 @@ class Chore:
     schedule: str | None
     path: Path
     line: int | None = None
+    source_error: str | None = None
 
     @property
     def id(self) -> str:
@@ -60,26 +61,35 @@ class Chore:
 
 
 def load_chore_files(layout: AgentLayout) -> tuple[Chore, ...]:
-    """Read immediate root/home Markdown definitions, with home taking precedence."""
+    """Read immediate home Markdown definitions."""
 
-    return tuple(
-        merge_chores(
-            *(
-                (file_chore(item) for item in AuthoredChores(directory).list())
-                for directory in dict.fromkeys((layout.root, layout.home))
-            )
-        ).values()
-    )
+    return tuple(file_chore(item) for item in AuthoredChores(layout.home).list())
 
 
 def load_chores(layout: AgentLayout) -> tuple[Chore, ...]:
     """Read effective authored definitions without preparing State or handlers."""
 
-    source = (
-        layout.program.read_text(encoding="utf-8") if layout.program.is_file() else ""
-    )
-    inline = inline_chores(parse_chore_declarations(source), path=layout.program)
+    inline: tuple[Chore, ...] = ()
+    if layout.program.is_file():
+        try:
+            inline = inline_chores(
+                parse_chore_declarations(layout.program.read_text(encoding="utf-8")),
+                path=layout.program,
+            )
+        except (OSError, ValueError):
+            pass
     return tuple(merge_chores(load_chore_files(layout), inline).values())
+
+
+def inspect_chore_sources(layout: AgentLayout) -> tuple[Chore, ...]:
+    """Include malformed authored files for inspection and raw repair."""
+    valid = load_chores(layout)
+    invalid = tuple(
+        Chore(path.stem, None, content, None, path, source_error=error)
+        for path, content, error in AuthoredChores(layout.home).sources()
+        if error is not None
+    )
+    return tuple(merge_chores(invalid, valid).values())
 
 
 def inline_chores(

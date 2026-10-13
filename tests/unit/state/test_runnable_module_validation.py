@@ -1,10 +1,20 @@
 """Module exports keep declaration roles and template ownership in validation."""
 
+import re
 import pytest
 
 from toolang.common.layout import AgentLayout
-from toolang.state.errors import StatePreparationError
+from toolang.state.watcher import StateWatcher
 from toolang.state.prepare import prepare_agent_state
+
+
+def _assert_excluded(state, match=None):
+    excluded = [file for file in state.files if not file.accepted]
+    assert excluded, "invalid source must be excluded from the published State"
+    assert all(file.code and file.message for file in excluded)
+    if match is not None:
+        assert re.search(match, "; ".join(file.message or "" for file in excluded))
+    return excluded
 
 
 def _prepare(tmp_path, root_source, module_source):
@@ -25,23 +35,27 @@ def test_module_filename_cannot_shadow_the_unnamed_entry_alias(
     layout.program.write_text("agic:\n  Root.\n" if root_entry else "")
     (layout.home / "runnables/_.too").write_text(f"{kind}:\n  pass\n")
 
-    with pytest.raises(StatePreparationError, match="reserved.*unnamed entry") as error:
-        prepare_agent_state(layout)
+    state = prepare_agent_state(layout)
+    _assert_excluded(state, match="reserved.*unnamed entry")
+    assert state.toolang_root is not None
+    error = StateWatcher(
+        AgentLayout.resident(state.toolang_root, state.name), initial_state=state
+    ).diagnostics()
 
-    assert error.value.diagnostics[0].code == "invalid-runnable-filename"
-    assert error.value.diagnostics[0].authored_path == "runnables/_.too"
+    assert error[0].code == "invalid-runnable-filename"
+    assert error[0].authored_path == "runnables/_.too"
 
 
 @pytest.mark.parametrize("named", [False, True])
 @pytest.mark.parametrize("kind", ["agic", "flow"])
 def test_exported_runnables_reject_whole_handle_arguments(tmp_path, kind, named):
-    with pytest.raises(StatePreparationError, match="Run handle 'job'"):
-        _prepare(
-            tmp_path,
-            "agic worker():\n  Work.\nflow parent():\n"
-            "  let job = async run worker\n  run research\n",
-            f"{kind}{' research' if named else ''}(job: Json):\n  pass\n",
-        )
+    state = _prepare(
+        tmp_path,
+        "agic worker():\n  Work.\nflow parent():\n"
+        "  let job = async run worker\n  run research\n",
+        f"{kind}{' research' if named else ''}(job: Json):\n  pass\n",
+    )
+    _assert_excluded(state, match="Run handle 'job'")
 
 
 @pytest.mark.parametrize("named", [False, True])
@@ -76,15 +90,15 @@ def test_exported_agic_uses_its_own_history_templates(tmp_path, kind, named, sel
 @pytest.mark.parametrize("named", [False, True])
 @pytest.mark.parametrize("kind", ["context", "instruct"])
 def test_exported_agic_checks_module_history_window(tmp_path, kind, named):
-    with pytest.raises(StatePreparationError, match="outside the active window"):
-        _prepare(
-            tmp_path,
-            f"{kind} shared:\n  Root guidance.\n"
-            "flow parent():\n  repeat 1 time windowing 1:\n    run research\n",
-            f"{kind} shared:\n  {{{{_2}}}}\n"
-            f"agic{' research' if named else ''}():\n"
-            f"  {kind} = shared\n  Work.\n",
-        )
+    state = _prepare(
+        tmp_path,
+        f"{kind} shared:\n  Root guidance.\n"
+        "flow parent():\n  repeat 1 time windowing 1:\n    run research\n",
+        f"{kind} shared:\n  {{{{_2}}}}\n"
+        f"agic{' research' if named else ''}():\n"
+        f"  {kind} = shared\n  Work.\n",
+    )
+    _assert_excluded(state, match="outside the active window")
 
 
 @pytest.mark.parametrize("kind", ["context", "instruct"])
@@ -103,5 +117,5 @@ def test_exported_agic_retains_inherited_template_owner(tmp_path, kind, disabled
     if disabled:
         _prepare(tmp_path, root, module)
     else:
-        with pytest.raises(StatePreparationError, match="outside the active window"):
-            _prepare(tmp_path, root, module)
+        state = _prepare(tmp_path, root, module)
+        _assert_excluded(state, match="outside the active window")

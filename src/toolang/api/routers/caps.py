@@ -157,7 +157,7 @@ async def delete_authored_cap(
             manager.home_authoring,
             manager.root_authoring,
             requested_scope,
-        ).remove,
+        ).remove_file,
         kind,
         name,
     )
@@ -381,7 +381,7 @@ def _collection_from_path(path: str) -> str:
 
 async def _publish_written_state(core: AgentCore) -> AgentState:
     result = await core.state.refresh_result()
-    if result.diagnostics:
+    if result.error is not None:
         detail = "; ".join(item.message for item in result.diagnostics)
         raise HTTPException(
             status_code=409,

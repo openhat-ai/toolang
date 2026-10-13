@@ -63,7 +63,7 @@ def test_model_creates_discovers_calls_edits_and_deletes_module(tmp_path, kind, 
     call("reject", "state__sync")
     call("get_broken", "state__get", key=key)
     call("after_reject", "runtime__runnables", name="research")
-    invoke("after_reject_run", "research", "last valid version")
+    call("after_reject_run", "runtime__run", runnable="research", input={"_": "input"})
     call(
         "repair",
         "state__update",
@@ -116,7 +116,8 @@ def test_model_creates_discovers_calls_edits_and_deletes_module(tmp_path, kind, 
             assert list(results) == expected_ids
             expected_errors = {
                 "stale",
-                "reject",
+                "after_reject",
+                "after_reject_run",
                 "private_discovery",
                 "private_run",
                 "get_deleted",
@@ -145,8 +146,11 @@ def test_model_creates_discovers_calls_edits_and_deletes_module(tmp_path, kind, 
                     {"key": key, "digest": digest, "bytes": len(content.encode())},
                 ]
             assert values["stale"]["error"] == "digest_mismatch"
-            assert values["reject"]["error"] == "state_rejected"
-            assert values["reject"]["diagnostics"]
+            rejected_file = next(
+                file for file in values["reject"]["files"] if file["key"] == key
+            )
+            assert rejected_file["accepted_digest"] is None
+            assert rejected_file["code"] == "invalid-program"
             assert values["get_broken"]["content"] == broken
             assert values["get_deleted"]["error"] == "not_found"
 
@@ -154,15 +158,21 @@ def test_model_creates_discovers_calls_edits_and_deletes_module(tmp_path, kind, 
             first_revision = values["publish"]["revision"]
             second_revision = values["republish"]["revision"]
             assert len({initial_revision, first_revision, second_revision}) == 3
-            assert values["reject"]["revision"] == second_revision
+            assert values["reject"]["revision"] != second_revision
             assert values["recover"]["revision"] == second_revision
             assert values["publish_delete"]["revision"] == initial_revision
-            assert {"scope": "home", "key": key, "digest": original_digest} in (
-                values["publish"]["files"]
-            )
-            assert {"scope": "home", "key": key, "digest": updated_digest} in (
-                values["republish"]["files"]
-            )
+            assert {
+                "scope": "home",
+                "key": key,
+                "observed_digest": original_digest,
+                "accepted_digest": original_digest,
+            } in (values["publish"]["files"])
+            assert {
+                "scope": "home",
+                "key": key,
+                "observed_digest": updated_digest,
+                "accepted_digest": updated_digest,
+            } in (values["republish"]["files"])
             assert [item["key"] for item in values["list_deleted"]["files"]] == [
                 "agent.too"
             ]
@@ -178,7 +188,6 @@ def test_model_creates_discovers_calls_edits_and_deletes_module(tmp_path, kind, 
                 ("discover", first_revision, "Research version one."),
                 ("before_sync", first_revision, "Research version one."),
                 ("rediscover", second_revision, "Research version two."),
-                ("after_reject", second_revision, "Research version two."),
             ):
                 entry = next(
                     e for e in values[id]["runnables"] if e["ref"] == f"{kind}:research"
@@ -192,19 +201,18 @@ def test_model_creates_discovers_calls_edits_and_deletes_module(tmp_path, kind, 
                 if execution_snapshot(invocation.call)["runnable"]
                 != "agent::agic:manage"
             ]
-            assert len(children) == 4
-            for call, version in zip(children, ("one", "one", "two", "two")):
+            assert len(children) == 3
+            for call, version in zip(children, ("one", "one", "two")):
                 text = " ".join(message_text(m.parts) for m in call.messages)
                 assert f"Version {version}: input" in text
             for id, output in (
                 ("first", "first result"),
                 ("before_sync_run", "still first version"),
                 ("second", "second result"),
-                ("after_reject_run", "last valid version"),
             ):
                 assert values[id] == {"type": "Text", "value": output}
             runs = harness.store.list_run_tree(root_run_id=root.id)
-            assert len(runs) == (5 if kind == "agic" else 9)
+            assert len(runs) == (4 if kind == "agic" else 7)
             assert all(run.status == "succeeded" for run in runs)
             assert harness.store.resolve_state_revision(root.state) == initial_revision
             assert harness.adapter.pending_responses == 0

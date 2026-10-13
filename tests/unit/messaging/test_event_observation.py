@@ -666,8 +666,8 @@ def test_multi_origin_cached_replay_preserves_global_order_and_identity(tmp_path
 
 @pytest.mark.parametrize("backlog", [False, True])
 def test_teaming_keeps_lease_through_final_export_drain(tmp_path, monkeypatch, backlog):
-    from toolang.work.messaging import MessagingLoop
-    from toolang.work.teaming import TeamingLoop
+    from toolang.driver.talk import MessagingLoop
+    from toolang.teaming.runtime import TeamingLoop
     from toolang.teaming.messaging import MessagingClient
 
     harness = ExecutionHarness.create(
@@ -759,8 +759,8 @@ def test_teaming_keeps_lease_through_final_export_drain(tmp_path, monkeypatch, b
 
 def test_teaming_close_bounds_unresponsive_lease_release(tmp_path, monkeypatch):
     from toolang.teaming.messaging import MessagingClient
-    from toolang.work.messaging import MessagingLoop
-    from toolang.work.teaming import TeamingLoop
+    from toolang.driver.talk import MessagingLoop
+    from toolang.teaming.runtime import TeamingLoop
 
     harness = ExecutionHarness.create(
         tmp_path, source="flow example:\n  let result = Done\n", responses=[]

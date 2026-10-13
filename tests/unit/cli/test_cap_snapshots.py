@@ -127,7 +127,8 @@ def test_authored_change_is_saved_before_state_publication_failure(
 
     layout = AgentLayout.resident(tmp_path, "alice")
     layout.home.mkdir(parents=True)
-    layout.program.write_text("invalid Toolang!!!")
+    layout.program.write_text("agic:\n  Valid.\n")
+    layout.config.write_text("[broken")
     (layout.home / "prompts").mkdir()
     source = layout.home / "prompts" / "note.md"
     if command == "edit":

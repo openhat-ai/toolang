@@ -4,9 +4,9 @@ from datetime import datetime, timezone
 
 from toolang.catalog.chore import AuthoredChores, ChoreFile
 from toolang.common.layout import AgentLayout
-from toolang.work.inspection import ChoreInspection
-from toolang.work.state import load_chores
-from toolang.work.store import ChoreStore
+from toolang.driver.chore.inspection import ChoreInspection
+from toolang.catalog.chores import load_chores
+from toolang.driver.chore.store import ChoreStore
 
 
 def test_inspection_shows_pending_time_and_detects_unprocessed_edits(tmp_path):

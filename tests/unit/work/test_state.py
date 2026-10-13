@@ -19,7 +19,7 @@ def test_name_identity_shadowing_and_collision(tmp_path, monkeypatch):
     import pytest
     from dataclasses import replace
     from toolang.lang.ast import Program
-    from toolang.work import state
+    from toolang.catalog import chores as state
 
     program = Program.from_source(
         "chore cleanup:\n  First.\nchore cleanup:\n  Second.\n"

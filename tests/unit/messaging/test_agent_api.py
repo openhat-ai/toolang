@@ -33,7 +33,7 @@ from toolang.teaming.records import HubRecord, MAX_BYTES
 from toolang.teaming.schemas import HubConnection, Message
 from toolang.teaming.stream_client import HubStreamState
 from toolang.teaming.subscriptions import HubSubscription
-from toolang.work.messaging import MessagingLoop
+from toolang.driver.talk import MessagingLoop
 
 CONNECTION = HubConnection("http://hub", "human:owner", CONFIG.identity)
 

@@ -13,8 +13,8 @@ from toolang.catalog import CapsManager, ChoresManager
 from toolang.catalog.chore import AuthoredChores, ChoreFile
 from toolang.common.ids import chore_id
 from toolang.up.core import AgentCore
-from toolang.work.store import ChoreStore
-from toolang.work.state import load_chores
+from toolang.driver.chore.store import ChoreStore
+from toolang.catalog.chores import load_chores
 
 
 def test_flat_authoring_and_inline_shadowing_with_chore_driver_disabled(tmp_path):
@@ -27,7 +27,7 @@ def test_flat_authoring_and_inline_shadowing_with_chore_driver_disabled(tmp_path
     layout.program.write_text("chore cleanup:\n  Inline wins.\nagic:\n  {{_}}\n")
     harness.store.close()
     core = AgentCore(layout, drivers=frozenset())
-    core.state = SimpleNamespace(current=lambda: harness.state)
+    asyncio.run(core.state.refresh())
     root_file = AuthoredChores(layout.root).create(
         ChoreFile.parse("Root body.", name="cleanup")
     )
@@ -135,13 +135,11 @@ def test_chore_inspection_reads_current_source_and_rejects_hidden_mutations(tmp_
     layout = harness.setup.layout
     harness.store.close()
     core = AgentCore(layout, drivers=frozenset())
-    core.state = SimpleNamespace(current=lambda: harness.state)
     home = AuthoredChores(layout.home).create(
         ChoreFile.parse("Home body.", name="cleanup")
     )
-    layout.program.write_text(
-        "chore cleanup:\n  New inline.\nflow broken:\n  run missing\n"
-    )
+    layout.program.write_text("chore cleanup:\n  New inline.\nflow ready:\n  pass\n")
+    asyncio.run(core.state.refresh())
     app = create_app(
         core, CapsManager(layout), ChoresManager(layout), cors_allowed_origins=()
     )
@@ -173,6 +171,7 @@ def test_chore_api_edits_visible_home_file_and_preserves_root(tmp_path):
     root_file = AuthoredChores(layout.root).create(
         ChoreFile.parse("Root body.", name="cleanup")
     )
+    asyncio.run(core.state.refresh())
     app = create_app(
         core, CapsManager(layout), ChoresManager(layout), cors_allowed_origins=()
     )
@@ -180,9 +179,9 @@ def test_chore_api_edits_visible_home_file_and_preserves_root(tmp_path):
         with TestClient(app) as client:
             endpoint = "/api/v1/chores/cleanup"
             assert (
-                client.patch(endpoint, json={"body": "Hidden edit."}).status_code == 409
+                client.patch(endpoint, json={"body": "Hidden edit."}).status_code == 404
             )
-            assert client.delete(endpoint).status_code == 409
+            assert client.delete(endpoint).status_code == 404
             created = client.post(
                 "/api/v1/chores", json={"name": "cleanup", "body": "Home body."}
             )
@@ -192,7 +191,7 @@ def test_chore_api_edits_visible_home_file_and_preserves_root(tmp_path):
             assert updated.status_code == 200
             assert client.get(endpoint).json() == updated.json()
             assert client.delete(endpoint).status_code == 204
-            assert client.get(endpoint).json()["body"] == "Root body."
+            assert client.get(endpoint).status_code == 404
             assert (
                 root_file.path is not None
                 and root_file.path.read_text() == "Root body."

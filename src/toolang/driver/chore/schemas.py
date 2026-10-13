@@ -40,6 +40,7 @@ class ChoreInfo:
     path: str
     line: int | None
     schedule: str | None
+    source_error: str | None
     runtime: ChoreRuntimeInfo
 
 

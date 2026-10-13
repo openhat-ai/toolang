@@ -4,7 +4,6 @@ import asyncio
 from collections.abc import Callable
 from dataclasses import replace
 from datetime import datetime, timezone
-from functools import partialmethod
 import threading
 
 import pytest
@@ -16,13 +15,13 @@ from toolang.catalog.chore import AuthoredChores, ChoreFile
 from toolang.execution.records import CreateControlPayload, RunControlPayload
 from toolang.lang.input import CallInput
 from toolang.lang.types import Array
-from toolang.work.authoring import new_chore_file
-from toolang.work.records import ChoreRecord
-from toolang.work.scheduler import ChoreDriver
+from toolang.catalog.chore_authoring import new_chore_file
+from toolang.driver.chore.records import ChoreRecord
+from toolang.driver.chore.scheduler import ChoreDriver
 from toolang.base.errors import ToolangError
-from toolang.work.state import load_chores
-from toolang.work.store import ChoreStore
-from toolang.work.watcher import ChoreWatcher
+from toolang.catalog.chores import load_chores
+from toolang.driver.chore.store import ChoreStore
+from toolang.state.watcher import StateWatcher
 from tests.support.execution_harness import (
     AsyncGate,
     ExecutionHarness,
@@ -37,16 +36,6 @@ agic review(_: Part[], focus: Text):
   instruct = none
   user: {{focus}} {{_}}
 """
-
-
-@pytest.fixture(autouse=True)
-def fast_chore_watcher(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Keep the real file watcher without its one-second shutdown polling delay.
-    monkeypatch.setattr(
-        ChoreWatcher,
-        "updates",
-        partialmethod(ChoreWatcher.updates, interval_ms=50, debounce_ms=50),
-    )
 
 
 def _result(text: str = "done") -> ModelCallResult:
@@ -68,14 +57,41 @@ def _create_chore(
 
 
 def _scheduler(harness: ExecutionHarness) -> ChoreDriver:
-    return ChoreDriver(
+    watcher = StateWatcher(harness.setup.layout, initial_state=harness.state)
+
+    class PublishedDriver(ChoreDriver):
+        async def start(self) -> None:
+            self.stop_signal = asyncio.Event()
+            await watcher.refresh()
+            harness.state = watcher.current()
+
+            async def publish():
+                async for state in watcher.updates(
+                    stop_signal=self.stop_signal, interval_ms=50, debounce_ms=50
+                ):
+                    harness.state = state
+
+            self.publisher = asyncio.create_task(publish())
+            await super().start()
+
+        async def refresh(self) -> None:
+            await watcher.refresh()
+            harness.state = watcher.current()
+            await super().refresh()
+
+        async def stop(self) -> None:
+            await super().stop()
+            self.stop_signal.set()
+            await self.publisher
+
+    return PublishedDriver(
         layout=harness.setup.layout,
         executor=harness.executor,
         ids=harness.ids,
         get_agent_setup=lambda: harness.setup,
-        get_agent_state=lambda: harness.state,
+        get_agent_state=lambda: watcher.current(),
         safety_refresh_seconds=60.0,
-        state_poll_seconds=60.0,
+        state_poll_seconds=0.05,
     )
 
 
@@ -106,6 +122,7 @@ def test_scheduler_rejects_invalid_input_without_creating_a_run(
 ) -> None:
     harness = ExecutionHarness.create(
         tmp_path / "toolang",
+        prepare_state=True,
         source=_SOURCE,
         responses=[],
     )
@@ -136,10 +153,10 @@ def test_scheduler_rejects_invalid_input_without_creating_a_run(
 
 
 def test_invalid_definition_startup_closes_chore_store(tmp_path, monkeypatch) -> None:
-    from toolang.work import scheduler as scheduler_module
+    from toolang.driver.chore import scheduler as scheduler_module
 
     harness = ExecutionHarness.create(
-        tmp_path / "toolang", source=_SOURCE, responses=[]
+        tmp_path / "toolang", prepare_state=True, source=_SOURCE, responses=[]
     )
     directory = harness.setup.layout.home / "chores"
     directory.mkdir()
@@ -156,8 +173,9 @@ def test_invalid_definition_startup_closes_chore_store(tmp_path, monkeypatch) ->
 
     async def scenario() -> None:
         try:
-            with pytest.raises(ValueError):
-                await scheduler.start()
+            await scheduler.start()
+            assert await scheduler.get("broken") is None
+            assert not harness.store.list_runs(limit=None)
         finally:
             await _close_scheduler(scheduler, harness)
         assert closed == [harness.setup.layout.run_store]
@@ -174,6 +192,7 @@ def test_scheduler_submits_and_awaits_runs_on_the_execution_loop(
 ) -> None:
     harness = ExecutionHarness.create(
         tmp_path / "toolang",
+        prepare_state=True,
         source=_SOURCE,
         responses=[_result()],
     )
@@ -277,6 +296,7 @@ agic review(_: Part[], focus: Text):
 def test_scheduler_recovers_a_claim_with_no_accepted_run(tmp_path) -> None:
     harness = ExecutionHarness.create(
         tmp_path / "toolang",
+        prepare_state=True,
         source=_SOURCE,
         responses=[_result()],
     )
@@ -328,6 +348,7 @@ def test_scheduler_accepts_blocking_controls_from_api_worker_threads(
 ) -> None:
     harness = ExecutionHarness.create(
         tmp_path / "toolang",
+        prepare_state=True,
         source=_SOURCE,
         responses=[_result("first"), _result("reopened")],
     )
@@ -371,6 +392,7 @@ def test_scheduler_serializes_body_changes(tmp_path) -> None:
     gate = AsyncGate()
     harness = ExecutionHarness.create(
         tmp_path / "toolang",
+        prepare_state=True,
         source=_SOURCE,
         responses=[
             ScriptedModelTurn(result=_result("first"), gate=gate),
@@ -437,6 +459,7 @@ def test_scheduler_allows_different_chores_to_run_concurrently(tmp_path) -> None
     second_gate = AsyncGate()
     harness = ExecutionHarness.create(
         tmp_path / "toolang",
+        prepare_state=True,
         source=_SOURCE,
         responses=[
             ScriptedModelTurn(result=_result("first"), gate=first_gate),
@@ -498,7 +521,9 @@ def test_chore_selects_named_handler_before_unnamed_entry(
     source = f"{runnable_kind}:\n  pass\n"
     if specialized:
         source += f"\n{runnable_kind} chore:\n  pass\n"
-    harness = ExecutionHarness.create(tmp_path, source=source, responses=[])
+    harness = ExecutionHarness.create(
+        tmp_path, prepare_state=True, source=source, responses=[]
+    )
     _create_chore(
         AuthoredChores(harness.setup.layout.home),
         "entry",
@@ -521,7 +546,7 @@ def test_chore_selects_named_handler_before_unnamed_entry(
 
 def test_chore_without_handler_or_entry_fails(tmp_path) -> None:
     harness = ExecutionHarness.create(
-        tmp_path, source="agic review:\n  pass\n", responses=[]
+        tmp_path, prepare_state=True, source="agic review:\n  pass\n", responses=[]
     )
     _create_chore(
         AuthoredChores(harness.setup.layout.home),
@@ -544,7 +569,9 @@ def test_chore_handler_falls_back_to_configured_runnable(
     source = "agic review:\n  {{_}}\nagic other:\n  {{_}}\n"
     if specialized:
         source += "agic chore:\n  {{_}}\n"
-    harness = ExecutionHarness.create(tmp_path, source=source, responses=[])
+    harness = ExecutionHarness.create(
+        tmp_path, prepare_state=True, source=source, responses=[]
+    )
     setup = replace(
         harness.setup,
         defaults=replace(harness.setup.defaults, runnable="agic:review"),
@@ -559,5 +586,98 @@ def test_chore_handler_falls_back_to_configured_runnable(
         spec = _scheduler(harness)._build_spec(chore, setup=setup)
         expected = "other" if explicit else "chore" if specialized else "review"
         assert spec.bindings.runnable == f"agic:{expected}"
+    finally:
+        harness.store.close()
+
+
+def test_driver_consumes_published_state_without_reading_authored_chores(
+    tmp_path, monkeypatch
+):
+    harness = ExecutionHarness.create(
+        tmp_path, source=_SOURCE, responses=[_result()], prepare_state=True
+    )
+    file = _create_chore(
+        AuthoredChores(harness.setup.layout.home),
+        "review",
+        "/agic:review focus=published\nReview.",
+    )
+    from toolang.state.prepare import prepare_agent_state
+
+    published = prepare_agent_state(harness.setup.layout)
+    driver = ChoreDriver(
+        layout=harness.setup.layout,
+        executor=harness.executor,
+        ids=harness.ids,
+        get_agent_setup=lambda: harness.setup,
+        get_agent_state=lambda: published,
+    )
+    monkeypatch.setattr(
+        AuthoredChores,
+        "list",
+        lambda *_: pytest.fail("driver must not read authored files"),
+    )
+    assert file.path is not None
+    file.path.unlink()
+
+    async def scenario():
+        try:
+            await driver.start()
+            await _wait_record(driver, "review", lambda record: record.status == "done")
+            assert len(harness.store.list_runs(limit=None)) == 1
+        finally:
+            await _close_scheduler(driver, harness)
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        harness.store.close()
+
+
+def test_invalid_edit_preserves_active_run_and_manual_cancellation(tmp_path):
+    gate = AsyncGate()
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=_SOURCE,
+        responses=[ScriptedModelTurn(result=_result(), gate=gate)],
+        prepare_state=True,
+    )
+    catalog = AuthoredChores(harness.setup.layout.home)
+    original = _create_chore(catalog, "review", "/agic:review focus=active\nReview.")
+    driver = _scheduler(harness)
+
+    async def scenario():
+        try:
+            await driver.start()
+            await gate.wait_until_entered()
+            before = await _wait_record(
+                driver, "review", lambda record: record.status == "running"
+            )
+            assert original.path is not None
+            assert before.active_run_id is not None
+            original.path.write_text("---\nschedule: invalid\n---\nRejected.")
+            await driver.refresh()
+            assert driver.get_agent_state().chores == ()
+            current = await driver.get("review")
+            assert current is not None
+            assert current.active_run_id == before.active_run_id
+            with pytest.raises(FileNotFoundError):
+                await driver.run_chore("review")
+            canceled = await driver.cancel_chore("review")
+            assert canceled.active_run_id == before.active_run_id
+            harness.executor.cancel(
+                run_id=before.active_run_id, reason="Manual cancellation"
+            )
+            gate.release()
+            terminal = await _wait_record(
+                driver, "review", lambda record: record.status == "canceled"
+            )
+            assert terminal.body_hash == before.body_hash
+            assert len(harness.store.list_runs(limit=None)) == 1
+        finally:
+            gate.release()
+            await _close_scheduler(driver, harness)
+
+    try:
+        asyncio.run(scenario())
     finally:
         harness.store.close()

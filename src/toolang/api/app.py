@@ -15,7 +15,7 @@ from toolang.execution.subscriptions import Subscriptions
 from toolang.catalog import CapsManager, ChoresManager
 from toolang.catalog.errors import CatalogConflictError, CatalogNotFoundError
 from toolang.up import AgentCore
-from toolang.work.scheduler import ChoreDriver
+from toolang.driver.chore.scheduler import ChoreDriver
 
 DEFAULT_CORS_ORIGINS = (
     "http://localhost:3000",

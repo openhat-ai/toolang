@@ -1,8 +1,8 @@
 from datetime import datetime, timezone
 from pathlib import Path
 
-from toolang.work.state import Chore
-from toolang.work.store import ChoreStore
+from toolang.catalog.chores import Chore
+from toolang.driver.chore.store import ChoreStore
 
 
 NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)

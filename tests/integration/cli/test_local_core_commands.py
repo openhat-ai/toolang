@@ -81,8 +81,8 @@ from toolang.up.types import AgentServerRef
 from toolang.up import AgentCore
 from toolang.api.app import create_app
 from toolang.catalog import CapsManager, ChoresManager
-from toolang.work.state import load_chores
-from toolang.work.store import ChoreStore
+from toolang.catalog.chores import load_chores
+from toolang.driver.chore.store import ChoreStore
 from toolang.base.protocols.tool import Tool
 
 runner = CliRunner()

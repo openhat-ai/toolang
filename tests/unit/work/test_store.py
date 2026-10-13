@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from toolang.work.state import Chore
-from toolang.work.store import ChoreStore, next_activation
+from toolang.catalog.chores import Chore
+from toolang.driver.chore.store import ChoreStore, next_activation
 
 
 NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)

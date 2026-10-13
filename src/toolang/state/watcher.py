@@ -17,7 +17,7 @@ from toolang.common.progress import ProgressSink
 from .config import normalize_cap_overrides
 from .state import AgentState
 from .errors import StateDiagnostic, StatePreparationError
-from .types import StateFile, StateFileDifference, StateSyncError, StateSyncResult
+from .types import StateSyncError, StateSyncResult
 from .cache import (
     LayerScope,
     agent_current_path,
@@ -34,7 +34,6 @@ from .source import (
     observe_home_source,
     observe_root_source,
     root_source_manifest,
-    raw_source_files,
     source_path_scope,
 )
 
@@ -80,7 +79,11 @@ class StateRefresh:
 
     @property
     def diagnostics(self) -> tuple[StateDiagnostic, ...]:
-        return self.failure.diagnostics if self.failure is not None else ()
+        return (
+            self.failure.diagnostics
+            if self.failure is not None
+            else _source_diagnostics(self.state)
+        )
 
     @property
     def error(self) -> StateSyncError | None:
@@ -143,7 +146,11 @@ class StateWatcher:
     def diagnostics(self) -> tuple[StateDiagnostic, ...]:
         """Return diagnostics for the latest rejected candidate, if any."""
 
-        return self._failure.diagnostics if self._failure is not None else ()
+        if self._failure is not None:
+            return self._failure.diagnostics
+        if self._state is None:
+            return ()
+        return _source_diagnostics(self._state)
 
     def load(self, revision: str) -> AgentState:
         """Load the exact State identified by a persisted composition."""
@@ -184,22 +191,11 @@ class StateWatcher:
         except Exception as exc:
             failure = _CheckFailure.from_exception(exc)
         message = "; ".join(item.message for item in failure.diagnostics)
-        files = state.files if state is not None else ()
-        try:
-            disk_files = await asyncio.to_thread(
-                raw_source_files, self.layout.root, self.layout.name
-            )
-            differences = _file_differences(disk_files, files)
-        except Exception as exc:
-            differences = None
-            message += f"; could not inspect source differences: {exc}"
         return StateSyncResult(
             revision=state.revision if state is not None else None,
-            files=files,
+            files=(),
             error=failure.error,
             message=message,
-            differences=differences,
-            diagnostics=failure.diagnostics,
         )
 
     async def _request_check(
@@ -594,17 +590,22 @@ def _candidate_diagnostic(exc: Exception) -> StateDiagnostic:
     )
 
 
-def _file_differences(
-    disk: tuple[StateFile, ...], published: tuple[StateFile, ...]
-) -> tuple[StateFileDifference, ...]:
-    current = {(item.scope, item.key): item.digest for item in disk}
-    previous = {(item.scope, item.key): item.digest for item in published}
+def _source_diagnostics(state: AgentState) -> tuple[StateDiagnostic, ...]:
     return tuple(
-        StateFileDifference(
-            scope, key, current.get((scope, key)), previous.get((scope, key))
+        StateDiagnostic(
+            layer="runnable-extension"
+            if file.code in {"invalid-runnable-export", "invalid-runnable-filename"}
+            else "program"
+            if file.code == "invalid-program"
+            else "state-composition",
+            module_kind="runnable" if file.key.startswith("runnables/") else "agent",
+            authored_path=file.key,
+            line=file.line,
+            code=file.code or "invalid-source",
+            message=file.message or "Invalid source",
         )
-        for scope, key in sorted(current.keys() | previous.keys())
-        if current.get((scope, key)) != previous.get((scope, key))
+        for file in state.files
+        if not file.accepted
     )
 
 

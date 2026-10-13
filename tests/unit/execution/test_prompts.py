@@ -8,7 +8,7 @@ import pytest
 
 from toolang.execution.assembly import prompts
 from toolang.plugin.toolsets.loading import load_tools
-from toolang.work.messaging import _INSTRUCTIONS
+from toolang.driver.talk import _INSTRUCTIONS
 
 
 @pytest.mark.parametrize(

@@ -16,12 +16,12 @@ from toolang.cli.common.execution import open_execution
 from toolang.cli.common.output import echo_table
 from toolang.cli.common.parameters import TextType
 from toolang.cli.common.routing import PrefixAgentChoreGroup, RequiredPrefixAgentCommand
-from toolang.work.authoring import (
+from toolang.catalog.chore_authoring import (
     allocate_authored_chore_name,
     create_chore,
-    editable_chore,
+    editable_chore_path,
 )
-from toolang.work.inspection import ChoreInspection, ChoreRun
+from toolang.driver.chore.inspection import ChoreInspection, ChoreRun
 
 ChoreRef = Annotated[
     str,
@@ -88,7 +88,8 @@ def list_chores(ctx: typer.Context) -> None:
                     default="-",
                 ),
                 item.schedule or "once",
-                item.runtime.scheduler_error
+                item.source_error
+                or item.runtime.scheduler_error
                 or (item.runtime.last_run.error if item.runtime.last_run else None)
                 or "-",
                 f"{item.path}:{item.line}" if item.line is not None else item.path,
@@ -115,11 +116,11 @@ def new_chore(ctx: typer.Context, name: ChoreName = None) -> None:
 def edit_chore(ctx: typer.Context, chore: ChoreRef) -> None:
     """Edit a definition without changing its name or progress"""
     catalog = AuthoredChores(context_layout(ctx).home)
-    existing = user_call(editable_chore, context_layout(ctx), chore)
-    text = edit_markdown(existing.content)
+    path = user_call(editable_chore_path, context_layout(ctx), chore)
+    text = edit_markdown(path.read_text(encoding="utf-8"))
     if text is None:
         raise typer.Exit()
-    definition = user_call(ChoreFile.parse, text, name=existing.name)
+    definition = user_call(ChoreFile.parse, text, name=path.stem)
     saved = user_call(catalog.update, definition)
     typer.echo(str(_path(saved)))
 
@@ -127,9 +128,9 @@ def edit_chore(ctx: typer.Context, chore: ChoreRef) -> None:
 def delete_chore(ctx: typer.Context, chore: ChoreRef) -> None:
     """Remove a definition; keep completed work and execution history"""
     catalog = AuthoredChores(context_layout(ctx).home)
-    existing = user_call(editable_chore, context_layout(ctx), chore)
-    removed = user_call(catalog.remove, existing.name)
-    typer.echo(f"chore {removed.name} deleted")
+    user_call(editable_chore_path, context_layout(ctx), chore)
+    path = user_call(catalog.remove_file, chore)
+    typer.echo(str(path))
 
 
 def run_chore(ctx: typer.Context, chore: ChoreRef) -> None:

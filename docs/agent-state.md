@@ -1,17 +1,18 @@
 # Agent State
 
 Agent State is the immutable runtime input derived from an agent's Programs,
-configuration, and capabilities. A module is a term for one named, sourced
-Program in State; it is not a separate runtime type. Agent State holds the
+configuration, capabilities, and chore definitions. A module is a term for one
+named, sourced Program in State; it is not a separate runtime type. Agent State holds the
 complete module-name-to-Program index rather than a separate primary Program.
 It combines one root layer with one home layer. Each accepted Run keeps one
 Agent State revision. New named children select the latest valid publication
 independently; inline bodies retain their containing plan.
 
-Chores stored as independent Markdown files are work data, not Agent
-State. Chore declarations inside `agent.too` are part of State because
-they are part of the program. Installed providers, tools, environments, and
-other `AgentSetup` data remain separate from Agent State.
+Accepted home `chores/*.md` files and chore declarations inside `agent.too`
+are part of Agent State. The chore driver owns activation, checkpoints, and
+execution progress. Root chores are ignored; the home directory is created
+only on its first explicit file write. Installed providers, tools, environments,
+and other `AgentSetup` data remain separate from Agent State.
 
 State preparation reads authored source but never edits it. The Toolang root
 and agent home must already exist. A missing `agent.too` produces the empty
@@ -124,23 +125,30 @@ paths before use. The source manifest also retains raw-byte digests, so comments
 line endings, and Setup-only config changes affect identity even when prepared
 State terms do not change. Raw config content is not copied into State storage.
 
-Every newly prepared AgentState exposes a sorted `files` list of
-`{scope, key, digest}` entries. Scope is `home` or `root`; keys are relative to that
-scope, and digests identify raw authored bytes. Entries come from the persisted
-layer manifests, including shadowed inputs and skill assets. The list is immutable
-for a revision and is also included in `to_snapshot()`. It is not reconstructed
-from live files or limited to effective caps.
+Every newly prepared AgentState exposes sorted source records containing
+`scope`, `key`, `observed_digest`, and `accepted_digest`. Digests identify exact
+raw authored bytes. Valid sources have equal digests; invalid readable sources
+have a null accepted digest and flat `code`, `message`, and optional `line`.
+Unreadable files/directories have null digests and a read diagnostic. Valid
+shadowed inputs and skill assets are included; deleted files are absent. These
+records are persisted and included in `to_snapshot()`.
 
-The `state` file tools return `{key, digest}` receipts for home files; deletion uses
-`digest: null`. `state.sync()` waits for one serialized refresh and returns the
-published `{revision, files}` directly. Callers must complete all source writes
-and exclude other writers until sync returns. On rejection it returns the exact
-last-valid publication, preparation diagnostics, and differences from one raw
-source scan; unreadable differences are null. Sync does not replace active code,
-captured Setup, or the current model-call snapshot. Independent job files remain
-outside State. See [the state interface](tools.md#current-agent).
+Invalid cap, chore, and Program units are excluded independently while valid
+siblings publish. Invalid inline resources exclude their whole Program. No
+previous definition is reused. An excluded agent Program contributes only an
+empty structural module; other valid modules remain available. Shared config,
+root/home access, persistence, and internal composition failures still reject
+the whole candidate. Root/home precedence applies to accepted definitions.
 
-New layers use schema 13 and source manifest schema 4. Preparation rebuilds older
+The raw `state` file tools retain `{key, digest}` write receipts and disk-digest
+checks. `state.sync()` returns `{revision, files}` with the flat source records
+above, including Markdown chores. Successful publication may contain excluded
+sources. A fatal failure returns `{error, message, revision, files: []}`, with the
+last published revision or null. Sync performs one serialized check without an
+additional reporting scan. It does not replace active code or refresh Setup.
+See [the state interface](tools.md#current-agent).
+
+New layers use schema 20 and source manifest schema 4. Preparation rebuilds older
 current layers without rewriting history. Explicit historical loads retain known
 file identities; schema-3 config and schema-2 source trees lack reliable raw
 identities and are not exposed as tracked files.

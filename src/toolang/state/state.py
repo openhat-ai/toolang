@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import lru_cache
 import hashlib
 from hashlib import sha256
@@ -20,6 +20,7 @@ from urllib.request import Request, urlopen
 
 import frontmatter
 
+from toolang.catalog.chores import Chore, inline_chores, merge_chores
 from toolang.catalog.config import ConfiguredCaps
 from toolang.catalog.types import (
     CAP_DIR_BY_KIND,
@@ -536,6 +537,7 @@ class AgentState:
     module_sources: Mapping[str, str]
     module_digests: Mapping[str, str]
     module_caps: Mapping[str, tuple[StateCap, ...]]
+    chores: tuple[Chore, ...] = ()
     files: tuple[StateFile, ...] = ()
     toolang_root: Path | None = None
     base_caps: tuple[StateCap, ...] | None = None
@@ -560,6 +562,22 @@ class AgentState:
         if len({(item.scope, item.key) for item in files}) != len(files):
             raise ValueError("Agent State file keys must be unique within each scope")
         object.__setattr__(self, "files", files)
+        home = (
+            self.toolang_root / "agents" / self.name
+            if self.toolang_root is not None
+            else Path()
+        )
+        authored_chores = tuple(
+            replace(chore, path=home / chore.path)
+            if not chore.path.is_absolute()
+            else chore
+            for chore in self.chores
+        )
+        combined = merge_chores(
+            authored_chores,
+            inline_chores(self.modules["agent"].chores, path=home / "agent.too"),
+        )
+        object.__setattr__(self, "chores", tuple(combined.values()))
         if self.revision != agent_state_revision(
             self.root_revision,
             self.home_revision,
@@ -805,6 +823,7 @@ def compose_agent_state(
     module_digests: Mapping[str, str],
     module_caps: Mapping[str, tuple[StateCap, ...]],
     files: tuple[StateFile, ...] = (),
+    chores: tuple[Chore, ...] = (),
     revision_dir: Path | None = None,
     name: str,
     allow_overrides: Mapping[str, tuple[str, ...]] | None = None,
@@ -838,6 +857,7 @@ def compose_agent_state(
         module_caps=module_caps,
         base_caps=effective_base,
         files=files,
+        chores=chores,
         revision_dir=revision_dir,
     )
 
@@ -1383,6 +1403,9 @@ def collect_local_entries(
 
     entries: dict[str, StateCap] = {}
     for item in authored.files:
+        entry_scope_value: CapScope = "root" if item.origin == "root" else "home"
+        if scope is not None and entry_scope_value != scope:
+            continue
         entry = _local_entry_from_file(authored, item)
         if entry is None:
             continue
@@ -1656,7 +1679,11 @@ def _local_entry_from_file(
         if tuple(local_parts[2:]) != ("SKILL.md",):
             return None
         return _skill_entry(authored, item, scope=scope, name=local_parts[1])
-    if kind in FILE_BACKED_KINDS and len(local_parts) == 2:
+    if (
+        kind in FILE_BACKED_KINDS
+        and len(local_parts) == 2
+        and relative_path.suffix == ".md"
+    ):
         return _file_entry(item, kind=kind)
     return None
 

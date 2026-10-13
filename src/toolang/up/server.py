@@ -51,9 +51,9 @@ from toolang.up.logging import (
     build_uvicorn_log_config,
     configure_logging,
 )
-from toolang.work.scheduler import ChoreDriver
-from toolang.work.messaging import MessagingLoop
-from toolang.work.teaming import TeamingLoop
+from toolang.driver.chore.scheduler import ChoreDriver
+from toolang.driver.talk import MessagingLoop
+from toolang.teaming.runtime import TeamingLoop
 from toolang.teaming.agent_client import AgentClient, AgentEventClient
 
 DEFAULT_WATCH_DEBOUNCE_MS = state_watcher.DEFAULT_DEBOUNCE_MS

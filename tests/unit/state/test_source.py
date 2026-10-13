@@ -190,8 +190,10 @@ def test_home_source_rejects_symbolic_linked_flow_directory(tmp_path: Path) -> N
     (external / "research.too").write_text("flow:\n  pass\n", encoding="utf-8")
     (home / "runnables").symlink_to(external, target_is_directory=True)
 
-    with pytest.raises(ValueError, match="symbolic-link directories"):
-        scan_home_source(root, "alice")
+    manifest = scan_home_source(root, "alice")
+    assert not manifest.files
+    assert manifest.issues[0].path == "runnables"
+    assert "symbolic-link directories" in manifest.issues[0].message
 
 
 def test_home_source_rejects_directory_in_agent_file_slot(tmp_path: Path) -> None:
@@ -200,8 +202,10 @@ def test_home_source_rejects_directory_in_agent_file_slot(tmp_path: Path) -> Non
     program.mkdir(parents=True)
     (program / "nested.too").write_text("# Agent alice\n", encoding="utf-8")
 
-    with pytest.raises(ValueError, match="must be a file"):
-        scan_home_source(root, "alice")
+    manifest = scan_home_source(root, "alice")
+    assert not manifest.files
+    assert manifest.issues[0].path == "agent.too"
+    assert "must be a file" in manifest.issues[0].message
 
 
 def test_root_source_rejects_file_in_cap_directory_slot(tmp_path: Path) -> None:
@@ -209,8 +213,10 @@ def test_root_source_rejects_file_in_cap_directory_slot(tmp_path: Path) -> None:
     root.mkdir()
     (root / "prompts").write_text("not a directory\n", encoding="utf-8")
 
-    with pytest.raises(ValueError, match="must be a directory"):
-        scan_root_source(root)
+    manifest = scan_root_source(root)
+    assert not manifest.files
+    assert manifest.issues[0].path == "prompts"
+    assert "must be a directory" in manifest.issues[0].message
 
 
 def test_config_snapshot_checks_for_concurrent_change(

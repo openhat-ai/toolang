@@ -87,8 +87,6 @@ async def synchronize(context: ToolContext) -> dict[str, object]:
             "Agent State synchronization is unavailable on this execution host",
             revision=None,
             files=[],
-            differences=None,
-            diagnostics=[],
         )
     result = await context.sync_state()
     data = result.to_data()

@@ -11,6 +11,7 @@ from typing import TypeVar
 
 from dateutil.rrule import rrulestr
 import frontmatter
+from yaml import YAMLError
 
 from toolang.common.files import atomic_write_text, file_write_lock
 from toolang.common.ids import chore_id
@@ -135,7 +136,7 @@ class AuthoredChores:
         return self._read_consistently(read)
 
     def contains_name(self, name: str) -> bool:
-        return self.get(name) is not None
+        return self.path(name).exists()
 
     def create(self, chore: ChoreFile) -> ChoreFile:
         with self.write_lock():
@@ -145,10 +146,10 @@ class AuthoredChores:
 
     def update(self, chore: ChoreFile) -> ChoreFile:
         with self.write_lock():
-            existing = self.get(chore.name)
-            if existing is None or existing.path is None:
+            path = self.path(chore.name)
+            if not path.is_file():
                 raise CatalogNotFoundError(f"chore not found: {chore.name}")
-            return self._write(chore, path=existing.path)
+            return self._write(chore, path=path)
 
     def remove(self, reference: str) -> ChoreFile:
         with self.write_lock():
@@ -184,13 +185,49 @@ class AuthoredChores:
     def _lock_file_exists(self) -> bool:
         return self.lock_path.exists() or self.lock_path.is_symlink()
 
-    def _list_files(self) -> tuple[ChoreFile, ...]:
+    def raw_path(self, reference: str) -> Path:
+        """Address an existing file without parsing its content or siblings."""
+        directory = self.directory / "chores"
+        paths = tuple(directory.glob("*.md")) if directory.is_dir() else ()
+        matches = [
+            path
+            for path in paths
+            if reference in {path.stem, f"chore/{path.stem}", chore_id(path.stem)}
+        ]
+        if len(matches) > 1:
+            raise CatalogConflictError(f"ambiguous chore reference: {reference}")
+        if not matches:
+            raise CatalogNotFoundError(f"chore not found: {reference}")
+        return matches[0]
+
+    def remove_file(self, reference: str) -> Path:
+        with self.write_lock():
+            path = self.raw_path(reference)
+            path.unlink()
+            return path
+
+    def sources(self) -> tuple[tuple[Path, str, str | None], ...]:
+        """Read all source files with independent content diagnostics."""
         directory = self.directory / "chores"
         if not directory.is_dir():
             return ()
+        result = []
+        for path in sorted(directory.glob("*.md")):
+            content = ""
+            try:
+                content = path.read_text(encoding="utf-8")
+                ChoreFile.parse(content, path=path)
+            except (OSError, ValueError, YAMLError) as exc:
+                result.append((path, content, str(exc)))
+            else:
+                result.append((path, content, None))
+        return tuple(result)
+
+    def _list_files(self) -> tuple[ChoreFile, ...]:
         return tuple(
-            ChoreFile.parse(path.read_text(encoding="utf-8"), path=path)
-            for path in sorted(directory.glob("*.md"))
+            ChoreFile.parse(content, path=path)
+            for path, content, error in self.sources()
+            if error is None
         )
 
 
