@@ -184,11 +184,16 @@ def test_version_deadline_is_total_and_does_not_retry(monkeypatch):
     client.info.assert_awaited_once()
 
 
-def test_talk_prints_header_once_before_history_and_clear(tmp_path, monkeypatch):
+@pytest.mark.parametrize("width", [40, 120])
+@pytest.mark.parametrize("read_only", [False, True])
+@pytest.mark.parametrize("sender", ["agent:alice", "human:bryan"])
+def test_talk_prints_header_once_before_history_and_clear(
+    tmp_path, monkeypatch, width, read_only, sender
+):
     async def scenario():
-        async with talk_app(tmp_path) as (ui, _):
+        async with talk_app(tmp_path, read_only=read_only) as (ui, _):
             output = StringIO()
-            console = Console(file=output, width=80, color_system=None)
+            console = Console(file=output, width=width, color_system=None)
             monkeypatch.setattr(tui, "terminal_console", lambda **_: console)
 
             async def in_terminal(write):
@@ -197,19 +202,19 @@ def test_talk_prints_header_once_before_history_and_clear(tmp_path, monkeypatch)
             monkeypatch.setattr(tui, "run_in_terminal", in_terminal)
 
             async def run_app(**_):
-                assert output.getvalue().endswith("╯\n\n")
+                header = output.getvalue()
+                assert header.startswith("\n╭")
+                assert header.endswith("╯\n\n\n")
                 await ui.show(
                     [
                         (
                             "1-0",
-                            {
-                                "data": Message.create(
-                                    "agent:alice", "retained body"
-                                ).encode()
-                            },
+                            {"data": Message.create(sender, "retained body").encode()},
                         )
                     ]
                 )
+                message_lines = output.getvalue()[len(header) :].splitlines()
+                assert sender.split(":", 1)[1] in message_lines[0]
                 ui._handle_clear()
                 ui.invalidate()
 
