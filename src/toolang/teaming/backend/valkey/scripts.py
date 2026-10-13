@@ -245,8 +245,7 @@ repeat
   local page=redis.call('SCAN',cursor,'MATCH',ARGV[2]..':*','COUNT',128)
   cursor=page[1]
   for _,key in ipairs(page[2]) do
-    if string.find(key,ARGV[2]..':msg:',1,true)==1 or key==ARGV[2]..':participants' or key==ARGV[2]..':last_seen' or string.find(key,ARGV[2]..':agent:',1,true)==1 then fail('unsupported legacy dataset') end
-    if fresh and string.find(key,ARGV[2]..':convo:',1,true)==1 then fail('partial conversation dataset') end
+    if fresh and (string.find(key,ARGV[2]..':convo:',1,true)==1 or (string.find(key,ARGV[2]..':agent:',1,true)==1 and string.sub(key,-5)==':talk')) then fail('partial conversation dataset') end
   end
 until cursor=='0'
 if not redis.call('GET',KEYS[1]) then
@@ -540,5 +539,30 @@ for _,row in ipairs(rows) do
   if value.epoch~=epoch then fail('invalid team event epoch') end
 end
 return {'ok',rows}
+"""
+)
+
+
+TALK_CURSOR = (
+    COMMON
+    + STREAM_ORDER
+    + """
+valid()
+local op=cjson.decode(ARGV[1])
+readable(op.id,op.actor,KEYS[10])
+expect(KEYS[11],'stream'); expect(KEYS[12],'hash')
+local saved=redis.call('HGET',KEYS[12],op.id) or '0-0'
+local ms,seq=string.match(saved,'^(%d+)%-(%d+)$')
+if not ms or (ms~='0' and string.sub(ms,1,1)=='0') or (seq~='0' and string.sub(seq,1,1)=='0') then fail('invalid talk cursor') end
+if less('18446744073709551615-18446744073709551615',saved) or #seq>20 or (#seq==20 and seq>'18446744073709551615') then fail('invalid talk cursor') end
+if op.action=='read' then return saved end
+authorize(op.actor,op.token)
+less(op.cursor,op.cursor)
+local last=redis.call('XREVRANGE',KEYS[11],'+','-','COUNT',1)
+local tail=last[1] and last[1][1] or '0-0'
+if less(op.cursor,saved) then error('Talk cursor cannot move backwards') end
+if less(tail,op.cursor) then error('Talk cursor exceeds conversation stream tail') end
+if op.cursor~=saved then redis.call('HSET',KEYS[12],op.id,op.cursor) end
+return op.cursor
 """
 )

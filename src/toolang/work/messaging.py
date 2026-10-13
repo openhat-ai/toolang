@@ -9,9 +9,8 @@ import json
 import logging
 from typing import Any
 
-from toolang.base.types.message import TextPart, ToolResultPart
+from toolang.base.types.message import TextPart
 from toolang.base.types.policy import RunBindings
-from toolang.common.files import atomic_write_text
 from toolang.common.layout import AgentLayout
 from toolang.execution.executor import RunExecutor, RunSpec
 from toolang.execution.runnables import resolve_runnable_reference, runnable_fallback
@@ -19,13 +18,18 @@ from toolang.execution.threads import ThreadManager
 from toolang.execution.types import ThreadPrefix
 from toolang.lang.input import resolve_runnable_input
 from toolang.teaming.types import MessageReceiver
-from toolang.teaming.errors import ConversationAccessDenied, MessagingError
-from toolang.teaming.schemas import Message, stream_id
+from toolang.teaming.errors import (
+    BackendUnavailable,
+    ConversationAccessDenied,
+    MessagingError,
+)
+from toolang.teaming.schemas import Message
 from toolang.setup import AgentSetup
 from toolang.state.state import AgentState
 
 logger = logging.getLogger(__name__)
 _CONTEXT = 20
+_CURSOR_SAVE_SECONDS = 2
 _INSTRUCTIONS = """Handle this message batch as the receiving agent.
 Use convo__team and convo__list to find agents and conversations; never inspect other agents'
 threads, files, configuration, or shell sessions to discover how to communicate.
@@ -36,7 +40,7 @@ as reply_to. convo__peek inspects history without consuming messages. The tool
 owns the envelope and delivery. Never resend a confirmed write or retry uncertain
 delivery. Your final output is a brief handling summary, not a chat message or a
 replies JSON object.
-Previous messages/results are context only. Do not re-handle your own messages,
+Use convo__peek when you need earlier discussion. Do not re-handle your own messages,
 acknowledgements, completed discussions, or requests addressed only to others.
 If no action is needed, simply note that. Do not send acknowledgements of acknowledgements.
 Delegate substantial work to an available spawn target, preserving source context;
@@ -63,34 +67,20 @@ class MessagingLoop:
         self.endpoint = endpoint
         self.executor, self.threads = executor, threads
         self.get_setup, self.get_state = get_agent_setup, get_agent_state
-        self.room = layout.channel_room("messaging")
-        self.path = self.room / "unselected.json"
-        self.saved: dict[str, Any] = {}
+        self.identity = ""
+        self.pending: tuple[str, str] | None = None
         self.last_conversation = ""
         self.gaps: dict[str, str | None] = {}
 
-    def load(self) -> None:
-        with self.client.session() as identity:
-            path = self.room / f"v2-{identity}.json"
-        saved = {}
-        try:
-            if path.exists():
-                saved = json.loads(path.read_text())
-                if not isinstance(saved, dict):
-                    raise ValueError("expected object")
-                for value in saved.values():
-                    stream_id(value["cursor"])
-                    if not isinstance(value["messages"], list):
-                        raise ValueError("expected message context")
-        except (OSError, ValueError, KeyError, TypeError, MessagingError) as exc:
-            raise MessagingError(f"Invalid messaging checkpoint: {path}") from exc
-        self.path, self.saved = path, saved
-        self.gaps, self.last_conversation = {}, ""
-
     async def consume(self, stop: asyncio.Event) -> None:
+        delay = 0.5
         while not stop.is_set():
-            await self.poll()
-            await self._wait(stop, 0.5)
+            try:
+                await self.poll()
+            except BackendUnavailable:
+                logger.warning("Talk cursor transport unavailable; retrying")
+            delay = min(5, delay * 2) if self.pending is not None else 0.5
+            await self._wait(stop, delay)
 
     @staticmethod
     async def _wait(stop: asyncio.Event, seconds: float) -> None:
@@ -98,13 +88,27 @@ class MessagingLoop:
             await asyncio.wait_for(stop.wait(), seconds)
 
     async def poll(self) -> None:
-        # Pin discovery for the whole batch. A Hub/backend switch fails this
-        # attempt instead of mixing data across checkpoints.
+        # Pin the entire batch and its cursor write to one Hub/backend identity.
         with self.client.session() as identity:
-            path = self.room / f"v2-{identity}.json"
-            if path != self.path:
-                self.load()
+            if identity != self.identity:
+                self.identity = identity
+                self.pending = None
+                self.gaps, self.last_conversation = {}, ""
+            if self.pending is not None:
+                await self._save_cursor()
+                return
             await self._poll()
+
+    async def _save_cursor(self) -> None:
+        if self.pending is None:
+            return
+        conversation, cursor = self.pending
+        try:
+            await self.client.advance_talk_cursor(conversation, cursor)
+        except ConversationAccessDenied:
+            # Departure after handling must not block the remaining conversations.
+            logger.warning("Talk cursor not saved after leaving %s", conversation)
+        self.pending = None
 
     async def _poll(self) -> None:
         conversations = await self.client.contacts()
@@ -117,13 +121,11 @@ class MessagingLoop:
         )
         for info in conversations:
             conversation = info["conversation"]
-            previous = self.saved.get(
-                conversation, {"cursor": "0-0", "messages": [], "result": None}
-            )
             try:
-                gap = await self.client.check_cursor(conversation, previous["cursor"])
+                cursor = await self.client.talk_cursor(conversation)
+                gap = await self.client.check_cursor(conversation, cursor)
                 entries = await self.client.read(
-                    conversation, after=previous["cursor"], count=_CONTEXT
+                    conversation, after=cursor, count=_CONTEXT
                 )
             except ConversationAccessDenied:
                 # Membership can change after the directory snapshot.
@@ -144,10 +146,8 @@ class MessagingLoop:
                     )
                     continue
                 messages.append({**message.data(), "stream_id": sid})
-            outcome = previous["result"]
             try:
                 if any(m["sender"] != self.agent for m in messages):
-                    outcome = {"status": "failed", "replies": []}
                     await self.handle(
                         {
                             "agent": self.agent,
@@ -156,34 +156,24 @@ class MessagingLoop:
                                 {
                                     "conversation": conversation,
                                     "messages": messages,
-                                    "previous": previous,
                                 }
                             ],
-                        },
-                        outcome,
+                        }
                     )
             except asyncio.CancelledError:
-                if outcome is not None:
-                    outcome["status"] = "cancelled"
                 raise
-            except Exception as exc:
+            except Exception:
                 logger.exception("Messaging batch failed; skipping %s", conversation)
-                if outcome is not None:
-                    outcome["error"] = str(exc)
             finally:
-                saved = {
-                    **self.saved,
-                    conversation: {
-                        "cursor": entries[-1][0],
-                        "messages": (previous["messages"] + messages)[-_CONTEXT:],
-                        "result": outcome,
-                    },
-                }
-                atomic_write_text(self.path, json.dumps(saved, ensure_ascii=False))
-                self.saved = saved
+                self.pending = conversation, entries[-1][0]
+                try:
+                    async with asyncio.timeout(_CURSOR_SAVE_SECONDS):
+                        await self._save_cursor()
+                except (BackendUnavailable, TimeoutError):
+                    logger.warning("Talk cursor save interrupted; retaining progress")
             return
 
-    async def handle(self, batch: dict[str, Any], outcome: dict[str, Any]) -> None:
+    async def handle(self, batch: dict[str, Any]) -> None:
         setup, state = self.get_setup(), self.get_state()
         preferred = "talk"
         custom = preferred in state.agics or preferred in state.flows
@@ -214,31 +204,11 @@ class MessagingLoop:
             ),
         )
         handle = self.executor.run(spec)
-        outcome["run"] = handle.run_id
         try:
             record = await handle
         except asyncio.CancelledError:
             handle.cancel(reason="Messaging handler stopped")
             await handle
             raise
-        finally:
-            runs = self.executor.store.list_run_tree(root_run_id=handle.run_id)
-            steps_by_run = self.executor.store.list_steps_for_runs(
-                run_ids=[run.id for run in runs]
-            )
-            for steps in steps_by_run.values():
-                for step in steps:
-                    result = step.output.value if step.output is not None else None
-                    if (
-                        step.kind == "tool"
-                        and isinstance(result, ToolResultPart)
-                        and result.tool_name in {"convo__write", "msg__send"}
-                        and result.error is None
-                    ):
-                        outcome["replies"].append(result.output)
         if record.status != "succeeded":
             raise MessagingError(f"Message handler {record.id}: {record.status}")
-        outcome.update(
-            status="succeeded",
-            noted=self.executor.store.run_output_text(run_id=record.id),
-        )

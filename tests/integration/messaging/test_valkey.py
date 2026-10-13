@@ -19,7 +19,7 @@ from rich.console import Console
 from rich.text import Text
 
 from toolang.teaming.messaging import MessagingClient
-from toolang.teaming.backend.valkey.keys import PRESENCE, TEAM
+from toolang.teaming.backend.valkey.keys import PRESENCE, TEAM_MEMBERS
 from toolang.teaming.client import HubClient
 from toolang.teaming.config import BackendConfig
 from toolang.teaming.errors import MessagingError, StorageIntegrityError
@@ -107,9 +107,9 @@ def test_standard_backend_registration_streams_and_expiry(valkey):
                 assert len(await replacement.history(own)) == 1
                 await alice.unregister()
                 assert (
-                    json.loads(await raw.execute_command("HGET", TEAM, "agent:alice"))[
-                        "lease"
-                    ]["token"]
+                    json.loads(
+                        await raw.execute_command("HGET", TEAM_MEMBERS, "agent:alice")
+                    )["lease"]["token"]
                     == "new"
                 )
                 dev = (await replacement.create_conversation("dev")).id

@@ -10,9 +10,10 @@ from urllib.parse import quote
 import httpx
 
 from .client import HubClient
+from .errors import MessagingError
 from toolang.execution.schemas import ActivitySnapshot
 from .discovery import host_token, hub_connection
-from .schemas import HubConnection, Message, target
+from .schemas import HubConnection, Message, TalkCursor, conversation_id, target
 
 _CONNECTIONS: ContextVar[dict[Path, HubConnection]] = ContextVar(
     "agent_hub_connections", default={}
@@ -74,6 +75,23 @@ class AgentClient(HubClient):
 
     async def unregister(self) -> None:
         await self._request("DELETE", "/lease")
+
+    async def talk_cursor(self, convo_id: str) -> str:
+        conversation_id(convo_id)
+        data = await self._request("GET", f"/talk/cursors/{convo_id}")
+        try:
+            return TalkCursor.model_validate(data).cursor
+        except (ValueError, TypeError) as exc:
+            raise MessagingError("Invalid Hub talk cursor") from exc
+
+    async def advance_talk_cursor(self, convo_id: str, cursor: str) -> None:
+        conversation_id(convo_id)
+        body = TalkCursor(cursor=cursor)
+        data = await self._request(
+            "PUT", f"/talk/cursors/{convo_id}", json=body.model_dump()
+        )
+        if TalkCursor.model_validate(data) != body:
+            raise MessagingError("Mismatched Hub talk cursor")
 
     async def publish_activity(self, pages: list[ActivitySnapshot]) -> None:
         await self._request(

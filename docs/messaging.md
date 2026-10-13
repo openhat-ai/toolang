@@ -224,7 +224,7 @@ UUID shared by write and peek, independent of backend stream IDs. `reply_to` is
 the ID of the message being replied to; omit it for a new message. Backend stream
 IDs and execution origin are not exposed by these tools. `peek` returns the latest
 0–1000 retained messages in chronological order; zero returns metadata only. It
-does not acknowledge, consume, or alter talk checkpoints. There is no recv tool.
+does not acknowledge, consume, or alter talk cursors. There is no recv tool.
 
 Rename verifies the supplied revision before mutation and reports the captured
 old name. Concurrent revisions fail; obtain fresh metadata with peek before
@@ -233,9 +233,10 @@ continue to use the existing Hub operations.
 
 Agents with the talk driver enabled poll joined conversations in serial batches
 of up to 20 entries through the `talk` runnable, or their default runnable.
-Batches reuse one durable `talk_` thread per agent, resolving workdir afresh.
-Disabling talk leaves presence, transport, outbound tools, and observation active. Previous messages, handling results, and send
-receipts provide context. Final model output is a summary; replies use `convo.write`.
+Each batch creates a separate `talk_` thread, resolving workdir afresh.
+Disabling talk leaves presence, transport, outbound tools, and observation active.
+Batches contain only current messages and conversation metadata; use `convo.peek`
+for earlier discussion. Final model output is a summary; replies use `convo.write`.
 Own messages do not trigger another handler. Failed/malformed batches are logged
 and skipped. Agent origin records contain context-derived thread/run IDs.
 
@@ -243,9 +244,10 @@ A shared handler can live in `runnables/talk.too`, exporting an unnamed or
 filename-matching agic or flow. Its primary input receives the JSON message
 batch without the built-in fallback instructions. Private helpers and inline
 caps stay in the same file; required models and services come from the receiving
-environment. A public `talk` in `agent.too` conflicts with this export. Handling
-records retain successful send receipts from the handler and its owned child
-Runs, including async children and replies delivered before cancellation.
+environment. A public `talk` in `agent.too` conflicts with this export. Execution
+records retain handling diagnostics and tool results; batches do not carry previous
+messages, handling results, or reply receipts. Custom handlers using `previous`
+must switch to explicit history lookup.
 
 An independent heartbeat runs every 5 seconds. Agent presence is a ZSet deadline
 in backend Unix milliseconds, renewed to at least 15 seconds ahead. Expired
@@ -261,9 +263,26 @@ stays visible. A recreated name retains its DM identity and history.
 
 Streams retain approximately 10,000 entries. Readers use independent full Stream-ID
 cursors and report retention gaps. Uncertain sends report their UUID without
-retrying; check history before resending. Local checkpoints live under the agent's
-`.runtime/channels/messaging/` in the `v2-<backend-identity>.json` file; Talk
-drafts/history live under root `.runtime/talk-v2/`.
+retrying; check history before resending. Talk handler cursors live in the backend,
+independently per agent and conversation.
+A missing cursor starts at `0-0`, replaying retained history. Failures, cancellation,
+malformed entries, and own messages advance progress. Cursor writes require the
+current lease and membership, cannot move backwards or past the stream tail, and
+can safely repeat the same position. Transient save failures retry only the cursor
+write while the process retains pending progress; a crash before saving can replay
+a batch. Backend changes discard pending progress from the previous backend.
+Cursors have no TTL and survive shutdown and membership departure. Humans and
+ordinary message reads do not advance them.
+
+Agents no longer create `.runtime/channels/` cursor files. Existing local files
+are ignored without import or cleanup. Stop writers and reinitialize development
+backend data for the renamed team member key; old backend data is not migrated.
+Human Talk input history remains under `<root>/human/talk-input/`.
+
+Agent-only Hub routes `GET` and `PUT /agents/{agent}/talk/cursors/{convo_id}`
+read and advance talk progress using `{"cursor": "<stream-id>"}`. Both require an
+active agent lease and conversation membership. The existing
+`GET .../msg/conversations/{convo_id}/cursor?after=...` only checks retained history.
 
 ## Storage, events, and statistics
 
@@ -271,7 +290,7 @@ With `P = too:teaming:v1`, the messaging key spaces are:
 
 | Key | Type | Contents |
 | --- | --- | --- |
-| `P:team` | Hash | Typed member ID → display name, owner, creation time, private lease JSON |
+| `P:team:members` | Hash | Typed member ID → display name, owner, creation time, private lease JSON |
 | `P:roster` | Hash | Agent ID → root ownership/discovery JSON (`root`, `managed`, `missing`) |
 | `P:team:presence` | ZSet | Agent ID → lease deadline in Unix milliseconds |
 | `P:team:events` | Stream | `data` → versioned team, conversation membership, or presence change JSON |
@@ -283,13 +302,14 @@ With `P = too:teaming:v1`, the messaging key spaces are:
 | `P:convo:id:gc` | Hash | Last allocated hourly tick and sequence |
 | `P:convo:stats` | Hash | DM count, GC count, accepted message count |
 | `P:convo:system` | Hash | `all` → system GC ID |
+| `P:agent:N:talk` | Hash | Conversation ID → talk handler cursor; `N` is the agent name |
 | `P:activity:agent:N` | Hash | `default` / `query` → `{query: query hash, pages: ActivitySnapshot[]}` |
 | `P:events:meta` | Hash | Version, epoch, tail, retention floor, byte count, catalog revision; `pending` fences interrupted publication |
 | `P:events:stream` | Stream | `kind`, `agent`, `data` fields for execution events and recovery transitions |
 | `P:events:agents` | Hash | Agent ID → publication/recovery state, generation pointers, source cursor, last operation receipt |
 | `P:events:agent:N:G` | Hash | Encoded entity identity → versioned entity JSON; `["manifest"]` → generation bounds and baseline |
 
-`P:team` is the global member directory. `P:roster` is an optional agent-only
+`P:team:members` is the global member directory. `P:roster` is an optional agent-only
 subset that records which root manages discovery. It does not duplicate names,
 owners, leases, or online state. Humans have no roster entry; unscoped agent
 registration may have only a team entry. A scoped transient registration has

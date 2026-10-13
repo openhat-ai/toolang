@@ -9,6 +9,19 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Changed
 
+- **Breaking:** agent talk progress moves from local per-runtime
+  `.runtime/channels/messaging/v2-<backend-identity>.json` checkpoint files to
+  the teaming backend, stored per agent and conversation with no TTL, so a
+  restart or relocation resumes from the backend cursor and agents create no
+  channel files or directories. Local files are ignored without import or
+  cleanup, and the team member key is renamed from `P:team` to `P:team:members`
+  without migration, so development backend data must be reinitialized.
+
+- **Breaking:** talk handler batches no longer carry previous messages, handling
+  results, or reply receipts; they contain only the current messages and existing
+  conversation metadata. Custom `talk` runnables that read the removed
+  `previous` field must switch to explicit history lookup with `convo/peek`.
+
 - **Breaking:** canonical observers and HTTP run streams receive model
   `StepBegin.given` with only `model`, `setup`, and optional `state`
   revisions. The complete normalized call is no longer included, reconnection

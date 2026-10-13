@@ -29,10 +29,11 @@ from .keys import (
     PREFIX,
     ROSTER,
     SYSTEM,
-    TEAM,
+    TEAM_MEMBERS,
     TEAM_EVENTS,
     convo_key,
     name_key,
+    talk_key,
 )
 from ...ids import dm_id, gc_id
 from ...schemas import (
@@ -46,6 +47,7 @@ from ...schemas import (
     conversation_name,
     participant,
     target,
+    TalkCursor,
 )
 from . import scripts
 from .lua import TEAM_GUARD
@@ -136,13 +138,15 @@ class ValkeyBackend:
         """
         target(agent, kind="agent")
         for attempt in range(SNAPSHOT_RETRIES):
-            raw = await self._call("HGET", TEAM, agent)
+            raw = await self._call("HGET", TEAM_MEMBERS, agent)
             try:
                 if raw is not None:
                     TeamRecord.decode(agent, raw)
             except (ValueError, TypeError, MessagingError) as exc:
                 raise StorageIntegrityError("Invalid team record") from exc
-            checked = _json({"key": keys.index(TEAM) + 1, "member": agent, "raw": raw})
+            checked = _json(
+                {"key": keys.index(TEAM_MEMBERS) + 1, "member": agent, "raw": raw}
+            )
             try:
                 return await self._eval(TEAM_GUARD + script, keys, [*args, checked])
             except _SnapshotChanged:
@@ -317,7 +321,7 @@ class ValkeyBackend:
 
     async def known_participant(self, member: str) -> bool:
         participant(member)
-        return bool(await self._call("HEXISTS", TEAM, member))
+        return bool(await self._call("HEXISTS", TEAM_MEMBERS, member))
 
     async def team_event_position(self) -> tuple[str, str]:
         epoch, tail = await self._operation(scripts.READ, {"action": "metadata"})
@@ -643,6 +647,41 @@ class ValkeyBackend:
             (sid, dict(zip(fields[::2], fields[1::2], strict=True)))
             for sid, fields in rows
         ]
+
+    async def talk_cursor(self, agent: str, convo_id: str) -> str:
+        target(agent, kind="agent")
+        conversation_id(convo_id)
+        value = await self._operation(
+            scripts.TALK_CURSOR,
+            dict(action="read", actor=agent, id=convo_id),
+            [
+                convo_key(convo_id, "members"),
+                convo_key(convo_id, "messages"),
+                talk_key(agent),
+            ],
+        )
+        try:
+            return TalkCursor(cursor=value).cursor
+        except (ValueError, MessagingError) as exc:
+            raise StorageIntegrityError("Invalid talk cursor") from exc
+
+    async def advance_talk_cursor(
+        self, agent: str, convo_id: str, cursor: str, *, token: str
+    ) -> None:
+        target(agent, kind="agent")
+        conversation_id(convo_id)
+        cursor = TalkCursor(cursor=cursor).cursor
+        await self._operation(
+            scripts.TALK_CURSOR,
+            dict(
+                action="advance", actor=agent, id=convo_id, cursor=cursor, token=token
+            ),
+            [
+                convo_key(convo_id, "members"),
+                convo_key(convo_id, "messages"),
+                talk_key(agent),
+            ],
+        )
 
     async def statistics(
         self, actor: str, conversation: str | None = None

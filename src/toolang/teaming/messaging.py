@@ -19,6 +19,7 @@ from .schemas import (
     Conversation,
     TeamMember,
     Targets,
+    TalkCursor,
     ConversationSummary,
     MessagePreview,
     Message,
@@ -321,6 +322,18 @@ class MessagingClient:
                     reverse=True,
                 )
             )
+        )
+
+    async def talk_cursor(self, convo_id: str) -> str:
+        target(self.actor, kind="agent")
+        conversation_id(convo_id)
+        return await self.backend.talk_cursor(self.actor, convo_id)
+
+    async def advance_talk_cursor(self, convo_id: str, cursor: str) -> None:
+        target(self.actor, kind="agent")
+        conversation_id(convo_id)
+        await self.backend.advance_talk_cursor(
+            self.actor, convo_id, TalkCursor(cursor=cursor).cursor, token=self.token
         )
 
     async def check_cursor(self, conversation: str, cursor: str) -> str | None:

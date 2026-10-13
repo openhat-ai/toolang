@@ -1,7 +1,6 @@
 """Agent batching with real execution and the shared transport."""
 
 import asyncio
-import json
 from unittest.mock import AsyncMock, MagicMock
 
 from fakeredis import FakeAsyncValkey, FakeServer
@@ -76,7 +75,7 @@ def harness_with_msg(path, server, responses, source="agic:\n  {{_}}\n", state=N
     "custom",
     [False, True, "agic-module", "flow-module", "flow-module-run", "flow-module-async"],
 )
-def test_tool_reply_receipt_context_and_restart(tmp_path, custom):
+def test_tool_reply_origin_and_backend_cursor_restart(tmp_path, custom):
     server = FakeServer(server_type="valkey")
     reply = ModelCallResult(
         tool_calls=(
@@ -127,17 +126,20 @@ def test_tool_reply_receipt_context_and_restart(tmp_path, custom):
             make_client(server, "human:owner") as human,
         ):
             await prepare(client, human)
-            await human.send("gc_00000001", body="literal $prompt {{x}} @file")
+            source_message = await human.send(
+                "gc_00000001", body="literal $prompt {{x}} @file"
+            )
             loop = make_loop(tmp_path, client, harness)
             await loop.poll()
-            saved = loop.saved["gc_00000001"]
-            assert saved["result"]["status"] == "succeeded"
-            assert len(saved["result"]["replies"]) == 1
-            receipt = saved["result"]["replies"][0]
+            assert (
+                await client.talk_cursor("gc_00000001") == source_message["stream_id"]
+            )
             assert len(harness.store.list_threads()) == 1
             assert harness.store.list_threads()[0].id.startswith("talk_")
-            handled = harness.store.get_run(run_id=saved["result"]["run"])
-            assert handled is not None
+            handled = next(
+                run for run in harness.store.list_runs() if run.parent is None
+            )
+            assert handled.status == "succeeded"
             if custom:
                 entry = harness.store.get_run_control(run_id=handled.id, index=0)
                 assert entry is not None and isinstance(
@@ -155,7 +157,6 @@ def test_tool_reply_receipt_context_and_restart(tmp_path, custom):
             stored = Message.decode(
                 (await client.history("gc_00000001"))[-1][1]["data"]
             )
-            assert stored.id == receipt["message"]["id"]
             origin = stored.origin
             assert origin is not None
             assert origin["thread"] == handled.thread.id
@@ -166,32 +167,33 @@ def test_tool_reply_receipt_context_and_restart(tmp_path, custom):
                 assert sender_run.parent.run_id == handled.id
             else:
                 assert sender_run.id == handled.id
-            assert receipt["message"]["reply_to"] == REPLY_TO
+            assert stored.in_reply_to == REPLY_TO
             assert len(await client.history("gc_00000001")) == 2
-            await loop.poll()  # Own reply is context, never another model invocation.
+            await (
+                loop.poll()
+            )  # Own replies advance progress without invoking the model.
             assert len(harness.adapter.invocations) == 2
             await human.send("gc_00000001", body="next")
             restarted = make_loop(tmp_path, client, harness)
-            restarted.load()
             await restarted.poll()
             threads = harness.store.list_threads()
             assert len(threads) == 2
             assert all(thread.origin == "talk" for thread in threads)
             assert len({thread.id for thread in threads}) == 2
-            latest = harness.store.get_run(
-                run_id=restarted.saved["gc_00000001"]["result"]["run"]
+            latest = next(
+                run for run in harness.store.list_runs() if run.parent is None
             )
-            assert latest is not None and latest.thread.id != handled.thread.id
+            assert latest.thread.id != handled.thread.id
             assert not harness.store.db_path.with_name("runs.db.threads.lock").exists()
             prompt = repr(harness.adapter.invocations[-1].call.messages)
             assert (
-                "Handled." in prompt
-                and "literal $prompt" in prompt
+                "Handled." not in prompt
+                and "literal $prompt" not in prompt
+                and "previous" not in prompt
                 and "next" in prompt
             )
-            assert (
-                len(await client.history("gc_00000001")) == 3
-            )  # Final summaries are not messages.
+            assert len(await client.history("gc_00000001")) == 3
+            assert not (harness.setup.layout.runtime / "channels").exists()
 
     asyncio.run(scenario())
 
@@ -213,31 +215,28 @@ def test_failed_batches_skip_bad_entries_and_rotate_groups(tmp_path):
             loop = make_loop(tmp_path, client)
             loop.handle = AsyncMock(side_effect=RuntimeError("handler failed"))
             await loop.poll()
-            assert len(loop.saved["gc_00000001"]["messages"]) == 19
-            assert loop.saved["gc_00000001"]["result"]["status"] == "failed"
-            await loop.poll()
-            assert (
-                loop.handle.call_args[0][0]["conversations"][0]["conversation"]
-                == "gc_00000002"
-            )
-            assert (
-                loop.handle.call_args[0][0]["conversations"][0]["previous"]["messages"]
-                == []
-            )
+            first_batch = loop.handle.call_args[0][0]["conversations"][0]
+            assert len(first_batch["messages"]) == 19
+            first_cursor = await client.talk_cursor("gc_00000001")
             await loop.poll()
             batch = loop.handle.call_args[0][0]["conversations"][0]
-            assert batch["previous"]["result"]["error"] == "handler failed"
-            assert len(loop.saved["gc_00000001"]["messages"]) == 20
-            assert (
-                json.loads(loop.path.read_text())["gc_00000001"]["cursor"]
-                == loop.saved["gc_00000001"]["cursor"]
-            )
+            assert batch["conversation"] == "gc_00000002"
+            assert "previous" not in batch
+            await loop.poll()
+            batch = loop.handle.call_args[0][0]["conversations"][0]
+            assert batch["conversation"] == "gc_00000001"
+            assert len(batch["messages"]) == 6
+            assert "previous" not in batch
+            assert await client.talk_cursor("gc_00000001") != first_cursor
+            assert not (
+                AgentLayout.resident(tmp_path, "alice").runtime / "channels"
+            ).exists()
 
     asyncio.run(scenario())
 
 
 @pytest.mark.parametrize("module_handler", [False, True])
-def test_arrivals_during_handling_and_cancellation_save_delivered_receipts(
+def test_arrivals_during_handling_and_cancellation_advance_only_fetched_messages(
     tmp_path, module_handler
 ):
     server = FakeServer(server_type="valkey")
@@ -287,10 +286,9 @@ def test_arrivals_during_handling_and_cancellation_save_delivered_receipts(
             task.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await task
-            saved = loop.saved["gc_00000001"]
-            assert saved["cursor"] == source["stream_id"]
-            assert saved["result"]["status"] == "cancelled"
-            assert len(saved["result"]["replies"]) == 1
+            assert await client.talk_cursor("gc_00000001") == source["stream_id"]
+            assert len(await client.history("gc_00000001")) == 3
+            assert any(run.status == "canceled" for run in harness.store.list_runs())
             gate.release()
 
     asyncio.run(scenario())

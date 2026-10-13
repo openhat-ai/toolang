@@ -8,7 +8,7 @@ import pytest
 
 from tests.unit.messaging.test_protocol import client, snapshot
 from toolang.execution.schemas import ActivitySnapshot
-from toolang.teaming.backend.valkey.keys import TEAM
+from toolang.teaming.backend.valkey.keys import TEAM_MEMBERS
 from toolang.teaming.backend.valkey.lua import TEAM_GUARD
 from toolang.teaming.errors import EventProtocolError, StorageIntegrityError
 
@@ -43,21 +43,21 @@ def test_publication_rejects_invalid_team_record_without_writes(
             )
             await backend.events.commit(op)
             raw = backend._client
-            original = await raw.hget(TEAM, agent)
+            original = await raw.hget(TEAM_MEMBERS, agent)
             record = json.loads(original)
             record["owner"] = None
-            await raw.hset(TEAM, agent, json.dumps(record))
+            await raw.hset(TEAM_MEMBERS, agent, json.dumps(record))
             before = await snapshot(raw)
             injected = False
             if concurrent:
-                await raw.hset(TEAM, agent, original)
+                await raw.hset(TEAM_MEMBERS, agent, original)
                 evaluate = backend._eval
 
                 async def corrupt_after_validation(script, keys, args):
                     nonlocal injected
                     if script.startswith(TEAM_GUARD) and not injected:
                         injected = True
-                        await raw.hset(TEAM, agent, json.dumps(record))
+                        await raw.hset(TEAM_MEMBERS, agent, json.dumps(record))
                     return await evaluate(script, keys, args)
 
                 monkeypatch.setattr(backend, "_eval", corrupt_after_validation)

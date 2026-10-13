@@ -15,6 +15,7 @@ from .roster import Roster
 from .records import MAX_BYTES
 from .schemas import (
     AgentRegistration,
+    TalkCursor,
     CommitRequest,
     Generation,
     StagingRequest,
@@ -102,6 +103,17 @@ def agent_router(human: MessagingClient, *, roster: Roster | None = None) -> API
         await client.backend.activity.save(client.actor, client.token, pages)
         await client.renew()
         return {"ok": True}
+
+    @router.get("/talk/cursors/{convo_id}")
+    async def talk_cursor(convo_id: str, client: ActiveClient) -> TalkCursor:
+        return TalkCursor(cursor=await client.talk_cursor(convo_id))
+
+    @router.put("/talk/cursors/{convo_id}")
+    async def advance_talk_cursor(
+        convo_id: str, body: TalkCursor, client: ActiveClient
+    ) -> TalkCursor:
+        await client.advance_talk_cursor(convo_id, body.cursor)
+        return body
 
     @router.get("/events/state")
     async def state(client: ActiveClient) -> dict[str, Any]:

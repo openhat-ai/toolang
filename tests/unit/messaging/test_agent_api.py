@@ -208,7 +208,7 @@ def test_agent_discovery_pins_batch_identity_and_refreshes_connections(tmp_path)
     asyncio.run(scenario())
 
 
-def test_message_checkpoints_are_separate_after_backend_switch(tmp_path, monkeypatch):
+def test_talk_cursors_are_separate_after_backend_switch(tmp_path, monkeypatch):
     async def scenario():
         humans = [
             client(FakeServer(server_type="valkey"), CONNECTION.human) for _ in range(2)
@@ -247,19 +247,18 @@ def test_message_checkpoints_are_separate_after_backend_switch(tmp_path, monkeyp
             )
             handler = AsyncMock()
             monkeypatch.setattr(loop, "handle", handler)
-            paths = []
             for current in range(2):
                 await alice.register(CONNECTION.human)
                 receipt = await humans[current].send(
                     "gc_00000000", body=f"dataset {current}"
                 )
                 await loop.poll()
-                assert (
-                    loop.saved["gc_00000000"]["messages"][-1]["id"]
-                    == receipt["message"]["id"]
-                )
-                paths.append(loop.path)
-            assert paths[0] != paths[1] and all(path.is_file() for path in paths)
+                batch = handler.call_args[0][0]["conversations"][0]
+                assert batch["messages"][-1]["id"] == receipt["message"]["id"]
+                assert await alice.talk_cursor("gc_00000000") == receipt["stream_id"]
+            assert not (
+                AgentLayout.resident(tmp_path, "alice").runtime / "channels"
+            ).exists()
             assert handler.await_count == 2
             current = 0
             await loop.poll()

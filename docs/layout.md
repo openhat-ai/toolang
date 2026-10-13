@@ -135,7 +135,6 @@ Key paths:
 | `ids.json`     | Local id allocator state                                     |
 | `chat-history.jsonl` | Chat input recall history                               |
 | `tools/`       | Per-toolset plugin working directories                       |
-| `channels/messaging/` | Hub/Talk transport checkpoints                        |
 
 Server ownership lives separately in
 `${TOOLANG_ROOT}/.sandbox/<agent>/state.json`, the authoritative sandbox
@@ -172,8 +171,9 @@ Locks remain beside their protected objects, without a dedicated lock directory:
 | `hub/hub.lock` | One Hub process per root for its lifetime |
 
 Thread fork/rewind use SQLite transactions, without `runs.db.threads.lock`.
-Incoming message batches create separate `talk` threads and retain the transport's
-per-conversation checkpoint context rather than a shared execution thread.
+Incoming message batches create separate `talk` threads. Each agent's per-conversation
+talk cursor lives in the teaming backend; agents generate no `.runtime/channels/`
+files and retain no previous-message batch context.
 ID allocation locks `ids.json` directly; there is no separate ID lock file.
 
 Stop all writers sharing storage before upgrading across these lock-name changes.

@@ -11,7 +11,7 @@ from valkey.exceptions import ConnectionError
 
 from toolang.teaming.backend.valkey import ValkeyBackend
 from toolang.teaming.backend.valkey.keys import (
-    TEAM,
+    TEAM_MEMBERS,
     PRESENCE,
     TEAM_EVENTS,
     CONVOS,
@@ -275,11 +275,13 @@ def test_presence_deadline_is_authority_and_reconciliation_is_atomic():
             info = await backend.lease_info("agent:alice")
             assert info["lease"]["token"] == "old"
             assert await raw.ttl(PRESENCE) == -1
-            before = await raw.execute_command("HGET", TEAM, "agent:alice")
+            before = await raw.execute_command("HGET", TEAM_MEMBERS, "agent:alice")
             events = await raw.execute_command("XLEN", TEAM_EVENTS)
             deadline = await raw.zscore(PRESENCE, "agent:alice")
             await alice.renew()
-            assert await raw.execute_command("HGET", TEAM, "agent:alice") == before
+            assert (
+                await raw.execute_command("HGET", TEAM_MEMBERS, "agent:alice") == before
+            )
             assert await raw.execute_command("XLEN", TEAM_EVENTS) == events
             assert await raw.zscore(PRESENCE, "agent:alice") >= deadline
             with pytest.raises(MessagingError, match="already online"):
@@ -309,9 +311,9 @@ def test_presence_deadline_is_authority_and_reconciliation_is_atomic():
             assert sum(changed) == 1
             assert await raw.execute_command("XLEN", TEAM_EVENTS) == start + 1
             assert (
-                json.loads(await raw.execute_command("HGET", TEAM, "agent:alice"))[
-                    "lease"
-                ]
+                json.loads(
+                    await raw.execute_command("HGET", TEAM_MEMBERS, "agent:alice")
+                )["lease"]
                 is None
             )
             assert "lease" not in json.dumps(await human.team())
@@ -427,9 +429,9 @@ def test_uncertain_send_is_not_retried_and_returns_recoverable_id(monkeypatch):
     asyncio.run(scenario())
 
 
-def test_legacy_and_partial_datasets_are_never_initialized():
+def test_partial_datasets_are_never_initialized():
     async def scenario():
-        for key in ("too:teaming:v1:participants", "too:teaming:v1:msg:groups", CONVOS):
+        for key in (CONVOS, "too:teaming:v1:agent:alice:talk"):
             raw = FakeAsyncValkey(decode_responses=True)
             await raw.execute_command("HSET", key, "old", "record")
             before = await snapshot(raw)

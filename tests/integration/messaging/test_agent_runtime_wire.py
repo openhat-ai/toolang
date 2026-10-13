@@ -26,7 +26,7 @@ from toolang.plugin.toolsets.loading import tools_from_toolsets
 from toolang.plugin.toolsets.convo import ConvoToolset
 from toolang.plugin.types import LoadedPlugin
 from toolang.teaming.agent_client import AgentClient, AgentEventClient
-from toolang.teaming.backend.valkey.keys import TEAM, PRESENCE
+from toolang.teaming.backend.valkey.keys import TEAM_MEMBERS, PRESENCE, talk_key
 from toolang.teaming.client import HubClient
 from toolang.teaming.events import HubScope
 from toolang.teaming.stream_client import HubStreamState
@@ -114,12 +114,11 @@ def test_inflight_message_survives_hub_restart_and_scoped_fanout(
                 async with asyncio.timeout(15):
                     while not lifecycle.exporter.generation:
                         await asyncio.sleep(0.05)
-                source = await human.send(system, body="please handle this")
+                await human.send(system, body="please handle this")
                 await asyncio.wait_for(gate.wait_until_entered(), 10)
                 runs = harness.store.list_runs()
                 assert len(runs) == 1
                 active = runs[0]
-                checkpoint = loop.path
                 await caught_up()
 
                 async def snapshot(scope, state=None):
@@ -196,7 +195,9 @@ def test_inflight_message_survives_hub_restart_and_scoped_fanout(
                     current = second if fault == "backend_switch" else raw
                     while (
                         json.loads(
-                            await current.execute_command("HGET", TEAM, client.actor)
+                            await current.execute_command(
+                                "HGET", TEAM_MEMBERS, client.actor
+                            )
                             or '{"lease": null}'
                         ).get("lease")
                         or {}
@@ -205,18 +206,19 @@ def test_inflight_message_survives_hub_restart_and_scoped_fanout(
                 gate.release()
                 async with asyncio.timeout(15):
                     while True:
-                        saved = (
-                            json.loads(checkpoint.read_text()).get(system, {})
-                            if checkpoint.exists()
-                            else {}
-                        )
-                        if saved.get("result", {}).get("status") == "succeeded":
+                        completed = harness.store.get_run(run_id=active.id)
+                        if completed is not None and completed.status == "succeeded":
                             break
                         await asyncio.sleep(0.05)
-                assert saved["cursor"] == source["stream_id"]
-                assert saved["result"]["run"] == active.id
                 if fault == "backend_switch":
-                    assert saved["result"]["replies"] == []
+                    async with asyncio.timeout(15):
+                        while (
+                            loop.identity != running_hub.connection().identity
+                            or loop.pending is not None
+                        ):
+                            await asyncio.sleep(0.05)
+                    assert await raw.hget(talk_key(client.actor), system) is None
+                    assert await second.hget(talk_key(client.actor), system) is None
                     async with HubClient(running_hub.connection()) as replacement:
                         new_system = next(
                             c["conversation"]
@@ -225,12 +227,16 @@ def test_inflight_message_survives_hub_restart_and_scoped_fanout(
                         )
                         assert await replacement.history(new_system) == []
                 else:
-                    assert len(saved["result"]["replies"]) == 1
-                    assert saved["result"]["replies"][0]["message"]["origin"] == {
+                    async with asyncio.timeout(15):
+                        while await raw.hget(talk_key(client.actor), system) is None:
+                            await asyncio.sleep(0.05)
+                    history = await human.history(system)
+                    assert len(history) == 2
+                    assert json.loads(history[-1][1]["data"])["origin"] == {
                         "thread": active.thread.id,
                         "run": active.id,
                     }
-                    assert len(await human.history(system)) == 2
+                assert not (harness.setup.layout.runtime / "channels").exists()
                 await caught_up()
                 resumed = await asyncio.gather(
                     *(

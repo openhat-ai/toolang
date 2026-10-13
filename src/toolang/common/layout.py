@@ -152,9 +152,6 @@ class AgentLayout:
     def tool_room(self, plugin: str) -> Path:
         return self.runtime / "tools" / plugin
 
-    def channel_room(self, binding: str) -> Path:
-        return self.runtime / "channels" / binding
-
     @property
     def sandbox_home(self) -> Path:
         base = self.root / ".sandbox" / self.name

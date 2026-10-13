@@ -400,6 +400,20 @@ def stream_id(value: str) -> tuple[int, int]:
     return int(a), int(b)
 
 
+class TalkCursor(ProtocolModel):
+    cursor: str = Field(max_length=41)
+
+    @field_validator("cursor")
+    @classmethod
+    def valid_cursor(cls, value: str) -> str:
+        milliseconds, sequence = stream_id(value)
+        if max(milliseconds, sequence) > 2**64 - 1:
+            raise ValueError("Stream ID exceeds unsigned 64-bit range")
+        if value != f"{milliseconds}-{sequence}":
+            raise ValueError("Stream ID must use canonical decimal components")
+        return value
+
+
 @dataclass(frozen=True)
 class Message:
     id: str
