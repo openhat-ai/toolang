@@ -1,7 +1,6 @@
 """Root-scoped Hub HTTP transport for shared teaming services."""
 
 from collections.abc import Callable, AsyncIterator
-import asyncio
 from contextlib import asynccontextmanager
 from typing import Annotated, Any, cast
 from urllib.parse import quote
@@ -189,11 +188,7 @@ def create_app(
     ) -> AsyncIterator[ServerSentEvent]:
         try:
             while True:
-                try:
-                    frame = await asyncio.wait_for(subscription.receive(), 15)
-                except TimeoutError:
-                    yield ServerSentEvent(comment="keep-alive")
-                    continue
+                frame = await subscription.receive()
                 yield ServerSentEvent(event=frame.event, data=frame.data, id=frame.id)
         except StopAsyncIteration:
             return

@@ -949,7 +949,10 @@ def test_remote_chat_repeated_concrete_runs_do_not_list_models() -> None:
 
 def test_remote_chat_falls_back_to_detail_without_resubmitting(
     monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
+    caplog.set_level("WARNING", logger=remote.__name__)
+    caplog.set_level("WARNING", logger="toolang.execution.remote")
     monkeypatch.setattr(remote, "_RECOVERY_DELAYS", (0.0, 0.0, 0.0))
     monkeypatch.setattr(remote, "_RECOVERY_INTERVAL", 0.0)
     terminal = _detail(
@@ -979,7 +982,7 @@ def test_remote_chat_falls_back_to_detail_without_resubmitting(
             submissions += 1
             return _stream(_begin())
         if request.url.path == "/api/v1/runs/run_remote/stream":
-            return httpx.Response(503, json={"detail": "temporarily unavailable"})
+            return httpx.Response(503, json={"detail": "private-token-must-not-log"})
         if request.url.path == "/api/v1/runs/run_remote":
             return httpx.Response(200, json=_json(next(details)))
         raise AssertionError(f"unexpected request: {request.method} {request.url}")
@@ -1018,6 +1021,13 @@ def test_remote_chat_falls_back_to_detail_without_resubmitting(
     assert isinstance(states[-1], RunRecovered)
     assert states[-1].detail == terminal
     assert errors == []
+    assert (
+        "run=run_remote phase=resume attempt=1/3 error=RemoteRunClientError status=503"
+        in caplog.text
+    )
+    assert "status=503" in caplog.text
+    assert "run=run_remote phase=stream error=RemoteRunClientError" in caplog.text
+    assert "private-token-must-not-log" not in caplog.text
 
 
 def test_remote_chat_blocks_ambiguous_pre_acceptance_failure() -> None:

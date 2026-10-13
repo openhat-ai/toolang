@@ -85,7 +85,26 @@ class _RemoteRunHandle:
                     "remote run client is disconnected"
                 ) from None
             raise
-        return await self._client._run_detail(self.run_id)
+        except RemoteRunClientError as exc:
+            _LOGGER.error(
+                "remote run wait failed run=%s phase=stream error=%s status=%s cause=%s",
+                self.run_id,
+                type(exc).__name__,
+                exc.status_code,
+                type(exc.__cause__).__name__ if exc.__cause__ else None,
+            )
+            raise
+        try:
+            return await self._client._run_detail(self.run_id)
+        except RemoteRunClientError as exc:
+            _LOGGER.error(
+                "remote run wait failed run=%s phase=detail error=%s status=%s cause=%s",
+                self.run_id,
+                type(exc).__name__,
+                exc.status_code,
+                type(exc.__cause__).__name__ if exc.__cause__ else None,
+            )
+            raise
 
 
 class RemoteRunClient:
@@ -394,8 +413,12 @@ class RemoteRunClient:
                         events, run_id, tracer=tracer, state=state
                     )
                     return
-                except (httpx.HTTPError, _InterruptedStream):
-                    pass
+                except (httpx.HTTPError, _InterruptedStream) as exc:
+                    _LOGGER.warning(
+                        "remote run stream interrupted run=%s phase=initial error=%s",
+                        run_id,
+                        type(exc).__name__,
+                    )
             # Never resubmit POST. A known run ID is enough; without a committed
             # cursor, GET initializes its entire recorded tree. A cursor permits
             # a smaller catchup independently of the admission request.
@@ -424,8 +447,23 @@ class RemoteRunClient:
                             resumed=True,
                         )
                         return
-                except (httpx.HTTPError, _InterruptedStream):
-                    if attempt == 2:
+                except (
+                    httpx.HTTPError,
+                    _InterruptedStream,
+                    RemoteRunClientError,
+                ) as exc:
+                    _LOGGER.warning(
+                        "remote run stream interrupted run=%s phase=resume attempt=%s/3 error=%s status=%s",
+                        run_id,
+                        attempt + 1,
+                        type(exc).__name__,
+                        exc.status_code
+                        if isinstance(exc, RemoteRunClientError)
+                        else None,
+                    )
+                    if attempt == 2 or not isinstance(
+                        exc, (httpx.HTTPError, _InterruptedStream)
+                    ):
                         raise
         except asyncio.CancelledError:
             if not accepted.done() and not self._connected:
@@ -466,9 +504,18 @@ class RemoteRunClient:
         first = not resumed
         root_seen = False
         async for wire in events:
+            # httpx-sse retains the last event ID and can emit a default empty
+            # "message" for a comment-only keep-alive following an identified event.
+            # It is not a run event and must not advance the committed cursor.
+            if wire.event == "message" and not wire.data:
+                continue
             try:
                 data = json.loads(wire.data)
             except json.JSONDecodeError as exc:
+                _LOGGER.warning(
+                    "remote run stream error run=%s phase=event reason=invalid_json",
+                    run_id,
+                )
                 raise RemoteRunClientError(
                     "remote run stream returned invalid event JSON"
                 ) from exc
@@ -479,6 +526,11 @@ class RemoteRunClient:
                 )
             if wire.event == "stream_error":
                 code = data.get("code")
+                _LOGGER.warning(
+                    "remote run stream error run=%s phase=event code=%s",
+                    run_id,
+                    code if code in ("overflow", "snapshot_limit") else "other",
+                )
                 if code == "overflow":
                     raise _InterruptedStream(
                         f"remote run subscription overflow: {run_id}"

@@ -528,6 +528,10 @@ def test_remote_client_rejects_invalid_endpoints(endpoint: str) -> None:
             "invalid event JSON",
         ),
         (
+            _stream_response(stream=_Bytes(b"event: run_end\ndata:\n\n")),
+            "invalid event JSON",
+        ),
+        (
             _stream_response(
                 stream=_Bytes(
                     (
@@ -591,7 +595,11 @@ def test_remote_client_rejects_invalid_stream_protocol(
 
 
 @pytest.mark.parametrize("after_begin", [False, True])
-def test_remote_client_recovers_overflow_without_resubmitting_or_canceling(after_begin):
+def test_remote_client_recovers_overflow_without_resubmitting_or_canceling(
+    after_begin, caplog
+):
+    caplog.set_level("WARNING", logger=remote.__name__)
+
     async def handler(_request: httpx.Request) -> httpx.Response:
         chunks = []
         if after_begin:
@@ -622,6 +630,130 @@ def test_remote_client_recovers_overflow_without_resubmitting_or_canceling(after
         ]
 
     asyncio.run(scenario())
+    assert "run=run_remote phase=initial error=_InterruptedStream" in caplog.text
+    assert (
+        "run=run_remote phase=resume attempt=3/3 error=_InterruptedStream"
+        in caplog.text
+    )
+
+
+@pytest.mark.parametrize("comment", [b": keep-alive\n\n", b": ping\n\n"])
+def test_remote_client_ignores_comment_keepalive_after_event_id(comment: bytes):
+    from toolang.execution.types import EventCursor
+
+    epoch = "1" * 32
+    begin_id = str(EventCursor(epoch, 1))
+    end_id = str(EventCursor(epoch, 2))
+    begin = json.dumps(run_event_to_data(_begin()))
+    end = json.dumps(run_event_to_data(_end()))
+    frames = _Bytes(
+        f"id: {begin_id}\nevent: run_begin\ndata: {begin}\n\n".encode(),
+        comment,
+        f"id: {end_id}\nevent: run_end\ndata: {end}\n\n".encode(),
+    )
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            return _stream_response(stream=frames)
+        return httpx.Response(
+            200, json=_DETAIL_ADAPTER.dump_python(_detail(), mode="json")
+        )
+
+    async def scenario() -> None:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+            client = RemoteRunClient("https://runtime.test", client=http)
+            tracer = _Tracer()
+            await client.connect()
+            handle = await client.run(_request(), tracer=tracer)
+            assert (await handle.wait()).status == "succeeded"
+            assert tracer.events == [_begin(), _end()]
+            await client.disconnect()
+
+    asyncio.run(scenario())
+
+
+def test_remote_client_logs_server_stream_error_code_without_payload(caplog):
+    caplog.set_level("WARNING", logger=remote.__name__)
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return _stream_response(
+            stream=_Bytes(
+                b'event: stream_error\ndata: {"code":"snapshot_limit",'
+                b'"private":"do-not-log"}\n\n'
+            )
+        )
+
+    async def scenario() -> None:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+            client = RemoteRunClient("https://runtime.test", client=http)
+            await client.connect()
+            handle = await client.run(_request())
+            with pytest.raises(RemoteRunClientError, match="snapshot_limit"):
+                await handle.wait()
+            await client.disconnect()
+
+    asyncio.run(scenario())
+    assert "run=run_remote phase=event code=snapshot_limit" in caplog.text
+    assert "do-not-log" not in caplog.text
+
+
+def test_remote_client_logs_stream_transport_failure_without_sensitive_details(caplog):
+    caplog.set_level("WARNING", logger=remote.__name__)
+    private = "secret-transport-url"
+
+    class BrokenStream(httpx.AsyncByteStream):
+        async def __aiter__(self) -> AsyncIterator[bytes]:
+            yield (
+                f"event: run_begin\ndata: {json.dumps(run_event_to_data(_begin()))}\n\n"
+            ).encode()
+            raise httpx.ReadError(private)
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            return _stream_response(stream=BrokenStream())
+        raise httpx.ConnectError(private, request=request)
+
+    async def scenario() -> None:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+            client = RemoteRunClient("https://runtime.test", client=http)
+            await client.connect()
+            handle = await client.run(_request())
+            with pytest.raises(
+                RemoteRunClientError, match="transport failed: ConnectError"
+            ):
+                await handle.wait()
+            await client.disconnect()
+
+    asyncio.run(scenario())
+    assert "run=run_remote phase=initial error=ReadError" in caplog.text
+    assert "run=run_remote phase=resume attempt=3/3 error=ConnectError" in caplog.text
+    assert "run=run_remote phase=stream error=RemoteRunClientError" in caplog.text
+    assert private not in caplog.text
+
+
+def test_remote_client_logs_terminal_detail_failure_separately(caplog):
+    caplog.set_level("ERROR", logger=remote.__name__)
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            return _stream_response(_begin(), _end())
+        return httpx.Response(503, json={"detail": "private-detail-must-not-log"})
+
+    async def scenario() -> None:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+            client = RemoteRunClient("https://runtime.test", client=http)
+            await client.connect()
+            handle = await client.run(_request())
+            with pytest.raises(RemoteRunClientError, match="HTTP 503"):
+                await handle.wait()
+            await client.disconnect()
+
+    asyncio.run(scenario())
+    assert (
+        "run=run_remote phase=detail error=RemoteRunClientError status=503"
+        in caplog.text
+    )
+    assert "private-detail-must-not-log" not in caplog.text
 
 
 def test_remote_client_does_not_retry_or_expose_transport_endpoint() -> None:
