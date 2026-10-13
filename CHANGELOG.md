@@ -100,6 +100,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Fixed
 
+- Cap authoring no longer requires valid content: the cap `edit` and `delete`
+  commands and the caps API delete act on the raw authored file, so an excluded
+  cap can be repaired or removed, and `too AGENT chore edit` opens a malformed
+  home definition the same way.
+
 - The State watcher re-checks while a tracked source cannot be read, so a
   temporarily unreadable definition is published once it becomes readable
   again instead of waiting for another change.
