@@ -107,7 +107,7 @@ def test_flow_statements_reject_active_targets_even_after_publication(
                 assert not harness.store.list_run_controls(run_id=run.id, kind="exec")
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 @pytest.mark.parametrize("action", ["run", "exec"])
@@ -224,7 +224,7 @@ flow outer() -> Text[]:
             )
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 def test_same_named_runnable_in_another_module_is_not_an_ancestor(tmp_path):

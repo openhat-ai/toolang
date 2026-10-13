@@ -255,7 +255,7 @@ def test_honor_precedes_blocked_batch_and_retry_executes_once(
     # Replay consumes records, not the rule files or State publication.
     (repo / "AGENTS.md").unlink()
     (repo / "src/AGENTS.md").unlink()
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 @pytest.mark.parametrize("change", ["update", "empty", "remove", "restore"])
@@ -309,7 +309,7 @@ def test_honor_rechecks_changes_including_empty_and_removed_rules(tmp_path, chan
             assert_run_event_integrity(tracer.events)
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 @pytest.mark.parametrize("failure", ["symlink", "invalid_utf8", "directory"])
@@ -350,7 +350,7 @@ def test_failed_rule_reads_block_the_operation_without_retraction(tmp_path, fail
             assert_run_event_integrity(tracer.events)
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 @pytest.mark.parametrize("event_type", [StepBegin, PartBegin, StepEnd])
@@ -427,7 +427,7 @@ def test_interrupted_honor_closes_every_announced_tool_call(
             assert_run_event_integrity(tracer.events)
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 def test_model_cannot_call_honor_and_unscoped_fs_is_rejected(tmp_path):
@@ -489,7 +489,7 @@ def test_mixed_batch_and_changed_retry_leave_the_original_operation_unexecuted(
             assert_run_event_integrity(tracer.events)
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 def test_parallel_children_keep_honor_dependencies_and_replies_local(tmp_path):
@@ -571,7 +571,7 @@ flow parent(_: Part[]) -> Part[][]:
             assert_run_event_integrity(tracer.events)
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 @pytest.mark.parametrize("saved_delta", [False, True])
@@ -630,9 +630,10 @@ def test_restart_recovers_intercepted_reply_once_without_rule_files(
                 assert (
                     _results(reopened.adapter.invocations[-1].call.messages) == expected
                 )
+        harness.model_calls.update(reopened.model_calls)
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 def test_overlapping_anchors_remain_independent_in_honor(tmp_path):
@@ -740,7 +741,7 @@ def test_pending_revisions_follow_a_b_a_order_and_deleted_rules_can_return(tmp_p
             assert_run_event_integrity(tracer.events)
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 def test_publication_preserves_the_workspace_at_the_tool_boundary(tmp_path):
@@ -778,7 +779,7 @@ def test_publication_preserves_the_workspace_at_the_tool_boundary(tmp_path):
             assert_run_event_integrity(tracer.events)
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 def test_honor_and_invocation_agree_after_symlink_parent_traversal(tmp_path):
@@ -814,7 +815,7 @@ def test_honor_and_invocation_agree_after_symlink_parent_traversal(tmp_path):
             assert_run_event_integrity(tracer.events)
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 def test_honor_preserves_a_prepared_directory_name_with_trailing_space(tmp_path):
@@ -851,4 +852,4 @@ def test_honor_preserves_a_prepared_directory_name_with_trailing_space(tmp_path)
             assert_run_event_integrity(tracer.events)
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)

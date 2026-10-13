@@ -607,7 +607,7 @@ def test_real_history_calls_are_ordinary_steps_and_replay_without_reading_again(
             assert_run_event_integrity(tracer.events)
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 def test_thread_page_decodes_only_selected_metadata(store, monkeypatch):
@@ -743,4 +743,4 @@ def test_history_read_can_be_interrupted_without_late_result_delivery(
                 assert await asyncio.to_thread(finished.wait, 2)
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)

@@ -33,7 +33,7 @@ from .records import RunRecord, StepRecord, RunControlPayload, StoredModelStepGi
 from .schemas import StreamFrame
 from .store import RunStore
 from .stream import CanonicalEvent, CanonicalStream, StreamReader
-from .types import ErrorMessage, EventCursor, ModelStepGiven, StepRef
+from .types import ErrorMessage, EventCursor, ModelStepInfo, StepRef
 
 from .observation import (
     SNAPSHOT_SECONDS,
@@ -227,9 +227,8 @@ class RecordSnapshot(StructuralSnapshot):
         for step in steps:
             given = step.given
             if isinstance(given, StoredModelStepGiven):
-                given = ModelStepGiven(
+                given = ModelStepInfo(
                     given.model,
-                    store.rebuild_model_call(step),
                     setup=given.setup,
                     state=given.state,
                 )

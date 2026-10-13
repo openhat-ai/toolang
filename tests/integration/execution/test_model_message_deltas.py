@@ -159,13 +159,15 @@ agic chat(_: Part[]) -> Part[]:
     ):
         path.rename(unavailable / name)
         assert not path.exists()
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
     store = RunStore(harness.store.db_path, read_only=True)
     try:
         history = RunHistory(store)
         for event in tracer.events:
-            if isinstance(event, StepBegin) and isinstance(event.given, ModelStepGiven):
-                assert history.get_model_call(event.step) == event.given.call
+            if isinstance(event, StepBegin) and event.kind == "model":
+                assert history.get_model_call(event.step) in [
+                    invocation.call for invocation in harness.adapter.invocations
+                ]
     finally:
         store.close()
 
@@ -269,7 +271,7 @@ def test_online_tool_loops_only_record_and_render_additions(
             ] == list(range(2, 39, 3))
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 @pytest.mark.parametrize("kind", ["model", "plugin", "runtime"])
@@ -351,7 +353,7 @@ def test_interruption_during_cleanup_still_persists_adopted_output(
             assert_run_event_integrity(tracer.events)
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 @pytest.mark.parametrize("interruption", ["steer", "cancel"])
@@ -471,7 +473,7 @@ def test_interrupted_model_end_preserves_referenced_output(
             assert_run_event_integrity(tracer.events)
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 @pytest.mark.parametrize(
@@ -541,7 +543,7 @@ def test_steer_and_interrupted_model_begin_replay_once(
             assert_run_event_integrity(tracer.events)
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 @pytest.mark.parametrize("scenario_name", ["execute", "child", "parallel", "repair"])
@@ -618,7 +620,7 @@ agic parent() -> Boolean:
             assert root.status == "succeeded", root.error
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 def test_retry_deletes_its_deltas_and_can_reuse_step_ids(tmp_path: Path) -> None:
@@ -659,7 +661,7 @@ def test_retry_deletes_its_deltas_and_can_reuse_step_ids(tmp_path: Path) -> None
             ) == [Message.user("start")]
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 def test_long_delta_sequences_are_linear_and_batch_expansion_is_shared(

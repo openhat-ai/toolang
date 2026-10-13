@@ -109,7 +109,7 @@ agic evolve() -> Text:
             assert "New root." in str(harness.adapter.invocations[3].call.messages)
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 @pytest.mark.parametrize("changed", [False, True])
@@ -174,7 +174,7 @@ def test_model_root_self_exec_keeps_one_run(tmp_path, changed, unnamed):
             }
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 @pytest.mark.parametrize("change", ["input", "output", "kind", "struct", "missing"])
@@ -301,7 +301,7 @@ def test_unchanged_native_self_exec_remains_cancelable(tmp_path, monkeypatch, ti
             )
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 def test_self_exec_preserves_root_budget_and_authority(tmp_path):

@@ -73,7 +73,7 @@ flow worker(_: Text) -> Text:
             )
         observer.finish()
         await observer.drain()
-        assert_replayed(harness.store.db_path, tracer.events)
+        assert_replayed(harness, tracer.events)
 
     asyncio.run(scenario())
 
@@ -180,6 +180,6 @@ agic reader(_: Text) -> Text:
             )
         observer.finish()
         await observer.drain()
-        assert_replayed(harness.store.db_path, tracer.events)
+        assert_replayed(harness, tracer.events)
 
     asyncio.run(scenario())

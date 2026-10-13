@@ -196,7 +196,7 @@ def test_batch_runs_finish_before_replies_and_next_tools(tmp_path: Path) -> None
             assert projector.root_metrics.model_calls == 4
             assert projector.root_metrics.tool_calls == 3
             assert not projector._steps
-        assert_replayed(harness.store.db_path, tracer.events)
+        assert_replayed(harness, tracer.events)
 
     asyncio.run(scenario())
 
@@ -317,7 +317,7 @@ def test_repeated_steer_during_children_resumes_caller(tmp_path: Path) -> None:
                 )
                 assert saved is not None and saved.status == "applied"
             assert_run_event_integrity(tracer.events)
-        assert_replayed(harness.store.db_path, tracer.events)
+        assert_replayed(harness, tracer.events)
 
     asyncio.run(scenario())
 
@@ -417,7 +417,7 @@ flow child(_: Part[]) -> Part[]:
                 harness.run_spec(thread=thread, runnable="parent")
             )
             assert_run_event_integrity(tracer.events)
-        assert_replayed(harness.store.db_path, tracer.events)
+        assert_replayed(harness, tracer.events)
         reopened = RunStore(harness.store.db_path, read_only=True)
         try:
             history = reopened.message_history(next_root.id).select(None)

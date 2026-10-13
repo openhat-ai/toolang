@@ -109,7 +109,7 @@ def test_first_call_has_all_workspaces_without_discovery_or_rule_reads(
                             )
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 def test_compaction_reintroduces_workspaces_even_if_far_mentions_them(tmp_path):
@@ -149,7 +149,7 @@ def test_compaction_reintroduces_workspaces_even_if_far_mentions_them(tmp_path):
             ]
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 def test_published_remap_keeps_active_rule_bindings(tmp_path):
@@ -202,7 +202,7 @@ def test_published_remap_keeps_active_rule_bindings(tmp_path):
             ]
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 def test_publication_preserves_bound_psyches_and_runnable_authority(tmp_path):
@@ -244,7 +244,7 @@ def test_publication_preserves_bound_psyches_and_runnable_authority(tmp_path):
             assert not _declarations(harness, run, "psyche")
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 @pytest.mark.parametrize("context", ["none", "custom"])
@@ -327,7 +327,7 @@ def test_publication_cannot_expand_bound_route_authority_and_replays(tmp_path, c
                     )
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 def test_runnable_docs_do_not_inflate_recurring_route_messages(tmp_path):
@@ -374,7 +374,7 @@ def test_runnable_docs_do_not_inflate_recurring_route_messages(tmp_path):
             )
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 def test_workspace_publications_preserve_active_workspace_listing(tmp_path):
@@ -418,7 +418,7 @@ def test_workspace_publications_preserve_active_workspace_listing(tmp_path):
             assert all("revision=" not in text for group in messages for text in group)
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 @pytest.mark.parametrize("kind,name", [("skill", "testing"), ("service", "github")])
@@ -493,4 +493,4 @@ def test_definition_changes_invalidate_and_refresh_guidance(tmp_path, kind, name
                 ) == (index >= 2)
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)

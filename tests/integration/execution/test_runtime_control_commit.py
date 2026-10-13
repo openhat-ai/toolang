@@ -128,7 +128,7 @@ flow child(_: Text) -> Text:
                 root = next(r for r in harness.store.list_runs() if r.id != parent.id)
                 assert root.status == ("failed" if target_fails else "succeeded")
         if caller == "agic":
-            assert_replayed(harness.store.db_path, tracer.events)
+            assert_replayed(harness, tracer.events)
 
     asyncio.run(scenario())
 
@@ -182,7 +182,7 @@ flow child() -> Text:
                 == "injected source completion failure"
             )
             assert_run_event_integrity(tracer.events)
-        assert_replayed(harness.store.db_path, tracer.events)
+        assert_replayed(harness, tracer.events)
 
     asyncio.run(scenario())
 
@@ -274,6 +274,6 @@ agic child() -> Text:
             )
             assert applied is not None and applied.status == "applied"
             assert_run_event_integrity(tracer.events)
-        assert_replayed(harness.store.db_path, tracer.events)
+        assert_replayed(harness, tracer.events)
 
     asyncio.run(scenario())

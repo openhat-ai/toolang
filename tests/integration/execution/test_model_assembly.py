@@ -175,7 +175,7 @@ def test_context_selection_keeps_data_and_current_input_out_of_instructions(
                     assert "</toolang:context>" not in runtime_text
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 def test_cross_run_baselines_do_not_duplicate_historical_contributions(
@@ -234,7 +234,7 @@ def test_cross_run_baselines_do_not_duplicate_historical_contributions(
             )
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 @pytest.mark.parametrize("compact", [False, True])
@@ -298,7 +298,7 @@ flow job(_: Part[]) -> Part[]:
             ]
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 @pytest.mark.parametrize("action", ["execute", "retry"])
@@ -408,7 +408,7 @@ agic next() -> Part[]:
     hooked = Tracer()
     harness.intercept_events(hooked)
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 def test_compact_preparation_survives_failed_begin(
@@ -483,7 +483,7 @@ def test_compact_preparation_survives_failed_begin(
             assert harness.store.run_horizon(target) == horizon
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 @pytest.mark.parametrize("context", [None, "Plain runtime context."])
@@ -596,7 +596,7 @@ def test_each_call_records_context_without_rerendering_history(
         "control_message",
         lambda _control: pytest.fail("replay must use saved templates"),
     )
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 @pytest.mark.parametrize("invalid", ["partial", "current", "step", "summary"])
@@ -691,7 +691,7 @@ agic describe() -> Text:
             assert text == "Summary: ; detail: []"
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 def test_fork_and_later_rewind_preserve_old_model_calls(tmp_path: Path) -> None:
@@ -726,7 +726,7 @@ def test_fork_and_later_rewind_preserve_old_model_calls(tmp_path: Path) -> None:
             )
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 def test_publication_preserves_recall_without_reading_state_during_replay(
@@ -798,7 +798,7 @@ def test_publication_preserves_recall_without_reading_state_during_replay(
         )
     ):
         path.rename(tmp_path / f"unavailable-state-{index}")
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 def test_parent_compact_changes_shared_history_without_automatic_child_recall(
@@ -903,7 +903,7 @@ agic child() -> Text:
                 assert summary_message("New far.") not in messages[index]
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 @pytest.mark.parametrize(
@@ -987,7 +987,7 @@ def test_initial_horizon_and_recall_selection(
             )
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 def test_compact_adoption_replaces_history_and_preserves_now(tmp_path: Path) -> None:
@@ -1069,7 +1069,7 @@ def test_compact_adoption_replaces_history_and_preserves_now(tmp_path: Path) -> 
             )[0] == summary_message("Earlier facts.")
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 def test_compaction_between_tools_resets_the_last_model_baseline(tmp_path):
@@ -1176,7 +1176,7 @@ def test_compaction_between_tools_resets_the_last_model_baseline(tmp_path):
             assert harness.store.rebuild_model_call(step) == request
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 @pytest.mark.parametrize(
@@ -1211,7 +1211,7 @@ def test_compaction_excludes_the_covered_roots_terminal_reply(tmp_path, summary)
                 Message.assistant("retained reply"),
                 Message.user("current input"),
             ]
-        assert_replayed(harness.store.db_path, tracer.events)
+        assert_replayed(harness, tracer.events)
 
     asyncio.run(scenario())
 
@@ -1277,7 +1277,7 @@ def test_compaction_keeps_terminal_tool_exchanges_with_their_root(tmp_path):
                 if isinstance(p, (ToolCallPart, ToolResultPart))
             ]
             assert [p.tool_call_id for p in parts] == ["retained", "retained"]
-        assert_replayed(harness.store.db_path, tracer.events)
+        assert_replayed(harness, tracer.events)
 
     asyncio.run(scenario())
 

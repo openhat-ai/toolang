@@ -112,7 +112,7 @@ def test_recovery_retains_accounting_and_replay_without_executing_failed_batch(
             assert_run_event_integrity(tracer.events)
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 @pytest.mark.parametrize(
@@ -165,7 +165,7 @@ def test_failed_step_retains_available_text(
             assert_run_event_integrity(tracer.events)
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 @pytest.mark.parametrize(
@@ -205,7 +205,7 @@ def test_recovery_is_bounded(tmp_path: Path, kind, limit, attempts: int) -> None
             assert_run_event_integrity(tracer.events)
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 @pytest.mark.parametrize("action", ["retry", "cancel", "steer"])
@@ -275,7 +275,7 @@ def test_network_backoff_is_cancelable_and_accepts_steering(
             assert_run_event_integrity(tracer.events)
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 @pytest.mark.parametrize("recoveries_before_repair", [1, 2])
@@ -328,7 +328,7 @@ agic chat() -> Boolean:
             assert_run_event_integrity(tracer.events)
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 @pytest.mark.parametrize("known_usage", [True, False])
@@ -373,7 +373,7 @@ def test_failed_attempt_respects_token_accounting_limits(
             assert_run_event_integrity(tracer.events)
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 @pytest.mark.parametrize("steer", [False, True])

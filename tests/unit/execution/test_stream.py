@@ -8,7 +8,8 @@ import weakref
 
 import pytest
 
-from toolang.base.types.message import TextDelta, TextPart
+from toolang.base.types.message import Message, TextDelta, TextPart
+from toolang.base.types.run import ModelCall
 from toolang.execution.errors import StreamGapError, StreamOverflowError
 from toolang.execution.events import (
     PartBegin,
@@ -16,11 +17,13 @@ from toolang.execution.events import (
     PartEnd,
     RunBegin,
     RunEnd,
+    StepBegin,
     StepEnd,
     ThreadForked,
+    event_to_data,
 )
 from toolang.execution.stream import CanonicalStream, StreamLimits
-from toolang.execution.types import ControlRef, EventCursor, StepRef
+from toolang.execution.types import ControlRef, EventCursor, ModelStepGiven, StepRef
 
 
 def emit(source, event, *, root="run_a", thread="term_a"):
@@ -28,6 +31,39 @@ def emit(source, event, *, root="run_a", thread="term_a"):
         cursor = EventCursor.parse(publication.cursor)
         publication.append(event, root_run_id=root, thread_id=thread)
     return cursor
+
+
+def test_large_model_context_does_not_overflow_live_observers():
+    context = "context " * (256 * 1024)
+    call = ModelCall(context, [Message.user(context)])
+    event = StepBegin(
+        StepRef.parse("run_a.0"),
+        "model",
+        ModelStepGiven("test/model", call, setup="test-setup", state="test-state"),
+    )
+    assert len(str(event_to_data(event)).encode()) > StreamLimits().batch_bytes
+
+    async def scenario():
+        source = CanonicalStream()
+        reader = source.subscribe(root_run_id="run_a")
+        try:
+            emit(source, event)
+            batch = await reader.receive()
+            observed = batch.events[0]
+            assert observed.size < 1024
+            data = event_to_data(observed.event)
+            assert data["given"] == {
+                "model": "test/model",
+                "setup": "test-setup",
+                "state": "test-state",
+            }
+            assert isinstance(event.given, ModelStepGiven)
+            assert event.given.call == call
+        finally:
+            reader.close()
+            source.close()
+
+    asyncio.run(scenario())
 
 
 def begin(run="run_a"):

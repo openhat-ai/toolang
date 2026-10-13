@@ -240,7 +240,7 @@ agic gamma() -> Text:
                     assert active.pop(event.step.run_id) == event.step
             assert not active
             assert projector.root_metrics.runs == 5
-        assert_replayed(harness.store.db_path, tracer.events)
+        assert_replayed(harness, tracer.events)
 
     asyncio.run(scenario())
 
@@ -317,7 +317,7 @@ agic child() -> {result_type}:
             assert restored is not None and restored.output == source.output
         finally:
             store.close()
-        assert_replayed(harness.store.db_path, tracer.events)
+        assert_replayed(harness, tracer.events)
 
     asyncio.run(scenario())
 
@@ -424,6 +424,6 @@ agic side() -> Text:
                 projector.handle(event)
                 assert not projector._broken
             assert projector.root_metrics.runs == 5
-        assert_replayed(harness.store.db_path, tracer.events)
+        assert_replayed(harness, tracer.events)
 
     asyncio.run(scenario())

@@ -133,7 +133,7 @@ agic chat(_: Part[]) -> Part[]:
                 if action == "cancel":
                     assert message_text(marker.parts).endswith("/>")
                     assert messages[-1] == Message.user("1")
-                assert_replayed(harness.store.db_path, tracer.events)
+                assert_replayed(harness, tracer.events)
             finally:
                 if pid is not None:
                     try:
@@ -311,7 +311,7 @@ agic chat(_: Part[]) -> Part[]:
             )
             assert str(run.thread) not in calls[0].instructions
             assert run.id not in calls[0].instructions
-        assert_replayed(harness.store.db_path, tracer.events)
+        assert_replayed(harness, tracer.events)
 
     asyncio.run(scenario())
 
@@ -383,6 +383,6 @@ agic chat(_: Part[]) -> Part[]:
                 *without_runtime_snapshots(call.messages),
                 Message.assistant("done"),
             ]
-        assert_replayed(harness.store.db_path, tracer.events)
+        assert_replayed(harness, tracer.events)
 
     asyncio.run(scenario())

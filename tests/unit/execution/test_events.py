@@ -35,6 +35,7 @@ from toolang.execution.types import (
     FieldRef,
     LoopStepNoted,
     ModelStepGiven,
+    ModelStepInfo,
     ModelStepNoted,
     Occurrence,
     OccurrencePosition,
@@ -128,6 +129,48 @@ _EVENTS: tuple[RunEvent, ...] = (
 def test_run_event_codec_round_trips_every_event_variant() -> None:
     for event in _EVENTS:
         assert run_event_from_data(run_event_to_data(event)) == event
+
+
+@pytest.mark.parametrize("state", [None, "test-state"])
+def test_model_observation_round_trips_without_a_call(state) -> None:
+    event = StepBegin(
+        StepRef.parse("run_root.0"),
+        "model",
+        ModelStepInfo("test/model", setup="test-setup", state=state),
+    )
+    data = run_event_to_data(event)
+    assert "call" not in data["given"]
+    assert run_event_from_data(data) == event
+
+
+@pytest.mark.parametrize("field", ["call_ref", "messages", "instructions"])
+def test_model_observation_rejects_noncanonical_given_fields(field) -> None:
+    event = StepBegin(
+        StepRef.parse("run_root.0"),
+        "model",
+        ModelStepInfo("test/model", setup="test-setup"),
+    )
+    data = run_event_to_data(event)
+    data["given"][field] = "unexpected"
+    with pytest.raises(ValueError, match="model Step info requires"):
+        run_event_from_data(data)
+
+
+def test_model_observation_cannot_be_persisted_as_a_complete_call(tmp_path) -> None:
+    from toolang.execution.executor._persist import _PersistSink
+    from toolang.execution.store import RunStore
+
+    event = StepBegin(
+        StepRef.parse("run_root.0"),
+        "model",
+        ModelStepInfo("test/model", setup="test-setup"),
+    )
+    store = RunStore(tmp_path / "runs.db")
+    try:
+        with pytest.raises(TypeError, match="complete ModelStepGiven"):
+            _PersistSink(store).on_event(event)
+    finally:
+        store.close()
 
 
 def test_step_begin_codec_rejects_malformed_state_control_reference() -> None:

@@ -91,7 +91,7 @@ def test_rules_preserve_trailing_spaces_in_workspace_paths(tmp_path):
             assert RulesRecallTarget("repo", "/notes") not in visible
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 @pytest.mark.parametrize("change", ["remove", "remap"])
@@ -252,7 +252,7 @@ def test_external_workspace_rules_and_protocol_survive_instruct_none(tmp_path):
 
     asyncio.run(scenario())
     (external / "AGENTS.md").unlink()
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 @pytest.mark.parametrize("external", [False, True])
@@ -334,7 +334,7 @@ def test_remove_symlink_honors_rules_then_unlinks_without_removing_the_target(tm
             assert_run_event_integrity(tracer.events)
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 def test_fs_protocol_follows_effective_tools(tmp_path):
@@ -404,7 +404,7 @@ def test_publication_preserves_revision_listing_grants_and_mapping_in_one_run(tm
             assert_run_event_integrity(tracer.events)
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 @pytest.mark.parametrize("change", ["remove", "remap", "remap-without-rules"])
@@ -449,7 +449,7 @@ def test_honor_retry_uses_the_bound_workspace_state(tmp_path, change):
             assert_run_event_integrity(tracer.events)
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 def test_publication_during_a_tool_keeps_paths_for_subsequent_steps(
@@ -498,7 +498,7 @@ def test_publication_during_a_tool_keeps_paths_for_subsequent_steps(
             assert_run_event_integrity(tracer.events)
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 def test_parallel_children_keep_workspace_rules_after_root_publication(tmp_path):
@@ -591,4 +591,4 @@ flow parent(_: Part[]) -> Text[]:
             assert_run_event_integrity(tracer.events)
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)

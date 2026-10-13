@@ -166,7 +166,7 @@ flow target(_: {type_name}, note: Part[]) -> {type_name}:
             return target.id
 
     target_id = asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
     reopened = RunStore(harness.store.db_path, read_only=True)
     try:
         target = reopened.get_run(run_id=target_id)
@@ -713,7 +713,7 @@ agic helper() -> Text:
                 )
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 @pytest.mark.parametrize("count", [63, 64])
@@ -2400,4 +2400,4 @@ agic other() -> Text:
             assert len(runs) == (2 if allowed and operation == "run" else 1)
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)

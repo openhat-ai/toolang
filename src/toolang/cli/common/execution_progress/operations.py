@@ -2,7 +2,12 @@
 
 from toolang.base.types.message import ToolResultPart
 from toolang.execution.events import StepBegin, StepEnd
-from toolang.execution.types import ExecStepNoted, ModelStepGiven, ToolStepGiven
+from toolang.execution.types import (
+    ExecStepNoted,
+    ModelStepGiven,
+    ModelStepInfo,
+    ToolStepGiven,
+)
 
 from .formatting import output_parts, runnable_label
 from .types import StepOperation
@@ -56,7 +61,7 @@ def normalize_operation(
             and name in {"pick", "honor", "compact"}
             else "›",
         )
-    if isinstance(given, ModelStepGiven):
+    if isinstance(given, ModelStepGiven | ModelStepInfo):
         return StepOperation(begin, "model", "model")
     return StepOperation(
         begin,

@@ -905,7 +905,7 @@ def test_output_repair_ignores_new_callable_targets(tmp_path, routes, added_targ
 
     asyncio.run(scenario())
 
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 def test_model_dependencies_refresh_but_prepared_tool_reads_and_code_stay_pinned(
@@ -1025,7 +1025,7 @@ agic grow() -> Text:
             )
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 def test_ancestor_rules_do_not_exclude_another_modules_private_caps_or_routes(tmp_path):
@@ -1249,7 +1249,7 @@ agic worker() -> Text:
             assert all(s.state == child.state for s, _ in models)
 
     asyncio.run(scenario())
-    assert_replayed(harness.store.db_path, tracer.events)
+    assert_replayed(harness, tracer.events)
 
 
 def test_external_tool_ceiling_does_not_require_children_to_restore_excluded_tools(
