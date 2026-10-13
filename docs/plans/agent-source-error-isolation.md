@@ -1,172 +1,190 @@
 # Agent source error isolation and chore ownership
 
-Status: proposed. State ownership, home-only chores, lazy directories, and
-nonblocking chore errors were confirmed in chat on 2026-10-13. The complete
-file-isolation policy below awaits human approval before implementation.
+Approved in chat on 2026-10-13, including the subsequent source-boundary and
+flat sync-receipt decisions. This PR contains the definition only.
 
 ## Goal and scope
 
-Publish valid agent source changes even when an independent chore, psyche, or
-runnable source is invalid. State owns accepted definitions and source
-diagnostics; drivers own activation and execution. Setup retains installed
-environment, model, and tool configuration.
+Publish valid source changes while excluding invalid independent resources.
+State owns accepted definitions and source diagnostics; drivers own activation
+and execution; Setup retains environments, models, and tools.
 
-This plan replaces the independent-chore exclusion and root-chore inheritance
-in [execution drivers](serve-execution-drivers.md) and the corresponding
-exclusion in [State revisions](agent-state-revisions.md). Keep their identity,
-checkpoint, driver selection, and execution contracts.
+This supersedes the Markdown-chore exclusion and root-chore inheritance in
+[execution drivers](serve-execution-drivers.md) and
+[State revisions](agent-state-revisions.md), and whole-candidate resource error
+handling in [runnable modules](flat-runnable-modules.md). Preserve their
+identity, checkpoint, execution, driver selection, and source syntax contracts.
 
-## Source acceptance
+## Source boundaries
 
-Use the same policy for each immediate home `chores/<name>.md`, each authored
-psyche definition, and each Program source (`agent.too` or an immediate
-`runnables/<name>.too`). A directory-form psyche and its materialized files are
-one unit. Root psyches use the same policy within the shared root layer.
+- Each `runnables/<name>.too` is a self-contained Program: direct symbol
+  references resolve only its own definitions. Helpers, types, instructions,
+  and caps remain private. Export exactly one agic or flow as `<name>`; retain
+  the existing named or unnamed entry forms and private module identities.
+- Each authored cap exposes its path-derived identity: the Markdown filename
+  stem for psyches, services, and prompts; the directory name for
+  `skills/<name>/SKILL.md`. A skill and its bundled assets are one unit.
+  A home `chores/<name>.md` exposes only chore `<name>`. Metadata cannot create
+  additional or differently named resources.
+- Preserve current `with` behavior for external URL/GitHub shorthand resources.
+  Capture them with their owning Program; resolution/materialization errors
+  invalidate that unit. Do not introduce sibling source imports.
+- Preserve directive selection, runtime visibility, model/tool use, and driver
+  handler resolution. Missing requested targets fail through normal handling;
+  runtime selection creates no preparation dependency graph.
+- Preserve `agent.too` as the composition entry, including its current direct
+  calls to public exports, external-declaration validation, public declarations,
+  and default-entry rules. Validate it against accepted exports as today.
+  A missing required export can invalidate this Program, while independent
+  valid resource files still publish. Do not change standalone script behavior.
 
-| Source result | Accepted definition | Publication |
-| --- | --- | --- |
-| Valid new or edited unit | Current validated unit | Publish with other accepted changes |
-| Invalid edited unit | Its last accepted unit at the same logical source path | Publish other valid changes and report the error |
-| Invalid new unit | Omit the unit | Publish other valid changes and report the error |
-| Deleted unit | Remove it; do not restore an older version | Publish the removal |
-| Repaired unit | Accept its current definition and clear its diagnostic | Publish the repair |
+No new linking, dependency graph, or iterative fallback mechanism is introduced.
 
-Fallback is per source path and scope, never to a similarly named resource or
-another agent. An invalid replacement after a published deletion is new and has
-no fallback. A rename is deletion plus addition. Retain complete accepted
-units, including module-local caps and materialized psyche files.
+## Uniform resource errors
 
-An invalid inline chore belongs to its enclosing Program unit: retain that
-Program's accepted version while unrelated files advance. General `.too`
-syntax remains strict; do not guess declarations out of a broken file. On
-first preparation, an invalid `agent.too` contributes an empty `agent` Program
-and a diagnostic, following the existing empty-module shape. Other valid
-modules remain available; missing handlers fail through existing admission.
+Apply the same policy to every authored cap kind, home Markdown chore, and
+Program source. Root caps use it within their shared root layer.
 
-Validate references against the selected accepted units. Reject an update with
-an unresolved dependency, falling back only for that dependent unit. Identity
-or export collisions reject all conflicting candidate updates; preserve their
-compatible accepted units and omit new conflicting units. Iterate selection
-until references and identities are consistent; unaffected units still publish.
-Never publish dangling references or choose a winner by scan order.
+| Source result | Contribution to the new State |
+| --- | --- |
+| Valid new or edited unit | Accept its current definition and bytes |
+| Invalid new or edited unit | Exclude it and report a source diagnostic |
+| Deleted unit | Remove it |
+| Repaired unit | Accept it and clear its diagnostic |
 
-Resource-local parsing, validation, and read failures are diagnostics for their
-unit. An unreadable resource directory retains its accepted contents until a
-complete listing succeeds; it must not be interpreted as deletion. Invalid
-shared config, an unavailable root/home, failed persistence, or an internally
-inconsistent final composition still rejects the entire candidate. Existing
-behavior for other capability kinds is outside this change.
+There is no old-definition fallback, including after restart, explicit sync,
+or forced refresh. Invalid inline caps/chores exclude their enclosing Program;
+do not extract declarations from malformed source. If the agent Program is
+excluded, retain only the structural empty `agent` module required by State,
+with no accepted `agent.too` source or synthetic public entry. Valid independent
+modules remain available; unavailable handlers fail through existing admission.
 
-## State persistence and diagnostics
+Use existing precedence among currently accepted units. Invalid home caps can
+expose valid root caps; valid `agent.too` chores still override home files.
+Same-scope identity or public export conflicts exclude all conflicting units
+with diagnostics naming every source; never choose by scan order.
 
-Include chore sources in home observation, capture, preparation, and revision
-loading. Parsing remains in `catalog` and `lang`; State must not import a
-driver, scheduler, store, or event emitter. Place pure chore vocabulary and
-source conversion with the authored chore owner.
+Parsing, validation, and resource-local read failures exclude only their unit.
+An unreadable resource directory excludes its units and receives a directory
+read diagnostic; do not report confirmed deletion. Invalid shared config,
+unavailable root/home, failed persistence, and internal composition errors
+still reject the whole candidate and retain the last published State.
 
-Keep observed source identity separate from accepted content identity. Persist
-accepted units and their exact bytes in each layer, copying retained units into
-the new revision. Record the observed digest or read error, the accepted digest,
-and a stable per-unit diagnostic. A rejected file must never be represented as
-accepted merely because a fallback exists. Diagnostics identify kind, scope,
-authored path, optional line, code, message, and whether a fallback is retained.
-Do not include timestamps in revision identity.
+Exclusion stops future invocations/dispatch of that definition. Existing runs
+follow existing snapshot rules; an active chore is not canceled. Preserve
+checkpoint/history records without accepting rejected definition hashes.
+Repair resumes normal reconciliation, including existing one-off and schedule
+rules; a repaired unchanged completed one-off must not rerun.
 
-State exposes an immutable effective chore index: home Markdown definitions
-followed by `agent.too` declarations, with later inline declarations winning.
-Keep other runnable-module chores inactive as today. Persist everything needed
-to reconstruct accepted definitions and diagnostics without authored files or
-network access. Bump the layer schema; rebuild current layers from source.
-Existing supported historical revisions remain loadable with an empty Markdown
-chore index when absent, without inventing historical definitions from disk.
+## Persistence and flat sync receipts
 
-Distinguish successful publication with source diagnostics from fatal State
-rejection in refresh and sync results. Per-unit fallback must also work on
-explicit sync and forced refresh. Rechecking identical sources, accepted units,
-and diagnostics retains the same revision; repair clears only repaired errors.
-Expose this distinction through existing State inspection/sync surfaces, using
-additive fields where necessary.
+Include home chore files in State observation, capture, preparation, and loading.
+Source parsing stays in `catalog`/`lang`; State must not depend on drivers,
+stores, schedulers, or emitters. Persist accepted bytes and definition terms,
+with source acceptance records identifying rejected observations separately.
+State exposes an immutable chore index assembled from accepted home files and
+accepted `agent.too`; chores in other runnable modules stay inactive as today.
 
-## Chore driver and filesystem
+Bump the layer schema and rebuild current layers from current sources. Existing
+supported historical revisions remain loadable without disk/network access;
+missing historical Markdown-chore data means an empty Markdown index. Never
+invent old definitions from current files. Integrity checks cover accepted
+bytes, terms, and source records. Stable diagnostics contain no timestamps or
+absolute host paths in revision identity; identical checks reuse the revision.
 
-Remove root chore loading, watching, authoring, and fallback. Existing root
-files remain untouched and ignored; users move or copy them into each intended
-agent home. Keep chore names, derived IDs, threads, and `runs.db` checkpoints,
-so a same-name move within an agent preserves its progress.
+A successful sync returns only `revision` and one `files` list of flat records:
 
-Agent creation, reads, State preparation, driver startup, and monitoring must
-not create a chores directory. Missing home chores means no Markdown chores.
-Create it only when an explicit authoring operation writes its first file.
-StateWatcher monitors existing ancestors and detects creation, atomic edits,
-deletion, and recreation without directory creation side effects.
+```json
+{
+  "revision": "<published-state-revision>",
+  "files": [
+    {"scope": "home", "key": "psyches/review.md", "observed_digest": "<sha256>", "accepted_digest": "<sha256>"},
+    {"scope": "home", "key": "chores/cleanup.md", "observed_digest": "<sha256>", "accepted_digest": null, "code": "invalid-source", "message": "Invalid chore schedule", "line": 2}
+  ]
+}
+```
 
-The chore driver consumes the accepted State chore index, with no separate
-filesystem watcher or definition scan. Reuse the existing State-revision poll
-for reconciliation. At dispatch, take one State and reconcile its definitions
-before resolving handlers from that same State. Keep deadlines, checkpoints,
-recovery, cancellation, and progress driver-owned.
+Both digests identify raw authored bytes. Accepted readable files have equal
+digests, including valid shadowed inputs. Invalid readable files have an
+observed digest and null accepted digest. Unreadable files/directories have
+both null and a read-error code/message. Assets share their unit's acceptance.
+Deleted files are absent. Sort records by scope/key. Optional `code`, `message`,
+and `line` appear directly on the affected record, never in a nested object;
+omit unknown lines. No separate sources/diagnostics/differences lists or
+redundant status field. Publication does not imply every file was accepted.
 
-Runtime authoring and manual-run call sites request State refresh on its owner
-loop before reconciling the driver; never wait for State from its own loop or
-move parsing into the scheduler thread. A resource diagnostic permits accepted
-fallback execution; a newly invalid definition cannot be manually dispatched.
-Offline authoring/listing remains independent of handler preparation. A bad
-file is reported without hiding valid siblings; runtime inspection distinguishes
-authored errors from the accepted definition actually used by the driver.
+A fatal rejected check returns top-level `error`, `message`, the prior published
+`revision` (or null), and `files: []`; it issues no per-file acceptance receipt
+for the rejected candidate. Existing sync errors keep their codes. Update
+inspection and tool contracts together so callers distinguish this rejection
+from successful publication containing invalid resources.
 
-Remove the `toolang.work` ownership layer: move chore runtime modules into
-`toolang.driver.chore`, pure definitions and authoring into `catalog`, incoming
-message handling into `toolang.driver.talk`, and transport/presence orchestration
-into `teaming`. Keep public commands, driver names, flags, and execution APIs.
-Do not introduce a generic driver framework or a new Work/task entity.
+## Chore ownership, authoring, and directories
 
-## Implementation touchpoints
+Remove root chore loading/watching/fallback. Leave existing root files untouched;
+users relocate them into each intended agent home. Names, IDs, threads, and
+`runs.db` checkpoints remain unchanged, preserving same-name progress.
 
-- `state/{source,prepare,cache,state,watcher,errors,types}.py`: source selection,
-  acceptance, persistence, diagnostics, and publication results.
-- `catalog/{chore,cap,manager}.py`, `lang` parsing callers: pure resource units
-  and consistent diagnostics without weakening source syntax.
-- `work/` and the new `driver/` owners, `up/server.py`, `teaming/`: relocate
-  responsibilities and consume accepted State through existing startup patterns.
-- CLI/API and internal authoring/state tools: imports, refresh ordering,
-  isolated listings, and accepted-versus-authored inspection.
-- Focused State, catalog, driver, CLI/API tests and `docs/agent-state.md`.
-  Generate implementation changelog entries through the repository runnable.
+Only the first explicit file write creates home `chores/`. Creation of an agent,
+reads, State preparation, startup, and monitoring create neither root nor home
+chores directories. Watch existing ancestors to detect creation, atomic edits,
+deletion, and recreation. Missing home chores contributes no Markdown chores.
 
-## Acceptance
+The chore driver consumes the accepted State index without a file watcher or
+source scan. Reuse its State-revision polling. Capture one State, reconcile its
+definitions, and resolve the handler from that same State before dispatch.
+Runtime authoring/manual-run call sites refresh State on its owner loop before
+driver reconciliation; avoid waiting on that loop from itself.
 
-1. For each source kind, invalid new/edited files beside valid edits yield a
-   new State containing the valid edits and the specified fallback/omission.
-2. Startup with invalid independent units succeeds with diagnostics; repair,
-   deletion, rename, and restart preserve the acceptance table.
-3. Invalid inline chore metadata retains only its enclosing Program unit;
-   valid sibling Programs, psyches, and Markdown chores still publish.
-4. Dependency and collision failures isolate affected units and cannot produce
-   dangling references. Unreadable listings never silently delete definitions.
-5. Retained units survive deletion of authored files and loading exact revisions;
-   integrity validation covers retained bytes and accepted definition identities.
-6. Resource errors appear in sync/inspection as successful publication with
-   diagnostics; fatal config/persistence errors retain the entire prior State.
-7. Startup, listing, sync, and monitoring create neither root nor home chores.
-   First authoring lazily creates only home chores; subsequent directory
-   recreation is detected. Root chores and sibling-agent chores have no effect.
-8. Chore dispatch uses one accepted State for both definitions and handlers;
-   invalid updates never alter checkpoints, trigger execution, or block valid
-   sibling chores. Existing scheduling/recovery scenarios remain green.
-9. No production imports reference `toolang.work`; public driver selection,
-   talk/transport behavior, command names, and checkpoint layout are preserved.
+Offline inspection stays independent of handler preparation and reports invalid
+files alongside valid siblings. Raw reads, complete replacement, and deletion
+address source paths without parsing existing content; retain digest checks and
+path safeguards. CLI editing opens raw source; invalid semantic patches direct
+the caller to complete replacement. Excluded definitions cannot run manually.
 
-Run default offline lint, format, type, and pytest verification for implementation.
-For this definition, validate source references and run `git diff --check`.
+Remove `toolang.work`: put chore runtime in `toolang.driver.chore`, pure
+source definitions/authoring in `catalog`, incoming message handling in
+`toolang.driver.talk`, and transport/presence orchestration in `teaming`.
+Preserve public commands, flags, driver names, talk/transport behavior, and
+startup/shutdown patterns. Do not add a generic driver framework or Work/task
+entity.
 
-## Risks and approval
+## Touchpoints and acceptance
 
-Fallback deliberately allows older accepted behavior to continue; diagnostics
-must make that visible. The first upgrade cannot recover a prior valid unit that
-was never persisted. Partial acceptance must preserve cross-file invariants,
-and accepted-versus-observed identities must remain explicit in storage and UI.
-Root chores require manual relocation. Driver moves must preserve startup and
-shutdown behavior, including transport with talk disabled.
+Likely files: `state/{source,prepare,cache,state,watcher,errors,types}.py`,
+`catalog/{chore,cap,manager}.py`, existing parsing/validation callers,
+`work/` and its new owners, `up/server.py`, CLI/API/internal state and authoring
+tools, focused tests, and `docs/agent-state.md`. Generate implementation
+changelog entries with the repository runnable.
 
-Open decision: approve the complete file-level fallback, dependency, and fatal
-error boundaries above. No implementation is authorized by this definition PR.
+1. Every cap kind, chore, and Program: valid sibling edits publish beside invalid
+   new/edited units; startup, repair, deletion, rename, restart, sync, and forced
+   refresh obey exclusion. Unreadable directories recover with clear diagnostics.
+2. Private symbols and same-name named/unnamed exports retain current behavior;
+   no sibling linking is added. Existing agent cross-file calls, URL/GitHub
+   references, directives, and driver resolution work and fail as specified.
+3. Inline-source errors, public collisions, and root/home or file/inline
+   shadowing produce deterministic accepted indexes and per-source diagnostics.
+4. Upgrade excludes invalid current sources; historical loading and integrity
+   validation require no current source/network. Repeated checks reuse revisions.
+5. Flat receipts cover valid, invalid, unreadable, shadowed, deleted, and repaired
+   sources; fatal rejection carries no candidate acceptance records. Raw CLI/API
+   and tool reads/replacement/deletion repair malformed files.
+6. No read/startup/watch operation creates chores directories; first authoring
+   creates only home chores. Root and sibling-agent chores have no effect.
+7. Dispatch uses one State for definitions and handlers. Invalid definitions
+   cannot dispatch or overwrite saved hashes; active runs/checkpoints survive.
+   Repair, one-off completion, schedules, and recovery retain their contracts.
+8. No production imports reference `toolang.work`; public commands, drivers,
+   talk-disabled transport, startup, and shutdown remain functional.
+
+Implementation requires the default offline lint, format, type, and pytest
+checks. This definition requires source/link verification and `git diff --check`.
+
+## Risks
+
+Invalid edits remove future availability until repair, and valid lower-scope
+resources may become effective. Root chores need manual relocation. Sync field
+changes require aligned consumer/tool documentation updates and changelog
+migration guidance. Driver moves must preserve lifecycle behavior. No open
+design questions remain; this definition PR ships no implementation.
