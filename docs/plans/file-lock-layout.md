@@ -1,7 +1,8 @@
 # File lock simplification
 
 Status: Original scope approved on 2026-10-12. SQLite initialization revision
-proposed on 2026-10-13; awaiting human confirmation before implementation.
+proposed on 2026-10-13; its host/guest feasibility check failed on the current
+OrbStack bind mount. A storage decision is required before implementation.
 
 ## Goal
 
@@ -60,7 +61,24 @@ so host-only tests cannot establish host/guest safety ([Docker Desktop architect
 Validate the actual engine, file-sharing backend, mount options, and SQLite builds
 on Linux and macOS. A returned `wal` mode alone does not prove these semantics.
 
-Writable opening follows one sequence:
+Feasibility evidence (2026-10-13): isolated macOS 27.0.1/arm64 host-directory bind
+mounts via `orbstack` (Docker Engine 29.4.0) and local `python:3.13-slim`, using
+the same directory-volume form as Toolang. Host SQLite 3.53.4 and guest SQLite
+3.46.1 both acquired `BEGIN IMMEDIATE` while the other side held its write
+transaction. Independent POSIX byte-range-lock probes also acquired an exclusive
+lock on both sides simultaneously, and already populated shared mmap views did
+not observe each other's writes. Probes used temporary files, explicit IPC gates,
+and no writes to production databases. This rules out assuming that the current
+mount provides SQLite WAL coordination; it does not characterize every backend.
+
+Open decision: establish a mount with documented compatible locking and coherent
+shared mappings, or revise database access ownership across the host/guest
+boundary. The latter is a separate storage design requiring human scope approval.
+An initialization sidecar protects neither runtime WAL access nor mmap coherence.
+Do not approve this candidate as a safe simplification while this decision remains
+unresolved; successful runs alone cannot substitute for filesystem guarantees.
+
+Subject to that decision, the candidate writable opening sequence is:
 
 1. Enable connection-local foreign keys, then acquire `BEGIN IMMEDIATE` before
    any schema reads. Check `user_version` and, for version zero, whether user
