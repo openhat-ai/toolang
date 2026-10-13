@@ -27,7 +27,7 @@ def test_defaults_enable_agent_teaming(home):
     setup = resolve(home=home)
     assert setup.root.backend == BackendConfig("redis://localhost:6379/0")
     assert setup.root.human == "human:owner"
-    assert setup.root.hub_port == 7000
+    assert setup.root.hub_port == 7001
     assert setup.home.enabled
     assert setup.toolset_config(root=ROOT.parent) == {"root": str(ROOT.parent)}
 

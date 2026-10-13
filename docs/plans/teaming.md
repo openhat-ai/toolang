@@ -54,7 +54,7 @@ human = "brice"
 url = "redis://localhost:6379/0"
 
 [teaming.hub]
-port = 7000
+port = 7001
 ```
 
 Home `<agent-home>/config.toml`:
@@ -68,9 +68,9 @@ enabled = true
 | --- | --- | --- |
 | `teaming.human` | Root | OS username, resolved by setup. |
 | `teaming.backend.url` | Root | `redis://localhost:6379/0`. |
-| `teaming.hub.port` | Root | `7000`, a visual mnemonic for `too0`. |
+| `teaming.hub.port` | Root | `7001`, a visual mnemonic for `TooL`. |
 | `teaming.enabled` | Home | `true`; set `false` to disable backend participation. |
-| `api.port` | Home; hosting-owned | Recorded agent port, otherwise next available `7001`–`7999`. |
+| `api.port` | Home; hosting-owned | Recorded agent port except `7001`, otherwise next available `7002`–`7999`. |
 
 No root enable switch or configured conversation/member lists. Parse scopes separately,
 reject unknown/misplaced fields with their source, and prevent script projections
@@ -83,6 +83,12 @@ Both `start` and `serve` resolve ports as **`--port` > environment > scoped conf
 configuration, and publish the actual endpoint. Invalid ports or conflicts on
 explicitly selected ports fail; Hub never silently changes port. Valid explicit
 ports are `1..65535`. Temporary agent port selection is unchanged.
+
+The port policy was revised by the human on 2026-10-13. A recorded agent port
+of `7001` is reassigned on its next default start, while other recorded ports
+and explicit overrides remain valid. Stop an agent on `7001` before starting
+Hub there; no running process or saved configuration is migrated automatically.
+Remove an explicit Hub `7000` setting to adopt the new default.
 
 ## Hub transport
 

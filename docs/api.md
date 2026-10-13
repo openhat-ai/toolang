@@ -343,7 +343,7 @@ Foreground runtime port selection depends on the agent mode:
 
 | Mode | Selector | Default port behavior |
 | --- | --- | --- |
-| Resident | Local managed name such as `alice` | Reuse the agent's last port when available, otherwise choose from `7001-7999` |
+| Resident | Local managed name such as `alice` | Reuse the agent's last port except `7001` when available, otherwise choose from `7002-7999` |
 | Visiting | Remote selector such as `brice/alice` or `https://toolang.ai/alice.too` | Reuse the visiting root's last port when available, otherwise choose an OS temporary port |
 | Script run | Local `.too` path with an agic or flow name | No port for embedded host execution; attached and temporary guest execution use the selected AgentServer endpoint |
 
@@ -974,10 +974,15 @@ assuming their identifiers can be shortened. Older version-1 references without
 identity fields remain readable as generic workloads.
 
 When `toolang start` runs without `--port`, Toolang first tries the agent's last
-runtime port. If that port is not reusable, Toolang scans its auto-assigned
-local range `7001-7999`, starting at `7001` and counting upward, skipping ports
+runtime port, except `7001`, which is reserved for the default Hub. If that port
+is not reusable, Toolang scans its auto-assigned local range `7002-7999`, starting
+at `7002` and counting upward, skipping ports
 already recorded by other local agents, instead of asking the OS for a random
 ephemeral port.
+
+An agent recorded on `7001` receives a new port on its next default start.
+Explicit CLI, environment, or home configuration port overrides still take
+precedence, including `7001`. Running processes are not relocated.
 
 
 ## Terminal titles and pane marks

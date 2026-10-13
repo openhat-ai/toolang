@@ -4,6 +4,8 @@ import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from toolang.base.types.model import ModelOverride
 from toolang.cli.common.policy import (
     resolve_default_overrides,
@@ -71,6 +73,71 @@ def test_resident_default_port_reuses_free_record_or_selects_available(
             host="127.0.0.1", explicit_port=7223, layout=layout, temporary=False
         )
         == 7223
+    )
+
+
+@pytest.mark.parametrize(
+    "preferred,expected", [(None, 7002), (7001, 7002), (7123, 7123), (8123, 8123)]
+)
+def test_default_agent_port_reserves_hub_port_without_changing_other_records(
+    tmp_path, monkeypatch, preferred, expected
+):
+    layout = AgentLayout.resident(tmp_path, "alice")
+    monkeypatch.setattr(server.agents, "preferred_runtime_port", lambda _: preferred)
+    monkeypatch.setattr(server.agents, "assigned_runtime_ports", lambda *a, **kw: set())
+    monkeypatch.setattr(server, "_port_is_available", lambda host, port: True)
+    assert (
+        server.resolve_runtime_port(
+            host="127.0.0.1", explicit_port=None, layout=layout, temporary=False
+        )
+        == expected
+    )
+    assert (
+        server.resolve_runtime_port(
+            host="127.0.0.1", explicit_port=7001, layout=layout, temporary=False
+        )
+        == 7001
+    )
+
+
+def test_auto_agent_ports_skip_assigned_and_busy_ports_and_stop_at_7999(
+    tmp_path, monkeypatch
+):
+    layout = AgentLayout.resident(tmp_path, "alice")
+    monkeypatch.setattr(server.agents, "preferred_runtime_port", lambda _: 7001)
+    monkeypatch.setattr(
+        server.agents, "assigned_runtime_ports", lambda *a, **kw: {7002}
+    )
+    attempted = []
+
+    def available(host, port):
+        attempted.append(port)
+        return port == 7999
+
+    monkeypatch.setattr(server, "_port_is_available", available)
+    assert (
+        server.resolve_runtime_port(
+            host="127.0.0.1", explicit_port=None, layout=layout, temporary=False
+        )
+        == 7999
+    )
+    assert attempted == list(range(7003, 8000))
+    attempted.clear()
+    monkeypatch.setattr(server, "_port_is_available", lambda host, port: False)
+    with pytest.raises(ValueError, match="no available agent runtime ports"):
+        server.resolve_runtime_port(
+            host="127.0.0.1", explicit_port=None, layout=layout, temporary=False
+        )
+
+
+def test_temporary_agent_port_selection_is_unchanged(tmp_path, monkeypatch):
+    layout = AgentLayout.resident(tmp_path, "alice")
+    monkeypatch.setattr(server, "_pick_temporary_runtime_port", lambda host: 45678)
+    assert (
+        server.resolve_runtime_port(
+            host="127.0.0.1", explicit_port=None, layout=layout, temporary=True
+        )
+        == 45678
     )
 
 

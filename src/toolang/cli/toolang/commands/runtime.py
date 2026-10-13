@@ -385,7 +385,7 @@ def serve(
     ] = None,
     port: Annotated[
         int, typer.Option("--port", metavar="PORT", help="API bind port")
-    ] = 7001,
+    ] = 7002,
     log_spec: Annotated[
         str | None,
         typer.Option("--log", metavar="LOG_SPEC", help="Python logging specification"),
