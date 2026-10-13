@@ -36,6 +36,10 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Fixed
 
+- Tool call summaries and tool errors keep one content cell at very narrow
+  widths, dropping the leading marker and its indentation when fewer than
+  three content cells remain instead of showing only the marker.
+
 - Tool call summaries and tool errors in execution progress now end two
   cells before the available progress width's right edge, matching execution
   footers and other progress rows, while narrow parallel-lane rows keep

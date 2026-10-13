@@ -147,3 +147,28 @@ def test_tool_progress_rows_reserve_the_right_output_inset(surface, text, tone):
     assert all(
         display_width(line.rstrip()) <= width - PROGRESS_RIGHT_INSET for line in lines
     )
+
+
+@pytest.mark.parametrize("width", [1, 2, 3, 4])
+@pytest.mark.parametrize(
+    ("surface", "text", "visible_content"),
+    [
+        ("tool_summary", "› Operation failed", "O"),
+        ("tool_error", "  Permission denied", "P"),
+    ],
+)
+def test_narrow_tool_progress_preserves_one_content_cell(
+    width, surface, text, visible_content
+):
+    console = Console(width=width)
+    rendered = progress_block_renderable(
+        ProgressBlock("tool", (ProgressRow(text, "error", surface=surface),)),
+        live=False,
+        max_width=width,
+    )
+    lines = "".join(segment.text for segment in console.render(rendered)).splitlines()
+
+    assert len(lines) == 1
+    assert visible_content in lines[0]
+    assert "…" not in lines[0]
+    assert display_width(lines[0].rstrip()) <= width
