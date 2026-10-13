@@ -16,6 +16,16 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   lock means an old and a new Hub no longer coordinate, so stop a running Hub
   before upgrading.
 
+- **Breaking:** Chat and Talk input history moves under the Toolang root and no
+  longer imports earlier files: Chat reads `<root>/human/chat-input.jsonl`
+  instead of `<agent-runtime>/chat-history.jsonl`, shared by every Chat session
+  using that root, and human Talk reads
+  `<root>/human/talk-input/<conversation-id>.jsonl` instead of
+  `<root>/.runtime/talk-history/<conversation-id>.jsonl`. Old files are left
+  untouched and are no longer read, so copy them to the new paths to keep
+  earlier recall. Talk also stops saving and restoring unsent composer drafts,
+  so unsent text is lost when its process exits.
+
 - Remote run and chat streams log a redacted diagnostic line when a stream is
   interrupted, resumed, or a terminal detail fails: phase, run ID, error type,
   and HTTP status, never response bodies, endpoints, or payloads.

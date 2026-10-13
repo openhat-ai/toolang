@@ -1014,7 +1014,7 @@ def test_chat_runtime_does_not_fall_back_after_remote_health_failure(
 
 
 @pytest.mark.parametrize("instance", [None, "guest"])
-def test_chat_ui_paths_follow_the_selected_layout(
+def test_chat_input_history_uses_canonical_path_without_legacy_import(
     tmp_path: Path,
     monkeypatch: Any,
     instance: str | None,
@@ -1025,20 +1025,33 @@ def test_chat_ui_paths_follow_the_selected_layout(
 
         layout = replace(layout, instance=instance)
     legacy = layout.runtime / "chat-input-history.jsonl"
+    previous = layout.runtime / "chat-history.jsonl"
     legacy.parent.mkdir(parents=True)
-    legacy.write_text('{"text":"previous"}\n', encoding="utf-8")
-    monkeypatch.setattr(chat, "context_layout", lambda _ctx: layout)
+    legacy_data = '{"text":"legacy"}\n'
+    previous_data = '{"text":"previous"}\n'
+    legacy.write_text(legacy_data, encoding="utf-8")
+    previous.write_text(previous_data, encoding="utf-8")
+    selected_layout = layout
+    monkeypatch.setattr(chat, "context_layout", lambda _ctx: selected_layout)
 
     history = chat._chat_input_history_store(object())  # type: ignore[arg-type]
 
+    expected_path = layout.root / "human" / "chat-input.jsonl"
     assert history is not None
-    assert history.path == layout.runtime / "chat-history.jsonl"
-    assert history.load() == ["previous"]
+    assert history.path == expected_path
+    assert history.load() == []
     history.append("new")
     reopened = chat._chat_input_history_store(object())  # type: ignore[arg-type]
     assert reopened is not None
-    assert reopened.load() == ["previous", "new"]
-    assert legacy.read_text() == '{"text":"previous"}\n'
+    assert reopened.path == expected_path
+    assert reopened.load() == ["new"]
+    selected_layout = AgentLayout.resident(layout.root, "bob")
+    other_agent_history = chat._chat_input_history_store(object())  # type: ignore[arg-type]
+    assert other_agent_history is not None
+    assert other_agent_history.path == expected_path
+    assert other_agent_history.load() == ["new"]
+    assert legacy.read_text(encoding="utf-8") == legacy_data
+    assert previous.read_text(encoding="utf-8") == previous_data
 
 
 def test_chat_runtime_forwards_dev_when_acquiring_a_guest(
