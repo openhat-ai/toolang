@@ -9,6 +9,16 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Changed
 
+- **Breaking:** ID allocation state moves from each agent's `.runtime/ids.json`
+  file into a `seqs` table in `runs.db`, serialized by SQLite instead of a file
+  lock, and legacy counters are not imported: a writable open rejects an
+  adjacent legacy `ids.json` and any store below schema 57, so stop all
+  writers, preserve the old runtime, and start with fresh runtime data while
+  supported older stores stay readable read-only. `allocate_id()` and
+  `IdIssuer` now take the initialized `runs.db` path as `db_path`, and
+  `AllocatorSnapshot` and `AgentLayout.id_state` are removed, so integrations
+  that pass a state file or read the snapshot must move to the database path.
+
 - Chat's queue summary now shows only a dim `N queued` count, right-aligned
   with two cells of right padding, instead of a centered count that restyled on
   focus and a trailing `tab to focus`, `space to expand`, or
