@@ -9,6 +9,13 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Changed
 
+- A temporary execution's runtime metadata is retired once its workload has
+  stopped and its resources are released, so a finished temporary run leaves no
+  leftover entry in its agent's runtime record while its execution history stays
+  in the run store and logs; a persistent agent keeps its record across stop,
+  and an interrupted instance or unreleased resource reference stays for
+  recovery.
+
 - Host foreground `serve` now executes the agent in one process: the command
   initializes the control record and then runs the workload itself instead of
   launching a separate child agent process, so the running agent is the
@@ -81,6 +88,24 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   with agents through the hub`, and `hub` reads `Control the teaming service`.
 
 ### Fixed
+
+- A temporary guest left behind by a caller that is confirmed dead is stopped
+  and released by the next `start`, `serve`, `stop`, or removal action, while a
+  caller that is still alive or cannot be verified, and a detached persistent
+  server, are left untouched.
+
+- A workload that fails during startup or cleanup records a diagnostic even
+  when the failure happens before the API starts, so a failed start reports its
+  reason instead of leaving a stale or missing state; a cleanup failure is
+  appended to the recorded startup error rather than replacing it.
+
+- Removing a stopped temporary run resolves its discovery reference from the
+  bindings saved when it registered rather than its current execution settings,
+  so cleanup uses the original root and paths.
+
+- Runtime inspection reads each agent's runtime record once and derives both
+  the resource reference and the workload report from that one snapshot, so a
+  concurrent update cannot mix before and after views.
 
 - Repeated short-lived script executions no longer leave one `.json.lock`
   beside every instance discovery reference: references share one

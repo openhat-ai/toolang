@@ -278,7 +278,8 @@ class AgentProcess:
     def state(self) -> dict[str, object] | None:
         """Return descriptive data only for the referenced workload."""
 
-        return self._report(self.reference)
+        entry = read_record(self.layout.runtime_status, self.layout.instance)
+        return self._report(entry, SandboxState.from_record(entry))
 
     def wait_ready(
         self,
@@ -333,10 +334,10 @@ class AgentProcess:
         )
         return current
 
-    def _report(self, reference: SandboxState | None) -> dict[str, object] | None:
-        report = _load_runtime_state(
-            self.layout.runtime_status, instance=self.layout.instance
-        )
+    def _report(
+        self, entry, reference: SandboxState | None
+    ) -> dict[str, object] | None:
+        report = _runtime_report(entry)
         if report is None or reference is None:
             return report
         if report.get("launch_id") and report["launch_id"] != reference.launch_id:
@@ -344,7 +345,13 @@ class AgentProcess:
         ref = reference.ref
         if ref.runtime_kind == "process":
             matches = (
-                str(report.get("pid")) == ref.runtime_id
+                (
+                    str(report.get("pid")) == ref.runtime_id
+                    or (
+                        report.get("pid") is None
+                        and report.get("status") in {"stopped", "failed"}
+                    )
+                )
                 and report.get("process_created") == ref.meta.get("created")
                 and isinstance(ref.meta.get("created"), (int, float))
             )
@@ -368,7 +375,12 @@ class AgentProcess:
         return report if matches else None
 
     def status(
-        self, *, ui_base_url: str, check_health: bool = False, cache: bool = False
+        self,
+        *,
+        ui_base_url: str,
+        check_health: bool = False,
+        cache: bool = False,
+        snapshot: dict | None = None,
     ) -> AgentStatus | None:
         """Inspect the workload, optionally requiring HTTP readiness for running."""
 
@@ -382,19 +394,31 @@ class AgentProcess:
         message = None
         status = "stopped"
         try:
-            observed = read_record(self.layout.runtime_status, self.layout.instance)
-            reference = self.reference
-            report = self._report(reference) or {}
+            observed = (
+                snapshot
+                if snapshot is not None
+                else read_record(self.layout.runtime_status, self.layout.instance)
+            )
+            reference = SandboxState.from_record(observed)
+            report = self._report(observed, reference) or {}
             if reference is not None:
                 sandbox = reference.sandbox
                 implementation = load_state_sandbox(self.layout, reference)
-                alive = self._alive(reference, implementation, cache=cache)
-                if alive:
+                alive = self._alive(reference, implementation, observed, cache=cache)
+                if (
+                    report.get("status") in {"stopped", "failed"}
+                    and report.get("pid") is None
+                ):
+                    status = str(report["status"])
+                elif alive:
                     endpoint = reference.ref.endpoint
                     status = (
                         "running"
                         if (not check_health and report.get("status") == "running")
-                        or _health_ready(f"{endpoint.rstrip('/')}/healthz")
+                        or (
+                            (check_health or not cache)
+                            and _health_ready(f"{endpoint.rstrip('/')}/healthz")
+                        )
                         else "starting"
                     )
                 elif alive is False:
@@ -460,10 +484,9 @@ class AgentProcess:
             message=message,
         )
 
-    def _alive(self, reference, implementation, *, cache: bool):
+    def _alive(self, reference, implementation, entry, *, cache: bool):
         key = self._cache_key(reference)
         now = time.monotonic()
-        entry = read_record(self.layout.runtime_status, self.layout.instance)
         fingerprint = json.dumps(entry, sort_keys=True)
         previous = _LIVENESS_CACHE.get(key) if cache else None
         if (
@@ -1151,7 +1174,10 @@ def runtime_identity_row(
 def _load_runtime_state(
     path: Path, *, instance: str | None = None
 ) -> dict[str, object] | None:
-    entry = read_record(path, instance)
+    return _runtime_report(read_record(path, instance))
+
+
+def _runtime_report(entry) -> dict[str, object] | None:
     if entry is None:
         return None
     control = entry["control"]

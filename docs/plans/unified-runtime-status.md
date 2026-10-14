@@ -15,6 +15,9 @@ health/metrics endpoints. Host `serve` executes in one process.
   successful settings; `workload` stores namespace-local PID/creation time,
   lifecycle state, timestamps, and errors. Remove independent sandbox state
   files/locks.
+  Persistent entries survive stop; successfully finalized temporary entries are
+  removed, keeping execution history in databases/logs. Interrupted entries and
+  unreleased refs remain recoverable.
 - Both host and guest workloads update their section through `up/records.py`.
   Every writer locks, rereads, validates launch ID, patches owned fields, and
   atomically replaces the file. Only successful control-side resource release
@@ -24,10 +27,14 @@ health/metrics endpoints. Host `serve` executes in one process.
   database/logs stay in agent root. No `ids.json`, `channels/`, or new directories.
   References share one native `instances/registry.lock`; temporary executions
   never leave one lock per instance. Queries do not create this guard.
+  `RuntimeRegistration` accepts one Toolang root; removal uses saved control
+  bindings rather than the workload's execution policy.
 - Resolve placement into concrete `ServeSpec` inputs at the control boundary:
   paths, drivers, config/dotenv sources, catalogs, authorized source-write targets,
   and teaming membership. Preserve loading/watching. `_serve` receives runtime
   inputs, sandbox, location, and launch ID, without placement decisions.
+  Guest launch identity must be explicit; host bootstrap returns its identity.
+  Workload startup/cleanup failures are recorded even before API startup.
 - Defer universal health/metrics services and TCP/Unix-socket transport changes.
   Keep chat-specific API availability conditional on the chat driver and retain
   existing generic execution APIs. Preserve public command targeting/flags,
@@ -113,10 +120,16 @@ and tool subprocesses. `_serve` is already counted by its launching command.
   cannot stand in for actual exit time/cause. Skip writes on contention/failure.
   Recover unbound host children by launch ID; a still-pending Docker creation
   helper prevents declaring its missing container dead or releasing the intent.
+  Temporary callers retain host PID/creation identity in `control.owner`. Later
+  control operations stop/release only confirmed-abandoned temporary resources;
+  live/unknown callers and detached servers are left alone. Bootstrap ownership
+  covers all agent entries, and removal refuses active or unreleased siblings.
 - `list`/`info` inspect relevant instances once. `top` separates repaint from
   liveness checks, caching at most one second per launch/ref with record-change
   invalidation. Bound backend timeouts/concurrency; batch Docker probes. Unchanged
   polls make no metadata writes or persistent probe-cache files.
+  Each refresh reads an agent document once and uses one snapshot for refs and
+  reports; top uses published readiness without repeated HTTP probes.
 
 ## Implementation and acceptance
 

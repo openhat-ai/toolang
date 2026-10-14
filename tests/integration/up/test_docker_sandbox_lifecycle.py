@@ -43,6 +43,85 @@ agic echo(_: Text) -> Text:
 _AGENT_SOURCE = f"# Agent alice\n\n{_ECHO_PROGRAM}"
 
 
+def test_killed_temporary_controller_is_recovered_by_next_control_operation(
+    tmp_path, docker_wheel_dir, local_model_port
+):
+    from dataclasses import replace
+    from toolang.up import process, sandbox
+    from toolang.up.records import read_record
+
+    source = tmp_path / "temporary.too"
+    source.write_text("flow complete:\n  let result = Done\n")
+    layout = process.materialize_roaming_program(source)
+    old = replace(layout, instance="abandoned")
+    code = """
+from pathlib import Path
+from dataclasses import replace
+import sys, time
+from toolang.up.process import materialize_roaming_program
+from toolang.cli.common.agent_server import acquire_agent_server
+layout = replace(materialize_roaming_program(Path(sys.argv[1])), instance='abandoned')
+with acquire_agent_server(layout, sandbox='docker', dev=Path(sys.argv[2]), temporary=True, show_progress=False):
+    print('ready', flush=True)
+    time.sleep(60)
+"""
+    env = {**os.environ, "OLLAMA_HOST": f"http://localhost:{local_model_port}"}
+    worker = subprocess.Popen(
+        (sys.executable, "-c", code, str(source), str(docker_wheel_dir)),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=env,
+    )
+    state = None
+    try:
+        assert worker.stdout is not None and worker.stdout.readline().strip() == "ready"
+        state = SandboxState.load(layout.runtime_status, instance=old.instance)
+        assert state is not None
+        worker.kill()
+        worker.wait(timeout=5)
+        entry = read_record(layout.runtime_status, old.instance)
+        assert entry is not None and entry["control"]["owner"]["pid"] == worker.pid
+        assert (
+            subprocess.run(
+                (
+                    "docker",
+                    "inspect",
+                    "--format",
+                    "{{.State.Running}}",
+                    state.ref.runtime_id,
+                ),
+                capture_output=True,
+                text=True,
+                timeout=10,
+            ).stdout.strip()
+            == "true"
+        )
+        import asyncio
+
+        asyncio.run(sandbox.release_stopped(replace(layout, instance="next")))
+        assert read_record(layout.runtime_status, old.instance) is None
+        assert (
+            subprocess.run(
+                ("docker", "inspect", state.ref.runtime_id),
+                capture_output=True,
+                timeout=10,
+            ).returncode
+            != 0
+        )
+        assert old.run_store.exists()
+    finally:
+        if worker.poll() is None:
+            worker.kill()
+            worker.wait(timeout=5)
+        if state is not None:
+            subprocess.run(
+                ("docker", "rm", "--force", state.ref.runtime_id),
+                capture_output=True,
+                timeout=10,
+            )
+
+
 @dataclass(frozen=True, slots=True)
 class _RunningDockerAgent:
     layout: AgentLayout

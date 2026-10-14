@@ -12,8 +12,26 @@ import psutil
 
 from toolang.common.files import atomic_write_text, file_write_lock
 from toolang.common.layout import AgentLayout
-from toolang.up.records import read_document, read_record, update_record
+from toolang.up.records import (
+    read_document,
+    read_record,
+    update_record,
+    remove_finished_instance,
+    control_owner,
+)
 from toolang.up.types import ExecutionDrivers
+
+
+def _registered_layout(control: dict) -> AgentLayout:
+    """Recover discovery identity from control bindings, never workload policy."""
+    return AgentLayout(
+        Path(control["root"]),
+        control["name"],
+        control["placement"],
+        instance=control["runtime_instance"],
+        project_inputs=control.get("project_inputs"),
+        managed_membership=control.get("managed_membership"),
+    )
 
 
 def instance_identity(layout: AgentLayout) -> str:
@@ -36,21 +54,17 @@ class RuntimeRegistration:
         self,
         layout: AgentLayout,
         *,
-        roots: tuple[Path, ...],
+        toolang_root: Path,
         drivers: ExecutionDrivers,
         endpoint: str = "",
-        sandbox_runtime: str | None = None,
         launch_id: str | None = None,
     ) -> None:
         self.layout = layout
         self.instance = instance_identity(layout)
         self.token = launch_id or uuid4().hex
         self.embedded = launch_id is None
-        self.roots = tuple(dict.fromkeys(roots))
-        self.paths = tuple(
-            root / ".runtime" / "instances" / instance_filename(layout)
-            for root in self.roots
-        )
+        self.toolang_root = toolang_root
+        self.path = toolang_root / ".runtime" / "instances" / instance_filename(layout)
         self.payload = {
             "version": 1,
             "status": str(layout.runtime_status),
@@ -72,8 +86,14 @@ class RuntimeRegistration:
                     home=str(self.layout.home),
                     store=str(self.layout.run_store),
                     drivers=sorted(self.drivers),
-                    toolang_root=str(self.roots[0]),
+                    toolang_root=str(self.toolang_root),
+                    project_inputs=bool(self.layout.project_inputs),
+                    managed_membership=bool(self.layout.managed_membership),
+                    sandbox="host",
+                    endpoint=self.endpoint,
                 )
+                if self.layout.instance is not None:
+                    entry["control"]["owner"] = control_owner()
                 entry["workload"] = {
                     "pid": os.getpid(),
                     "process_created": psutil.Process().create_time(),
@@ -85,9 +105,8 @@ class RuntimeRegistration:
                 self.layout.runtime_status, begin, instance=self.layout.instance
             )
         try:
-            for path in self.paths:
-                with file_write_lock(_registry_lock(path)):
-                    atomic_write_text(path, json.dumps(self.payload))
+            with file_write_lock(_registry_lock(self.path)):
+                atomic_write_text(self.path, json.dumps(self.payload))
         except BaseException:
             self.close()
             raise
@@ -100,8 +119,9 @@ class RuntimeRegistration:
             stop_runtime_state(
                 self.layout, expected_pid=os.getpid(), launch_id=self.token
             )
-        for path in self.paths:
-            _remove_reference(path, self.token)
+        _remove_reference(self.path, self.token)
+        if self.embedded:
+            remove_finished_instance(self.layout, self.token)
 
     def __exit__(self, *exc: object) -> None:
         self.close()
@@ -123,7 +143,10 @@ def remove_registration(layout: AgentLayout, launch_id: str) -> None:
     root = entry["control"].get("toolang_root")
     if isinstance(root, str):
         _remove_reference(
-            Path(root) / ".runtime" / "instances" / instance_filename(layout),
+            Path(root)
+            / ".runtime"
+            / "instances"
+            / instance_filename(_registered_layout(entry["control"])),
             launch_id,
         )
 
@@ -133,31 +156,34 @@ def running_instances(root: Path) -> tuple[dict, ...]:
     from toolang.up.process import AgentProcess
 
     candidates = []
+    records: dict[Path, dict] = {}
     for path in sorted((root / ".runtime" / "instances").glob("*.json")):
         try:
             reference = json.loads(path.read_text())
             if reference.get("version") != 1:
                 continue  # Never adopt legacy registrations.
             status_path = Path(reference["status"])
-            document = read_document(status_path)
-            if document is None or document.get("version") != 2:
-                continue
-            for entry in document["instances"].values():
-                if entry["launch_id"] != reference["launch_id"]:
-                    continue
-                control = entry["control"]
-                layout = AgentLayout(
-                    Path(control["root"]),
-                    control["name"],
-                    control["placement"],
-                    instance=control["runtime_instance"],
+            if status_path not in records:
+                document = read_document(status_path)
+                records[status_path] = (
+                    {
+                        entry["launch_id"]: entry
+                        for entry in document["instances"].values()
+                    }
+                    if document is not None and document.get("version") == 2
+                    else {}
                 )
-                if (
-                    layout.runtime_status != status_path
-                    or instance_filename(layout) != path.name
-                ):
-                    continue
-                candidates.append((path, entry, layout))
+            entry = records[status_path].get(reference["launch_id"])
+            if entry is None:
+                continue
+            control = entry["control"]
+            layout = _registered_layout(control)
+            if (
+                layout.runtime_status != status_path
+                or instance_filename(layout) != path.name
+            ):
+                continue
+            candidates.append((path, entry, layout))
         except (OSError, ValueError, KeyError, TypeError):
             continue
     docker = []
@@ -169,9 +195,7 @@ def running_instances(root: Path) -> tuple[dict, ...]:
         ):
             from toolang.up.records import SandboxState
 
-            reference = SandboxState.snapshot(
-                layout.runtime_status, instance=layout.instance
-            )
+            reference = SandboxState.from_record(entry)
             if reference is not None:
                 docker.append((AgentProcess(layout), reference, entry))
     AgentProcess.cache_docker_states(docker)
@@ -180,7 +204,7 @@ def running_instances(root: Path) -> tuple[dict, ...]:
         try:
             control = entry["control"]
             status = AgentProcess(layout).status(
-                ui_base_url="", check_health=False, cache=True
+                ui_base_url="", check_health=False, cache=True, snapshot=entry
             )
             if status is None or status.status != "running":
                 continue

@@ -426,7 +426,8 @@ def serve(
     """Run the internal AgentServer entrypoint."""
 
     from toolang.up.server import resolve_serve, serve as serve_agent
-    from toolang.up.config import default_drivers, parse_drivers
+    from toolang.up.config import parse_drivers
+    from toolang.up.types import ALL_DRIVERS
     from toolang.plugin.sandboxes.host import HOST_LAUNCH_ENV
 
     launch_id = launch_id or os.environ.pop(HOST_LAUNCH_ENV, None)
@@ -453,9 +454,7 @@ def serve(
         layout=layout,
         toolang_root=context_root(ctx),
         launch_id=launch_id,
-        drivers=user_call(parse_drivers, driver)
-        if driver is not None
-        else default_drivers("resident"),
+        drivers=user_call(parse_drivers, driver) if driver is not None else ALL_DRIVERS,
         host=host,
         endpoint_host=endpoint_host,
         port=port,

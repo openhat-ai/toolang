@@ -234,6 +234,11 @@ def serve(
 
     from toolang.up.sandbox import register_host_server
 
+    launch_id = launch_id or spec.launch_id
+    if location == "guest" and launch_id is None:
+        raise ValueError("guest workload requires an explicit launch identity")
+    owns_control = location == "host" and launch_id is None
+
     host_ref = (
         asyncio.run(
             register_host_server(
@@ -243,13 +248,13 @@ def serve(
         if location == "host"
         else None
     )
-    from toolang.up.records import read_record, patch_workload
+    from toolang.up.records import patch_workload
     import psutil
 
-    launch_id = launch_id or (
-        read_record(spec.layout.runtime_status, spec.layout.instance, location=location)
-        or {}
-    ).get("launch_id")
+    if launch_id is None and host_ref is not None:
+        identity = host_ref.meta.get("launch_id")
+        if isinstance(identity, str) and identity:
+            launch_id = identity
     if launch_id is None:
         raise ValueError("workload requires a launch identity")
     published = patch_workload(
@@ -265,29 +270,41 @@ def serve(
     )
     if not published:
         raise ValueError("workload launch identity is no longer current")
-    _restore_termination_signal_defaults()
-    runtime_log_spec = _runtime_log_spec_value(spec.log_spec, environ)
-    configure_logging(spec=runtime_log_spec, environ=environ)
-    core = AgentCore(
-        spec.layout,
-        drivers=spec.drivers,
-        sandbox=sandbox,
-        ceiling_overrides=spec.ceiling_overrides,
-        default_overrides=spec.default_overrides,
-        limit_overrides=spec.limit_overrides,
-        compact_override=spec.compact_override,
-        workspace_additions=spec.workspace_additions,
-        workdir=spec.workdir,
-    )
+    initialized_core: AgentCore | None = None
     core_closed = False
+    failure: str | None = None
 
     async def close_core() -> None:
-        nonlocal core_closed
-        if not core_closed:
+        nonlocal core_closed, failure
+        if initialized_core is not None and not core_closed:
             core_closed = True
-            await core.close()
+            try:
+                await initialized_core.close()
+            except BaseException as exc:
+                message = str(exc) or type(exc).__name__
+                failure = (
+                    message
+                    if failure is None
+                    else f"{failure}; cleanup failed: {message}"
+                )
+                raise
 
     try:
+        _restore_termination_signal_defaults()
+        runtime_log_spec = _runtime_log_spec_value(spec.log_spec, environ)
+        configure_logging(spec=runtime_log_spec, environ=environ)
+        core = AgentCore(
+            spec.layout,
+            drivers=spec.drivers,
+            sandbox=sandbox,
+            ceiling_overrides=spec.ceiling_overrides,
+            default_overrides=spec.default_overrides,
+            limit_overrides=spec.limit_overrides,
+            compact_override=spec.compact_override,
+            workspace_additions=spec.workspace_additions,
+            workdir=spec.workdir,
+        )
+        initialized_core = core
         asyncio.run(_refresh_core(core))
         state = core.state.current()
         ceiling = AgentCeiling()
@@ -321,6 +338,7 @@ def serve(
 
         @asynccontextmanager
         async def lifespan(app: FastAPI):
+            nonlocal failure
             stop_signal = asyncio.Event()
             tasks: list[asyncio.Task[None]] = []
             scheduler: ChoreDriver | None = None
@@ -400,25 +418,22 @@ def serve(
                 )
                 yield
             finally:
-                agents.stop_runtime_state(
-                    spec.layout,
-                    expected_pid=os.getpid(),
-                    expected_started_at=started_at,
-                    launch_id=launch_id,
-                    location=location,
-                )
                 stop_signal.set()
-                async with AsyncExitStack() as cleanup:
-                    if scheduler is not None:
-                        cleanup.push_async_callback(scheduler.stop)
-                    if teaming is not None:
-                        cleanup.push_async_callback(teaming.close)
-                    cleanup.push_async_callback(close_core)
-                    if teaming is not None:
-                        cleanup.push_async_callback(teaming.stop_messages)
-                    cleanup.push_async_callback(_finish_runtime_tasks, tasks)
-                    if scheduler is not None:
-                        cleanup.push_async_callback(scheduler.pause)
+                try:
+                    async with AsyncExitStack() as cleanup:
+                        if scheduler is not None:
+                            cleanup.push_async_callback(scheduler.stop)
+                        if teaming is not None:
+                            cleanup.push_async_callback(teaming.close)
+                        cleanup.push_async_callback(close_core)
+                        if teaming is not None:
+                            cleanup.push_async_callback(teaming.stop_messages)
+                        cleanup.push_async_callback(_finish_runtime_tasks, tasks)
+                        if scheduler is not None:
+                            cleanup.push_async_callback(scheduler.pause)
+                except BaseException as exc:
+                    failure = failure or str(exc) or type(exc).__name__
+                    raise
 
         app = create_app(
             core,
@@ -461,15 +476,45 @@ def serve(
             on_stopped=lambda: logger.info("Agent stopped"),
         )
         return 0
+    except BaseException as exc:
+        if not isinstance(exc, KeyboardInterrupt) and not (
+            isinstance(exc, SystemExit) and exc.code in {None, 0}
+        ):
+            failure = failure or str(exc) or type(exc).__name__
+        raise
     finally:
-        asyncio.run(close_core())
-        if host_ref is not None:
-            from toolang.up.sandbox import _clear_state
-            from toolang.up.records import SandboxState
+        try:
+            asyncio.run(close_core())
+        finally:
+            if failure is not None:
+                patch_workload(
+                    spec.layout.runtime_status,
+                    launch_id,
+                    {
+                        "status": "failed",
+                        "pid": None,
+                        "message": failure,
+                        "updated_at": time.strftime(
+                            "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
+                        ),
+                    },
+                    instance=spec.layout.instance,
+                    location=location,
+                )
+            else:
+                agents.stop_runtime_state(
+                    spec.layout,
+                    expected_pid=os.getpid(),
+                    launch_id=launch_id,
+                    location=location,
+                )
+            if owns_control and failure is None and host_ref is not None:
+                from toolang.up.sandbox import _clear_state
+                from toolang.up.records import SandboxState
 
-            _clear_state(
-                spec.layout, expected=SandboxState(sandbox, host_ref, launch_id)
-            )
+                _clear_state(
+                    spec.layout, expected=SandboxState(sandbox, host_ref, launch_id)
+                )
 
 
 def _format_allow(values: tuple[str, ...] | None) -> str:

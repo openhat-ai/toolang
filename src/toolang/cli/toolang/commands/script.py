@@ -753,7 +753,7 @@ def _run(
                 runtime_scope.enter_context(
                     RuntimeRegistration(
                         layout,
-                        roots=(layout.toolang_root or resolve_root(None),),
+                        toolang_root=layout.toolang_root or resolve_root(None),
                         drivers=frozenset(),
                     )
                 )

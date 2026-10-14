@@ -4,6 +4,8 @@ from dataclasses import replace
 import json
 import os
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
+import time
 
 import psutil
 import pytest
@@ -375,3 +377,145 @@ with runtime_lock(Path(sys.argv[1])):
         if writer.poll() is None:
             writer.kill()
             writer.wait(timeout=5)
+
+
+@pytest.mark.parametrize("alive", [None, False, True])
+def test_foreign_guest_claim_requires_a_definite_dead_probe(
+    tmp_path, monkeypatch, alive
+):
+    from toolang.up import records, sandbox
+
+    layout = AgentLayout.resident(tmp_path, "alice")
+    previous = {
+        "location": "guest",
+        "launch_id": "guest",
+        "acquired_at": time.time() - 2,
+        "control": {
+            "root": str(layout.root),
+            "name": layout.name,
+            "placement": layout.placement,
+            "sandbox": "docker:image",
+            "ref": SandboxRef(
+                "container", "http://localhost:1", runtime_kind="container"
+            ).to_data(),
+        },
+    }
+
+    class Backend:
+        async def running(self, ref):
+            return alive
+
+    @contextmanager
+    def claim(path, *, owner_dead, **kwargs):
+        assert owner_dead(previous) is (alive is False)
+        yield
+
+    monkeypatch.setattr(records, "file_write_lock", claim)
+    monkeypatch.setattr(sandbox, "load_state_sandbox", lambda *args: Backend())
+    with runtime_lock(layout.runtime_status):
+        pass
+
+
+def test_temporary_cleanup_retains_recovery_refs_and_new_generations(tmp_path):
+    from toolang.up.records import remove_finished_instance
+
+    layout = replace(AgentLayout.resident(tmp_path, "alice"), instance="script")
+    begin(layout)
+    state = SandboxState("host", SandboxRef("resource", "http://localhost:1"), "first")
+    state.save(layout.runtime_status, instance=layout.instance)
+    patch_workload(
+        layout.runtime_status,
+        "first",
+        {"status": "stopped", "pid": None},
+        instance=layout.instance,
+    )
+    assert not remove_finished_instance(layout, "first")
+    assert required_record(layout)["control"]["ref"]
+    begin(layout, "second")
+    assert not remove_finished_instance(layout, "first")
+    assert required_record(layout)["launch_id"] == "second"
+
+
+@pytest.mark.parametrize("live_owner", [False, True])
+def test_next_control_operation_recovers_only_abandoned_temporary_runtimes(
+    tmp_path, monkeypatch, live_owner
+):
+    import asyncio
+    from toolang.up import sandbox
+    from toolang.up.observation import RuntimeRegistration
+
+    base = AgentLayout.resident(tmp_path, "alice")
+    old = replace(base, instance="old")
+    current = replace(base, instance="new")
+    registration = RuntimeRegistration(old, toolang_root=tmp_path, drivers=frozenset())
+    registration.__enter__()
+    state = SandboxState(
+        "docker:image",
+        SandboxRef("container", "http://localhost:1", runtime_kind="container"),
+        registration.token,
+    )
+    state.save(old.runtime_status, instance=old.instance)
+    update_record(
+        old.runtime_status,
+        lambda entry: entry["control"].update(
+            owner={
+                "pid": os.getpid(),
+                "created": psutil.Process().create_time() if live_owner else 0,
+            }
+        ),
+        instance=old.instance,
+    )
+    stopped = []
+
+    class Backend:
+        async def stop(self, ref, *, force=False):
+            stopped.append(ref)
+
+        async def release(self, ref):
+            pass
+
+    monkeypatch.setattr(sandbox, "load_state_sandbox", lambda *args: Backend())
+    asyncio.run(sandbox.release_stopped(current))
+    assert stopped == ([] if live_owner else [state.ref])
+    assert registration.path.exists() is live_owner
+    assert (read_record(base.runtime_status, old.instance) is not None) is live_owner
+
+
+def test_owned_bootstrap_is_not_mistaken_for_unreferenced_staging(tmp_path):
+    import asyncio
+    from toolang.up import sandbox
+    from toolang.up.observation import RuntimeRegistration
+
+    base = AgentLayout.resident(tmp_path, "alice")
+    old = replace(base, instance="running")
+    registration = RuntimeRegistration(old, toolang_root=tmp_path, drivers=frozenset())
+    registration.__enter__()
+    stage = base.sandbox_stage / "owned"
+    stage.mkdir(parents=True)
+    state = SandboxState(
+        "docker:image",
+        SandboxRef(
+            "container",
+            "http://localhost:1",
+            runtime_kind="container",
+            meta={"stage_dir": str(stage)},
+        ),
+        registration.token,
+    )
+    state.save(base.runtime_status, instance=old.instance)
+    update_record(
+        base.runtime_status,
+        lambda entry: entry.update(
+            launch_id="uncreated",
+            control={
+                "sandbox": "docker:image",
+                "placement": "resident",
+                "owner": {"pid": os.getpid(), "created": 0},
+            },
+            workload={"status": "preparing", "pid": None},
+        ),
+        instance="uncreated",
+    )
+    asyncio.run(sandbox.release_stopped(base))
+    assert stage.exists() and registration.path.exists()
+    assert read_record(base.runtime_status, "uncreated") is None

@@ -27,7 +27,6 @@ from toolang.common.files import (
 from toolang.teaming.records import HubRecord as HubRecord
 
 RUNTIME_STATUS_VERSION = 2
-SANDBOX_STATE_VERSION = 1
 
 
 def read_document(path: Path, *, location: str = "host") -> dict[str, Any] | None:
@@ -165,7 +164,7 @@ def runtime_lock(
                 )
 
             with ThreadPoolExecutor(max_workers=1) as pool:
-                return not pool.submit(asyncio.run, probe()).result(timeout=3)
+                return pool.submit(asyncio.run, probe()).result(timeout=3) is False
         except (KeyError, OSError, RuntimeError, TypeError, ValueError):
             return False
 
@@ -277,6 +276,42 @@ def patch_workload(
     )
 
 
+def remove_finished_instance(layout: AgentLayout, launch_id: str) -> bool:
+    """Retire temporary control metadata after release; preserve database/log history."""
+    if layout.instance is None:
+        return False  # Persistent agent settings survive stop.
+    path = layout.runtime_status
+    snapshot = read_record(path, layout.instance)
+    if snapshot is None or snapshot["launch_id"] != launch_id:
+        return False
+    with runtime_lock(
+        path, instance=layout.instance, launch_id=launch_id, snapshot=snapshot
+    ):
+        document = read_document(path)
+        if document is None:
+            return False
+        entry = document["instances"].get(layout.instance)
+        if (
+            entry is None
+            or entry["launch_id"] != launch_id
+            or entry["control"].get("ref") is not None
+            or entry["control"].get("operation") is not None
+            or not (
+                entry["workload"].get("status") in {"stopped", "failed"}
+                or (not entry["launch_id"] and not entry["workload"])
+            )
+            or entry["workload"].get("pid") is not None
+        ):
+            return False
+        del document["instances"][layout.instance]
+        atomic_write_text(
+            path,
+            json.dumps(document, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            inherit_owner=True,
+        )
+    return True
+
+
 @dataclass(frozen=True, slots=True)
 class SandboxState:
     """One control-owned resource reference bound to a startup generation."""
@@ -318,7 +353,11 @@ class SandboxState:
     def snapshot(
         cls, path: Path, *, instance: str | None = None
     ) -> SandboxState | None:
-        entry = read_record(path, instance)
+        return cls.from_record(read_record(path, instance))
+
+    @classmethod
+    def from_record(cls, entry: dict[str, Any] | None) -> SandboxState | None:
+        """Decode a resource from the same snapshot as its workload report."""
         if entry is None or entry["control"].get("ref") is None:
             return None
         control = entry["control"]
@@ -351,6 +390,11 @@ def process_alive(pid: object, created: object) -> bool | None:
         return None
 
 
+def control_owner() -> dict[str, int | float]:
+    """Host identity for a control operation or a temporary caller's lifetime."""
+    return {"pid": os.getpid(), "created": psutil.Process().create_time()}
+
+
 @contextmanager
 def management_operation(
     layout: AgentLayout, *, stage: str, on_wait: Callable[[], None] | None = None
@@ -362,8 +406,7 @@ def management_operation(
         return
     owner = {
         "token": uuid4().hex,
-        "pid": os.getpid(),
-        "created": psutil.Process().create_time(),
+        **control_owner(),
         "stage": stage,
     }
     claimed = False
@@ -393,13 +436,18 @@ def management_operation(
         yield
     finally:
         _OPERATIONS.reset(token)
+        completed_launch: str | None = None
 
         def release(entry):
+            nonlocal completed_launch
             if entry["control"].get("operation") == owner:
+                completed_launch = entry["launch_id"]
                 entry["control"].pop("operation", None)
 
         if layout.runtime_status.exists():
             update_record(layout.runtime_status, release, instance=layout.instance)
+            if completed_launch is not None:
+                remove_finished_instance(layout, completed_launch)
 
 
 def recover_control_write_lock(path: Path) -> None:

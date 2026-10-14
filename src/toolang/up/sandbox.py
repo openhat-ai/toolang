@@ -52,7 +52,16 @@ from toolang.up.mounts import (
     prepare_source_mounts,
     prepare_workspace_mounts,
 )
-from toolang.up.records import SandboxState, read_record, update_record, patch_workload
+from toolang.up.records import (
+    SandboxState,
+    read_record,
+    read_document,
+    update_record,
+    patch_workload,
+    process_alive,
+    control_owner,
+    runtime_lock,
+)
 from toolang.up.observation import RuntimeRegistration
 from toolang.up.server import ServeSpec, build_serve_argv, resolve_serve
 from toolang.up.types import ExecutionDrivers
@@ -231,6 +240,7 @@ async def _launch_locked(
     *,
     progress: ProgressSink | None,
 ) -> SandboxHandle:
+    owns_launch = False
     sandbox_name = spec.sandbox.partition(":")[0].replace("_", " ").title()
     prepare_label = f"Preparing {sandbox_name} sandbox..."
     _startup_progress(
@@ -245,6 +255,7 @@ async def _launch_locked(
         await _release_stopped_locked(spec.serve.layout)
         launch_id = uuid4().hex
         spec = replace(spec, serve=replace(spec.serve, launch_id=launch_id))
+        owns_launch = True
         _begin_launch(spec)
         if not spec.serve.layout.home.is_dir():
             raise FileNotFoundError(f"agent not found: {spec.serve.layout.name}")
@@ -343,6 +354,18 @@ async def _launch_locked(
                 spec.serve.layout.runtime_status, instance=spec.serve.layout.instance
             )
     except BaseException as exc:
+        if owns_launch and spec.serve.launch_id is not None:
+            patch_workload(
+                spec.serve.layout.runtime_status,
+                spec.serve.launch_id,
+                {
+                    "status": "failed",
+                    "pid": None,
+                    "message": str(exc),
+                    "updated_at": _now(),
+                },
+                instance=spec.serve.layout.instance,
+            )
         _startup_progress(
             progress,
             spec,
@@ -956,7 +979,22 @@ async def remove_agent(layout: AgentLayout) -> None:
     async with _task_lock(lock_path, instance=layout.instance):
         with management_lock(layout):
             await _release_stopped_locked(layout)
-            LocalAgents(layout.root / "agents").remove(layout.name)
+            with runtime_lock(layout.runtime_status, instance=layout.instance):
+                document = read_document(layout.runtime_status) or {}
+                if any(
+                    key != (layout.instance or "default")
+                    and (
+                        entry["control"].get("ref") is not None
+                        or entry["control"].get("operation") is not None
+                        or entry["workload"].get("status")
+                        in {"preparing", "starting", "running"}
+                    )
+                    for key, entry in document.get("instances", {}).items()
+                ):
+                    raise ValueError(
+                        "agent has an active or unreleased execution instance"
+                    )
+                LocalAgents(layout.root / "agents").remove(layout.name)
 
 
 async def release_stopped(layout: AgentLayout) -> None:
@@ -970,6 +1008,7 @@ async def release_stopped(layout: AgentLayout) -> None:
 
 async def _release_stopped_locked(layout: AgentLayout) -> None:
     _reject_legacy_state(layout)
+    await _release_abandoned_temporary(layout)
     state = SandboxState.load(layout.runtime_status, instance=layout.instance)
     if state is None:
         _reject_unreferenced_staging(layout)
@@ -981,6 +1020,50 @@ async def _release_stopped_locked(layout: AgentLayout) -> None:
         raise ValueError(f"agent is already running: {layout.name}")
     await implementation.release(state.ref)
     _clear_state(layout, expected=state)
+
+
+async def _release_abandoned_temporary(layout: AgentLayout) -> None:
+    """Recover caller-owned temporary resources; never collect detached servers."""
+    document = read_document(layout.runtime_status) or {}
+    for instance, entry in document.get("instances", {}).items():
+        if instance in {"default", layout.instance}:
+            continue
+        owner = entry["control"].get("owner")
+        if (
+            not isinstance(owner, dict)
+            or process_alive(owner.get("pid"), owner.get("created")) is not False
+        ):
+            continue
+        sibling = replace(
+            layout,
+            instance=instance,
+            placement=entry["control"]["placement"],
+            project_inputs=entry["control"].get("project_inputs"),
+            managed_membership=entry["control"].get("managed_membership"),
+        )
+        async with _task_lock(
+            file_lock_path(sibling.runtime_status), instance=instance
+        ):
+            with management_lock(sibling, stage="stop"):
+                current = read_record(sibling.runtime_status, instance)
+                if (
+                    current is None
+                    or current["launch_id"] != entry["launch_id"]
+                    or current["control"].get("owner") != owner
+                ):
+                    continue
+                state = SandboxState.from_record(current)
+                if state is not None:
+                    await _stop_and_release(
+                        sibling,
+                        SandboxHandle(load_state_sandbox(sibling, state), state),
+                        force=True,
+                    )
+                else:
+                    await _recover_unreferenced(sibling)
+                    from toolang.up.observation import remove_registration
+
+                    remove_registration(sibling, current["launch_id"])
 
 
 async def _recover_unreferenced(layout: AgentLayout) -> SandboxState | None:
@@ -1017,7 +1100,7 @@ async def _recover_unreferenced(layout: AgentLayout) -> SandboxState | None:
         dead = (
             str(control.get("sandbox", "")).partition(":")[0] == "docker"
             and report.get("pid") is None
-            and not layout.sandbox_stage.exists()
+            and not (layout.sandbox_stage / entry["launch_id"]).exists()
         )
     if not dead:
         raise ValueError("active runtime report has no verifiable sandbox reference")
@@ -1045,6 +1128,19 @@ def _reject_legacy_state(layout: AgentLayout) -> None:
 def _reject_unreferenced_staging(layout: AgentLayout) -> None:
     path = layout.sandbox_stage
     if not path.is_dir() or not any(path.iterdir()):
+        return
+    document = read_document(layout.runtime_status) or {}
+    owned = {
+        Path(stage).resolve()
+        for entry in document.get("instances", {}).values()
+        if isinstance(
+            stage := (entry["control"].get("ref") or {})
+            .get("meta", {})
+            .get("stage_dir"),
+            str,
+        )
+    }
+    if all(item.resolve() in owned for item in path.iterdir()):
         return
     raise ValueError(
         "unreferenced sandbox staging requires manual cleanup before continuing: "
@@ -1087,12 +1183,16 @@ def _begin_launch(spec: LaunchSpec) -> None:
             store=str(layout.run_store),
             drivers=sorted(spec.serve.drivers),
             toolang_root=str(spec.serve.toolang_root or layout.root),
+            project_inputs=bool(layout.project_inputs),
+            managed_membership=bool(layout.managed_membership),
         )
+        if layout.instance is not None:
+            entry["control"]["owner"] = control_owner()
 
     update_record(layout.runtime_status, begin, instance=layout.instance)
     RuntimeRegistration(
         layout,
-        roots=(spec.serve.toolang_root or layout.root,),
+        toolang_root=spec.serve.toolang_root or layout.root,
         drivers=spec.serve.drivers,
         launch_id=spec.serve.launch_id,
     ).__enter__()

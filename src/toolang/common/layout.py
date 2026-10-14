@@ -187,7 +187,7 @@ class AgentLayout:
 
     @property
     def sandbox_stage(self) -> Path:
-        return self.sandbox_home / "launches"
+        return self.root / ".sandbox" / self.name / "launches"
 
 
 def root_edit_lock_path(root: Path) -> Path:

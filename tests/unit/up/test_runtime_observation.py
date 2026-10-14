@@ -1,5 +1,8 @@
 from dataclasses import replace
 import asyncio
+import os
+
+import pytest
 
 from toolang.common.layout import AgentLayout
 from toolang.execution.activity import ActivityQuery
@@ -21,7 +24,7 @@ def test_all_placements_are_visible_without_talk_or_hub(tmp_path) -> None:
             store.create_thread(thread_id=f"script_{index}", origin="script")
             store.close()
             registration = RuntimeRegistration(
-                layout, roots=(scope,), drivers=frozenset()
+                layout, toolang_root=scope, drivers=frozenset()
             )
             registration.__enter__()
             registrations.append(registration)
@@ -66,9 +69,9 @@ def test_independent_script_instances_have_separate_execution_and_sandbox_state(
 
 def test_stale_registration_and_replaced_owner_are_safe(tmp_path) -> None:
     layout = AgentLayout.resident(tmp_path, "alice")
-    old = RuntimeRegistration(layout, roots=(tmp_path,), drivers=frozenset())
+    old = RuntimeRegistration(layout, toolang_root=tmp_path, drivers=frozenset())
     current = RuntimeRegistration(
-        layout, roots=(tmp_path,), drivers=frozenset(("chat",))
+        layout, toolang_root=tmp_path, drivers=frozenset(("chat",))
     )
     old.__enter__()
     current.__enter__()
@@ -106,7 +109,7 @@ def test_guest_discovery_uses_host_sandbox_ownership_not_guest_pid(
         lambda ids: {identity: alive for identity in ids},
     )
     with RuntimeRegistration(
-        layout, roots=(tmp_path,), drivers=frozenset({"chore"})
+        layout, toolang_root=tmp_path, drivers=frozenset({"chore"})
     ) as registration:
         SandboxState(
             "docker:image",
@@ -137,7 +140,7 @@ def test_unbound_guest_discovery_preserves_unknown_workload(tmp_path):
 
     layout = AgentLayout.resident(tmp_path, "guest")
     with RuntimeRegistration(
-        layout, roots=(tmp_path,), drivers=frozenset()
+        layout, toolang_root=tmp_path, drivers=frozenset()
     ) as registration:
         update_record(
             layout.runtime_status,
@@ -160,12 +163,16 @@ def test_short_lived_scripts_share_one_registry_lock_and_readable_references(tmp
     for index in range(20):
         with RuntimeRegistration(
             replace(layout, instance=f"script{index}"),
-            roots=(scope,),
+            toolang_root=scope,
             drivers=frozenset(),
         ) as registration:
-            assert registration.paths[0].name.startswith("echo-roaming-")
-            assert registration.paths[0].name.endswith(f"{registration.instance}.json")
+            assert registration.path.name.startswith("echo-roaming-")
+            assert registration.path.name.endswith(f"{registration.instance}.json")
     assert tuple(path.name for path in directory.iterdir()) == ("registry.lock",)
+    from toolang.up.records import read_document
+
+    document = read_document(layout.runtime_status)
+    assert document is not None and document["instances"] == {}
 
 
 def test_registry_guard_keeps_a_new_reference_when_old_cleanup_races(tmp_path):
@@ -175,11 +182,11 @@ def test_registry_guard_keeps_a_new_reference_when_old_cleanup_races(tmp_path):
     from toolang.up.records import update_record
 
     layout = AgentLayout.resident(tmp_path, "gus")
-    old = RuntimeRegistration(layout, roots=(tmp_path,), drivers=frozenset())
+    old = RuntimeRegistration(layout, toolang_root=tmp_path, drivers=frozenset())
     old.__enter__()
-    guard = old.paths[0].parent / "registry.lock"
+    guard = old.path.parent / "registry.lock"
     current = RuntimeRegistration(
-        layout, roots=(tmp_path,), drivers=frozenset(), launch_id="new"
+        layout, toolang_root=tmp_path, drivers=frozenset(), launch_id="new"
     )
     entered = Event()
 
@@ -197,5 +204,70 @@ def test_registry_guard_keeps_a_new_reference_when_old_cleanup_races(tmp_path):
             )
             current.__enter__()
         closing.result(timeout=1)
-    assert current.paths[0].exists()
+    assert current.path.exists()
     current.close()
+
+
+@pytest.mark.parametrize("placement", ["visiting", "roaming"])
+def test_placement_free_workload_cleans_the_reference_using_control_bindings(
+    tmp_path, placement
+):
+    from toolang.plugin.sandboxes.host import process_ref
+    from toolang.up.records import SandboxState
+    from toolang.up.sandbox import _clear_state
+
+    layout = AgentLayout(tmp_path / "agent", "alice", placement)
+    with RuntimeRegistration(
+        layout, toolang_root=tmp_path / "toolang", drivers=frozenset()
+    ) as registration:
+        ref = SandboxState(
+            "host",
+            process_ref(os.getpid(), "http://localhost:8123"),
+            registration.token,
+        )
+        ref.save(layout.runtime_status)
+        runtime_layout = replace(layout, placement="resident")
+        _clear_state(runtime_layout, expected=ref)
+        assert not registration.path.exists()
+
+
+def test_discovery_reads_a_shared_agent_document_once_per_refresh(
+    tmp_path, monkeypatch
+):
+    from toolang.up import observation, records
+    from contextlib import ExitStack
+
+    layout = AgentLayout.roaming(tmp_path / "echo.too")
+    with ExitStack() as scope:
+        for index in range(10):
+            scope.enter_context(
+                RuntimeRegistration(
+                    replace(layout, instance=f"script{index}"),
+                    toolang_root=tmp_path,
+                    drivers=frozenset(),
+                )
+            )
+        read = records.read_document
+        reads = 0
+
+        def count_read(path, **kwargs):
+            nonlocal reads
+            reads += 1
+            return read(path, **kwargs)
+
+        monkeypatch.setattr(records, "read_document", count_read)
+        monkeypatch.setattr(observation, "read_document", count_read)
+        assert len(running_instances(tmp_path)) == 10
+        assert reads == 1
+
+
+def test_agent_removal_retains_home_used_by_an_independent_script(tmp_path):
+    from toolang.up.sandbox import remove_agent
+
+    layout = AgentLayout.resident(tmp_path, "alice")
+    with RuntimeRegistration(
+        replace(layout, instance="script"), toolang_root=tmp_path, drivers=frozenset()
+    ):
+        with pytest.raises(ValueError, match="execution instance"):
+            asyncio.run(remove_agent(layout))
+        assert layout.home.exists()

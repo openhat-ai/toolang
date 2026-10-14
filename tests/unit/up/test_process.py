@@ -48,6 +48,54 @@ def test_status_uses_saved_identity_not_live_pid_in_report(
     )
 
 
+def test_status_keeps_one_snapshot_when_a_restart_changes_the_file(
+    tmp_path, monkeypatch
+):
+    from toolang.up.records import update_record
+
+    layout = AgentLayout.resident(tmp_path, "alice")
+    state = SandboxState(
+        "host", process_ref(os.getpid(), "http://localhost:8123"), "first"
+    )
+    state.save(layout.runtime_status)
+    process.write_runtime_state(
+        layout,
+        endpoint=state.ref.endpoint,
+        started_at="now",
+        pid=os.getpid(),
+        process_created=state.ref.meta["created"],
+        launch_id="first",
+    )
+    read = process.read_record
+    reads = 0
+
+    def restart_after_snapshot(path, instance=None):
+        nonlocal reads
+        entry = read(path, instance)
+        reads += 1
+        if reads == 1:
+            replaced = replace(state.ref, meta={**state.ref.meta, "created": 0})
+            update_record(
+                path,
+                lambda entry: entry.update(
+                    launch_id="second",
+                    control={"sandbox": "host", "ref": replaced.to_data()},
+                    workload={
+                        "status": "running",
+                        "pid": os.getpid(),
+                        "process_created": 0,
+                    },
+                ),
+            )
+        return entry
+
+    monkeypatch.setattr(process, "read_record", restart_after_snapshot)
+    result = process.AgentProcess(layout).status(ui_base_url="")
+    assert result is not None and result.status == "running"
+    assert result.endpoint == state.ref.endpoint
+    assert reads == 1
+
+
 def test_status_does_not_adopt_unregistered_process(tmp_path: Path) -> None:
     layout = AgentLayout.resident(tmp_path, "alice")
     layout.home.mkdir(parents=True)
