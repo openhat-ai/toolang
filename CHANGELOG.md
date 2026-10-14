@@ -33,6 +33,22 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   workspaces`, `chore` reads `Create or schedule tasks`, `talk` reads `Talk
   with agents through the hub`, and `hub` reads `Control the teaming service`.
 
+### Fixed
+
+- Concurrent chore mutations no longer interleave: the API patch and the CLI
+  edit and delete hold the agent's edit guard across the winner check and the
+  whole read/modify/write, so two patches to different fields of one chore are
+  both retained.
+
+- Chore inspection and the edit/delete winner check read inline declarations and
+  home Markdown files in one guarded snapshot, so a read no longer mixes
+  before/after states or drops a malformed definition's diagnostic.
+
+- Roaming configuration projection rechecks its root sources after releasing the
+  home guard and retries changed inputs up to three times, so a delayed
+  invocation no longer leaves `config.toml` or `catalog.json` behind a newer
+  edit, and repeated changes fail explicitly instead of projecting stale content.
+
 ## [0.4.0a7] - 2026-10-14
 
 ### Changed
