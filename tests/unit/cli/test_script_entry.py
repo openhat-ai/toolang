@@ -136,7 +136,7 @@ def test_init_creates_script_and_portable_config(
     neighbor.write_text("keep")
     before = {p for p in tmp_path.rglob("*") if p.is_file()}
     assert cli.main(["init", directory]) == 0
-    destination = (tmp_path / directory / "aide.too").resolve()
+    destination = (tmp_path / directory / "aid.too").resolve()
     assert destination.read_text() == load_template("script").raw_text
     assert destination.read_text().startswith("#!/usr/bin/env too\n")
     assert {p for p in tmp_path.rglob("*") if p.is_file()} == before | {
@@ -158,14 +158,14 @@ def test_init_creates_script_and_portable_config(
     output = capsys.readouterr().out
     lines = output.splitlines()
     assert lines[:2] == [
-        "Created aide.too and toolang.toml.",
+        "Created aid.too and toolang.toml.",
         "Add .toolang/ to .gitignore.",
     ]
     assert len(lines) == 3
     assert lines[2].startswith("Try: ")
     assert shlex.split(lines[2].removeprefix("Try: ")) == [
         executable,
-        str(Path(directory) / "aide.too"),
+        str(Path(directory) / "aid.too"),
         "--help",
     ]
 
@@ -179,7 +179,7 @@ def test_initialized_script_help_exposes_project_helpers(entry, monkeypatch, cap
     monkeypatch.setattr(
         script, "_run", lambda *args, **kwargs: pytest.fail("help executed")
     )
-    assert cli.main(["run", "aide.too", *([entry] if entry else []), "--help"]) == 0
+    assert cli.main(["run", "aid.too", *([entry] if entry else []), "--help"]) == 0
     output = " ".join(capsys.readouterr().out.split())
     if entry is None:
         for name in ("issue", "fix", "review", "whats_for", "whats_new", "update_i18n"):
@@ -207,7 +207,7 @@ def test_initialized_script_without_runnable_only_shows_help(
         lambda *args, **kwargs: pytest.fail("selected a default runnable"),
     )
 
-    assert cli.main([*(["run"] if explicit else []), "aide.too"]) == 0
+    assert cli.main([*(["run"] if explicit else []), "aid.too"]) == 0
     assert "whats_for agic" in " ".join(capsys.readouterr().out.split())
 
 
@@ -218,11 +218,11 @@ def test_initialized_script_requires_its_input(entry, monkeypatch):
         script, "_run", lambda *args, **kwargs: pytest.fail("executed without input")
     )
 
-    assert cli.main(["aide.too", entry]) == 2
+    assert cli.main(["aid.too", entry]) == 2
 
 
 @pytest.mark.parametrize("kind", ["file", "directory", "symlink", "dangling"])
-@pytest.mark.parametrize("filename", ["aide.too", "toolang.toml"])
+@pytest.mark.parametrize("filename", ["aid.too", "toolang.toml"])
 def test_init_never_overwrites_existing_output(kind, filename, tmp_path, capsys):
     output = tmp_path / filename
     target = tmp_path / "target"
@@ -238,7 +238,7 @@ def test_init_never_overwrites_existing_output(kind, filename, tmp_path, capsys)
     message = capsys.readouterr()
     assert message.err == f"Error: aborted to avoid overwriting: {filename}\n"
     assert message.out == ""
-    other = "toolang.toml" if filename == "aide.too" else "aide.too"
+    other = "toolang.toml" if filename == "aid.too" else "aid.too"
     assert not (tmp_path / other).exists()
     if kind == "file":
         assert output.read_text() == "keep"
@@ -249,16 +249,16 @@ def test_init_never_overwrites_existing_output(kind, filename, tmp_path, capsys)
 
 
 def test_init_reports_all_existing_outputs(tmp_path, capsys):
-    for name in ("aide.too", "toolang.toml"):
+    for name in ("aid.too", "toolang.toml"):
         (tmp_path / name).write_text("keep")
 
     assert cli.main(["init", "."]) == 1
     message = capsys.readouterr()
     assert message.err == (
-        "Error: aborted to avoid overwriting: aide.too, toolang.toml\n"
+        "Error: aborted to avoid overwriting: aid.too, toolang.toml\n"
     )
     assert message.out == ""
-    for name in ("aide.too", "toolang.toml"):
+    for name in ("aid.too", "toolang.toml"):
         assert (tmp_path / name).read_text() == "keep"
 
 
@@ -274,7 +274,7 @@ def test_init_reports_permission_errors(tmp_path, monkeypatch, capsys):
     original = Path.open
 
     def denied(self, *args, **kwargs):
-        if self == tmp_path / "aide.too":
+        if self == tmp_path / "aid.too":
             raise PermissionError("permission denied")
         return original(self, *args, **kwargs)
 
@@ -282,10 +282,10 @@ def test_init_reports_permission_errors(tmp_path, monkeypatch, capsys):
     assert cli.main(["init", "."]) == 1
     assert capsys.readouterr().err == "Error: permission denied\n"
     assert (tmp_path / "toolang.toml").is_file()
-    assert not (tmp_path / "aide.too").exists()
+    assert not (tmp_path / "aid.too").exists()
 
 
-@pytest.mark.parametrize("filename", ["aide.too", "toolang.toml"])
+@pytest.mark.parametrize("filename", ["aid.too", "toolang.toml"])
 def test_init_reports_a_postcheck_collision(filename, tmp_path, monkeypatch, capsys):
     original = Path.open
     output = tmp_path / filename
@@ -303,7 +303,7 @@ def test_init_reports_a_postcheck_collision(filename, tmp_path, monkeypatch, cap
     assert message.out == ""
     assert output.read_text() == "keep"
     assert (tmp_path / "toolang.toml").is_file()
-    assert (tmp_path / "aide.too").exists() == (filename == "aide.too")
+    assert (tmp_path / "aid.too").exists() == (filename == "aid.too")
 
 
 def test_concurrent_init_has_one_winner(tmp_path):
@@ -317,7 +317,7 @@ def test_concurrent_init_has_one_winner(tmp_path):
     with ThreadPoolExecutor(max_workers=2) as pool:
         results = list(pool.map(lambda _: create(), range(2)))
     assert sorted(results) == [False, True]
-    assert (tmp_path / "aide.too").read_text() == load_template("script").raw_text
+    assert (tmp_path / "aid.too").read_text() == load_template("script").raw_text
 
 
 @pytest.mark.parametrize("explicit", [False, True])
@@ -484,7 +484,7 @@ def test_static_run_help(executable, arguments, monkeypatch, capsys):
     assert "ARGUMENTS..." not in output
     assert (
         "Omit run if RUNNABLE is not a Toolang command, e.g. "
-        f"{executable} aide.too whats_for." in output
+        f"{executable} aid.too whats_for." in output
     )
     assert "Add --help after FILE or RUNNABLE for details." in output
 

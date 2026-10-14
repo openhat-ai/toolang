@@ -214,7 +214,7 @@ readable; do not rewrite execution history or add a storage migration for the na
 | Migration guidance | `docs/{tools,agent-state,executor}.md`; runtime authoring protocol; relevant bundled templates/examples and tests |
 
 Implementation must generate the user-visible breaking-change entry through
-`too aide.too update_changelog`; a maintainer verifies it before merge. This
+`too aid.too update_changelog`; a maintainer verifies it before merge. This
 definition-only change does not claim shipped behavior or add a changelog entry.
 
 ## Acceptance and risks

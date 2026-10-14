@@ -521,7 +521,7 @@ Paths below are relative to `src/toolang/`:
 
 Update messaging, roster, activity, toolset, and Talk tests and relevant ID/messaging
 docs. Generate the implementation's breaking-change Unreleased entry with
-`too aide.too update_changelog`.
+`too aid.too update_changelog`.
 
 | Acceptance scenario | Pass condition |
 | --- | --- |

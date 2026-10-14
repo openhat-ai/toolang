@@ -91,7 +91,7 @@ unrelated legacy cleanup are out of scope.
 
 Keep default tests offline/deterministic. Run repository Ruff, type, and pytest
 checks, plus `git diff --check`. Generate user-visible Unreleased coverage through
-`too aide.too update_changelog`.
+`too aid.too update_changelog`.
 
 ## Risks
 

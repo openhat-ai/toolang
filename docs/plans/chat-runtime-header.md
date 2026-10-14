@@ -35,7 +35,7 @@ banner. This supersedes the metadata presentation in
 
 Chat client metadata and local/remote adapters, `HeaderBlock`, TUI startup and
 CLI composition, their unit/integration/PTY fixtures, and `docs/chat.md`.
-Update the changelog through `too aide.too update_changelog`.
+Update the changelog through `too aid.too update_changelog`.
 
 ## Acceptance
 

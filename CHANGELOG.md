@@ -9,6 +9,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Changed
 
+- `too init DIR` now creates `aid.too` instead of `aide.too`, and its
+  success message, the `too run` help example, and the documented examples
+  use the new name. An existing `aide.too` keeps running under its current
+  name; update automation that expects the file created by `init`.
+
 - **Breaking:** authored edit locks are unified into one persistent guard per
   source scope and the derived State guards are renamed: `agent.too.lock`,
   `runnables.lock`, `caps.lock`, `chores.lock`, `config.toml.lock`, and

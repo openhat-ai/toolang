@@ -22,7 +22,7 @@ def init_script(
 
     try:
         template = load_template("script").raw_text
-        destination = directory.expanduser().resolve() / "aide.too"
+        destination = directory.expanduser().resolve() / "aid.too"
         config = destination.with_name("toolang.toml")
         conflicts = [
             target.name
@@ -47,10 +47,10 @@ def init_script(
         raise ClickException(f"{name} already exists") from exc
     except OSError as exc:
         raise ClickException(str(exc)) from exc
-    typer.echo("Created aide.too and toolang.toml.")
+    typer.echo("Created aid.too and toolang.toml.")
     typer.echo("Add .toolang/ to .gitignore.")
     executable = ctx.find_root().info_name or "too"
     command = shlex.join(
-        [executable, str(directory.expanduser() / "aide.too"), "--help"]
+        [executable, str(directory.expanduser() / "aid.too"), "--help"]
     )
     typer.echo(f"Try: {command}")

@@ -134,7 +134,7 @@ class _ScriptEntryCommand(CliCommand):
         formatter.write_paragraph()
         formatter.write_text(
             "Omit run if RUNNABLE is not a Toolang command, e.g. "
-            f"{ctx.find_root().command_path} aide.too whats_for."
+            f"{ctx.find_root().command_path} aid.too whats_for."
         )
 
 

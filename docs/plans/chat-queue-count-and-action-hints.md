@@ -52,7 +52,7 @@ Enter and uses `m-enter` as the queue's existing inline abbreviation.
 - `tests/system/cli/test_chat_tui_e2e.py`: update affected terminal hint expectations.
 - `docs/chat.md`: align the queue presentation documentation with this definition.
 - `CHANGELOG.md`: generate the user-visible entry through the existing
-  `too aide.too update_changelog` runnable during implementation.
+  `too aid.too update_changelog` runnable during implementation.
 
 ## Acceptance checks
 

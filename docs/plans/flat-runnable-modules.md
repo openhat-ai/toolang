@@ -92,7 +92,7 @@ agic(_: Json):
 - `src/toolang/work/messaging.py`: receipts from the handler's owned Run tree.
 - Existing watcher, messaging, CLI, and API consumers share the public index.
 - Focused module, layout, State, messaging, execution, and home-authoring docs;
-  generate the user-facing change record with `too aide.too update_changelog`.
+  generate the user-facing change record with `too aid.too update_changelog`.
 
 ## Acceptance Tests
 

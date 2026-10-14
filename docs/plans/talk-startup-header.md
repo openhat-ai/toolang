@@ -67,7 +67,7 @@ Likely files: `teaming/{schemas,api,client}.py`, `up/hub.py`, Talk composition,
 TUI and new `talk/header.py`, Chat TUI and `blocks.py`, and a shared pure
 `cli/common/banner.py` renderer, all under `src/toolang`. Keep field meanings
 with their command. Update affected tests, `docs/chat.md`, `docs/messaging.md`,
-and the changelog through `too aide.too update_changelog` when implemented.
+and the changelog through `too aid.too update_changelog` when implemented.
 
 ## Acceptance and risks
 

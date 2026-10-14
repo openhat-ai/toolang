@@ -279,7 +279,7 @@ results to convey them:
   `execution/assembly/prompts/protocol.md` and align tool descriptions.
 - [ ] Add focused offline acceptance coverage, update `docs/program.md` and
   `docs/executor.md`, and generate implementation changelog coverage through the
-  repository's `too aide.too update_changelog` workflow.
+  repository's `too aid.too update_changelog` workflow.
 - [ ] Run default code verification and optional opt-in live-provider checks.
 
 ## Acceptance tests

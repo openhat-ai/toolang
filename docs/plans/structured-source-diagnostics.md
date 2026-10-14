@@ -131,10 +131,10 @@ Examples of the intended format (locations are still evidence-dependent):
 broken.too:1:22: Expected ')' in parameter list: 'flow work(value: Text:'
 fields.too:2:9: Expected a field type: 'field:'
 skill.too:2:16: Property 'description' in skill 'review' must be nonempty: 'description ='
-aide.too:4:1: Parse error in agic block: 'agic issue(_: Text) sdf:\n  pass'
+aid.too:4:1: Parse error in agic block: 'agic issue(_: Text) sdf:\n  pass'
 ```
 
-The `aide` example deliberately does not claim column 21 or an expected `:`/`->`:
+The `aid` example deliberately does not claim column 21 or an expected `:`/`->`:
 the current recovered tree does not reliably supply those facts.
 
 ## Implementation milestones and touchpoints

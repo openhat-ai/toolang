@@ -112,7 +112,7 @@ Repeated changes fail explicitly rather than returning a stale projection.
   retain coverage, acquisition order, progress, and watcher semantics.
 - [x] Add the acceptance checks below; update [layout.md](../layout.md) and relevant
   State-lock references, and generate the implementation's canonical changelog
-  entry with `too aide.too update_changelog` for maintainer verification.
+  entry with `too aid.too update_changelog` for maintainer verification.
 - [x] Run the default offline verification and document the coordinated upgrade.
 
 ## Acceptance checks

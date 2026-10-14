@@ -88,7 +88,7 @@ retain their existing behavior.
   `tests/unit/messaging/test_protocol.py`: shortcut and lookup coverage.
 - Update the existing Talk interface contract, `docs/messaging.md`, and README
   examples to the approved behavior; generate the implementation's Unreleased
-  entry through `aide.too`.
+  entry through `aid.too`.
 
 ## Acceptance checks
 
