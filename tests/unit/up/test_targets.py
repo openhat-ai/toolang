@@ -253,6 +253,8 @@ def test_visiting_agent_keeps_one_progress_id_across_prepare_stages(
         "resolve",
         "fetch",
         "fetch",
+        "parse",
+        "parse",
         "materialize",
         "materialize",
     ]

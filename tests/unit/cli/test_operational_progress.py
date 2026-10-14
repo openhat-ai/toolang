@@ -538,3 +538,208 @@ def test_operational_progress_uses_compact_duration(
         assert progress._live_text().plain == f"Installed Toolang ({expected})"
     finally:
         progress.close()
+
+
+def _startup_event(
+    item_id: str,
+    *,
+    stage: ProgressStage = "fetch",
+    status: ProgressStatus = "running",
+    scope: str = "home",
+    cached: bool = False,
+    complete: bool = False,
+) -> ProgressEvent:
+    from dataclasses import replace
+
+    return replace(
+        _event("prepare", stage, "Working...", item_id=item_id, status=status),
+        subject="cap",
+        ref=f"github://example/caps/{item_id}",
+        scope=scope,
+        cached=cached,
+        complete=complete,
+    )
+
+
+def _finish_startup(progress: CliProgress) -> None:
+    progress(
+        ProgressEvent(
+            id="state",
+            kind="prepare",
+            stage="materialize",
+            label="Prepared State",
+            status="ok",
+            subject="state",
+            complete=True,
+        )
+    )
+
+
+def test_startup_slots_reuse_rows_then_collapse_to_one_dim_summary(monkeypatch) -> None:
+    from toolang.cli.common.progress import StartupProgress
+
+    monkeypatch.setenv("TERM", "xterm-256color")
+    stream = _TTYBuffer()
+    now = [0.0]
+    with StartupProgress(
+        stream=stream, _clock=lambda: now[0], _reveal_seconds=3600
+    ) as progress:
+        progress(_startup_event("one"))
+        progress(_startup_event("two"))
+        assert progress._live_text().plain.splitlines() == [
+            "github://example/caps/one fetching",
+            "github://example/caps/two fetching",
+        ]
+        assert progress._live_text().style == "dim"
+        progress(_startup_event("one", stage="fetch", status="ok"))
+        assert len(progress._live_text().plain.splitlines()) == 2
+        progress(_startup_event("one", stage="materialize"))
+        progress(_startup_event("one", stage="materialize", status="ok", complete=True))
+        progress(_startup_event("three"))
+        assert progress._live_text().plain.splitlines() == [
+            "github://example/caps/three fetching",
+            "github://example/caps/two fetching",
+        ]
+        # A late event for a completed occupant cannot overwrite its replacement.
+        progress(_startup_event("one"))
+        assert "one fetching" not in progress._live_text().plain
+        progress(_startup_event("two", stage="materialize", status="ok", complete=True))
+        assert progress._live_text().plain == "github://example/caps/three fetching"
+        progress(
+            _startup_event("three", stage="materialize", status="ok", complete=True)
+        )
+        assert progress._live_text().plain == ""
+        assert stream.getvalue() == ""
+        now[0] = 2.0
+        _finish_startup(progress)
+        _finish_startup(progress)
+    output = stream.getvalue()
+    assert output.count("Prepared 3 caps in 2s") == 1
+    assert "\x1b[2m" in output
+    assert "Preparing caps" not in output
+
+
+@pytest.mark.parametrize("terminal", [False, True])
+def test_cached_startup_is_silent_even_after_reveal_threshold(terminal: bool) -> None:
+    from toolang.cli.common.progress import StartupProgress
+
+    stream = _TTYBuffer() if terminal else StringIO()
+    now = [0.0]
+    with StartupProgress(stream=stream, _clock=lambda: now[0]) as progress:
+        progress(_startup_event("cached", cached=True))
+        progress(
+            _startup_event(
+                "cached",
+                stage="materialize",
+                status="skipped",
+                cached=True,
+                complete=True,
+            )
+        )
+        now[0] = 60.0
+        _finish_startup(progress)
+        assert progress._reveal_timer is None
+        assert progress._live_display is None
+    assert stream.getvalue() == ""
+
+
+def test_startup_distinguishes_scopes_omits_cache_and_keeps_plain_output_bounded() -> (
+    None
+):
+    from toolang.cli.common.progress import StartupProgress
+
+    stream = StringIO()
+    with StartupProgress(stream=stream) as progress:
+        progress(_startup_event("same", scope="root"))
+        progress(_startup_event("same", scope="home"))
+        progress(_startup_event("cached", cached=True))
+        progress(_startup_event("same", scope="root", stage="materialize"))
+        progress(_startup_event("same", scope="root", stage="materialize"))
+        progress(
+            _startup_event(
+                "same", scope="home", stage="materialize", status="ok", complete=True
+            )
+        )
+        progress(
+            _startup_event(
+                "same", scope="root", stage="materialize", status="ok", complete=True
+            )
+        )
+        _finish_startup(progress)
+    lines = stream.getvalue().splitlines()
+    assert lines[:3] == [
+        "github://example/caps/same fetching",
+        "github://example/caps/same fetching",
+        "github://example/caps/same updating",
+    ]
+    assert len(lines) == 4
+    assert lines[-1].startswith("Prepared 2 caps in ")
+    assert "cached" not in stream.getvalue()
+    assert "\x1b" not in stream.getvalue()
+
+
+def test_startup_failure_and_interruption_clear_slots_without_success() -> None:
+    from toolang.cli.common.progress import StartupProgress
+
+    stream = _TTYBuffer()
+    with StartupProgress(stream=stream, _reveal_seconds=3600) as progress:
+        progress(_startup_event("one"))
+        progress(_startup_event("one", status="failed", complete=True))
+        _finish_startup(progress)
+        assert progress.failure_stage == "prepare.fetch"
+        assert not any(progress._slots)
+    assert "Prepared" not in stream.getvalue()
+    stream = _TTYBuffer()
+    with pytest.raises(KeyboardInterrupt):
+        with StartupProgress(stream=stream, _reveal_seconds=3600) as progress:
+            progress(_startup_event("one"))
+            raise KeyboardInterrupt
+    progress(_startup_event("late"))
+    assert progress._live_display is None
+    assert stream.getvalue() == ""
+
+
+def test_startup_session_is_shared_across_nested_launch_boundaries() -> None:
+    from dataclasses import replace
+    from toolang.cli.common.progress import make_cli_progress
+
+    stream = StringIO()
+    with make_cli_progress(stream=stream, preparation=True) as outer:
+        outer(replace(_startup_event("agent"), subject="agent", complete=False))
+        outer(
+            replace(
+                _startup_event("agent", status="ok", complete=True), subject="agent"
+            )
+        )
+        with make_cli_progress(preparation=True) as inner:
+            assert inner is outer
+            inner(_startup_event("dependency"))
+            inner(
+                _startup_event(
+                    "dependency", stage="materialize", status="ok", complete=True
+                )
+            )
+            _finish_startup(inner)
+        assert not outer._closed
+    assert stream.getvalue().count("Prepared agent and 1 cap in ") == 1
+
+
+def test_startup_narrow_terminal_preserves_action_and_short_terminal_limits_rows(
+    monkeypatch,
+) -> None:
+    import os
+    from toolang.cli.common.progress import StartupProgress
+
+    stream = _TTYBuffer()
+    monkeypatch.setattr(stream, "fileno", lambda: 1)
+    monkeypatch.setattr(os, "get_terminal_size", lambda *_: os.terminal_size((24, 2)))
+    with StartupProgress(stream=stream, max_width=24, _reveal_seconds=3600) as progress:
+        progress(_startup_event("one"))
+        progress(_startup_event("two"))
+        text = progress._live_text().plain
+        assert len(text.splitlines()) == 1
+        assert text.endswith(" fetching")
+        assert display_width(text) <= 24
+        with progress.suspended():
+            assert progress._live_display is None
+        assert len(progress._live_text().plain.splitlines()) == 1

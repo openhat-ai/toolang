@@ -1422,3 +1422,18 @@ def test_cli_bare_dev_keeps_unknown_option_errors(command, tmp_path, capsys):
         cli.main(["--root", str(tmp_path), "alice", command, "--dev", "--unknown"]) == 2
     )
     assert "No such option: --unknown" in strip_ansi(capsys.readouterr().err)
+
+
+def test_remote_agent_parse_failure_is_reported_before_command_execution(
+    tmp_path, monkeypatch, capsys
+):
+    from toolang.cli.toolang.routing import dispatch_visiting
+    from toolang.up import process as agents
+
+    monkeypatch.setattr(agents, "_fetch_http_text", lambda *_: "flow broken(:\n")
+    result = dispatch_visiting(
+        ["--root", str(tmp_path), "https://example.test/broken.too", "serve"],
+        run_app=lambda *_: pytest.fail("command ran before agent parsed"),
+    )
+    assert result == 1
+    assert "Failed to parse agent" in capsys.readouterr().err

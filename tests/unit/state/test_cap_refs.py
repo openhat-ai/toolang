@@ -47,7 +47,7 @@ def test_remote_cap_keeps_one_progress_id_across_prepare_stages(
         progress=events.append,
         progress_id=progress_id,
     )
-    caps._remote_materialized_files(
+    caps._fetch_remote_cap_files(
         relative_entry_path=Path("referenced/psyches/reviewer.md"),
         kind="psyche",
         name="reviewer",

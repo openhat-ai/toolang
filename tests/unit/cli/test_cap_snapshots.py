@@ -89,7 +89,7 @@ def test_delete_authored_cap_resolves_same_scope_conflict(
     monkeypatch.setattr(cap_state, "_github_remote_exists", lambda *_: True)
     monkeypatch.setattr(
         cap_state,
-        "_remote_materialized_files",
+        "_fetch_remote_cap_files",
         lambda *, relative_entry_path, **kwargs: {
             str(relative_entry_path): b"Remote body.\n"
         },

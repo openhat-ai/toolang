@@ -3,23 +3,96 @@
 from __future__ import annotations
 
 from collections.abc import Collection, Mapping, Sequence
+from collections import OrderedDict
 from dataclasses import asdict, dataclass
 from hashlib import sha256
 import os
 from pathlib import Path
 import re
+from threading import RLock
 from typing import Literal, cast
 
 from toolang.catalog.types import CAP_DIRECTORY_NAMES
 
 
 from ..lang.ast import AgicDecl, FlowDecl, Program
+from ..common.progress import ProgressSink, emit_progress
 
 SourceNodeKind = Literal["file", "directory"]
 SOURCE_SCHEMA = 4
 CANONICAL_SOURCE_SCHEMA = 3
 LEGACY_SOURCE_SCHEMA = 2
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+_AGENT_PROGRAMS: OrderedDict[tuple[Path, str], Program] = OrderedDict()
+_AGENT_PROGRAMS_LOCK = RLock()
+
+
+def cached_agent_program(path: Path, digest: str) -> Program | None:
+    """Reuse only the exact agent source validated during remote acquisition."""
+
+    with _AGENT_PROGRAMS_LOCK:
+        return _AGENT_PROGRAMS.get((path, digest))
+
+
+def parse_agent_program(
+    path: Path,
+    source: str,
+    *,
+    ref: str,
+    progress: ProgressSink | None = None,
+    prepared: Program | None = None,
+    progress_id: str | None = None,
+) -> Program:
+    """Validate a remote agent before dependency work and retain its exact AST."""
+
+    digest = sha256(source.encode("utf-8")).hexdigest()
+    item_id = progress_id or f"agent:{path}"
+    with _AGENT_PROGRAMS_LOCK:
+        existing = cached_agent_program(path, digest)
+        if existing is not None:
+            return existing
+        if prepared is None:
+            emit_progress(
+                progress,
+                id=item_id,
+                kind="prepare",
+                stage="parse",
+                label="Parsing agent...",
+                status="running",
+                subject="agent",
+                ref=ref,
+            )
+            try:
+                prepared = Program.from_source(source)
+            except Exception as exc:
+                emit_progress(
+                    progress,
+                    id=item_id,
+                    kind="prepare",
+                    stage="parse",
+                    label="Failed to parse agent",
+                    status="failed",
+                    detail=str(exc),
+                    subject="agent",
+                    ref=ref,
+                    complete=True,
+                )
+                raise
+            emit_progress(
+                progress,
+                id=item_id,
+                kind="prepare",
+                stage="parse",
+                label="Parsed agent",
+                status="ok",
+                subject="agent",
+                ref=ref,
+                complete=True,
+            )
+        _AGENT_PROGRAMS[(path, digest)] = prepared
+        while len(_AGENT_PROGRAMS) > 32:
+            _AGENT_PROGRAMS.popitem(last=False)
+        return prepared
 
 
 @dataclass(frozen=True, slots=True)

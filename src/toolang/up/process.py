@@ -149,6 +149,8 @@ def fetch_agent_ref(
         label="Fetching agent...",
         status="running",
         detail=url,
+        subject="agent",
+        ref=detail,
     )
     try:
         source = _fetch_http_text(url)
@@ -161,6 +163,9 @@ def fetch_agent_ref(
             label="Failed to fetch agent",
             status="failed",
             detail=str(exc),
+            subject="agent",
+            ref=detail,
+            complete=True,
         )
         raise
     emit_progress(
@@ -170,6 +175,9 @@ def fetch_agent_ref(
         stage="fetch",
         label="Fetched agent",
         status="ok",
+        subject="agent",
+        ref=detail,
+        complete=True,
     )
     return source
 
@@ -195,6 +203,8 @@ def resolve_agent_selector_ref(
         label="Resolving agent...",
         status="running",
         detail=selector.text,
+        subject="agent",
+        ref=selector.text,
     )
     try:
         ref = _resolve_github_agent_shorthand(
@@ -211,6 +221,9 @@ def resolve_agent_selector_ref(
             label="Failed to resolve agent",
             status="failed",
             detail=str(exc),
+            subject="agent",
+            ref=selector.text,
+            complete=True,
         )
         raise
     emit_progress(
@@ -221,6 +234,9 @@ def resolve_agent_selector_ref(
         label="Resolved agent",
         status="ok",
         detail=ref.render(),
+        subject="agent",
+        ref=ref.render(),
+        complete=True,
     )
     return ref
 
@@ -831,9 +847,17 @@ def _resolve_visiting_layout(
     progress: ProgressSink | None,
     toolang_root: Path,
 ) -> AgentLayout:
+    from toolang.state.prepare import parse_visiting_agent
+
     layout = _visiting_layout(selector, toolang_root=toolang_root)
 
     if _visiting_program_cache_fresh(layout.program):
+        parse_visiting_agent(
+            layout,
+            ref=selector.text,
+            progress=progress,
+            progress_id=f"agent:{selector.text}",
+        )
         return layout
     progress_id = f"agent:{selector.text}"
     resolved_ref = resolve_agent_selector_ref(
@@ -846,12 +870,19 @@ def _resolve_visiting_layout(
         progress=progress,
         progress_id=progress_id,
     )
+    parse_visiting_agent(
+        layout,
+        ref=resolved_ref.render(),
+        source=source_text,
+        progress=progress,
+        progress_id=progress_id,
+    )
     emit_progress(
         progress,
         id=progress_id,
         kind="prepare",
         stage="materialize",
-        label="Preparing agent...",
+        label="Caching agent source...",
         status="running",
         detail=layout.name,
     )
@@ -868,7 +899,7 @@ def _resolve_visiting_layout(
             id=progress_id,
             kind="prepare",
             stage="materialize",
-            label="Failed to prepare agent",
+            label="Failed to cache agent source",
             status="failed",
             detail=str(exc),
         )
@@ -878,7 +909,7 @@ def _resolve_visiting_layout(
         id=progress_id,
         kind="prepare",
         stage="materialize",
-        label="Prepared agent",
+        label="Cached agent source",
         status="ok",
         detail=layout.name,
     )

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
+from contextvars import ContextVar, Token
 from dataclasses import dataclass
 import os
 from pathlib import Path
@@ -20,12 +21,15 @@ from ...common.events import ProgressEvent
 from ...common.progress import ProgressSink
 from ...common.time import format_duration
 from .execution_progress.config import resolve_progress_max_width
-from .execution_progress.formatting import one_line, wrap_display
+from .execution_progress.formatting import one_line, wrap_display, truncate
 
 
 _LIVE_REVEAL_SECONDS = 0.15
 _ELAPSED_REVEAL_SECONDS = 1.0
 _MAX_DETAIL = 80
+_STARTUP_PROGRESS: ContextVar[StartupProgress | None] = ContextVar(
+    "startup_progress", default=None
+)
 
 
 @dataclass(slots=True)
@@ -434,16 +438,214 @@ class CliProgress:
         return max(1, min(terminal_width, self._max_width))
 
 
+class StartupProgress(CliProgress):
+    """Show uncached preparation in reusable rows, then one dim summary."""
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._slots: list[tuple[tuple[str | None, str], ProgressEvent] | None] = []
+        self._finished: set[tuple[str | None, str]] = set()
+        self._caps: set[tuple[str | None, str]] = set()
+        self._started: float | None = None
+        self._agent_work = False
+        self._preparation_done = False
+        self._depth = 0
+        self._token: Token[StartupProgress | None] | None = None
+        self._last_slot_render = float("-inf")
+        self._slot_timer: Timer | None = None
+
+    def __enter__(self) -> StartupProgress:
+        if self._depth == 0:
+            self._token = _STARTUP_PROGRESS.set(self)
+        self._depth += 1
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
+        self._depth -= 1
+        if self._depth == 0:
+            if self._token is not None:
+                _STARTUP_PROGRESS.reset(self._token)
+                self._token = None
+            super().__exit__(exc_type, exc, traceback)
+
+    def __call__(self, event: ProgressEvent) -> None:
+        with self._lock:
+            if event.kind != "prepare":
+                super().__call__(event)
+                return
+            if (
+                self._closed
+                or self._failure_event is not None
+                or self._preparation_done
+            ):
+                return
+            if event.status == "failed":
+                self._slots.clear()
+                self._cancel_slot_render()
+                super().__call__(event)
+                return
+            if event.cached or event.status in {"pending", "skipped"}:
+                return
+            if event.subject == "state" and event.complete:
+                self._finish_preparation()
+                return
+            if event.subject is None:
+                return
+            if event.status == "running":
+                if self._started is None:
+                    self._started = self._clock()
+                if event.subject == "state":
+                    return
+                self._agent_work |= event.subject == "agent"
+                key = self._work_key(event)
+                if key in self._finished:
+                    return
+                if event.subject == "cap":
+                    self._caps.add(key)
+                index = next(
+                    (
+                        i
+                        for i, item in enumerate(self._slots)
+                        if item and item[0] == key
+                    ),
+                    None,
+                )
+                if index is None:
+                    index = next(
+                        (i for i, item in enumerate(self._slots) if item is None),
+                        len(self._slots),
+                    )
+                    if index == len(self._slots):
+                        self._slots.append(None)
+                self._slots[index] = (key, event)
+            elif event.complete:
+                key = self._work_key(event)
+                self._finished.add(key)
+                for i, item in enumerate(self._slots):
+                    if item is not None and item[0] == key:
+                        self._slots[i] = None
+            else:
+                return
+            self._render_slots()
+
+    @staticmethod
+    def _work_key(event: ProgressEvent) -> tuple[str | None, str]:
+        scope = event.stage if event.subject == "agent" else event.scope
+        return scope, event.id
+
+    def _render_slots(self) -> None:
+        if not self._enabled:
+            return
+        if not self._terminal:
+            for item in self._slots:
+                if item is None:
+                    continue
+                text = self._slot_text(item[1])
+                key = ("prepare", repr(item[0]))
+                previous = self._items.get(key)
+                if previous is None or previous.event.stage != item[1].stage:
+                    print(text, file=self._stream)
+                    self._items[key] = _ItemState(item[1], 0)
+            return
+        if not any(self._slots):
+            self._cancel_reveal()
+            self._clear_live()
+            return
+        if self._live_display is None:
+            self._render_terminal()
+        elif self._clock() - self._last_slot_render >= 0.1:
+            self._last_slot_render = self._clock()
+            self._live_display.update(self._live_text(), refresh=True)
+        elif self._slot_timer is None:
+            self._slot_timer = Timer(0.1, self._refresh_slots)
+            self._slot_timer.daemon = True
+            self._slot_timer.start()
+
+    def _refresh_slots(self) -> None:
+        with self._lock:
+            self._slot_timer = None
+            if not self._closed:
+                self._render_slots()
+
+    def _cancel_slot_render(self) -> None:
+        if self._slot_timer is not None:
+            self._slot_timer.cancel()
+            self._slot_timer = None
+
+    def _slot_text(self, event: ProgressEvent) -> str:
+        action = {
+            "resolve": "resolving",
+            "fetch": "fetching",
+            "parse": "parsing",
+            "materialize": "updating",
+        }[event.stage]
+        width = self._available_width()
+        suffix = f" {action}"
+        if width <= len(suffix):
+            return truncate(action, width)
+        return truncate(one_line(event.ref or event.id), width - len(suffix)) + suffix
+
+    def _selected_state(self) -> _ItemState | None:
+        for item in self._slots:
+            if item is not None:
+                return _ItemState(item[1], 0)
+        return super()._selected_state()
+
+    def _live_text(self) -> Text:
+        if any(self._slots):
+            try:
+                height = os.get_terminal_size(self._stream.fileno()).lines
+            except (AttributeError, OSError, ValueError):
+                height = 24
+            rows = [
+                self._slot_text(item[1]) for item in self._slots if item is not None
+            ]
+            return Text("\n".join(rows[: max(1, height - 1)]), style="dim")
+        return super()._live_text()
+
+    def _schedule_refresh(self) -> None:
+        if not any(self._slots):
+            super()._schedule_refresh()
+
+    def _finish_preparation(self) -> None:
+        self._preparation_done = True
+        self._slots.clear()
+        self._cancel_slot_render()
+        self._cancel_reveal()
+        self._clear_live()
+        if self._started is None or not self._enabled:
+            return
+        parts = []
+        if self._agent_work:
+            parts.append("agent")
+        if self._caps:
+            parts.append(
+                f"{len(self._caps)} {'cap' if len(self._caps) == 1 else 'caps'}"
+            )
+        subject = " and ".join(parts) or "State"
+        elapsed = format_duration(self._clock() - self._started)
+        self._console.print(Text(f"Prepared {subject} in {elapsed}", style="dim"))
+
+    def close(self) -> None:
+        with self._lock:
+            self._cancel_slot_render()
+            super().close()
+
+
 def make_cli_progress(
     *,
     stream: TextIO | None = None,
     enabled: bool = True,
     max_width: int | None = None,
     leading_gap: bool = False,
+    preparation: bool = False,
 ) -> CliProgress:
     """Create one invocation-scoped operational presenter."""
 
-    return CliProgress(
+    if preparation and enabled and (current := _STARTUP_PROGRESS.get()) is not None:
+        return current
+    presenter = StartupProgress if preparation else CliProgress
+    return presenter(
         stream=stream,
         enabled=enabled,
         max_width=max_width,

@@ -47,6 +47,7 @@ from .source import (
     SourceSnapshot,
     SourceRecord,
     ProgramSource,
+    parse_agent_program,
     observe_home_source,
     observe_root_source,
     read_authored_source,
@@ -81,6 +82,35 @@ from .source import scan_home_source, scan_root_source
 _MAX_SOURCE_SNAPSHOT_ATTEMPTS = 3
 _ERROR_LINE_RE = re.compile(r"\bline (\d+)\b", re.IGNORECASE)
 logger = logging.getLogger(__name__)
+
+
+def parse_visiting_agent(
+    layout: AgentLayout,
+    *,
+    ref: str,
+    source: str | None = None,
+    progress_id: str | None = None,
+    progress: ProgressSink | None = None,
+) -> Program:
+    """Parse the visiting agent before any root or home dependency preparation."""
+
+    text = source if source is not None else layout.program.read_bytes().decode("utf-8")
+    digest = sha256(text.encode("utf-8")).hexdigest()
+    prepared = None
+    try:
+        home = load_home_layer(layout)
+        if home.schema == LAYER_SCHEMA and home.module_digests.get("agent") == digest:
+            prepared = home.modules.get("agent")
+    except (FileNotFoundError, KeyError, TypeError, ValueError):
+        pass
+    return parse_agent_program(
+        layout.program,
+        text,
+        ref=ref,
+        progress=progress,
+        prepared=prepared,
+        progress_id=progress_id,
+    )
 
 
 def prepare_agent_state(
@@ -259,6 +289,8 @@ def prepare_root_home(
 
     _require_root(layout)
     _require_agent_home(layout)
+    if layout.placement == "visiting":
+        parse_visiting_agent(layout, ref=str(layout.program), progress=progress)
     root = prepare_root(
         layout,
         force=force,
@@ -505,6 +537,7 @@ def _prepare_layer(
         label=f"Preparing {subject}...",
         status="running",
         detail=layout.name,
+        subject="state",
     )
     try:
         revision, entry_count = _prepare_layer_revision(
@@ -523,6 +556,7 @@ def _prepare_layer(
             label=f"Failed to prepare {subject}",
             status="failed",
             detail=str(exc),
+            subject="state",
         )
         raise
     emit_progress(
@@ -533,6 +567,7 @@ def _prepare_layer(
         label=f"Prepared {subject}",
         status="ok",
         detail=f"{entry_count} entries",
+        subject="state",
     )
     return revision
 

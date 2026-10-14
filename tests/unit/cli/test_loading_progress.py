@@ -33,13 +33,13 @@ def test_cap_materialization_only_starts_after_saving(
     monkeypatch.setattr("toolang.cli.caps.commands.edit_markdown", edit)
     observed = []
 
-    def materialize(*, relative_entry_path, **kwargs):
+    def fetch_files(*, relative_entry_path, **kwargs):
         assert edited
         observed.append(kwargs.get("progress") is not None)
         assert "Preparing" in capsys.readouterr().err
         return {str(relative_entry_path): b"Remote content.\n"}
 
-    monkeypatch.setattr(cap_state, "_remote_materialized_files", materialize)
+    monkeypatch.setattr(cap_state, "_fetch_remote_cap_files", fetch_files)
     arguments = ["prompt", command, "note" if command == "edit" else "another"]
     assert main(["--root", str(tmp_path), "alice", *arguments]) == 0
     assert observed == ([True] if save else [])

@@ -64,7 +64,7 @@ def acquire_agent_server(
     # Share the management lock with start/serve/stop, releasing it before caller work.
     try:
         with (
-            make_cli_progress(enabled=show_progress) as progress,
+            make_cli_progress(enabled=show_progress, preparation=True) as progress,
             sandbox_runtime.management_lock(layout, progress=progress.sink),
         ):
             acquired = _prepare_agent_server(

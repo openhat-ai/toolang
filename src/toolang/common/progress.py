@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from toolang.base.types.progress import (
     ProgressEvent,
     ProgressKind,
@@ -20,6 +22,11 @@ def emit_progress(
     label: str,
     status: ProgressStatus,
     detail: str | None = None,
+    subject: Literal["agent", "cap", "state"] | None = None,
+    ref: str | None = None,
+    scope: str | None = None,
+    cached: bool = False,
+    complete: bool = False,
 ) -> None:
     """Send one advisory progress event when a sink is configured."""
 
@@ -34,6 +41,11 @@ def emit_progress(
                 label=label,
                 status=status,
                 detail=detail,
+                subject=subject,
+                ref=ref,
+                scope=scope,
+                cached=cached,
+                complete=complete,
             )
         )
     except Exception:

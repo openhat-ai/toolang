@@ -13,6 +13,7 @@ ProgressStage = Literal[
     "resolve",
     "fetch",
     "materialize",
+    "parse",
     "load",
     "discover",
     "create",
@@ -22,7 +23,7 @@ ProgressStage = Literal[
 ]
 
 _STAGES_BY_KIND: dict[ProgressKind, frozenset[ProgressStage]] = {
-    "prepare": frozenset({"resolve", "fetch", "materialize"}),
+    "prepare": frozenset({"resolve", "fetch", "parse", "materialize"}),
     "setup": frozenset({"load", "discover"}),
     "runtime": frozenset({"create", "start", "stop", "destroy"}),
 }
@@ -39,6 +40,11 @@ class ProgressEvent:
     label: str
     status: ProgressStatus
     detail: str | None = None
+    subject: Literal["agent", "cap", "state"] | None = None
+    ref: str | None = None
+    scope: str | None = None
+    cached: bool = False
+    complete: bool = False
 
     def __post_init__(self) -> None:
         if not self.id or self.id != self.id.strip():
