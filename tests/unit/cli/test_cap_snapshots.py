@@ -4,6 +4,7 @@ import pytest
 
 from toolang.common.layout import AgentLayout
 from toolang.state import state as cap_state
+from toolang.common.layout import root_edit_lock_path
 
 
 @pytest.mark.parametrize("scope", ["root", "home"])
@@ -61,7 +62,12 @@ def test_remove_unresolvable_configured_cap(tmp_path, monkeypatch, capsys, scope
     output = capsys.readouterr()
     assert result == 0, output.err
     assert "Prompt rewrite removed: acme/rewrite" in output.out
-    assert ConfiguredCaps(config).get("prompt", "rewrite") is None
+    assert (
+        ConfiguredCaps(config, lock_path=root_edit_lock_path(config.parent)).get(
+            "prompt", "rewrite"
+        )
+        is None
+    )
 
 
 @pytest.mark.parametrize("scope", ["root", "home"])
@@ -113,10 +119,17 @@ def test_root_add_does_not_resolve_unrelated_configured_caps(
     output = capsys.readouterr()
 
     assert result == 0, output.err
-    added = ConfiguredCaps(config).get("prompt", "rewrite")
+    added = ConfiguredCaps(config, lock_path=root_edit_lock_path(config.parent)).get(
+        "prompt", "rewrite"
+    )
     assert added is not None
     assert f"Prompt rewrite added: {added.ref}" in output.out
-    assert ConfiguredCaps(config).get("prompt", "stale") is not None
+    assert (
+        ConfiguredCaps(config, lock_path=root_edit_lock_path(config.parent)).get(
+            "prompt", "stale"
+        )
+        is not None
+    )
 
 
 @pytest.mark.parametrize("command", ["new", "edit"])

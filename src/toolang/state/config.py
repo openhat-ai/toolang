@@ -16,7 +16,7 @@ import tomlkit
 from toolang.catalog.types import CAP_DIR_BY_KIND, CAP_KINDS
 from toolang.common.errors import ToolangError
 from toolang.common.config_sources import read_config
-from toolang.common.files import atomic_write_text, file_lock_path, file_write_lock
+from toolang.common.files import EditLock, atomic_write_text
 from toolang.common.policy import resolve_query_sentinels
 
 CAP_ALLOW_FIELDS = tuple(f"{kind}s" for kind in CAP_KINDS)
@@ -31,21 +31,25 @@ _ACRONYM_TO_WORD_RE = re.compile(r"([A-Z]+)([A-Z][a-z])")
 class ConfiguredWorkspaces:
     """Manage agent-home workspace grants in one explicit config file."""
 
-    def __init__(self, config_path: Path) -> None:
+    def __init__(self, config_path: Path, *, lock_path: Path) -> None:
         self.config_path = config_path
+        self._lock = EditLock(lock_path)
 
     @property
     def lock_path(self) -> Path:
-        return file_lock_path(self.config_path)
+        return self._lock.path
 
     def write_lock(self) -> AbstractContextManager[None]:
         """Return the lock shared by agent config mutations."""
 
-        return file_write_lock(self.lock_path)
+        return self._lock.write()
 
     def list(self) -> dict[str, str]:
         """Return configured workspace paths in config insertion order."""
 
+        return self._lock.read(self._list)
+
+    def _list(self) -> dict[str, str]:
         if self.config_path.exists() and not self.config_path.is_file():
             raise ValueError(f"agent config must be a file: {self.config_path}")
         return configured_workspaces(read_config(self.config_path))

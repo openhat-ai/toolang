@@ -9,7 +9,9 @@ import os
 from pathlib import Path
 import tempfile
 import threading
-from typing import BinaryIO
+from typing import BinaryIO, TypeVar
+
+_T = TypeVar("_T")
 
 
 class _LockState:
@@ -34,6 +36,7 @@ def file_write_lock(
     *,
     inherit_owner: bool = False,
     on_wait: Callable[[], None] | None = None,
+    create: bool = True,
 ) -> Iterator[None]:
     """Lock across processes, optionally retaining the parent owner as root."""
 
@@ -53,8 +56,9 @@ def file_write_lock(
         state.mutex.acquire()
     try:
         if state.depth == 0:
-            _prepare_directory(path.parent, inherit_owner=inherit_owner)
-            state.handle = path.open("a+b")
+            if create:
+                _prepare_directory(path.parent, inherit_owner=inherit_owner)
+            state.handle = path.open("a+b" if create else "rb")
             try:
                 if inherit_owner:
                     _inherit_owner(state.handle.fileno(), path.parent)
@@ -79,6 +83,53 @@ def file_write_lock(
                 state.handle = None
     finally:
         state.mutex.release()
+
+
+class EditLock:
+    """One persistent edit guard beneath an authored scope's .state directory."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+
+    def _validate(self) -> None:
+        # Validate the owning directory, .state, and root/home without resolving
+        # a symlink into another scope. Missing directories are valid for reads.
+        for directory in reversed(self.path.parents[:3]):
+            if directory.is_symlink() or (
+                directory.exists() and not directory.is_dir()
+            ):
+                raise OSError(f"edit lock ancestor must be a directory: {directory}")
+        if self.path.is_symlink() or (self.path.exists() and not self.path.is_file()):
+            raise OSError(f"edit lock must be a regular file: {self.path}")
+
+    @contextmanager
+    def write(self) -> Iterator[None]:
+        self._validate()
+        with file_write_lock(self.path, inherit_owner=True):
+            yield
+
+    def read(self, read: Callable[[], _T]) -> _T:
+        """Read consistently without creating a guard or its directories."""
+        self._validate()
+        if not self.path.exists():
+            try:
+                result = read()
+            except Exception as exc:
+                # Configuration readers may wrap a disappearing source's I/O
+                # failure with a domain error. Preserve unrelated failures.
+                if not isinstance(exc, OSError) and not isinstance(
+                    exc.__cause__, OSError
+                ):
+                    raise
+                self._validate()
+                if not self.path.exists():
+                    raise
+            else:
+                self._validate()
+                if not self.path.exists():
+                    return result
+        with file_write_lock(self.path, create=False):
+            return read()
 
 
 def atomic_write_text(path: Path, content: str, *, inherit_owner: bool = False) -> None:

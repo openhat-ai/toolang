@@ -2,24 +2,21 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TypeVar
 
 from dateutil.rrule import rrulestr
 import frontmatter
 from yaml import YAMLError
 
-from toolang.common.files import atomic_write_text, file_write_lock
+from toolang.common.files import EditLock, atomic_write_text
 from toolang.common.ids import chore_id
 
 from .common import normalize_meta
 from .errors import CatalogConflictError, CatalogNotFoundError
-
-_T = TypeVar("_T")
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,18 +107,19 @@ class ChoreFile:
 class AuthoredChores:
     """CRUD for one definition layer, addressed by name, ref, or derived ID."""
 
-    def __init__(self, directory: Path) -> None:
+    def __init__(self, directory: Path, *, lock_path: Path) -> None:
         self.directory = directory
+        self._lock = EditLock(lock_path)
 
     @property
     def lock_path(self) -> Path:
-        return self.directory / "chores.lock"
+        return self._lock.path
 
     def write_lock(self) -> AbstractContextManager[None]:
-        return file_write_lock(self.lock_path)
+        return self._lock.write()
 
     def list(self) -> tuple[ChoreFile, ...]:
-        return self._read_consistently(self._list_files)
+        return self._lock.read(self._list_files)
 
     def get(self, reference: str) -> ChoreFile | None:
         def read() -> ChoreFile | None:
@@ -133,7 +131,7 @@ class AuthoredChores:
                 raise CatalogConflictError(f"ambiguous chore reference: {reference}")
             return next(iter(matches), None)
 
-        return self._read_consistently(read)
+        return self._lock.read(read)
 
     def contains_name(self, name: str) -> bool:
         return self.path(name).exists()
@@ -167,26 +165,11 @@ class AuthoredChores:
         atomic_write_text(path, chore.content)
         return ChoreFile.parse(chore.content, path=path)
 
-    def _read_consistently(self, read: Callable[[], _T]) -> _T:
-        if self._lock_file_exists():
-            with self.write_lock():
-                return read()
-        try:
-            result = read()
-        except OSError:
-            if not self._lock_file_exists():
-                raise
-        else:
-            if not self._lock_file_exists():
-                return result
-        with self.write_lock():
-            return read()
-
-    def _lock_file_exists(self) -> bool:
-        return self.lock_path.exists() or self.lock_path.is_symlink()
-
     def raw_path(self, reference: str) -> Path:
         """Address an existing file without parsing its content or siblings."""
+        return self._lock.read(lambda: self._raw_path(reference))
+
+    def _raw_path(self, reference: str) -> Path:
         directory = self.directory / "chores"
         paths = tuple(directory.glob("*.md")) if directory.is_dir() else ()
         matches = []
@@ -212,6 +195,9 @@ class AuthoredChores:
 
     def sources(self) -> tuple[tuple[Path, str, str | None], ...]:
         """Read all source files with independent content diagnostics."""
+        return self._lock.read(self._sources)
+
+    def _sources(self) -> tuple[tuple[Path, str, str | None], ...]:
         directory = self.directory / "chores"
         if not directory.is_dir():
             return ()

@@ -29,7 +29,7 @@ from toolang.state import watcher as state_watcher
 from toolang.state.cache import (
     LAYER_SCHEMA,
     LayerScope,
-    _agent_check_lock,
+    _agent_publish_lock,
     _persist_agent_revision,
     agent_revision_dir,
     canonical_json,
@@ -712,7 +712,7 @@ def test_prepare_rebuilds_a_current_layer_from_an_older_schema(
     shutil.copytree(current_dir, stale_dir)
     (stale_dir / "layer.json").write_bytes(encoded)
     publish_layer_current(layout, "home", stale_revision)
-    with _agent_check_lock(layout):
+    with _agent_publish_lock(layout):
         stale_state_revision = _persist_agent_revision(
             layout,
             root_revision=current_root.revision,
@@ -1045,7 +1045,7 @@ def test_concurrent_processes_publish_one_root_and_home_revision(
     assert [path.name for path in agent_revs.iterdir()] == [results[0][0]]
 
 
-def test_agent_check_lock_blocks_same_agent_process(tmp_path: Path) -> None:
+def test_agent_publish_lock_blocks_same_agent_process(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     home = toolang_root / "agents" / "alice"
     home.mkdir(parents=True)
@@ -1058,7 +1058,7 @@ def test_agent_check_lock_blocks_same_agent_process(tmp_path: Path) -> None:
         max_workers=1,
         mp_context=multiprocessing.get_context("spawn"),
     ) as executor:
-        with _agent_check_lock(layout):
+        with _agent_publish_lock(layout):
             future = executor.submit(
                 _prepare_after_signal,
                 (str(toolang_root), "alice", str(started)),
@@ -1072,7 +1072,7 @@ def test_agent_check_lock_blocks_same_agent_process(tmp_path: Path) -> None:
     assert len(state_revision) == 64
 
 
-def test_agent_check_lock_does_not_block_another_agent(tmp_path: Path) -> None:
+def test_agent_publish_lock_does_not_block_another_agent(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     for name in ("alice", "bob"):
         home = toolang_root / "agents" / name
@@ -1085,7 +1085,7 @@ def test_agent_check_lock_does_not_block_another_agent(tmp_path: Path) -> None:
         max_workers=1,
         mp_context=multiprocessing.get_context("spawn"),
     ) as executor:
-        with _agent_check_lock(_layout(toolang_root, "alice")):
+        with _agent_publish_lock(_layout(toolang_root, "alice")):
             future = executor.submit(
                 _prepare_after_signal,
                 (str(toolang_root), "bob", str(started)),

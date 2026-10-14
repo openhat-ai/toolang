@@ -12,7 +12,7 @@ from uuid import uuid4
 
 import frontmatter
 
-from toolang.common.files import atomic_write_text, file_write_lock
+from toolang.common.files import EditLock, atomic_write_text
 
 from .common import normalize_meta
 from .errors import CatalogConflictError, CatalogNotFoundError
@@ -73,19 +73,23 @@ class CapFile:
 class AuthoredCaps:
     """CRUD for authored caps below one explicitly supplied directory."""
 
-    def __init__(self, directory: Path) -> None:
+    def __init__(self, directory: Path, *, lock_path: Path) -> None:
         self.directory = directory
+        self._lock = EditLock(lock_path)
 
     @property
     def lock_path(self) -> Path:
-        return self.directory / "caps.lock"
+        return self._lock.path
 
     def write_lock(self) -> AbstractContextManager[None]:
         """Return the shared lock used by all authored-cap mutations."""
 
-        return file_write_lock(self.lock_path)
+        return self._lock.write()
 
     def list(self, *, kinds: set[CapKind] | None = None) -> tuple[CapFile, ...]:
+        return self._lock.read(lambda: self._list(kinds=kinds))
+
+    def _list(self, *, kinds: set[CapKind] | None = None) -> tuple[CapFile, ...]:
         caps: list[CapFile] = []
         for kind in CAP_KINDS:
             if kinds is not None and kind not in kinds:
@@ -111,6 +115,9 @@ class AuthoredCaps:
         return tuple(sorted(caps, key=lambda cap: (cap.kind, cap.name)))
 
     def get(self, kind: CapKind, name: str) -> CapFile | None:
+        return self._lock.read(lambda: self._get(kind, name))
+
+    def _get(self, kind: CapKind, name: str) -> CapFile | None:
         path = self.path(kind, name)
         if not path.is_file():
             return None
@@ -154,6 +161,9 @@ class AuthoredCaps:
 
     def read(self, kind: CapKind, name: str) -> str:
         """Read raw authored content even when its metadata is invalid."""
+        return self._lock.read(lambda: self._read(kind, name))
+
+    def _read(self, kind: CapKind, name: str) -> str:
         path = self.path(kind, name)
         if not path.is_file():
             raise CatalogNotFoundError(f"authored {kind} not found: {name}")

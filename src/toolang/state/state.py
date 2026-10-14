@@ -1877,9 +1877,7 @@ def _collect_remote_entry_requests(
         )
         if config_file is None:
             continue
-        for entry in ConfiguredCaps(config_file.path).parse(
-            config_file.read_text(), kinds=kinds
-        ):
+        for entry in ConfiguredCaps.parse(config_file.read_text(), kinds=kinds):
             requests.append(
                 _RemoteEntryRequest(
                     scope=item_scope,

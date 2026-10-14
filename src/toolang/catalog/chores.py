@@ -108,7 +108,10 @@ class Chore:
 def load_chore_files(layout: AgentLayout) -> tuple[Chore, ...]:
     """Read immediate home Markdown definitions."""
 
-    return tuple(file_chore(item) for item in AuthoredChores(layout.home).list())
+    return tuple(
+        file_chore(item)
+        for item in AuthoredChores(layout.home, lock_path=layout.home_edit_lock).list()
+    )
 
 
 def load_chores(layout: AgentLayout) -> tuple[Chore, ...]:
@@ -132,7 +135,9 @@ def inspect_chore_sources(layout: AgentLayout) -> tuple[Chore, ...]:
     accepted_names = {chore.name for chore in valid}
     invalid = tuple(
         Chore(path.stem, None, content, None, path, source_error=error)
-        for path, content, error in AuthoredChores(layout.home).sources()
+        for path, content, error in AuthoredChores(
+            layout.home, lock_path=layout.home_edit_lock
+        ).sources()
         if error is not None and path.stem not in accepted_names
     )
     return (*invalid, *valid)

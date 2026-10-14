@@ -196,7 +196,7 @@ def test_historical_canonical_manifests_do_not_claim_raw_config_identity(tmp_pat
 
     from toolang.state.cache import (
         LAYER_SCHEMA,
-        _agent_check_lock,
+        _agent_publish_lock,
         _persist_agent_revision,
         layer_revision_dir,
         publish_layer_current,
@@ -217,7 +217,7 @@ def test_historical_canonical_manifests_do_not_claim_raw_config_identity(tmp_pat
     shutil.copytree(current_dir, legacy_dir)
     (legacy_dir / "layer.json").write_bytes(encoded)
     publish_layer_current(layout, "home", legacy_home)
-    with _agent_check_lock(layout):
+    with _agent_publish_lock(layout):
         legacy_revision = _persist_agent_revision(
             layout, root_revision=current.root_revision, home_revision=legacy_home
         )

@@ -75,7 +75,10 @@ def add_workspace(
     ] = None,
 ) -> None:
     require_prefix_agent(ctx)
-    configured = ConfiguredWorkspaces(_authored_config(context_layout(ctx)))
+    configured = ConfiguredWorkspaces(
+        _authored_config(context_layout(ctx)),
+        lock_path=_workspace_edit_lock(context_layout(ctx)),
+    )
     selected_name, selected_path = user_call(configured.add, path, name=name)
     _refresh_project(context_layout(ctx))
     typer.echo(f"Workspace {selected_name} added: {selected_path}")
@@ -90,7 +93,9 @@ def list_workspaces(ctx: typer.Context) -> None:
         config_path = source.parent / "toolang.toml"
     else:
         config_path = layout.config
-    workspaces = user_call(ConfiguredWorkspaces(config_path).list)
+    workspaces = user_call(
+        ConfiguredWorkspaces(config_path, lock_path=_workspace_edit_lock(layout)).list
+    )
     echo_table(
         ("NAME", "PATH", "AVAILABLE"),
         tuple(
@@ -110,6 +115,14 @@ def _authored_config(layout: AgentLayout) -> Path:
     return layout.config
 
 
+def _workspace_edit_lock(layout: AgentLayout) -> Path:
+    return (
+        layout.root_edit_lock
+        if layout.placement == "roaming"
+        else layout.home_edit_lock
+    )
+
+
 def remove_workspace(
     ctx: typer.Context,
     name: Annotated[
@@ -118,7 +131,10 @@ def remove_workspace(
     ],
 ) -> None:
     require_prefix_agent(ctx)
-    configured = ConfiguredWorkspaces(_authored_config(context_layout(ctx)))
+    configured = ConfiguredWorkspaces(
+        _authored_config(context_layout(ctx)),
+        lock_path=_workspace_edit_lock(context_layout(ctx)),
+    )
     path = user_call(configured.remove, name)
     _refresh_project(context_layout(ctx))
     typer.echo(f"Workspace {name} removed: {path}")

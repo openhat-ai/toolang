@@ -116,7 +116,10 @@ def test_retry_rejects_revoked_workspace_grants_before_mutation(
                 assert run.status == "failed"
                 before_controls = harness.store.list_run_controls(run_id=run.id)
                 before_steps = harness.store.list_steps(run_id=run.id)
-                grants = ConfiguredWorkspaces(harness.setup.layout.config)
+                grants = ConfiguredWorkspaces(
+                    harness.setup.layout.config,
+                    lock_path=harness.setup.layout.home_edit_lock,
+                )
                 grants.remove("repo")
                 if change == "remap":
                     replacement = tmp_path / "replacement"
@@ -171,9 +174,10 @@ def test_retry_keeps_still_authorized_recorded_workspace_grants(
                 if add_workspace:
                     added = tmp_path / "added"
                     added.mkdir()
-                    ConfiguredWorkspaces(harness.setup.layout.config).add(
-                        added, name="added"
-                    )
+                    ConfiguredWorkspaces(
+                        harness.setup.layout.config,
+                        lock_path=harness.setup.layout.home_edit_lock,
+                    ).add(added, name="added")
                     current = await watcher.refresh()
                     assert set(current.workspaces) == {"repo", "added"}
                 retried = await executor.retry(

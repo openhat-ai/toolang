@@ -412,11 +412,11 @@ def materialize_roaming_program(source_path: Path) -> AgentLayout:
         resolved_source,
         replace_regular_file=False,
     )
-    _sync_roaming_project(layout.home, resolved_source)
+    _sync_roaming_project(layout, resolved_source)
     return layout
 
 
-def _sync_roaming_project(home: Path, source: Path) -> None:
+def _sync_roaming_project(layout: AgentLayout, source: Path) -> None:
     from toolang.common.config_sources import (
         PROJECTION_HEADER,
         project_sources,
@@ -424,14 +424,17 @@ def _sync_roaming_project(home: Path, source: Path) -> None:
         script_sources,
         source_catalog,
     )
-    from toolang.common.files import atomic_write_text, file_lock_path, file_write_lock
+    from toolang.common.files import EditLock, atomic_write_text
 
-    sources = script_sources(source)
+    home = layout.home
+    sources = EditLock(layout.root_edit_lock).read(lambda: script_sources(source))
     catalog = source_catalog(sources, roaming=True, validate=False)
     projected = project_sources(sources, source=source, catalog=catalog)
     target = home / "config.toml"
     catalog_target = home / "catalog.json"
-    with file_write_lock(file_lock_path(target)):
+    lock = EditLock(layout.home_edit_lock)
+
+    def needs_update() -> bool:
         previous_catalog = None
         previous_source = None
         if (
@@ -489,6 +492,25 @@ def _sync_roaming_project(home: Path, source: Path) -> None:
             raise ValueError(
                 f"generated project file conflicts with existing file: {path}"
             )
+        return (
+            target.is_symlink()
+            or not target.exists()
+            or target.read_text() != projected
+            or (
+                catalog is not None
+                and (
+                    not catalog_target.is_symlink()
+                    or catalog_target.resolve() != catalog.resolve()
+                )
+            )
+            or (catalog is None and catalog_target.is_symlink())
+        )
+
+    if not lock.read(needs_update):
+        return
+    with lock.write():
+        if not needs_update():
+            return
         if target.is_symlink():
             target.unlink()
         if not target.exists() or target.read_text() != projected:

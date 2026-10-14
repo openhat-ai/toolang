@@ -240,9 +240,12 @@ operations are excluded. Symlinks are rejected except the canonical roaming
 `agent.too` link to its own original script; that link is preserved when editing.
 Linked config files are not writable through state.
 
-Main operations use `.agent.too.lock`; runnable modules use `.runnables.lock`.
-Config writers, including configured caps, workspaces, and roaming projection, share
-`.config.toml.lock`; caps/assets use `.caps.lock`, and chores use `.chores.lock`.
+All home file mutations use `.state/home/edit.lock`, shared with configured caps,
+workspaces, authored caps/chores, and roaming-home configuration projection.
+`list/get` never create it: they use an existing lock, or read optimistically and
+retry under the lock if the first writer creates it during that read. Mutation
+attempts create it before digest/existence checks; failed or identical-content
+writes may leave it behind. Released lock files remain in place.
 Locks coordinate participating writers; filesystem edits that bypass these locks
 can still race a save.
 

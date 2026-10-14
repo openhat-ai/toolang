@@ -58,14 +58,14 @@ from .cache import (
     HomeLayer,
     LayerScope,
     RootLayer,
-    _agent_check_lock,
+    _agent_publish_lock,
     _persist_agent_revision,
     agent_revision_dir,
     load_agent_revisions,
     load_current_revision,
     load_home_layer,
     load_root_layer,
-    layer_lock,
+    layer_build_lock,
     publish_layer_current,
     validate_layer_revision,
     write_layer,
@@ -98,7 +98,7 @@ def prepare_agent_state(
     _require_agent_home(layout)
     ensure_scratch_workspace(layout.home)
     overrides = normalize_cap_overrides(allow_overrides)
-    with _agent_check_lock(layout, progress=progress):
+    with _agent_publish_lock(layout, progress=progress):
         root, home = prepare_root_home(
             layout,
             force=force,
@@ -289,7 +289,7 @@ def prepare_root(
     )
     if current is not None:
         return current
-    with layer_lock(layout, "root", progress=progress):
+    with layer_build_lock(layout, "root", progress=progress):
         source = scan_root_source(layout.root)
         current = _matching_root(
             layout,
@@ -410,7 +410,7 @@ def prepare_home(
     )
     if current is not None:
         return current
-    with layer_lock(layout, "home", progress=progress):
+    with layer_build_lock(layout, "home", progress=progress):
         source = scan_home_source(layout.root, layout.name)
         current = _matching_home(
             layout,

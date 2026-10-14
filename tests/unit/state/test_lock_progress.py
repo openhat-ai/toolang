@@ -7,7 +7,7 @@ from threading import Event
 import pytest
 
 from toolang.common.layout import AgentLayout
-from toolang.state.cache import _agent_check_lock_path, layer_lock_path
+from toolang.state.cache import _agent_publish_lock_path, layer_build_lock_path
 from toolang.state.prepare import prepare_agent_state
 
 
@@ -17,9 +17,9 @@ def test_preparation_reports_contended_lock(tmp_path, scope):
     layout.home.mkdir(parents=True)
     layout.program.write_text("flow run():\n  pass\n")
     path = (
-        _agent_check_lock_path(layout)
+        _agent_publish_lock_path(layout)
         if scope == "agent"
-        else layer_lock_path(layout, scope)
+        else layer_build_lock_path(layout, scope)
     )
     path.parent.mkdir(parents=True, exist_ok=True)
     waiting = Event()
