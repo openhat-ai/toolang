@@ -37,7 +37,7 @@ def resolve_model_catalog_path(
         sources
         if sources is not None
         else config_sources(layout, include_agent=include_agent),
-        roaming=layout.placement == "roaming",
+        roaming=bool(layout.project_inputs),
     )
     if selected is not None:
         return selected.resolve(strict=False)

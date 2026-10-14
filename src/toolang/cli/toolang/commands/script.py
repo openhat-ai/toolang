@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import ExitStack
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import replace
 import json
@@ -725,9 +726,7 @@ def _run(
             f" {runnable}" if not runnable.startswith("<entry:") else ""
         )
         with (
-            RuntimeRegistration(
-                layout, roots=(layout.root, resolve_root(None)), drivers=frozenset()
-            ),
+            ExitStack() as runtime_scope,
             prepare_terminal(
                 "run",
                 layout=layout,
@@ -751,6 +750,13 @@ def _run(
                 terminal.set_run(run)
 
             if server is None:
+                runtime_scope.enter_context(
+                    RuntimeRegistration(
+                        layout,
+                        roots=(layout.toolang_root or resolve_root(None),),
+                        drivers=frozenset(),
+                    )
+                )
                 store = RunStore(layout.run_store)
                 ids = IdIssuer(layout.run_store, agent_name=layout.name)
                 run_id = ids.issue_run()

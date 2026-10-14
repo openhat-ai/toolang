@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import hashlib
 from pathlib import Path
 from typing import Literal
@@ -20,6 +20,9 @@ class AgentLayout:
     name: str
     placement: AgentPlacement
     instance: str | None = None
+    project_inputs: bool | None = None
+    managed_membership: bool | None = None
+    toolang_root: Path | None = field(default=None, compare=False)
 
     def __post_init__(self) -> None:
         root = self.root.expanduser().resolve()
@@ -34,23 +37,39 @@ class AgentLayout:
             raise ValueError("instance identity must be alphanumeric")
         object.__setattr__(self, "root", root)
         object.__setattr__(self, "name", name)
+        if self.toolang_root is not None:
+            object.__setattr__(
+                self, "toolang_root", self.toolang_root.expanduser().resolve()
+            )
+        if self.project_inputs is None:
+            object.__setattr__(self, "project_inputs", self.placement == "roaming")
+        if self.managed_membership is None:
+            object.__setattr__(self, "managed_membership", self.placement == "resident")
 
     @classmethod
     def resident(cls, root: Path, name: str) -> AgentLayout:
         """Create a resident-agent layout under an explicit Toolang root."""
 
-        return cls(root=root, name=name, placement="resident")
+        return cls(root=root, name=name, placement="resident", toolang_root=root)
 
     @classmethod
-    def visiting(cls, source: str, name: str) -> AgentLayout:
+    def visiting(
+        cls, source: str, name: str, *, toolang_root: Path | None = None
+    ) -> AgentLayout:
         """Create the stable temporary layout for one remote source selector."""
 
         label = _safe_agent_label(name)
-        digest = hashlib.sha256(source.encode("utf-8")).hexdigest()[:8]
+        identity = (
+            source
+            if toolang_root is None
+            else f"{toolang_root.expanduser().resolve()}\0{source}"
+        )
+        digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:8]
         return cls(
             root=Path("/tmp") / f"toolang-{label}-{digest}",
             name=name,
             placement="visiting",
+            toolang_root=toolang_root,
         )
 
     @classmethod
@@ -119,10 +138,15 @@ class AgentLayout:
 
     @property
     def runtime_status(self) -> Path:
-        return self.runtime / "status.json"
+        return self.home / ".runtime" / "status.json"
 
     @property
     def sandbox_state(self) -> Path:
+        """Return the consolidated runtime record (including control refs)."""
+        return self.runtime_status
+
+    @property
+    def previous_sandbox_state(self) -> Path:
         return self.sandbox_home / "state.json"
 
     @property

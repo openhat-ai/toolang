@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from collections.abc import Mapping
 from contextlib import suppress
 from pathlib import Path
 import subprocess
+import psutil
 
 from toolang.base.types.sandbox import SandboxMount
 
@@ -15,18 +17,60 @@ DOCKER_DIAGNOSTIC_TAIL_LINES = 2000
 
 
 def docker_container_running(container_id: str) -> bool:
-    result = _docker(
-        "inspect",
-        "--format",
-        "{{.State.Running}}",
-        container_id,
-        check=False,
-    )
-    return (
-        result is not None
-        and result.returncode == 0
-        and result.stdout.strip() == "true"
-    )
+    try:
+        result = _docker(
+            "inspect",
+            "--format",
+            "{{.State.Running}}",
+            container_id,
+            check=False,
+            timeout=2.0,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError("docker inspect timed out") from exc
+    if result is None:
+        raise RuntimeError("docker command not found")
+    if result.returncode != 0:
+        if "No such object:" in result.stderr or "No such container:" in result.stderr:
+            if docker_launch_pending(container_id):
+                raise RuntimeError("docker container creation is still pending")
+            return False
+        raise RuntimeError(result.stderr.strip() or "docker inspect failed")
+    if result.stdout.strip() not in {"true", "false"}:
+        raise RuntimeError("docker inspect returned an invalid state")
+    running = result.stdout.strip() == "true"
+    if not running and docker_launch_pending(container_id):
+        raise RuntimeError("docker container creation is still pending")
+    return running
+
+
+def docker_launch_pending(container_name: str) -> bool:
+    """Do not retire an intent while its orphaned native creation helper exists."""
+    if not container_name.startswith("toolang-"):
+        return False
+    for process in psutil.process_iter(["name", "cmdline", "uids"]):
+        try:
+            if process.info["name"] not in {"docker", "com.docker.cli"}:
+                continue
+            args = process.info["cmdline"]
+            if args is None:
+                uids = process.info["uids"]
+                if uids is not None and uids.real == os.getuid():
+                    raise RuntimeError("cannot verify pending docker creation")
+                continue
+            if (
+                len(args) > 1
+                and args[1] == "run"
+                and "--name" in args
+                and args[args.index("--name") + 1] == container_name
+                and process.status() != psutil.STATUS_ZOMBIE
+            ):
+                return True
+        except (psutil.NoSuchProcess, IndexError):
+            continue
+        except psutil.AccessDenied as exc:
+            raise RuntimeError("cannot verify pending docker creation") from exc
+    return False
 
 
 def docker_wait_container(container_id: str) -> int:
@@ -62,7 +106,7 @@ def docker_stop_container(container_id: str, *, force: bool) -> None:
         raise RuntimeError("docker command not found")
     if result.returncode != 0:
         detail = result.stderr.strip()
-        if "No such container" not in detail:
+        if "No such container" not in detail and docker_container_running(container_id):
             raise RuntimeError(detail or f"docker {command} failed")
 
 
@@ -181,6 +225,7 @@ async def _terminate_process(process: asyncio.subprocess.Process) -> None:
 def _docker(
     *args: str,
     check: bool,
+    timeout: float | None = None,
 ) -> subprocess.CompletedProcess[str] | None:
     try:
         return subprocess.run(
@@ -188,6 +233,55 @@ def _docker(
             check=check,
             capture_output=True,
             text=True,
+            timeout=timeout,
         )
     except FileNotFoundError:
         return None
+
+
+def docker_container_states(identities: tuple[str, ...]) -> dict[str, bool]:
+    """Batch bounded inspection; missing/unknown results never imply death."""
+    if not identities:
+        return {}
+    try:
+        result = _docker(
+            "inspect",
+            "--format",
+            "{{.Id}} {{.Name}} {{.State.Running}}",
+            *identities,
+            check=False,
+            timeout=2.0,
+        )
+    except subprocess.TimeoutExpired:
+        return {}
+    if result is None:
+        return {}
+    states = {}
+    for line in result.stdout.splitlines():
+        parts = line.split()
+        if len(parts) != 3 or parts[2] not in {"true", "false"}:
+            continue
+        for identity in identities:
+            if identity in {parts[0], parts[1].lstrip("/")}:
+                running = parts[2] == "true"
+                try:
+                    if running or not docker_launch_pending(identity):
+                        states[identity] = running
+                except RuntimeError:
+                    pass
+    if result.returncode != 0:
+        for identity in identities:
+            if any(
+                line.strip()
+                in {
+                    f"Error: No such object: {identity}",
+                    f"Error: No such container: {identity}",
+                }
+                for line in result.stderr.splitlines()
+            ):
+                try:
+                    if not docker_launch_pending(identity):
+                        states[identity] = False
+                except RuntimeError:
+                    pass
+    return states

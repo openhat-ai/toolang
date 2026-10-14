@@ -146,11 +146,15 @@ def test_resolve_visiting_layout_materializes_and_reuses_program(
 
     monkeypatch.setattr(agents, "fetch_agent_ref", fake_fetch)
 
-    first = agents.resolve_visiting_layout(source)
+    first = agents.resolve_visiting_layout(source, toolang_root=tmp_path / "other")
     second = agents.resolve_run_layout(tmp_path / "other", source)
 
     assert first is not second
-    assert first == second == AgentLayout.visiting(source, "researcher")
+    assert (
+        first
+        == second
+        == AgentLayout.visiting(source, "researcher", toolang_root=tmp_path / "other")
+    )
     assert first.program.read_text(encoding="utf-8") == "# Agent researcher\n"
     assert fetches == [source]
 
@@ -181,7 +185,7 @@ from toolang.common.layout import AgentLayout
 from toolang.up import process as agents
 
 AgentLayout.visiting = classmethod(
-    lambda cls, source, name: cls(Path(sys.argv[1]), name, "visiting")
+    lambda cls, source, name, **kwargs: cls(Path(sys.argv[1]), name, "visiting")
 )
 signal.signal(signal.SIGXFSZ, signal.SIG_IGN)
 resource.setrlimit(resource.RLIMIT_FSIZE, (128, 128))
@@ -216,7 +220,7 @@ def test_visiting_agent_keeps_one_progress_id_across_prepare_stages(
         AgentLayout,
         "visiting",
         classmethod(
-            lambda cls, source, name: cls(
+            lambda cls, source, name, **kwargs: cls(
                 root=tmp_path, name=name, placement="visiting"
             )
         ),

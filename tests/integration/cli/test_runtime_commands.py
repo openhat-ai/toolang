@@ -260,6 +260,7 @@ def test_serve_uses_process_sandbox_instead_of_dotenv(
         environ: Mapping[str, str],
         sandbox: str,
         launch_id: str | None = None,
+        location: str = "host",
     ) -> int:
         captured["spec"] = spec
         captured["environ"] = environ
@@ -274,7 +275,16 @@ def test_serve_uses_process_sandbox_instead_of_dotenv(
 
     result = runner.invoke(
         cli.app,
-        ["--root", str(root), "_serve", "alice"],
+        [
+            "--root",
+            str(root),
+            "_serve",
+            "alice",
+            "--sandbox",
+            expected,
+            "--location",
+            "guest" if expected.startswith("docker") else "host",
+        ],
     )
 
     assert result.exit_code == 0, result.stderr
@@ -530,6 +540,7 @@ def test_resident_commands_resolve_ports_before_launch(
     monkeypatch.setattr(sandbox_runtime, "resolve_launch", resolve_launch)
     monkeypatch.setattr(sandbox_runtime, "launch", launch)
     monkeypatch.setattr(sandbox_runtime, "run", run)
+    monkeypatch.setattr(agent_server, "serve", lambda *a, **k: 0)
     options = [] if option is None else ["--port", str(option)]
     result = runner.invoke(
         cli.app, ["--root", str(tmp_path), command, "alice", *options]

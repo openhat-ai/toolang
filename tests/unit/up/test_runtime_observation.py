@@ -1,6 +1,5 @@
 from dataclasses import replace
 import asyncio
-import json
 
 from toolang.common.layout import AgentLayout
 from toolang.execution.activity import ActivityQuery
@@ -51,7 +50,7 @@ def test_independent_script_instances_have_separate_execution_and_sandbox_state(
     assert one.run_store != two.run_store
     assert one.chore_store == one.run_store
     assert one.chore_store != two.chore_store
-    assert one.sandbox_state != two.sandbox_state
+    assert one.runtime_status == two.runtime_status
     store = RunStore(one.run_store)
     store.create_thread(thread_id="talk_existing", origin="talk")
     store.close()
@@ -75,8 +74,9 @@ def test_stale_registration_and_replaced_owner_are_safe(tmp_path) -> None:
     current.__enter__()
     old.close()
     assert running_instances(tmp_path)[0]["drivers"] == ["chat"]
-    payload = dict(current.payload, created=0)
-    current.paths[0].write_text(json.dumps(payload))
+    from toolang.up.records import patch_workload
+
+    patch_workload(layout.runtime_status, current.token, {"process_created": 0})
     assert running_instances(tmp_path) == ()
     current.close()
 
@@ -84,24 +84,118 @@ def test_stale_registration_and_replaced_owner_are_safe(tmp_path) -> None:
 def test_guest_discovery_uses_host_sandbox_ownership_not_guest_pid(
     tmp_path, monkeypatch
 ):
-    from types import SimpleNamespace
-    from toolang.up.process import AgentProcess
+    from toolang.base.types.sandbox import SandboxRef
+    from toolang.up import sandbox
+    from toolang.up.records import SandboxState
+    from toolang.up.process import write_runtime_state
 
     layout = AgentLayout.resident(tmp_path, "guest")
     layout.home.mkdir(parents=True)
-    reference = SimpleNamespace(ref=SimpleNamespace(runtime_id="container-one"))
-    monkeypatch.setattr(AgentProcess, "reference", property(lambda _: reference))
+    alive = True
+
+    class Backend:
+        async def running(self, ref):
+            return alive
+
+    monkeypatch.setattr(sandbox, "load_state_sandbox", lambda *a: Backend())
+    from toolang.plugin.sandboxes.docker import _cli
+
     monkeypatch.setattr(
-        AgentProcess, "status", lambda *a, **k: SimpleNamespace(status="running")
+        _cli,
+        "docker_container_states",
+        lambda ids: {identity: alive for identity in ids},
     )
     with RuntimeRegistration(
-        layout,
-        roots=(tmp_path,),
-        drivers=frozenset({"chore"}),
-        sandbox_runtime="container-one",
+        layout, roots=(tmp_path,), drivers=frozenset({"chore"})
     ) as registration:
-        registration.payload["created"] = 0
-        registration.paths[0].write_text(json.dumps(registration.payload))
+        SandboxState(
+            "docker:image",
+            SandboxRef("container-one", "http://localhost:1", runtime_kind="container"),
+            registration.token,
+        ).save(layout.runtime_status)
+        write_runtime_state(
+            layout,
+            endpoint="http://guest:1",
+            started_at="now",
+            pid=1,
+            sandbox="docker:image",
+            launch_id=registration.token,
+        )
         assert running_instances(tmp_path)[0]["drivers"] == ["chore"]
-        reference.ref.runtime_id = "container-two"
+        alive = False
+        # Record changes invalidate the top cache immediately.
+        from toolang.up.records import patch_workload
+
+        patch_workload(
+            layout.runtime_status, registration.token, {"updated_at": "later"}
+        )
         assert running_instances(tmp_path) == ()
+
+
+def test_unbound_guest_discovery_preserves_unknown_workload(tmp_path):
+    from toolang.up.records import patch_workload, update_record
+
+    layout = AgentLayout.resident(tmp_path, "guest")
+    with RuntimeRegistration(
+        layout, roots=(tmp_path,), drivers=frozenset()
+    ) as registration:
+        update_record(
+            layout.runtime_status,
+            lambda entry: entry["control"].update(sandbox="docker:image"),
+        )
+        patch_workload(
+            layout.runtime_status, registration.token, {"process_created": 0}
+        )
+        before = layout.runtime_status.read_bytes()
+        assert running_instances(tmp_path) == ()
+        assert layout.runtime_status.read_bytes() == before
+
+
+def test_short_lived_scripts_share_one_registry_lock_and_readable_references(tmp_path):
+    scope = tmp_path / "toolang"
+    layout = AgentLayout.roaming(tmp_path / "echo.too")
+    directory = scope / ".runtime" / "instances"
+    assert running_instances(scope) == ()
+    assert not directory.exists()
+    for index in range(20):
+        with RuntimeRegistration(
+            replace(layout, instance=f"script{index}"),
+            roots=(scope,),
+            drivers=frozenset(),
+        ) as registration:
+            assert registration.paths[0].name.startswith("echo-roaming-")
+            assert registration.paths[0].name.endswith(f"{registration.instance}.json")
+    assert tuple(path.name for path in directory.iterdir()) == ("registry.lock",)
+
+
+def test_registry_guard_keeps_a_new_reference_when_old_cleanup_races(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+    from toolang.common.files import file_write_lock
+    from toolang.up.records import update_record
+
+    layout = AgentLayout.resident(tmp_path, "gus")
+    old = RuntimeRegistration(layout, roots=(tmp_path,), drivers=frozenset())
+    old.__enter__()
+    guard = old.paths[0].parent / "registry.lock"
+    current = RuntimeRegistration(
+        layout, roots=(tmp_path,), drivers=frozenset(), launch_id="new"
+    )
+    entered = Event()
+
+    def close_old():
+        entered.set()
+        old.close()
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        with file_write_lock(guard):
+            closing = pool.submit(close_old)
+            assert entered.wait(timeout=1)
+            assert not closing.done()
+            update_record(
+                layout.runtime_status, lambda entry: entry.update(launch_id="new")
+            )
+            current.__enter__()
+        closing.result(timeout=1)
+    assert current.paths[0].exists()
+    current.close()

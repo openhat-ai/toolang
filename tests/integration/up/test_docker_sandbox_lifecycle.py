@@ -201,7 +201,7 @@ def test_docker_agent_server_discovers_host_ollama_and_llama_cpp(
 ) -> None:
     payload = _get_json(f"{running_docker_agent.endpoint}/api/v1/models")
     discovered = {
-        (item["provider"], item["model"])
+        (item["provider"], item["ref"].partition("/")[2])
         for item in payload["items"]
         if item["provider"] in {"ollama", "llama_cpp"}
     }
@@ -230,8 +230,8 @@ def test_docker_agent_server_reruns_on_the_existing_container(
         running_docker_agent,
         "rerun",
         completed_docker_run,
-        "--default",
-        f"model={_MODEL}",
+        "--model",
+        _MODEL,
     )
 
     assert result.returncode == 0, result.stderr
@@ -248,8 +248,6 @@ def test_docker_agent_server_retries_on_the_existing_container(
         running_docker_agent,
         "retry",
         completed_docker_run,
-        "--default",
-        f"model={_MODEL}",
     )
 
     assert result.returncode == 0, result.stderr
@@ -279,14 +277,19 @@ def test_docker_script_runs_with_a_temporary_agent_server(
             "docker",
             "--dev",
             str(docker_wheel_dir),
-            "--default",
-            f"model={_MODEL}",
+            "--model",
+            _MODEL,
             "--quiet",
             "--out",
             "-",
             "hello from script",
         ),
         cwd=_repository(),
+        env={
+            **os.environ,
+            "OLLAMA_HOST": f"http://127.0.0.1:{local_model_port}",
+            "LLAMA_CPP_HOST": f"http://localhost:{local_model_port}",
+        },
         check=False,
         capture_output=True,
         text=True,
@@ -531,11 +534,11 @@ def _create_authored_run(agent: _RunningDockerAgent) -> str:
     run_id, stream = _post_stream(
         f"{agent.endpoint}/api/v1/runs/authored/stream",
         {
-            "thread": thread["id"],
+            "thread_id": thread["id"],
             "request_id": "live_docker_seed",
-            "commands": [{"group": "default", "field": "model", "value": _MODEL}],
-            "input": {"primary": "seed run"},
-            "runnable_fallbacks": ["agic:echo"],
+            "runnable": {"ref": "agic:echo", "input": {"_": "seed run"}},
+            "model": {"ref": _MODEL},
+            "policy": {"allow": [], "limits": {}},
         },
     )
     detail = _get_json(f"{agent.endpoint}/api/v1/runs/{run_id}")
@@ -668,3 +671,193 @@ def _require_docker() -> None:
 
 def _repository() -> Path:
     return Path(__file__).parents[3]
+
+
+def test_guest_status_updates_share_host_lock_and_preserve_control_and_ownership(
+    running_docker_agent: _RunningDockerAgent,
+) -> None:
+    from toolang.common.files import file_lock_path
+    from toolang.up.records import read_record, update_record, runtime_lock
+
+    agent = running_docker_agent
+    status = agent.layout.runtime_status
+    marker = status.parent / "mount-test.marker"
+    lock = file_lock_path(status)
+    ownership = (status.stat().st_uid, status.stat().st_gid, status.stat().st_mode)
+    assert not lock.exists()
+    script = """
+from pathlib import Path
+from toolang.up.records import read_record, patch_workload
+status = Path('/root/.toolang/agents/alice/.runtime/status.json')
+entry = read_record(status, location='guest')
+status.with_name('mount-test.marker').write_text('waiting')
+assert patch_workload(status, entry['launch_id'], {'message': 'mount-test'}, location='guest')
+"""
+    worker = None
+    try:
+        with runtime_lock(status):
+            worker = subprocess.Popen(
+                (
+                    "docker",
+                    "exec",
+                    agent.container_id,
+                    "/tmp/toolang-runtime/tools/toolang/bin/python",
+                    "-c",
+                    script,
+                ),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            deadline = time.monotonic() + 5
+            while not marker.exists() and time.monotonic() < deadline:
+                time.sleep(0.05)
+            assert marker.exists(), "guest writer did not reach the shared record"
+            time.sleep(0.1)
+            assert worker.poll() is None, "guest writer did not wait for the host"
+            entry = read_record(status)
+            assert (
+                entry is not None and entry["workload"].get("message") != "mount-test"
+            )
+            update_record(
+                status, lambda entry: entry["control"].update(mount_test=True)
+            )
+        _, stderr = worker.communicate(timeout=10)
+        assert worker.returncode == 0, stderr
+        entry = read_record(status)
+        assert entry is not None and entry["control"]["mount_test"] is True
+        assert entry["workload"]["message"] == "mount-test"
+        assert (
+            status.stat().st_uid,
+            status.stat().st_gid,
+            status.stat().st_mode,
+        ) == ownership
+        assert not lock.exists()
+        # Alternate differently sized replacements in both kernels. Reading a
+        # cached canonical name on Docker Desktop can truncate valid new JSON.
+        rounds_script = """
+import json, sys
+from pathlib import Path
+from toolang.up.records import read_record, patch_workload
+status = Path('/root/.toolang/agents/alice/.runtime/status.json')
+for line in sys.stdin:
+    round = int(line)
+    entry = read_record(status, location='guest')
+    assert entry['control']['mount_round'] == round
+    assert patch_workload(status, entry['launch_id'], {'mount_round': round, 'padding': 'g' * (3072 + round % 50 * 61)}, location='guest')
+    assert read_record(status, location='guest')['control']['mount_round'] == round
+    print(round, flush=True)
+"""
+        worker = subprocess.Popen(
+            (
+                "docker",
+                "exec",
+                "-i",
+                agent.container_id,
+                "/tmp/toolang-runtime/tools/toolang/bin/python",
+                "-u",
+                "-c",
+                rounds_script,
+            ),
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        assert worker.stdin is not None and worker.stdout is not None
+        for round in range(200):
+            update_record(
+                status,
+                lambda entry: entry["control"].update(
+                    mount_round=round, padding="h" * (4096 + round % 50 * 35)
+                ),
+            )
+            worker.stdin.write(f"{round}\n")
+            worker.stdin.flush()
+            assert worker.stdout.readline().strip() == str(round)
+            entry = read_record(status)
+            assert entry is not None
+            assert entry["control"]["mount_round"] == round
+            assert entry["workload"]["mount_round"] == round
+        worker.stdin.close()
+        worker.stdin = None
+        _, stderr = worker.communicate(timeout=10)
+        assert worker.returncode == 0, stderr
+    finally:
+        if worker is not None and worker.poll() is None:
+            worker.kill()
+            worker.wait(timeout=5)
+        marker.unlink(missing_ok=True)
+
+        def clear(entry):
+            for key in ("mount_test", "mount_round", "padding"):
+                entry["control"].pop(key, None)
+            for key in ("message", "mount_round", "padding"):
+                entry["workload"].pop(key, None)
+
+        update_record(status, clear)
+
+
+def test_killed_guest_writer_claim_is_recovered_by_query(
+    running_docker_agent: _RunningDockerAgent,
+) -> None:
+    from toolang.common.files import file_lock_path
+    from toolang.up.records import read_record
+
+    agent = running_docker_agent
+    status = agent.layout.runtime_status
+    marker = status.parent / "killed-writer.marker"
+    script = """
+from pathlib import Path
+import time
+from toolang.up.records import runtime_lock, read_record
+status = Path('/root/.toolang/agents/alice/.runtime/status.json')
+entry = read_record(status)
+with runtime_lock(status, location='guest', launch_id=entry['launch_id']):
+    status.with_name('killed-writer.marker').write_text('owned')
+    time.sleep(60)
+"""
+    worker = subprocess.Popen(
+        (
+            "docker",
+            "exec",
+            agent.container_id,
+            "/tmp/toolang-runtime/tools/toolang/bin/python",
+            "-c",
+            script,
+        ),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    try:
+        deadline = time.monotonic() + 5
+        while not marker.exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert marker.exists()
+        killed = subprocess.run(
+            ("docker", "kill", agent.container_id), capture_output=True, timeout=10
+        )
+        assert killed.returncode == 0, killed.stderr
+        worker.communicate(timeout=5)
+        listed = subprocess.run(
+            (
+                sys.executable,
+                "-m",
+                "toolang.cli.toolang",
+                "--root",
+                str(agent.layout.root),
+                "list",
+            ),
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        assert listed.returncode == 0, listed.stderr
+        entry = read_record(status)
+        assert entry is not None and entry["workload"]["status"] == "stopped"
+        assert not file_lock_path(status).exists()
+    finally:
+        if worker.poll() is None:
+            worker.kill()
+            worker.wait(timeout=5)
+        marker.unlink(missing_ok=True)

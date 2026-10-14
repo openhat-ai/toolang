@@ -23,7 +23,9 @@ def test_status_uses_saved_identity_not_live_pid_in_report(
     ref = process_ref(os.getpid(), "http://localhost:8123")
     if not matching:
         ref = replace(ref, meta={**ref.meta, "created": 0.0})
-    SandboxState(sandbox="host", ref=ref).save(layout.sandbox_state)
+    SandboxState(sandbox="host", ref=ref, launch_id="fixture").save(
+        layout.sandbox_state
+    )
     process.write_runtime_state(
         layout,
         endpoint="http://stale.example:9999",
@@ -53,9 +55,9 @@ def test_status_does_not_adopt_unregistered_process(tmp_path: Path) -> None:
         layout, endpoint="http://localhost:8123", started_at="old", pid=os.getpid()
     )
     status = process.AgentProcess(layout).status(ui_base_url="")
-    assert status is not None and status.status == "failed"
+    assert status is not None and status.status == "unknown"
     assert status.endpoint is None
-    assert status.message == "active runtime report has no sandbox reference"
+    assert status.message is None
     assert process.runtime_identity_row({"pid": os.getpid()}, layout=layout) is None
 
 
@@ -67,7 +69,7 @@ def test_status_recovers_readiness_from_health_endpoint(
     layout = AgentLayout.resident(tmp_path, "alice")
     layout.home.mkdir(parents=True)
     ref = process_ref(os.getpid(), "http://localhost:8123/")
-    SandboxState("host", ref).save(layout.sandbox_state)
+    SandboxState("host", ref, launch_id="fixture").save(layout.sandbox_state)
     monkeypatch.setattr(
         sandbox, "_health_ready", lambda url: url == "http://localhost:8123/healthz"
     )
@@ -89,6 +91,7 @@ def test_runtime_identity_formats_named_docker_container(tmp_path: Path) -> None
             runtime_kind="container",
             runtime_name="toolang-alice-launch",
         ),
+        launch_id="fixture",
     ).save(layout.sandbox_state)
 
     assert process.runtime_identity_row({"pid": 1}, layout=layout) == (
@@ -108,6 +111,7 @@ def test_runtime_identity_formats_legacy_docker_reference(tmp_path: Path) -> Non
             endpoint="http://localhost:7001",
             meta={"container_name": "toolang-alice-legacy"},
         ),
+        launch_id="fixture",
     ).save(layout.sandbox_state)
 
     assert process.runtime_identity_row({"pid": 1}, layout=layout) == (
@@ -124,6 +128,7 @@ def test_runtime_identity_preserves_unknown_opaque_id(tmp_path: Path) -> None:
             runtime_id="opaque:identifier:that-must-not-be-shortened",
             endpoint="http://localhost:7001",
         ),
+        launch_id="fixture",
     ).save(layout.sandbox_state)
 
     assert process.runtime_identity_row({"pid": 1}, layout=layout) == (
@@ -133,7 +138,7 @@ def test_runtime_identity_preserves_unknown_opaque_id(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("instance", ["a" * 12, "b" * 12, "a", None])
-def test_container_reports_match_the_instance_not_guest_pid(
+def test_container_reports_match_launch_identity_not_guest_pid_or_hostname(
     tmp_path: Path, instance: str | None
 ) -> None:
     layout = AgentLayout.resident(tmp_path, "alice")
@@ -141,6 +146,7 @@ def test_container_reports_match_the_instance_not_guest_pid(
     SandboxState(
         "docker:image",
         SandboxRef("a" * 64, "http://localhost:1", runtime_kind="container"),
+        launch_id="fixture",
     ).save(layout.sandbox_state)
     process.write_runtime_state(
         layout,
@@ -151,13 +157,13 @@ def test_container_reports_match_the_instance_not_guest_pid(
         sandbox_instance=instance,
     )
     report = process.AgentProcess(layout).state()
-    assert (report is not None) is (instance == "a" * 12)
+    assert report is not None and report["launch_id"] == "fixture"
 
 
 def test_runtime_registration_waits_for_conditional_stop(tmp_path, monkeypatch):
     from concurrent.futures import ThreadPoolExecutor
     from contextlib import contextmanager
-    from threading import Event
+    from threading import Event, local
 
     from toolang.common.files import file_write_lock
 
@@ -166,22 +172,31 @@ def test_runtime_registration_waits_for_conditional_stop(tmp_path, monkeypatch):
     read = Event()
     finish_stop = Event()
     waiting = Event()
-    load = process._load_runtime_state
+    from toolang.up import records
 
-    def pause_read(path):
-        state = load(path)
-        read.set()
-        assert finish_stop.wait(timeout=5)
+    load = records.read_document
+    scope = local()
+
+    def pause_read(path, **kwargs):
+        state = load(path, **kwargs)
+        if getattr(scope, "locked", False) and not read.is_set():
+            read.set()
+            assert finish_stop.wait(timeout=5)
         return state
 
     @contextmanager
-    def observed_lock(path):
+    def observed_lock(path, **kwargs):
         assert path == layout.runtime_status.with_name("status.json.lock")
-        with file_write_lock(path, on_wait=waiting.set):
-            yield
+        kwargs.pop("on_wait", None)
+        with file_write_lock(path, on_wait=waiting.set, **kwargs):
+            scope.locked = True
+            try:
+                yield
+            finally:
+                scope.locked = False
 
-    monkeypatch.setattr(process, "_load_runtime_state", pause_read)
-    monkeypatch.setattr(process, "file_write_lock", observed_lock)
+    monkeypatch.setattr(records, "read_document", pause_read)
+    monkeypatch.setattr(records, "file_write_lock", observed_lock)
     with ThreadPoolExecutor(max_workers=2) as pool:
         stopping = pool.submit(
             process.stop_runtime_state,
@@ -203,6 +218,6 @@ def test_runtime_registration_waits_for_conditional_stop(tmp_path, monkeypatch):
             finish_stop.set()
         assert stopping.result(timeout=5)
         registering.result(timeout=5)
-    state = load(layout.runtime_status)
+    state = process._load_runtime_state(layout.runtime_status)
     assert state is not None and state["pid"] == 2 and state["status"] == "running"
     assert not process.stop_runtime_state(layout, expected_pid=1)

@@ -45,7 +45,6 @@ from toolang.up.config import (
 )
 from toolang.up.types import ALL_DRIVERS, ExecutionDrivers
 from toolang.up.core import AgentCore
-from toolang.up.observation import RuntimeRegistration
 from toolang.up.logging import (
     DEFAULT_LOG_LEVEL,
     build_uvicorn_log_config,
@@ -72,6 +71,8 @@ class ServeSpec:
     host: str
     endpoint_host: str
     port: int
+    toolang_root: Path | None = None
+    launch_id: str | None = None
     drivers: ExecutionDrivers = ALL_DRIVERS
     ceiling_overrides: Mapping[str, tuple[str, ...] | None] = field(
         default_factory=dict
@@ -127,11 +128,15 @@ def resolve_serve(
     temporary_port: bool = False,
     workspace_additions: Mapping[str, str] | None = None,
     workdir: str | None = None,
+    toolang_root: Path | None = None,
+    launch_id: str | None = None,
 ) -> ServeSpec:
     """Resolve explicit CLI values without constructing runtime snapshots."""
 
     return ServeSpec(
         layout=layout,
+        toolang_root=toolang_root or layout.toolang_root or layout.root,
+        launch_id=launch_id,
         drivers=default_drivers(layout.placement) if drivers is None else drivers,
         workspace_additions=dict(workspace_additions or {}),
         workdir=workdir,
@@ -158,14 +163,26 @@ def build_serve_argv(
     *,
     root: Path | None = None,
     host: str | None = None,
+    sandbox: str = "host",
+    location: str = "host",
 ) -> tuple[str, ...]:
     """Build explicit argv for the hidden AgentServer entrypoint."""
 
     command = [
         "--root",
-        str(root or spec.layout.root),
+        str(spec.toolang_root or spec.layout.root),
         "_serve",
         spec.layout.name,
+        "--agent-root",
+        str(root or spec.layout.root),
+        "--sandbox",
+        sandbox,
+        "--location",
+        location,
+        "--source-policy",
+        "project" if spec.layout.project_inputs else "root",
+        "--membership",
+        "managed" if spec.layout.managed_membership else "unmanaged",
         "--host",
         host or spec.host,
         "--endpoint-host",
@@ -177,8 +194,8 @@ def build_serve_argv(
     ]
     if spec.layout.instance is not None:
         command.extend(["--runtime-instance", spec.layout.instance])
-    if spec.layout.placement != "resident":
-        command.extend(["--placement", spec.layout.placement])
+    if spec.launch_id is not None:
+        command.extend(["--launch-id", spec.launch_id])
     if spec.workspace_additions:
         command.extend(
             ["--workspace-bindings", json.dumps(dict(spec.workspace_additions))]
@@ -211,6 +228,7 @@ def serve(
     environ: Mapping[str, str],
     sandbox: str,
     launch_id: str | None = None,
+    location: str = "host",
 ) -> int:
     """Run one AgentServer as the current process's primary workload."""
 
@@ -219,12 +237,34 @@ def serve(
     host_ref = (
         asyncio.run(
             register_host_server(
-                spec.layout, endpoint=spec.endpoint, launch_id=launch_id
+                spec.layout, endpoint=spec.endpoint, launch_id=launch_id, spec=spec
             )
         )
-        if sandbox == "host"
+        if location == "host"
         else None
     )
+    from toolang.up.records import read_record, patch_workload
+    import psutil
+
+    launch_id = launch_id or (
+        read_record(spec.layout.runtime_status, spec.layout.instance, location=location)
+        or {}
+    ).get("launch_id")
+    if launch_id is None:
+        raise ValueError("workload requires a launch identity")
+    published = patch_workload(
+        spec.layout.runtime_status,
+        launch_id,
+        {
+            "pid": os.getpid(),
+            "process_created": psutil.Process().create_time(),
+            "status": "starting",
+        },
+        instance=spec.layout.instance,
+        location=location,
+    )
+    if not published:
+        raise ValueError("workload launch identity is no longer current")
     _restore_termination_signal_defaults()
     runtime_log_spec = _runtime_log_spec_value(spec.log_spec, environ)
     configure_logging(spec=runtime_log_spec, environ=environ)
@@ -285,23 +325,6 @@ def serve(
             tasks: list[asyncio.Task[None]] = []
             scheduler: ChoreDriver | None = None
             teaming: TeamingLoop | None = None
-            registration = (
-                RuntimeRegistration(
-                    spec.layout,
-                    roots=(
-                        spec.layout.root,
-                        Path(
-                            environ.get(
-                                "TOOLANG_OBSERVATION_ROOT", str(spec.layout.root)
-                            )
-                        ),
-                    ),
-                    drivers=spec.drivers,
-                    endpoint=spec.endpoint,
-                )
-                if sandbox == "host"
-                else None
-            )
             try:
                 agents.write_runtime_state(
                     spec.layout,
@@ -312,11 +335,11 @@ def serve(
                         model.ref for model in current_setup().models_effective()
                     ),
                     sandbox=sandbox,
+                    launch_id=launch_id,
+                    location=location,
                     drivers=sorted(spec.drivers),
                     workspace_additions=spec.workspace_additions,
-                    process_created=host_ref.meta.get("created")
-                    if host_ref is not None
-                    else None,
+                    process_created=psutil.Process().create_time(),
                     sandbox_description=environ.get(HOST_SANDBOX_DESCRIPTION_ENV),
                     sandbox_instance=environ.get("TOOLANG_SANDBOX_INSTANCE"),
                 )
@@ -333,7 +356,7 @@ def serve(
                     hub_client = AgentClient(
                         spec.layout.root,
                         actor=f"agent:{spec.layout.name}",
-                        managed=spec.layout.placement == "resident",
+                        managed=bool(spec.layout.managed_membership),
                     )
                     messaging = (
                         MessagingLoop(
@@ -362,8 +385,6 @@ def serve(
                     teaming.start()
                 if scheduler is not None:
                     await scheduler.start()
-                if registration is not None:
-                    registration.__enter__()
                 app.state.chore_driver = scheduler
                 tasks.extend(
                     [
@@ -379,12 +400,12 @@ def serve(
                 )
                 yield
             finally:
-                if registration is not None:
-                    registration.close()
                 agents.stop_runtime_state(
                     spec.layout,
                     expected_pid=os.getpid(),
                     expected_started_at=started_at,
+                    launch_id=launch_id,
+                    location=location,
                 )
                 stop_signal.set()
                 async with AsyncExitStack() as cleanup:
@@ -425,10 +446,13 @@ def serve(
                 spec.layout.root,
                 extra={"color_message": "Agent starting root=\x1b[1m%s\x1b[0m"},
             ),
-            on_running=lambda: logger.info(
-                "Agent started webui=%s drivers=%s",
-                webui_url,
-                format_drivers(spec.drivers),
+            on_running=lambda: (
+                _record_ready(spec, launch_id, sandbox, host_ref),
+                logger.info(
+                    "Agent started webui=%s drivers=%s",
+                    webui_url,
+                    format_drivers(spec.drivers),
+                ),
             ),
             on_stopping=lambda: (
                 app.state.subscriptions.stop(),
@@ -439,6 +463,13 @@ def serve(
         return 0
     finally:
         asyncio.run(close_core())
+        if host_ref is not None:
+            from toolang.up.sandbox import _clear_state
+            from toolang.up.records import SandboxState
+
+            _clear_state(
+                spec.layout, expected=SandboxState(sandbox, host_ref, launch_id)
+            )
 
 
 def _format_allow(values: tuple[str, ...] | None) -> str:
@@ -676,3 +707,17 @@ def _port_is_available(host: str, port: int) -> bool:
         except OSError:
             return False
     return True
+
+
+def _record_ready(spec: ServeSpec, launch_id: str, sandbox: str, host_ref) -> None:
+    if host_ref is not None:
+        from toolang.up.records import update_record
+
+        update_record(
+            spec.layout.runtime_status,
+            lambda entry: entry["control"].update(
+                last_successful={"endpoint": spec.endpoint, "sandbox": sandbox}
+            ),
+            instance=spec.layout.instance,
+            launch_id=launch_id,
+        )

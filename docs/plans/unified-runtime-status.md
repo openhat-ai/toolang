@@ -1,7 +1,7 @@
 # Unified runtime status
 
-Draft for approval; no implementation yet. Consolidate lifecycle files without
-adding universal health/metrics endpoints. Host `serve` executes in one process.
+Approved in #804. Consolidate lifecycle files without adding universal
+health/metrics endpoints. Host `serve` executes in one process.
 
 ## Decisions
 
@@ -9,8 +9,8 @@ adding universal health/metrics endpoints. Host `serve` executes in one process.
   `agent_root`. Resident roots coincide; visiting roots derive from Toolang root
   and source; roaming roots derive from project directory. Remove observation
   root and its environment variable; retain `TOOLANG_ROOT` meaning Toolang root.
-- Keep one `agent_root/agents/<name>/.runtime/status.json` and stable `.lock`.
-  Execution-instance entries share a launch ID and have two owned sections:
+- Keep one `agent_root/agents/<name>/.runtime/status.json` and a transient `.lock`.
+  Each execution-instance entry has a launch ID and two owned sections:
   `control` stores intent, complete recovery refs, startup bindings, and last
   successful settings; `workload` stores namespace-local PID/creation time,
   lifecycle state, timestamps, and errors. Remove independent sandbox state
@@ -19,9 +19,11 @@ adding universal health/metrics endpoints. Host `serve` executes in one process.
   Every writer locks, rereads, validates launch ID, patches owned fields, and
   atomically replaces the file. Only successful control-side resource release
   clears refs; old workload writes cannot affect a new launch.
-- Discovery remains `toolang_root/.runtime/instances/<instance-id>.json`, with
+- Discovery remains `toolang_root/.runtime/instances/<name>-<placement>-<id>.json`, with
   version, absolute status path, and launch ID. Keep stable instance identities;
   database/logs stay in agent root. No `ids.json`, `channels/`, or new directories.
+  References share one native `instances/registry.lock`; temporary executions
+  never leave one lock per instance. Queries do not create this guard.
 - Resolve placement into concrete `ServeSpec` inputs at the control boundary:
   paths, drivers, config/dotenv sources, catalogs, authorized source-write targets,
   and teaming membership. Preserve loading/watching. `_serve` receives runtime
@@ -49,7 +51,7 @@ adding universal health/metrics endpoints. Host `serve` executes in one process.
   This adds a historical fallback to today's config-or-host default.
 - Store the successful port/endpoint and sandbox selector in `control` only after
   readiness. Failed attempts cannot overwrite them. Successful stop retains
-  `status.json`, its lock, these settings, final lifecycle/timestamps/errors,
+  `status.json`, these settings, final lifecycle/timestamps/errors,
   launch ID, and database/log history. Confirmed exit clears the active PID;
   successful resource release clears operation ownership, recovery refs, and the
   matching discovery reference. Failed cleanup retains refs for recovery. Retained
@@ -60,7 +62,7 @@ adding universal health/metrics endpoints. Host `serve` executes in one process.
   authorized workspaces only; retain existing source-write permissions. Mount
   bootstrap scripts/materials read-only. Do not mount entire roots or Toolang
   discovery references. Remembered settings need no separate mount. Directory
-  mounts support atomic status replacement; keep the lock inode stable.
+  mounts support atomic status replacement.
 
 ## Existing names and command boundaries
 
@@ -92,8 +94,15 @@ and tool subprocesses. `_serve` is already counted by its launching command.
   verifies host identity to bind/recover refs; Docker intent saves a recoverable
   container locator. Guest PIDs never authorize host signals.
 - Use short locked updates and operation ownership to prevent competing starts;
-  never hold the lock across creation, readiness, execution, or shutdown. Process
-  death releases kernel locks; preserve the stable lock file.
+  never hold the lock across creation, readiness, execution, or shutdown. Claim
+  `status.json.lock` by atomically linking a complete writer identity; release
+  only the owned inode. Host/guest kernel locks alone did not coordinate on the
+  tested macOS Docker mount. The lock path stays fixed, but its inode is transient.
+  Guest updates and claim checks read temporary hard-link snapshots to avoid
+  stale file-name attributes after host replacement on shared mounts.
+  Reap only a confirmed-dead native owner or guest launch; native locks serialize
+  reapers in their own kernel. Guests cannot infer host PID liveness. Queries may
+  remove a dead host writer's claim so a live guest can resume its own updates.
 - Live workloads own normal status updates. Queries correct only confirmed exited,
   zombie, or identity-replaced workloads; unknown probes and unbound/active
   startup operations are not deaths. Probe outside the lock, then nonblockingly
@@ -102,6 +111,8 @@ and tool subprocesses. `_serve` is already counted by its launching command.
 - Later control operations recover interrupted work idempotently. Neither launcher
   exit nor missing shutdown handlers establish workload death. Detection time
   cannot stand in for actual exit time/cause. Skip writes on contention/failure.
+  Recover unbound host children by launch ID; a still-pending Docker creation
+  helper prevents declaring its missing container dead or releasing the intent.
 - `list`/`info` inspect relevant instances once. `top` separates repaint from
   liveness checks, caching at most one second per launch/ref with record-change
   invalidation. Bound backend timeouts/concurrency; batch Docker probes. Unchanged
@@ -130,11 +141,17 @@ failed-start history retention, and repeated stop/reconciliation. Verify guest
 access to required inputs and runtime data without mounting discovery references.
 Run Ruff checks/formatting, `ty check`, and the default offline pytest suite.
 
-## Open decisions before implementation
+## Compatibility and trust
 
-- **Shared-file trust:** confirm cooperative guest writes are acceptable. Section
+- **Shared-file trust:** use cooperative guest writes. Section
   ownership is an application contract, not filesystem isolation; arbitrary guest
   code can change the file. Strong isolation requires host-only refs or a broker.
-- **Compatibility:** approve stopped-runtime migration/rollback for legacy records
-  and observation-root settings. Never implicitly adopt live legacy workloads or
-  discard execution history. Unified health/metrics transport is a future plan.
+- **Compatibility:** stop old workloads with the previous version before upgrading.
+  Stopped legacy reports migrate; leftover sandbox refs require old-version
+  cleanup. Keep databases/logs. Visiting roots now include the Toolang root in
+  their source hash; preserve old roots for explicit history migration. For
+  rollback, stop new workloads first and restore backed-up legacy status/roots.
+  Replace observation-root settings with `TOOLANG_ROOT`. Unified health/metrics
+  transport remains a future plan.
+  After stopping old versions, orphan discovery `<id>.json.lock` files may be
+  removed; new versions never create them or prune locks of a live old version.

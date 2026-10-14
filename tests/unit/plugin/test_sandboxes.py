@@ -34,6 +34,36 @@ from toolang.up.mounts import prepare_root_mounts
 _CONTAINER_ID = "176191c1528b8e2861cc16422dee13ade59d4977c2148a9ebf5d36a06f090abb"
 
 
+def test_absent_container_with_pending_native_creation_is_unknown(monkeypatch):
+    name = "toolang-alice-launch"
+    monkeypatch.setattr(
+        docker_cli,
+        "_docker",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args, 1, stdout="", stderr=f"Error: No such object: {name}\n"
+        ),
+    )
+    monkeypatch.setattr(docker_cli, "docker_launch_pending", lambda identity: True)
+    with pytest.raises(RuntimeError, match="creation is still pending"):
+        docker_cli.docker_container_running(name)
+    assert name not in docker_cli.docker_container_states((name,))
+
+
+@pytest.mark.parametrize("match", [True, False])
+def test_pending_creation_matches_the_exact_unique_container_name(monkeypatch, match):
+    helper = SimpleNamespace(
+        info={
+            "name": "docker",
+            "cmdline": ["docker", "run", "--detach", "--name", "toolang-alice-launch"],
+            "uids": SimpleNamespace(real=os.getuid()),
+        },
+        status=lambda: "running",
+    )
+    monkeypatch.setattr(docker_cli.psutil, "process_iter", lambda *args: [helper])
+    name = "toolang-alice-launch" if match else "toolang-alice-other"
+    assert docker_cli.docker_launch_pending(name) == match
+
+
 def _request(
     root: Path,
     *,
@@ -429,12 +459,12 @@ def test_docker_sandbox_prepares_and_launches(
     )
     assert stage_mount.read_only is True
     control_state = AgentLayout.resident(tmp_path, "alice").sandbox_state.resolve()
-    assert not any(
-        control_state.is_relative_to(mount.local_path.resolve())
+    assert any(
+        control_state.is_relative_to(mount.local_path.resolve()) and not mount.read_only
         for mount in plan.mounts
     )
     assert control_lock.read_text(encoding="utf-8") == "host control\n"
-    assert stage_dir.is_relative_to(control_lock.parent / "launches")
+    assert stage_dir.is_relative_to(tmp_path / ".sandbox" / "alice" / "launches")
     assert diagnostic_path.is_file()
     assert stat.S_IMODE(diagnostic_path.stat().st_mode) == 0o600
     assert startup_events_path.is_file()
@@ -485,7 +515,7 @@ def test_docker_sandbox_prepares_and_launches(
     assert run_call["hosted_port"] == 8123
     assert run_call["env_values"] == {
         "TOOLANG_HOST_GATEWAY": "host.docker.internal",
-        "TOOLANG_ROOT": "/root/.toolang",
+        "TOOLANG_ROOT": str(tmp_path),
         "TOOLANG_SANDBOX": "docker:python:3.13-slim",
         "TOOLANG_WORKSPACE_MOUNTS": "{}",
         "TOOLANG_WORKSPACE_LOCATION": "guest",

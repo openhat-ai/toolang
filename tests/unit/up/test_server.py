@@ -178,18 +178,13 @@ def test_serve_argv_contains_only_server_inputs(tmp_path: Path) -> None:
         "tools": (),
         "skills": None,
     }
-    assert argv[:9] == (
-        "--root",
-        "/root/.toolang",
-        "_serve",
-        "alice",
-        "--host",
-        "0.0.0.0",
-        "--endpoint-host",
-        "localhost",
-        "--port",
-    )
-    assert "--sandbox" not in argv
+    assert argv[:4] == ("--root", str(tmp_path), "_serve", "alice")
+    assert _option_values(argv, "--agent-root") == ["/root/.toolang"]
+    assert _option_values(argv, "--host") == ["0.0.0.0"]
+    assert _option_values(argv, "--sandbox") == ["host"]
+    assert _option_values(argv, "--location") == ["host"]
+    assert _option_values(argv, "--source-policy") == ["root"]
+    assert "--placement" not in argv
     assert "--sandbox-child" not in argv
     assert _option_values(argv, "--compact-model") == ["test/compact effort=low"]
     assert _option_values(argv, "--allow") == [

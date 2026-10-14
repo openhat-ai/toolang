@@ -13,7 +13,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlsplit
 from urllib.request import Request, urlopen
 from collections.abc import Mapping, Sequence
-from typing import Literal
+from concurrent.futures import ThreadPoolExecutor
+from typing import TYPE_CHECKING, Literal
 
 from toolang.common.github import (
     GitHubRef,
@@ -21,10 +22,22 @@ from toolang.common.github import (
     parse_github_file_url,
     parse_github_ref,
 )
-from toolang.common.files import atomic_write_text, file_lock_path, file_write_lock
+from toolang.common.files import atomic_write_text
 from toolang.common.layout import AgentLayout
 from ..common.progress import ProgressSink, emit_progress
-from toolang.up.records import SandboxState
+from toolang.up.records import (
+    SandboxState,
+    read_record,
+    update_record,
+    patch_workload,
+    process_alive,
+    recover_control_write_lock,
+)
+
+_LIVENESS_CACHE: dict = {}
+
+if TYPE_CHECKING:
+    from toolang.up.sandbox import LaunchSpec, SandboxHandle
 
 AgentSelectorForm = Literal["name", "shorthand", "ref"]
 _MAX_ROAMING_PROJECTION_ATTEMPTS = 3
@@ -237,14 +250,30 @@ class AgentStatus:
 
 
 class AgentProcess:
-    """Inspect one materialized AgentServer process."""
+    """Control and inspect one materialized AgentServer process."""
 
     def __init__(self, layout: AgentLayout) -> None:
         self.layout = layout
 
+    async def start(
+        self, spec: LaunchSpec, *, progress: ProgressSink | None = None
+    ) -> SandboxHandle:
+        from toolang.up.sandbox import launch
+
+        return await launch(spec, progress=progress)
+
+    async def stop(
+        self, *, force: bool = False, progress: ProgressSink | None = None
+    ) -> bool:
+        from toolang.up.sandbox import stop
+
+        return await stop(self.layout, force=force, progress=progress)
+
     @property
     def reference(self) -> SandboxState | None:
-        return SandboxState.snapshot(self.layout.sandbox_state)
+        return SandboxState.snapshot(
+            self.layout.runtime_status, instance=self.layout.instance
+        )
 
     def state(self) -> dict[str, object] | None:
         """Return descriptive data only for the referenced workload."""
@@ -305,9 +334,13 @@ class AgentProcess:
         return current
 
     def _report(self, reference: SandboxState | None) -> dict[str, object] | None:
-        report = _load_runtime_state(self.layout.runtime_status)
+        report = _load_runtime_state(
+            self.layout.runtime_status, instance=self.layout.instance
+        )
         if report is None or reference is None:
             return report
+        if report.get("launch_id") and report["launch_id"] != reference.launch_id:
+            return None
         ref = reference.ref
         if ref.runtime_kind == "process":
             matches = (
@@ -316,6 +349,8 @@ class AgentProcess:
                 and isinstance(ref.meta.get("created"), (int, float))
             )
         else:
+            if report.get("launch_id"):
+                return report
             instance = report.get("sandbox_instance")
             matches = isinstance(instance, str) and instance in {
                 ref.runtime_id,
@@ -333,12 +368,13 @@ class AgentProcess:
         return report if matches else None
 
     def status(
-        self, *, ui_base_url: str, check_health: bool = False
+        self, *, ui_base_url: str, check_health: bool = False, cache: bool = False
     ) -> AgentStatus | None:
         """Inspect the workload, optionally requiring HTTP readiness for running."""
 
         if not self.layout.home.is_dir():
             return None
+        recover_control_write_lock(self.layout.runtime_status)
         from toolang.up.sandbox import load_state_sandbox, _health_ready
 
         endpoint = None
@@ -346,12 +382,13 @@ class AgentProcess:
         message = None
         status = "stopped"
         try:
+            observed = read_record(self.layout.runtime_status, self.layout.instance)
             reference = self.reference
             report = self._report(reference) or {}
             if reference is not None:
                 sandbox = reference.sandbox
                 implementation = load_state_sandbox(self.layout, reference)
-                alive = asyncio.run(implementation.running(reference.ref))
+                alive = self._alive(reference, implementation, cache=cache)
                 if alive:
                     endpoint = reference.ref.endpoint
                     status = (
@@ -360,14 +397,53 @@ class AgentProcess:
                         or _health_ready(f"{endpoint.rstrip('/')}/healthz")
                         else "starting"
                     )
-                elif report.get("status") == "failed":
-                    status = "failed"
+                elif alive is False:
+                    operation = (observed or {}).get("control", {}).get("operation")
+                    if (
+                        operation is not None
+                        and process_alive(
+                            operation.get("pid"), operation.get("created")
+                        )
+                        is not False
+                    ):
+                        status = "preparing"
+                    else:
+                        self.reconcile(observed)
+                    if status != "preparing" and report.get("status") == "failed":
+                        status = "failed"
+                else:
+                    status, message = (
+                        "unknown",
+                        "workload identity could not be verified",
+                    )
             elif report.get("status") in {"preparing", "starting", "running"}:
-                raise ValueError("active runtime report has no sandbox reference")
+                entry = observed
+                operation = (entry or {}).get("control", {}).get("operation")
+                if (
+                    operation is not None
+                    and process_alive(operation.get("pid"), operation.get("created"))
+                    is not False
+                ):
+                    status = "preparing"
+                elif (entry or {}).get("control", {}).get("sandbox", "host") != "host":
+                    # A guest PID has no meaning in this host namespace. Without
+                    # its resource reference there is no valid liveness probe.
+                    status = "unknown"
+                else:
+                    alive = process_alive(
+                        report.get("pid"), report.get("process_created")
+                    )
+                    if alive is False:
+                        self.reconcile(entry)
+                    elif alive is True:
+                        status = str(report.get("status"))
+                    else:
+                        status = "unknown"
             elif report.get("status") == "failed":
                 status = "failed"
             raw_message = report.get("message")
-            message = raw_message if isinstance(raw_message, str) else None
+            if isinstance(raw_message, str):
+                message = raw_message
             if self.layout.legacy_sandbox_state.is_file():
                 raise ValueError("legacy sandbox state requires manual cleanup")
         except (ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
@@ -384,15 +460,116 @@ class AgentProcess:
             message=message,
         )
 
+    def _alive(self, reference, implementation, *, cache: bool):
+        key = self._cache_key(reference)
+        now = time.monotonic()
+        entry = read_record(self.layout.runtime_status, self.layout.instance)
+        fingerprint = json.dumps(entry, sort_keys=True)
+        previous = _LIVENESS_CACHE.get(key) if cache else None
+        if (
+            previous is not None
+            and previous[0] + 1 > now
+            and previous[1] == fingerprint
+        ):
+            return previous[2]
+        try:
+            alive = asyncio.run(
+                asyncio.wait_for(implementation.running(reference.ref), timeout=2)
+            )
+        except (OSError, RuntimeError, ValueError, TimeoutError):
+            alive = None
+        if cache:
+            if len(_LIVENESS_CACHE) > 256:
+                _LIVENESS_CACHE.clear()
+            _LIVENESS_CACHE[key] = (now, fingerprint, alive)
+        return alive
+
+    def _cache_key(self, reference):
+        return (
+            self.layout.runtime_status,
+            self.layout.instance,
+            reference.launch_id,
+            repr(reference.ref.to_data()),
+        )
+
+    @classmethod
+    def cache_docker_states(cls, owners):
+        from toolang.plugin.sandboxes.docker._cli import docker_container_states
+
+        pending = []
+        now = time.monotonic()
+        for owner, reference, entry in owners:
+            key = owner._cache_key(reference)
+            fingerprint = json.dumps(entry, sort_keys=True)
+            cached = _LIVENESS_CACHE.get(key)
+            if cached is None or cached[0] + 1 <= now or cached[1] != fingerprint:
+                pending.append((key, fingerprint, reference.ref.runtime_id))
+        states = docker_container_states(
+            tuple(dict.fromkeys(identity for _, _, identity in pending))
+        )
+        if len(_LIVENESS_CACHE) > 256:
+            _LIVENESS_CACHE.clear()
+        for key, fingerprint, identity in pending:
+            _LIVENESS_CACHE[key] = (now, fingerprint, states.get(identity))
+
+    def reconcile(self, observed) -> bool:
+        """Compare the probe snapshot under a nonblocking lock; retain recovery refs."""
+        if observed is None or observed["workload"].get("status") not in {
+            "running",
+            "starting",
+            "preparing",
+        }:
+            return False
+        changed = False
+
+        def correct(entry):
+            nonlocal changed
+            if entry != observed:
+                return
+            operation = entry["control"].get("operation")
+            if (
+                operation is not None
+                and process_alive(operation.get("pid"), operation.get("created"))
+                is not False
+            ):
+                return
+            workload = entry["workload"]
+            if workload.get("status") not in {"running", "starting", "preparing"}:
+                return
+            workload.update(
+                status="stopped",
+                pid=None,
+                observed_dead_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            )
+            changed = True
+
+        try:
+            update_record(
+                self.layout.runtime_status,
+                correct,
+                instance=self.layout.instance,
+                launch_id=observed["launch_id"],
+                blocking=False,
+                dead_guest_launch=observed["launch_id"]
+                if observed["control"].get("ref", {}).get("runtime_kind") != "process"
+                else None,
+            )
+        except (OSError, ValueError):
+            pass
+        return changed
+
     @classmethod
     def list(cls, root: Path, *, ui_base_url: str) -> tuple[AgentStatus, ...]:
         from .discovery import agent_layouts
 
-        statuses = (
-            cls(layout).status(ui_base_url=ui_base_url)
-            for layout in agent_layouts(root)
-        )
-        return tuple(status for status in statuses if status is not None)
+        layouts = tuple(agent_layouts(root))
+        if not layouts:
+            return ()
+        with ThreadPoolExecutor(max_workers=min(8, len(layouts))) as pool:
+            statuses = pool.map(
+                lambda layout: cls(layout).status(ui_base_url=ui_base_url), layouts
+            )
+            return tuple(status for status in statuses if status is not None)
 
 
 VISITING_PROGRAM_CACHE_TTL_SEC = 3600
@@ -565,11 +742,14 @@ def materialize_visiting_program(
     source_text: str,
     *,
     source: str | None = None,
+    toolang_root: Path | None = None,
 ) -> AgentLayout:
     """Materialize one remote agent into its stable visiting root."""
 
     agent_name = ref.default_name()
-    layout = AgentLayout.visiting(source or ref.render(), agent_name)
+    layout = AgentLayout.visiting(
+        source or ref.render(), agent_name, toolang_root=toolang_root
+    )
     atomic_write_text(layout.program, source_text)
     return layout
 
@@ -586,21 +766,26 @@ def resolve_run_layout(
     if selector.form == "name":
         return AgentLayout.resident(toolang_root, selector.name or "")
 
-    return _resolve_visiting_layout(selector, progress=progress)
+    return _resolve_visiting_layout(
+        selector, progress=progress, toolang_root=toolang_root
+    )
 
 
-def visiting_layout(selector_text: str) -> AgentLayout:
+def visiting_layout(
+    selector_text: str, *, toolang_root: Path | None = None
+) -> AgentLayout:
     """Derive one visiting layout without resolving or fetching its source."""
 
     selector = parse_agent_selector(selector_text)
     if selector.form == "name":
         raise ValueError(f"agent selector is not remote: {selector_text}")
-    return _visiting_layout(selector)
+    return _visiting_layout(selector, toolang_root=toolang_root)
 
 
 def resolve_visiting_layout(
     selector_text: str,
     *,
+    toolang_root: Path | None = None,
     progress: ProgressSink | None = None,
 ) -> AgentLayout:
     """Resolve and materialize one remote selector as a visiting layout."""
@@ -608,19 +793,26 @@ def resolve_visiting_layout(
     selector = parse_agent_selector(selector_text)
     if selector.form == "name":
         raise ValueError(f"agent selector is not remote: {selector_text}")
-    return _resolve_visiting_layout(selector, progress=progress)
+    return _resolve_visiting_layout(
+        selector, progress=progress, toolang_root=toolang_root
+    )
 
 
-def _visiting_layout(selector: AgentSelector) -> AgentLayout:
-    return AgentLayout.visiting(selector.text, selector.default_name())
+def _visiting_layout(
+    selector: AgentSelector, *, toolang_root: Path | None = None
+) -> AgentLayout:
+    return AgentLayout.visiting(
+        selector.text, selector.default_name(), toolang_root=toolang_root
+    )
 
 
 def _resolve_visiting_layout(
     selector: AgentSelector,
     *,
     progress: ProgressSink | None,
+    toolang_root: Path | None = None,
 ) -> AgentLayout:
-    layout = _visiting_layout(selector)
+    layout = _visiting_layout(selector, toolang_root=toolang_root)
 
     if _visiting_program_cache_fresh(layout.program):
         return layout
@@ -649,6 +841,7 @@ def _resolve_visiting_layout(
             resolved_ref,
             source_text,
             source=selector.text,
+            toolang_root=toolang_root,
         )
     except Exception as exc:
         emit_progress(
@@ -790,6 +983,8 @@ def write_runtime_state(
     workspace_additions: Mapping[str, str] | None = None,
     status: str = "running",
     message: str | None = None,
+    launch_id: str | None = None,
+    location: str = "host",
 ) -> Path:
     """Persist one minimal runtime state file for a running agent."""
 
@@ -812,8 +1007,19 @@ def write_runtime_state(
         payload["sandbox_instance"] = sandbox_instance
     if sandbox_description is not None:
         payload["sandbox_description"] = sandbox_description
-    with file_write_lock(file_lock_path(path)):
-        _save_runtime_state(path, payload)
+    entry = read_record(path, layout.instance, location=location)
+    identity = launch_id or (entry or {}).get("launch_id")
+    if not identity:
+        from uuid import uuid4
+
+        identity = uuid4().hex
+        update_record(
+            path,
+            lambda entry: entry.update(launch_id=identity),
+            instance=layout.instance,
+            location=location,
+        )
+    patch_workload(path, identity, payload, instance=layout.instance, location=location)
     return path
 
 
@@ -822,37 +1028,45 @@ def stop_runtime_state(
     *,
     expected_pid: int | None = None,
     expected_started_at: str | None = None,
+    launch_id: str | None = None,
+    location: str = "host",
 ) -> bool:
     """Mark one runtime state as stopped while keeping the last endpoint."""
 
     path = layout.runtime_status
-    with file_write_lock(file_lock_path(path)):
-        runtime_state = _load_runtime_state(path)
-        if runtime_state is None:
-            return False
-        if expected_pid is not None and runtime_state.get("pid") != expected_pid:
-            return False
+    changed = False
+
+    def finish(entry):
+        nonlocal changed
+        state = entry["workload"]
+        if expected_pid is not None and state.get("pid") != expected_pid:
+            return
         if (
             expected_started_at is not None
-            and runtime_state.get("started_at") != expected_started_at
+            and state.get("started_at") != expected_started_at
         ):
-            return False
-        runtime_state["status"] = "stopped"
-        runtime_state["pid"] = None
-        runtime_state["message"] = None
-        runtime_state["updated_at"] = time.strftime(
-            "%Y-%m-%dT%H:%M:%SZ",
-            time.gmtime(),
+            return
+        if state.get("status") not in {"running", "starting", "preparing"}:
+            return
+        state.update(
+            status="stopped",
+            pid=None,
+            updated_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         )
-        _save_runtime_state(path, runtime_state)
-    return True
+        changed = True
+
+    update_record(
+        path, finish, instance=layout.instance, launch_id=launch_id, location=location
+    )
+    return changed
 
 
 def preferred_runtime_port(layout: AgentLayout) -> int | None:
     """Return one previously used port for an agent when available."""
 
-    runtime_state = _load_runtime_state(layout.runtime_status)
-    return _runtime_state_port(runtime_state)
+    entry = read_record(layout.runtime_status, layout.instance)
+    remembered = (entry or {}).get("control", {}).get("last_successful", {})
+    return _runtime_state_port(remembered)
 
 
 def assigned_runtime_ports(
@@ -873,7 +1087,7 @@ def assigned_runtime_ports(
         if exclude_agent is not None and agent_name == exclude_agent:
             continue
         layout = AgentLayout.resident(toolang_root, agent_name)
-        port = _runtime_state_port(_load_runtime_state(layout.runtime_status))
+        port = preferred_runtime_port(layout)
         if port is not None:
             ports.add(port)
     return ports
@@ -899,7 +1113,7 @@ def runtime_identity_row(
     """Return one human-readable workload identity for runtime info output."""
 
     if layout is not None:
-        state = SandboxState.snapshot(layout.sandbox_state)
+        state = SandboxState.snapshot(layout.runtime_status, instance=layout.instance)
         if state is not None:
             ref = state.ref
             if ref.runtime_kind == "process":
@@ -934,26 +1148,18 @@ def runtime_identity_row(
     return None
 
 
-def _load_runtime_state(path: Path) -> dict[str, object] | None:
-    if not path.is_file():
+def _load_runtime_state(
+    path: Path, *, instance: str | None = None
+) -> dict[str, object] | None:
+    entry = read_record(path, instance)
+    if entry is None:
         return None
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    if not isinstance(payload, dict):
-        return None
-    normalized: dict[str, object] = {}
-    for key, value in payload.items():
-        normalized[str(key)] = value
-    return normalized
-
-
-def _save_runtime_state(path: Path, payload: dict[str, object]) -> None:
-    atomic_write_text(
-        path,
-        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-    )
+    control = entry["control"]
+    return {
+        **control.get("last_successful", {}),
+        **entry["workload"],
+        "launch_id": entry["launch_id"],
+    }
 
 
 def _webui_url(endpoint: str | None, *, ui_base_url: str) -> str | None:

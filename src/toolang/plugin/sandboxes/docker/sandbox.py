@@ -237,13 +237,40 @@ class DockerSandbox:
         del local_root
         return self._runtime_root
 
+    def intent_reference(self, request: SandboxRequest) -> SandboxRef:
+        """Persist a unique recovery locator before staging or container creation."""
+        identity = request.envs["TOOLANG_HOST_LAUNCH"]
+        stage = (
+            request.local_root / ".sandbox" / request.agent_name / "launches" / identity
+        )
+        name = f"toolang-{_container_label(request.agent_name)}-{identity}"
+        return SandboxRef(
+            name,
+            request.endpoint,
+            runtime_kind="container",
+            runtime_name=name,
+            meta={
+                "stage_dir": str(stage),
+                "diagnostic_path": str(
+                    request.local_home / ".runtime" / f"docker-guest-{identity}.log"
+                ),
+                "startup_events_path": str(
+                    request.local_home / ".runtime" / f"docker-guest-{identity}.events"
+                ),
+            },
+        )
+
+    def prepared_reference(self, plan: SandboxPlan) -> SandboxRef:
+        name = _plan_text(plan, "container_name")
+        return _docker_ref(plan, runtime_id=name, container_name=name)
+
     def prepare(self, spec: str | None, request: SandboxRequest) -> SandboxPlan:
         stage_dir = (
             request.local_root
             / ".sandbox"
             / request.agent_name
             / "launches"
-            / uuid4().hex[:8]
+            / request.envs.get("TOOLANG_HOST_LAUNCH", uuid4().hex[:8])
         )
         diagnostic_path = (
             request.local_home / ".runtime" / f"docker-guest-{stage_dir.name}.log"
@@ -342,6 +369,9 @@ class DockerSandbox:
         package_source = (
             str(hosted_dev_artifact) if hosted_dev_artifact is not None else "toolang"
         )
+        command = list(request.command)
+        if "--sandbox" in command:
+            command[command.index("--sandbox") + 1] = f"{self.name}:{image}"
         return SandboxPlan(
             sandbox=f"{self.name}:{image}",
             command=(
@@ -355,7 +385,7 @@ class DockerSandbox:
                 package_source,
                 str(hosted_log_path) if hosted_log_path is not None else "-",
                 "--",
-                *request.command,
+                *command,
             ),
             working_directory=request.hosted_home,
             output=request.output,
@@ -363,7 +393,9 @@ class DockerSandbox:
             endpoint=request.endpoint,
             envs={
                 "TOOLANG_HOST_GATEWAY": DEFAULT_HOST_GATEWAY,
-                "TOOLANG_ROOT": str(request.hosted_root),
+                "TOOLANG_ROOT": request.envs.get(
+                    "TOOLANG_ROOT", str(request.local_root)
+                ),
                 "TOOLANG_SANDBOX": f"{self.name}:{image}",
                 "TOOLANG_WORKSPACE_MOUNTS": request.envs.get(
                     "TOOLANG_WORKSPACE_MOUNTS", "{}"

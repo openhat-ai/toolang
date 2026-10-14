@@ -129,7 +129,7 @@ def config_sources(
     layout: AgentLayout, *, include_agent: bool = True
 ) -> tuple[ConfigSource, ...]:
     """Load normal root/home layers or captured roaming project layers."""
-    if layout.placement == "roaming":
+    if layout.project_inputs:
         config = read_config(layout.config)
         raw = config.get(PROJECTION_KEY)
         if isinstance(raw, list):

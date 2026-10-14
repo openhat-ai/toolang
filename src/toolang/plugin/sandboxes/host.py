@@ -67,7 +67,7 @@ class HostSandbox:
             raise ValueError("host sandbox does not accept a spec")
         envs = dict(request.envs)
         envs[HOST_SANDBOX_DESCRIPTION_ENV] = host_sandbox_description()
-        envs[HOST_LAUNCH_ENV] = uuid4().hex
+        envs.setdefault(HOST_LAUNCH_ENV, uuid4().hex)
         return SandboxPlan(
             sandbox=self.name,
             command=_local_command(request.command),
@@ -103,6 +103,47 @@ class HostSandbox:
         ref = await _capture_reference(workload, plan)
         self._processes[process.pid] = workload
         return ref
+
+    async def recover(self, launch_id: str, endpoint: str) -> SandboxRef | None:
+        def find():
+            unverified = False
+            for process in psutil.process_iter(["pid", "name", "cmdline", "uids"]):
+                try:
+                    raw_args = process.info["cmdline"]
+                    uids = process.info["uids"]
+                    if (
+                        raw_args is None
+                        and uids is not None
+                        and uids.real == os.getuid()
+                        and (
+                            process.info["name"] is None
+                            or process.info["name"].casefold().startswith("python")
+                        )
+                        and process.status() != psutil.STATUS_ZOMBIE
+                    ):
+                        unverified = True
+                    args = raw_args or []
+                    if (
+                        "--launch-id" in args
+                        and args[args.index("--launch-id") + 1] == launch_id
+                    ):
+                        return process_ref(
+                            process.pid,
+                            endpoint,
+                            group=os.getpgid(process.pid) == process.pid,
+                            launch_id=launch_id,
+                        )
+                except (psutil.NoSuchProcess, IndexError):
+                    continue
+                except psutil.AccessDenied:
+                    # Other users' processes are outside this local launch.
+                    if process.uids().real == os.getuid():
+                        unverified = True
+            if unverified:
+                raise ValueError("cannot verify a possible host workload")
+            return None
+
+        return await asyncio.to_thread(find)
 
     async def attach(
         self,

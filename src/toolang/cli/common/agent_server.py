@@ -339,10 +339,12 @@ def _resolve_inactive_launch(
             layout,
             base_environ=os.environ if base_environ is None else base_environ,
         )
-        environ.setdefault(
-            "TOOLANG_OBSERVATION_ROOT", str(resolve_root(None, environ=environ))
+        toolang_root = layout.toolang_root or (
+            layout.root
+            if layout.placement == "resident"
+            else resolve_root(None, environ=environ)
         )
-        environ["TOOLANG_ROOT"] = str(layout.root)
+        environ["TOOLANG_ROOT"] = str(toolang_root)
         if model_catalog is not None:
             environ[MODEL_CATALOG_ENV] = str(model_catalog)
         log_plan = resolve_agent_logging(
@@ -353,6 +355,7 @@ def _resolve_inactive_launch(
         return asyncio.run(
             sandbox_runtime.resolve_launch(
                 layout=layout,
+                toolang_root=toolang_root,
                 drivers=drivers,
                 sandbox=sandbox,
                 port=None

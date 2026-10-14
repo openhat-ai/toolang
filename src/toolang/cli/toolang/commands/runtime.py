@@ -9,7 +9,7 @@ import os
 import sys
 import json
 from pathlib import Path
-from typing import Annotated, TYPE_CHECKING, cast, Literal
+from typing import Annotated, TYPE_CHECKING
 from toolang.cli.common.workspaces import (
     WorkspaceOptions,
     WorkdirOption,
@@ -51,7 +51,6 @@ from ...common.context import (
     ModelCatalogOption,
     cli_context,
     context_root,
-    resolve_root,
     require_runtime_agent,
     load_runtime_environ,
     resolve_model_catalog_option,
@@ -92,7 +91,7 @@ def run(
         typer.Option(
             "--sandbox",
             metavar="SANDBOX",
-            help="Run in this sandbox; defaults to agent config or host",
+            help="Run in this sandbox; defaults to config, last successful selection, or host",
         ),
     ] = None,
     allows: AllowOptions = None,
@@ -151,6 +150,7 @@ def run(
             )
             launch = resolve_startup(
                 target,
+                toolang_root=context_root(ctx),
                 model_catalog=model_catalog,
                 sandbox=sandbox,
                 allows=allows,
@@ -169,19 +169,34 @@ def run(
             with progress.suspended():
                 warn_development_package_source(launch.startup)
             launch_started = True
-            exit_code = user_call(
-                asyncio.run,
-                sandbox_runtime.run(
-                    launch.startup,
-                    on_ready=lambda state: _report_foreground_ready(
-                        launch.target.name,
-                        state,
-                        progress,
+            if launch.startup.sandbox == "host":
+                from toolang.up.server import serve as serve_agent
+                from dataclasses import replace
+                from toolang.plugin.sandboxes.host import (
+                    host_sandbox_description,
+                    HOST_SANDBOX_DESCRIPTION_ENV,
+                )
+
+                environ = dict(launch.environ)
+                environ[HOST_SANDBOX_DESCRIPTION_ENV] = host_sandbox_description()
+                exit_code = user_call(
+                    serve_agent,
+                    replace(launch.startup.serve, toolang_root=context_root(ctx)),
+                    environ=environ,
+                    sandbox="host",
+                )
+            else:
+                exit_code = user_call(
+                    asyncio.run,
+                    sandbox_runtime.run(
+                        launch.startup,
+                        on_ready=lambda state: _report_foreground_ready(
+                            launch.target.name, state, progress
+                        ),
+                        progress=progress.sink,
+                        cleanup_progress=cleanup_progress.sink,
                     ),
-                    progress=progress.sink,
-                    cleanup_progress=cleanup_progress.sink,
-                ),
-            )
+                )
     except KeyboardInterrupt:
         raise typer.Exit(130) from None
     except (
@@ -232,7 +247,7 @@ def start(
         typer.Option(
             "--sandbox",
             metavar="SANDBOX",
-            help="Run in this sandbox; defaults to agent config or host",
+            help="Run in this sandbox; defaults to config, last successful selection, or host",
         ),
     ] = None,
     allows: AllowOptions = None,
@@ -258,7 +273,6 @@ def start(
         typer.Option("--endpoint-host", help="Endpoint host name", hidden=True),
     ] = None,
 ) -> None:
-    from toolang.up import sandbox as sandbox_runtime
     from ...common.progress import make_cli_progress
 
     selector = require_runtime_agent(ctx, agent)
@@ -278,6 +292,7 @@ def start(
             )
             launch = resolve_startup(
                 target,
+                toolang_root=context_root(ctx),
                 model_catalog=model_catalog,
                 sandbox=sandbox,
                 allows=allows,
@@ -296,7 +311,7 @@ def start(
             launch_started = True
             handle = user_call(
                 asyncio.run,
-                sandbox_runtime.launch(
+                agents.AgentProcess(launch.target).start(
                     launch.startup,
                     progress=progress.sink,
                 ),
@@ -334,7 +349,6 @@ def stop(
         typer.Option(help="Force-stop when graceful shutdown does not complete"),
     ] = False,
 ) -> None:
-    from toolang.up import sandbox as sandbox_runtime
     from ...common.progress import make_cli_progress
 
     agent_name = require_runtime_agent(ctx, agent)
@@ -345,8 +359,7 @@ def stop(
         with progress:
             stopped = user_call(
                 asyncio.run,
-                sandbox_runtime.stop(
-                    layout,
+                agents.AgentProcess(layout).stop(
                     force=force,
                     progress=progress.sink,
                 ),
@@ -390,7 +403,16 @@ def serve(
         str | None,
         typer.Option("--log", metavar="LOG_SPEC", help="Python logging specification"),
     ] = None,
-    placement: Annotated[str, typer.Option("--placement", hidden=True)] = "resident",
+    agent_root: Annotated[
+        Path | None, typer.Option("--agent-root", hidden=True)
+    ] = None,
+    source_policy: Annotated[
+        str, typer.Option("--source-policy", hidden=True)
+    ] = "root",
+    membership: Annotated[str, typer.Option("--membership", hidden=True)] = "managed",
+    sandbox: Annotated[str, typer.Option("--sandbox", hidden=True)] = "host",
+    location: Annotated[str, typer.Option("--location", hidden=True)] = "host",
+    launch_id: Annotated[str | None, typer.Option("--launch-id", hidden=True)] = None,
     runtime_instance: Annotated[
         str | None, typer.Option("--runtime-instance", hidden=True)
     ] = None,
@@ -407,24 +429,33 @@ def serve(
     from toolang.up.config import default_drivers, parse_drivers
     from toolang.plugin.sandboxes.host import HOST_LAUNCH_ENV
 
-    launch_id = os.environ.pop(HOST_LAUNCH_ENV, None)
+    launch_id = launch_id or os.environ.pop(HOST_LAUNCH_ENV, None)
+    if (
+        source_policy not in {"project", "root"}
+        or membership not in {"managed", "unmanaged"}
+        or location not in {"host", "guest"}
+    ):
+        raise ClickException("invalid workload startup inputs")
     layout = AgentLayout(
-        context_root(ctx),
+        agent_root or context_root(ctx),
         agent,
-        cast(Literal["resident", "roaming", "visiting"], placement),
+        "resident",
         instance=runtime_instance,
+        project_inputs=source_policy == "project",
+        managed_membership=membership == "managed",
     )
-    sandbox = os.environ.get("TOOLANG_SANDBOX", "host").strip() or "host"
     environ = load_runtime_environ(layout, base_environ=os.environ)
-    environ["TOOLANG_ROOT"] = str(layout.root)
+    environ["TOOLANG_ROOT"] = str(context_root(ctx))
     if model_catalog := resolve_model_catalog_option(model_catalog):
         environ[MODEL_CATALOG_ENV] = str(model_catalog)
     spec = user_call(
         resolve_serve,
         layout=layout,
+        toolang_root=context_root(ctx),
+        launch_id=launch_id,
         drivers=user_call(parse_drivers, driver)
         if driver is not None
-        else default_drivers(layout.placement),
+        else default_drivers("resident"),
         host=host,
         endpoint_host=endpoint_host,
         port=port,
@@ -443,6 +474,7 @@ def serve(
             environ=environ,
             sandbox=sandbox,
             launch_id=launch_id,
+            location=location,
         )
     )
 
@@ -451,6 +483,7 @@ def resolve_startup(
     target: AgentLayout,
     *,
     model_catalog: Path | None,
+    toolang_root: Path | None = None,
     sandbox: str | None,
     allows: list[str] | None,
     defaults: list[str] | None,
@@ -485,10 +518,12 @@ def resolve_startup(
     if existing is not None and existing.status in {"running", "preparing", "starting"}:
         raise ClickException(active_agent_error(existing))
     environ = load_runtime_environ(target, base_environ=os.environ)
-    environ.setdefault(
-        "TOOLANG_OBSERVATION_ROOT", str(resolve_root(None, environ=environ))
+    toolang_root = (
+        toolang_root
+        or target.toolang_root
+        or Path(environ.get("TOOLANG_ROOT", str(root)))
     )
-    environ["TOOLANG_ROOT"] = str(root)
+    environ["TOOLANG_ROOT"] = str(toolang_root)
     port = user_call(agent_port, target, port, environ=environ)
     if model_catalog := resolve_model_catalog_option(model_catalog):
         environ[MODEL_CATALOG_ENV] = str(model_catalog)
@@ -533,7 +568,7 @@ def resolve_startup(
             log_spec=log_plan.spec,
             output="file" if background else "inherit",
             log_path=log_plan.path,
-            temporary_port=target.placement == "visiting" and port is None,
+            toolang_root=toolang_root,
             environ=log_plan.environ,
             workspace_additions=workspaces.additions,
             workdir=workspaces.workdir,

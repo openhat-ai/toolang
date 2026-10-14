@@ -2452,7 +2452,7 @@ def test_visiting_selector_reads_inspection_without_fetching(
     def unexpected_fetch(*_args: object, **_kwargs: object) -> AgentLayout:
         raise AssertionError("inspect must not fetch the visiting source")
 
-    monkeypatch.setattr(agents, "visiting_layout", lambda _selector: layout)
+    monkeypatch.setattr(agents, "visiting_layout", lambda _selector, **kwargs: layout)
     monkeypatch.setattr(agents, "resolve_visiting_layout", unexpected_fetch)
 
     result = cli.main([selector, "inspect", "run_visiting.0", "--json"])
@@ -3910,7 +3910,7 @@ def test_visiting_agent_info_uses_the_materialized_layout(
         encoding="utf-8",
     )
     monkeypatch.setattr(agent_commands, "SetupWatcher", _EmptySetupWatcher)
-    monkeypatch.setattr(agents, "visiting_layout", lambda _: layout)
+    monkeypatch.setattr(agents, "visiting_layout", lambda _, **kwargs: layout)
     captured: dict[str, object] = {}
     monkeypatch.setattr(
         agent_commands,

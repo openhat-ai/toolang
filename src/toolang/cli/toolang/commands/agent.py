@@ -254,7 +254,10 @@ def _local_resources(
                 user_call(agents.materialize_roaming_program, source)
             elif selector is not None:
                 user_call(
-                    agents.resolve_visiting_layout, selector, progress=progress.sink
+                    agents.resolve_visiting_layout,
+                    selector,
+                    toolang_root=layout.toolang_root,
+                    progress=progress.sink,
                 )
             state = cast(
                 AgentState,

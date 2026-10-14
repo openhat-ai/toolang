@@ -350,7 +350,9 @@ def test_home_prepares_nonresident_home_and_reuses_it(
         )
         layout = AgentLayout(tmp_path / "visiting", "alice", "visiting")
         monkeypatch.setattr(
-            AgentLayout, "visiting", classmethod(lambda _cls, source, name: layout)
+            AgentLayout,
+            "visiting",
+            classmethod(lambda _cls, source, name, **kwargs: layout),
         )
 
     def fetch(ref: agents.AgentRef, **_kwargs: Any) -> str:
@@ -394,7 +396,9 @@ def test_home_reports_remote_preparation_failure_without_launching(
 ) -> None:
     layout = AgentLayout(tmp_path, "alice", "visiting")
     monkeypatch.setattr(
-        AgentLayout, "visiting", classmethod(lambda _cls, source, name: layout)
+        AgentLayout,
+        "visiting",
+        classmethod(lambda _cls, source, name, **kwargs: layout),
     )
 
     def fetch(*_args: Any, **_kwargs: Any) -> str:
@@ -465,7 +469,9 @@ def test_home_does_not_prepare_targets_for_help_or_invalid_invocations(
         layout = AgentLayout(tmp_path / "visiting", "alice", "visiting")
         selector = "https://agents.example/alice.too"
         monkeypatch.setattr(
-            AgentLayout, "visiting", classmethod(lambda _cls, source, name: layout)
+            AgentLayout,
+            "visiting",
+            classmethod(lambda _cls, source, name, **kwargs: layout),
         )
 
     fetches: list[str] = []
