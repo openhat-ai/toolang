@@ -123,7 +123,9 @@ def edit_chore(ctx: typer.Context, chore: ChoreRef) -> None:
     if text is None:
         raise typer.Exit()
     definition = user_call(ChoreFile.parse, text, name=path.stem)
-    saved = user_call(catalog.update, definition)
+    with catalog.write_lock():
+        user_call(editable_chore_path, context_layout(ctx), chore)
+        saved = user_call(catalog.update, definition)
     typer.echo(str(_path(saved)))
 
 
@@ -132,8 +134,9 @@ def delete_chore(ctx: typer.Context, chore: ChoreRef) -> None:
     catalog = AuthoredChores(
         context_layout(ctx).home, lock_path=context_layout(ctx).home_edit_lock
     )
-    user_call(editable_chore_path, context_layout(ctx), chore)
-    path = user_call(catalog.remove_file, chore)
+    with catalog.write_lock():
+        user_call(editable_chore_path, context_layout(ctx), chore)
+        path = user_call(catalog.remove_file, chore)
     typer.echo(f"chore {path.stem} deleted")
 
 

@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import cast
 
 from .chore import AuthoredChores, ChoreFile
+from toolang.common.files import EditLock
 from toolang.common.ids import chore_id
 from toolang.common.layout import AgentLayout
 from toolang.lang.ast import ChoreDecl, parse_chore_declarations
@@ -117,6 +118,10 @@ def load_chore_files(layout: AgentLayout) -> tuple[Chore, ...]:
 def load_chores(layout: AgentLayout) -> tuple[Chore, ...]:
     """Read effective authored definitions without preparing State or handlers."""
 
+    return EditLock(layout.home_edit_lock).read(lambda: _load_chores(layout))
+
+
+def _load_chores(layout: AgentLayout) -> tuple[Chore, ...]:
     inline: tuple[Chore, ...] = ()
     if layout.program.is_file():
         try:
@@ -131,6 +136,10 @@ def load_chores(layout: AgentLayout) -> tuple[Chore, ...]:
 
 def inspect_chore_sources(layout: AgentLayout) -> tuple[Chore, ...]:
     """Include malformed authored files for inspection and raw repair."""
+    return EditLock(layout.home_edit_lock).read(lambda: _inspect_chore_sources(layout))
+
+
+def _inspect_chore_sources(layout: AgentLayout) -> tuple[Chore, ...]:
     valid = load_chores(layout)
     accepted_names = {chore.name for chore in valid}
     invalid = tuple(

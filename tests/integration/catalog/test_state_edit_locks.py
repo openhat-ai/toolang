@@ -1,9 +1,11 @@
 """Cross-process exclusion and lazy reads for authored State scopes."""
 
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from contextlib import contextmanager
 from hashlib import sha256
 import multiprocessing
 from pathlib import Path
+from threading import Event, current_thread
 
 import pytest
 
@@ -215,6 +217,180 @@ def test_shared_roaming_config_updates_preserve_both_scripts_workspaces(tmp_path
     assert set(workspaces) == {"alice", "bob"}
     assert layout.root_edit_lock.is_file()
     assert not (tmp_path / "toolang.toml.lock").exists()
+
+
+def test_delayed_roaming_projection_does_not_overwrite_newer_workspace_config(
+    tmp_path, monkeypatch
+):
+    source = tmp_path / "alice.too"
+    source.write_text("agic:\n  Hello.\n")
+    layout = materialize_roaming_program(source)
+    grants = ConfiguredWorkspaces(
+        tmp_path / "toolang.toml", lock_path=layout.root_edit_lock
+    )
+    for name in ("first", "second"):
+        (tmp_path / name).mkdir()
+    grants.add(tmp_path / "first", name="first")
+    paused, resume = Event(), Event()
+    original = EditLock.write
+
+    @contextmanager
+    def write(lock):
+        if (
+            lock.path == layout.home_edit_lock
+            and current_thread().name.startswith("old-projection")
+            and not paused.is_set()
+        ):
+            paused.set()
+            assert resume.wait(10)
+        with original(lock):
+            yield
+
+    monkeypatch.setattr(EditLock, "write", write)
+    with ThreadPoolExecutor(thread_name_prefix="old-projection") as pool:
+        pending = pool.submit(materialize_roaming_program, source)
+        try:
+            assert paused.wait(10)
+            grants.add(tmp_path / "second", name="second")
+            materialize_roaming_program(source)
+        finally:
+            resume.set()
+        pending.result(timeout=10)
+    projected = ConfiguredWorkspaces(layout.config, lock_path=layout.home_edit_lock)
+    assert set(projected.list()) == {"first", "second"}
+
+
+def test_effective_chores_retry_inline_and_file_reads_after_first_edit(
+    tmp_path, monkeypatch
+):
+    from toolang.catalog import chores
+
+    layout = AgentLayout.resident(tmp_path, "alice")
+    directory = layout.home / "chores"
+    directory.mkdir(parents=True)
+    layout.program.write_text("chore first:\n  Old inline.\n")
+    definition = directory / "second.md"
+    definition.write_text("Old file.")
+    original = chores.load_chore_files
+    changed = False
+
+    def read_files(layout):
+        nonlocal changed
+        if not changed:
+            changed = True
+            with EditLock(layout.home_edit_lock).write():
+                atomic_write_text(layout.program, "chore first:\n  New inline.\n")
+                atomic_write_text(definition, "New file.")
+        return original(layout)
+
+    monkeypatch.setattr(chores, "load_chore_files", read_files)
+    assert {item.name: item.body for item in chores.load_chores(layout)} == {
+        "first": "New inline.",
+        "second": "New file.",
+    }
+
+
+def test_chore_inspection_retries_when_valid_source_becomes_invalid(
+    tmp_path, monkeypatch
+):
+    from toolang.catalog.chores import inspect_chore_sources
+
+    layout = AgentLayout.resident(tmp_path, "alice")
+    directory = layout.home / "chores"
+    directory.mkdir(parents=True)
+    definition = directory / "review.md"
+    definition.write_text("Valid file.")
+    original = AuthoredChores.sources
+    calls = 0
+
+    def sources(catalog):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            with EditLock(layout.home_edit_lock).write():
+                atomic_write_text(
+                    definition, "---\nschedule: invalid\n---\nInvalid file."
+                )
+        return original(catalog)
+
+    monkeypatch.setattr(AuthoredChores, "sources", sources)
+    inspected = inspect_chore_sources(layout)
+    assert len(inspected) == 1
+    assert inspected[0].source_error is not None
+
+
+def test_concurrent_chore_api_patches_preserve_independent_fields(
+    tmp_path, monkeypatch
+):
+    import asyncio
+
+    from toolang.api.routers.chores import _update_chore
+    from toolang.api.schemas import ChorePatchRequest
+    from toolang.catalog.manager import ChoresManager
+    from toolang.up import AgentCore
+
+    layout = AgentLayout.resident(tmp_path, "alice")
+    layout.home.mkdir(parents=True)
+    manager = ChoresManager(layout)
+    manager.home_authoring.create(ChoreFile.parse("Original.", name="review"))
+    core = AgentCore(layout, drivers=frozenset())
+    paused, resume, second_progress = Event(), Event(), Event()
+    original_update = AuthoredChores.update
+    original_lock = files.file_write_lock
+
+    def update(catalog, entry):
+        if current_thread().name.startswith("title-patch"):
+            paused.set()
+            assert resume.wait(10)
+        saved = original_update(catalog, entry)
+        if current_thread().name.startswith("schedule-patch"):
+            second_progress.set()
+        return saved
+
+    @contextmanager
+    def acquire(path, **kwargs):
+        if current_thread().name.startswith("schedule-patch"):
+            kwargs["on_wait"] = second_progress.set
+        with original_lock(path, **kwargs):
+            yield
+
+    monkeypatch.setattr(AuthoredChores, "update", update)
+    monkeypatch.setattr(files, "file_write_lock", acquire)
+    try:
+        with ThreadPoolExecutor(thread_name_prefix="title-patch") as first_pool:
+            first = first_pool.submit(
+                _update_chore,
+                core,
+                manager,
+                "review",
+                ChorePatchRequest(title="Updated title"),
+            )
+            try:
+                assert paused.wait(10)
+                with ThreadPoolExecutor(
+                    thread_name_prefix="schedule-patch"
+                ) as second_pool:
+                    second = second_pool.submit(
+                        _update_chore,
+                        core,
+                        manager,
+                        "review",
+                        ChorePatchRequest(schedule="FREQ=DAILY"),
+                    )
+                    try:
+                        assert second_progress.wait(10)
+                    finally:
+                        resume.set()
+                    first.result(timeout=10)
+                    second.result(timeout=10)
+            finally:
+                resume.set()
+        saved = manager.home_authoring.get("review")
+        assert saved is not None
+        assert saved.title == "Updated title"
+        assert saved.schedule == "FREQ=DAILY"
+    finally:
+        asyncio.run(core.close())
 
 
 def test_watcher_ignores_edit_lock_and_lock_activity_keeps_revision(tmp_path):

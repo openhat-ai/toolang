@@ -9,8 +9,9 @@ and name State locks by their responsibilities. Success means reads leave a fres
 scope free of edit locks, cooperating writers share exclusion, and State build
 and publication retain their existing concurrency guarantees.
 
-In scope: State file tools, authored/configured catalogs, workspace configuration,
-roaming configuration projection, State lock names, and their tests and docs.
+In scope: State file tools, authored/configured catalogs, chore authoring API/CLI
+transactions, workspace configuration, roaming configuration projection, State
+lock names, and their tests and docs.
 Out of scope: runtime, sandbox, Hub, SQLite, allocator, and compaction locks;
 new batch-edit transactions; generic formatters, external editors, and initial
 agent copying; changes to watcher scheduling, revisions, CLI flags, or schemas.
@@ -63,6 +64,8 @@ not just the final pointer write. Cached layers still bypass the build lock.
   I/O failure and repeat under the existing lock. Otherwise preserve the result
   or error. Apply this to State `list/get` and participating catalog/workspace
   readers; a State list holds one home lock for enumeration and all metadata.
+  Effective chore reads cover inline declarations, Markdown files, and diagnostics
+  together; chore mutations retain the guard from winner validation through save.
 - Reading must not create `.state` directories. Retain process/thread exclusion,
   reentrancy for nested store calls, atomic source writes, and digest mismatch
   behavior. Preserve existing permission/ownership and lock-wait reporting.
@@ -85,6 +88,9 @@ root and home build locks are released separately. Release edit locks before
 requesting State refresh or synchronization. Operations touching both authored
 scopes release root edit before taking home edit, then re-read home inputs; no
 cross-scope edit transaction or edit/build/publish lock nesting is introduced.
+Roaming projection rechecks its root inputs after releasing home edit and retries
+from a fresh capture when they changed, with at most three application attempts.
+Repeated changes fail explicitly rather than returning a stale projection.
 
 ## Implementation steps
 
@@ -98,6 +104,8 @@ cross-scope edit transaction or edit/build/publish lock nesting is introduced.
   share the correct lock, including nested reads and read-only construction sites.
 - [x] Update roaming projection in `up/process.py` to share the home edit lock,
   recheck pending changes after acquisition, and leave no-change projections lazy.
+- [x] Keep chore API/CLI validation and read/modify/write in one edit transaction;
+  preserve async routes' thread-pool execution and refresh only after release.
 - [x] Rename State lock paths and internal helpers in `state/{cache,prepare}.py`;
   retain coverage, acquisition order, progress, and watcher semantics.
 - [x] Add the acceptance checks below; update [layout.md](../layout.md) and relevant
@@ -120,7 +128,9 @@ cross-scope edit transaction or edit/build/publish lock nesting is introduced.
    exclusion. Competing digest-based updates yield one success and one mismatch.
 5. Independence: another home remains editable while one home is locked; distinct
    root/home edits remain independent; shared roaming `toolang.toml` updates from
-   different scripts do not lose changes. Nested store calls do not deadlock.
+   different scripts do not lose changes, including delayed projections. Nested
+   store calls do not deadlock; independent chore PATCH fields are both retained,
+   and chore inspection does not mix inline/file snapshots or omit diagnostics.
 6. State coverage: same-agent processes serialize complete publication, different
    agents coordinate root builds, and cached-layer reuse remains unchanged; new
    build/publish names are used without creating legacy prepare/check names.
