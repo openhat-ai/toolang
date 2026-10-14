@@ -743,3 +743,56 @@ def test_startup_narrow_terminal_preserves_action_and_short_terminal_limits_rows
         with progress.suspended():
             assert progress._live_display is None
         assert len(progress._live_text().plain.splitlines()) == 1
+
+
+@pytest.mark.parametrize("ended", ["finished", "closed", "failed"])
+def test_nested_launch_does_not_reuse_an_ended_startup_session(ended):
+    from toolang.cli.common.progress import make_cli_progress
+
+    with make_cli_progress(stream=StringIO(), preparation=True) as outer:
+        if ended == "finished":
+            _finish_startup(outer)
+        elif ended == "closed":
+            outer.close()
+        else:
+            outer(_startup_event("broken", status="failed", complete=True))
+        with make_cli_progress(stream=StringIO(), preparation=True) as inner:
+            assert inner is not outer
+
+
+def test_suspended_startup_defers_worker_output_and_summary():
+    from toolang.cli.common.progress import StartupProgress
+
+    stream = StringIO()
+    with StartupProgress(stream=stream) as progress:
+        with progress.suspended():
+            progress(_startup_event("one"))
+            assert stream.getvalue() == ""
+            progress(
+                _startup_event("one", stage="materialize", status="ok", complete=True)
+            )
+            _finish_startup(progress)
+            assert stream.getvalue() == ""
+        assert stream.getvalue().startswith("Prepared 1 cap in ")
+
+
+def test_rejected_cap_error_survives_a_successful_state_publication():
+    from dataclasses import replace
+    from toolang.cli.common.progress import StartupProgress
+
+    stream = StringIO()
+    with StartupProgress(stream=stream) as progress:
+        progress(_startup_event("broken"))
+        progress(
+            replace(
+                _startup_event("broken", status="failed", complete=True),
+                label="Failed to fetch prompt broken",
+                detail="Remote content was not found",
+            )
+        )
+        _finish_startup(progress)
+        _finish_startup(progress)
+    output = stream.getvalue()
+    assert output.count("Failed to fetch prompt broken") == 1
+    assert "Remote content was not found" in output
+    assert "Prepared" not in output

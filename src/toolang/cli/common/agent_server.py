@@ -12,6 +12,7 @@ import sys
 from toolang.base.errors import ToolangError
 from toolang.base.types.model import ModelOverride
 from toolang.common.layout import AgentLayout
+from toolang.common.progress import emit_progress
 from toolang.common.version import development_source
 from toolang.plugin.catalogs.models_dev.path import MODEL_CATALOG_ENV
 from toolang.up import process as agents
@@ -81,6 +82,17 @@ def acquire_agent_server(
                 drivers=drivers,
                 required_driver=required_driver,
             )
+            if isinstance(acquired, AgentServerRef):
+                emit_progress(
+                    progress.sink,
+                    id=f"state:{layout.name}",
+                    kind="prepare",
+                    stage="materialize",
+                    label="Attached to prepared agent State",
+                    status="ok",
+                    subject="state",
+                    complete=True,
+                )
     except AgentServerAcquisitionError:
         raise
     except (

@@ -453,6 +453,8 @@ class StartupProgress(CliProgress):
         self._token: Token[StartupProgress | None] | None = None
         self._last_slot_render = float("-inf")
         self._slot_timer: Timer | None = None
+        self._suspended = 0
+        self._deferred_output: Text | None = None
 
     def __enter__(self) -> StartupProgress:
         if self._depth == 0:
@@ -468,23 +470,58 @@ class StartupProgress(CliProgress):
                 self._token = None
             super().__exit__(exc_type, exc, traceback)
 
+    @contextmanager
+    def suspended(self) -> Iterator[None]:
+        with self._lock:
+            was_visible = self._live_display is not None
+            self._suspended += 1
+            self._cancel_slot_render()
+            self._cancel_reveal()
+            self._clear_live()
+        try:
+            yield
+        finally:
+            with self._lock:
+                self._suspended -= 1
+                if not self._suspended and not self._closed:
+                    if self._deferred_output is not None:
+                        self._console.print(self._deferred_output)
+                        self._deferred_output = None
+                    elif self._terminal:
+                        if was_visible and self._selected_state() is not None:
+                            self._reveal_live()
+                        else:
+                            self._render_terminal()
+                    else:
+                        self._render_slots()
+
     def __call__(self, event: ProgressEvent) -> None:
         with self._lock:
             if event.kind != "prepare":
                 super().__call__(event)
                 return
-            if (
-                self._closed
-                or self._failure_event is not None
-                or self._preparation_done
-            ):
+            if self._closed or self._preparation_done:
+                return
+            if self._failure_event is not None:
+                if event.subject == "state" and event.complete and event.status == "ok":
+                    self._preparation_done = True
+                    self._print_or_defer(
+                        Text(
+                            self.failure_message(
+                                RuntimeError("State contains rejected sources")
+                            )
+                        )
+                    )
                 return
             if event.status == "failed":
                 self._slots.clear()
                 self._cancel_slot_render()
                 super().__call__(event)
                 return
-            if event.cached or event.status in {"pending", "skipped"}:
+            if event.status == "pending":
+                self._finished.discard(self._work_key(event))
+                return
+            if event.cached or event.status == "skipped":
                 return
             if event.subject == "state" and event.complete:
                 self._finish_preparation()
@@ -534,7 +571,7 @@ class StartupProgress(CliProgress):
         return scope, event.id
 
     def _render_slots(self) -> None:
-        if not self._enabled:
+        if not self._enabled or self._suspended:
             return
         if not self._terminal:
             for item in self._slots:
@@ -560,6 +597,21 @@ class StartupProgress(CliProgress):
             self._slot_timer = Timer(0.1, self._refresh_slots)
             self._slot_timer.daemon = True
             self._slot_timer.start()
+
+    def _render_terminal(self) -> None:
+        if not self._suspended:
+            super()._render_terminal()
+
+    def _render_plain(self, event: ProgressEvent, previous: _ItemState | None) -> None:
+        if not self._suspended:
+            super()._render_plain(event, previous)
+
+    def _reveal_live(self) -> None:
+        with self._lock:
+            if self._suspended:
+                self._reveal_timer = None
+                return
+            super()._reveal_live()
 
     def _refresh_slots(self) -> None:
         with self._lock:
@@ -624,11 +676,19 @@ class StartupProgress(CliProgress):
             )
         subject = " and ".join(parts) or "State"
         elapsed = format_duration(self._clock() - self._started)
-        self._console.print(Text(f"Prepared {subject} in {elapsed}", style="dim"))
+        self._print_or_defer(Text(f"Prepared {subject} in {elapsed}", style="dim"))
+
+    def _print_or_defer(self, text: Text) -> None:
+        if self._suspended:
+            self._deferred_output = text
+        else:
+            self._console.print(text)
 
     def close(self) -> None:
         with self._lock:
             self._cancel_slot_render()
+            self._slots.clear()
+            self._deferred_output = None
             super().close()
 
 
@@ -642,7 +702,14 @@ def make_cli_progress(
 ) -> CliProgress:
     """Create one invocation-scoped operational presenter."""
 
-    if preparation and enabled and (current := _STARTUP_PROGRESS.get()) is not None:
+    if (
+        preparation
+        and enabled
+        and (current := _STARTUP_PROGRESS.get()) is not None
+        and not current._closed
+        and not current._preparation_done
+        and current._failure_event is None
+    ):
         return current
     presenter = StartupProgress if preparation else CliProgress
     return presenter(

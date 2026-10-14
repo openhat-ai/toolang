@@ -1843,3 +1843,17 @@ def test_remote_parse_reuse_requires_matching_source_bytes(tmp_path, monkeypatch
     layout.program.write_text("# Changed\n")
     prepare_agent_state(layout)
     assert calls == ["# First\r\n", "# Changed\n"]
+
+
+def test_cached_agent_ast_revalidates_removed_external_runnable(tmp_path):
+    resident = AgentLayout.resident(tmp_path, "visitor")
+    (resident.home / "runnables").mkdir(parents=True)
+    helper = resident.home / "runnables/helper.too"
+    helper.write_text("flow():\n  pass\n")
+    resident.program.write_text("flow():\n  run helper\n")
+    prepare_agent_state(resident)
+    visiting = AgentLayout(root=tmp_path, name="visitor", placement="visiting")
+    prepare_agent_state(visiting)
+    helper.unlink()
+    changed = prepare_agent_state(visiting)
+    _assert_excluded(changed, match="unknown runnable")

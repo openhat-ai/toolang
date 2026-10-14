@@ -1291,6 +1291,10 @@ class _RemoteEntryRequest:
     def progress_id(self) -> str:
         return _cap_progress_id(self.kind, self.ref)
 
+    @property
+    def progress_scope(self) -> str:
+        return f"{self.scope}:{self.relative_config_path}:{self.form}:{self.name or ''}"
+
 
 @dataclass(frozen=True, slots=True)
 class _CachedRemoteEntry:
@@ -2046,7 +2050,7 @@ def _remote_entry_from_ref(
                     event,
                     subject="cap",
                     ref=display_ref,
-                    scope=f"{scope}:{relative_config_path}:{form}",
+                    scope=request.progress_scope,
                     cached=cached is not None,
                     complete=(
                         event.stage == "materialize"
@@ -2296,6 +2300,9 @@ def _emit_remote_entry_pending(
             label=f"Fetching {request.kind}{object_label}...",
             status="pending",
             detail=ref,
+            subject="cap",
+            ref=request.ref,
+            scope=request.progress_scope,
         )
         return
     emit_progress(
@@ -2306,6 +2313,9 @@ def _emit_remote_entry_pending(
         label=f"Resolving {request.kind}{object_label}...",
         status="pending",
         detail=ref,
+        subject="cap",
+        ref=request.ref,
+        scope=request.progress_scope,
     )
 
 
