@@ -7,6 +7,12 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ## [Unreleased]
 
+### Changed
+
+- Root command descriptions are revised: `workspace` reads `Configure agent
+  workspaces`, `chore` reads `Create or schedule tasks`, `talk` reads `Talk
+  with agents through the hub`, and `hub` reads `Control the teaming service`.
+
 ## [0.4.0a7] - 2026-10-14
 
 ### Changed

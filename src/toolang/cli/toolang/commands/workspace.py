@@ -33,7 +33,7 @@ class _WorkspaceCommand(RequiredPrefixAgentCommand):
 def workspace_app() -> typer.Typer:
     app = typer.Typer(
         cls=_WorkspaceGroup,
-        help="Manage agent workspaces",
+        help="Configure agent workspaces",
         add_completion=False,
         no_args_is_help=True,
         pretty_exceptions_enable=False,

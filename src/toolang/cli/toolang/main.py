@@ -360,7 +360,7 @@ _registered_command(
 _registered_group(
     "toolang.cli.toolang.commands.workspace:workspace_app",
     name="workspace",
-    help="Manage agent workspaces",
+    help="Configure agent workspaces",
     no_args_is_help=True,
     rich_help_panel=AGENT_COMMAND_PANEL,
 )
@@ -391,7 +391,7 @@ _registered_command(
 _registered_group(
     "toolang.cli.toolang.commands.chore:chore_app",
     name="chore",
-    help="Manage one-off and scheduled work",
+    help="Create or schedule tasks",
     no_args_is_help=True,
     rich_help_panel=WORK_COMMAND_PANEL,
 )
@@ -399,7 +399,7 @@ _registered_group(
 _registered_command(
     "talk",
     "toolang.cli.toolang.commands.talk:talk_command",
-    help="Exchange messages through the Hub",
+    help="Talk with agents through the hub",
     epilog=(
         "\nExamples:\n"
         "  too talk                     List conversations\n"
@@ -424,7 +424,7 @@ _registered_command(
 _registered_group(
     "toolang.cli.toolang.commands.hub:hub_app",
     name="hub",
-    help="Manage the teaming service",
+    help="Control the teaming service",
     no_args_is_help=True,
     rich_help_panel=RUNTIME_COMMAND_PANEL,
 )

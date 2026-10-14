@@ -107,10 +107,11 @@ def test_lazy_command_exposes_short_help_without_loading():
 @pytest.mark.parametrize(
     ("command", "description"),
     [
-        ("hub", "Manage the teaming service"),
-        ("talk", "Exchange messages through the Hub"),
+        ("workspace", "Configure agent workspaces"),
+        ("hub", "Control the teaming service"),
+        ("talk", "Talk with agents through the hub"),
         ("chat", "Chat directly with an agent"),
-        ("chore", "Manage one-off and scheduled work"),
+        ("chore", "Create or schedule tasks"),
         ("start", "Start an agent in the background"),
         ("top", "Monitor runtime activity"),
         ("inspect", "Inspect run history and details"),
