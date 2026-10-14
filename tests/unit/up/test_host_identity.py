@@ -30,7 +30,7 @@ def test_direct_registration_blocks_duplicate_and_removal(tmp_path: Path) -> Non
         with pytest.raises(ValueError, match="already running"):
             asyncio.run(action)
     assert layout.home.is_dir()
-    state = SandboxState.load(layout.sandbox_state)
+    state = SandboxState.load(layout.runtime_status)
     assert state is not None and state.ref == ref
 
 
@@ -40,7 +40,7 @@ def test_managed_workload_updates_while_control_operation_is_active(
     layout = AgentLayout.resident(tmp_path, "alice")
     layout.home.mkdir(parents=True)
     ref = host.process_ref(os.getpid(), "http://localhost:1", launch_id="launch-1")
-    SandboxState("host", ref).save(layout.sandbox_state)
+    SandboxState("host", ref).save(layout.runtime_status)
     with ThreadPoolExecutor() as pool:
         with sandbox.management_lock(layout):
             result = pool.submit(
@@ -63,7 +63,7 @@ def test_managed_launch_without_a_current_record_does_not_create_state(
                 layout, endpoint="http://localhost:1", launch_id="lost-parent"
             )
         )
-    assert not layout.sandbox_state.exists()
+    assert not layout.runtime_status.exists()
 
 
 def test_managed_ack_rejects_another_launch(tmp_path: Path) -> None:
@@ -71,12 +71,12 @@ def test_managed_ack_rejects_another_launch(tmp_path: Path) -> None:
     ref = host.process_ref(
         os.getpid(), "http://localhost:1", group=True, launch_id="old"
     )
-    SandboxState("host", ref).save(layout.sandbox_state)
+    SandboxState("host", ref).save(layout.runtime_status)
     with pytest.raises(ValueError, match="does not match"):
         asyncio.run(
             sandbox.register_host_server(layout, endpoint=ref.endpoint, launch_id="new")
         )
-    state = SandboxState.load(layout.sandbox_state)
+    state = SandboxState.load(layout.runtime_status)
     assert state is not None and state.ref == ref
 
 
@@ -106,7 +106,7 @@ def test_removal_retains_control_lock_and_clears_stale_ref(tmp_path: Path) -> No
     layout.home.mkdir(parents=True)
     ref = host.process_ref(os.getpid(), "http://localhost:1")
     ref = replace(ref, meta={**ref.meta, "created": 0.0})
-    SandboxState("host", ref).save(layout.sandbox_state)
+    SandboxState("host", ref).save(layout.runtime_status)
     lock = layout.runtime_status.with_name("status.json.lock")
     assert not lock.exists()
     asyncio.run(sandbox.remove_agent(layout))
@@ -120,7 +120,7 @@ def test_failed_launch_cleanup_keeps_live_reference(
     ref = host.process_ref(os.getpid(), "http://localhost:1")
     layout = AgentLayout.resident(tmp_path, "alice")
     state = SandboxState("host", ref)
-    state.save(layout.sandbox_state)
+    state.save(layout.runtime_status)
     state = SandboxState.load(layout.runtime_status)
     released: list[object] = []
 
@@ -174,7 +174,7 @@ def test_releasing_dead_ref_clears_active_report_but_preserves_failure(
     layout.home.mkdir(parents=True)
     ref = host.process_ref(os.getpid(), "http://localhost:1")
     SandboxState("host", replace(ref, meta={**ref.meta, "created": 0.0})).save(
-        layout.sandbox_state
+        layout.runtime_status
     )
     write_runtime_state(
         layout,

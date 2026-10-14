@@ -43,7 +43,7 @@ def test_all_placements_are_visible_without_talk_or_hub(tmp_path) -> None:
     assert running_instances(scope) == ()
 
 
-def test_independent_script_instances_have_separate_execution_and_sandbox_state(
+def test_independent_script_instances_share_status_and_keep_separate_execution_stores(
     tmp_path,
 ) -> None:
     source = tmp_path / "app.too"

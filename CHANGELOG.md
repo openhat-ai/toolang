@@ -89,6 +89,10 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Fixed
 
+- Root `too top --once` now reports local runtime activity when no Hub is
+  running instead of failing, so team status can be inspected without the
+  teaming service.
+
 - A temporary guest left behind by a caller that is confirmed dead is stopped
   and released by the next `start`, `serve`, `stop`, or removal action, while a
   caller that is still alive or cannot be verified, and a detached persistent

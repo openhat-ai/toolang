@@ -25,7 +25,7 @@ from urllib.request import Request, urlopen
 import pytest
 
 from toolang.common.layout import AgentLayout
-from toolang.up.sandbox import SandboxState
+from toolang.up.records import SandboxState
 
 
 pytestmark = pytest.mark.live_docker
@@ -41,6 +41,227 @@ agic echo(_: Text) -> Text:
   user: {{_}}
 """
 _AGENT_SOURCE = f"# Agent alice\n\n{_ECHO_PROGRAM}"
+
+
+@pytest.mark.parametrize("placement", ["roaming", "visiting"])
+def test_docker_foreground_nonresident_uses_selected_root_and_cleans_reference(
+    tmp_path: Path, docker_wheel_dir: Path, local_model_port: int, placement: str
+) -> None:
+    from toolang.up.process import visiting_layout
+    from toolang.up.records import read_record
+
+    program = "flow complete:\n  let result = Done\n"
+
+    class SourceHandler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            data = program.encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def log_message(self, format: str, *args: Any) -> None:
+            pass
+
+    root = tmp_path / "selected"
+    source_server = ThreadingHTTPServer(("127.0.0.1", 0), SourceHandler)
+    source_thread = threading.Thread(target=source_server.serve_forever, daemon=True)
+    source_thread.start()
+    if placement == "roaming":
+        source = tmp_path / "local.too"
+        source.write_text(program)
+        selector = str(source)
+        layout = AgentLayout.roaming(source)
+    else:
+        selector = f"http://127.0.0.1:{source_server.server_port}/remote.too"
+        layout = visiting_layout(selector, toolang_root=root)
+    layout.home.mkdir(parents=True, exist_ok=True)
+    _write_local_model_env(layout.root_env, local_model_port)
+    port = _available_port()
+    env = {**os.environ, "TOOLANG_ROOT": str(root)}
+    base = (sys.executable, "-m", "toolang.cli.toolang")
+    container_id = None
+    with (tmp_path / "foreground.log").open("w+") as log:
+        worker = subprocess.Popen(
+            (
+                *base,
+                selector,
+                "serve",
+                "--sandbox",
+                "docker",
+                "--dev",
+                str(docker_wheel_dir),
+                "--port",
+                str(port),
+            ),
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=log,
+            stderr=log,
+        )
+        try:
+            deadline = time.monotonic() + 180
+            while time.monotonic() < deadline:
+                state = SandboxState.load(layout.runtime_status)
+                if state is not None:
+                    container_id = state.ref.runtime_id
+                if state is not None and _endpoint_ready(state.ref.endpoint):
+                    break
+                if worker.poll() is not None:
+                    log.seek(0)
+                    pytest.fail(log.read())
+                time.sleep(0.1)
+            else:
+                pytest.fail("nonresident guest did not become ready")
+            entry = read_record(layout.runtime_status)
+            assert entry is not None and entry["control"]["placement"] == placement
+            assert entry["control"]["toolang_root"] == str(root)
+            references = tuple((root / ".runtime" / "instances").glob("*.json"))
+            assert len(references) == 1 and placement in references[0].name
+            assert json.loads(references[0].read_text())["status"] == str(
+                layout.runtime_status
+            )
+            observed = subprocess.run(
+                (*base, "top", "--once"),
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+            assert observed.returncode == 0, observed.stderr
+            assert layout.name in observed.stdout
+            worker.send_signal(signal.SIGINT)
+            assert worker.wait(timeout=30) == 130
+            assert SandboxState.load(layout.runtime_status) is None
+            assert not tuple((root / ".runtime" / "instances").glob("*.json"))
+            assert not (layout.root_runtime / "instances").exists()
+            assert not layout.previous_sandbox_state.exists()
+            assert layout.runtime_status.exists() and layout.run_store.exists()
+        finally:
+            if worker.poll() is None:
+                worker.send_signal(signal.SIGINT)
+                try:
+                    worker.wait(timeout=30)
+                except subprocess.TimeoutExpired:
+                    worker.kill()
+                    worker.wait(timeout=10)
+            if container_id is not None:
+                subprocess.run(
+                    ("docker", "rm", "--force", container_id),
+                    capture_output=True,
+                    timeout=15,
+                )
+            source_server.shutdown()
+            source_server.server_close()
+            source_thread.join(timeout=2)
+
+
+def test_docker_restart_reuses_settings_after_queries_reconcile_killed_guest(
+    tmp_path: Path, docker_wheel_dir: Path, local_model_port: int
+) -> None:
+    from toolang.up.records import read_record
+
+    layout = AgentLayout.resident(tmp_path / "toolang", "restart")
+    layout.home.mkdir(parents=True)
+    layout.program.write_text("flow complete:\n  let result = Done\n")
+    layout.config.write_text("[teaming]\nenabled = false\n")
+    _write_local_model_env(layout.root_env, local_model_port)
+    env = {**os.environ, "TOOLANG_ROOT": str(layout.root)}
+    base = (sys.executable, "-m", "toolang.cli.toolang", "--root", str(layout.root))
+    selected_port = _available_port()
+    containers: set[str] = set()
+
+    def command(*args: str, expected: int = 0) -> subprocess.CompletedProcess[str]:
+        result = subprocess.run(
+            (*base, *args), env=env, capture_output=True, text=True, timeout=180
+        )
+        assert result.returncode == expected, result.stdout + result.stderr
+        return result
+
+    try:
+        command(
+            "start",
+            "restart",
+            "--sandbox",
+            "docker",
+            "--dev",
+            str(docker_wheel_dir),
+            "--port",
+            str(selected_port),
+        )
+        first = SandboxState.load(layout.runtime_status)
+        assert first is not None
+        containers.add(first.ref.runtime_id)
+        entry = read_record(layout.runtime_status)
+        assert entry is not None and first.ref.runtime_kind == "container"
+        settings = entry["control"]["last_successful"]
+        assert settings["sandbox"] == "docker"
+        assert settings["endpoint"] == f"http://localhost:{selected_port}"
+        assert not layout.previous_sandbox_state.exists()
+
+        killed = subprocess.run(
+            ("docker", "kill", first.ref.runtime_id),
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        assert killed.returncode == 0, killed.stderr
+        command("list")
+        entry = read_record(layout.runtime_status)
+        assert entry is not None and entry["workload"]["status"] == "stopped"
+        assert entry["workload"]["pid"] is None
+        unchanged = layout.runtime_status.stat().st_mtime_ns
+        command("info", "restart")
+        command("top", "--once")
+        assert layout.runtime_status.stat().st_mtime_ns == unchanged
+        assert SandboxState.load(layout.runtime_status) == first
+        assert (
+            subprocess.run(
+                ("docker", "inspect", first.ref.runtime_id),
+                capture_output=True,
+                timeout=10,
+            ).returncode
+            == 0
+        ), "queries must retain resources for control-side release"
+
+        command("start", "restart", "--dev", str(docker_wheel_dir))
+        second = SandboxState.load(layout.runtime_status)
+        assert second is not None
+        containers.add(second.ref.runtime_id)
+        assert second.ref.runtime_id != first.ref.runtime_id
+        assert second.launch_id != first.launch_id
+        assert second.sandbox == first.sandbox
+        assert second.ref.endpoint == first.ref.endpoint
+        assert (
+            subprocess.run(
+                ("docker", "inspect", first.ref.runtime_id),
+                capture_output=True,
+                timeout=10,
+            ).returncode
+            != 0
+        ), "restart must release the previous container"
+        command("stop", "restart")
+        repeated = command("stop", "restart", expected=1)
+        assert "not running" in repeated.stderr
+        entry = read_record(layout.runtime_status)
+        assert entry is not None and entry["workload"]["status"] == "stopped"
+        assert entry["control"]["last_successful"] == settings
+        assert not entry["control"].get("ref")
+        assert not tuple((layout.root_runtime / "instances").glob("*.json"))
+        assert layout.run_store.exists()
+    finally:
+        subprocess.run(
+            (*base, "stop", "restart", "--force"),
+            env=env,
+            capture_output=True,
+            timeout=30,
+        )
+        for container in containers:
+            subprocess.run(
+                ("docker", "rm", "--force", container),
+                capture_output=True,
+                timeout=15,
+            )
 
 
 def test_killed_temporary_controller_is_recovered_by_next_control_operation(
@@ -216,7 +437,7 @@ def running_docker_agent(
             timeout=180,
         )
         assert started.returncode == 0, started.stderr
-        state = SandboxState.load(layout.sandbox_state)
+        state = SandboxState.load(layout.runtime_status)
         assert state is not None
         container_id = state.ref.runtime_id
         yield _RunningDockerAgent(
@@ -226,7 +447,7 @@ def running_docker_agent(
             started=started,
         )
     finally:
-        if SandboxState.load(layout.sandbox_state) is not None:
+        if SandboxState.load(layout.runtime_status) is not None:
             stopped = subprocess.run(
                 (*base, "stop", "--force"),
                 cwd=_repository(),
@@ -237,7 +458,7 @@ def running_docker_agent(
                 timeout=30,
             )
             assert stopped.returncode == 0, stopped.stderr
-        assert SandboxState.load(layout.sandbox_state) is None
+        assert SandboxState.load(layout.runtime_status) is None
         if container_id is not None:
             inspected = subprocess.run(
                 ("docker", "inspect", container_id),
@@ -262,7 +483,7 @@ def test_docker_agent_server_start_exposes_canonical_runtime_identity(
     with urlopen(f"{agent.endpoint}/healthz", timeout=2) as response:
         assert response.status == 200
     profile = _get_json(f"{agent.endpoint}/api/v1/profile")
-    state = SandboxState.load(agent.layout.sandbox_state)
+    state = SandboxState.load(agent.layout.runtime_status)
 
     assert state is not None
     assert state.sandbox == "docker:python:3.13-slim"
@@ -377,7 +598,7 @@ def test_docker_script_runs_with_a_temporary_agent_server(
 
     assert result.returncode == 0, result.stderr
     assert result.stdout == _MODEL_REPLY
-    assert SandboxState.load(layout.sandbox_state) is None
+    assert SandboxState.load(layout.runtime_status) is None
 
 
 def test_docker_agent_run_interrupt_stops_and_removes_container(
@@ -431,7 +652,7 @@ def test_docker_agent_run_interrupt_stops_and_removes_container(
     try:
         deadline = time.monotonic() + 180
         while time.monotonic() < deadline:
-            state = SandboxState.load(layout.sandbox_state)
+            state = SandboxState.load(layout.runtime_status)
             if state is not None and _endpoint_ready(endpoint):
                 container_id = state.ref.runtime_id
                 break
@@ -447,7 +668,7 @@ def test_docker_agent_run_interrupt_stops_and_removes_container(
         stdout, stderr = process.communicate(timeout=30)
 
         assert process.returncode == 130, (stdout, stderr)
-        assert SandboxState.load(layout.sandbox_state) is None
+        assert SandboxState.load(layout.runtime_status) is None
         inspected = subprocess.run(
             ("docker", "inspect", container_id),
             check=False,
@@ -464,7 +685,7 @@ def test_docker_agent_run_interrupt_stops_and_removes_container(
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.communicate(timeout=10)
-        if SandboxState.load(layout.sandbox_state) is not None:
+        if SandboxState.load(layout.runtime_status) is not None:
             subprocess.run(
                 (*base, "stop", "--force"),
                 cwd=_repository(),
@@ -655,7 +876,7 @@ def _run_agent_command(
 
 
 def _assert_running_container_unchanged(agent: _RunningDockerAgent) -> None:
-    state = SandboxState.load(agent.layout.sandbox_state)
+    state = SandboxState.load(agent.layout.runtime_status)
     assert state is not None
     assert state.ref.runtime_id == agent.container_id
     inspected = subprocess.run(

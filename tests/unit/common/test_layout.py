@@ -16,22 +16,33 @@ def test_resident_layout_derives_agent_paths(tmp_path: Path) -> None:
     assert layout.agent_state == layout.home / ".state" / "agent"
     assert layout.sandbox_home == layout.root / ".sandbox" / "alice"
     assert layout.runtime_status == layout.home / ".runtime" / "status.json"
-    assert layout.sandbox_state == layout.runtime_status
+    assert layout.previous_sandbox_state == layout.sandbox_home / "state.json"
     assert layout.legacy_sandbox_state == layout.runtime / "sandbox.json"
     assert layout.sandbox_stage == layout.sandbox_home / "launches"
     assert layout.runtime_status.is_relative_to(layout.home)
     assert layout.run_store == layout.home / ".runtime" / "runs.db"
 
 
-def test_visiting_layout_is_stable_and_source_specific() -> None:
-    first = AgentLayout.visiting("octo/agents/researcher", "researcher")
-    repeated = AgentLayout.visiting("octo/agents/researcher", "researcher")
-    other = AgentLayout.visiting("other/agents/researcher", "researcher")
+def test_visiting_layout_is_stable_and_root_and_source_specific(tmp_path: Path) -> None:
+    root = tmp_path / "toolang"
+    first = AgentLayout.visiting(
+        "octo/agents/researcher", "researcher", toolang_root=root
+    )
+    repeated = AgentLayout.visiting(
+        "octo/agents/researcher", "researcher", toolang_root=root
+    )
+    other = AgentLayout.visiting(
+        "other/agents/researcher", "researcher", toolang_root=root
+    )
+    other_root = AgentLayout.visiting(
+        "octo/agents/researcher", "researcher", toolang_root=tmp_path / "other"
+    )
 
     assert first == repeated
     assert first.placement == "visiting"
     assert first.root.parent == Path("/tmp").resolve()
     assert first.root != other.root
+    assert first.root != other_root.root
 
 
 def test_roaming_layout_is_local_to_source(tmp_path: Path) -> None:

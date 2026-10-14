@@ -2,6 +2,11 @@
 
 Status: Approved on 2026-10-12.
 
+Historical decisions below: authored/State guards are superseded by
+[State lock layout](state-lock-layout.md), ID-file locking by
+[SQLite ID allocation](sqlite-id-allocator.md), and runtime persistence/claims by
+[unified runtime status](unified-runtime-status.md).
+
 ## Goal
 
 Keep necessary cross-process locks and name them after the protected object in

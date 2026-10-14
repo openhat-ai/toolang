@@ -271,7 +271,7 @@ class AgentProcess:
 
     @property
     def reference(self) -> SandboxState | None:
-        return SandboxState.snapshot(
+        return SandboxState.load(
             self.layout.runtime_status, instance=self.layout.instance
         )
 
@@ -765,7 +765,7 @@ def materialize_visiting_program(
     source_text: str,
     *,
     source: str | None = None,
-    toolang_root: Path | None = None,
+    toolang_root: Path,
 ) -> AgentLayout:
     """Materialize one remote agent into its stable visiting root."""
 
@@ -794,9 +794,7 @@ def resolve_run_layout(
     )
 
 
-def visiting_layout(
-    selector_text: str, *, toolang_root: Path | None = None
-) -> AgentLayout:
+def visiting_layout(selector_text: str, *, toolang_root: Path) -> AgentLayout:
     """Derive one visiting layout without resolving or fetching its source."""
 
     selector = parse_agent_selector(selector_text)
@@ -808,7 +806,7 @@ def visiting_layout(
 def resolve_visiting_layout(
     selector_text: str,
     *,
-    toolang_root: Path | None = None,
+    toolang_root: Path,
     progress: ProgressSink | None = None,
 ) -> AgentLayout:
     """Resolve and materialize one remote selector as a visiting layout."""
@@ -821,9 +819,7 @@ def resolve_visiting_layout(
     )
 
 
-def _visiting_layout(
-    selector: AgentSelector, *, toolang_root: Path | None = None
-) -> AgentLayout:
+def _visiting_layout(selector: AgentSelector, *, toolang_root: Path) -> AgentLayout:
     return AgentLayout.visiting(
         selector.text, selector.default_name(), toolang_root=toolang_root
     )
@@ -833,7 +829,7 @@ def _resolve_visiting_layout(
     selector: AgentSelector,
     *,
     progress: ProgressSink | None,
-    toolang_root: Path | None = None,
+    toolang_root: Path,
 ) -> AgentLayout:
     layout = _visiting_layout(selector, toolang_root=toolang_root)
 
@@ -1136,7 +1132,7 @@ def runtime_identity_row(
     """Return one human-readable workload identity for runtime info output."""
 
     if layout is not None:
-        state = SandboxState.snapshot(layout.runtime_status, instance=layout.instance)
+        state = SandboxState.load(layout.runtime_status, instance=layout.instance)
         if state is not None:
             ref = state.ref
             if ref.runtime_kind == "process":

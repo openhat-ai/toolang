@@ -990,7 +990,7 @@ def test_info_shows_starting_identity_without_stale_report(
     root = tmp_path / "toolang"
     layout = _create_agent(root)
     ref = process_ref(os.getpid(), "http://localhost:8123")
-    SandboxState("host", ref).save(layout.sandbox_state)
+    SandboxState("host", ref).save(layout.runtime_status)
     write_runtime_state(
         layout,
         endpoint="http://stale.invalid:9999",

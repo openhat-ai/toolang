@@ -17,7 +17,7 @@ from toolang.plugin.sandboxes.host import HOST_LAUNCH_ENV
 from urllib.request import urlopen
 
 from toolang.common.layout import AgentLayout
-from toolang.up.sandbox import SandboxState
+from toolang.up.records import SandboxState
 
 
 def test_host_sandbox_runs_without_backend_with_default_teaming(tmp_path: Path) -> None:
@@ -51,7 +51,7 @@ def test_host_sandbox_runs_without_backend_with_default_teaming(tmp_path: Path) 
             timeout=40,
         )
         assert started.returncode == 0, started.stderr
-        state = SandboxState.load(layout.sandbox_state)
+        state = SandboxState.load(layout.runtime_status)
         assert state is not None
         assert state.sandbox == "host"
         assert state.ref.meta["signal_scope"] == "process_group"
@@ -105,9 +105,9 @@ def test_host_sandbox_runs_without_backend_with_default_teaming(tmp_path: Path) 
             timeout=10,
         )
         assert stopped.returncode == 0, stopped.stderr
-        assert SandboxState.load(layout.sandbox_state) is None
+        assert SandboxState.load(layout.runtime_status) is None
     finally:
-        state = SandboxState.load(layout.sandbox_state)
+        state = SandboxState.load(layout.runtime_status)
         if state is not None:
             subprocess.run(
                 (*base, "stop", "alice", "--force"),
@@ -190,13 +190,13 @@ with acquire_agent_server(layout, sandbox="host", show_progress=False) as server
         assert [marker.read_text() for marker in ready] == [
             f"http://localhost:{port}"
         ] * 2
-        state = SandboxState.load(layout.sandbox_state)
+        state = SandboxState.load(layout.runtime_status)
         assert state is not None
         release.touch()
         for index, worker in enumerate(workers):
             _output, error = worker.communicate(timeout=10)
             assert worker.returncode == index, error
-        assert SandboxState.load(layout.sandbox_state) == state
+        assert SandboxState.load(layout.runtime_status) == state
         with urlopen(f"{state.ref.endpoint}/healthz", timeout=2) as response:
             assert response.status == 200
     finally:
@@ -205,7 +205,7 @@ with acquire_agent_server(layout, sandbox="host", show_progress=False) as server
             if worker.poll() is None:
                 worker.kill()
             worker.communicate(timeout=5)
-        if SandboxState.load(layout.sandbox_state) is not None:
+        if SandboxState.load(layout.runtime_status) is not None:
             subprocess.run(
                 (
                     sys.executable,
@@ -257,7 +257,7 @@ def test_direct_server_registers_and_stops_without_signalling_shell(
                 time.sleep(0.05)
             else:
                 raise AssertionError("direct server did not become ready")
-            state = SandboxState.load(layout.sandbox_state)
+            state = SandboxState.load(layout.runtime_status)
             assert state is not None and state.ref.runtime_id == str(child.pid)
             assert state.ref.meta["signal_scope"] == "process"
             assert os.getpgid(child.pid) == os.getpgrp()
@@ -272,7 +272,7 @@ def test_direct_server_registers_and_stops_without_signalling_shell(
                 ]["status"]
                 == "stopped"
             )
-            assert SandboxState.load(layout.sandbox_state) is None
+            assert SandboxState.load(layout.runtime_status) is None
         finally:
             if child.poll() is None:
                 child.kill()
@@ -304,7 +304,7 @@ def test_unregistered_managed_child_exits_before_preparing_agent(
     )
     assert result.returncode != 0
     assert "launch identity does not match" in result.stderr
-    assert not layout.sandbox_state.exists()
+    assert not layout.runtime_status.exists()
     assert not layout.runtime_status.exists()
     assert not layout.agent_state.exists()
 
@@ -347,6 +347,11 @@ def test_foreground_serve_is_one_process_and_kill_preserves_restart_settings(
                 "status",
                 "launch_id",
             }
+            monitored = subprocess.run(
+                (*base, "top", "--once"), capture_output=True, text=True, timeout=10
+            )
+            assert monitored.returncode == 0, monitored.stderr
+            assert "alice" in monitored.stdout
             workload.kill()
             workload.wait(timeout=5)
             listed = subprocess.run(

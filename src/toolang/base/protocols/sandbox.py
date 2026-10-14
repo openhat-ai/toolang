@@ -22,7 +22,7 @@ class Sandbox(Protocol):
     location: SandboxLocation
 
     def runtime_root(self, local_root: Path) -> Path:
-        """Resolve the Toolang root used by the workload environment."""
+        """Map the local agent root into the workload's filesystem namespace."""
 
     def prepare(self, spec: str | None, request: SandboxRequest) -> SandboxPlan:
         """Parse an implementation-owned spec and prepare one launch."""

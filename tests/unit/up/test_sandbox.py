@@ -19,6 +19,7 @@ from toolang.base.types.sandbox import (
 )
 from toolang.common.layout import AgentLayout
 from toolang.up import sandbox
+from toolang.up.records import SandboxState
 from toolang.up import process as process_runtime
 from toolang.up.server import ServeSpec
 
@@ -245,7 +246,7 @@ def test_resolve_selection_uses_explicit_home_root_host_precedence(
 
 def test_sandbox_state_round_trips(tmp_path: Path) -> None:
     path = tmp_path / "sandbox.json"
-    state = sandbox.SandboxState(
+    state = SandboxState(
         sandbox="docker:python:3.13-slim",
         ref=SandboxRef(
             runtime_id="container",
@@ -259,7 +260,7 @@ def test_sandbox_state_round_trips(tmp_path: Path) -> None:
 
     state.save(path)
 
-    assert sandbox.SandboxState.load(path) == state
+    assert SandboxState.load(path) == state
     assert '"version": 2' in path.read_text(encoding="utf-8")
 
 
@@ -283,7 +284,7 @@ def test_sandbox_state_does_not_adopt_a_version_one_reference(
     )
 
     with pytest.raises(ValueError, match="unsupported runtime status version"):
-        sandbox.SandboxState.load(path)
+        SandboxState.load(path)
 
 
 def test_sandbox_state_rejects_corrupted_data(tmp_path: Path) -> None:
@@ -291,7 +292,7 @@ def test_sandbox_state_rejects_corrupted_data(tmp_path: Path) -> None:
     path.write_text("{broken", encoding="utf-8")
 
     with pytest.raises(ValueError, match="invalid runtime status"):
-        sandbox.SandboxState.load(path)
+        SandboxState.load(path)
 
 
 def test_sandbox_state_rejects_an_unversioned_payload(tmp_path: Path) -> None:
@@ -302,7 +303,7 @@ def test_sandbox_state_rejects_an_unversioned_payload(tmp_path: Path) -> None:
     )
 
     with pytest.raises(ValueError, match="unsupported runtime status version"):
-        sandbox.SandboxState.load(path)
+        SandboxState.load(path)
 
 
 def test_sandbox_ref_rejects_non_json_recovery_metadata(tmp_path: Path) -> None:
@@ -327,18 +328,18 @@ def test_agent_removal_releases_control_state_through_the_sandbox(
     )
     layout = AgentLayout.resident(tmp_path, "alice")
     layout.home.mkdir(parents=True)
-    sandbox.SandboxState(
+    SandboxState(
         sandbox="docker:python:3.13-slim",
         ref=SandboxRef("toolang-alice-test", "http://localhost:8123"),
         launch_id="fixture",
-    ).save(layout.sandbox_state)
+    ).save(layout.runtime_status)
 
     asyncio.run(sandbox.remove_agent(layout))
 
     assert ("release", SandboxRef("toolang-alice-test", "http://localhost:8123")) in (
         implementation.calls
     )
-    assert sandbox.SandboxState.load(layout.sandbox_state) is None
+    assert SandboxState.load(layout.runtime_status) is None
     assert not layout.home.exists()
 
 
@@ -353,18 +354,18 @@ def test_release_stopped_rejects_a_workload_that_became_active(
         lambda _layout, _state: implementation,
     )
     layout = AgentLayout.resident(tmp_path, "alice")
-    state = sandbox.SandboxState(
+    state = SandboxState(
         sandbox="docker:python:3.13-slim",
         ref=SandboxRef("toolang-alice-test", "http://localhost:8123"),
         launch_id="fixture",
     )
-    state.save(layout.sandbox_state)
+    state.save(layout.runtime_status)
 
     with pytest.raises(ValueError, match="already running"):
         asyncio.run(sandbox.release_stopped(layout))
 
     assert ("release", state.ref) not in implementation.calls
-    assert sandbox.SandboxState.load(layout.sandbox_state) == state
+    assert SandboxState.load(layout.runtime_status) == state
 
 
 def test_stop_handle_stops_only_its_exact_owned_workload(
@@ -372,12 +373,12 @@ def test_stop_handle_stops_only_its_exact_owned_workload(
 ) -> None:
     implementation = FakeSandbox()
     layout = AgentLayout.resident(tmp_path, "alice")
-    state = sandbox.SandboxState(
+    state = SandboxState(
         sandbox="docker:python:3.13-slim",
         ref=SandboxRef("toolang-alice-owned", "http://localhost:8123"),
         launch_id="fixture",
     )
-    state.save(layout.sandbox_state)
+    state.save(layout.runtime_status)
     handle = sandbox.SandboxHandle(implementation, state)
     events: list[ProgressEvent] = []
 
@@ -387,7 +388,7 @@ def test_stop_handle_stops_only_its_exact_owned_workload(
 
     assert ("stop", state.ref, False) in implementation.calls
     assert ("release", state.ref) in implementation.calls
-    assert sandbox.SandboxState.load(layout.sandbox_state) is None
+    assert SandboxState.load(layout.runtime_status) is None
     assert [(event.kind, event.stage, event.status) for event in events] == [
         ("runtime", "stop", "running"),
         ("runtime", "stop", "ok"),
@@ -403,12 +404,12 @@ def test_stop_handle_reports_the_failed_cleanup_stage(
     implementation = FakeSandbox()
     implementation.stop_error = RuntimeError("stop failed")
     layout = AgentLayout.resident(tmp_path, "alice")
-    state = sandbox.SandboxState(
+    state = SandboxState(
         sandbox="docker:python:3.13-slim",
         ref=SandboxRef("toolang-alice-owned", "http://localhost:8123"),
         launch_id="fixture",
     )
-    state.save(layout.sandbox_state)
+    state.save(layout.runtime_status)
     events: list[ProgressEvent] = []
 
     with pytest.raises(RuntimeError, match="stop failed"):
@@ -426,7 +427,7 @@ def test_stop_handle_reports_the_failed_cleanup_stage(
         ("runtime", "stop", "running", "docker:python:3.13-slim"),
         ("runtime", "stop", "failed", "stop failed"),
     ]
-    assert sandbox.SandboxState.load(layout.sandbox_state) == state
+    assert SandboxState.load(layout.runtime_status) == state
 
 
 def test_stop_handle_rejects_replaced_ownership_without_stopping(
@@ -434,17 +435,17 @@ def test_stop_handle_rejects_replaced_ownership_without_stopping(
 ) -> None:
     implementation = FakeSandbox()
     layout = AgentLayout.resident(tmp_path, "alice")
-    owned = sandbox.SandboxState(
+    owned = SandboxState(
         sandbox="docker:python:3.13-slim",
         ref=SandboxRef("toolang-alice-owned", "http://localhost:8123"),
         launch_id="fixture",
     )
-    replacement = sandbox.SandboxState(
+    replacement = SandboxState(
         sandbox="docker:python:3.13-slim",
         ref=SandboxRef("toolang-alice-replacement", "http://localhost:8124"),
         launch_id="fixture",
     )
-    replacement.save(layout.sandbox_state)
+    replacement.save(layout.runtime_status)
 
     with pytest.raises(ValueError, match="ownership changed"):
         asyncio.run(
@@ -458,7 +459,7 @@ def test_stop_handle_rejects_replaced_ownership_without_stopping(
         isinstance(call, tuple) and call[0] in {"stop", "release"}
         for call in implementation.calls
     )
-    assert sandbox.SandboxState.load(layout.sandbox_state) == replacement
+    assert SandboxState.load(layout.runtime_status) == replacement
 
 
 def test_stop_handle_does_not_stop_without_current_ownership(
@@ -466,7 +467,7 @@ def test_stop_handle_does_not_stop_without_current_ownership(
 ) -> None:
     implementation = FakeSandbox()
     layout = AgentLayout.resident(tmp_path, "alice")
-    owned = sandbox.SandboxState(
+    owned = SandboxState(
         sandbox="docker:python:3.13-slim",
         ref=SandboxRef("toolang-alice-owned", "http://localhost:8123"),
         launch_id="fixture",
@@ -493,11 +494,11 @@ def test_sandbox_status_reports_plugin_recovery_failure(
 ) -> None:
     layout = AgentLayout.resident(tmp_path, "alice")
     layout.home.mkdir(parents=True)
-    sandbox.SandboxState(
+    SandboxState(
         sandbox="missing",
         ref=SandboxRef("workload-1", "http://localhost:8123"),
         launch_id="fixture",
-    ).save(layout.sandbox_state)
+    ).save(layout.runtime_status)
 
     def fail_recovery(*_args: object) -> object:
         raise ValueError("plugin is unavailable")
@@ -552,7 +553,7 @@ def test_launch_delegates_complete_spec_and_stop_releases_state(
         )
         in request.mounts
     )
-    assert sandbox.SandboxState.load(spec.serve.layout.sandbox_state) == handle.state
+    assert SandboxState.load(spec.serve.layout.runtime_status) == handle.state
     assert [
         (event.stage, event.status) for event in events if event.kind == "prepare"
     ] == [
@@ -578,7 +579,7 @@ def test_launch_delegates_complete_spec_and_stop_releases_state(
     assert asyncio.run(sandbox.stop(spec.serve.layout, force=True)) is True
     assert ("stop", handle.state.ref, True) in implementation.calls
     assert ("release", handle.state.ref) in implementation.calls
-    assert sandbox.SandboxState.load(spec.serve.layout.sandbox_state) is None
+    assert SandboxState.load(spec.serve.layout.runtime_status) is None
     assert configs == [{}, {"current": True}]
 
 
@@ -676,17 +677,17 @@ def test_stop_failure_preserves_sandbox_state(
     implementation.stop_error = RuntimeError("still running")
     monkeypatch.setattr(sandbox, "create_sandbox", lambda _name, config: implementation)
     spec = _launch_spec(tmp_path)
-    state = sandbox.SandboxState(
+    state = SandboxState(
         sandbox=spec.sandbox,
         ref=SandboxRef("workload-1", spec.serve.endpoint),
         launch_id="fixture",
     )
-    state.save(spec.serve.layout.sandbox_state)
+    state.save(spec.serve.layout.runtime_status)
 
     with pytest.raises(RuntimeError, match="still running"):
         asyncio.run(sandbox.stop(spec.serve.layout))
 
-    assert sandbox.SandboxState.load(spec.serve.layout.sandbox_state) == state
+    assert SandboxState.load(spec.serve.layout.runtime_status) == state
 
 
 def test_launch_failure_stops_releases_and_clears_state(
@@ -716,7 +717,7 @@ def test_launch_failure_stops_releases_and_clears_state(
         "release",
         SandboxRef("workload-1", spec.serve.endpoint),
     ) in implementation.calls
-    assert sandbox.SandboxState.load(spec.serve.layout.sandbox_state) is None
+    assert SandboxState.load(spec.serve.layout.runtime_status) is None
     assert (events[-1].kind, events[-1].stage) == ("runtime", "start")
     assert events[-1].status == "failed"
     assert events[-1].detail == "not ready"
@@ -761,7 +762,7 @@ def test_readiness_cleanup_failure_preserves_sandbox_state(
     with pytest.raises(TimeoutError, match="not ready"):
         asyncio.run(sandbox.launch(spec))
 
-    state = sandbox.SandboxState.load(spec.serve.layout.sandbox_state)
+    state = SandboxState.load(spec.serve.layout.runtime_status)
     assert state is not None
     assert state.ref == SandboxRef("workload-1", spec.serve.endpoint)
 
@@ -779,7 +780,7 @@ def test_attach_cleanup_failure_preserves_sandbox_state(
     with pytest.raises(RuntimeError, match="could not attach output"):
         asyncio.run(sandbox.launch(spec))
 
-    state = sandbox.SandboxState.load(spec.serve.layout.sandbox_state)
+    state = SandboxState.load(spec.serve.layout.runtime_status)
     assert state is not None
     assert state.ref == SandboxRef("workload-1", spec.serve.endpoint)
 
@@ -796,7 +797,7 @@ def test_recoverable_launch_failure_persists_state_when_release_fails(
     with pytest.raises(SandboxLaunchError, match="launch cleanup failed"):
         asyncio.run(sandbox.launch(spec))
 
-    state = sandbox.SandboxState.load(spec.serve.layout.sandbox_state)
+    state = SandboxState.load(spec.serve.layout.runtime_status)
     assert state is not None
     assert state.ref.runtime_id == "recoverable-workload"
 
@@ -813,20 +814,18 @@ def test_foreground_run_waits_then_releases_state(
 
     monkeypatch.setattr(sandbox, "_wait_ready", ready)
     spec = _launch_spec(tmp_path)
-    ready_states: list[sandbox.SandboxState] = []
+    ready_states: list[SandboxState] = []
 
     result = asyncio.run(sandbox.run(spec, on_ready=ready_states.append))
 
     ref = SandboxRef("workload-1", spec.serve.endpoint)
     assert result == 7
     assert ready_states == [
-        sandbox.SandboxState(
-            sandbox=spec.sandbox, ref=ref, launch_id=ready_states[0].launch_id
-        )
+        SandboxState(sandbox=spec.sandbox, ref=ref, launch_id=ready_states[0].launch_id)
     ]
     assert ("wait", ref) in implementation.calls
     assert ("release", ref) in implementation.calls
-    assert sandbox.SandboxState.load(spec.serve.layout.sandbox_state) is None
+    assert SandboxState.load(spec.serve.layout.runtime_status) is None
 
 
 def test_foreground_wait_failure_stops_releases_and_clears_state(
@@ -848,7 +847,7 @@ def test_foreground_wait_failure_stops_releases_and_clears_state(
     ref = SandboxRef("workload-1", spec.serve.endpoint)
     assert ("stop", ref, True) in implementation.calls
     assert ("release", ref) in implementation.calls
-    assert sandbox.SandboxState.load(spec.serve.layout.sandbox_state) is None
+    assert SandboxState.load(spec.serve.layout.runtime_status) is None
 
 
 def test_foreground_ready_failure_stops_releases_and_clears_state(
@@ -864,7 +863,7 @@ def test_foreground_ready_failure_stops_releases_and_clears_state(
     monkeypatch.setattr(sandbox, "_wait_ready", ready)
     spec = _launch_spec(tmp_path)
 
-    def fail_ready(_state: sandbox.SandboxState) -> None:
+    def fail_ready(_state: SandboxState) -> None:
         raise RuntimeError("ready output failed")
 
     with pytest.raises(RuntimeError, match="ready output failed"):
@@ -873,7 +872,7 @@ def test_foreground_ready_failure_stops_releases_and_clears_state(
     ref = SandboxRef("workload-1", spec.serve.endpoint)
     assert ("stop", ref, True) in implementation.calls
     assert ("release", ref) in implementation.calls
-    assert sandbox.SandboxState.load(spec.serve.layout.sandbox_state) is None
+    assert SandboxState.load(spec.serve.layout.runtime_status) is None
 
 
 def test_legacy_guest_state_blocks_launch_stop_and_removal(
@@ -977,7 +976,7 @@ def test_canceled_run_preserves_state_when_stop_fails(
 
     assert isinstance(error, RuntimeError)
     assert str(error) == "still running"
-    assert sandbox.SandboxState.load(spec.serve.layout.sandbox_state) is not None
+    assert SandboxState.load(spec.serve.layout.runtime_status) is not None
     assert not any(
         isinstance(call, tuple) and call[0] == "release"
         for call in implementation.calls
@@ -1013,7 +1012,7 @@ def test_canceled_run_stops_releases_and_clears_state(
     ref = SandboxRef("workload-1", spec.serve.endpoint)
     assert ("stop", ref, False) in implementation.calls
     assert ("release", ref) in implementation.calls
-    assert sandbox.SandboxState.load(spec.serve.layout.sandbox_state) is None
+    assert SandboxState.load(spec.serve.layout.runtime_status) is None
 
 
 def test_readiness_fails_when_workload_exits() -> None:
@@ -1249,7 +1248,7 @@ def test_management_lock_reports_waiting_before_the_lock_is_available(tmp_path):
             assert events[-1].status == "ok"
 
     with ThreadPoolExecutor(max_workers=1) as pool:
-        with file_write_lock(layout.sandbox_state.with_name("status.json.lock")):
+        with file_write_lock(layout.runtime_status.with_name("status.json.lock")):
             future = pool.submit(acquire)
             assert waiting.wait(timeout=2)
             assert [event.status for event in events] == ["running"]
@@ -1277,7 +1276,7 @@ def test_shutdown_reports_management_lock_contention(tmp_path, owned_handle):
         if owned_handle:
             handle = sandbox.SandboxHandle(
                 FakeSandbox(),
-                sandbox.SandboxState(
+                SandboxState(
                     "fake",
                     SandboxRef("test", "http://localhost:1"),
                     launch_id="fixture",
@@ -1287,7 +1286,7 @@ def test_shutdown_reports_management_lock_contention(tmp_path, owned_handle):
         return asyncio.run(sandbox.stop(layout, progress=progress))
 
     with ThreadPoolExecutor(max_workers=1) as pool:
-        with file_write_lock(layout.sandbox_state.with_name("status.json.lock")):
+        with file_write_lock(layout.runtime_status.with_name("status.json.lock")):
             future = pool.submit(stop)
             assert waiting.wait(timeout=1), "Shutdown blocked without progress"
             assert not future.done()

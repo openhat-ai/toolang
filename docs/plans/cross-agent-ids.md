@@ -3,6 +3,9 @@
 Status: implementation scope confirmed by the user on 2026-10-09: add the agent
 name to the existing reversible codec and defer API/generalization refactors.
 
+The file-based allocator below is historical and superseded by
+[SQLite ID allocation](sqlite-id-allocator.md); the agent-keyed codec remains.
+
 ## Goal and scope
 
 Diversify independently generated IDs across agents while retaining the

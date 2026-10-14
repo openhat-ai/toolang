@@ -304,7 +304,7 @@ def test_agent_server_opens_embedded_host_and_releases_stopped_state(
 
 def test_agent_server_wraps_management_lock_failure(tmp_path: Path) -> None:
     layout = AgentLayout.resident(tmp_path, "alice")
-    lock_path = layout.sandbox_state.with_name("status.json.lock")
+    lock_path = layout.runtime_status.with_name("status.json.lock")
     lock_path.mkdir(parents=True)
 
     with pytest.raises(agent_server.AgentServerAcquisitionError) as captured:
@@ -944,7 +944,7 @@ def test_persistent_acquisition_waits_for_http_after_running_report(
     layout = AgentLayout.resident(tmp_path, "alice")
     layout.home.mkdir(parents=True)
     ref = process_ref(os.getpid(), "http://localhost:8123")
-    SandboxState("host", ref, launch_id="fixture").save(layout.sandbox_state)
+    SandboxState("host", ref, launch_id="fixture").save(layout.runtime_status)
     agent_server.agents.write_runtime_state(
         layout,
         endpoint=ref.endpoint,
@@ -980,7 +980,7 @@ def test_persistent_acquisition_waits_for_http_after_running_report(
             with agent_server.acquire_agent_server(layout, sandbox="host"):
                 pytest.fail("unready runtime acquired")
         assert probes == [f"{ref.endpoint}/healthz"]
-    assert SandboxState.load(layout.sandbox_state) == SandboxState(
+    assert SandboxState.load(layout.runtime_status) == SandboxState(
         "host", ref, launch_id="fixture"
     )
 

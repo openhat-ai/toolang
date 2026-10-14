@@ -24,7 +24,7 @@ def test_status_uses_saved_identity_not_live_pid_in_report(
     if not matching:
         ref = replace(ref, meta={**ref.meta, "created": 0.0})
     SandboxState(sandbox="host", ref=ref, launch_id="fixture").save(
-        layout.sandbox_state
+        layout.runtime_status
     )
     process.write_runtime_state(
         layout,
@@ -117,7 +117,7 @@ def test_status_recovers_readiness_from_health_endpoint(
     layout = AgentLayout.resident(tmp_path, "alice")
     layout.home.mkdir(parents=True)
     ref = process_ref(os.getpid(), "http://localhost:8123/")
-    SandboxState("host", ref, launch_id="fixture").save(layout.sandbox_state)
+    SandboxState("host", ref, launch_id="fixture").save(layout.runtime_status)
     monkeypatch.setattr(
         sandbox, "_health_ready", lambda url: url == "http://localhost:8123/healthz"
     )
@@ -140,7 +140,7 @@ def test_runtime_identity_formats_named_docker_container(tmp_path: Path) -> None
             runtime_name="toolang-alice-launch",
         ),
         launch_id="fixture",
-    ).save(layout.sandbox_state)
+    ).save(layout.runtime_status)
 
     assert process.runtime_identity_row({"pid": 1}, layout=layout) == (
         "Container",
@@ -160,7 +160,7 @@ def test_runtime_identity_formats_legacy_docker_reference(tmp_path: Path) -> Non
             meta={"container_name": "toolang-alice-legacy"},
         ),
         launch_id="fixture",
-    ).save(layout.sandbox_state)
+    ).save(layout.runtime_status)
 
     assert process.runtime_identity_row({"pid": 1}, layout=layout) == (
         "Container",
@@ -177,7 +177,7 @@ def test_runtime_identity_preserves_unknown_opaque_id(tmp_path: Path) -> None:
             endpoint="http://localhost:7001",
         ),
         launch_id="fixture",
-    ).save(layout.sandbox_state)
+    ).save(layout.runtime_status)
 
     assert process.runtime_identity_row({"pid": 1}, layout=layout) == (
         "Runtime",
@@ -195,7 +195,7 @@ def test_container_reports_match_launch_identity_not_guest_pid_or_hostname(
         "docker:image",
         SandboxRef("a" * 64, "http://localhost:1", runtime_kind="container"),
         launch_id="fixture",
-    ).save(layout.sandbox_state)
+    ).save(layout.runtime_status)
     process.write_runtime_state(
         layout,
         endpoint="http://guest:1",

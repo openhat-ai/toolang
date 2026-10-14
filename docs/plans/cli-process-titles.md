@@ -2,8 +2,9 @@
 
 Status: server discovery implemented. Process-title rewriting was withdrawn on
 2026-09-21: the CLI now preserves the interpreter's name and argv. The title
-design below is historical; sandbox identity, registration, and discovery remain
-in effect. Native executable naming is deferred to a future implementation.
+design below is historical. Runtime files, roots, and lifecycle ownership below
+are superseded by [unified runtime status](unified-runtime-status.md).
+Native executable naming is deferred to a future implementation.
 
 ## Goal and scope
 

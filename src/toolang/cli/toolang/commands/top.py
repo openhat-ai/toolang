@@ -16,6 +16,7 @@ from toolang.cli.common.activity import watch
 from toolang.cli.common.activity_view import since as stats_since
 from toolang.execution.activity import ActivityQuery, ActivityReader, duration
 from toolang.teaming.observation import CombinedObservation, LocalObservation, Presence
+from toolang.teaming.errors import TeamingError
 from toolang.cli.common.context import (
     cli_context,
     context_layout,
@@ -98,7 +99,7 @@ def top_command(
         endpoint = None
         try:
             connection = HubProcess(context_root(ctx)).connection()
-        except (OSError, ValueError, RuntimeError):
+        except (OSError, ValueError, RuntimeError, TeamingError):
             pass
         else:
             endpoint, backend = connection.endpoint, connection.identity

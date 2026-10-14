@@ -190,7 +190,7 @@ async def launch(
 ) -> SandboxHandle:
     """Launch an AgentServer and return after it becomes ready."""
 
-    lock_path = file_lock_path(spec.serve.layout.sandbox_state)
+    lock_path = file_lock_path(spec.serve.layout.runtime_status)
     async with _task_lock(lock_path, instance=spec.serve.layout.instance):
         with management_lock(spec.serve.layout, progress=progress):
             return await _launch_locked(spec, progress=progress)
@@ -669,7 +669,7 @@ async def stop(
 ) -> bool:
     """Stop and release the currently hosted AgentServer."""
 
-    lock_path = file_lock_path(layout.sandbox_state)
+    lock_path = file_lock_path(layout.runtime_status)
     async with _task_lock(lock_path, instance=layout.instance):
         with management_lock(layout, stage="stop", progress=progress):
             _reject_legacy_state(layout)
@@ -703,7 +703,7 @@ async def stop_handle(
 ) -> bool:
     """Stop and release one exact process-owned sandbox workload."""
 
-    lock_path = file_lock_path(layout.sandbox_state)
+    lock_path = file_lock_path(layout.runtime_status)
     async with _task_lock(lock_path, instance=layout.instance):
         with management_lock(layout, stage="stop", progress=progress):
             _reject_legacy_state(layout)
@@ -976,7 +976,7 @@ async def register_host_server(
 async def remove_agent(layout: AgentLayout) -> None:
     """Keep the final stopped check and home deletion in one management operation."""
 
-    lock_path = file_lock_path(layout.sandbox_state)
+    lock_path = file_lock_path(layout.runtime_status)
     async with _task_lock(lock_path, instance=layout.instance):
         with management_lock(layout):
             await _release_stopped_locked(layout)
@@ -1001,7 +1001,7 @@ async def remove_agent(layout: AgentLayout) -> None:
 async def release_stopped(layout: AgentLayout) -> None:
     """Release any stopped sandbox resources before embedded execution."""
 
-    lock_path = file_lock_path(layout.sandbox_state)
+    lock_path = file_lock_path(layout.runtime_status)
     async with _task_lock(lock_path, instance=layout.instance):
         with management_lock(layout):
             await _release_stopped_locked(layout)

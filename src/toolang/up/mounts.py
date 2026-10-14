@@ -19,7 +19,7 @@ def prepare_root_mounts(
     local_root: Path,
     hosted_root: Path,
 ) -> tuple[SandboxMount, ...]:
-    """Prepare Toolang root paths and return their explicit hosted mounts."""
+    """Prepare authored agent-root inputs and their explicit hosted mounts."""
 
     config_path = local_root / "config.toml"
     config_path.parent.mkdir(parents=True, exist_ok=True)

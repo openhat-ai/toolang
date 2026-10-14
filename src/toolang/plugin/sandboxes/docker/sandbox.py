@@ -232,7 +232,7 @@ class DockerSandbox:
             ) from exc
 
     def runtime_root(self, local_root: Path) -> Path:
-        """Return the Toolang root configured for the Docker guest."""
+        """Return the mapped agent root configured for the Docker guest."""
 
         del local_root
         return self._runtime_root

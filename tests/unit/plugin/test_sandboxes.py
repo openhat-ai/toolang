@@ -427,7 +427,7 @@ def test_docker_sandbox_prepares_and_launches(
     dev.parent.mkdir(parents=True)
     dev.write_bytes(b"wheel")
     (tmp_path / "shared").mkdir()
-    control_lock = AgentLayout.resident(tmp_path, "alice").sandbox_state.with_suffix(
+    control_lock = AgentLayout.resident(tmp_path, "alice").runtime_status.with_suffix(
         ".lock"
     )
     control_lock.parent.mkdir(parents=True)
@@ -474,7 +474,7 @@ def test_docker_sandbox_prepares_and_launches(
         if item.hosted_path == Path("/root/.toolang/agents/alice/.runtime/sandbox")
     )
     assert stage_mount.read_only is True
-    control_state = AgentLayout.resident(tmp_path, "alice").sandbox_state.resolve()
+    control_state = AgentLayout.resident(tmp_path, "alice").runtime_status.resolve()
     assert any(
         control_state.is_relative_to(mount.local_path.resolve()) and not mount.read_only
         for mount in plan.mounts

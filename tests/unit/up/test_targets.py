@@ -107,6 +107,7 @@ def test_resolve_resident_layout_does_not_materialize_files(tmp_path: Path) -> N
 
 
 def test_visiting_layout_derivation_does_not_resolve_or_fetch(
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     selector = "brice/researcher"
@@ -121,9 +122,12 @@ def test_visiting_layout_derivation_does_not_resolve_or_fetch(
         lambda *_args, **_kwargs: pytest.fail("history layout must not fetch"),
     )
 
-    assert agents.visiting_layout(selector) == AgentLayout.visiting(
+    assert agents.visiting_layout(
+        selector, toolang_root=tmp_path
+    ) == AgentLayout.visiting(
         selector,
         "researcher",
+        toolang_root=tmp_path,
     )
 
 
@@ -193,6 +197,7 @@ try:
     agents.materialize_visiting_program(
         agents.HttpAgentRef("https://example.com/researcher.too"),
         "agic:\\n  " + "Long source. " * 1000,
+        toolang_root=Path(sys.argv[1]),
     )
 except OSError:
     sys.exit(0)
@@ -239,7 +244,9 @@ def test_visiting_agent_keeps_one_progress_id_across_prepare_stages(
     )
     events: list[ProgressEvent] = []
 
-    agents.resolve_visiting_layout(selector, progress=events.append)
+    agents.resolve_visiting_layout(
+        selector, toolang_root=tmp_path, progress=events.append
+    )
 
     assert [event.stage for event in events] == [
         "resolve",
@@ -272,7 +279,9 @@ def test_visiting_agent_closes_materialize_progress_on_failure(
     events: list[ProgressEvent] = []
 
     with pytest.raises(OSError, match="write failed"):
-        agents.resolve_visiting_layout(source, progress=events.append)
+        agents.resolve_visiting_layout(
+            source, toolang_root=tmp_path, progress=events.append
+        )
 
     assert [(event.stage, event.status) for event in events[-2:]] == [
         ("materialize", "running"),

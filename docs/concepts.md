@@ -57,8 +57,9 @@ tag, and commit in selector syntax.
 
 ## Agent Placement
 
-Agent placement describes how an agent source is materialized into one local
-runnable Toolang root before execution.
+Agent placement resolves an agent root from its source and the user-selected
+Toolang root. Resident roots coincide; visiting roots depend on Toolang root
+and source; roaming roots depend on the source directory.
 
 Current placements are:
 
@@ -69,7 +70,8 @@ Current placements are:
 | `roaming` | A local `.too` source materialized into a source-local `.toolang` root |
 
 Placement determines which root, home, source, and config files participate in
-runtime assembly. It does not define the semantic shape of one run.
+runtime assembly. The control boundary passes concrete inputs to `_serve`,
+which makes no placement decisions. Placement does not define one run's semantics.
 
 Inspection commands (`info`, `models`, `providers`, `tools`, `caps`,
 `psyche list`, `skill list`, `service list`, `prompt list`, `workspace list`,
@@ -88,7 +90,7 @@ implements the `Sandbox` lifecycle. Current implementations are:
 
 | Driver | Meaning |
 | --- | --- |
-| `host` | Launch `too _serve` as a local child process |
+| `host` | Run foreground `serve` in-process; detached `start` launches `too _serve` |
 | `docker` | Launch a container whose primary workload is `too _serve` |
 
 Selectors use `name[:spec]`. Generic orchestration selects the plugin by name
@@ -96,13 +98,17 @@ and passes the remaining spec unchanged to that implementation. Future drivers
 may use a cloud host. `RunExecutor` receives an `AgentSetup` and an immutable
 `AgentState` and does not know where its process is hosted.
 
-`SandboxState` persists only the control-side workload reference required by a
-later `stop` command. AgentServer status and execution data remain separate.
-The materialized root and home remain authoritative in every environment.
+`SandboxState` in `up/records.py` is a view of the resource reference inside
+the authoritative agent `status.json`, alongside workload state. It has no
+separate state file. `AgentProcess` owns control/query orchestration;
+`AgentCore` and server lifecycle hooks own workload execution and status.
+`RuntimeRegistration` publishes lightweight references in the Toolang root.
 
-Both `serve` and `start` launch the same AgentServer entrypoint. `serve` waits for
-the hosted workload and releases it on exit; `start` returns after readiness.
-One-shot scripts and the chat TUI continue to use the execution core directly.
+Host `serve` uses one Toolang process; host `start` has a controller and child
+during startup, then leaves one workload. Docker uses a host controller and one
+guest workload; entry scripts use `exec`. `serve` waits and releases resources
+on handled exit; `start` returns after readiness. Host scripts execute directly;
+guest scripts use temporary servers, and Chat acquires a persistent server.
 
 
 ## Caps

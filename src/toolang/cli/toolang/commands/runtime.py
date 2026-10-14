@@ -65,7 +65,8 @@ from ...common.output import active_agent_error
 from toolang.common.version import development_source
 
 if TYPE_CHECKING:
-    from toolang.up.sandbox import SandboxState, LaunchSpec
+    from toolang.up.records import SandboxState
+    from toolang.up.sandbox import LaunchSpec
 
 from ...common.progress import CliProgress, runtime_startup_failure_message
 

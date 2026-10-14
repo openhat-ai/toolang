@@ -58,7 +58,7 @@ class HostSandbox:
     )
 
     def runtime_root(self, local_root: Path) -> Path:
-        """Use the caller's Toolang root without path translation."""
+        """Use the local agent root without path translation."""
 
         return local_root
 

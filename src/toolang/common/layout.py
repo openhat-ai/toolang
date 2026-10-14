@@ -14,7 +14,7 @@ IMPLICIT_WORKSPACE_NAME = "lab"
 
 @dataclass(frozen=True, slots=True)
 class AgentLayout:
-    """Immutable paths for one agent under one materialized Toolang root."""
+    """Immutable paths for one agent under its resolved agent root."""
 
     root: Path
     name: str
@@ -53,17 +53,11 @@ class AgentLayout:
         return cls(root=root, name=name, placement="resident", toolang_root=root)
 
     @classmethod
-    def visiting(
-        cls, source: str, name: str, *, toolang_root: Path | None = None
-    ) -> AgentLayout:
+    def visiting(cls, source: str, name: str, *, toolang_root: Path) -> AgentLayout:
         """Create the stable temporary layout for one remote source selector."""
 
         label = _safe_agent_label(name)
-        identity = (
-            source
-            if toolang_root is None
-            else f"{toolang_root.expanduser().resolve()}\0{source}"
-        )
+        identity = f"{toolang_root.expanduser().resolve()}\0{source}"
         digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:8]
         return cls(
             root=Path("/tmp") / f"toolang-{label}-{digest}",
@@ -139,11 +133,6 @@ class AgentLayout:
     @property
     def runtime_status(self) -> Path:
         return self.home / ".runtime" / "status.json"
-
-    @property
-    def sandbox_state(self) -> Path:
-        """Return the consolidated runtime record (including control refs)."""
-        return self.runtime_status
 
     @property
     def previous_sandbox_state(self) -> Path:

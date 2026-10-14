@@ -347,12 +347,6 @@ class SandboxState:
 
     @classmethod
     def load(cls, path: Path, *, instance: str | None = None) -> SandboxState | None:
-        return cls.snapshot(path, instance=instance)
-
-    @classmethod
-    def snapshot(
-        cls, path: Path, *, instance: str | None = None
-    ) -> SandboxState | None:
         return cls.from_record(read_record(path, instance))
 
     @classmethod
