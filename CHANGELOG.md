@@ -7,6 +7,19 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ## [Unreleased]
 
+### Added
+
+- Managed agent startup prepares State locally before entering or creating a
+  workload, so a preparation failure reports its cause and creates no workload.
+  Required work appears on stderr as dim `<ref> fetching`, `parsing`,
+  `resolving`, or `updating` rows that reuse one slot across stages and vanish
+  as work completes, then a single dim summary such as `Prepared agent and 4
+  caps in 1.4s` replaces the region; cached work stays silent with no rows or
+  summary, no spinner or running counter appears, and plain output shows
+  operation transitions plus that summary without terminal controls. A remote
+  `.too` agent is fetched and parsed before its dependencies are prepared, and
+  an unparsable agent blocks them.
+
 ### Changed
 
 - A temporary execution's runtime metadata is retired once its workload has
