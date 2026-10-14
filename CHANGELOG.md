@@ -9,9 +9,48 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Changed
 
+- **Breaking:** authored edit locks are unified into one persistent guard per
+  source scope and the derived State guards are renamed: `agent.too.lock`,
+  `runnables.lock`, `caps.lock`, `chores.lock`, `config.toml.lock`, and
+  `toolang.toml.lock` become `.state/root/edit.lock` for shared root sources
+  and `agents/<agent>/.state/home/edit.lock` for one agent's sources, while
+  each layer's `prepare.lock` and the agent's `check.lock` become `build.lock`
+  and `publish.lock`. A mutation attempt creates its scope's edit lock before
+  its digest or existence checks, but reads never create one: `state`
+  `list`/`get` and other readers acquire an existing guard, or read
+  optimistically and retry under the guard when a writer creates it during
+  that read, and an unchanged roaming projection also leaves the lock absent.
+  Legacy sidecars are neither used nor modified, and mixed versions cannot
+  coordinate across the renamed paths, so stop all host and guest processes
+  sharing the root, upgrade together, then restart.
+
+- **Breaking:** `AuthoredCaps`, `AuthoredChores`, `ConfiguredCaps`, and
+  `ConfiguredWorkspaces` now require an explicit `lock_path=`: use
+  `layout.root_edit_lock` for root-owned sources, including a shared roaming
+  `toolang.toml`, and `layout.home_edit_lock` for one agent's sources.
+
 - Root command descriptions are revised: `workspace` reads `Configure agent
   workspaces`, `chore` reads `Create or schedule tasks`, `talk` reads `Talk
   with agents through the hub`, and `hub` reads `Control the teaming service`.
+
+### Fixed
+
+- Concurrent chore mutations no longer interleave: the API patch holds the
+  agent's edit guard across its whole read/modify/write, so two patches to
+  different fields of one chore are both retained; the CLI edit reads the
+  original before opening the editor and rechecks the winning definition under
+  the edit guard only when saving, and the CLI delete holds that guard across
+  its winner check and removal.
+
+- Chore inspection and the edit/delete winner check read inline declarations and
+  home Markdown files in one guarded snapshot, so a read no longer mixes
+  before/after states or drops a malformed definition's diagnostic.
+
+- Roaming configuration projection rechecks its root sources after releasing the
+  home guard and retries changed inputs for up to three projection attempts in
+  total, so a delayed invocation no longer leaves `config.toml` or `catalog.json`
+  behind a newer edit, and repeated changes fail explicitly instead of silently
+  accepting stale output.
 
 ## [0.4.0a7] - 2026-10-14
 

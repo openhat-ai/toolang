@@ -363,7 +363,7 @@ def test_schema_20_chore_history_remains_loadable_and_current_is_rebuilt(layout)
     import shutil
     from toolang.state.cache import (
         LAYER_SCHEMA,
-        _agent_check_lock,
+        _agent_publish_lock,
         _persist_agent_revision,
         canonical_json,
         layer_revision_dir,
@@ -386,7 +386,7 @@ def test_schema_20_chore_history_remains_loadable_and_current_is_rebuilt(layout)
         shutil.copytree(directory, legacy)
         (legacy / "layer.json").write_bytes(encoded)
     publish_layer_current(layout, "home", revision)
-    with _agent_check_lock(layout):
+    with _agent_publish_lock(layout):
         historical = _persist_agent_revision(
             layout, root_revision=original.root_revision, home_revision=revision
         )

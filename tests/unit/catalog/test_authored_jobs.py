@@ -9,6 +9,7 @@ import pytest
 from toolang.catalog.chore import AuthoredChores, ChoreFile
 from toolang.catalog.errors import CatalogConflictError, CatalogNotFoundError
 from toolang.common.ids import chore_id
+from toolang.common.layout import home_edit_lock_path
 
 
 def test_parsing_preserves_source_and_uses_filename_identity(tmp_path: Path) -> None:
@@ -77,7 +78,7 @@ def test_invalid_metadata_fails(metadata: str) -> None:
 
 
 def test_crud_is_flat_and_addressable_by_name_ref_and_id(tmp_path: Path) -> None:
-    catalog = AuthoredChores(tmp_path)
+    catalog = AuthoredChores(tmp_path, lock_path=home_edit_lock_path(tmp_path))
     assert catalog.list() == ()
     assert not catalog.lock_path.exists()
     item = catalog.create(ChoreFile.parse("Work.\n", name="cleanup"))
@@ -93,7 +94,7 @@ def test_crud_is_flat_and_addressable_by_name_ref_and_id(tmp_path: Path) -> None
 
 
 def test_authoring_rejects_conflicts_and_missing_definitions(tmp_path: Path) -> None:
-    catalog = AuthoredChores(tmp_path)
+    catalog = AuthoredChores(tmp_path, lock_path=home_edit_lock_path(tmp_path))
     item = catalog.create(ChoreFile.parse("Work.", name="cleanup"))
     with pytest.raises(CatalogConflictError, match="already exists"):
         catalog.create(item)
@@ -119,7 +120,7 @@ def test_only_immediate_files_are_effective_and_reads_do_not_write(
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("Work.\n")
     before = {path: path.read_bytes() for path in paths}
-    catalog = AuthoredChores(tmp_path)
+    catalog = AuthoredChores(tmp_path, lock_path=home_edit_lock_path(tmp_path))
     assert [item.name for item in catalog.list()] == ["current"]
     assert catalog.get("current") is not None
     assert not catalog.lock_path.exists()
@@ -127,8 +128,8 @@ def test_only_immediate_files_are_effective_and_reads_do_not_write(
 
 
 def test_authoring_lock_is_reentrant(tmp_path: Path) -> None:
-    catalog = AuthoredChores(tmp_path)
+    catalog = AuthoredChores(tmp_path, lock_path=home_edit_lock_path(tmp_path))
     with catalog.write_lock():
         item = catalog.create(ChoreFile.parse("Work.", name="cleanup"))
         catalog.update(item.with_body("Updated."))
-    assert catalog.lock_path == tmp_path / "chores.lock"
+    assert catalog.lock_path == home_edit_lock_path(tmp_path)

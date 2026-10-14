@@ -101,6 +101,14 @@ class AgentLayout:
         return self.home / ".state" / "agent"
 
     @property
+    def root_edit_lock(self) -> Path:
+        return root_edit_lock_path(self.root)
+
+    @property
+    def home_edit_lock(self) -> Path:
+        return home_edit_lock_path(self.home)
+
+    @property
     def root_runtime(self) -> Path:
         return self.root / ".runtime"
 
@@ -156,6 +164,14 @@ class AgentLayout:
     @property
     def sandbox_stage(self) -> Path:
         return self.sandbox_home / "launches"
+
+
+def root_edit_lock_path(root: Path) -> Path:
+    return root / ".state" / "root" / "edit.lock"
+
+
+def home_edit_lock_path(home: Path) -> Path:
+    return home / ".state" / "home" / "edit.lock"
 
 
 def _safe_agent_label(value: str) -> str:

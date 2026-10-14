@@ -27,6 +27,7 @@ from ..common.progress import ProgressSink, emit_progress
 from toolang.up.records import SandboxState
 
 AgentSelectorForm = Literal["name", "shorthand", "ref"]
+_MAX_ROAMING_PROJECTION_ATTEMPTS = 3
 
 
 @dataclass(frozen=True, slots=True)
@@ -412,11 +413,11 @@ def materialize_roaming_program(source_path: Path) -> AgentLayout:
         resolved_source,
         replace_regular_file=False,
     )
-    _sync_roaming_project(layout.home, resolved_source)
+    _sync_roaming_project(layout, resolved_source)
     return layout
 
 
-def _sync_roaming_project(home: Path, source: Path) -> None:
+def _sync_roaming_project(layout: AgentLayout, source: Path) -> None:
     from toolang.common.config_sources import (
         PROJECTION_HEADER,
         project_sources,
@@ -424,14 +425,22 @@ def _sync_roaming_project(home: Path, source: Path) -> None:
         script_sources,
         source_catalog,
     )
-    from toolang.common.files import atomic_write_text, file_lock_path, file_write_lock
+    from toolang.common.files import EditLock, atomic_write_text
 
-    sources = script_sources(source)
-    catalog = source_catalog(sources, roaming=True, validate=False)
+    home = layout.home
+    root_lock = EditLock(layout.root_edit_lock)
+
+    def capture():
+        sources = script_sources(source)
+        return sources, source_catalog(sources, roaming=True, validate=False)
+
+    sources, catalog = root_lock.read(capture)
     projected = project_sources(sources, source=source, catalog=catalog)
     target = home / "config.toml"
     catalog_target = home / "catalog.json"
-    with file_write_lock(file_lock_path(target)):
+    lock = EditLock(layout.home_edit_lock)
+
+    def needs_update() -> bool:
         previous_catalog = None
         previous_source = None
         if (
@@ -489,16 +498,43 @@ def _sync_roaming_project(home: Path, source: Path) -> None:
             raise ValueError(
                 f"generated project file conflicts with existing file: {path}"
             )
-        if target.is_symlink():
-            target.unlink()
-        if not target.exists() or target.read_text() != projected:
-            atomic_write_text(target, projected)
-        if catalog is not None:
-            _replace_relative_symlink(
-                catalog_target, catalog, replace_regular_file=False
+        return (
+            target.is_symlink()
+            or not target.exists()
+            or target.read_text() != projected
+            or (
+                catalog is not None
+                and (
+                    not catalog_target.is_symlink()
+                    or catalog_target.resolve() != catalog.resolve()
+                )
             )
-        elif catalog_target.is_symlink():
-            catalog_target.unlink()
+            or (catalog is None and catalog_target.is_symlink())
+        )
+
+    for _ in range(_MAX_ROAMING_PROJECTION_ATTEMPTS):
+        if lock.read(needs_update):
+            with lock.write():
+                if needs_update():
+                    if target.is_symlink():
+                        target.unlink()
+                    if not target.exists() or target.read_text() != projected:
+                        atomic_write_text(target, projected)
+                    if catalog is not None:
+                        _replace_relative_symlink(
+                            catalog_target, catalog, replace_regular_file=False
+                        )
+                    elif catalog_target.is_symlink():
+                        catalog_target.unlink()
+        # Root edits and home projection never hold each other's guards. An
+        # older invocation delayed on the home guard must not leave a stale
+        # projection behind after a newer root edit/projection has completed.
+        current_sources, current_catalog = root_lock.read(capture)
+        if (sources, catalog) == (current_sources, current_catalog):
+            return
+        sources, catalog = current_sources, current_catalog
+        projected = project_sources(sources, source=source, catalog=catalog)
+    raise RuntimeError("project sources changed repeatedly while projecting")
 
 
 def _replace_relative_symlink(

@@ -29,10 +29,10 @@ def test_flat_authoring_and_inline_shadowing_with_chore_driver_disabled(tmp_path
     harness.store.close()
     core = AgentCore(layout, drivers=frozenset())
     asyncio.run(core.state.refresh())
-    root_file = AuthoredChores(layout.root).create(
+    root_file = AuthoredChores(layout.root, lock_path=layout.root_edit_lock).create(
         ChoreFile.parse("Root body.", name="cleanup")
     )
-    home_file = AuthoredChores(layout.home).create(
+    home_file = AuthoredChores(layout.home, lock_path=layout.home_edit_lock).create(
         ChoreFile.parse("Home body.", name="cleanup")
     )
     app = create_app(
@@ -136,7 +136,7 @@ def test_chore_inspection_reads_current_source_and_rejects_hidden_mutations(tmp_
     layout = harness.setup.layout
     harness.store.close()
     core = AgentCore(layout, drivers=frozenset())
-    home = AuthoredChores(layout.home).create(
+    home = AuthoredChores(layout.home, lock_path=layout.home_edit_lock).create(
         ChoreFile.parse("Home body.", name="cleanup")
     )
     layout.program.write_text("chore cleanup:\n  New inline.\nflow ready:\n  pass\n")
@@ -169,7 +169,7 @@ def test_chore_api_edits_visible_home_file_and_preserves_root(tmp_path):
     layout = harness.setup.layout
     harness.store.close()
     core = AgentCore(layout, drivers=frozenset())
-    root_file = AuthoredChores(layout.root).create(
+    root_file = AuthoredChores(layout.root, lock_path=layout.root_edit_lock).create(
         ChoreFile.parse("Root body.", name="cleanup")
     )
     asyncio.run(core.state.refresh())
@@ -272,7 +272,9 @@ def test_chore_patch_reports_reconciled_runtime_state(tmp_path, changes):
     )
     layout = harness.setup.layout
     harness.store.close()
-    AuthoredChores(layout.home).create(ChoreFile.parse("Original body.", name="good"))
+    AuthoredChores(layout.home, lock_path=layout.home_edit_lock).create(
+        ChoreFile.parse("Original body.", name="good")
+    )
     core = AgentCore(layout, drivers=frozenset())
     state = asyncio.run(core.state.refresh())
     checkpoints = ChoreStore(layout.chore_store)
@@ -303,7 +305,9 @@ def test_invalid_agent_syntax_does_not_block_home_chore_api_authoring(tmp_path):
     layout = harness.setup.layout
     harness.store.close()
     layout.program.write_text("flow (")
-    AuthoredChores(layout.home).create(ChoreFile.parse("Original body.", name="good"))
+    AuthoredChores(layout.home, lock_path=layout.home_edit_lock).create(
+        ChoreFile.parse("Original body.", name="good")
+    )
     core = AgentCore(layout, drivers=frozenset())
     asyncio.run(core.state.refresh())
     app = create_app(

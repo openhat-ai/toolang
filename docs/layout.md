@@ -156,17 +156,45 @@ Existing destinations win and legacy files remain untouched.
 
 ## File Locks
 
-Locks remain beside their protected objects, without a dedicated lock directory:
+Authored scopes and derived State use locks in their existing `.state` directories:
+
+| Lock path | Purpose |
+| --- | --- |
+| `.state/root/edit.lock` | All edits to shared root sources |
+| `agents/<agent>/.state/home/edit.lock` | All edits to one agent's sources |
+| `.state/root/build.lock` | Root layer construction and publication |
+| `agents/<agent>/.state/home/build.lock` | Home layer construction and publication |
+| `agents/<agent>/.state/agent/publish.lock` | Complete agent preparation, composition, and publication |
+
+Edit locks first appear on a mutation attempt, including one that fails or makes
+no content change. Read-only operations never create edit locks or their parent
+directories: they acquire an existing guard, or read optimistically and retry
+under the guard if the first writer creates it during the read. An unchanged
+roaming configuration projection also leaves an absent edit lock absent.
+Shared roaming `toolang.toml` edits use the roaming root edit lock; projected
+home configuration uses its home edit lock. Release edit locks before refreshing
+State. The watcher uses source-change detection independently of edit locks.
+Roaming projection verifies its root inputs again after releasing the home guard
+and retries changed inputs, up to three attempts. Chore inspection reads inline
+and file definitions together. API patches hold edit across winner checks and
+read/modify/write; CLI saves/deletes recheck the winner under edit through commit.
+The interactive editor runs outside the guard.
+
+Python callers of `AuthoredCaps`, `AuthoredChores`, `ConfiguredCaps`, and
+`ConfiguredWorkspaces` must now pass `lock_path=` explicitly. Use
+`layout.root_edit_lock` or `layout.home_edit_lock` according to source ownership;
+for shared roaming `toolang.toml`, use the root path. Parsing remains independent
+of locks through `CapFile.parse`, `ChoreFile.parse`, `ConfiguredCaps.parse`, and
+`ConfiguredWorkspaces.parse`.
+
+Other locks remain beside their protected objects:
 
 | Lock | Purpose |
 | --- | --- |
-| `config.toml.lock`, `agent.too.lock` | Authored file updates |
-| `caps.lock`, `chores.lock`, `runnables.lock` | Authored collection updates |
 | `<database-name>.init.lock` | SQLite initialization |
 | `<thread-id>.compact.lock` | Thread compaction across model calls |
 | `status.json.lock` | Runtime status updates |
 | `state.json.lock` | Sandbox lifecycle |
-| `prepare.lock`, `check.lock` | State preparation and publication |
 | `hub/hub.lock` | One Hub process per root for its lifetime |
 
 Thread fork/rewind use SQLite transactions, without `runs.db.threads.lock`.
@@ -176,7 +204,8 @@ files and retain no previous-message batch context.
 ID allocation updates the `seqs` table in `runs.db` under a short SQLite write
 transaction; there is no separate allocator file or lock.
 
-Stop all writers sharing storage before upgrading across these lock-name changes.
+Stop all host/guest processes and writers sharing the affected root, upgrade
+together, then restart. Mixed versions cannot coordinate across the new paths.
 Released sidecars remain empty files; existence does not mean a lock is held.
 Do not delete them while processes may use them. Legacy lock files remain in
 place and may be removed only while the entire affected scope is offline.
@@ -194,8 +223,8 @@ State directories:
 | Home layer | `${TOOLANG_ROOT}/agents/<agent>/.state/home/` |
 | Agent composition | `${TOOLANG_ROOT}/agents/<agent>/.state/agent/` |
 
-Each directory stores a current-revision pointer, a writer lock, and immutable
-revision directories. Layer source identities contain only logical paths,
+Each directory stores a current-revision pointer, a build or publish lock, and
+immutable revision directories. Layer source identities contain only logical paths,
 canonical byte sizes, and content digests, so the same revisions remain usable
 when root and home are mounted at different absolute paths. Sandbox preparation
 mounts symbolic-linked State source files read-only at their logical guest

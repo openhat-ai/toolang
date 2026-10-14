@@ -54,7 +54,8 @@ referenced capabilities have `here` scope and belong to one module.
 ```text
 ${TOOLANG_ROOT}/.state/root/
   current
-  prepare.lock
+  edit.lock
+  build.lock
   revs/<root-revision>/
     layer.json
     files/
@@ -65,7 +66,8 @@ ${TOOLANG_ROOT}/.state/root/
 
 ${TOOLANG_ROOT}/agents/<agent>/.state/home/
   current
-  prepare.lock
+  edit.lock
+  build.lock
   revs/<home-revision>/
     layer.json
     files/
@@ -81,12 +83,15 @@ ${TOOLANG_ROOT}/agents/<agent>/.state/home/
 
 ${TOOLANG_ROOT}/agents/<agent>/.state/agent/
   current
-  check.lock
+  publish.lock
   revs/<state-revision>/
     layers.json
 ```
 
-Locks and temporary paths are writer implementation details. Old
+Each source scope's edit lock coordinates participating source writers and is
+created only on a mutation attempt. State preparation does not acquire edit
+locks; it verifies source snapshots and retries when sources change. Build and
+publish locks coordinate derived State writes. Old
 `.state/current` and `.state/versions` caches are ignored and are not migrated.
 
 ## Canonical Documents and Revisions
@@ -220,7 +225,7 @@ paths. An explicit refresh resolves remote refs again.
 
 When rebuilding a layer, a writer:
 
-1. acquires the layer writer lock and checks the source manifest again;
+1. acquires the layer build lock and checks the source manifest again;
 2. captures authored files and parses config and modules;
 3. resolves and materializes configured and referenced capabilities;
 4. verifies the process-local source observation did not change during
@@ -262,13 +267,13 @@ A legacy source metadata tree remains decodable only when loading an exact
 historical layer. It never matches current authored source; a legacy current
 layer is rebuilt with the portable manifest schema.
 
-The complete check and publication transaction also holds an agent-scoped file
-lock, so multiple processes cannot interleave checks for the same agent or let
-an older check publish after a newer one. Different agents use different locks
-and may check concurrently. Root and home layer writer locks remain narrower:
+The complete check and publication transaction also holds the agent-scoped
+`publish.lock`, so multiple processes cannot interleave checks for the same agent
+or let an older check publish after a newer one. Different agents use different locks
+and may check concurrently. Root and home `build.lock` guards remain narrower:
 they are acquired only when that shared or agent-local layer actually needs to
-be rebuilt. The lock order is agent check, then root layer writer, then home
-layer writer. This process-owned boundary is also the State access boundary for
+be rebuilt. The lock order is agent publish, then root build, then home
+build. This process-owned boundary is also the State access boundary for
 current-agent `state` tools.
 
 ## Execution Records

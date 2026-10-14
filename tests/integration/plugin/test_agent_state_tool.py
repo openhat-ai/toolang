@@ -16,6 +16,7 @@ from toolang.execution.tools.state import create_toolset
 from toolang.execution.tools.state.types import StateToolContext
 from toolang.state.prepare import prepare_agent_state
 from toolang.state.watcher import StateWatcher
+from toolang.common.layout import home_edit_lock_path
 
 
 @pytest.fixture
@@ -48,6 +49,51 @@ def read(context, key):
     result = invoke(context, "get", key=key)
     assert result.error is None, result.output
     return result.output
+
+
+def test_reads_leave_fresh_home_without_edit_locks(context):
+    for _ in range(2):
+        assert read(context, "agent.too")["content"]
+        assert invoke(context, "list").error is None
+        assert invoke(context, "get", key="config.toml").output["error"] == "not_found"
+    assert not (context.home / ".state").exists()
+    assert not tuple(context.home.glob("*.lock"))
+
+
+def test_list_retries_a_disappearing_file_during_first_edit(context, monkeypatch):
+    from toolang.common.files import EditLock
+    from toolang.execution.tools.state.storage import HomeFiles
+
+    original = HomeFiles.metadata
+    attempts = []
+
+    def metadata(storage, file):
+        attempts.append(file.key)
+        with EditLock(context.layout.home_edit_lock).write():
+            context.layout.program.unlink()
+        return original(storage, file)
+
+    monkeypatch.setattr(HomeFiles, "metadata", metadata)
+    result = invoke(context, "list")
+    assert result.error is None
+    assert result.output == {"files": []}
+    assert attempts == ["agent.too"]
+
+
+@pytest.mark.parametrize("ancestor", [".state", ".state/home"])
+def test_edit_lock_ancestors_cannot_escape(context, tmp_path, ancestor):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    target = context.home / ancestor
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.symlink_to(outside, target_is_directory=True)
+    for operation, arguments in [
+        ("get", {"key": "agent.too"}),
+        ("list", {}),
+        ("create", {"key": "prompts/new.md", "content": "new"}),
+    ]:
+        assert invoke(context, operation, **arguments).output["error"] == "io_error"
+    assert not tuple(outside.iterdir())
 
 
 def test_six_closed_me_schemas():
@@ -406,8 +452,8 @@ def test_failed_atomic_save_preserves_original_file_and_digest(context, monkeypa
     assert result.output["error"] == "io_error"
     assert read(context, "agent.too") == item
     assert sorted(path.name for path in context.home.iterdir()) == [
+        ".state",
         "agent.too",
-        "agent.too.lock",
     ]
 
 
@@ -658,8 +704,8 @@ def test_flow_deletion_is_saved_and_composition_errors_belong_to_watcher(context
     assert rejected.state.revision != state.revision
     assert not rejected.state.runnables
     assert rejected.diagnostics
-    assert (context.home / "agent.too.lock").is_file()
-    assert (context.home / "runnables.lock").is_file()
+    assert context.layout.home_edit_lock.is_file()
+    assert not tuple(context.home.glob("*.lock"))
     assert not (context.home / ".authored-flows.lock").exists()
 
 
@@ -695,8 +741,16 @@ def test_config_writes_preserve_original_fields_and_relative_paths(context):
     from toolang.state.config import ConfiguredWorkspaces
 
     config = context.home / "config.toml"
-    assert ConfiguredCaps(config).lock_path == ConfiguredWorkspaces(config).lock_path
-    assert ConfiguredCaps(config).lock_path == context.home / "config.toml.lock"
+    assert (
+        ConfiguredCaps(config, lock_path=home_edit_lock_path(config.parent)).lock_path
+        == ConfiguredWorkspaces(
+            config, lock_path=home_edit_lock_path(config.parent)
+        ).lock_path
+    )
+    assert (
+        ConfiguredCaps(config, lock_path=home_edit_lock_path(config.parent)).lock_path
+        == context.layout.home_edit_lock
+    )
 
 
 def test_job_reads_never_allocate_and_crud_preserves_full_text(context):
@@ -754,7 +808,8 @@ def test_symlinks_cannot_escape(context, tmp_path, target):
         (context.home / "config.toml").symlink_to(external)
         key = "config.toml"
     else:
-        (context.home / "caps.lock").symlink_to(external)
+        context.layout.home_edit_lock.parent.mkdir(parents=True, exist_ok=True)
+        context.layout.home_edit_lock.symlink_to(external)
         key = "prompts/new.md"
     result = invoke(context, "create", key=key, content="changed")
     assert result.output["error"] == "io_error"
@@ -838,7 +893,7 @@ def test_roaming_main_preserves_canonical_link_and_source_mode(tmp_path, source_
     assert layout.program.is_symlink()
     assert sha256(source.read_bytes()).hexdigest() == result.output["digest"]
     assert source.stat().st_mode & 0o777 == 0o755
-    assert (layout.home / "config.toml.lock").exists()
+    assert layout.home_edit_lock.exists()
     assert not (layout.home / ".project.lock").exists()
 
 

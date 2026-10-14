@@ -14,7 +14,7 @@ from toolang.cli.common.parameters import TextType
 from toolang.cli.common.editor import edit_markdown
 from ...catalog import templates
 from ...catalog.errors import CatalogConflictError
-from ...common.layout import AgentLayout
+from ...common.layout import AgentLayout, home_edit_lock_path, root_edit_lock_path
 from toolang.catalog import cap as cap_store
 from toolang.catalog import config as cap_config
 from toolang.catalog.types import CAP_KINDS, CapKind
@@ -504,12 +504,21 @@ def _cap_directory(
     return toolang_root if scope == "root" else toolang_root / "agents" / agent_name
 
 
+def _cap_edit_lock(toolang_root: Path, agent_name: str, scope: MutableScope) -> Path:
+    if scope == "root":
+        return root_edit_lock_path(toolang_root)
+    return home_edit_lock_path(_cap_directory(toolang_root, agent_name, scope))
+
+
 def _authored_caps(
     toolang_root: Path,
     agent_name: str,
     scope: MutableScope,
 ) -> cap_store.AuthoredCaps:
-    return cap_store.AuthoredCaps(_cap_directory(toolang_root, agent_name, scope))
+    return cap_store.AuthoredCaps(
+        _cap_directory(toolang_root, agent_name, scope),
+        lock_path=_cap_edit_lock(toolang_root, agent_name, scope),
+    )
 
 
 def _configured_caps(
@@ -518,7 +527,8 @@ def _configured_caps(
     scope: MutableScope,
 ) -> cap_config.ConfiguredCaps:
     return cap_config.ConfiguredCaps(
-        _cap_directory(toolang_root, agent_name, scope) / "config.toml"
+        _cap_directory(toolang_root, agent_name, scope) / "config.toml",
+        lock_path=_cap_edit_lock(toolang_root, agent_name, scope),
     )
 
 

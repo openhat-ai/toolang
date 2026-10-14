@@ -2,17 +2,20 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
-from contextlib import ExitStack, contextmanager
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from hashlib import sha256
 from pathlib import Path
+from typing import TypeVar
 
 from toolang.catalog.types import CAP_KIND_BY_DIR
-from toolang.common.files import atomic_write_bytes, file_lock_path, file_write_lock
+from toolang.common.files import EditLock, atomic_write_bytes
 from toolang.common.layout import AgentLayout
 
 from .errors import DigestMismatchError, UnsafeAuthoringPathError
 from .types import HomeFile, HomeFileCategory
+
+_T = TypeVar("_T")
 
 _SINGLE_FILES: dict[str, HomeFileCategory] = {
     "agent.too": "program",
@@ -52,6 +55,7 @@ class HomeFiles:
         self.layout = layout
         self.home = layout.home
         self._names: dict[Path, set[str]] = {}
+        self._lock = EditLock(layout.home_edit_lock)
 
     def path(self, file: HomeFile) -> Path:
         self._directory(self.home)
@@ -175,31 +179,25 @@ class HomeFiles:
             atomic_write_bytes(path, content)
 
     @contextmanager
-    def lock(self, file: HomeFile | None = None) -> Iterator[None]:
-        targets = {
-            "program": ("agent.too",)
-            if file and file.key == "agent.too"
-            else ("runnables",),
-            "config": ("config.toml",),
-            "cap": ("caps",),
-            "asset": ("caps",),
-            "chore": ("chores",),
-        }
-        names = (
-            targets[file.category]
-            if file is not None
-            else ("agent.too", "runnables", "config.toml", "caps", "chores")
-        )
+    def lock(self) -> Iterator[None]:
         self._directory(self.home)
-        with ExitStack() as stack:
-            for name in names:
-                path = file_lock_path(self.home / name)
-                self._regular(path)
-                stack.enter_context(file_write_lock(path))
+        with self._lock.write():
             try:
                 yield
             finally:
                 self._names.clear()
+
+    def read_consistently(self, read: Callable[[], _T]) -> _T:
+        self._directory(self.home)
+
+        def attempt() -> _T:
+            self._names.clear()
+            try:
+                return read()
+            finally:
+                self._names.clear()
+
+        return self._lock.read(attempt)
 
     def _exact_name(self, path: Path) -> None:
         if not path.exists() and not path.is_symlink():

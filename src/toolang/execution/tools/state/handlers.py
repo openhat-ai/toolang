@@ -21,18 +21,21 @@ def execute(request: ResourceRequest, context: ToolContext) -> dict[str, Any]:
             fail("invalid_request", "state requires a current agent context")
         storage = _storage(context)
         if request.operation == "list":
-            with storage.lock():
-                return {
+            return storage.read_consistently(
+                lambda: {
                     "files": [storage.metadata(classify(key)) for key in storage.keys()]
                 }
+            )
         assert request.key is not None
         try:
             file = classify(request.key)
         except ValueError as exc:
             fail("invalid_request", str(exc), key=request.key)
-        with storage.lock(file):
-            if request.operation == "get":
-                return _item(file.key, storage.read(file))
+        if request.operation == "get":
+            return storage.read_consistently(
+                lambda: _item(file.key, storage.read(file))
+            )
+        with storage.lock():
             encoded: bytes | None = None
             if request.operation != "delete":
                 assert request.content is not None

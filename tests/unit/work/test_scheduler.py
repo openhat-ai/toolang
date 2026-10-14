@@ -126,7 +126,13 @@ def test_scheduler_rejects_invalid_input_without_creating_a_run(
         source=_SOURCE,
         responses=[],
     )
-    _create_chore(AuthoredChores(harness.setup.layout.home), "review", ":help")
+    _create_chore(
+        AuthoredChores(
+            harness.setup.layout.home, lock_path=harness.setup.layout.home_edit_lock
+        ),
+        "review",
+        ":help",
+    )
     scheduler = _scheduler(harness)
 
     async def scenario() -> None:
@@ -197,7 +203,9 @@ def test_scheduler_submits_and_awaits_runs_on_the_execution_loop(
         responses=[_result()],
     )
     _create_chore(
-        AuthoredChores(harness.setup.layout.home),
+        AuthoredChores(
+            harness.setup.layout.home, lock_path=harness.setup.layout.home_edit_lock
+        ),
         "review",
         "/agic:review focus=security\n\nReview this.",
     )
@@ -273,7 +281,9 @@ agic review(_: Part[], focus: Text):
         responses=[],
     )
     _create_chore(
-        AuthoredChores(harness.setup.layout.home),
+        AuthoredChores(
+            harness.setup.layout.home, lock_path=harness.setup.layout.home_edit_lock
+        ),
         "nested-input",
         "/agic:review focus=nested -\nBefore\n$wrap ---\ntarget\n---\nAfter\n",
     )
@@ -301,7 +311,9 @@ def test_scheduler_recovers_a_claim_with_no_accepted_run(tmp_path) -> None:
         responses=[_result()],
     )
     _create_chore(
-        AuthoredChores(harness.setup.layout.home),
+        AuthoredChores(
+            harness.setup.layout.home, lock_path=harness.setup.layout.home_edit_lock
+        ),
         "review",
         "/agic:review focus=recovery\n\nReview after recovery.",
     )
@@ -353,7 +365,9 @@ def test_scheduler_accepts_blocking_controls_from_api_worker_threads(
         responses=[_result("first"), _result("reopened")],
     )
     _create_chore(
-        AuthoredChores(harness.setup.layout.home),
+        AuthoredChores(
+            harness.setup.layout.home, lock_path=harness.setup.layout.home_edit_lock
+        ),
         "review",
         "/agic:review focus=worker\n\nReview from a worker.",
     )
@@ -399,7 +413,9 @@ def test_scheduler_serializes_body_changes(tmp_path) -> None:
             _result("second"),
         ],
     )
-    catalog = AuthoredChores(harness.setup.layout.home)
+    catalog = AuthoredChores(
+        harness.setup.layout.home, lock_path=harness.setup.layout.home_edit_lock
+    )
     authored = _create_chore(
         catalog,
         "review",
@@ -466,7 +482,9 @@ def test_scheduler_allows_different_chores_to_run_concurrently(tmp_path) -> None
             ScriptedModelTurn(result=_result("second"), gate=second_gate),
         ],
     )
-    catalog = AuthoredChores(harness.setup.layout.home)
+    catalog = AuthoredChores(
+        harness.setup.layout.home, lock_path=harness.setup.layout.home_edit_lock
+    )
     _create_chore(catalog, "alpha", "/agic:review focus=alpha\n\nAlpha.")
     _create_chore(catalog, "beta", "/agic:review focus=beta\n\nBeta.")
     scheduler = _scheduler(harness)
@@ -525,7 +543,9 @@ def test_chore_selects_named_handler_before_unnamed_entry(
         tmp_path, prepare_state=True, source=source, responses=[]
     )
     _create_chore(
-        AuthoredChores(harness.setup.layout.home),
+        AuthoredChores(
+            harness.setup.layout.home, lock_path=harness.setup.layout.home_edit_lock
+        ),
         "entry",
         "Handle this request.",
     )
@@ -549,7 +569,9 @@ def test_chore_without_handler_or_entry_fails(tmp_path) -> None:
         tmp_path, prepare_state=True, source="agic review:\n  pass\n", responses=[]
     )
     _create_chore(
-        AuthoredChores(harness.setup.layout.home),
+        AuthoredChores(
+            harness.setup.layout.home, lock_path=harness.setup.layout.home_edit_lock
+        ),
         "entry",
         "Handle this request.",
     )
@@ -577,7 +599,7 @@ def test_chore_handler_falls_back_to_configured_runnable(
         defaults=replace(harness.setup.defaults, runnable="agic:review"),
     )
     _create_chore(
-        AuthoredChores(setup.layout.home),
+        AuthoredChores(setup.layout.home, lock_path=setup.layout.home_edit_lock),
         "entry",
         ("/agic:other\n" if explicit else "") + "Handle this request.",
     )
@@ -597,7 +619,9 @@ def test_driver_consumes_published_state_without_reading_authored_chores(
         tmp_path, source=_SOURCE, responses=[_result()], prepare_state=True
     )
     file = _create_chore(
-        AuthoredChores(harness.setup.layout.home),
+        AuthoredChores(
+            harness.setup.layout.home, lock_path=harness.setup.layout.home_edit_lock
+        ),
         "review",
         "/agic:review focus=published\nReview.",
     )
@@ -641,7 +665,9 @@ def test_invalid_edit_preserves_active_run_and_manual_cancellation(tmp_path):
         responses=[ScriptedModelTurn(result=_result(), gate=gate)],
         prepare_state=True,
     )
-    catalog = AuthoredChores(harness.setup.layout.home)
+    catalog = AuthoredChores(
+        harness.setup.layout.home, lock_path=harness.setup.layout.home_edit_lock
+    )
     original = _create_chore(catalog, "review", "/agic:review focus=active\nReview.")
     driver = _scheduler(harness)
 

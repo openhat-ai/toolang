@@ -84,6 +84,7 @@ from toolang.catalog import CapsManager, ChoresManager
 from toolang.catalog.chores import load_chores
 from toolang.driver.chore.store import ChoreStore
 from toolang.base.protocols.tool import Tool
+from toolang.common.layout import root_edit_lock_path
 
 runner = CliRunner()
 
@@ -702,7 +703,7 @@ def test_chore_list_shows_scheduler_and_latest_run_state(tmp_path: Path) -> None
     root = tmp_path / "toolang"
     _create_agent(root)
     layout = AgentLayout.resident(root, "alice")
-    AuthoredChores(layout.home).create(
+    AuthoredChores(layout.home, lock_path=layout.home_edit_lock).create(
         ChoreFile.parse(
             """---
 id: maintain
@@ -3143,7 +3144,9 @@ def test_cap_summary_counts_filtered_entries_and_kinds(tmp_path: Path) -> None:
     from toolang.catalog.cap import AuthoredCaps, CapFile
 
     for kind, name in (("psyche", "one"), ("psyche", "two"), ("prompt", "three")):
-        AuthoredCaps(tmp_path).create(CapFile.parse("Content.", kind=kind, name=name))
+        AuthoredCaps(tmp_path, lock_path=root_edit_lock_path(tmp_path)).create(
+            CapFile.parse("Content.", kind=kind, name=name)
+        )
     for query, summary in (
         (None, "3 caps, 2 kinds"),
         ("psyche/*", "2 caps, 1 kind"),
@@ -3326,7 +3329,7 @@ def test_cap_lists_apply_scope_allow_and_display_status(
         (tmp_path, "blocked_cap"),
         (layout.home, "private_cap"),
     ):
-        AuthoredCaps(directory).create(
+        AuthoredCaps(directory, lock_path=root_edit_lock_path(directory)).create(
             CapFile.parse(
                 templates.load_template(kind).raw_text,
                 kind=kind,
@@ -3485,7 +3488,7 @@ def test_caps_inspection_combines_root_and_selected_agent_resources(
         (AgentLayout.resident(tmp_path, "alice").home, "private_cap"),
         (AgentLayout.resident(tmp_path, "default").home, "other_cap"),
     ):
-        AuthoredCaps(directory).create(
+        AuthoredCaps(directory, lock_path=root_edit_lock_path(directory)).create(
             CapFile.parse("Be helpful.\n", kind="psyche", name=name)
         )
 
@@ -4015,7 +4018,7 @@ def test_standalone_caps_all_preserves_scope_and_query(
     _create_agent(tmp_path)
     layout = AgentLayout.resident(tmp_path, "alice")
     for directory in (tmp_path, layout.home):
-        AuthoredCaps(directory).create(
+        AuthoredCaps(directory, lock_path=root_edit_lock_path(directory)).create(
             CapFile.parse("Be helpful.\n", kind="psyche", name="shared_cap")
         )
     layout.config.write_text("[allow]\npsyches = []\n")
@@ -4211,7 +4214,7 @@ def test_resource_json_human_and_external_tq_select_identical_records(
         '[allow]\ntools = ["shell/echo"]\nskills = ["skill/reviewer"]\n'
     )
     for name in ("reviewer", "blocked"):
-        AuthoredCaps(tmp_path).create(
+        AuthoredCaps(tmp_path, lock_path=root_edit_lock_path(tmp_path)).create(
             CapFile.parse(
                 "---\ndescription: Review changes.\n---\nReview changes.\n",
                 kind="skill",
@@ -4325,7 +4328,7 @@ def test_chore_mutations_target_visible_definitions(
     layout.program.write_text(
         "chore cleanup:\n  Inline body.\nflow broken:\n  run missing\n"
     )
-    hidden = AuthoredChores(layout.home).create(
+    hidden = AuthoredChores(layout.home, lock_path=layout.home_edit_lock).create(
         ChoreFile.parse("Home body.", name="cleanup")
     )
     assert hidden.path is not None

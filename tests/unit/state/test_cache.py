@@ -11,7 +11,7 @@ from toolang.common.layout import AgentLayout
 from toolang.lang.ast import Program, RepeatStmt, ReduceStmt, SortStmt
 from toolang.state.cache import (
     _persist_agent_revision,
-    _agent_check_lock,
+    _agent_publish_lock,
     canonical_json,
     layer_revision_dir,
     load_agent_revisions,
@@ -92,7 +92,7 @@ def test_agent_state_revision_round_trips_exact_layers(tmp_path: Path) -> None:
     layout = _layout(tmp_path)
     root_revision = _write_root(layout)
     home_revision = _write_home(layout)
-    with _agent_check_lock(layout):
+    with _agent_publish_lock(layout):
         revision = _persist_agent_revision(
             layout,
             root_revision=root_revision,
@@ -122,7 +122,7 @@ def test_exact_revision_loaders_reject_an_empty_revision(tmp_path: Path) -> None
     home_revision = _write_home(layout)
     publish_layer_current(layout, "root", root_revision)
     publish_layer_current(layout, "home", home_revision)
-    with _agent_check_lock(layout):
+    with _agent_publish_lock(layout):
         _persist_agent_revision(
             layout,
             root_revision=root_revision,

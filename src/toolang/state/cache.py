@@ -117,8 +117,8 @@ def layer_current_path(layout: AgentLayout, scope: LayerScope) -> Path:
     return state_root(layout, scope) / "current"
 
 
-def layer_lock_path(layout: AgentLayout, scope: LayerScope) -> Path:
-    return state_root(layout, scope) / "prepare.lock"
+def layer_build_lock_path(layout: AgentLayout, scope: LayerScope) -> Path:
+    return state_root(layout, scope) / "build.lock"
 
 
 def layer_revision_dir(
@@ -134,8 +134,8 @@ def agent_current_path(layout: AgentLayout) -> Path:
     return layout.agent_state / "current"
 
 
-def _agent_check_lock_path(layout: AgentLayout) -> Path:
-    return layout.agent_state / "check.lock"
+def _agent_publish_lock_path(layout: AgentLayout) -> Path:
+    return layout.agent_state / "publish.lock"
 
 
 def agent_revision_dir(layout: AgentLayout, revision: str) -> Path:
@@ -293,7 +293,7 @@ def _persist_agent_revision(
     allow_overrides: Mapping[str, tuple[str, ...]] | None = None,
     workspace_additions: Mapping[str, str] | None = None,
 ) -> str:
-    """Persist and publish one composition while the agent check lock is held."""
+    """Persist and publish one composition while the agent publish lock is held."""
 
     document = agent_layers_document(
         root_revision=root_revision,
@@ -383,25 +383,25 @@ def validate_agent_revision(layout: AgentLayout, revision: str) -> None:
 
 
 @contextmanager
-def layer_lock(
+def layer_build_lock(
     layout: AgentLayout, scope: LayerScope, *, progress: ProgressSink | None = None
 ) -> Iterator[None]:
     """Serialize preparation writers for one State layer."""
 
     with _file_lock(
-        layer_lock_path(layout, scope), label=f"{scope} State", progress=progress
+        layer_build_lock_path(layout, scope), label=f"{scope} State", progress=progress
     ):
         yield
 
 
 @contextmanager
-def _agent_check_lock(
+def _agent_publish_lock(
     layout: AgentLayout, *, progress: ProgressSink | None = None
 ) -> Iterator[None]:
     """Serialize one agent's complete check and publication across processes."""
 
     with _file_lock(
-        _agent_check_lock_path(layout),
+        _agent_publish_lock_path(layout),
         label=f"agent {layout.name} State",
         progress=progress,
     ):

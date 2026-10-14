@@ -12,6 +12,7 @@ from toolang.lang.ast import Program
 from toolang.catalog.chores import load_chores, merge_chores, inline_chores
 from toolang.driver.chore.store import ChoreStore
 from toolang.state.watcher import StateWatcher
+from toolang.common.layout import home_edit_lock_path
 
 
 def test_chore_watcher_current_returns_published_snapshot_without_rescanning(
@@ -37,8 +38,12 @@ def test_inline_chore_shadows_home_and_root_without_changing_identity(
 ) -> None:
     root = tmp_path / "toolang"
     home = root / "agents" / "alice"
-    root_file = AuthoredChores(root).create(ChoreFile.parse("Root.", name="review"))
-    AuthoredChores(home).create(ChoreFile.parse("Home.", name="review"))
+    root_file = AuthoredChores(root, lock_path=home_edit_lock_path(root)).create(
+        ChoreFile.parse("Root.", name="review")
+    )
+    AuthoredChores(home, lock_path=home_edit_lock_path(home)).create(
+        ChoreFile.parse("Home.", name="review")
+    )
     layout = AgentLayout.resident(root, "alice")
     (home_definition,) = load_chores(layout)
     assert home_definition.body == "Home."
@@ -56,9 +61,10 @@ def test_inline_chore_shadows_home_and_root_without_changing_identity(
 
 def test_chore_store_claims_once_across_connections(tmp_path: Path) -> None:
     root = tmp_path / "toolang"
-    AuthoredChores(root / "agents" / "alice").create(
-        ChoreFile.parse("Review this.", name="review")
-    )
+    AuthoredChores(
+        root / "agents" / "alice",
+        lock_path=home_edit_lock_path(root / "agents" / "alice"),
+    ).create(ChoreFile.parse("Review this.", name="review"))
     chores = merge_chores(
         load_chores(AgentLayout.resident(root, "alice")),
         inline_chores(

@@ -20,10 +20,14 @@ class CapsManager:
     )
 
     def __init__(self, layout: AgentLayout) -> None:
-        self.home_authoring = AuthoredCaps(layout.home)
-        self.home_configured = ConfiguredCaps(layout.config)
-        self.root_authoring = AuthoredCaps(layout.root)
-        self.root_configured = ConfiguredCaps(layout.root_config)
+        self.home_authoring = AuthoredCaps(layout.home, lock_path=layout.home_edit_lock)
+        self.home_configured = ConfiguredCaps(
+            layout.config, lock_path=layout.home_edit_lock
+        )
+        self.root_authoring = AuthoredCaps(layout.root, lock_path=layout.root_edit_lock)
+        self.root_configured = ConfiguredCaps(
+            layout.root_config, lock_path=layout.root_edit_lock
+        )
 
 
 class ChoresManager:
@@ -32,4 +36,6 @@ class ChoresManager:
     __slots__ = ("home_authoring",)
 
     def __init__(self, layout: AgentLayout) -> None:
-        self.home_authoring = AuthoredChores(layout.home)
+        self.home_authoring = AuthoredChores(
+            layout.home, lock_path=layout.home_edit_lock
+        )

@@ -7,6 +7,7 @@ import frontmatter
 
 from toolang.catalog.chore import AuthoredChores, ChoreFile
 from toolang.catalog.errors import CatalogConflictError, CatalogNotFoundError
+from toolang.common.files import EditLock
 from toolang.common.ids import LOCAL_ID_FAMILY, allocate_id
 from toolang.common.layout import AgentLayout
 from toolang.execution.store import RunStore
@@ -19,7 +20,7 @@ def allocate_authored_chore_name(
 ) -> str:
     """Allocate a filename when the caller did not supply a declaration name."""
     RunStore(layout.run_store).close()
-    effective = catalog or AuthoredChores(layout.home)
+    effective = catalog or AuthoredChores(layout.home, lock_path=layout.home_edit_lock)
     with effective.write_lock():
         return allocate_id(
             layout.run_store,
@@ -44,17 +45,25 @@ def new_chore_file(
 def create_chore(layout: AgentLayout, definition: ChoreFile) -> ChoreFile:
     """Create a home definition only when it can become effective."""
     _require_resident(layout)
-    for chore in load_chores(layout):
-        if chore.name == definition.name and chore.line is not None:
-            raise CatalogConflictError(
-                f"chore {chore.name} is defined at {chore.location}; edit that source"
-            )
-    return AuthoredChores(layout.home).create(definition)
+    catalog = AuthoredChores(layout.home, lock_path=layout.home_edit_lock)
+    with catalog.write_lock():
+        for chore in load_chores(layout):
+            if chore.name == definition.name and chore.line is not None:
+                raise CatalogConflictError(
+                    f"chore {chore.name} is defined at {chore.location}; edit that source"
+                )
+        return catalog.create(definition)
 
 
 def editable_chore(layout: AgentLayout, reference: str) -> ChoreFile:
     """Require the effective definition to be an editable home Markdown file."""
     _require_resident(layout)
+    return EditLock(layout.home_edit_lock).read(
+        lambda: _editable_chore(layout, reference)
+    )
+
+
+def _editable_chore(layout: AgentLayout, reference: str) -> ChoreFile:
     chore = next(
         (
             item
@@ -64,7 +73,7 @@ def editable_chore(layout: AgentLayout, reference: str) -> ChoreFile:
         None,
     )
     if chore is None:
-        catalog = AuthoredChores(layout.home)
+        catalog = AuthoredChores(layout.home, lock_path=layout.home_edit_lock)
         try:
             path = catalog.raw_path(reference)
         except CatalogNotFoundError:
@@ -76,7 +85,7 @@ def editable_chore(layout: AgentLayout, reference: str) -> ChoreFile:
         raise CatalogConflictError(
             f"chore {chore.name} is defined at {chore.location}; edit that source"
         )
-    entry = AuthoredChores(layout.home).get(chore.name)
+    entry = AuthoredChores(layout.home, lock_path=layout.home_edit_lock).get(chore.name)
     if entry is None:
         raise CatalogNotFoundError(f"chore not found: {reference}")
     return entry
@@ -85,6 +94,12 @@ def editable_chore(layout: AgentLayout, reference: str) -> ChoreFile:
 def editable_chore_path(layout: AgentLayout, reference: str) -> Path:
     """Protect inline winners while allowing raw repair of malformed home files."""
     _require_resident(layout)
+    return EditLock(layout.home_edit_lock).read(
+        lambda: _editable_chore_path(layout, reference)
+    )
+
+
+def _editable_chore_path(layout: AgentLayout, reference: str) -> Path:
     visible = next(
         (
             item
@@ -97,7 +112,9 @@ def editable_chore_path(layout: AgentLayout, reference: str) -> Path:
         raise CatalogConflictError(
             f"chore {visible.name} is defined at {visible.location}; edit that source"
         )
-    return AuthoredChores(layout.home).raw_path(reference)
+    return AuthoredChores(layout.home, lock_path=layout.home_edit_lock).raw_path(
+        reference
+    )
 
 
 def _require_resident(layout: AgentLayout) -> None:

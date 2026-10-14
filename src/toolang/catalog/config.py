@@ -11,7 +11,7 @@ from typing import Any, cast
 
 import tomlkit
 
-from toolang.common.files import atomic_write_text, file_lock_path, file_write_lock
+from toolang.common.files import EditLock, atomic_write_text
 
 from .cap import _validate_kind, _validate_name
 from .errors import CatalogConflictError, CatalogNotFoundError
@@ -36,19 +36,23 @@ class CapRef:
 class ConfiguredCaps:
     """CRUD for capability references in one explicitly supplied config file."""
 
-    def __init__(self, config_path: Path) -> None:
+    def __init__(self, config_path: Path, *, lock_path: Path) -> None:
         self.config_path = config_path
+        self._lock = EditLock(lock_path)
 
     @property
     def lock_path(self) -> Path:
-        return file_lock_path(self.config_path)
+        return self._lock.path
 
     def write_lock(self) -> AbstractContextManager[None]:
         """Return the lock shared by configured-cap mutations."""
 
-        return file_write_lock(self.lock_path)
+        return self._lock.write()
 
     def list(self, *, kinds: set[CapKind] | None = None) -> tuple[CapRef, ...]:
+        return self._lock.read(lambda: self._list(kinds=kinds))
+
+    def _list(self, *, kinds: set[CapKind] | None = None) -> tuple[CapRef, ...]:
         if not self.config_path.is_file():
             return ()
         return self.parse(self.config_path.read_text(encoding="utf-8"), kinds=kinds)

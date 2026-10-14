@@ -115,21 +115,28 @@ def new_chore(ctx: typer.Context, name: ChoreName = None) -> None:
 
 def edit_chore(ctx: typer.Context, chore: ChoreRef) -> None:
     """Edit a definition without changing its name or progress"""
-    catalog = AuthoredChores(context_layout(ctx).home)
+    catalog = AuthoredChores(
+        context_layout(ctx).home, lock_path=context_layout(ctx).home_edit_lock
+    )
     path = user_call(editable_chore_path, context_layout(ctx), chore)
     text = edit_markdown(path.read_text(encoding="utf-8"))
     if text is None:
         raise typer.Exit()
     definition = user_call(ChoreFile.parse, text, name=path.stem)
-    saved = user_call(catalog.update, definition)
+    with catalog.write_lock():
+        user_call(editable_chore_path, context_layout(ctx), chore)
+        saved = user_call(catalog.update, definition)
     typer.echo(str(_path(saved)))
 
 
 def delete_chore(ctx: typer.Context, chore: ChoreRef) -> None:
     """Remove a definition; keep completed work and execution history"""
-    catalog = AuthoredChores(context_layout(ctx).home)
-    user_call(editable_chore_path, context_layout(ctx), chore)
-    path = user_call(catalog.remove_file, chore)
+    catalog = AuthoredChores(
+        context_layout(ctx).home, lock_path=context_layout(ctx).home_edit_lock
+    )
+    with catalog.write_lock():
+        user_call(editable_chore_path, context_layout(ctx), chore)
+        path = user_call(catalog.remove_file, chore)
     typer.echo(f"chore {path.stem} deleted")
 
 

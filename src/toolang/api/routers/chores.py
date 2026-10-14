@@ -146,8 +146,7 @@ async def delete_chore(
     scheduler: ChoreDriverDep,
     chore_id: str,
 ) -> None:
-    await asyncio.to_thread(editable_chore_path, core.layout, chore_id)
-    await asyncio.to_thread(manager.home_authoring.remove_file, chore_id)
+    await asyncio.to_thread(_delete_chore, core, manager, chore_id)
     await _refresh_chores(core, scheduler)
 
 
@@ -218,18 +217,24 @@ def _update_chore(
     reference: str,
     payload: ChorePatchRequest,
 ) -> ChoreFile:
-    entry = editable_chore(core.layout, reference)
     fields = ("title", "body", "schedule")
     changes = {
         field: getattr(payload, field)
         for field in fields
         if field in payload.model_fields_set
     }
-    try:
-        saved = manager.home_authoring.update(entry.patch(changes))
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return saved
+    with manager.home_authoring.write_lock():
+        entry = editable_chore(core.layout, reference)
+        try:
+            return manager.home_authoring.update(entry.patch(changes))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _delete_chore(core: AgentCore, manager: ChoresManager, reference: str) -> None:
+    with manager.home_authoring.write_lock():
+        editable_chore_path(core.layout, reference)
+        manager.home_authoring.remove_file(reference)
 
 
 def _scheduler_call(call: Callable[..., _T], *args: object) -> _T:

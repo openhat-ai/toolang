@@ -22,10 +22,13 @@ from toolang.catalog.chore_authoring import (
     allocate_authored_chore_name,
     new_chore_file,
 )
+from toolang.common.layout import home_edit_lock_path, root_edit_lock_path
 
 
 def _wire_prompt(config_path: str, index: int) -> None:
-    ConfiguredCaps(Path(config_path)).create(
+    ConfiguredCaps(
+        Path(config_path), lock_path=root_edit_lock_path((Path(config_path)).parent)
+    ).create(
         CapRef(
             kind="prompt",
             name=f"prompt-{index}",
@@ -35,7 +38,9 @@ def _wire_prompt(config_path: str, index: int) -> None:
 
 
 def _create_same_prompt(directory: str, body: str) -> str:
-    catalog = AuthoredCaps(Path(directory))
+    catalog = AuthoredCaps(
+        Path(directory), lock_path=root_edit_lock_path(Path(directory))
+    )
     try:
         catalog.create(CapFile.parse(body, kind="prompt", name="root"))
     except CatalogConflictError:
@@ -44,7 +49,9 @@ def _create_same_prompt(directory: str, body: str) -> str:
 
 
 def _create_same_job(directory: str, kind: str) -> str:
-    catalog = AuthoredChores(Path(directory))
+    catalog = AuthoredChores(
+        Path(directory), lock_path=home_edit_lock_path(Path(directory))
+    )
     content = frontmatter.dumps(frontmatter.Post("Run it.", None, id="same-id"))
     job = ChoreFile.parse(content, name="same-name")
     try:
@@ -63,7 +70,10 @@ def _assign_manual_job(root: str) -> None:
 def _allocate_and_create_job(root: str) -> None:
     root_path = Path(root)
     job_id = allocate_authored_chore_name(AgentLayout.resident(root_path, "alice"))
-    AuthoredChores(root_path / "agents" / "alice").create(
+    AuthoredChores(
+        root_path / "agents" / "alice",
+        lock_path=home_edit_lock_path(root_path / "agents" / "alice"),
+    ).create(
         new_chore_file(
             name=job_id,
             title="Generated",
@@ -96,7 +106,14 @@ def test_configured_caps_preserves_all_concurrent_writes(tmp_path: Path) -> None
     with ProcessPoolExecutor(max_workers=4, mp_context=context) as executor:
         tuple(executor.map(_wire_prompt, [str(config_path)] * 12, range(12)))
 
-    assert len(ConfiguredCaps(config_path).list()) == 12
+    assert (
+        len(
+            ConfiguredCaps(
+                config_path, lock_path=root_edit_lock_path(config_path.parent)
+            ).list()
+        )
+        == 12
+    )
 
 
 def test_authored_caps_serializes_conflicting_creates(tmp_path: Path) -> None:
@@ -132,7 +149,7 @@ def test_authored_jobs_serializes_global_id_uniqueness(tmp_path: Path) -> None:
 def test_collection_write_lock_is_reentrant_for_external_transactions(
     tmp_path: Path,
 ) -> None:
-    catalog = AuthoredCaps(tmp_path)
+    catalog = AuthoredCaps(tmp_path, lock_path=root_edit_lock_path(tmp_path))
 
     with catalog.write_lock():
         created = catalog.create(
@@ -161,7 +178,10 @@ def test_job_state_assignment_and_api_allocation_share_lock_order(
         for future in futures:
             future.result(timeout=10)
 
-    jobs = AuthoredChores(root / "agents" / "alice").list()
+    jobs = AuthoredChores(
+        root / "agents" / "alice",
+        lock_path=home_edit_lock_path(root / "agents" / "alice"),
+    ).list()
     assert len(jobs) == 2
     assert len({job.id for job in jobs}) == 2
 

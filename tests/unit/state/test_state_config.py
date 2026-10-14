@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from toolang.state.config import ConfiguredWorkspaces, canonical_state_config
+from toolang.common.layout import home_edit_lock_path
 
 
 def test_state_config_projection_excludes_setup_fields_and_is_canonical() -> None:
@@ -71,7 +72,9 @@ def test_configured_workspaces_preserve_unrelated_toml_and_workspace_data(
     config.write_text(original, encoding="utf-8")
     workspace = tmp_path / "toolang"
     workspace.mkdir()
-    configured = ConfiguredWorkspaces(config)
+    configured = ConfiguredWorkspaces(
+        config, lock_path=home_edit_lock_path(config.parent)
+    )
 
     assert configured.add(workspace) == ("toolang", str(workspace.resolve()))
     assert configured.list() == {"toolang": str(workspace.resolve())}
@@ -116,7 +119,9 @@ def test_configured_workspaces_reject_non_file_config(tmp_path: Path) -> None:
     config.mkdir()
 
     with pytest.raises(ValueError, match="agent config must be a file"):
-        ConfiguredWorkspaces(config).list()
+        ConfiguredWorkspaces(
+            config, lock_path=home_edit_lock_path(config.parent)
+        ).list()
 
 
 def test_configured_workspaces_derive_name_from_resolved_path(
@@ -127,7 +132,10 @@ def test_configured_workspaces_derive_name_from_resolved_path(
     workspace.mkdir()
     monkeypatch.chdir(workspace)
 
-    assert ConfiguredWorkspaces(tmp_path / "config.toml").add(Path(".")) == (
+    assert ConfiguredWorkspaces(
+        tmp_path / "config.toml",
+        lock_path=home_edit_lock_path((tmp_path / "config.toml").parent),
+    ).add(Path(".")) == (
         "toolang",
         str(workspace),
     )
@@ -142,7 +150,10 @@ def test_configured_workspaces_derive_name_from_parent_path(
     child.mkdir(parents=True)
     monkeypatch.chdir(child)
 
-    assert ConfiguredWorkspaces(tmp_path / "config.toml").add(Path("..")) == (
+    assert ConfiguredWorkspaces(
+        tmp_path / "config.toml",
+        lock_path=home_edit_lock_path((tmp_path / "config.toml").parent),
+    ).add(Path("..")) == (
         "toolang",
         str(workspace),
     )
@@ -151,7 +162,10 @@ def test_configured_workspaces_derive_name_from_parent_path(
 def test_configured_workspaces_normalize_derived_name(tmp_path: Path) -> None:
     workspace = tmp_path / "a_.b-c"
     workspace.mkdir()
-    configured = ConfiguredWorkspaces(tmp_path / "config.toml")
+    configured = ConfiguredWorkspaces(
+        tmp_path / "config.toml",
+        lock_path=home_edit_lock_path((tmp_path / "config.toml").parent),
+    )
 
     assert configured.add(workspace) == (
         "a-b-c",
@@ -163,7 +177,10 @@ def test_configured_workspaces_normalize_derived_name(tmp_path: Path) -> None:
 def test_configured_workspaces_normalize_explicit_name(tmp_path: Path) -> None:
     workspace = tmp_path / "repo"
     workspace.mkdir()
-    configured = ConfiguredWorkspaces(tmp_path / "config.toml")
+    configured = ConfiguredWorkspaces(
+        tmp_path / "config.toml",
+        lock_path=home_edit_lock_path((tmp_path / "config.toml").parent),
+    )
 
     assert configured.add(workspace, name="  CaféSDK__Client  ") == (
         "cafe-sdk-client",
@@ -183,7 +200,10 @@ def test_configured_workspaces_reject_unsupported_name_characters(
     workspace.mkdir()
 
     with pytest.raises(ValueError, match="unsupported characters"):
-        ConfiguredWorkspaces(tmp_path / "config.toml").add(workspace, name=name)
+        ConfiguredWorkspaces(
+            tmp_path / "config.toml",
+            lock_path=home_edit_lock_path((tmp_path / "config.toml").parent),
+        ).add(workspace, name=name)
 
 
 def test_configured_workspaces_reject_filesystem_aliases(
@@ -194,7 +214,10 @@ def test_configured_workspaces_reject_filesystem_aliases(
     alias = tmp_path / "alias"
     first.mkdir()
     alias.mkdir()
-    configured = ConfiguredWorkspaces(tmp_path / "config.toml")
+    configured = ConfiguredWorkspaces(
+        tmp_path / "config.toml",
+        lock_path=home_edit_lock_path((tmp_path / "config.toml").parent),
+    )
     configured.add(first, name="first")
     monkeypatch.setattr(Path, "samefile", lambda _self, _other: True)
 
@@ -228,7 +251,9 @@ def test_configured_workspaces_reject_duplicates_but_allow_nested_adds(
     root = tmp_path / "repo"
     nested = root / "nested"
     nested.mkdir(parents=True)
-    configured = ConfiguredWorkspaces(config)
+    configured = ConfiguredWorkspaces(
+        config, lock_path=home_edit_lock_path(config.parent)
+    )
     configured.add(root, name="root")
 
     with pytest.raises(ValueError, match="workspace name already exists"):

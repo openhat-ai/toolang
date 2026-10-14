@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import cast
 
 from .chore import AuthoredChores, ChoreFile
+from toolang.common.files import EditLock
 from toolang.common.ids import chore_id
 from toolang.common.layout import AgentLayout
 from toolang.lang.ast import ChoreDecl, parse_chore_declarations
@@ -108,12 +109,19 @@ class Chore:
 def load_chore_files(layout: AgentLayout) -> tuple[Chore, ...]:
     """Read immediate home Markdown definitions."""
 
-    return tuple(file_chore(item) for item in AuthoredChores(layout.home).list())
+    return tuple(
+        file_chore(item)
+        for item in AuthoredChores(layout.home, lock_path=layout.home_edit_lock).list()
+    )
 
 
 def load_chores(layout: AgentLayout) -> tuple[Chore, ...]:
     """Read effective authored definitions without preparing State or handlers."""
 
+    return EditLock(layout.home_edit_lock).read(lambda: _load_chores(layout))
+
+
+def _load_chores(layout: AgentLayout) -> tuple[Chore, ...]:
     inline: tuple[Chore, ...] = ()
     if layout.program.is_file():
         try:
@@ -128,11 +136,17 @@ def load_chores(layout: AgentLayout) -> tuple[Chore, ...]:
 
 def inspect_chore_sources(layout: AgentLayout) -> tuple[Chore, ...]:
     """Include malformed authored files for inspection and raw repair."""
+    return EditLock(layout.home_edit_lock).read(lambda: _inspect_chore_sources(layout))
+
+
+def _inspect_chore_sources(layout: AgentLayout) -> tuple[Chore, ...]:
     valid = load_chores(layout)
     accepted_names = {chore.name for chore in valid}
     invalid = tuple(
         Chore(path.stem, None, content, None, path, source_error=error)
-        for path, content, error in AuthoredChores(layout.home).sources()
+        for path, content, error in AuthoredChores(
+            layout.home, lock_path=layout.home_edit_lock
+        ).sources()
         if error is not None and path.stem not in accepted_names
     )
     return (*invalid, *valid)
