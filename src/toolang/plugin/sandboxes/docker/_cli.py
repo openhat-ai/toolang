@@ -100,6 +100,8 @@ async def docker_follow_container_logs(
 
 
 def docker_stop_container(container_id: str, *, force: bool) -> None:
+    if docker_launch_pending(container_id):
+        raise RuntimeError("docker container creation is still pending")
     command = "kill" if force else "stop"
     result = _docker(command, container_id, check=False)
     if result is None:
@@ -111,6 +113,8 @@ def docker_stop_container(container_id: str, *, force: bool) -> None:
 
 
 def docker_remove_container(container_id: str) -> None:
+    if docker_launch_pending(container_id):
+        raise RuntimeError("docker container creation is still pending")
     result = _docker("rm", "--force", container_id, check=False)
     if result is None:
         raise RuntimeError("docker command not found")

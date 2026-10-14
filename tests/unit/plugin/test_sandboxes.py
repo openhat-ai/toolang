@@ -49,6 +49,22 @@ def test_absent_container_with_pending_native_creation_is_unknown(monkeypatch):
     assert name not in docker_cli.docker_container_states((name,))
 
 
+@pytest.mark.parametrize("action", ["stop", "remove"])
+def test_pending_creation_cannot_be_stopped_or_released(monkeypatch, action):
+    name = "toolang-alice-launch"
+    monkeypatch.setattr(docker_cli, "docker_launch_pending", lambda identity: True)
+    monkeypatch.setattr(
+        docker_cli,
+        "_docker",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args, 0, stdout=name),
+    )
+    with pytest.raises(RuntimeError, match="creation is still pending"):
+        if action == "stop":
+            docker_cli.docker_stop_container(name, force=True)
+        else:
+            docker_cli.docker_remove_container(name)
+
+
 @pytest.mark.parametrize("match", [True, False])
 def test_pending_creation_matches_the_exact_unique_container_name(monkeypatch, match):
     helper = SimpleNamespace(
