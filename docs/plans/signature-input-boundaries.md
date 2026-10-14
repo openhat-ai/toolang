@@ -178,7 +178,7 @@ arbitrary typed arrays or structural migrations between incompatible structs.
    `src/toolang/execution/executor/executor.py`; cover local and HTTP admission
    and unchanged retry behavior.
 4. [x] Update `docs/plugins.md` and `docs/call-input.md`; generate the relevant
-   `CHANGELOG.md` compatibility/fix entries through `too aide.too update_changelog`.
+   `CHANGELOG.md` compatibility/fix entries through `too aid.too update_changelog`.
 5. [x] Run the acceptance scenarios below and the repository's default
    verification before each implementation commit. Fetch/rebase and verify
    again before handing off each PR; humans approve scope and merging.

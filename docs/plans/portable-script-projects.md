@@ -117,12 +117,12 @@ different name; never invent suffixes. Different names may
 alias one root, with one guest mount. Preserve nested-root semantics.
 
 ```sh
-./aide.too whats_for                          # Source workspace
+./aid.too whats_for                          # Source workspace
 ./module1/file.too whats_for -d module2       # Relative to procdir
-./aide.too whats_for -w another_dir -w .      # Select the last addition
-./aide.too whats_for -d project=../project    # Explicit name
-./aide.too whats_for -d repo://src            # Existing grant
-./aide.too whats_for -d =./foo=bar            # Infer a name for a path containing =
+./aid.too whats_for -w another_dir -w .      # Select the last addition
+./aid.too whats_for -d project=../project    # Explicit name
+./aid.too whats_for -d repo://src            # Existing grant
+./aid.too whats_for -d =./foo=bar            # Infer a name for a path containing =
 ```
 
 Resolve CLI choices into concrete grants and a canonical URI before runtime
@@ -156,18 +156,18 @@ config, and never modify shared ancestors or generated projections.
 
 ## Init and runnable help
 
-`too init DIR` creates executable `aide.too` and a comment-only `toolang.toml`.
+`too init DIR` creates executable `aid.too` and a comment-only `toolang.toml`.
 The template contains only named helpers: `issue`, `fix`, `review`, `whats_for`,
 `whats_new`, and `update_i18n`; nothing executes by default. No catalog, secrets,
 or machine-specific paths are generated. The config comment is:
 `# Toolang settings. Paths are relative to this file.`
 
 Preflight both destinations, including directories and dangling symlinks. Report
-all conflicts in `aide.too, toolang.toml` order:
-`Error: aborted to avoid overwriting: aide.too, toolang.toml` (list only conflicts).
+all conflicts in `aid.too, toolang.toml` order:
+`Error: aborted to avoid overwriting: aid.too, toolang.toml` (list only conflicts).
 Then exclusively create TOML followed by the script. A later collision/write
 failure aborts without rollback or overwriting. Success lists the two filenames,
-suggests ignoring `.toolang/`, and shows one `too PATH/aide.too --help` command.
+suggests ignoring `.toolang/`, and shows one `too PATH/aid.too --help` command.
 Do not edit `.gitignore` automatically.
 
 Use `too run FILE [RUNNABLE] [ARGUMENTS]`; omit `run` when the runnable name does

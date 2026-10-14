@@ -90,8 +90,8 @@ applies, raise the ambiguity and ask the human before proceeding.
 - In each relevant pull request, update `Unreleased` for user-visible behavior,
   compatibility, and important fixes. Omit internal-only refactors, tests, CI,
   and empty categories.
-- Generate changelog updates with `too aide.too update_changelog`, or select a
-  baseline with `too aide.too update_changelog since=v0.3.4`. Have a maintainer
+- Generate changelog updates with `too aid.too update_changelog`, or select a
+  baseline with `too aid.too update_changelog since=v0.3.4`. Have a maintainer
   verify every entry against the rules above before merge; make corrections
   through the runnable.
 - Preserve existing records and prepend new information. Change old entries only
@@ -101,8 +101,8 @@ applies, raise the ambiguity and ask the human before proceeding.
 - Explain the impact and migration path for breaking changes.
 - Every release PR must include a verified `CHANGELOG.md` release entry alongside
   the version changes in `pyproject.toml` and `uv.lock`. First refresh coverage
-  with `too aide.too update_changelog since=PREVIOUS_TAG`, then prepare the entry
-  with `too aide.too update_changelog since=PREVIOUS_TAG version=VERSION date=YYYY-MM-DD`
+  with `too aid.too update_changelog since=PREVIOUS_TAG`, then prepare the entry
+  with `too aid.too update_changelog since=PREVIOUS_TAG version=VERSION date=YYYY-MM-DD`
   using the target version and planned release date. Keep `Unreleased` above it
   and update both comparison links. If the matching entry is already complete
   and accurate, preserve it unchanged. Do not report a release PR as ready until

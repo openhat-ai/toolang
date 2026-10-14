@@ -236,7 +236,7 @@ Implementation touchpoints under `src/toolang/`:
 
 Update current input/Chat/model documentation, affected bundled examples, and
 relevant tests. Generate the breaking-change/migration changelog entry through
-`too aide.too update_changelog`; preserve historical records.
+`too aid.too update_changelog`; preserve historical records.
 
 Acceptance checks:
 

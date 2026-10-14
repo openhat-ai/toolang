@@ -76,21 +76,21 @@ EOF
 too hello-world.too
 ```
 
-To start from a template, use `too init` to create `aide.too` and `toolang.toml` in a directory. Rename or edit it as needed, then call it from Makefiles, CI jobs, or other scripts:
+To start from a template, use `too init` to create `aid.too` and `toolang.toml` in a directory. Rename or edit it as needed, then call it from Makefiles, CI jobs, or other scripts:
 
 ```bash
 too init DIR
-too DIR/aide.too --help
+too DIR/aid.too --help
 ```
 
 The generated script provides six named runnables for issues, fixes, pull request reviews, project overviews, recent updates, and localization. Select one by name and pass its arguments on the command line:
 
 ```bash
-too DIR/aide.too whats_for
-too DIR/aide.too whats_new                     # Updates from the past week
-too DIR/aide.too whats_new since=v0.2.0
-too DIR/aide.too review -- "https://github.com/OWNER/REPO/pull/123"
-too DIR/aide.too update_i18n locale=zh-CN
+too DIR/aid.too whats_for
+too DIR/aid.too whats_new                     # Updates from the past week
+too DIR/aid.too whats_new since=v0.2.0
+too DIR/aid.too review -- "https://github.com/OWNER/REPO/pull/123"
+too DIR/aid.too update_i18n locale=zh-CN
 ```
 
 ## Language
@@ -132,7 +132,7 @@ too serve <ref>                       # Run an agent in the foreground
 too start <agent>                     # Start an agent in the background
 too stop <agent>                      # Stop a running agent
 
-too init <dir>                        # Create aide.too and toolang.toml
+too init <dir>                        # Create aid.too and toolang.toml
 too [run] <file.too> [runnable]       # Execute a .too file; run is optional
 
 too caps                              # List available caps

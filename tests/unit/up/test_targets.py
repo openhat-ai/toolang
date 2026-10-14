@@ -301,7 +301,7 @@ def test_concurrent_roaming_materialization_accepts_the_same_program_link(
     import threading
     from toolang.up.process import materialize_roaming_program
 
-    source = tmp_path / "aide.too"
+    source = tmp_path / "aid.too"
     source.write_text("flow run():\n  pass\n")
     barrier = threading.Barrier(2)
     symlink_to = Path.symlink_to

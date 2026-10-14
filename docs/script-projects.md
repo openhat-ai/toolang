@@ -1,6 +1,6 @@
 # Script Projects
 
-`too init DIR` creates an executable `aide.too` and a comment-only `toolang.toml`.
+`too init DIR` creates an executable `aid.too` and a comment-only `toolang.toml`.
 Both belong in version control. Initialization refuses to overwrite either file,
 including directories and symlinks. A failure during creation may leave partial
 output; remove or complete it before retrying. Add `.toolang/` to Git ignore rules.
@@ -11,7 +11,7 @@ also check its kind. `<entry:5>` in help identifies the source line. Input `-`
 reads stdin, so `too file.too _ -` selects the entry and reads from stdin.
 
 Use `too run FILE [RUNNABLE] [ARGUMENTS]` when a runnable name matches a Toolang
-command. Otherwise, `run` can be omitted: `too aide.too whats_for`.
+command. Otherwise, `run` can be omitted: `too aid.too whats_for`.
 Add `--help` after the file or runnable for details. File help lists the unnamed
 entry first, then named agics and flows in their source order within each kind.
 
@@ -57,10 +57,10 @@ placements without adding srcdir automatically, including for roaming agents.
 `too AGENT workspace add DIR` or edit `[workspaces]` before starting it.
 
 ```sh
-too aide.too whats_for
-too aide.too whats_for -w another_dir -w .
-too aide.too whats_for --workdir project=../project
-too aide.too whats_for --workdir repo://src
+too aid.too whats_for
+too aid.too whats_for -w another_dir -w .
+too aid.too whats_for --workdir project=../project
+too aid.too whats_for --workdir repo://src
 ```
 
 `-w` / `--workspace [NAME=]<DIR>` adds a temporary grant and can be repeated.
@@ -86,12 +86,12 @@ its grants. Chat can select an existing server workspace with
 including when `-d` selects a URI. A server started by Chat remains running after
 Chat exits, together with its temporary grants; they are not written to config.
 
-`too ./aide.too workspace list` reads source-local workspace configuration and
+`too ./aid.too workspace list` reads source-local workspace configuration and
 shows configured names, resolved paths, and local directory availability without
 loading ancestor configuration or creating project caches. It does not query
 the running server or include temporary grants, implicit `lab`,
 or a workdir. Resident and visiting targets list their layout configuration.
-`too ./aide.too info` retains runtime workspace information when a server is
+`too ./aid.too info` retains runtime workspace information when a server is
 running. `info`, `workspace list`, `tools`, `models`, and `providers` do not accept
 workspace or workdir options or add the source directory.
 Persistent workspace edits update source-local TOML;

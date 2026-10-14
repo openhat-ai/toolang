@@ -88,7 +88,7 @@ template per kind, without a template selector.
   options outside template selection, driver selection, and scheduling semantics
   stay unchanged.
 - Update current user documentation and record breaking removals and migration
-  guidance through `too aide.too update_changelog`. Preserve historical records
+  guidance through `too aid.too update_changelog`. Preserve historical records
   and superseded plans; this definition supersedes their conflicting CLI scope.
 
 ## Implementation touchpoints

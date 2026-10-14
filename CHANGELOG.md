@@ -9,6 +9,13 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Changed
 
+- `too init DIR` now creates `aid.too` instead of `aide.too`, and the
+  repository's own root helper is renamed from `aide.too` to `aid.too`; its
+  success message, the `too run` help example, and the documented examples
+  use the new name. Automation that invokes the repository helper must change
+  `too aide.too ...` to `too aid.too ...`; only existing user-created scripts
+  retain their names and keep running unchanged.
+
 - **Breaking:** authored edit locks are unified into one persistent guard per
   source scope and the derived State guards are renamed: `agent.too.lock`,
   `runnables.lock`, `caps.lock`, `chores.lock`, `config.toml.lock`, and

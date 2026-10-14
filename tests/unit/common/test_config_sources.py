@@ -28,7 +28,7 @@ def test_shared_workspaces_are_ignored_before_path_resolution(tmp_path, placemen
     shared = '[workspaces]\nignored = "~toolang-nonexistent-user/repo"\n'
     if placement == "roaming":
         git_init(tmp_path)
-        source = tmp_path / "module" / "aide.too"
+        source = tmp_path / "module" / "aid.too"
         source.parent.mkdir()
         source.write_text("flow run():\n  pass\n")
         (tmp_path / "toolang.toml").write_text(shared)
@@ -162,7 +162,7 @@ def test_real_script_and_discovered_config_symlinks_keep_distinct_origins(tmp_pa
     git_init(tmp_path)
     source_dir = tmp_path / "scripts"
     source_dir.mkdir()
-    source = source_dir / "aide.too"
+    source = source_dir / "aid.too"
     source.write_text("flow run():\n  pass\n")
     shared = tmp_path / "shared"
     shared.mkdir()
@@ -226,7 +226,7 @@ def test_git_boundary_does_not_inherit_parent(tmp_path, kind):
     subprocess.run(command, check=True)
     inner = worktree / "module"
     inner.mkdir()
-    source = inner / "aide.too"
+    source = inner / "aid.too"
     source.touch()
     assert script_directories(source) == (inner, worktree)
     assert config_sources(materialize_roaming_program(source)) == ()
@@ -237,7 +237,7 @@ def test_three_project_layers_preserve_field_specific_merges(tmp_path):
     middle = tmp_path / "project"
     inner = middle / "module"
     inner.mkdir(parents=True)
-    source = inner / "aide.too"
+    source = inner / "aid.too"
     source.write_text("flow run():\n  pass\n")
     (tmp_path / "toolang.toml").write_text(
         '[default]\nmodel = "test/base"\n'
@@ -276,7 +276,7 @@ def test_three_project_layers_preserve_field_specific_merges(tmp_path):
 
 
 def test_unowned_symlink_is_not_replaced(tmp_path):
-    source = tmp_path / "aide.too"
+    source = tmp_path / "aid.too"
     source.write_text("flow run():\n  pass\n")
     layout = materialize_roaming_program(source)
     unrelated = tmp_path / "unrelated.toml"
@@ -290,7 +290,7 @@ def test_unowned_symlink_is_not_replaced(tmp_path):
 
 
 def test_explicit_catalog_can_override_a_missing_authored_catalog(tmp_path):
-    source = tmp_path / "aide.too"
+    source = tmp_path / "aid.too"
     source.write_text("flow run():\n  pass\n")
     (tmp_path / "toolang.toml").write_text(
         '[plugin.model_catalog.models_dev]\npath = "missing.json"\n'
@@ -304,7 +304,7 @@ def test_explicit_catalog_can_override_a_missing_authored_catalog(tmp_path):
 
 
 def test_empty_catalog_path_does_not_become_the_config_directory(tmp_path):
-    source = tmp_path / "aide.too"
+    source = tmp_path / "aid.too"
     source.write_text("flow run():\n  pass\n")
     (tmp_path / "toolang.toml").write_text(
         '[plugin.model_catalog.models_dev]\npath = ""\n'
@@ -318,14 +318,14 @@ def test_relocated_project_can_clear_its_owned_catalog_link(tmp_path):
 
     original = tmp_path / "original"
     original.mkdir()
-    source = original / "aide.too"
+    source = original / "aid.too"
     source.write_text("flow run():\n  pass\n")
     (original / "toolang.catalog.json").write_text("{}")
     materialize_roaming_program(source)
     copied = tmp_path / "copied"
     shutil.copytree(original, copied, symlinks=True)
     (copied / "toolang.catalog.json").unlink()
-    layout = materialize_roaming_program(copied / "aide.too")
+    layout = materialize_roaming_program(copied / "aid.too")
     assert not (layout.home / "catalog.json").is_symlink()
     assert (original / "toolang.catalog.json").is_file()
 
@@ -335,7 +335,7 @@ def test_only_companion_directories_contribute_layers(tmp_path):
     middle = tmp_path / "empty" / "catalog-only"
     srcdir = middle / "empty" / "source"
     srcdir.mkdir(parents=True)
-    source = srcdir / "aide.too"
+    source = srcdir / "aid.too"
     source.write_text("flow run():\n  pass\n")
     (tmp_path / "toolang.toml").write_text("# Shared settings\n")
     catalog = middle / "toolang.catalog.json"

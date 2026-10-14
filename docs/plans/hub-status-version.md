@@ -52,7 +52,7 @@ Persisting version in the Hub record, displaying CLI/Hub comparisons, changing
 - `tests/unit/up/test_hub_process.py`: deterministic HTTP metadata coverage.
 - `tests/unit/cli/test_hub_commands.py`: status output acceptance tests.
 - `CHANGELOG.md`: generate an Unreleased entry through
-  `too aide.too update_changelog` during implementation; maintainer verification
+  `too aid.too update_changelog` during implementation; maintainer verification
   remains required before merge.
 
 ## Acceptance tests

@@ -196,7 +196,7 @@ feature groups.
   provenance, and public projections; `src/toolang/state/cache.py`.
 - CLI execution progress, language/execution/API/record tests, current Flow docs,
   and tracked examples. Generate the implementation's breaking-change entry
-  through `too aide.too update_changelog` and obtain maintainer verification.
+  through `too aid.too update_changelog` and obtain maintainer verification.
 
 ## Acceptance Tests
 
