@@ -673,6 +673,7 @@ async def stop(
     async with _task_lock(lock_path, instance=layout.instance):
         with management_lock(layout, stage="stop", progress=progress):
             _reject_legacy_state(layout)
+            await _release_abandoned_temporary(layout)
             state = SandboxState.load(layout.runtime_status, instance=layout.instance)
             if state is None:
                 state = await _recover_unreferenced(layout)

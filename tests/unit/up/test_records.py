@@ -437,8 +437,9 @@ def test_temporary_cleanup_retains_recovery_refs_and_new_generations(tmp_path):
 
 
 @pytest.mark.parametrize("live_owner", [False, True])
+@pytest.mark.parametrize("command", ["release", "stop"])
 def test_next_control_operation_recovers_only_abandoned_temporary_runtimes(
-    tmp_path, monkeypatch, live_owner
+    tmp_path, monkeypatch, live_owner, command
 ):
     import asyncio
     from toolang.up import sandbox
@@ -475,7 +476,11 @@ def test_next_control_operation_recovers_only_abandoned_temporary_runtimes(
             pass
 
     monkeypatch.setattr(sandbox, "load_state_sandbox", lambda *args: Backend())
-    asyncio.run(sandbox.release_stopped(current))
+    asyncio.run(
+        sandbox.release_stopped(current)
+        if command == "release"
+        else sandbox.stop(current)
+    )
     assert stopped == ([] if live_owner else [state.ref])
     assert registration.path.exists() is live_owner
     assert (read_record(base.runtime_status, old.instance) is not None) is live_owner
