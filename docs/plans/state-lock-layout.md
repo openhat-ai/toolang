@@ -104,8 +104,10 @@ Repeated changes fail explicitly rather than returning a stale projection.
   share the correct lock, including nested reads and read-only construction sites.
 - [x] Update roaming projection in `up/process.py` to share the home edit lock,
   recheck pending changes after acquisition, and leave no-change projections lazy.
-- [x] Keep chore API/CLI validation and read/modify/write in one edit transaction;
-  preserve async routes' thread-pool execution and refresh only after release.
+- [x] Keep chore API patches in one read/modify/write transaction and chore
+  creation/save/delete winner checks guarded through commit. Keep interactive
+  editing outside the guard, preserve async routes' thread-pool execution in
+  `api/routers/chores.py`, and refresh only after release.
 - [x] Rename State lock paths and internal helpers in `state/{cache,prepare}.py`;
   retain coverage, acquisition order, progress, and watcher semantics.
 - [x] Add the acceptance checks below; update [layout.md](../layout.md) and relevant

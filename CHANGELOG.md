@@ -35,19 +35,22 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Fixed
 
-- Concurrent chore mutations no longer interleave: the API patch and the CLI
-  edit and delete hold the agent's edit guard across the winner check and the
-  whole read/modify/write, so two patches to different fields of one chore are
-  both retained.
+- Concurrent chore mutations no longer interleave: the API patch holds the
+  agent's edit guard across its whole read/modify/write, so two patches to
+  different fields of one chore are both retained; the CLI edit reads the
+  original before opening the editor and rechecks the winning definition under
+  the edit guard only when saving, and the CLI delete holds that guard across
+  its winner check and removal.
 
 - Chore inspection and the edit/delete winner check read inline declarations and
   home Markdown files in one guarded snapshot, so a read no longer mixes
   before/after states or drops a malformed definition's diagnostic.
 
 - Roaming configuration projection rechecks its root sources after releasing the
-  home guard and retries changed inputs up to three times, so a delayed
-  invocation no longer leaves `config.toml` or `catalog.json` behind a newer
-  edit, and repeated changes fail explicitly instead of projecting stale content.
+  home guard and retries changed inputs for up to three projection attempts in
+  total, so a delayed invocation no longer leaves `config.toml` or `catalog.json`
+  behind a newer edit, and repeated changes fail explicitly instead of silently
+  accepting stale output.
 
 ## [0.4.0a7] - 2026-10-14
 

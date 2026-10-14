@@ -176,8 +176,9 @@ home configuration uses its home edit lock. Release edit locks before refreshing
 State. The watcher uses source-change detection independently of edit locks.
 Roaming projection verifies its root inputs again after releasing the home guard
 and retries changed inputs, up to three attempts. Chore inspection reads inline
-and file definitions together; mutation guards cover winner checks and the full
-read/modify/write operation, including API patches and CLI saves/deletes.
+and file definitions together. API patches hold edit across winner checks and
+read/modify/write; CLI saves/deletes recheck the winner under edit through commit.
+The interactive editor runs outside the guard.
 
 Python callers of `AuthoredCaps`, `AuthoredChores`, `ConfiguredCaps`, and
 `ConfiguredWorkspaces` must now pass `lock_path=` explicitly. Use
