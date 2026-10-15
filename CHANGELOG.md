@@ -7,6 +7,8 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ## [Unreleased]
 
+## [0.4.0a8] - 2026-10-15
+
 ### Added
 
 - A visiting server started implicitly by Chat, retry/rerun, fork, or rewind
@@ -1850,7 +1852,8 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 - The formatter normalizes `exec` statements consistently with other flow
   statements. (#676)
 
-[Unreleased]: https://github.com/openhat-ai/toolang/compare/v0.4.0a7...HEAD
+[Unreleased]: https://github.com/openhat-ai/toolang/compare/v0.4.0a8...HEAD
+[0.4.0a8]: https://github.com/openhat-ai/toolang/compare/v0.4.0a7...v0.4.0a8
 [0.4.0a7]: https://github.com/openhat-ai/toolang/compare/v0.4.0a6...v0.4.0a7
 [0.4.0a6]: https://github.com/openhat-ai/toolang/compare/v0.4.0a5...v0.4.0a6
 [0.4.0a5]: https://github.com/openhat-ai/toolang/compare/v0.4.0a4...v0.4.0a5
