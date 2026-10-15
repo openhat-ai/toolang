@@ -33,7 +33,7 @@ class _ServerAdmission:
             return
         launch_id = next(
             (
-                v.decode()
+                v.decode("latin-1")
                 for k, v in scope["headers"]
                 if k == LAUNCH_HEADER.lower().encode()
             ),

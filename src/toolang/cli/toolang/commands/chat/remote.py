@@ -134,6 +134,7 @@ class RemoteChatSession:
         self.run_client: RemoteRunClient | None = None
         self.executor_metadata: ChatExecutorMetadata
         self._surface: SessionSetting | None = None
+        self.last_accepted_run_id: str | None = None
         self._blocked_run_id: str | None = None
         self._blocked_message: str | None = None
         self._closed = False
@@ -836,6 +837,7 @@ class RemoteChatSession:
             )
             return
 
+        self.last_accepted_run_id = handle.run_id
         _emit_state(on_state, RunAccepted(handle.run_id))
         try:
             detail = await handle.wait()

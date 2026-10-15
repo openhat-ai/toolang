@@ -143,6 +143,7 @@ agic chat(_: Part[]) -> Part[]:
             RunWorkdirUpdated(root_id, "lab://"),
         ]
         assert result.run_id == root_id
+        assert session.last_accepted_run_id == root_id
         assert result.output == (TextPart("remote response"),)
         assert errors == []
     finally:

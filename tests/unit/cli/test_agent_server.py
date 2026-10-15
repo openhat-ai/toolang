@@ -213,7 +213,13 @@ def test_automatic_server_exiting_during_acquisition(
             )
         return httpx.Response(
             200,
-            json={"runtime": {"launch_id": request.url.host, "lifetime": "automatic"}},
+            json={"runtime": {"launch_id": request.url.host, "lifetime": "automatic"}}
+            if request.method == "GET"
+            else {
+                "launch_id": request.url.host,
+                "lifetime": "automatic",
+                "lifecycle_protocol": 1,
+            },
         )
 
     client = httpx.Client

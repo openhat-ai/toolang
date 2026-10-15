@@ -64,10 +64,13 @@ def test_lost_clients_retain_pending_execution_and_stale_controls_fail(tmp_path)
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://server"
         ) as client:
-            wrong_generation = await client.post(
-                "/api/v1/threads", json={}, headers={LAUNCH_HEADER: "old"}
-            )
-            assert wrong_generation.status_code == 409
+            for generation in (b"old", b"\xff"):
+                wrong_generation = await client.post(
+                    "/api/v1/threads",
+                    json={},
+                    headers=[(LAUNCH_HEADER.encode(), generation)],
+                )
+                assert wrong_generation.status_code == 409
             assert len(core.store.list_threads()) == 1
             stale = await client.post(
                 f"/api/v1/runs/{handle.run_id}/cancel",

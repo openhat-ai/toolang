@@ -345,16 +345,22 @@ The TUI ensures one AgentServer is ready after materializing the agent layout. A
 healthy running server is reused for resident, roaming, and visiting
 layouts. An explicit `--sandbox` must match that runtime; Chat never stops or
 reconfigures an attached server. When no server is active, Chat resolves the
-explicit selector, then the merged root/agent `[sandbox]` binding, then `host`.
-Both host and non-host selectors start a persistent AgentServer and use
-`RemoteRunClient` through its API. Concurrent starters converge on that server;
+explicit selector, the merged root/agent `[sandbox]` binding, the last successful
+selection, then `host`. Host and guest servers use `RemoteRunClient` through the
+same API. Concurrent starters converge on that server;
 Chat waits for an existing startup and reports readiness failures.
 `--dev [PATH]` may provide a Toolang wheel, or a directory containing one, when
 Chat creates a new non-host runtime.
 Bare `--dev` searches the process working directory (`.`); omitting the option
 keeps the existing package selection. It cannot modify an attached server and
-does not apply to host mode. Closing Chat leaves the server running, including
-one it started. Use `too stop <agent>` to stop it explicitly.
+does not apply to host mode.
+
+Fresh resident/visiting Chat servers enable chat only. Resident implicit servers
+remain running; visiting implicit servers automatically stop after clients and
+accepted work finish. Explicit `too start <agent-or-ref>` keeps either placement
+available until `too stop <agent-or-ref>`. Roaming behavior is unchanged. See
+[execution drivers](work.md) for defaults and [execution ownership](execution.md)
+for retention, promotion, and lease-loss handling.
 
 Remote acceptance records the root run id before the first event so cancel and
 steer remain addressable. An interrupted stream first resumes with GET and the

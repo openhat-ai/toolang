@@ -117,11 +117,12 @@ See [examples](https://github.com/openhat-ai/toolang/tree/main/examples) for run
 
 Use these commands to run and manage agents. Add `--help` to any command for its usage and options.
 
-Chat, retry/rerun, and fork/rewind start a shared server when needed, enabling
-only chat by default. Resident servers keep running; visiting servers exit after
-the last client leaves and all accepted work finishes. `start` keeps either
-placement running until `stop`; `serve` owns a foreground server. Start before
-Chat to enable background talk/chore drivers. Steer/cancel require a live owner.
+For resident and visiting agents, Chat, retry/rerun, and fork/rewind start a shared
+server when needed, enabling only chat by default. Resident servers keep running;
+visiting servers exit after the last client leaves and all accepted work finishes.
+`start` keeps either placement running until `stop`; `serve` owns a foreground
+server. Start before Chat to enable background talk/chore drivers. Steer/cancel
+require a live owner. See [execution ownership](docs/execution.md) for details.
 
 ```bash
 too new <agent>                       # Create a local agent

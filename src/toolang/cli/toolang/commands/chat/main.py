@@ -208,6 +208,7 @@ def _chat_runtime(
         workdir=workdir,
     )
     compact_override = user_call(resolve_compact_override, {}, compact_model)
+    remote: RemoteChatSession | None = None
     try:
         server_context = (
             nullcontext(server)
@@ -247,7 +248,11 @@ def _chat_runtime(
                 yield remote
             finally:
                 remote.close()
-    except (AgentServerAcquisitionError, ServerLeaseLostError) as exc:
+    except ServerLeaseLostError as exc:
+        accepted = remote.last_accepted_run_id if remote is not None else None
+        message = f"{exc}; inspect accepted run {accepted}" if accepted else str(exc)
+        raise ClickException(message) from exc
+    except AgentServerAcquisitionError as exc:
         raise ClickException(str(exc)) from exc
 
 

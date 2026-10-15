@@ -14,19 +14,15 @@ tracers and run/thread/agent clients observe it without blocking execution or
 requiring Redis/Valkey. Optional teaming exports the same source events; local
 and Hub subscriptions share boundary and structural-prefill rules.
 
-Resident-agent CLI operations that need execution must ensure the agent is ready
-and use its API. Concurrent starters converge on the same runtime. Remove host
-embedding from these paths; retain the runtime after the command by default.
+Resident/visiting CLI operations that need execution use the agent API.
+Concurrent starters converge on the same runtime. Lifetime, command defaults,
+and attach-only controls follow
+[the lifecycle contract](resident-visiting-server-lifecycle.md).
 Mutations of subscribed run/thread structure also go through this owner; an
 out-of-process writer must not bypass cursor assignment and publication.
-Optional stop-on-exit applies only to the instance started by that command, never
-an attached/replacement instance, and must not cancel other active work. Resolve
-configuration/environment/CLI policy at the call site. Script mode is a separate,
-unresolved lifecycle decision; its eventual policy must preserve single ownership
-when sharing an agent home.
-
-Chat, retry/rerun, and run/thread controls now use a persistent hosted runtime.
-Script mode still permits host embedding and stops script-created guests on exit.
+Resolve configuration/environment/CLI policy at the call site. Roaming and script
+lifecycles remain unchanged: scripts permit host embedding and stop script-created
+guests on exit.
 The hosted executor permits multiple active roots in one thread; preserve this
 concurrency while consolidating execution ownership.
 
@@ -252,7 +248,7 @@ and cache, local subscription normalization/HTTP, then
 
 | Acceptance scenario | Pass condition |
 | --- | --- |
-| Concurrent CLI acquisition | One runtime/executor; defaults keep it running; stop-on-exit cannot stop another instance/workload. |
+| Concurrent CLI acquisition | One runtime/executor with the command lifetime defined by the lifecycle contract; one client exiting preserves other clients and accepted work. |
 | Multiple publishers and observers | Parallel roots in one thread, multiple threads, descendants, and worker-thread mutations share ordered unique cursors; slow/failing tracers do not delay execution. |
 | Durable publication | Begin/End cursors commit with records before delivery; failed projection publishes nothing; restart/legacy cursors never alias current events. |
 | Every scope and start-and-subscribe | Correct isolation/ancestry; earliest POST events are captured; retry catchup cannot end at an older RunEnd; one client's closure leaves others running; background descendants are observed through completion. |
@@ -272,8 +268,7 @@ stream adapters; dependencies, `docs/api.md`, and focused lifecycle/store/stream
 tests. Runtime PRs update the changelog through the existing runnable and run the
 [default checks](../../AGENTS.md#verification).
 
-Remaining choices: script lifecycle; stop-on-exit option/environment/config names
-and scope; and request-ID reconciliation. Cache/batch budgets and cursor
+Remaining choices: script lifecycle and request-ID reconciliation. Cache/batch budgets and cursor
 encoding are fixed above. The checkpoint commit rules and retry mutation semantics above are fixed. Hub
 storage/versioning/retention details are settled in stage 5. These are explicit
 follow-ups, not guarantees already provided by the current runtime.

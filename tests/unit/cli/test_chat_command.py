@@ -1009,6 +1009,36 @@ def test_chat_runtime_does_not_fall_back_after_remote_health_failure(
             raise AssertionError("failed remote must not open Chat")
 
 
+def test_chat_lease_loss_reports_the_accepted_run_after_client_cleanup(
+    tmp_path, monkeypatch
+):
+    layout = AgentLayout.resident(tmp_path, "alice")
+    closed = []
+
+    @contextmanager
+    def acquire(*_args, **_kwargs):
+        yield AgentServerRef("host", "http://server", launch_id="launch")
+        raise chat.ServerLeaseLostError("server retention lease was lost")
+
+    class Session(_Client):
+        last_accepted_run_id = "run_accepted"
+
+        def __init__(self, *_args, **_kwargs):
+            super().__init__()
+
+        def close(self):
+            closed.append(True)
+
+    monkeypatch.setattr(chat, "context_layout", lambda _ctx: layout)
+    monkeypatch.setattr(chat, "ui_base_url", lambda: "")
+    monkeypatch.setattr(chat, "acquire_agent_server", acquire)
+    monkeypatch.setattr(chat, "RemoteChatSession", Session)
+    with pytest.raises(ClickException, match="inspect accepted run run_accepted"):
+        with chat._chat_runtime(object(), sandbox=None):  # type: ignore[arg-type]
+            pass
+    assert closed == [True]
+
+
 @pytest.mark.parametrize("instance", [None, "guest"])
 def test_chat_input_history_uses_canonical_runtime_path_without_legacy_import(
     tmp_path: Path,

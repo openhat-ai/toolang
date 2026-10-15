@@ -98,12 +98,12 @@ and tool subprocesses. `_serve` is already counted by its launching command.
 
 | Command | Processes | Reads / writes |
 | --- | --- | --- |
-| Host `start` | 2 at startup; 1 after return | Config/status; resident-only control writes and child workload execution. |
+| Host `start` | 2 at startup; 1 after return | Config/status; resident/visiting control writes and child workload execution. |
 | Docker `start` | 1 host + 1 guest; guest remains | Host owns control/reference; guest owns workload status and database/logs. |
 | Host `serve` | 1 throughout | Control initialization then workload in-process; no agent child. |
 | Docker `serve` | 1 host + 1 guest | Host controls/follows; guest executes; entry scripts use `exec`. |
 | `_serve` | 1 workload | Explicit inputs/config/status/database; workload-section writes. Direct host invocation also performs control bootstrap. |
-| `stop` | 1 command + target until exit | Resident-only; read saved refs, stop/release, then finalize control/reference. |
+| `stop` | 1 command + target until exit | Resident/visiting; read saved refs, stop/release, then finalize control/reference. |
 | `top` | 1 additional | Read references/status/database/Hub; correct confirmed-dead metadata only. |
 | `list` | 1 additional | Read installed residents/config/status; include stopped agents; confirmed-dead correction only. |
 | `info` | 1 additional | Read status/config and existing online APIs or offline resources; confirmed-dead correction and existing caches allowed. |
