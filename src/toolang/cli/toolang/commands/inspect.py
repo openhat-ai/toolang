@@ -115,6 +115,7 @@ class _ProjectorTransition:
     name: str
     project: Callable[[RunStore, _InspectSubject], object]
     render: Callable[[Console, _InspectSubject, object], None]
+    help: str
     supports: Callable[[_InspectSubject], bool] = lambda _subject: True
 
 
@@ -672,19 +673,27 @@ INSPECT_SUBJECT_TRANSITIONS: tuple[_SubjectTransition, ...] = (
 )
 
 INSPECT_PROJECTORS: tuple[_ProjectorTransition, ...] = (
-    _ProjectorTransition("run", "output", _project_run_output, _render_run_output),
+    _ProjectorTransition(
+        "run",
+        "output",
+        _project_run_output,
+        _render_run_output,
+        help="Resolved run result",
+    ),
     _ProjectorTransition(
         "run",
         "tree",
         _project_structural_tree,
         _render_execution_tree,
+        help="Stored execution tree",
     ),
     _ProjectorTransition(
         "step",
         "call",
         _project_step_call,
         _render_step_call,
-        lambda subject: (
+        help="Historical call owned by the step",
+        supports=lambda subject: (
             _selected_step(subject).kind in {"model", "tool", "run", "par", "loop"}
         ),
     ),
@@ -720,9 +729,8 @@ def write_inspect_help(ctx: Context, formatter: HelpFormatter) -> None:
     with formatter.section("Projections"):
         formatter.write_dl(
             [
-                ("<RUN> output", "Resolved run result"),
-                ("<RUN> tree", "Stored execution tree"),
-                ("<STEP> call", "Historical call owned by the step"),
+                (f"<{projector.source.upper()}> {projector.name}", projector.help)
+                for projector in INSPECT_PROJECTORS
             ]
         )
     with formatter.section("Examples"):

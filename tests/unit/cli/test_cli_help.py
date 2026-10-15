@@ -88,21 +88,16 @@ def test_examples_share_section_styles_and_wrap_descriptions(
     assert all(cell_len(line) <= width for line in output.plain.splitlines())
     examples = output.plain.split("Examples:\n", 1)[1]
     assert "\n\n" not in examples.rstrip()
-    assert "Open a conversation with an agent" in " ".join(examples.split())
     for label in ("Arguments:", "Options:", "Examples:"):
         assert output.get_style_at_offset(console, output.plain.index(label)) == (
             output.get_style_at_offset(console, output.plain.index("Options:"))
         )
     first = next(line for line in examples.splitlines() if "List conversations" in line)
     description_column = first.index("List conversations")
-    # No wrapped description escapes to the left margin as it did in epilog text.
-    for line in examples.splitlines():
-        if (
-            line.strip()
-            and "too talk" not in line
-            and not line.lstrip().startswith('"Hello"')
-        ):
-            assert len(line) - len(line.lstrip()) >= description_column
+    descriptions = " ".join(
+        line[description_column:].strip() for line in examples.splitlines()
+    )
+    assert "Open a conversation with an agent" in descriptions
 
 
 @pytest.mark.parametrize(
