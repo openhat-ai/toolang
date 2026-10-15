@@ -165,9 +165,9 @@ Define `ExecutionActivitySnapshot` in `execution/schemas.py`:
 | Recent | Bounded terminal root summaries with root lifetime stats. |
 | Limits | Exact active counts, exported counts, active truncation, and `recent_has_more`. |
 
-Bound free text to 240 characters. Include IDs, parent, kind/operation, names,
-status, timestamps, occurrence, and explicit tool summary. Exclude full
-inputs/outputs, model messages, streamed text, arguments, and authored ASTs.
+Bound free text to 240 characters. Include IDs, node incarnation identity, parent,
+kind/operation, names, status, timestamps, occurrence, and explicit tool summary.
+Exclude full inputs/outputs, model messages, streamed text, arguments, and authored ASTs.
 Keep inspect references; reference-only errors need not be dereferenced for Top.
 
 Capture at most 200 roots and 4,000 nodes as detached flat descriptors/counters
@@ -269,13 +269,71 @@ coverage must reflect truncation. Header and scope statistics do not change.
 Preserve public flags and keys; document the execution-total range and sampled
 filter behavior as compatibility changes in the implementation changelog.
 
+## Top integration
+
+```text
+executor live tree + terminal root reader -> /activity/current --+
+                                                              +-> RuntimeObservation -> Activity -> rows/dashboard
+Agent/Thread Period reader -------------> /activity/stats ------+
+```
+
+The API paths use the `/api/v1` prefix defined above. RuntimeObservation delivers
+complete execution snapshots and separate scope-stat replacements; Top applies
+them directly instead of converting them into legacy activity pages/checkpoints.
+
+| Existing component | Integration responsibility |
+| --- | --- |
+| `cli/toolang/commands/top.py:top_command` | Resolve root/home scope and supply the new observer to `watch`; route live activity through executor snapshots. Keep offline terminal/history reads and presence metadata distinct. |
+| `up/activity.py:RuntimeObservation` | Discover instances, read their registered activity URLs, attach ownership/coverage metadata, and produce independent execution/stat updates per instance. Apply the source limits above. |
+| `cli/common/activity.py:watch` | Keep background reads, input handling, repaint scheduling, and terminal cleanup. Receive complete replacements and request redraw; source failures affect that source only. |
+| `cli/common/activity_view.py:Activity` | Store the latest execution snapshot and scope metrics separately; validate identity/query versions and replace state before projecting rows. |
+| `Activity.rows()` and `activity_dashboard.py` | Apply the view table above using existing grouping, folding, sorting, layout, and Details interactions; read supplied statistics without execution-node SQL. |
+
+Key source state by runtime instance and expected executor epoch, then group by
+Agent/Thread for display. Distinct instances of the same Agent must not overwrite
+each other. Discovery owns instance removal/replacement; a partial update from
+another source cannot remove an omitted instance. Hub roster/presence can decorate
+the observation, but legacy Hub activity pages cannot replace executor snapshots.
+
+Provide explicit activity and scope-stat replacement handlers in `Activity`.
+An activity replacement validates instance/epoch, Recent-query generation, and
+sample sequence, then swaps Active and Recent together. A scope-stat replacement
+validates epoch, Period generation, and requested scopes. Keep requested settings
+visible while loading; mark the affected Recent window or scope metrics updating
+until replacement arrives, without relabeling old data as a fresh calculation.
+The two families have independent readiness/error state, so slow Period reads or
+another agent's failure cannot freeze fresh execution activity.
+
+Keep root selection by instance/epoch/root ID across Active-to-Recent and retry
+transitions while that root remains visible. Before replacement, retain the
+selected child's ancestor chain for the existing nearest-visible-ancestor
+fallback. Include incarnation identity in
+non-root selection/fold keys so a reused reference cannot inherit an old node's
+UI state. Folds and selection survive unrelated sources' replacements. Existing
+Details result lookup stays an explicit asynchronous read outside compact frames.
+
+| Trigger | Observation work |
+| --- | --- |
+| Startup or reconnect | Read a complete current snapshot; load Header/scope metrics independently. `--once` uses the same bounded reads for one render. |
+| Refresh tick or Recent expiry | Request the latest current snapshot; replace it atomically on success. |
+| Recent change | Advance its query generation and reload current activity; invalidate late responses for the previous window. |
+| Period change | Advance the Period generation and reload scope stats; retain the current execution snapshot. |
+| View change, thread viewport change | Project existing activity immediately; batch-load newly needed visible Thread metrics when applicable. |
+| Fold, filter, sort, selection, resize | Reproject/repaint locally without execution reads or statistics recomputation; newly visible Thread metrics follow the viewport rule above. |
+| Root completion | Arrives in the next complete snapshot as a Recent summary; no client-synthesized terminal transition. |
+
+Opening Top and subscriber lifetime never own execution. Reconnect uses current
+state rather than canonical event replay. Preserve existing alternate-screen,
+keyboard/mouse, scrolling, and redraw behavior while replacing the data path.
+
 ## Touchpoints and acceptance
 
 Likely files: `execution/{live,types,schemas,activity,accounting,statistics,stream}.py`,
 executor publication/admission and `executor/{awaitables,spawn}.py`;
 `execution/store.py` for indexed Recent and bulk totals; `up/{core,activity,observation,server}.py`;
-API app/router factories, script lifecycle wiring, observation adapters, and Top
-view/dashboard code. Schemas remain independent of stores/runtime services.
+API app/router factories, script lifecycle wiring, observation adapters, and
+`cli/toolang/commands/top.py`, `cli/common/{activity,activity_view,activity_dashboard}.py`.
+Schemas remain independent of stores/runtime services.
 Only this definition changes now; no implementation or changelog changes ship.
 
 | Scenario | Pass condition |
@@ -290,6 +348,9 @@ Only this definition changes now; no implementation or changelog changes ship.
 | Completion/retry racing capture | One coherent membership; final root counters agree with durable lifetime totals. |
 | Long history, Recent all, export caps | Limited Recent seek and bulk totals, no full counts/history grouping; bounded gate copy and truthful has-more coverage. |
 | All views, Period changes, filters/folds | Execution rows use live/root totals without per-node Period SQL; scope metrics remain independent. |
+| Top source wiring and duplicate Agent names | Live data reaches Top through the executor observer; distinct runtime instances remain distinct and legacy activity pages cannot overwrite them. |
+| Top replacement, selection, and query races | Active/Recent swap together; root selection survives completion/retry, pruned children select ancestors, and late epoch/window/Period responses are discarded. |
+| Top navigation, refresh, and once | Local interactions repaint without execution reads; view changes fetch only missing scope metrics; normal and once rendering use the same snapshot contract. |
 | Hosted/local/sandbox/embedded host script | Live Active always comes from the owning executor; embedded endpoint adds no executor/driver or persistent daemon. |
 | Embedded observer failure/exit and observer disconnect | Execution semantics are unchanged; listeners/registrations are cleaned up and source loss is not fabricated completion. |
 | Two viewers, slow reads, stale samples, clock-only expiry | Shared bounded replacements, epoch/sequence/query checks, independent healthy-source updates. |
