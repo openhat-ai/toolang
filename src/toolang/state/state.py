@@ -37,7 +37,6 @@ from ..lang.ast import (
     CapDecl,
     FlowDecl,
     Program,
-    to_data,
 )
 from toolang.lang.types import unnamed_runnable_name
 
@@ -85,24 +84,10 @@ class MaterializedFile:
             raise ValueError("materialized file size must be non-negative")
         _require_revision(self.sha256, name="materialized file sha256")
 
-    def to_data(self) -> dict[str, object]:
-        return {"path": self.path, "size": self.size, "sha256": self.sha256}
-
-    @classmethod
-    def from_data(cls, data: Mapping[str, object]) -> MaterializedFile:
-        size = data["size"]
-        if not isinstance(size, int) or isinstance(size, bool):
-            raise TypeError("resolved file size must be an integer")
-        return cls(
-            path=str(data["path"]),
-            size=size,
-            sha256=str(data["sha256"]),
-        )
-
 
 @dataclass(frozen=True, slots=True)
 class CapResolution:
-    """Persisted resolution of one referenced or configured capability."""
+    """Runtime acquisition details reconstructed from a Cap and its file map."""
 
     kind: EntryKind
     name: str
@@ -143,45 +128,6 @@ class CapResolution:
             raise ValueError("resolved cap content hash does not match its files")
         if self.line is not None and self.line < 1:
             raise ValueError("resolved cap line must be positive")
-
-    def to_data(self) -> dict[str, object]:
-        data: dict[str, object] = {
-            "kind": self.kind,
-            "name": self.name,
-            "form": self.form,
-            "declared_ref": self.declared_ref,
-            "resolved_ref": self.resolved_ref,
-            "definition": self.definition,
-            "materialized": self.materialized,
-            "content_hash": self.content_hash,
-            "files": [file.to_data() for file in self.files],
-        }
-        if self.line is not None:
-            data["line"] = self.line
-        return data
-
-    @classmethod
-    def from_data(cls, data: Mapping[str, object]) -> CapResolution:
-        raw_files = data["files"]
-        if not isinstance(raw_files, list):
-            raise TypeError("resolved cap files must be a list")
-        line = data.get("line")
-        return cls(
-            kind=cast(EntryKind, str(data["kind"])),
-            name=str(data["name"]),
-            form=cast(CapForm, str(data["form"])),
-            declared_ref=str(data["declared_ref"]),
-            resolved_ref=str(data["resolved_ref"]),
-            definition=str(data["definition"]),
-            materialized=str(data["materialized"]),
-            content_hash=str(data["content_hash"]),
-            files=tuple(
-                MaterializedFile.from_data(cast(dict[str, object], file))
-                for file in raw_files
-                if isinstance(file, dict)
-            ),
-            line=line if isinstance(line, int) and not isinstance(line, bool) else None,
-        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -233,27 +179,10 @@ class CapSource:
             data["declared_ref"] = self.declared_ref
         return data
 
-    @classmethod
-    def from_data(cls, data: dict[str, object]) -> CapSource:
-        raw_line = data.get("line")
-        return cls(
-            origin=cast(SourceOrigin, str(data["origin"])),
-            form=cast(CapForm, str(data["form"])),
-            path=str(data["path"]),
-            updated_at=str(data["updated_at"]),
-            fingerprint=str(data["fingerprint"]),
-            declared_ref=(
-                str(data["declared_ref"])
-                if data.get("declared_ref") is not None
-                else None
-            ),
-            line=raw_line if isinstance(raw_line, int) else None,
-        )
-
 
 @dataclass(frozen=True, slots=True)
 class StateCap:
-    """One capability backed by an immutable State layer path."""
+    """One parsed capability with captured provenance and file resources."""
 
     kind: EntryKind
     name: str
@@ -325,25 +254,13 @@ class StateCap:
         return Path(self.path).read_text(encoding="utf-8")
 
     def read_content(self) -> str:
-        """Read the capability body lazily from its immutable layer file."""
+        """Return parsed content, reading a file only before State persistence."""
         if self.body is not None:
             return self.body
         return frontmatter.loads(self.read_text()).content.strip()
 
     def to_snapshot(self) -> dict[str, object]:
         return self.to_data()
-
-    @classmethod
-    def from_data(cls, data: dict[str, object]) -> StateCap:
-        return cls(
-            kind=cast(EntryKind, str(data["kind"])),
-            name=str(data["name"]),
-            shape=cast(EntryShape, str(data["shape"])),
-            ref=str(data["ref"]),
-            path=str(data["path"]),
-            source=CapSource.from_data(cast(dict[str, object], data["source"])),
-            meta=dict(cast(dict[str, object], data.get("meta", {}))),
-        )
 
 
 def program_runnable_index(
@@ -438,35 +355,6 @@ def runnable_export(source: str, program: Program) -> tuple[str, str]:
             f"filename-matching agic or flow: {source} (found {len(candidates)})"
         )
     return public_name, candidates[0]
-
-
-def program_term_data(
-    *,
-    name: str,
-    source: str,
-    digest: str,
-    program: Program,
-    here_caps: tuple[StateCap, ...],
-) -> dict[str, object]:
-    """Serialize one source-bound Program term for the State layer document."""
-
-    public_name, local_name = (
-        (None, None) if name == "agent" else runnable_export(source, program)
-    )
-    return {
-        "name": name,
-        "kind": "agent" if name == "agent" else "runnable",
-        "authored_path": source,
-        "materialized_path": f"files/{source}",
-        "digest": digest,
-        "program": to_data(program),
-        "export": (
-            {"public_name": public_name, "local_name": local_name}
-            if public_name is not None
-            else None
-        ),
-        "here_caps": [cap.to_data() for cap in sorted(here_caps, key=_entry_sort_key)],
-    }
 
 
 def _module_runnable_key(module: str, kind: str, local_name: str) -> str:
@@ -730,25 +618,6 @@ class AgentState:
         # Accepted code may outlive its module. Only current external caps remain.
         base = tuple(self.caps.values()) if self.base_caps is None else self.base_caps
         return _allowed_state_caps(self, base)
-
-    def to_snapshot(self) -> dict[str, object]:
-        return {
-            "revision": self.revision,
-            "root_revision": self.root_revision,
-            "home_revision": self.home_revision,
-            "files": [item.to_data() for item in self.files],
-            "caps": [cap.path for cap in self.caps.values()],
-            "modules": [
-                program_term_data(
-                    name=name,
-                    source=self.module_sources[name],
-                    digest=self.module_digests[name],
-                    program=program,
-                    here_caps=self.module_caps[name],
-                )
-                for name, program in self.modules.items()
-            ],
-        }
 
 
 def _effective_module_caps(state: AgentState) -> dict[str, tuple[StateCap, ...]]:
@@ -1962,11 +1831,22 @@ def _materialize_remote_entry_requests_serial(
 def merge_materialized_files(
     target: dict[str, bytes], captured: Mapping[str, bytes]
 ) -> None:
-    """Share equal acquired bytes while rejecting conflicting captures."""
+    """Share complete identical acquisitions without mixing different captures."""
+    incoming: dict[str, dict[str, bytes]] = {}
+    previous: dict[str, dict[str, bytes]] = {}
     for path, content in captured.items():
-        if path in target and target[path] != content:
-            raise ValueError(f"conflicting acquired file: {path}")
-        target[path] = content
+        key = Path(path).parts[1]
+        incoming.setdefault(key, {})[path] = content
+    for path, content in target.items():
+        if not path.startswith("materialized/"):
+            continue
+        key = Path(path).parts[1]
+        if key in incoming:
+            previous.setdefault(key, {})[path] = content
+    for key, files in previous.items():
+        if files != incoming[key]:
+            raise ValueError(f"conflicting acquired files: {key}")
+    target.update(captured)
 
 
 def _remote_entry_from_request(

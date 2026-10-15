@@ -102,7 +102,8 @@ publish locks coordinate derived State writes. Old
 `config`, `source` and `materialized` file maps, and `modules`, `caps`, and
 `chores` arrays. Each item has `ref`, `source`, and `value`; caps also have
 `form`. The `source` field names its original file in the source map. Only an
-empty default agent module can omit its source.
+empty default agent module has `source: null`, when `agent.too` is absent or
+excluded.
 
 Program values hold the parsed AST. Cap values hold `meta` and `body`. Chore
 values hold `title`, `body`, and `schedule`, after home Markdown/agent-inline
@@ -125,7 +126,8 @@ Fetched items include one complete `resolution` object:
 
 `resolution.materialized` selects an entry in the materialized map. Its acquisition
 key is SHA-256 of the UTF-8 canonical `resolved_ref`. Equal acquisitions share
-files across consumers; conflicting bytes under the same key reject preparation.
+files across consumers; different file sets or bytes under the same key reject
+preparation.
 Source owners supply canonical refs, entry paths, and original relative paths.
 State does not interpret schemes or choose a default source. Visiting Mod
 provenance is passed from its source cache into its module item with the exact
@@ -153,7 +155,8 @@ after an intervening change creates a new revision.
 List home revisions by creation time from an agent home:
 
 ```sh
-jq -r '[.created_at, input_filename] | @tsv' .state/home/revs/*/layer.json | sort
+jq -r 'select(.created_at != null) | [.created_at, input_filename] | @tsv' \
+  .state/home/revs/*/layer.json | sort
 ```
 
 Public source receipts keep `scope`, `key`, `observed_digest`, `accepted_digest`,
@@ -251,11 +254,13 @@ headers are rejected. Missing optional source is represented by empty text.
 Normal preparation compares raw source identities and asks the Source owner
 whether each recorded selection remains reusable under current source policy.
 The watcher performs that eligibility check even when local files are unchanged.
-Reusable versions do not require upstream polling. A forced refresh rechecks
-upstream: GitHub selectors resolve to full commit SHAs before files are fetched
-at that SHA; HTTP(S) URLs are fetched again and compared by bytes. A changed Git
-commit changes provenance even when content is equal. Historical/offline loads
-use their captured refs without consulting current selection policy.
+Reusable versions do not require upstream polling. A forced State refresh
+rechecks Cap acquisitions: GitHub selectors resolve to full commit SHAs before
+files are fetched at that SHA; HTTP(S) URLs are fetched again and compared by
+bytes. A changed Git commit changes provenance even when content is equal.
+Visiting Mod acquisition keeps its one-hour source-cache lifecycle; State records
+the supplied Program and resolution. Historical/offline loads use their captured
+refs without consulting current selection policy.
 
 When rebuilding a layer, a writer:
 

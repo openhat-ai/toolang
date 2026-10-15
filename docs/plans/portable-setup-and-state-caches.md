@@ -196,8 +196,8 @@ SourceManifest      sorted relative file path, byte size, and SHA-256
 
 Directories contribute only their descendant path set; directory size and
 timestamps are excluded. The complete bytes of `config.toml` are hashed, so
-Setup-only edits or comments also change the State manifest. Only State-owned
-fields are persisted in the projected config artifact. Symlinked files use their
+Setup-only edits or comments also change the State manifest. Raw config bytes are archived under `source/`; State-owned
+fields are normalized separately in `layer.json`. Symlinked files use their
 logical relative path and target bytes; symlink directories remain rejected.
 
 Within one watcher, observation-equal files reuse their prior digest. Changed
@@ -209,9 +209,9 @@ content-changed files change it even when size and mtime are preserved.
 
 ### Matching, Migration, And Watching
 
-The portable manifest replaces `SourceTree` in canonical `layer.json` and
-participates in the root/home layer revision. The existing State config,
-resolutions, caps, programs, and materialized-file manifest remain unchanged.
+Portable observations drive current-layer matching. The persisted maps, parsed
+values, acquisitions, and timestamped identities follow the final
+[State layer format](state-layer-format.md).
 
 ```text
 observe -> compute/reuse manifest -> compare with current layer
@@ -223,9 +223,7 @@ observe -> compute/reuse manifest -> compare with current layer
 Remote output changes remain represented by resolutions, caps, and files and
 therefore create a new layer revision.
 
-Layer schema 6 records full dependency digests. Composition schema 2 records
-agent name and frozen startup cap overrides alongside the layer references.
-Incompatible compositions are rejected, and current State is rebuilt from
+Unsupported compositions are rejected, and current State is rebuilt from
 source; historical loads never substitute current policy. Historical ModelCall
 replay uses execution records, not State caches. See
 [AgentState publication](agent-state-publication.md).
@@ -261,7 +259,7 @@ root/home-relative path. Sandbox preparation extends the current roaming
    - implement catalog and root/agent context stores, portable identities,
      large projections, hydration, external `--models` mounts, and Setup tests.
 2. `perf(state): make source revisions portable`
-   - implement observations/manifests, matching, compatibility loading,
+   - implement observations/manifests, matching, schema validation,
      generalized linked-source mounts, and State tests.
 
 These PRs merge in order, share no new persistence framework, and require no

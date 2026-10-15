@@ -7,46 +7,39 @@ from dataclasses import replace
 from hashlib import sha256
 import logging
 from pathlib import Path
-import re
 
 from toolang.common.layout import AgentLayout, ensure_scratch_workspace
 from toolang.catalog import source as cap_source
 
 from ..common.progress import ProgressSink, emit_progress
-from ..lang.ast import AgicDecl, FlowDecl, Program, parse_cap_declarations
+from ..lang.ast import Program, parse_cap_declarations
 from .acceptance import accept_sources
 from .state import (
     AgentState,
+    StateCap,
+    materialize_program_caps,
+    materialize_scope,
+    layer_remote_cache,
     compose_agent_state,
     effective_caps,
-    runnable_export,
-    runnable_module_name,
-    public_runnable_index,
     merge_materialized_files,
-    program_runnable_index,
     _allowed_caps,
 )
-from .errors import StateDiagnostic, StatePreparationError, StateValidationLayer
 from .config import (
     canonical_state_config,
     normalize_cap_overrides,
     parse_config,
     resolve_cap_allows,
 )
-from .types import EntryKind, StateFile
-from .state import (
-    materialize_program_caps,
-    materialize_scope,
-    layer_remote_cache,
-)
+from .types import CapScope, EntryKind, StateFile
 from .source import (
     SourceChangedError,
+    scan_home_source,
+    scan_root_source,
     SourceFile,
     SourceManifest,
     SourceObservation,
     SourceSnapshot,
-    SourceRecord,
-    ProgramSource,
     parse_agent_program,
     observe_home_source,
     observe_root_source,
@@ -71,16 +64,8 @@ from .cache import (
     publish_agent_current,
     write_layer,
 )
-from .state import (
-    CapResolution,
-    StateCap,
-    CapScope,
-    MaterializedFile,
-)
-from .source import scan_home_source, scan_root_source
 
 _MAX_SOURCE_SNAPSHOT_ATTEMPTS = 3
-_ERROR_LINE_RE = re.compile(r"\bline (\d+)\b", re.IGNORECASE)
 logger = logging.getLogger(__name__)
 
 
@@ -206,9 +191,7 @@ def compose_layer_state(
     )
 
 
-def _source_files(scope: LayerScope, source: SourceRecord) -> tuple[StateFile, ...]:
-    if not isinstance(source, SourceManifest):
-        return ()
+def _source_files(scope: LayerScope, source: SourceManifest) -> tuple[StateFile, ...]:
     return tuple(StateFile(scope, item.path, item.digest) for item in source.files)
 
 
@@ -252,12 +235,6 @@ def load_state_caps(
     if scope == "root":
         return load_root_layer(layout, state.root_revision).caps
     return load_home_layer(layout, state.home_revision).caps
-
-
-def validate_home_programs(authored: SourceSnapshot) -> None:
-    """Validate one captured home Program candidate without publishing State."""
-
-    _program_drafts(authored)
 
 
 def refresh_agent_state(
@@ -635,10 +612,7 @@ def _build_layer_revision(
         )
         modules: dict[str, Program] = {}
         module_sources: dict[str, str] = {}
-        module_digests: dict[str, str] = {}
         module_caps: dict[str, tuple[StateCap, ...]] = {}
-        module_entries: tuple[StateCap, ...] = ()
-        drafts = []
         for prepared in accepted.programs:
             name, module_source, program = (
                 prepared.name,
@@ -649,9 +623,7 @@ def _build_layer_revision(
             merge_materialized_files(generated_files, here_files)
             modules[name] = program
             module_sources[name] = module_source.authored_path
-            module_digests[name] = module_source.digest
             module_caps[name] = here_entries
-            drafts.append((name, module_source, program))
         files = _snapshot_files(
             selected,
             generated_files,
@@ -661,7 +633,6 @@ def _build_layer_revision(
             _snapshot_entry(
                 entry,
                 agent_name=authored.agent_name,
-                files=files,
                 cap_scope=cap_scope,
             )
             for entry in entries
@@ -672,16 +643,12 @@ def _build_layer_revision(
                     _snapshot_entry(
                         entry,
                         agent_name=authored.agent_name,
-                        files=files,
                         cap_scope=cap_scope,
                     )
                     for entry in module_caps[name]
                 )
                 for name in modules
             }
-            module_entries = tuple(
-                entry for entries in module_caps.values() for entry in entries
-            )
         module_resolutions = {}
         acquired = layout.program_acquisition if scope == "home" else None
         if acquired is not None and "source/agent.too" in files:
@@ -696,19 +663,16 @@ def _build_layer_revision(
                 },
             )
             module_resolutions["agent"] = acquired.resolution()
-        resolutions = _cap_resolutions((*entries, *module_entries), files)
         if observation != _observe_scope_source(layout, scope=scope):
             continue
         revision = write_layer(
             layout=layout,
             scope=scope,
             source=source,
-            resolutions=resolutions,
             config=_snapshot_config(selected, cap_scope=cap_scope),
             caps=entries,
             modules=modules,
             module_sources=module_sources,
-            module_digests=module_digests,
             module_caps=module_caps,
             files=files,
             records=accepted.records,
@@ -766,147 +730,6 @@ def _require_agent_home(layout: AgentLayout) -> None:
         raise FileNotFoundError(f"agent home not found: {layout.home}")
 
 
-def _program_drafts(
-    authored: SourceSnapshot,
-) -> tuple[tuple[str, ProgramSource, Program], ...]:
-    sources = authored.load_programs()
-    programs: list[tuple[ProgramSource, Program]] = []
-    diagnostics: list[StateDiagnostic] = []
-    external_runnables: dict[str, tuple[Program, AgicDecl | FlowDecl]] = {}
-    for source in sorted(sources, key=lambda source: source.kind == "agent"):
-        try:
-            program = (
-                source.parse(external_runnables=external_runnables)
-                if source.kind == "agent" and external_runnables
-                else source.parse()
-            )
-            programs.append((source, program))
-            if source.kind == "runnable":
-                try:
-                    public_name, local_name = runnable_export(
-                        source.authored_path, program
-                    )
-                except ValueError:
-                    continue  # Report invalid exports at the runnable-extension layer below.
-                declaration = program_runnable_index(program)[local_name]
-                external_runnables[public_name] = (program, declaration)
-        except Exception as exc:
-            diagnostics.append(
-                _diagnostic(
-                    source,
-                    layer="program",
-                    code="invalid-program",
-                    error=exc,
-                )
-            )
-    if diagnostics:
-        raise StatePreparationError(*diagnostics)
-
-    runnable_sources = tuple(
-        source for source, _program in programs if source.kind == "runnable"
-    )
-    _validate_runnable_source_names(runnable_sources)
-
-    drafts: list[tuple[str, ProgramSource, Program]] = []
-    extension_diagnostics: list[StateDiagnostic] = []
-    for source, program in programs:
-        if source.kind == "agent":
-            drafts.append(("agent", source, program))
-            continue
-        try:
-            runnable_export(source.authored_path, program)
-        except ValueError as exc:
-            extension_diagnostics.append(
-                _diagnostic(
-                    source,
-                    layer="runnable-extension",
-                    code="invalid-runnable-export",
-                    error=exc,
-                )
-            )
-            continue
-        drafts.append((runnable_module_name(source.authored_path), source, program))
-    if extension_diagnostics:
-        raise StatePreparationError(*extension_diagnostics)
-
-    modules = {name: program for name, _source, program in drafts}
-    module_sources = {name: source.authored_path for name, source, _program in drafts}
-    try:
-        public_runnable_index(modules, module_sources)
-    except ValueError as exc:
-        agent = sources[0]
-        raise StatePreparationError(
-            _diagnostic(
-                agent,
-                layer="state-composition",
-                code="public-runnable-conflict",
-                error=exc,
-            )
-        ) from exc
-    return tuple(drafts)
-
-
-def _validate_runnable_source_names(sources: tuple[ProgramSource, ...]) -> None:
-    seen: dict[str, str] = {}
-    diagnostics: list[StateDiagnostic] = []
-    for source in sources:
-        name = Path(source.authored_path).stem
-        error: ValueError | None = None
-        try:
-            runnable_module_name(source.authored_path)
-        except ValueError as exc:
-            error = exc
-        if error is None and (existing := seen.get(name.casefold())):
-            error = ValueError(
-                f"Runnable module filenames collide under case folding: "
-                f"{existing!r} and {name!r}"
-            )
-        elif error is None:
-            seen[name.casefold()] = name
-        if error is not None:
-            diagnostics.append(
-                _diagnostic(
-                    source,
-                    layer="runnable-extension",
-                    code="invalid-runnable-filename",
-                    error=error,
-                )
-            )
-    if diagnostics:
-        raise StatePreparationError(*diagnostics)
-
-
-def _diagnostic(
-    source: ProgramSource,
-    *,
-    layer: StateValidationLayer,
-    code: str,
-    error: Exception,
-) -> StateDiagnostic:
-    message = str(error) or type(error).__name__
-    match = _ERROR_LINE_RE.search(message)
-    return StateDiagnostic(
-        layer=layer,
-        module_kind=source.kind,
-        authored_path=source.authored_path,
-        line=int(match.group(1)) if match is not None else None,
-        code=code,
-        message=message,
-    )
-
-
-def _module_error(
-    source: ProgramSource,
-    *,
-    layer: StateValidationLayer,
-    code: str,
-    error: Exception,
-) -> StatePreparationError:
-    return StatePreparationError(
-        _diagnostic(source, layer=layer, code=code, error=error)
-    )
-
-
 def _snapshot_files(
     authored: SourceSnapshot, generated_files: dict[str, bytes], *, cap_scope: CapScope
 ) -> dict[str, bytes]:
@@ -953,7 +776,7 @@ def _scope_relative_path(
 
 
 def _snapshot_entry(
-    entry: StateCap, *, agent_name: str, files: dict[str, bytes], cap_scope: CapScope
+    entry: StateCap, *, agent_name: str, cap_scope: CapScope
 ) -> StateCap:
     return replace(
         entry,
@@ -974,44 +797,6 @@ def _entry_snapshot_path(
         )
         return Path("source") / relative
     return Path(entry.path)
-
-
-def _cap_resolutions(
-    entries: tuple[StateCap, ...], files: dict[str, bytes]
-) -> tuple[CapResolution, ...]:
-    result: list[CapResolution] = []
-    for entry in entries:
-        if entry.source.origin != "remote":
-            continue
-        path = Path(entry.path)
-        selected = [
-            (key, content)
-            for key, content in sorted(files.items())
-            if key == entry.path
-            or (entry.shape == "dir" and Path(key).is_relative_to(path.parent))
-        ]
-        captured = tuple(
-            MaterializedFile(key, len(content), sha256(content).hexdigest())
-            for key, content in selected
-        )
-        digest = sha256()
-        for file in captured:
-            digest.update(f"{file.path}\0{file.sha256}\n".encode())
-        result.append(
-            CapResolution(
-                kind=entry.kind,
-                name=entry.name,
-                form=entry.source.form,
-                declared_ref=entry.source.declared_ref or entry.ref,
-                resolved_ref=entry.ref,
-                line=entry.source.line,
-                definition=f"source/{_resolved_definition_path(entry).as_posix()}",
-                materialized=entry.path,
-                content_hash=digest.hexdigest(),
-                files=captured,
-            )
-        )
-    return tuple(result)
 
 
 def _resolved_definition_path(entry: StateCap) -> Path:

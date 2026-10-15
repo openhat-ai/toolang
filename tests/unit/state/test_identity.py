@@ -177,8 +177,8 @@ def test_raw_config_changes_have_distinct_state_identity_after_rebasing(
         "observed_digest": sha256(content).hexdigest(),
         "accepted_digest": sha256(content).hexdigest(),
     }
-    before_files = before.to_snapshot()["files"]
-    after_files = after.to_snapshot()["files"]
+    before_files = [file.to_data() for file in before.files]
+    after_files = [file.to_data() for file in after.files]
     assert isinstance(before_files, list) and isinstance(after_files, list)
     assert expected in before_files
     assert {

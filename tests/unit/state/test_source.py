@@ -309,15 +309,12 @@ def test_home_source_discovers_only_direct_lowercase_too_runnables(
     assert all(not is_source_path(root, "alice", path) for path in ignored)
 
 
-def test_current_source_requires_raw_digests_and_legacy_scan_upgrades(tmp_path):
+@pytest.mark.parametrize("schema", [2, 3, SOURCE_SCHEMA])
+def test_source_manifest_rejects_old_schemas_and_missing_raw_digests(schema):
     from hashlib import sha256
 
-    source = tmp_path / "source"
-    source.mkdir()
-    (source / "agent.too").write_bytes(b"# Hello\r\n")
-    observation = observe_source(source, ("agent.too",))
     old_data = {
-        "schema": 3,
+        "schema": schema,
         "files": [
             {
                 "path": "agent.too",
@@ -326,12 +323,6 @@ def test_current_source_requires_raw_digests_and_legacy_scan_upgrades(tmp_path):
             }
         ],
     }
-    old = SourceManifest.from_data(old_data)
-    assert old.to_data() == old_data
-    with pytest.raises(ValueError, match="requires raw file digests"):
-        SourceManifest.from_data({**old_data, "schema": SOURCE_SCHEMA})
-    upgraded = build_source_manifest(
-        observation, previous_observation=observation, previous_manifest=old
-    )
-    assert upgraded.files[0].raw_digest == old.files[0].digest
-    assert upgraded.schema == SOURCE_SCHEMA
+    message = "requires raw file digests" if schema == SOURCE_SCHEMA else "unsupported"
+    with pytest.raises(ValueError, match=message):
+        SourceManifest.from_data(old_data)

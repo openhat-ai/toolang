@@ -149,7 +149,8 @@ Configured write requests still use `ref` for the supplied Source Ref.
 | `github://user/repo/path/name.md@rev` | Remote cap target |
 
 GitHub cap refs must include `@rev`. Shorthand Source Refs such as `gh:owner/name`
-resolve to the matched repository's default branch before they are stored.
+probe the matched repository's default branch. Acquisition then pins that
+selector to a full commit SHA in State.
 Three-part shorthand such as `gh:owner/repo/name` specifies the repository exactly
 and probes only paths inside that repository.
 

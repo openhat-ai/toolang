@@ -1,7 +1,5 @@
 """Capability inspection and management routes."""
 
-from toolang.catalog import source as cap_source
-
 from collections.abc import Mapping
 from typing import Literal
 
@@ -13,6 +11,7 @@ from pydantic import TypeAdapter
 from toolang.api.app import AgentCoreDep, CapsManagerDep
 from toolang.api.schemas import PutCapRequest, ConfiguredCapRequest
 from toolang.up import AgentCore
+from toolang.catalog import source as cap_source
 from toolang.catalog import cap as caps, templates
 from toolang.catalog import config as cap_config
 from toolang.catalog.types import CapKind

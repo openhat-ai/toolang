@@ -2,7 +2,8 @@
 
 ## Status
 
-Approved.
+Approved. Persisted formats and module layout follow the final
+[State layer format](state-layer-format.md).
 
 ## Goal
 
@@ -27,10 +28,10 @@ model-provider continuation data.
   the last valid revision when a changed candidate is invalid.
 - Normal revision loading trusts persisted content; integrity validation is an
   explicit operation with no implicit runtime callers.
-- Cap forms, serialized literals, and materialized directory names are exactly
-  `authored`, `inline`, `configured`, and `referenced`.
-- Program module names are stable, single-segment, and portable across Windows,
-  macOS, and Linux.
+- Cap forms are `authored`, `inline`, `configured`, and `referenced`;
+  materialized paths follow acquisition identity.
+- Module identities derive from captured source paths independently of
+  materialized directory names.
 - Execution `state` means only Agent State revision; model continuation uses
   `cont` throughout code, protocols, and durable model-step data.
 - The default offline verification suite passes.
@@ -96,129 +97,17 @@ State values use `revision`, `root_revision`, `home_revision`, and
 `revision_dir`. State has no `fingerprint` compatibility alias and does not
 persist Toolang version or observation timestamps.
 
-## Layout
+## Persistence and Modules
 
-```text
-<root>/.state/root/
-  current
-  revs/<root-revision>/
-    layer.json
-    files/
-      config.toml
-      caps/
-        authored/<kind>/<name>/...
-        configured/<kind>/<name>/...
+The [State layer format](state-layer-format.md) defines the current directory
+layout, canonical documents, timestamps, revision identity, module/Cap records,
+and offline integrity checks. It is the persistence contract for this plan.
 
-<home>/.state/home/
-  current
-  revs/<home-revision>/
-    layer.json
-    files/
-      agent.too
-      config.toml
-      flows/<flow-name>.too
-      caps/
-        authored/<kind>/<name>/...
-        configured/<kind>/<name>/...
-        inline/<module>/<kind>/<name>/...
-        referenced/<module>/<kind>/<name>/...
-
-<home>/.state/agent/
-  current
-  revs/<state-revision>/
-    layers.json
-```
-
-Writer locks and temporary paths are implementation details, not durable
-format. New code neither reads nor converts the former `.state/current` and
-`.state/versions` layout.
-
-## Canonical JSON And Revisions
-
-`layer.json` and `layers.json` are stored as canonical UTF-8 JSON:
-
-- object keys are lexicographically sorted;
-- separators are `,` and `:` without whitespace;
-- Unicode is not escaped unless JSON requires it;
-- no indentation or trailing newline is written; and
-- arrays without semantic order are sorted by stable domain keys before
-  encoding.
-
-A loader parses and canonically re-encodes each document and requires exact
-byte equality. The revision is the lowercase SHA-256 hex digest of those exact
-bytes:
-
-```text
-layer_revision = sha256(layer.json bytes)
-state_revision = sha256(layers.json bytes)
-```
-
-No domain separator or separately constructed identity payload is used. The
-schema and required document shape define the format.
-
-## Layer Document
-
-`layer.json` is the complete root or home identity document. It contains:
-
-- `schema` and `scope`;
-- the source snapshot used for change detection;
-- configured and referenced cap resolutions;
-- parsed config;
-- root/home caps;
-- home State modules and their here caps; and
-- a sorted manifest of every file below `files/`, including relative path,
-  byte size, and SHA-256.
-
-Explicit validation requires the file manifest to exactly equal the recursive
-file set: missing, additional, size-mismatched, or hash-mismatched files
-invalidate the layer. Every cap, module, and resolution path must point to one
-manifest entry. Normal loading assumes those persisted invariants hold and does
-not hash the manifest.
-
-The four cap-form literals are used directly as directory segments. There is
-no mapping to `file`, `wired`, `ref`, `cited`, or `with`. `declared_ref` stores
-authored selectors and `resolved_ref` stores canonical resolved selectors.
-
-## Program Modules
-
-The special `agent.too` module is named `agent`. A direct
-`flows/<name>.too` module is named `flow_<name>`. The module name is also its
-single filesystem segment and is treated as an opaque label rather than parsed
-from `_`.
-
-Flow filename stems must match
-`^[A-Za-z_][A-Za-z0-9_-]{0,63}$`, must not be Windows reserved device names,
-and must be unique under Unicode `casefold()`. The module name comes only from
-the source path, not the agent header or the exported flow's local name.
-
-Module-local cap paths are:
-
-```text
-files/caps/<inline|referenced>/<module>/<kind>/<name>/...
-```
-
-The public runnable catalog maps a public runnable to the opaque module name
-and module-local declaration name. It remains derived and is not duplicated in
-the layer document.
-
-## Agent State Composition
-
-`layers.json` contains exactly:
-
-```json
-{"home_revision":"<sha256>","root_revision":"<sha256>","schema":1}
-```
-
-The surrounding revision directory name is the SHA-256 of these exact bytes.
-Loading reads `layers.json`, loads the referenced root and home layer revisions,
-and composes config, caps, modules, and the public runnable catalog without an
-implicit integrity pass. Explicit validation checks `layers.json` and both
-referenced layers transitively.
-
-The Agent State store atomically writes a complete revision before publishing
-`agent/current`, and publishing an already-current revision is a no-op. A
-record can therefore reference only a State revision whose transitive content
-is already durable.
+State loads the exact root/home pair from `layers.json` and reconstructs config,
+capabilities, Programs, and public runnable indexes from captured JSON values.
+The agent store installs a complete revision before publishing `agent/current`;
+re-publishing the current revision is a no-op. Execution can therefore reference
+only a State revision whose transitive content is already durable.
 
 ## State Watcher
 

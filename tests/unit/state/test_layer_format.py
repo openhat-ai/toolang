@@ -256,6 +256,31 @@ def test_conflicting_bytes_for_shared_acquisition_are_rejected(tmp_path, monkeyp
         prepare_agent_state(layout)
 
 
+@pytest.mark.parametrize("second_assets", [{}, {"second.py": b"pass\n"}])
+def test_shared_acquisitions_require_the_same_file_set(
+    tmp_path, monkeypatch, second_assets
+):
+    layout = layout_at(tmp_path)
+    layout.config.write_text(
+        '[skills]\none = {ref="future:first"}\ntwo = {ref="future:second"}\n'
+    )
+
+    def acquire(kind, declared_ref, **kwargs):
+        assets = (
+            {"first.py": b"pass\n"} if declared_ref == "future:first" else second_assets
+        )
+        return Acquisition(
+            "future:registry/review@v1",
+            "SKILL.md",
+            {"SKILL.md": b"Review carefully.", **assets},
+            "review",
+        )
+
+    monkeypatch.setattr(source_owner, "acquire", acquire)
+    with pytest.raises(ValueError, match="conflicting acquired file"):
+        prepare_agent_state(layout)
+
+
 def test_equal_bytes_at_a_new_commit_change_provenance(tmp_path, monkeypatch):
     layout = layout_at(tmp_path)
     ref = "gh:owner/repo/style.md@main"
@@ -332,7 +357,16 @@ def test_generic_acquisition_reuse_keeps_original_name_and_all_files(
 
 @pytest.mark.parametrize(
     "damage",
-    ["config", "cap-source", "cap-value", "module-source", "orphaned-acquisition"],
+    [
+        "config",
+        "cap-source",
+        "cap-value",
+        "module-source",
+        "default-source",
+        "chore-title",
+        "chore-schedule",
+        "orphaned-acquisition",
+    ],
 )
 def test_integrity_checks_stored_shapes_without_interpreting_source(
     tmp_path, monkeypatch, damage
@@ -343,6 +377,8 @@ def test_integrity_checks_stored_shapes_without_interpreting_source(
     layout = layout_at(tmp_path)
     (layout.home / "prompts").mkdir()
     (layout.home / "prompts/style.md").write_text("Be concise.")
+    (layout.home / "chores").mkdir()
+    (layout.home / "chores/review.md").write_text("Review changes.")
     state = prepare_agent_state(layout)
     layer = document(layout, state)
     if damage == "config":
@@ -353,6 +389,13 @@ def test_integrity_checks_stored_shapes_without_interpreting_source(
         layer["caps"][0]["value"]["body"] = 42
     elif damage == "module-source":
         layer["modules"][0]["source"] = None
+    elif damage == "default-source":
+        from toolang.lang.ast import Span, to_data
+
+        layer["modules"][0]["source"] = None
+        layer["modules"][0]["value"] = to_data(Program(span=Span(1)))
+    elif damage.startswith("chore-"):
+        layer["chores"][0]["value"][damage.removeprefix("chore-")] = " "
     else:
         layer["materialized"]["a" * 64 + "/unused.md"] = {
             "size": 0,

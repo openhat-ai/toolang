@@ -31,7 +31,6 @@ from toolang.catalog.chores import Chore, inline_chores, merge_chores
 from .source import (
     SOURCE_SCHEMA,
     SourceManifest,
-    SourceRecord,
     SourceManifestEntry,
     SourceIssue,
 )
@@ -63,7 +62,7 @@ class RootLayer:
     revision: str
     revision_dir: Path
     schema: int
-    source: SourceRecord
+    source: SourceManifest
     resolutions: tuple[CapResolution, ...]
     config: Mapping[str, object]
     caps: tuple[StateCap, ...]
@@ -89,7 +88,7 @@ class HomeLayer:
     revision: str
     revision_dir: Path
     schema: int
-    source: SourceRecord
+    source: SourceManifest
     resolutions: tuple[CapResolution, ...]
     config: Mapping[str, object]
     caps: tuple[StateCap, ...]
@@ -173,7 +172,7 @@ def load_layer_source(
     layout: AgentLayout,
     scope: LayerScope,
     revision: str,
-) -> SourceRecord:
+) -> SourceManifest:
     """Load the source identity recorded by one trusted State layer."""
 
     document, _ = _load_layer(layout, scope, revision)
@@ -242,12 +241,10 @@ def write_layer(
     layout: AgentLayout,
     scope: LayerScope,
     source: SourceManifest,
-    resolutions: tuple[CapResolution, ...],
     config: Mapping[str, object],
     caps: tuple[StateCap, ...],
     modules: Mapping[str, Program],
     module_sources: Mapping[str, str],
-    module_digests: Mapping[str, str],
     module_caps: Mapping[str, tuple[StateCap, ...]],
     files: Mapping[str, bytes],
     records: tuple[StateFile, ...] = (),
@@ -258,12 +255,10 @@ def write_layer(
     document = _layer_document(
         scope=scope,
         source=source,
-        resolutions=resolutions,
         config=config,
         caps=caps,
         modules=modules,
         module_sources=module_sources,
-        module_digests=module_digests,
         module_caps=module_caps,
         files=normalized,
         records=records,
@@ -674,6 +669,10 @@ def _decode_modules(
         if source is None:
             if name != "agent":
                 raise ValueError("only the default agent Program can omit source")
+            if "agent.too" in inputs and "error" not in _object(
+                inputs["agent.too"], "agent source"
+            ):
+                raise ValueError("an accepted agent source must own its Program")
             path, digest = "agent.too", sha256(b"").hexdigest()
         else:
             path = str(source)
@@ -886,6 +885,7 @@ def _decode_chores(
     document: Mapping[str, object], *, modules: Mapping[str, Program] | None = None
 ) -> tuple[Chore, ...]:
     result: list[Chore] = []
+    seen: set[str] = set()
     inputs = _object(document["source"], "source")
     for item in _items(document, "chores"):
         if set(item) != {"ref", "source", "value"}:
@@ -901,8 +901,11 @@ def _decode_chores(
         ):
             raise ValueError("invalid chore value")
         for key in ("title", "schedule"):
-            if value[key] is not None and not isinstance(value[key], str):
-                raise TypeError(f"chore {key} must be text or null")
+            text = value[key]
+            if text is not None and (
+                not isinstance(text, str) or not text.strip() or text != text.strip()
+            ):
+                raise ValueError(f"chore {key} must be normalized text or null")
         line = None
         if (
             source != "agent.too"
@@ -929,8 +932,10 @@ def _decode_chores(
             Path(source),
             line,
         )
-        if any(previous.id == chore.id for previous in result):
+        identity = chore.id
+        if identity in seen:
             raise ValueError("duplicate chore")
+        seen.add(identity)
         result.append(chore)
     return tuple(result)
 
@@ -963,12 +968,10 @@ def _layer_document(
     *,
     scope: LayerScope,
     source: SourceManifest,
-    resolutions: tuple[CapResolution, ...],
     config: Mapping[str, object],
     caps: tuple[StateCap, ...],
     modules: Mapping[str, Program],
     module_sources: Mapping[str, str],
-    module_digests: Mapping[str, str],
     module_caps: Mapping[str, tuple[StateCap, ...]],
     files: Mapping[str, bytes],
     records: tuple[StateFile, ...],
@@ -1017,19 +1020,10 @@ def _layer_document(
             "value": {"meta": mutable_data(cap.meta), "body": body},
         }
         if cap.source.origin == "remote":
-            match = next(
-                resolution
-                for resolution in resolutions
-                if resolution.materialized == cap.path
-                and resolution.definition == f"source/{key}"
-                and resolution.declared_ref == cap.source.declared_ref
-            )
             result["resolution"] = {
-                "declared_ref": match.declared_ref,
-                "resolved_ref": match.resolved_ref,
-                "materialized": Path(match.materialized)
-                .relative_to("materialized")
-                .as_posix(),
+                "declared_ref": cap.source.declared_ref,
+                "resolved_ref": cap.ref,
+                "materialized": Path(cap.path).relative_to("materialized").as_posix(),
             }
         return result
 

@@ -1,7 +1,5 @@
 """Cap subcommands."""
 
-from toolang.catalog import source as cap_source
-
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,6 +15,7 @@ from toolang.cli.common.editor import edit_markdown
 from ...catalog import templates
 from ...catalog.errors import CatalogConflictError
 from ...common.layout import AgentLayout, home_edit_lock_path, root_edit_lock_path
+from toolang.catalog import source as cap_source
 from toolang.catalog import cap as cap_store
 from toolang.catalog import config as cap_config
 from toolang.catalog.types import CAP_KINDS, CapKind

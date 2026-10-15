@@ -288,10 +288,12 @@ State directories:
 Each directory stores a current-revision pointer, a build or publish lock, and
 immutable revision directories. Each layer contains `layer.json`, original
 accepted bytes under `source/`, and fetched bytes under
-`materialized/<sha256-resolved-ref>/`. JSON stores parsed values, file sizes and
+`materialized/<acquisition-key>/`, keyed by SHA-256 of the canonical resolved
+Source Ref. JSON stores parsed values, file sizes and
 digests, resolutions, and a creation time included in the revision hash. The same
-revisions remain usable
-when root and home are mounted at different absolute paths. Sandbox preparation
+revisions can be loaded when root and home are mounted at different absolute
+paths. Stored workspace paths remain frozen; preparing relative workspace
+configuration at a new location produces a new revision. Sandbox preparation
 mounts symbolic-linked State source files read-only at their logical guest
 paths. See [agent-state.md](./agent-state.md) for the canonical documents,
 revision calculation, validation, and publication rules.

@@ -33,11 +33,9 @@ from toolang.state.cache import (
     layer_revision_dir,
     validate_agent_revision,
 )
-from toolang.state.errors import StatePreparationError
 from toolang.state.schemas import CapDetail
 from toolang.state.watcher import StateWatcher
 from toolang.state.prepare import (
-    _validate_runnable_source_names,
     compose_layer_state,
     load_agent_state,
     prepare_agent_state,
@@ -1245,24 +1243,33 @@ def test_runnable_module_names_reject_nonportable_source_paths(
         runnable_module_name(authored_path)
 
 
-def test_runnable_module_names_reject_casefold_collisions() -> None:
-    def source(path: str) -> ProgramSource:
-        text = "flow:\n  pass\n"
-        return ProgramSource(
-            agent_name="alice",
-            kind="runnable",
-            authored_path=path,
-            source_path=f"agents/alice/{path}",
-            source_text=text,
-            digest=sha256(text.encode()).hexdigest(),
-        )
+def test_runnable_module_names_reject_casefold_collisions(tmp_path) -> None:
+    from toolang.state.acceptance import accept_sources
+    from toolang.state.source import SourceFile, SourceSnapshot
 
-    with pytest.raises(StatePreparationError) as raised:
-        _validate_runnable_source_names(
-            (source("runnables/Report.too"), source("runnables/report.too"))
+    content = b"flow:\n  pass\n"
+    digest = sha256(content).hexdigest()
+    paths = ("runnables/Report.too", "runnables/report.too")
+    files = tuple(
+        SourceFile(
+            path=tmp_path / "agents/alice" / path,
+            relative_path=f"agents/alice/{path}",
+            category="program",
+            origin="agent",
+            content=content,
+            digest=digest,
+            size=len(content),
+            raw_digest=digest,
         )
-
-    assert raised.value.diagnostics[0].code == "invalid-runnable-filename"
+        for path in paths
+    )
+    accepted = accept_sources(SourceSnapshot(tmp_path, "alice", files), scope="home")
+    assert {record.key for record in accepted.records} == set(paths)
+    assert all(
+        not record.accepted and record.code == "invalid-runnable-filename"
+        for record in accepted.records
+    )
+    assert [program.name for program in accepted.programs] == ["agent"]
 
 
 @pytest.mark.parametrize(
