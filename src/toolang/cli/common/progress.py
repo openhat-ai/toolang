@@ -503,20 +503,32 @@ class StartupProgress(CliProgress):
             if self._closed or self._preparation_done:
                 return
             if self._failure_event is not None:
-                if event.subject == "state" and event.complete and event.status == "ok":
+                if event.subject == "state" and event.complete:
                     self._preparation_done = True
-                    self._print_or_defer(
-                        Text(
-                            self.failure_message(
-                                RuntimeError("State contains rejected sources")
+                    self._slots.clear()
+                    self._cancel_slot_render()
+                    self._clear_live()
+                    if event.status == "ok":
+                        self._print_or_defer(
+                            Text(
+                                self.failure_message(
+                                    RuntimeError("State contains rejected sources")
+                                )
                             )
                         )
-                    )
-                return
+                    return
+                if self._failure_event.subject != "cap":
+                    return
             if event.status == "failed":
-                self._slots.clear()
-                self._cancel_slot_render()
-                super().__call__(event)
+                if event.subject == "cap":
+                    if self._failure_event is None:
+                        self._failure_event = event
+                    self._finish_item(event)
+                    self._render_slots()
+                else:
+                    self._slots.clear()
+                    self._cancel_slot_render()
+                    super().__call__(event)
                 return
             if event.status == "pending":
                 self._finished.discard(self._work_key(event))
@@ -556,14 +568,17 @@ class StartupProgress(CliProgress):
                         self._slots.append(None)
                 self._slots[index] = (key, event)
             elif event.complete:
-                key = self._work_key(event)
-                self._finished.add(key)
-                for i, item in enumerate(self._slots):
-                    if item is not None and item[0] == key:
-                        self._slots[i] = None
+                self._finish_item(event)
             else:
                 return
             self._render_slots()
+
+    def _finish_item(self, event: ProgressEvent) -> None:
+        key = self._work_key(event)
+        self._finished.add(key)
+        for i, item in enumerate(self._slots):
+            if item is not None and item[0] == key:
+                self._slots[i] = None
 
     @staticmethod
     def _work_key(event: ProgressEvent) -> tuple[str | None, str]:

@@ -796,3 +796,80 @@ def test_rejected_cap_error_survives_a_successful_state_publication():
     assert output.count("Failed to fetch prompt broken") == 1
     assert "Remote content was not found" in output
     assert "Prepared" not in output
+
+
+@pytest.mark.parametrize("terminal", [False, True])
+def test_cap_failure_keeps_parallel_slots_and_replacements_visible(terminal):
+    from dataclasses import replace
+    from toolang.cli.common.progress import StartupProgress
+
+    stream = _TTYBuffer() if terminal else StringIO()
+    with StartupProgress(stream=stream, _reveal_seconds=3600) as progress:
+        for item_id in ("one", "broken", "three", "four"):
+            progress(_startup_event(item_id))
+        progress(
+            replace(
+                _startup_event("broken", status="failed"),
+                label="Failed to fetch prompt broken",
+                detail="Connection closed",
+            )
+        )
+        assert progress.failure_stage == "prepare.fetch"
+        assert [item[1].id for item in progress._slots if item] == [
+            "one",
+            "three",
+            "four",
+        ]
+        progress(_startup_event("five"))
+        assert [item[1].id for item in progress._slots if item] == [
+            "one",
+            "five",
+            "three",
+            "four",
+        ]
+        progress(_startup_event("broken"))
+        progress(_startup_event("one", stage="materialize"))
+        if terminal:
+            assert progress._live_text().plain.splitlines() == [
+                "github://example/caps/one updating",
+                "github://example/caps/five fetching",
+                "github://example/caps/three fetching",
+                "github://example/caps/four fetching",
+            ]
+        else:
+            assert "github://example/caps/five fetching" in stream.getvalue()
+            assert "github://example/caps/one updating" in stream.getvalue()
+        for item_id in ("one", "five", "three", "four"):
+            progress(
+                _startup_event(item_id, stage="materialize", status="ok", complete=True)
+            )
+        assert not any(progress._slots)
+        _finish_startup(progress)
+        _finish_startup(progress)
+    assert stream.getvalue().count("Failed to fetch prompt broken") == 1
+    assert "Connection closed" in stream.getvalue()
+    assert "Prepared" not in stream.getvalue()
+
+
+def test_failed_state_clears_parallel_slots_after_a_cap_failure():
+    from dataclasses import replace
+    from toolang.cli.common.progress import StartupProgress
+
+    stream = _TTYBuffer()
+    with StartupProgress(stream=stream, _reveal_seconds=3600) as progress:
+        progress(_startup_event("broken"))
+        progress(_startup_event("still-running"))
+        progress(_startup_event("broken", status="failed"))
+        assert any(progress._slots)
+        progress._reveal_live()
+        assert progress._live_display is not None
+        progress(
+            replace(
+                _startup_event("state", status="failed", complete=True),
+                subject="state",
+            )
+        )
+        assert not any(progress._slots)
+        assert progress._live_display is None
+        assert progress._slot_timer is None
+    assert "Prepared" not in stream.getvalue()
