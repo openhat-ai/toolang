@@ -117,7 +117,7 @@ in this order:
 | --- | --- |
 | `CAP` | Cap Ref for queries, such as `skill/reviewer` |
 | `DESCRIPTION` | Cap description, or `-` when absent |
-| `LOCATION` | Absolute content path, inline `file:line`, or configured/referenced GitHub HTTPS URL |
+| `LOCATION` | Absolute content path, inline `file:line`, or configured/referenced HTTP(S) URL |
 | `TAGS` | Availability, access, origin, scope, and form tags |
 
 Use repeatable `--query/-q` with native TQ. Both combined and kind-specific
@@ -135,8 +135,10 @@ headers. Locations remain complete for copying; authored skills point to
 CLI query/JSON records and API summaries/details expose `cap` (`kind/name`)
 and `source` (the resolved, canonical Source Ref). `location` is a separate
 human-facing content address. Default queries match `cap`; bare
-`skill/reviewer` still selects that identity. Migrate explicit query keys from
-`ref` to `cap`; API Cap response `ref` becomes `source`, with `cap` added.
+`skill/reviewer` still selects that identity. External TQ consumers use `cap`
+instead of `ref` as their identity key; API response `ref` becomes `source`,
+with `cap` added. Use identity syntax such as `skill/reviewer`, not a
+`*[cap="skill/reviewer"]` predicate.
 Configured write requests still use `ref` for the supplied Source Ref.
 
 | Ref | Meaning |

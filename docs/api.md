@@ -79,8 +79,9 @@ List output uses `CAP`, `DESCRIPTION`, `LOCATION`, and `TAGS` for combined and
 kind-specific lists. `location` addresses actual content, with `file:line` only
 for inline caps. JSON and query keys are lowercase. Cap records use `cap` for `kind/name` and
 `source` for the resolved Source Ref; Cap API summaries/details use the same
-fields. Migrate explicit Cap query keys from `ref` to `cap`, and Cap response
-fields from `ref` to `source`.
+fields. External TQ consumers use `cap` instead of `ref` as the identity key;
+API readers migrate Cap response `ref` to `source`. Configured write requests
+retain `ref` for the supplied Source Ref.
 
 Resource query parameters use native TQ over public model/tool/cap records.
 Cap identities have singular prefixes such as `skill/reviewer`, including
@@ -315,20 +316,21 @@ cancel local runs. Event retention and repair boundaries are specified in the
 
 ## Agent Targets
 
-Runtime commands accept a local Agent Name (`alice` or `agent:alice`), a `.too`
+`serve` and runtime queries accept a local Agent Name (`alice` or `agent:alice`), a `.too`
 file, an explicit GitHub Source Ref (`gh:owner/name`, `github:owner/name`, or
 `github://owner/repo/path.too@rev`), or a complete HTTP(S) URL. Exact
 `gh:owner/repo/path.too@rev` and `github:owner/repo/path.too@rev` aliases normalize
 to `github://` without repository/path probes. Bare remote refs, domain/path
 shorthand, and OpenHat prefixes are unsupported. See
 [Agent Sources](concepts.md#agent-sources) for syntax, naming, and migration.
+`start` and `stop` accept resident names only; stop a foreground nonresident
+server by interrupting `serve`.
 
-Foreground runtime port selection depends on the agent mode:
+Runtime port selection distinguishes persistent servers from temporary execution:
 
 | Mode | Target | Default port behavior |
 | --- | --- | --- |
-| Resident | Local managed name such as `alice` | Reuse the agent's last port except `7001` when available, otherwise choose from `7002-7999` |
-| Visiting | Remote Source Ref such as `gh:brice/alice` or `https://toolang.ai/alice.too` | Reuse the visiting root's last port when available, otherwise choose an OS temporary port |
+| Resident, visiting, or roaming server | Agent Name, remote Source Ref, or `.too` path with `serve` | Reuse the last successful available port except `7001`, otherwise choose from `7002-7999` |
 | Script run | Local `.too` path with an agic or flow name | No port for embedded host execution; attached and temporary guest execution use the selected AgentServer endpoint |
 
 

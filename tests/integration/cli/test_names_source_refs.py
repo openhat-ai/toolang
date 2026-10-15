@@ -1,14 +1,66 @@
 """CLI Name validation and explicit Source Ref acquisition."""
 
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import json
 from pathlib import Path
+from threading import Thread
 
 import pytest
 from typer.testing import CliRunner
 
-from toolang.cli.toolang.main import app
+from toolang.cli.toolang.main import app, main
 from toolang.up import source as sources
 
 runner = CliRunner()
+
+
+@pytest.mark.parametrize("kind", ["skill", "prompt"])
+def test_http_caps_accept_markdown_content_negotiation(tmp_path, capsys, kind):
+    requests = []
+
+    class ContentHandler(BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802
+            requests.append(self.path)
+            accepted = self.headers.get("Accept", "*/*")
+            if "*/*" not in accepted and "text/markdown" not in accepted:
+                self.send_error(406)
+                return
+            content = b"---\ndescription: Review\n---\nReview changes.\n"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/markdown")
+            self.send_header("Content-Length", str(len(content)))
+            self.end_headers()
+            self.wfile.write(content)
+
+        def log_message(self, format, *args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), ContentHandler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    root = tmp_path / "root"
+    home = root / "agents/gus"
+    home.mkdir(parents=True)
+    (home / "agent.too").write_text("flow main():\n  pass\n")
+    path = "/review/SKILL.md" if kind == "skill" else "/review.md"
+    url = f"http://127.0.0.1:{server.server_port}{path}?version=2"
+    try:
+        result = main(["--root", str(root), "gus", kind, "add", url])
+        output = capsys.readouterr()
+        assert result == 0, output
+        result = main(["--root", str(root), "gus", kind, "list", "--json"])
+        output = capsys.readouterr()
+        assert result == 0, output
+        (record,) = json.loads(output.out)
+        assert record["cap"] == f"{kind}/review"
+        assert record["source"] == (
+            url.replace("/SKILL.md", "") if kind == "skill" else url
+        )
+        assert requests == [f"{path}?version=2"]
+    finally:
+        server.shutdown()
+        thread.join()
+        server.server_close()
 
 
 @pytest.mark.parametrize("name", ["Gus", "a.b", "gus-by3", "a" * 65])

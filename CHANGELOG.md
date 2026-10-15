@@ -152,6 +152,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Fixed
 
+- Remote caps hosted on ordinary HTTP Markdown servers no longer fail to
+  fetch with `406 Not Acceptable`: URL requests send only a `User-Agent`
+  header instead of GitHub-only `Accept` and `X-GitHub-Api-Version`
+  headers. ([#812](https://github.com/openhat-ai/toolang/pull/812))
+
 - Concurrent starts of the same roaming script no longer mistake a link
   published by the other caller for an authored file: the roaming program
   link's file type comes from one `lstat` observation, while atomic link

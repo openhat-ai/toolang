@@ -143,17 +143,18 @@ Discovery references live under `${TOOLANG_ROOT}/.runtime/instances/`:
 
 The hash is the first 16 hex characters of SHA-256. Visiting uses the same key
 as its agent root: the canonical Toolang root, a NUL separator, and the Source
-Ref. Its temporary root and discovery reference use that same 16-character
-hash.
+Ref target. GitHub prefix aliases normalize before hashing; shorthand targets
+do not require resolving a branch. Complete URL targets retain their spelling.
+The temporary root and discovery reference use that same 16-character hash.
 Roaming uses the canonical host absolute `.too` source path. The host saves
 `source_id` with its control bindings so guest mounts cannot change identity.
 Changing ports, sandbox, launch IDs, or source contents does not change this hash.
 Agent Names contain neither `@` nor `-`; placement markers remain unambiguous.
 
-Until scripts switch to a shared server, an isolated temporary execution appends
-`@<execution-id>` before `.json`; its source hash remains stable and parallel
-executions remain independently visible. This change does not introduce shared
-script servers.
+An isolated temporary execution appends `@<execution-id>` before `.json`;
+its source hash remains stable and parallel
+executions remain independently visible. Repeated invocations of the same source
+and config reuse prepared Agent State; execution histories remain separate.
 
 Each reference contains only its version, absolute authoritative status path,
 and launch ID. `RuntimeRegistration` publishes into one Toolang root and uses

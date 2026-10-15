@@ -2476,14 +2476,7 @@ def _fetch_github_file(ref: GitHubRef) -> bytes:
 
 
 def _fetch_url_bytes(url: str) -> bytes:
-    request = Request(
-        url,
-        headers={
-            "Accept": "application/vnd.github+json",
-            "User-Agent": "toolang/0.1",
-            "X-GitHub-Api-Version": "2022-11-28",
-        },
-    )
+    request = Request(url, headers={"User-Agent": "toolang/0.1"})
     try:
         with urlopen(request, timeout=30) as response:
             return response.read()
