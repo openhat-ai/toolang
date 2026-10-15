@@ -1056,3 +1056,44 @@ def test_startup_warning_suspends_the_lock_wait_presenter(tmp_path, monkeypatch)
         assert presenter._live_display is None
     assert observed == [True]
     assert stream.getvalue().count("Development package warning") == 1
+
+
+def test_attach_finishes_remote_source_progress_without_preparing_state(
+    tmp_path, monkeypatch
+):
+    from io import StringIO
+    from toolang.base.types.progress import ProgressEvent
+    from toolang.cli.common.progress import make_cli_progress
+
+    layout = AgentLayout.resident(tmp_path, "alice")
+    layout.home.mkdir(parents=True)
+    server = AgentServerRef(sandbox="host", endpoint="http://127.0.0.1:8123")
+    monkeypatch.setattr(agent_server, "_prepare_agent_server", lambda *_a, **_k: server)
+    stream = StringIO()
+    with make_cli_progress(stream=stream, preparation=True) as outer:
+        outer(
+            ProgressEvent(
+                id="source",
+                kind="prepare",
+                stage="fetch",
+                label="Fetching agent...",
+                status="running",
+                subject="agent",
+                ref="https://example.test/agent.too",
+            )
+        )
+        outer(
+            ProgressEvent(
+                id="source",
+                kind="prepare",
+                stage="fetch",
+                label="Fetched agent",
+                status="ok",
+                subject="agent",
+                ref="https://example.test/agent.too",
+                complete=True,
+            )
+        )
+        with agent_server.acquire_agent_server(layout, sandbox=None) as acquired:
+            assert acquired is server
+    assert stream.getvalue().count("Prepared agent in ") == 1

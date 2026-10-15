@@ -16,8 +16,9 @@ from toolang.catalog.chores import Chore, file_chore, inline_chores
 from toolang.catalog.types import CAP_KIND_BY_DIR
 from toolang.lang.ast import AgicDecl, FlowDecl, Program
 from toolang.lang.errors import ToolangSourceError
+from toolang.lang.validate import _validate as validate_program
 from toolang.common.progress import ProgressSink
-from .source import ProgramSource, SourceFile, SourceSnapshot
+from .source import ProgramSource, SourceFile, SourceSnapshot, cached_agent_program
 from .state import (
     StateCap,
     _local_entry_from_file,
@@ -192,11 +193,16 @@ def accept_sources(
             file.read_text(),
             file.digest,
         )
-        program = (
-            source.parse(external_runnables=external)
-            if name == "agent" and external
-            else source.parse()
-        )
+        bindings = external if name == "agent" else None
+        program = cached_agent_program(file.path, source.digest)
+        if program is None:
+            program = (
+                source.parse(external_runnables=bindings)
+                if bindings
+                else source.parse()
+            )
+        else:
+            validate_program(program, external_runnables=bindings)
         program_runnable_index(program)
         if name != "agent":
             try:

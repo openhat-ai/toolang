@@ -124,7 +124,7 @@ def run(
     from ...common.progress import make_cli_progress
 
     selector = require_runtime_agent(ctx, agent)
-    progress = make_cli_progress()
+    progress = make_cli_progress(preparation=True)
     cleanup_progress = make_cli_progress(leading_gap=True)
     launch: RuntimeLaunch | None = None
     launch_started = False
@@ -180,6 +180,11 @@ def run(
 
                 environ = dict(launch.environ)
                 environ[HOST_SANDBOX_DESCRIPTION_ENV] = host_sandbox_description()
+                user_call(
+                    sandbox_runtime.prepare_launch_state,
+                    launch.startup,
+                    progress=progress.sink,
+                )
                 exit_code = user_call(
                     serve_agent,
                     replace(launch.startup.serve, toolang_root=context_root(ctx)),
@@ -281,7 +286,7 @@ def start(
         raise ClickException(
             "start only supports local agent names; clone the remote source first"
         )
-    progress = make_cli_progress()
+    progress = make_cli_progress(preparation=True)
     launch: RuntimeLaunch | None = None
     launch_started = False
     try:

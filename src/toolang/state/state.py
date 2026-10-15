@@ -35,6 +35,7 @@ from toolang.state.source import (
 )
 from ..common.immutable import freeze_mapping, mutable_data
 from ..common.progress import ProgressSink, emit_progress
+from ..base.types.progress import ProgressEvent
 from ..lang.ast import (
     AgicDecl,
     CapDecl,
@@ -1290,6 +1291,10 @@ class _RemoteEntryRequest:
     def progress_id(self) -> str:
         return _cap_progress_id(self.kind, self.ref)
 
+    @property
+    def progress_scope(self) -> str:
+        return f"{self.scope}:{self.relative_config_path}:{self.form}:{self.name or ''}"
+
 
 @dataclass(frozen=True, slots=True)
 class _CachedRemoteEntry:
@@ -2035,6 +2040,26 @@ def _remote_entry_from_ref(
     )
     progress_id = request.progress_id
     cached = _cached_remote_entry(remote_cache, request)
+    original_progress = progress
+    display_ref = ref
+
+    def report(event: ProgressEvent) -> None:
+        if original_progress is not None:
+            original_progress(
+                replace(
+                    event,
+                    subject="cap",
+                    ref=display_ref,
+                    scope=request.progress_scope,
+                    cached=cached is not None,
+                    complete=(
+                        event.stage == "materialize"
+                        and event.status in {"ok", "skipped", "failed"}
+                    ),
+                )
+            )
+
+    progress = report if original_progress is not None else None
     if cached is not None:
         canonical_ref = cached.ref
         _emit_cached_remote_progress(request, canonical_ref, progress=progress)
@@ -2047,6 +2072,7 @@ def _remote_entry_from_ref(
         )
     else:
         canonical_ref = canonicalize_remote_ref(kind, ref)
+    display_ref = canonical_ref
     if name is None:
         name = remote_entry_name(kind, canonical_ref)
     relative_entry_path = _relative_remote_entry_path(
@@ -2057,7 +2083,7 @@ def _remote_entry_from_ref(
     if cached is not None:
         entry_files = _remap_cached_remote_files(cached, relative_entry_path)
     elif materialize and progress is not None:
-        entry_files = _remote_materialized_files(
+        entry_files = _fetch_remote_cap_files(
             relative_entry_path=relative_entry_path,
             kind=kind,
             name=name,
@@ -2066,7 +2092,7 @@ def _remote_entry_from_ref(
             progress_id=progress_id,
         )
     elif materialize:
-        entry_files = _remote_materialized_files(
+        entry_files = _fetch_remote_cap_files(
             relative_entry_path=relative_entry_path,
             kind=kind,
             name=name,
@@ -2274,6 +2300,9 @@ def _emit_remote_entry_pending(
             label=f"Fetching {request.kind}{object_label}...",
             status="pending",
             detail=ref,
+            subject="cap",
+            ref=request.ref,
+            scope=request.progress_scope,
         )
         return
     emit_progress(
@@ -2284,6 +2313,9 @@ def _emit_remote_entry_pending(
         label=f"Resolving {request.kind}{object_label}...",
         status="pending",
         detail=ref,
+        subject="cap",
+        ref=request.ref,
+        scope=request.progress_scope,
     )
 
 
@@ -2314,7 +2346,7 @@ def _remote_placeholder_content(
     return frontmatter.dumps(post).encode("utf-8")
 
 
-def _remote_materialized_files(
+def _fetch_remote_cap_files(
     *,
     relative_entry_path: Path,
     kind: EntryKind,
@@ -2323,6 +2355,8 @@ def _remote_materialized_files(
     progress: ProgressSink | None = None,
     progress_id: str | None = None,
 ) -> dict[str, bytes]:
+    """Fetch remote cap bytes keyed by their relative prepared paths."""
+
     if not ref.startswith("github://"):
         raise ValueError(f"unsupported remote {kind} ref: {ref}")
     github_ref = parse_github_ref(ref)

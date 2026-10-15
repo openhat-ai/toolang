@@ -48,6 +48,8 @@ from toolang.setup.config import (
     load_setup_dotenvs,
 )
 from toolang.state.prepare import prepare_agent_state
+from toolang.state.state import AgentState
+from toolang.state.config import CAP_ALLOW_FIELDS
 from toolang.up.mounts import (
     prepare_source_mounts,
     prepare_workspace_mounts,
@@ -235,6 +237,48 @@ def management_lock(
         yield
 
 
+def prepare_launch_state(
+    spec: LaunchSpec, *, progress: ProgressSink | None = None
+) -> AgentState:
+    """Prepare host-owned State before creating or entering a workload."""
+
+    try:
+        state = prepare_agent_state(
+            spec.serve.layout,
+            workspace_additions=spec.serve.workspace_additions,
+            allow_overrides={
+                name: value
+                for name, value in spec.serve.ceiling_overrides.items()
+                if name in CAP_ALLOW_FIELDS
+            },
+            progress=progress,
+        )
+    except BaseException as exc:
+        emit_progress(
+            progress,
+            id=f"state:{spec.serve.layout.name}",
+            kind="prepare",
+            stage="materialize",
+            label="Failed to prepare agent State",
+            status="failed",
+            detail=str(exc),
+            subject="state",
+            complete=True,
+        )
+        raise
+    emit_progress(
+        progress,
+        id=f"state:{spec.serve.layout.name}",
+        kind="prepare",
+        stage="materialize",
+        label="Prepared agent State",
+        status="ok",
+        subject="state",
+        complete=True,
+    )
+    return state
+
+
 async def _launch_locked(
     spec: LaunchSpec,
     *,
@@ -271,13 +315,8 @@ async def _launch_locked(
         hosted_home = hosted_root / "agents" / spec.serve.layout.name
         workspace_mounts: tuple[SandboxMount, ...] = ()
         workspace_mapping: dict[str, tuple[str, str]] = {}
+        state = await asyncio.to_thread(prepare_launch_state, spec, progress=progress)
         if not on_host:
-            state = await asyncio.to_thread(
-                prepare_agent_state,
-                spec.serve.layout,
-                workspace_additions=spec.serve.workspace_additions,
-                progress=progress,
-            )
             workspace_mounts, workspace_mapping = prepare_workspace_mounts(
                 spec.serve.layout.home, hosted_home, workspaces=state.workspaces
             )

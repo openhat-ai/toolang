@@ -1001,7 +1001,7 @@ def test_inline_skill_conflicts_with_same_name_reference(tmp_path: Path, monkeyp
     )
     monkeypatch.setattr(
         cap_state,
-        "_remote_materialized_files",
+        "_fetch_remote_cap_files",
         lambda *, relative_entry_path, **_kwargs: {
             relative_entry_path.as_posix(): b"---\ndescription: Remote review\n---\nReview.\n"
         },
@@ -1153,13 +1153,11 @@ def test_remote_refresh_changes_resolved_and_root_revision(
     )
     monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
 
-    def fake_materialized_files(*, relative_entry_path, kind, name, ref):
+    def fake_fetch_cap_files(*, relative_entry_path, kind, name, ref):
         del kind, name, ref
         return {str(relative_entry_path): content["value"]}
 
-    monkeypatch.setattr(
-        cap_state, "_remote_materialized_files", fake_materialized_files
-    )
+    monkeypatch.setattr(cap_state, "_fetch_remote_cap_files", fake_fetch_cap_files)
 
     first_root, _ = prepare_root_home(
         _layout(toolang_root),
@@ -1226,7 +1224,7 @@ def test_local_change_reuses_unchanged_remote_materialization(
     monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
     monkeypatch.setattr(
         cap_state,
-        "_remote_materialized_files",
+        "_fetch_remote_cap_files",
         lambda *, relative_entry_path, **_kwargs: {
             str(relative_entry_path): (
                 b"---\ndescription: Rewrite\n---\nRemote content.\n"
@@ -1241,7 +1239,7 @@ def test_local_change_reuses_unchanged_remote_materialization(
     local.write_text("---\ndescription: Local\n---\nLocal content.\n", encoding="utf-8")
     monkeypatch.setattr(
         cap_state,
-        "_remote_materialized_files",
+        "_fetch_remote_cap_files",
         lambda **_kwargs: (_ for _ in ()).throw(
             AssertionError("unchanged remote cap must be reused")
         ),
@@ -1288,7 +1286,7 @@ def test_local_change_does_not_reuse_corrupt_remote_materialization(
     monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
     monkeypatch.setattr(
         cap_state,
-        "_remote_materialized_files",
+        "_fetch_remote_cap_files",
         lambda *, relative_entry_path, **_kwargs: {
             str(relative_entry_path): b"---\ndescription: Rewrite\n---\nFirst.\n"
         },
@@ -1308,7 +1306,7 @@ def test_local_change_does_not_reuse_corrupt_remote_materialization(
             str(relative_entry_path): b"---\ndescription: Rewrite\n---\nRepaired.\n"
         }
 
-    monkeypatch.setattr(cap_state, "_remote_materialized_files", rematerialize)
+    monkeypatch.setattr(cap_state, "_fetch_remote_cap_files", rematerialize)
 
     second, _ = prepare_root_home(layout)
 
@@ -1336,7 +1334,7 @@ def test_declared_ref_change_refreshes_remote_materialization(
     monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
     calls: list[str] = []
 
-    def fake_materialized_files(*, relative_entry_path, kind, name, ref):
+    def fake_fetch_cap_files(*, relative_entry_path, kind, name, ref):
         del kind, name
         calls.append(ref)
         return {
@@ -1345,9 +1343,7 @@ def test_declared_ref_change_refreshes_remote_materialization(
             )
         }
 
-    monkeypatch.setattr(
-        cap_state, "_remote_materialized_files", fake_materialized_files
-    )
+    monkeypatch.setattr(cap_state, "_fetch_remote_cap_files", fake_fetch_cap_files)
 
     first, _ = prepare_root_home(
         _layout(toolang_root),
@@ -1611,7 +1607,7 @@ def test_flow_modules_can_reference_the_same_cap(
     monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
     monkeypatch.setattr(
         cap_state,
-        "_remote_materialized_files",
+        "_fetch_remote_cap_files",
         lambda *, relative_entry_path, **_kwargs: {
             relative_entry_path.as_posix(): (
                 b"---\ndescription: Review\n---\nReview carefully.\n"
@@ -1754,3 +1750,110 @@ def test_obsolete_flow_snapshot_requires_migration_even_with_current_ast(
         for path in revision_dir.rglob("*")
         if path.is_file()
     }
+
+
+def test_visiting_agent_parses_once_before_parallel_dependencies(tmp_path, monkeypatch):
+    from threading import Barrier, Lock
+    from toolang.state import source as source_owner
+
+    layout = AgentLayout(root=tmp_path, name="visitor", placement="visiting")
+    layout.home.mkdir(parents=True)
+    text = "with prompt github://acme/caps/one.md@main\nwith prompt github://acme/caps/two.md@main\n"
+    layout.program.write_text(text)
+    original = Program.from_source
+    parses = []
+    barrier = Barrier(2)
+    lock = Lock()
+    running = [0, 0]
+
+    def parse(text, **kwargs):
+        parses.append(text)
+        return original(text, **kwargs)
+
+    def fetch(_ref):
+        assert parses == [text]
+        with lock:
+            running[0] += 1
+            running[1] = max(running)
+        barrier.wait(timeout=5)
+        with lock:
+            running[0] -= 1
+        return b"---\ndescription: A prompt\n---\nPrompt.\n"
+
+    monkeypatch.setattr(Program, "from_source", parse)
+    monkeypatch.setattr(cap_state, "_fetch_github_file", fetch)
+    events = []
+    state_prepare.parse_visiting_agent(
+        layout, ref="https://example.test/agent.too", progress=events.append
+    )
+    state = prepare_agent_state(layout, progress=events.append)
+    assert len(parses) == 1
+    assert running[1] == 2
+    parsed = next(
+        i for i, e in enumerate(events) if e.stage == "parse" and e.status == "ok"
+    )
+    fetching = [
+        i for i, e in enumerate(events) if e.subject == "cap" and e.stage == "fetch"
+    ]
+    assert fetching and min(fetching) > parsed
+    assert len(state.caps_for("agent")) == 2
+    # Simulate a new process: persisted State supplies the validated AST silently.
+    source_owner._AGENT_PROGRAMS.clear()
+    monkeypatch.setattr(
+        Program, "from_source", lambda *_a, **_k: pytest.fail("warm parse")
+    )
+    monkeypatch.setattr(
+        cap_state, "_fetch_github_file", lambda *_a: pytest.fail("warm fetch")
+    )
+    warm_events = []
+    warm = prepare_agent_state(layout, progress=warm_events.append)
+    assert warm.revision == state.revision
+    assert warm_events == []
+
+
+def test_invalid_remote_agent_blocks_all_dependency_preparation(tmp_path, monkeypatch):
+    layout = AgentLayout(root=tmp_path, name="visitor", placement="visiting")
+    layout.home.mkdir(parents=True)
+    layout.program.write_text("flow broken(:\n")
+    monkeypatch.setattr(
+        state_prepare,
+        "prepare_root",
+        lambda *_a, **_k: pytest.fail("dependency work before agent parsing"),
+    )
+    from toolang.lang.errors import ToolangSourceError
+
+    with pytest.raises(ToolangSourceError):
+        prepare_agent_state(layout)
+
+
+def test_remote_parse_reuse_requires_matching_source_bytes(tmp_path, monkeypatch):
+    layout = AgentLayout(root=tmp_path, name="visitor", placement="visiting")
+    layout.home.mkdir(parents=True)
+    original = Program.from_source
+    calls = []
+
+    def parse(text, **kwargs):
+        calls.append(text)
+        return original(text, **kwargs)
+
+    monkeypatch.setattr(Program, "from_source", parse)
+    layout.program.write_bytes(b"# First\r\n")
+    prepare_agent_state(layout)
+    assert calls == ["# First\r\n"]
+    layout.program.write_text("# Changed\n")
+    prepare_agent_state(layout)
+    assert calls == ["# First\r\n", "# Changed\n"]
+
+
+def test_cached_agent_ast_revalidates_removed_external_runnable(tmp_path):
+    resident = AgentLayout.resident(tmp_path, "visitor")
+    (resident.home / "runnables").mkdir(parents=True)
+    helper = resident.home / "runnables/helper.too"
+    helper.write_text("flow():\n  pass\n")
+    resident.program.write_text("flow():\n  run helper\n")
+    prepare_agent_state(resident)
+    visiting = AgentLayout(root=tmp_path, name="visitor", placement="visiting")
+    prepare_agent_state(visiting)
+    helper.unlink()
+    changed = prepare_agent_state(visiting)
+    _assert_excluded(changed, match="unknown runnable")

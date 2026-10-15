@@ -555,7 +555,9 @@ def test_launch_delegates_complete_spec_and_stop_releases_state(
     )
     assert SandboxState.load(spec.serve.layout.runtime_status) == handle.state
     assert [
-        (event.stage, event.status) for event in events if event.kind == "prepare"
+        (event.stage, event.status)
+        for event in events
+        if event.kind == "prepare" and not event.complete
     ] == [
         ("materialize", "running"),
         ("materialize", "ok"),
@@ -1293,3 +1295,90 @@ def test_shutdown_reports_management_lock_contention(tmp_path, owned_handle):
         assert future.result(timeout=2) is False
     assert [event.status for event in events] == ["running", "ok"]
     assert {event.stage for event in events} == {"stop"}
+
+
+@pytest.mark.parametrize("location", ["host", "guest"])
+def test_launch_prepares_state_once_before_workload_with_state_overrides(
+    tmp_path, monkeypatch, location
+):
+    implementation = FakeSandbox()
+    implementation.location = location
+    monkeypatch.setattr(
+        sandbox, "create_sandbox", lambda *_args, **_kwargs: implementation
+    )
+    spec = _launch_spec(tmp_path)
+    spec = replace(
+        spec,
+        serve=replace(
+            spec.serve, ceiling_overrides={"models": ("*",), "skills": ("*",)}
+        ),
+    )
+    captured = []
+    original = sandbox.prepare_agent_state
+
+    def prepare(layout, **kwargs):
+        captured.append(kwargs)
+        return original(layout, **kwargs)
+
+    monkeypatch.setattr(sandbox, "prepare_agent_state", prepare)
+    original_launch = implementation.launch
+
+    async def launch(plan):
+        assert len(captured) == 1
+        assert spec.serve.layout.agent_state.joinpath("current").exists()
+        return await original_launch(plan)
+
+    async def ready(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(implementation, "launch", launch)
+    monkeypatch.setattr(sandbox, "_wait_ready", ready)
+    events = []
+    asyncio.run(sandbox.launch(spec, progress=events.append))
+    assert captured[0]["allow_overrides"] == {"skills": ("*",)}
+    assert captured[0]["workspace_additions"] == spec.serve.workspace_additions
+    complete = next(
+        i for i, e in enumerate(events) if e.subject == "state" and e.complete
+    )
+    ready_event = next(
+        i for i, e in enumerate(events) if e.kind == "runtime" and e.stage == "start"
+    )
+    assert complete < ready_event
+
+
+def test_local_prepare_failure_never_creates_a_workload_and_allows_retry(
+    tmp_path, monkeypatch
+):
+    implementation = FakeSandbox()
+    implementation.location = "host"
+    monkeypatch.setattr(
+        sandbox, "create_sandbox", lambda *_args, **_kwargs: implementation
+    )
+    spec = _launch_spec(tmp_path)
+    original = sandbox.prepare_agent_state
+
+    def reject(*_args, **_kwargs):
+        raise OSError("cannot read State source")
+
+    monkeypatch.setattr(sandbox, "prepare_agent_state", reject)
+    events = []
+    with pytest.raises(OSError, match="cannot read State source"):
+        asyncio.run(sandbox.launch(spec, progress=events.append))
+    assert not any(
+        isinstance(call, tuple) and call[0] == "launch" for call in implementation.calls
+    )
+    assert any(e.subject == "state" and e.status == "failed" for e in events)
+    monkeypatch.setattr(sandbox, "prepare_agent_state", original)
+
+    async def ready(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(sandbox, "_wait_ready", ready)
+    asyncio.run(sandbox.launch(spec))
+    assert (
+        sum(
+            isinstance(call, tuple) and call[0] == "launch"
+            for call in implementation.calls
+        )
+        == 1
+    )

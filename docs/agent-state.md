@@ -210,6 +210,19 @@ in `layer.json`. Script help uses the same binding rules.
 
 ## Prepare, Publish, and Load
 
+Managed AgentServer startup prepares State locally before creating a workload;
+foreground host `serve` prepares before entering the server in the same process.
+The server then validates and reuses compatible prepared layers and owns the
+subsequent watcher. Setup stays in the server process. Remote `.too` agents are
+fetched and parsed before their dependencies are prepared; independent remote
+caps retain bounded parallel preparation.
+
+Cached preparation is silent. Required work appears on stderr as reusable,
+dim `<ref> fetching`, `parsing`, `resolving`, or `updating` rows. Rows disappear
+as work finishes, then one dim summary replaces the region. No spinner or
+running counter is shown. Plain output uses operation transitions and a summary
+without terminal controls; fully cached preparation produces no summary.
+
 State passes unchanged source text to `Program.from_source`; all syntax belongs
 to `toolang.lang` and its tree-sitter grammar. Legacy `agent NAME` and `agent:`
 headers are rejected. Missing optional source is represented by empty text.

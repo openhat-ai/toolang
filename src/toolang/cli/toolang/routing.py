@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from toolang.base.errors import ToolangError
 from toolang.common.layout import AgentLayout, AgentPlacement
 from toolang.catalog.types import CAP_KINDS
 from ..common.output import echo_error
@@ -288,7 +289,10 @@ def dispatch_visiting(
     if not spec.accepts(position, "visiting"):
         return _unsupported_target(command, "visiting", position)
     prepare = _preparation(spec, body, position)
-    progress = make_cli_progress(enabled=prepare == "program")
+    progress = make_cli_progress(
+        enabled=prepare == "program",
+        preparation=command in {"serve", "chat", "retry", "rerun"},
+    )
     try:
         with progress:
             layout = (
@@ -300,9 +304,20 @@ def dispatch_visiting(
                 if prepare == "program"
                 else agents.visiting_layout(selector, toolang_root=toolang_root)
             )
+            return run_app(
+                [
+                    *global_args,
+                    *_selected_command_args(
+                        body,
+                        position,
+                        target=selector if command == "info" else layout.name,
+                    ),
+                ],
+                layout,
+            )
     except KeyboardInterrupt:
         return 130
-    except (FileNotFoundError, OSError, RuntimeError, ValueError) as exc:
+    except (FileNotFoundError, OSError, RuntimeError, ToolangError, ValueError) as exc:
         message = (
             progress.failure_message(exc)
             if progress.failure_stage is not None
@@ -310,15 +325,6 @@ def dispatch_visiting(
         )
         echo_error(message)
         return 1
-    return run_app(
-        [
-            *global_args,
-            *_selected_command_args(
-                body, position, target=selector if command == "info" else layout.name
-            ),
-        ],
-        layout,
-    )
 
 
 def normalize(argv: list[str]) -> tuple[list[str], str | None]:
