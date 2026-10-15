@@ -1,5 +1,7 @@
 """Retention failure does not turn transport loss into run cancellation."""
 
+import threading
+
 import httpx
 import pytest
 
@@ -66,6 +68,10 @@ def test_expired_client_cannot_keep_submitting_before_renewal_thread_runs(monkey
     now[0] = 16.0
     with pytest.raises(server_lease.ServerLeaseLostError):
         lease.check()
+    monkeypatch.setattr(lease, "_request", lambda _method: None)
+    lease.close()
+    with pytest.raises(server_lease.ServerLeaseLostError):
+        lease.check()
 
 
 def test_late_renewal_response_cannot_revive_expired_retention(monkeypatch):
@@ -120,6 +126,40 @@ def test_failed_release_is_best_effort(monkeypatch):
     monkeypatch.setattr(lease, "_request", fail)
     lease.close()
     lease.check()
+
+
+@pytest.mark.parametrize(
+    "error", [httpx.ReadTimeout("renewal failed"), ValueError("invalid response")]
+)
+def test_inflight_renewal_failure_after_close_does_not_report_lease_loss(
+    monkeypatch, error
+):
+    now = [0.0]
+    entered = threading.Event()
+    monkeypatch.setattr(server_lease.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(server_lease, "LEASE_RENEW_SEC", 0)
+    lease = server_lease.ServerLease(
+        AgentServerRef("host", "http://server", launch_id="launch")
+    )
+    lease._interrupt = False
+    requests = []
+
+    def request(method):
+        requests.append(method)
+        if method == "PUT":
+            entered.set()
+            assert lease._stop.wait(2)
+            now[0] = 100.0
+            raise error
+
+    monkeypatch.setattr(lease, "_request", request)
+    lease.start()
+    try:
+        assert entered.wait(2)
+    finally:
+        lease.close()
+    lease.check()
+    assert requests == ["PUT", "DELETE"]
 
 
 def test_renewal_loss_expires_without_cancel_or_retrying_execution(monkeypatch):

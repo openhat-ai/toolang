@@ -263,7 +263,9 @@ class RemoteRunClient:
     ) -> ControlInfo:
         RunRef.parse(run_id)
         if self._guarded and expected_control is None:
-            invocation = (await self._run_detail(run_id)).control
+            invocation = (
+                await self._fetch_run_detail(run_id, operation="cancel")
+            ).control
             expected_control = ControlRef.for_run(invocation.run, invocation.index)
         return await self._post_control(
             run_id,
@@ -292,7 +294,9 @@ class RemoteRunClient:
     ) -> ControlInfo:
         RunRef.parse(run_id)
         if self._guarded and expected_control is None:
-            invocation = (await self._run_detail(run_id)).control
+            invocation = (
+                await self._fetch_run_detail(run_id, operation="steer")
+            ).control
             expected_control = ControlRef.for_run(invocation.run, invocation.index)
         if message.role != "user":
             raise ValueError("run steer requires a user message")
@@ -640,23 +644,30 @@ class RemoteRunClient:
         except Exception:
             _LOGGER.exception("remote run tracer event handling failed")
 
-    async def _run_detail(self, run_id: str) -> RunDetail:
+    async def _fetch_run_detail(self, run_id: str, *, operation: str) -> RunDetail:
         RunRef.parse(run_id)
         response = await self._request(
             "GET",
             f"/api/v1/runs/{run_id}",
-            operation="wait",
+            operation=operation,
         )
-        payload = _response_json(response, operation="wait")
+        payload = _response_json(response, operation=operation)
         try:
             detail = _RUN_DETAIL_ADAPTER.validate_python(payload)
         except ValidationError as exc:
             raise RemoteRunClientError(
-                "remote run wait returned invalid run detail"
+                f"remote run {operation} returned invalid run detail"
             ) from exc
+        if detail.id != run_id:
+            raise RemoteRunClientError(
+                f"remote run {operation} returned invalid run detail"
+            )
+        return detail
+
+    async def _run_detail(self, run_id: str) -> RunDetail:
+        detail = await self._fetch_run_detail(run_id, operation="wait")
         if (
-            detail.id != run_id
-            or detail.root_run_id != run_id
+            detail.root_run_id != run_id
             or detail.parent is not None
             or detail.status not in {"succeeded", "failed", "canceled"}
         ):

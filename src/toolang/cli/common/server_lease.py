@@ -23,6 +23,7 @@ class ServerLease:
     def __init__(self, server: AgentServerRef) -> None:
         self.server = server
         self.client_id = f"client_{uuid4().hex}"
+        self._state_lock = threading.Lock()
         self._stop = threading.Event()
         self._lost = threading.Event()
         self._interrupt = threading.current_thread() is threading.main_thread()
@@ -60,9 +61,11 @@ class ServerLease:
         self._thread.start()
 
     def check(self) -> None:
-        if not self._stop.is_set() and time.monotonic() >= self._expires_at:
-            self._lost.set()
-        if self._lost.is_set():
+        with self._state_lock:
+            if not self._stop.is_set() and time.monotonic() >= self._expires_at:
+                self._lost.set()
+            lost = self._lost.is_set()
+        if lost:
             raise ServerLeaseLostError(
                 "server retention lease was lost; accepted runs may still be running. "
                 "Inspect their IDs before starting another command."
@@ -74,19 +77,23 @@ class ServerLease:
                 self.check()
                 self._request("PUT")
             except (httpx.HTTPError, ValueError, ServerLeaseLostError) as exc:
-                if (
-                    isinstance(exc, httpx.HTTPError)
-                    and not self._lost.is_set()
-                    and time.monotonic() < self._expires_at
-                ):
-                    continue
-                self._lost.set()
-                if self._interrupt and not self._stop.is_set():
-                    os.kill(os.getpid(), signal.SIGINT)
+                with self._state_lock:
+                    if self._stop.is_set():
+                        return
+                    if (
+                        isinstance(exc, httpx.HTTPError)
+                        and not self._lost.is_set()
+                        and time.monotonic() < self._expires_at
+                    ):
+                        continue
+                    self._lost.set()
+                    if self._interrupt:
+                        os.kill(os.getpid(), signal.SIGINT)
                 return
 
     def close(self) -> None:
-        self._stop.set()
+        with self._state_lock:
+            self._stop.set()
         if self._thread.ident is not None:
             self._thread.join()
         try:

@@ -16,6 +16,7 @@ from toolang.base.types.message import Message, TextPart
 from toolang.base.types.run import ModelCallResult
 from toolang.catalog import CapsManager, ChoresManager
 from toolang.execution.types import ThreadPrefix
+from toolang.execution.remote import RemoteRunClient
 from toolang.up.core import AgentCore
 from toolang.up.lifecycle import LAUNCH_HEADER, ServerLifecycle
 
@@ -79,11 +80,15 @@ def test_lost_clients_retain_pending_execution_and_stale_controls_fail(tmp_path)
             assert stale.status_code == 409
             current = core.store.get_run(run_id=handle.run_id)
             assert current is not None and current.status == "running"
-            canceled = await client.post(
-                f"/api/v1/runs/{handle.run_id}/cancel",
-                json={"expected_control": str(record.control)},
-            )
-            assert canceled.status_code == 200, canceled.text
+            guarded = RemoteRunClient("http://server", client=client, guarded=True)
+            await guarded.connect()
+            try:
+                steered = await guarded.steer(handle.run_id, Message.user("revise"))
+                assert steered.kind == "steer"
+                canceled = await guarded.cancel(handle.run_id)
+                assert canceled.kind == "cancel"
+            finally:
+                await guarded.disconnect()
         assert (await asyncio.wait_for(handle, 2)).status == "canceled"
         retried = core.executor.retry(
             handle.run_id, setup=harness.setup, state=harness.state
