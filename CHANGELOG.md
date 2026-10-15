@@ -15,7 +15,7 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   ref that carries `@rev` normalizes to one exact `github://` ref without
   repository or path probes. HTTP(S) sources fetch file-backed caps directly:
   a skill from its directory URL or `SKILL.md` URL fetches only `SKILL.md`,
-  while GitHub skill sources still include the directory's files.
+  while GitHub skill sources still include the directory's files. ([#812](https://github.com/openhat-ai/toolang/pull/812))
 
 - Managed agent startup prepares State locally before entering or creating a
   workload, so a preparation failure reports its cause and creates no workload.
@@ -35,7 +35,7 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   `oh:` and `openhat:` prefixes are rejected before any network access. Prefix
   former implicit GitHub refs with `gh:` (or `github:`) and replace domain/path
   shorthand with a complete HTTP(S) URL. Cap Ref queries such as
-  `skill/reviewer` and local sources are unaffected.
+  `skill/reviewer` and local sources are unaffected. ([#812](https://github.com/openhat-ai/toolang/pull/812))
 
 - **Breaking:** Agent Names are validated as 1–64 lowercase ASCII letters,
   digits, or underscores starting with a letter. Explicit names (`too new NAME`,
@@ -46,14 +46,14 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   keeps its filename. A home named with dots, hyphens, uppercase letters, or
   more than 64 characters is no longer discovered or addressable, so stop its
   workload with the previous Toolang version, then rename the home and its
-  paths manually; State and histories are not moved.
+  paths manually; State and histories are not moved. ([#812](https://github.com/openhat-ai/toolang/pull/812))
 
 - **Breaking:** Cap records expose `cap` (`kind/name`) and `source` (the
   resolved Source Ref) instead of `ref`, and cap lists show a `CAP` column
   instead of `REF`; `location` remains the human-facing content address.
   Migrate explicit query keys from `ref` to `cap` and API Cap response `ref` to
   `source`; configured cap write requests still use `ref` for the supplied
-  Source Ref.
+  Source Ref. ([#812](https://github.com/openhat-ai/toolang/pull/812))
 
 - The directory-wide native guard over discovery references is renamed from
   `instances/update.lock` to `instances/register.lock`, still protecting only
@@ -153,7 +153,7 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 ### Fixed
 
 - `too skill add` reports the underlying Source Ref error for an unsupported or
-  unresolved source instead of only a generic not-found message.
+  unresolved source instead of only a generic not-found message. ([#812](https://github.com/openhat-ai/toolang/pull/812))
 
 - Cap inspection, publication after saved edits, offline `info`, and local
   scripts now use the same parallel preparation rows and dim summary as managed
