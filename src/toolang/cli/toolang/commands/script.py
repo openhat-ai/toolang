@@ -24,7 +24,6 @@ from typer.main import get_command_from_info
 from typer.models import CommandInfo
 
 from toolang.common.errors import ToolangError
-from toolang.common.typer.ui import HelpFormatter as UIHelpFormatter
 from toolang.common.typer.options import (
     OptionalValue,
     OptionalValueCommand,
@@ -52,7 +51,7 @@ from ...common.workspaces import (
     single_workdir,
 )
 from ...common.output import echo_error
-from ...common.help import CliCommand, CliGroup, HelpContext
+from ...common.help import CliCommand, CliGroup, CliHelpFormatter, HelpContext
 from ...common.parameters import (
     DEVELOPMENT_WHEEL_HELP,
     AllowOptions,
@@ -130,7 +129,7 @@ class _ScriptParser(OptionalValueParser):
             self._process_opts(state.rargs.pop(0), state)
 
 
-class _ScriptHelpFormatter(UIHelpFormatter):
+class _ScriptHelpFormatter(CliHelpFormatter):
     def write_description(self, ctx: Context) -> None:
         command = ctx.command
         if not isinstance(command, _RunnableCommand):
@@ -439,7 +438,7 @@ def _runnable_command(
             typer.Option(
                 "--model",
                 metavar="MODEL",
-                help="Set model and parameters",
+                help="Set the model; see Model parameters",
             ),
         ] = None,
         workspace: WorkspaceOptions = None,

@@ -3,6 +3,11 @@
 from __future__ import annotations
 
 import pytest
+from rich.console import Console
+from typer._click import Context
+from typer.core import TyperCommand
+
+from toolang.common.typer.ui import HelpFormatter
 
 from toolang.base.types.message import (
     ReasoningPart,
@@ -67,7 +72,11 @@ def test_registered_projector_drives_allowed_values(
 
 
 def test_inspect_help_is_derived_from_registered_transitions() -> None:
-    help_text = inspect_commands._inspect_subject_help()
+    formatter = HelpFormatter(console=Console(color_system=None, width=120))
+    inspect_commands.write_inspect_help(
+        Context(TyperCommand("inspect"), info_name="too"), formatter
+    )
+    help_text = formatter.getvalue()
 
     for transition in inspect_commands.INSPECT_SUBJECT_TRANSITIONS:
         assert transition.name in help_text

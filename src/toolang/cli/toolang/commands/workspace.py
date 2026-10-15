@@ -23,11 +23,11 @@ from ...common.routing import RequiredPrefixAgentCommand, RequiredPrefixAgentGro
 
 
 class _WorkspaceGroup(RequiredPrefixAgentGroup):
-    argument_help = "Agent Name, .too file, gh:/github: Source Ref, or HTTP(S) URL"
+    argument_help = "Agent name, .too path, GitHub ref, or URL"
 
 
 class _WorkspaceCommand(RequiredPrefixAgentCommand):
-    argument_help = "Agent Name, .too file, gh:/github: Source Ref, or HTTP(S) URL"
+    argument_help = "Agent name, .too path, GitHub ref, or URL"
 
 
 def workspace_app() -> typer.Typer:

@@ -174,7 +174,7 @@ class TyperUITest(unittest.TestCase):
         self.assertEqual(self.run_app(sample_app(), ["process"]), 2)
         output = self.stderr.getvalue()
         self.assertTrue(output.startswith("Process one named job.\n\nUsage:"))
-        self.assertIn("  * name  Job name.", output)
+        self.assertIn("  * NAME  Job name.", output)
         self.assertNotIn("[required]", output)
         self.assertNotIn("Error:", output)
         self.assertEqual(self.stdout.getvalue(), "")
@@ -619,7 +619,7 @@ class TyperUITest(unittest.TestCase):
         original_styles = dict(custom.styles)
         self.ui = dict(theme=custom, console=console)
         self.assertEqual(self.run_app(app, ["process", "--help"]), 0)
-        self.assertIn("\x1b[1;31mname", self.stdout.getvalue())
+        self.assertIn("\x1b[1;31mNAME", self.stdout.getvalue())
         self.assertIn("\x1b[1m--count", self.stdout.getvalue())
         self.assertEqual(custom.styles, original_styles)
         self.reset_output()
@@ -682,7 +682,7 @@ class TyperUITest(unittest.TestCase):
             )
             formatter.write_help(ctx)
         output = formatter.getvalue()
-        self.assertIn("\n    *  name   Job name.", output)
+        self.assertIn("\n    *  NAME   Job name.", output)
         self.assertIn("\n    -n,  --count", output)
 
     def test_later_user_class_changes_are_used_on_the_next_run(self):

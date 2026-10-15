@@ -2152,19 +2152,22 @@ def test_inspect_display_modes_are_exclusive_and_removed_options_fail(
     assert help_code == 0
     assert "POINTER" in help_text
     assert "Inspect run history and details" in help_text
-    assert "Subject chain." in help_text
-    assert "Root subjects: threads, runs, controls" in compact_help
-    assert "THREAD runs" in compact_help
-    assert "RUN steps" in compact_help
-    assert "STEP runs" in compact_help
-    assert "LOOP_STEP steps" in compact_help
-    assert "STEP call" in compact_help
-    assert "RUN output" in compact_help
+    assert "Subject chain;" in help_text
+    assert "Subjects:" in help_text
+    assert "threads List threads" in compact_help
+    assert "runs List runs" in compact_help
+    assert "controls List controls" in compact_help
+    assert "<THREAD> runs" in compact_help
+    assert "<RUN> steps" in compact_help
+    assert "<STEP> runs" in compact_help
+    assert "<LOOP_STEP> steps" in compact_help
+    assert "<STEP> call" in compact_help
+    assert "<RUN> output" in compact_help
     assert "--markdown" not in help_text
-    assert "RUN tree" in compact_help
-    assert "Run tree is a durable structural snapshot" in compact_help
-    assert "Step-owned historical call" in compact_help
-    assert "Render human-readable output (default)" in help_text
+    assert "<RUN> tree" in compact_help
+    assert "Stored execution tree" in compact_help
+    assert "Historical call owned by the step" in compact_help
+    assert "Output human-readable text (default)" in help_text
     assert "--human" in help_text
     assert "--json" in help_text
     assert "--type" not in help_text

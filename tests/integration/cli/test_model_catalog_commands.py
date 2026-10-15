@@ -132,12 +132,10 @@ def test_models_is_a_leaf_command_without_file_output_options() -> None:
     assert "--all" in models_help
     assert "--all" in strip_ansi(providers_result.stdout)
     assert "--json" in models_help
-    assert "Write public model records as JSON" in models_help
+    assert "Output models as JSON" in models_help
     assert "--output" not in models_help
     assert "--force" not in models_help
-    assert "Write public provider records as JSON" in strip_ansi(
-        providers_result.stdout
-    )
+    assert "Output providers as JSON" in strip_ansi(providers_result.stdout)
 
     for subcommand in ("inspect", "update"):
         result = runner.invoke(cli.app, ["models", subcommand])
@@ -801,9 +799,8 @@ def test_catalog_help_describes_optional_agent_without_loading(
     assert result == 0
     assert ("\x1b[" in output.out) is colored
     assert f"[AGENT] {command} [OPTIONS]" in stdout
-    assert (
-        "Agent Name, .too file, gh:/github: Source Ref, or HTTP(S) URL; omit for root configuration"
-        in (" ".join(stdout.split()))
+    assert "Agent name, .too path, GitHub ref, or URL; omit for root configuration" in (
+        " ".join(stdout.split())
     )
     assert "--catalog" in stdout
     assert ("--query" in stdout) is (command == "models")

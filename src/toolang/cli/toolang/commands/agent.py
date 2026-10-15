@@ -55,7 +55,7 @@ def new_agent(
         typer.Argument(
             metavar="AGENT",
             click_type=TextType(),
-            help="Agent Name: [a-z][a-z0-9_]{0,63}",
+            help="Agent name: [a-z][a-z0-9_]{0,63}",
         ),
     ],
 ) -> None:
@@ -77,7 +77,7 @@ def clone_agent(
         typer.Argument(
             metavar="SOURCE",
             click_type=TextType(),
-            help="Local Agent Name, gh:/github: Source Ref, or complete HTTP(S) URL",
+            help="Local agent name, GitHub ref, or URL",
         ),
     ],
     target: Annotated[
@@ -85,7 +85,7 @@ def clone_agent(
         typer.Argument(
             metavar="TARGET",
             click_type=TextType(),
-            help="Agent Name: [a-z][a-z0-9_]{0,63}",
+            help="New agent name",
         ),
     ] = None,
 ) -> None:
@@ -171,7 +171,7 @@ def info_agent(
     ctx: typer.Context,
     agent: str | None = typer.Argument(
         None,
-        help="Agent Name, .too file, gh:/github: Source Ref, or HTTP(S) URL",
+        help="Agent name, .too path, GitHub ref, or URL",
         hidden=True,
     ),
     model_catalog: ModelCatalogOption = None,

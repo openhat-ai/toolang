@@ -233,16 +233,13 @@ Global `--root` / `-r` overrides are not supported in Script mode.
 Runnable help summarizes the available input categories:
 
 ```text
-Usage: too run app.too demo [OPTIONS] [NAME=VALUE...] [-- <INPUT> | -]
+Usage: too run app.too demo [OPTIONS] [ARGUMENTS]
 ```
 
-`[NAME=VALUE...]` appears when the signature declares at least one named parameter.
-`[-- <INPUT> | -]` appears when the signature requires primary input. This includes
-the implicit `Part[]` input of a runnable without a signature. Empty and named-only
-signatures omit it. It denotes one logical input, which may span multiple shell
-words or come from stdin. The command-line group is optional because piped or
-redirected stdin can supply the input. Required named arguments remain required
-despite the optional `[NAME=VALUE...]` group.
+`[ARGUMENTS]` appears when the signature accepts named or primary input, including
+implicit `Part[]` input. Empty signatures omit it. The Arguments panel describes
+each input's assignment or capture syntax and marks required values with `*`.
+The category brackets do not make required signature inputs optional.
 
 The opening description uses `Run KIND NAME.` or `Run KIND NAME - DESCRIPTION`
 when an authored doc comment exists. Usage and the help panels follow. Flows

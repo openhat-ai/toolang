@@ -41,7 +41,7 @@ class ArgumentUsageTest(unittest.TestCase):
             "Usage: demo groups [OPTIONS] <SOURCE> <DESTINATION> [LABEL] [TAG...]\n",
             result.stdout,
         )
-        self.assertIn("\n    tag\n", result.stdout)
+        self.assertIn("\n    TAG\n", result.stdout)
         self.assertNotIn("tags...", result.stdout)
         self.assertNotIn("tag...", result.stdout)
 

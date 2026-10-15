@@ -8,6 +8,7 @@ from typing import Annotated
 import pytest
 import typer
 from rich.console import Console
+from rich.cells import cell_len
 from rich.text import Text
 from typer._click import Context
 from typer._click.utils import strip_ansi
@@ -20,7 +21,180 @@ from toolang.cli.common.help import CliCommand, CliGroup
 from toolang.cli.common.lazy import LazyCommand, lazy_typer_command
 from toolang.cli.common.parameters import PathType
 from toolang.cli.toolang.main import app, main as too_main
-from toolang.common.typer.ui import PLAIN, UV, run
+from toolang.common.typer.ui import PLAIN, UV, _format_help, run
+
+
+@pytest.mark.parametrize("theme", [PLAIN, UV])
+@pytest.mark.parametrize("width", [44, 80, 120])
+@pytest.mark.parametrize("color_system", [None, "standard"])
+def test_script_root_and_runnable_share_field_sections(theme, width, color_system):
+    from toolang.cli.toolang.commands.script import _program_command
+    from toolang.lang.ast import Program
+
+    class UnreadableStdin(StringIO):
+        def read(self, *args, **kwargs):
+            pytest.fail("help must not read stdin")
+
+    program = Program.from_source("agic greet(name: Text, tone?: Text):\n  Greet.\n")
+    root = _program_command(
+        program,
+        source_path=Path("demo.too"),
+        source_label="demo.too",
+        stdin=UnreadableStdin(),
+    )
+    parent = root.context_class(root, info_name="too demo.too", terminal_width=width)
+    command = root.commands["greet"]
+    child = command.context_class(command, parent=parent, info_name="greet")
+    console = Console(width=width, force_terminal=True, color_system=color_system)
+    for ctx in (parent, child):
+        output = Text.from_ansi(_format_help(ctx, theme=theme, console=console))
+        assert all(cell_len(line) <= width for line in output.plain.splitlines())
+        for section in ("Allow fields:", "Limit fields:", "Model parameters:"):
+            assert output.plain.count(section) == 1
+            assert output.get_style_at_offset(console, output.plain.index(section)) == (
+                output.get_style_at_offset(console, output.plain.index("Options:"))
+            )
+        assert "Default fields:" not in output.plain
+        if ctx is child:
+            assert "[ARGUMENTS]" in output.plain
+            assert "* name=<NAME>" in output.plain
+            assert "* tone=<TONE>" not in output.plain
+
+
+@pytest.mark.parametrize("theme", [PLAIN, UV])
+@pytest.mark.parametrize("width", [44, 80, 120])
+@pytest.mark.parametrize("color_system", [None, "standard"])
+def test_examples_share_section_styles_and_wrap_descriptions(
+    theme, width, color_system, tmp_path, capsys, monkeypatch
+):
+    monkeypatch.setattr("toolang.up.logging.configure_logging", lambda **kwargs: None)
+    stdout = StringIO()
+    console = Console(
+        file=stdout, width=width, force_terminal=True, color_system=color_system
+    )
+    assert (
+        run(
+            app,
+            args=["--root", str(tmp_path), "talk", "--help"],
+            prog_name="too",
+            theme=theme,
+            console=console,
+            terminal_width=width,
+        )
+        == 0
+    )
+    assert not capsys.readouterr().out
+    output = Text.from_ansi(stdout.getvalue())
+    assert all(cell_len(line) <= width for line in output.plain.splitlines())
+    examples = output.plain.split("Examples:\n", 1)[1]
+    assert "\n\n" not in examples.rstrip()
+    assert "Open a conversation with an agent" in " ".join(examples.split())
+    for label in ("Arguments:", "Options:", "Examples:"):
+        assert output.get_style_at_offset(console, output.plain.index(label)) == (
+            output.get_style_at_offset(console, output.plain.index("Options:"))
+        )
+    first = next(line for line in examples.splitlines() if "List conversations" in line)
+    description_column = first.index("List conversations")
+    # No wrapped description escapes to the left margin as it did in epilog text.
+    for line in examples.splitlines():
+        if (
+            line.strip()
+            and "too talk" not in line
+            and not line.lstrip().startswith('"Hello"')
+        ):
+            assert len(line) - len(line.lstrip()) >= description_column
+
+
+@pytest.mark.parametrize(
+    ("command", "sections"),
+    [
+        (
+            "serve",
+            {"Allow fields", "Limit fields", "Default fields", "Model parameters"},
+        ),
+        (
+            "chat",
+            {"Allow fields", "Limit fields", "Default fields", "Model parameters"},
+        ),
+        ("retry", {"Allow fields", "Limit fields"}),
+        ("rerun", {"Allow fields", "Limit fields", "Model parameters"}),
+        ("caps", set()),
+        ("models", set()),
+    ],
+)
+def test_field_sections_match_supported_options(
+    command, sections, tmp_path, capsys, monkeypatch
+):
+    monkeypatch.setattr("toolang.up.logging.configure_logging", lambda **kwargs: None)
+    assert too_main(["--root", str(tmp_path), command, "--help"]) == 0
+    output = strip_ansi(capsys.readouterr().out)
+    known = {"Allow fields", "Limit fields", "Default fields", "Model parameters"}
+    assert {name for name in known if f"\n{name}:\n" in output} == sections
+    for name in sections:
+        assert output.count(f"\n{name}:\n") == 1
+        assert output.index("Options:") < output.index(f"\n{name}:\n")
+
+
+def test_field_tables_cover_parser_fields_and_repetition_rules(
+    tmp_path, capsys, monkeypatch
+):
+    monkeypatch.setattr("toolang.up.logging.configure_logging", lambda **kwargs: None)
+    from toolang.cli.common.policy import _ALLOW_FIELDS, _DEFAULT_FIELDS, _LIMIT_FIELDS
+
+    assert too_main(["--root", str(tmp_path), "serve", "--help"]) == 0
+    output = strip_ansi(capsys.readouterr().out)
+    for section, fields in (
+        ("Allow fields", _ALLOW_FIELDS),
+        ("Limit fields", _LIMIT_FIELDS),
+        ("Default fields", _DEFAULT_FIELDS),
+    ):
+        rows = output.split(f"\n{section}:\n", 1)[1].split("\n\n", 1)[0]
+        assert tuple(line.split()[0] for line in rows.splitlines()) == fields
+    text = " ".join(output.split())
+    assert "Repeat a resource to combine queries by union" in text
+    assert "each field may appear once" in text
+    assert "Maximum model calls per agic" in text
+    assert "Total input and output tokens per run tree" in text
+    assert "Total cost in USD per run tree" in text
+    assert "Elapsed time in seconds per run tree" in text
+    assert "--compact-model requires an exact model for a new runtime" in text
+
+
+def test_callers_compose_sections_and_preserve_footer_and_hidden_options():
+    from toolang.common.typer.ui import HelpFormatter
+
+    class CustomCommand(CliCommand):
+        def write_help_sections(self, ctx: Context, formatter: HelpFormatter) -> None:
+            with formatter.section("Custom fields"):
+                formatter.write_dl([("example", "A caller-owned description")])
+                formatter.write_paragraph()
+                formatter.write_text("A caller-owned paragraph.")
+            with formatter.section("Examples"):
+                formatter.write_dl([("demo", "Show an example")])
+
+    demo = typer.Typer(add_completion=False)
+
+    @demo.command(cls=CustomCommand, epilog="Ordinary footer.")
+    def show(
+        limit: Annotated[str | None, typer.Option("--limit")] = None,
+        default: Annotated[str | None, typer.Option("--default", hidden=True)] = None,
+    ) -> None:
+        pytest.fail("help must not execute the command")
+
+    stdout = StringIO()
+    assert run(demo, args=["--help"], console=Console(file=stdout)) == 0
+    output = stdout.getvalue()
+    sections = [
+        "Options:",
+        "Limit fields:",
+        "Custom fields:",
+        "Examples:",
+        "Ordinary footer.",
+    ]
+    positions = [output.index(section) for section in sections]
+    assert positions == sorted(positions)
+    assert "\n  A caller-owned paragraph.\n" in output
+    assert "Default fields:" not in output and "--default" not in output
 
 
 @pytest.mark.parametrize("theme", [PLAIN, UV])
@@ -111,7 +285,7 @@ def test_lazy_command_exposes_short_help_without_loading():
         ("hub", "Control the teaming service"),
         ("talk", "Talk with agents through the hub"),
         ("chat", "Chat directly with an agent"),
-        ("chore", "Create or schedule tasks"),
+        ("chore", "Manage one-off and scheduled chores"),
         ("start", "Start an agent in the background"),
         ("top", "Monitor runtime activity"),
         ("inspect", "Inspect run history and details"),
@@ -159,7 +333,7 @@ def test_top_help_explains_observation_scope(tmp_path, capsys):
     assert too_main(["--root", str(tmp_path), "top", "--help"]) == 0
     output = " ".join(strip_ansi(capsys.readouterr().out).split())
     assert "Observe runtime instances, threads, and runs." in output
-    assert "Local activity is available without the Hub." in output
+    assert "Local activity is available without the hub." in output
 
 
 @pytest.mark.parametrize("application", [app, caps_app])
@@ -278,23 +452,23 @@ def test_additional_commands_keep_theme_and_root_invocation_hint(capsys, monkeyp
     assert root.commands["more"].hidden
     assert root.commands["_serve"].hidden
     more_panels = {
-        "Run Commands": {
+        "Run commands": {
             "steer": "Steer an active run",
             "cancel": "Cancel an active run",
             "retry": "Retry a run from a failed step",
             "rerun": "Rerun an earlier run as a new one",
         },
-        "Thread Commands": {
+        "Thread commands": {
             "fork": "Fork a thread from an earlier run",
             "rewind": "Rewind a thread to an earlier run",
         },
-        "Plugin Commands": {
+        "Plugin commands": {
             "catalogs": "List installed model catalogs",
             "adapters": "List installed model adapters",
             "toolsets": "List installed toolsets",
             "sandboxes": "List installed sandboxes",
         },
-        "Language Commands": {
+        "Language commands": {
             "parse": "Parse .too source",
             "highlight": "Highlight .too source",
             "fmt": "Format .too source",
@@ -314,7 +488,7 @@ def test_additional_commands_keep_theme_and_root_invocation_hint(capsys, monkeyp
     output = capsys.readouterr().out
     assert "\x1b[1;32m" in output
     plain = strip_ansi(output)
-    assert plain.splitlines()[0] == "Run Commands:"
+    assert plain.splitlines()[0] == "Run commands:"
     assert "Usage:" not in plain
     assert "Run 'too COMMAND --help' for details." in plain
     assert "QUERY = MATCH" not in plain
@@ -333,7 +507,7 @@ def test_additional_commands_keep_theme_and_root_invocation_hint(capsys, monkeyp
     assert too_main(["--help"]) == 0
     main_help = strip_ansi(capsys.readouterr().out)
     assert main_help.rstrip().endswith("Run 'too more' to see additional commands.")
-    assert "Run Commands:" not in main_help
+    assert "Run commands:" not in main_help
     for names in more_panels.values():
         for description in names.values():
             assert description not in main_help
@@ -354,10 +528,10 @@ def test_additional_directory_uses_selected_help_output(theme, args, capsys):
     captured = capsys.readouterr()
     assert not captured.out and not captured.err
     output = Text.from_ansi(stdout.getvalue())
-    assert output.plain.splitlines()[0] == "Run Commands:"
+    assert output.plain.splitlines()[0] == "Run commands:"
     assert "Usage:" not in output.plain
     assert all(len(line) <= 44 for line in output.plain.splitlines())
-    style = output.get_style_at_offset(console, output.plain.index("Run Commands:"))
+    style = output.get_style_at_offset(console, output.plain.index("Run commands:"))
     assert style.bold
     assert (style.color is not None) is (theme is UV)
 
@@ -492,7 +666,7 @@ def test_virtual_agent_usage_keeps_position_and_normal_weight(
         (
             "serve",
             "Run an agent in the foreground",
-            "Agent Name, .too file, gh:/github: Source Ref, or HTTP(S) URL",
+            "Agent name, .too path, GitHub ref, or URL",
         ),
         ("_serve", "Run an agent server", "Local agent name"),
     ],
@@ -512,7 +686,8 @@ def test_real_and_virtual_agent_arguments_share_usage(
         assert f"* AGENT {argument_help}" in [
             " ".join(line.split()) for line in output.splitlines()
         ]
-        assert output.endswith("Show this message and exit\n")
+        assert "Show this message and exit\n" in output
+        assert output.index("Options:") < output.index("Allow fields:")
 
 
 @pytest.mark.parametrize(
@@ -546,9 +721,9 @@ def test_agent_help_matches_target_scope(command, tmp_path, capsys):
         line for line in output.splitlines() if line.lstrip().startswith("* AGENT ")
     )
     if command == "new":
-        expected = "Agent Name: [a-z][a-z0-9_]{0,63}"
+        expected = "Agent name: [a-z][a-z0-9_]{0,63}"
     elif command in {"start", "stop"}:
-        expected = "Agent Name, gh:/github: Source Ref, or HTTP(S) URL"
+        expected = "Agent name, GitHub ref, or URL"
     elif command.split()[0] in {
         "remove",
         "_serve",
@@ -556,7 +731,7 @@ def test_agent_help_matches_target_scope(command, tmp_path, capsys):
     }:
         expected = "Local agent name"
     else:
-        expected = "Agent Name, .too file, gh:/github: Source Ref, or HTTP(S) URL"
+        expected = "Agent name, .too path, GitHub ref, or URL"
     assert " ".join(row.split()) == f"* AGENT {expected}"
 
 
@@ -569,12 +744,12 @@ def test_cap_agent_help_distinguishes_mutation_and_listing(
     assert main(["--root", str(tmp_path), kind, command, "--help"]) == 0
     output = " ".join(strip_ansi(capsys.readouterr().out).split())
     agent_help = (
-        "Agent Name, .too file, gh:/github: Source Ref, or HTTP(S) URL"
+        "Agent name, .too path, GitHub ref, or URL"
         if main is too_main
         else "Local agent name"
     )
     expected = (
-        f"Modify the agent's home {kind}s; omit for root {kind}s"
+        f"Local agent name; omit for root {kind}s"
         if command == "new"
         else f"{agent_help}; omit for root {kind}s only"
     )
@@ -585,10 +760,7 @@ def test_cap_agent_help_distinguishes_mutation_and_listing(
 def test_inspection_help_describes_all_agent_targets(command, tmp_path, capsys):
     assert too_main(["--root", str(tmp_path), command, "--help"]) == 0
     output = " ".join(strip_ansi(capsys.readouterr().out).split())
-    assert (
-        "AGENT Agent Name, .too file, gh:/github: Source Ref, or HTTP(S) URL; omit for root"
-        in output
-    )
+    assert "AGENT Agent name, .too path, GitHub ref, or URL; omit for root" in output
 
 
 @pytest.mark.parametrize("main", [too_main, caps_main])
@@ -665,8 +837,8 @@ def test_help_uses_semantic_configuration_metavars(
     metavars = {
         "--sandbox": "<SANDBOX>",
         "--allow": "<RESOURCE>=<QUERY>",
-        "--limit": "<LIMIT>=<VALUE>",
-        "--default": "<SETTING>=<VALUE>",
+        "--limit": "<FIELD>=<VALUE>",
+        "--default": "<FIELD>=<VALUE>",
         "--compact-model": "<MODEL>",
         "--model": "<MODEL>",
         "--log": "<LOG_SPEC>",
@@ -678,7 +850,11 @@ def test_help_uses_semantic_configuration_metavars(
         assert metavars[option] in row.split()
     if "--dev" in output:
         option_rows = [
-            line for line in output.splitlines() if line.lstrip().startswith("-")
+            line
+            for line in output.split("Options:\n", 1)[1]
+            .split("\n\n", 1)[0]
+            .splitlines()
+            if line.lstrip().startswith("-")
         ]
         assert "--dev" in option_rows[-2].split()
         assert "--help" in option_rows[-1].split()

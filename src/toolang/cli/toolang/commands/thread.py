@@ -74,7 +74,7 @@ def steer_command(
         typer.Argument(
             metavar="RUN",
             click_type=TextType(),
-            help="Run id to steer. Thread id means its active run",
+            help="Run ID or thread ID; a thread selects its active run",
         ),
     ],
     message: Annotated[
@@ -118,7 +118,7 @@ def cancel_command(
         typer.Argument(
             metavar="RUN",
             click_type=TextType(),
-            help="Run id to cancel. Thread id means its active run",
+            help="Run ID or thread ID; a thread selects its active run",
         ),
     ],
 ) -> None:
@@ -152,7 +152,7 @@ def retry_command(
         typer.Argument(
             metavar="RUN",
             click_type=TextType(),
-            help="Run id to retry. Thread id means its latest visible root run",
+            help="Run ID or thread ID; a thread selects its latest visible root run",
         ),
     ],
     model_catalog: ModelCatalogOption = None,
@@ -210,7 +210,7 @@ def rerun_command(
         typer.Argument(
             metavar="RUN",
             click_type=TextType(),
-            help="Run id to rerun. Thread id means its latest visible root run",
+            help="Run ID or thread ID; a thread selects its latest visible root run",
         ),
     ],
     model_catalog: ModelCatalogOption = None,
@@ -228,7 +228,7 @@ def rerun_command(
         str | None,
         typer.Option(
             "--model",
-            help="Replace the persisted model identity or parameters",
+            help="Override the model; see Model parameters",
             metavar="MODEL",
         ),
     ] = None,
@@ -279,7 +279,7 @@ def rewind_command(
         typer.Argument(
             metavar="RUN",
             click_type=TextType(),
-            help="Run id to rewind before. Thread id means rewind before its latest root run",
+            help="Run ID to rewind before; a thread ID selects its latest root run",
         ),
     ],
     chat: Annotated[
@@ -317,7 +317,7 @@ def fork_command(
         typer.Argument(
             metavar="RUN",
             click_type=TextType(),
-            help="Run id to fork through. Thread id means fork through its latest root run",
+            help="Run ID to fork through; a thread ID selects its latest root run",
         ),
     ],
     chat: Annotated[

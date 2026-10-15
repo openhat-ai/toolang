@@ -627,10 +627,7 @@ def test_script_uses_typer_help_and_authored_docs(
     normalized = " ".join(stdout.split())
 
     assert result == 0
-    assert (
-        "Usage: toolang demo.too demo [OPTIONS] [NAME=VALUE...] [-- <INPUT> | -]"
-        in normalized
-    )
+    assert "Usage: toolang demo.too demo [OPTIONS] [ARGUMENTS]" in normalized
     assert "Run the documented demo." in stdout
     assert "Arguments" in stdout
     assert "count=<COUNT>" in stdout
@@ -643,7 +640,7 @@ def test_script_uses_typer_help_and_authored_docs(
     assert "<str>" not in stdout
     for option, metavar in (
         ("--allow", "<RESOURCE>=<QUERY>"),
-        ("--limit", "<LIMIT>=<VALUE>"),
+        ("--limit", "<FIELD>=<VALUE>"),
         ("--model", "<MODEL>"),
         ("--sandbox", "<SANDBOX>"),
         ("--out", "<FILE>"),
@@ -807,6 +804,8 @@ def test_script_runnable_description_uses_docs_or_kind(
         ("agic", "toolang", 120),
         ("flow", "toolang", 80),
         ("flow", "too", 120),
+        ("agic", "too", 44),
+        ("flow", "toolang", 44),
     ],
 )
 @pytest.mark.parametrize(
@@ -860,12 +859,12 @@ def test_script_help_groups_signature_categories(
     captured = capsys.readouterr()
     output = strip_ansi(captured.out)
     assert result == 0 and not captured.err, captured.err
-    usage = next(line.strip() for line in output.splitlines() if "Usage:" in line)
+    usage = "Usage: " + " ".join(
+        output.split("Usage:", 1)[1].split("\n\n", 1)[0].split()
+    )
     expected = f"Usage: {prog_name} demo.too demo [OPTIONS]"
-    if arguments:
-        expected += " [NAME=VALUE...]"
-    if input_type:
-        expected += " [-- <INPUT> | -]"
+    if arguments or input_type:
+        expected += " [ARGUMENTS]"
     assert usage == expected
     assert "---" not in output
     assert all(cell_len(line) <= width for line in output.splitlines())

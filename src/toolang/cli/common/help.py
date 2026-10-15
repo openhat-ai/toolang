@@ -26,8 +26,20 @@ def parameter_usage(param: Parameter, ctx: Context) -> list[str]:
     return [argument_usage(param)]
 
 
+class CliHelpFormatter(HelpFormatter):
+    """Compose CLI-owned sections before the command's ordinary footer."""
+
+    def write_epilog(self, ctx: Context) -> None:
+        from .help_sections import write_field_sections
+
+        write_field_sections(ctx, self)
+        if isinstance(ctx.command, (CliCommand, CliGroup)):
+            ctx.command.write_help_sections(ctx, self)
+        super().write_epilog(ctx)
+
+
 class HelpContext(Context):
-    formatter_class = HelpFormatter
+    formatter_class = CliHelpFormatter
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
@@ -57,7 +69,7 @@ def show_help(ctx: Context) -> NoReturn:
 
 
 def _format_help(ctx: Context, formatter: NativeHelpFormatter) -> None:
-    output = formatter if isinstance(formatter, HelpFormatter) else HelpFormatter()
+    output = formatter if isinstance(formatter, HelpFormatter) else CliHelpFormatter()
     output.write_help(ctx)
     if output is not formatter:
         formatter.write(output.getvalue())
@@ -67,6 +79,9 @@ class CliCommand(TyperCommand):
     """Keep Typer parsing and render help with the shared formatter."""
 
     context_class = HelpContext
+
+    def write_help_sections(self, ctx: Context, formatter: HelpFormatter) -> None:
+        """Let callers compose sections with the formatter's layout primitives."""
 
     def format_help(self, ctx: Context, formatter: NativeHelpFormatter) -> None:
         _format_help(ctx, formatter)
@@ -82,6 +97,9 @@ class CliGroup(TyperGroup):
     """Apply the same help conventions to command groups."""
 
     context_class = HelpContext
+
+    def write_help_sections(self, ctx: Context, formatter: HelpFormatter) -> None:
+        """Let callers compose sections with the formatter's layout primitives."""
 
     def __init__(self, *, subcommand_metavar: str | None = None, **kwargs: Any) -> None:
         super().__init__(

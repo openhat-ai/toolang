@@ -348,7 +348,10 @@ class HelpFormatter(TyperHelpFormatter):
         self, param: TyperArgument, ctx: Context
     ) -> tuple[Text, Text, Text]:
         marker = Text("*" if param.required else "", style="cli.required")
-        label = Text(param.metavar or param.name or "", style="cli.argument.name")
+        name = param.metavar or param.name or ""
+        if not _BRACKETED_METAVAR.search(name) and "=" not in name:
+            name = name.upper()
+        label = Text(name, style="cli.argument.name")
         return marker, label, _parameter_help(param, ctx)
 
     def _option_row(self, param: TyperOption, ctx: Context) -> tuple[Text, Text, Text]:

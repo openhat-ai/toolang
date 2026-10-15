@@ -71,7 +71,7 @@ def callback(
 
 app.command(
     "list",
-    help="Inspect available caps",
+    help="List available caps",
     cls=OptionalPrefixAgentListCommand,
 )(commands.list_caps)
 _cap_apps = commands.create_cap_apps(group_cls=OptionalPrefixAgentGroup)

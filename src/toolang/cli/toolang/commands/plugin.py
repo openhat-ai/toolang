@@ -40,9 +40,7 @@ def list_tools(
         bool,
         typer.Option("--all", "-a", help="Include internal and allow-excluded tools"),
     ] = False,
-    json_: Annotated[
-        bool, typer.Option("--json", help="Write public tool records as JSON")
-    ] = False,
+    json_: Annotated[bool, typer.Option("--json", help="Output tools as JSON")] = False,
     human: Annotated[
         bool, typer.Option("--human", help="Display a table (default)")
     ] = False,
