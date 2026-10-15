@@ -18,7 +18,7 @@ from rich.live import Live
 from rich.text import Text
 
 from ...common.events import ProgressEvent
-from ...common.progress import ProgressSink
+from ...common.progress import ProgressSink, emit_progress
 from ...common.time import format_duration
 from .execution_progress.config import resolve_progress_max_width
 from .execution_progress.formatting import one_line, wrap_display, truncate
@@ -27,8 +27,8 @@ from .execution_progress.formatting import one_line, wrap_display, truncate
 _LIVE_REVEAL_SECONDS = 0.15
 _ELAPSED_REVEAL_SECONDS = 1.0
 _MAX_DETAIL = 80
-_STARTUP_PROGRESS: ContextVar[StartupProgress | None] = ContextVar(
-    "startup_progress", default=None
+_PREPARATION_PROGRESS: ContextVar[PreparationProgress | None] = ContextVar(
+    "preparation_progress", default=None
 )
 
 
@@ -438,7 +438,7 @@ class CliProgress:
         return max(1, min(terminal_width, self._max_width))
 
 
-class StartupProgress(CliProgress):
+class PreparationProgress(CliProgress):
     """Show uncached preparation in reusable rows, then one dim summary."""
 
     def __init__(self, **kwargs) -> None:
@@ -450,23 +450,25 @@ class StartupProgress(CliProgress):
         self._agent_work = False
         self._preparation_done = False
         self._depth = 0
-        self._token: Token[StartupProgress | None] | None = None
+        self._token: Token[PreparationProgress | None] | None = None
         self._last_slot_render = float("-inf")
         self._slot_timer: Timer | None = None
         self._suspended = 0
         self._deferred_output: Text | None = None
 
-    def __enter__(self) -> StartupProgress:
+    def __enter__(self) -> PreparationProgress:
         if self._depth == 0:
-            self._token = _STARTUP_PROGRESS.set(self)
+            self._token = _PREPARATION_PROGRESS.set(self)
         self._depth += 1
         return self
 
     def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
         self._depth -= 1
         if self._depth == 0:
+            if exc_type is None:
+                complete_preparation(self)
             if self._token is not None:
-                _STARTUP_PROGRESS.reset(self._token)
+                _PREPARATION_PROGRESS.reset(self._token)
                 self._token = None
             super().__exit__(exc_type, exc, traceback)
 
@@ -720,18 +722,34 @@ def make_cli_progress(
     if (
         preparation
         and enabled
-        and (current := _STARTUP_PROGRESS.get()) is not None
+        and (current := _PREPARATION_PROGRESS.get()) is not None
+        and current._enabled
         and not current._closed
         and not current._preparation_done
         and current._failure_event is None
     ):
         return current
-    presenter = StartupProgress if preparation else CliProgress
+    presenter = PreparationProgress if preparation else CliProgress
     return presenter(
         stream=stream,
         enabled=enabled,
         max_width=max_width,
         leading_gap=leading_gap,
+    )
+
+
+def complete_preparation(progress: CliProgress) -> None:
+    """Finish one CLI-owned preparation phase before displaying its result."""
+
+    emit_progress(
+        progress.sink,
+        id="state",
+        kind="prepare",
+        stage="materialize",
+        label="Prepared State",
+        status="ok",
+        subject="state",
+        complete=True,
     )
 
 

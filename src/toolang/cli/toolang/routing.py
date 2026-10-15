@@ -279,7 +279,7 @@ def dispatch_visiting(
     if selected is None:
         return None
     from toolang.up import process as agents
-    from ..common.progress import make_cli_progress
+    from ..common.progress import complete_preparation, make_cli_progress
 
     from ..common.context import resolve_root
 
@@ -291,7 +291,7 @@ def dispatch_visiting(
     prepare = _preparation(spec, body, position)
     progress = make_cli_progress(
         enabled=prepare == "program",
-        preparation=command in {"serve", "chat", "retry", "rerun"},
+        preparation=True,
     )
     try:
         with progress:
@@ -304,6 +304,8 @@ def dispatch_visiting(
                 if prepare == "program"
                 else agents.visiting_layout(selector, toolang_root=toolang_root)
             )
+            if command not in {"serve", "chat", "retry", "rerun", "caps", *CAP_KINDS}:
+                complete_preparation(progress)
             return run_app(
                 [
                     *global_args,

@@ -222,6 +222,10 @@ dim `<ref> fetching`, `parsing`, `resolving`, or `updating` rows. Rows disappear
 as work finishes, then one dim summary replaces the region. No spinner or
 running counter is shown. Plain output uses operation transitions and a summary
 without terminal controls; fully cached preparation produces no summary.
+Cap inspection, publication after saved edits, offline `info`, and local script
+execution use this same presentation. Preparation completes before command
+records, Setup inspection, or run progress are displayed. Cap inspection retains
+its existing boundary: it resolves capabilities without preparing executable State.
 
 State passes unchanged source text to `Program.from_source`; all syntax belongs
 to `toolang.lang` and its tree-sitter grammar. Legacy `agent NAME` and `agent:`

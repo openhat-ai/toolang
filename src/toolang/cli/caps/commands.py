@@ -355,7 +355,9 @@ def _make_add_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
     ) -> None:
         scope, agent_name = _target_scope(ctx)
         selected_agent = context_agent(ctx)
-        progress = _make_cap_write_progress()
+        from ..common.progress import make_cli_progress
+
+        progress = make_cli_progress()
         try:
             with progress:
                 canonical_ref = cap_state.resolve_remote_ref(
@@ -367,12 +369,11 @@ def _make_add_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
                 entry = _configured_caps(context_root(ctx), agent_name, scope).create(
                     cap_config.CapRef(kind=kind, name=name, ref=canonical_ref)
                 )
-                if selected_agent:
-                    _refresh_agent_state(
-                        context_root(ctx),
-                        selected_agent,
-                        progress=progress,
-                    )
+            if selected_agent:
+                _refresh_agent_state(
+                    context_root(ctx),
+                    selected_agent,
+                )
         except CatalogConflictError as exc:
             raise ClickException(
                 f"{title} {cap_state.remote_entry_name(kind, ref)} already exists"
@@ -467,23 +468,26 @@ def _cap_entries(
     prepare: bool,
     kinds: set[EntryKind],
 ) -> "tuple[tuple[StateCap, ...], tuple[StateCap, ...]]":
-    from ..common.progress import make_cli_progress
+    from ..common.progress import complete_preparation, make_cli_progress
 
     if not prepare and not layout.root.exists():
         return (), ()
-    progress = make_cli_progress()
+    progress = make_cli_progress(preparation=True)
     try:
         with progress:
             if not prepare:
-                return user_call(
+                result = user_call(
                     inspect_root_caps,
                     layout,
                     kinds=kinds,
                     progress=progress.sink,
                 )
-            return user_call(
-                inspect_agent_caps, layout, kinds=kinds, progress=progress.sink
-            )
+            else:
+                result = user_call(
+                    inspect_agent_caps, layout, kinds=kinds, progress=progress.sink
+                )
+            complete_preparation(progress)
+            return result
     except Exception as exc:
         if progress.failure_stage is not None:
             raise ClickException(progress.failure_message(exc)) from exc
@@ -535,19 +539,14 @@ def _configured_caps(
 def _make_cap_write_progress() -> "CliProgress":
     from ..common.progress import make_cli_progress
 
-    return make_cli_progress()
+    return make_cli_progress(preparation=True)
 
 
 def _refresh_agent_state(
     toolang_root: Path,
     agent_name: str,
-    *,
-    progress: "CliProgress | None" = None,
 ) -> None:
     try:
-        if progress is not None:
-            _prepare_agent_state_with_progress(toolang_root, agent_name, progress)
-            return
         with _make_cap_write_progress() as owned_progress:
             _prepare_agent_state_with_progress(toolang_root, agent_name, owned_progress)
     except Exception as exc:

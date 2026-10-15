@@ -36,7 +36,7 @@ def test_cap_materialization_only_starts_after_saving(
     def fetch_files(*, relative_entry_path, **kwargs):
         assert edited
         observed.append(kwargs.get("progress") is not None)
-        assert "Preparing" in capsys.readouterr().err
+        assert "acme/remote resolving" in capsys.readouterr().err
         return {str(relative_entry_path): b"Remote content.\n"}
 
     monkeypatch.setattr(cap_state, "_fetch_remote_cap_files", fetch_files)

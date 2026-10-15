@@ -697,7 +697,7 @@ def _run(
     from ...common.agent_server import acquire_agent_server
     from ...common.progress import make_cli_progress
 
-    progress = make_cli_progress(enabled=not quiet)
+    progress = make_cli_progress(enabled=not quiet, preparation=True)
     layout: AgentLayout | None = None
     store: RunStore | None = None
     run_id: str | None = None
@@ -1281,6 +1281,9 @@ async def _execute(
     )
     executor.validate(spec)
     if progress is not None:
+        from ...common.progress import complete_preparation
+
+        complete_preparation(progress)
         progress.close()
     progress_width = None if quiet else resolve_progress_max_width(environ)
     surfaces = (
