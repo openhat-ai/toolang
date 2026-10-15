@@ -2,9 +2,12 @@
 
 ## Status
 
-Approved by the human on 2026-08-30 and implemented. Its collection boundaries,
-terminology, and discovery surface are superseded by
-`collection-query-discovery.md`.
+Historical definition, approved on 2026-08-30. Its custom query engine and schema
+discovery have been replaced by
+[Dynamic tq-json Resource Queries](tq-json-collection-queries.md). Current record
+shapes follow [Resource Records](resource-record-projections.md), including the
+[Cap identity/source contract](names-handles-and-source-refs.md#cap-projection).
+Use [Resource Queries](../queries.md) for the active public contract.
 
 ## Goal
 

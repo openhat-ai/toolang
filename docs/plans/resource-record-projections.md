@@ -3,6 +3,8 @@
 Approved for implementation. This replaces the record shapes, provenance fields, and tag
 placement in `tq-json-collection-queries.md`. Native TQ parsing, validation,
 union ordering, bounded selection, and exact runnable references are unchanged.
+Cap identity and source fields follow
+[Agent Names and Source Refs](names-handles-and-source-refs.md#cap-projection).
 
 ## Goal and scope
 
@@ -132,7 +134,7 @@ These records are designed directly for inspection; they need no second shape.
 | Record | Fields |
 | --- | --- |
 | Tool | `ref`, `toolset`, `name`, `description`, `parameters`, `tags` |
-| Cap | `ref`, `name`, `description`, `location`, `tags` |
+| Cap | `cap`, `source`, `name`, `description`, `location`, `tags` |
 | Installed plugin | `name`, `package` |
 
 Tools retain `toolset/name` refs and parameter-name arrays. They expose neither
@@ -152,20 +154,21 @@ Keep those internal authority classifications where loading/security uses them.
 - Inline caps: the containing `.too` file resolved from Toolang root, with
   the declaration line appended as `path:line`.
 - Configured/referenced caps: the actual content target, not the config or
-  `.too` file that links it. GitHub targets become HTTPS blob/tree URLs with
-  the revision already captured in the source reference. Do not append line
-  numbers or generate line anchors. Keep the existing supported source forms:
-  this projection does not add local configured/referenced caps, arbitrary URL
-  loaders, or revision-resolution requests.
+  `.too` file that links it. HTTP(S) targets retain their URL; GitHub targets
+  become HTTPS blob/tree URLs with the revision already captured in the source
+  reference. Do not append line
+  numbers or generate line anchors. Source acquisition follows
+  [Cap Source Refs](../caps.md#source-refs); projection performs no acquisition
+  or revision-resolution requests.
 - Only inline caps use `file:line`. Other forms address independent content
   files or URLs and carry no declaration/reference line in their location.
 - Never use `inline://`, `root://`, `home://`, or `github://` as display locations.
-  Keep canonical source identities internal for persistence and deduplication;
-  do not use the formatted location as the resource identity.
+  Expose the resolved Source Ref as `source`, separate from the `kind/name`
+  Cap Ref in `cap`; do not use formatted location as either identity.
 
 Form and Scope tags describe how the cap is attached and its owning scope;
-`location` addresses only the content. Remove cap `source`, `definition`, and `line`
-from this public projection, and add no separate `declared_at` or reference-site
+`location` addresses only the content. Omit `definition` and `line` from this
+public query projection, and add no separate `declared_at` or reference-site
 field. Location resolution receives explicit root/source context at the call
 site; it does not read global environment or perform network probes during
 matching.
@@ -202,7 +205,7 @@ Plugin inventories have only default table output.
 | Models | Inspection | `REF`, `CONTEXT`, `MAX_OUTPUT`, `PRICE`, `INPUT`, `OUTPUT`, `FEATURES`, `TAGS` |
 | Providers | Inspection | `ID`, `MODELS`, `ADAPTER`, `API`, `ENV` |
 | Tools | Direct record | `REF`, `DESCRIPTION`, `TAGS` |
-| Caps | Direct record | `REF`, `DESCRIPTION`, `LOCATION`, `TAGS` |
+| Caps | Direct record | `CAP`, `DESCRIPTION`, `LOCATION`, `TAGS` |
 | Toolsets, adapters, catalogs, channels, sandboxes | Plugin inventory | `NAME`, `PACKAGE` |
 
 Headers uppercase the record keys, preserving underscores: `max_output` becomes
@@ -218,12 +221,13 @@ The renderer selects keys from the record; it does not derive new fields.
 - Providers: `id` comes from the canonical record; the remaining columns use
   the inspection values, including resolved `api`/`env`. `models` displays the
   stored ready/total counts. Do not display provider tags or `_toolang` columns.
-- Tools/caps: `ref` identifies the resource, so omit the separate `name` and
-  tool `toolset` columns. Tool `parameters` remains available in JSON and queries.
+- Tools use `ref` and caps use `cap` as the resource identity. Omit the separate
+  `name` and tool `toolset` columns. Tool `parameters` and Cap `source` remain
+  available in JSON and queries.
 - Fields omitted from resource tables remain in inspection JSON and available
   to supported query surfaces; human column selection does not restrict queries.
 
-`REF` columns have a maximum width of 40 display cells. Wrap long values,
+`REF` and `CAP` columns have a maximum width of 40 display cells. Wrap long values,
 preferably after `/`, without truncating or inserting visible characters. Short
 refs stay on one line; JSON and query values remain unchanged.
 In model tables, continuation lines align to the right edge of the REF column;
