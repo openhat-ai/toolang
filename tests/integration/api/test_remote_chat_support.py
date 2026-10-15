@@ -197,7 +197,7 @@ agic chat:
         name="review",
         shape="file",
         ref="inline://prompts/review",
-        path="files/caps/inline/agent/prompt/review.md",
+        path="source/agent.too",
         source=CapSource(
             origin="local",
             form="inline",

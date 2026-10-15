@@ -1,9 +1,10 @@
 """Cap authoring uses its catalog before publishing the resulting State."""
 
+from toolang.catalog import source as cap_source
+
 import pytest
 
 from toolang.common.layout import AgentLayout
-from toolang.state import state as cap_state
 from toolang.common.layout import root_edit_lock_path
 
 
@@ -25,7 +26,7 @@ def test_authoring_does_not_resolve_unrelated_caps(
         '[prompts]\nremote = { ref = "gh:acme/remote" }\n'
     )
     monkeypatch.setattr(
-        cap_state,
+        cap_source,
         "_github_repo_default_branch",
         lambda *_: pytest.fail("authoring must not fetch unrelated sources"),
     )
@@ -58,7 +59,7 @@ def test_remove_unresolvable_configured_cap(tmp_path, monkeypatch, capsys, scope
     def unavailable(*args, **kwargs):
         raise ValueError("remote repository is unavailable")
 
-    monkeypatch.setattr(cap_state, "_github_repo_default_branch", unavailable)
+    monkeypatch.setattr(cap_source, "_github_repo_default_branch", unavailable)
     target = ["alice"] if scope == "home" else []
     result = main(["--root", str(tmp_path), *target, "prompt", "remove", "rewrite"])
     output = capsys.readouterr()
@@ -89,10 +90,10 @@ def test_delete_authored_cap_resolves_same_scope_conflict(
     (base / "config.toml").write_text(
         '[prompts]\nrewrite = { ref = "gh:acme/rewrite" }\n'
     )
-    monkeypatch.setattr(cap_state, "_github_repo_default_branch", lambda *_: "main")
-    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda *_: True)
+    monkeypatch.setattr(cap_source, "_github_repo_default_branch", lambda *_: "main")
+    monkeypatch.setattr(cap_source, "_github_remote_exists", lambda *_: True)
     monkeypatch.setattr(
-        cap_state,
+        cap_source,
         "_fetch_remote_cap_files",
         lambda *, relative_entry_path, **kwargs: {
             str(relative_entry_path): b"Remote body.\n"
@@ -114,9 +115,9 @@ def test_root_add_does_not_resolve_unrelated_configured_caps(
 
     config = tmp_path / "config.toml"
     config.write_text('[prompts]\nstale = { ref = "gh:acme/stale" }\n')
-    monkeypatch.setattr(cap_state, "_github_repo_default_branch", lambda *_: "main")
+    monkeypatch.setattr(cap_source, "_github_repo_default_branch", lambda *_: "main")
     monkeypatch.setattr(
-        cap_state, "_github_remote_exists", lambda _kind, ref: "rewrite" in ref
+        cap_source, "_github_remote_exists", lambda _kind, ref: "rewrite" in ref
     )
 
     result = main(["--root", str(tmp_path), "prompt", "add", "gh:acme/rewrite"])

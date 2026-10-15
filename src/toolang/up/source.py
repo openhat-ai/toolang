@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from functools import lru_cache
+from dataclasses import dataclass, replace
+from hashlib import sha256
 import json
 import os
 from pathlib import Path
@@ -15,10 +15,21 @@ from urllib.request import Request, urlopen
 from typing import Literal
 
 from toolang.common.files import EditLock, atomic_write_text
-from toolang.common.github import GitHubRef, GitHubShorthand, github_raw_url
+from toolang.common.github import (
+    GitHubRef,
+    GitHubShorthand,
+    github_raw_url,
+    pin_github_ref,
+)
 from toolang.common.layout import AgentLayout, derive_agent_name, validate_agent_name
 from toolang.common.progress import ProgressSink, emit_progress
-from toolang.common.source import HttpRef, RemoteSource, parse_remote_source
+from toolang.common.source import (
+    AcquiredSource,
+    Acquisition,
+    HttpRef,
+    RemoteSource,
+    parse_remote_source,
+)
 
 AgentTargetForm = Literal["name", "shorthand", "ref"]
 _MAX_ROAMING_PROJECTION_ATTEMPTS = 3
@@ -34,6 +45,7 @@ class AgentTarget:
     text: str
     name: str | None = None
     source: RemoteSource | None = None
+    declared_ref: str | None = None
 
     @property
     def form(self) -> AgentTargetForm:
@@ -65,12 +77,14 @@ def parse_agent_target(text: str) -> AgentTarget:
         return AgentTarget(text=text, name=validate_agent_name(text))
     source = parse_remote_source(text)
     if isinstance(source, GitHubShorthand):
-        return AgentTarget(text=source.render(), source=source)
+        return AgentTarget(
+            text=source.render(), source=source, declared_ref=text.strip()
+        )
     _require_too_path(source.path, text)
     identity = (
         source.render() if text.strip().startswith(("gh:", "github:")) else text.strip()
     )
-    return AgentTarget(text=identity, source=source)
+    return AgentTarget(text=identity, source=source, declared_ref=text.strip())
 
 
 def fetch_agent_ref(
@@ -373,6 +387,7 @@ def materialize_visiting_program(
     source_text: str,
     *,
     source: str | None = None,
+    declared_ref: str | None = None,
     toolang_root: Path,
 ) -> AgentLayout:
     """Materialize one remote agent into its stable visiting root."""
@@ -381,8 +396,32 @@ def materialize_visiting_program(
     layout = AgentLayout.visiting(
         source or ref.render(), agent_name, toolang_root=toolang_root
     )
+    content = source_text.encode("utf-8")
+    acquired = AcquiredSource(
+        declared_ref or source or ref.render(),
+        Acquisition(
+            ref.render(),
+            ref.path.lstrip("/"),
+            {ref.path.lstrip("/"): content},
+            agent_name,
+        ),
+    )
+    # This receipt belongs to the visiting source cache, outside State revisions.
+    # Write it after the program; a mismatched pair is never reused.
     atomic_write_text(layout.program, source_text)
-    return layout
+    atomic_write_text(
+        layout.home / "agent.source.json",
+        json.dumps(
+            {
+                "declared_ref": acquired.declared_ref,
+                "resolved_ref": acquired.acquisition.resolved_ref,
+                "entry": acquired.acquisition.entry,
+                "sha256": sha256(content).hexdigest(),
+            },
+            sort_keys=True,
+        ),
+    )
+    return replace(layout, program_acquisition=acquired)
 
 
 def resolve_run_layout(
@@ -443,7 +482,13 @@ def _resolve_visiting_layout(
 
     layout = _visiting_layout(target, toolang_root=toolang_root)
 
-    if _visiting_program_cache_fresh(layout.program):
+    captured = _cached_visiting_source(layout, target.declared_ref or target.text)
+    if (
+        captured is not None
+        and reusable_agent_source(target, captured.acquisition.resolved_ref)
+        and _visiting_program_cache_fresh(layout.program)
+    ):
+        layout = replace(layout, program_acquisition=captured)
         parse_visiting_agent(
             layout,
             ref=target.text,
@@ -457,6 +502,8 @@ def _resolve_visiting_layout(
         progress=progress,
         progress_id=progress_id,
     )
+    if isinstance(resolved_ref, GitHubRef):
+        resolved_ref = replace(resolved_ref, rev=_resolve_github_commit(resolved_ref))
     source_text = fetch_agent_ref(
         resolved_ref,
         progress=progress,
@@ -483,6 +530,7 @@ def _resolve_visiting_layout(
             resolved_ref,
             source_text,
             source=target.text,
+            declared_ref=target.declared_ref,
             toolang_root=toolang_root,
         )
     except Exception as exc:
@@ -549,7 +597,6 @@ def _github_agent_ref_exists(ref: GitHubRef) -> bool:
         return False
 
 
-@lru_cache
 def _github_repo_default_branch(owner: str, repo: str) -> str:
     api_url = (
         f"https://api.github.com/repos/{quote(owner, safe='')}/{quote(repo, safe='')}"
@@ -592,3 +639,59 @@ def _visiting_program_cache_fresh(program_path: Path) -> bool:
     if not program_path.is_file():
         return False
     return time.time() - program_path.stat().st_mtime <= VISITING_PROGRAM_CACHE_TTL_SEC
+
+
+def _resolve_github_commit(ref: GitHubRef) -> str:
+    return pin_github_ref(ref, lambda url: _fetch_http_text(url).encode("utf-8")).rev
+
+
+def _cached_visiting_source(
+    layout: AgentLayout, declared_ref: str | None = None
+) -> AcquiredSource | None:
+    try:
+        receipt = json.loads((layout.home / "agent.source.json").read_bytes())
+        content = layout.program.read_bytes()
+        if (
+            declared_ref is not None and receipt["declared_ref"] != declared_ref
+        ) or receipt["sha256"] != sha256(content).hexdigest():
+            return None
+        entry = receipt["entry"]
+        return AcquiredSource(
+            receipt["declared_ref"],
+            Acquisition(
+                receipt["resolved_ref"],
+                entry,
+                {entry: content},
+                layout.name,
+            ),
+        )
+    except (OSError, KeyError, TypeError, ValueError):
+        return None
+
+
+def restore_program_acquisition(layout: AgentLayout) -> AgentLayout:
+    """Carry a verified visiting cache receipt across the workload boundary."""
+    if layout.program_acquisition is not None or layout.managed_membership:
+        return layout
+    captured = _cached_visiting_source(layout)
+    return replace(layout, program_acquisition=captured) if captured else layout
+
+
+def reusable_agent_source(target: AgentTarget, resolved_ref: str) -> bool:
+    """Check effective Mod source selection without polling an upstream version."""
+    previous = parse_remote_source(resolved_ref)
+    requested = target.source
+    if isinstance(requested, GitHubShorthand):
+        return (
+            isinstance(previous, GitHubRef)
+            and previous.owner == requested.owner
+            and previous.repo == (requested.repo or "agents")
+            and previous.default_name() == requested.name
+        )
+    if isinstance(requested, GitHubRef):
+        return isinstance(previous, GitHubRef) and (
+            previous.owner,
+            previous.repo,
+            previous.path,
+        ) == (requested.owner, requested.repo, requested.path)
+    return isinstance(requested, HttpRef) and requested == previous

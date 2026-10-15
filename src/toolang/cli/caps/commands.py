@@ -1,5 +1,7 @@
 """Cap subcommands."""
 
+from toolang.catalog import source as cap_source
+
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -363,12 +365,12 @@ def _make_add_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
         progress = make_cli_progress(preparation=True)
         try:
             with progress:
-                canonical_ref = cap_state.resolve_remote_ref(
+                canonical_ref = cap_source.resolve_remote_ref(
                     kind,
                     ref,
                     progress=progress.sink,
                 )
-                name = cap_state.remote_entry_name(kind, canonical_ref)
+                name = cap_source.remote_entry_name(kind, canonical_ref)
                 entry = _configured_caps(context_root(ctx), agent_name, scope).create(
                     cap_config.CapRef(kind=kind, name=name, ref=canonical_ref)
                 )
@@ -379,7 +381,7 @@ def _make_add_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
                 )
         except CatalogConflictError as exc:
             raise ClickException(
-                f"{title} {cap_state.remote_entry_name(kind, ref)} already exists"
+                f"{title} {cap_source.remote_entry_name(kind, ref)} already exists"
             ) from exc
         except ValueError as exc:
             if progress.failure_stage is not None:
@@ -387,7 +389,7 @@ def _make_add_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
             message = str(exc)
             if "conflicting entries" in message:
                 raise ClickException(
-                    f"{title} {cap_state.remote_entry_name(kind, ref)} already exists"
+                    f"{title} {cap_source.remote_entry_name(kind, ref)} already exists"
                 ) from exc
             raise ClickException(str(exc)) from exc
         typer.echo(f"{kind.title()} {entry.name} added: {entry.ref}")

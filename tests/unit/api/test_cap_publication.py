@@ -1,5 +1,7 @@
 """Capability mutations return the exact published State representation."""
 
+from toolang.catalog import source as cap_source
+
 import asyncio
 
 from fastapi.testclient import TestClient
@@ -94,16 +96,15 @@ def test_rejected_write_publication_does_not_return_previous_content(tmp_path):
 def test_configured_write_materializes_content_and_delete_publishes(
     tmp_path, monkeypatch, scope
 ):
-    from toolang.state import state as cap_state
 
     layout = AgentLayout.resident(tmp_path, "alice")
     layout.home.mkdir(parents=True)
     core = AgentCore(layout)
     asyncio.run(core.state.refresh())
-    monkeypatch.setattr(cap_state, "_github_repo_default_branch", lambda *_: "main")
-    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda *_: True)
+    monkeypatch.setattr(cap_source, "_github_repo_default_branch", lambda *_: "main")
+    monkeypatch.setattr(cap_source, "_github_remote_exists", lambda *_: True)
     monkeypatch.setattr(
-        cap_state,
+        cap_source,
         "_fetch_remote_cap_files",
         lambda *, relative_entry_path, **kwargs: {
             str(relative_entry_path): b"Remote body.\n"

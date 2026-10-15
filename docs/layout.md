@@ -86,7 +86,9 @@ eight-character roots are left untouched and are no longer selected. Stop old
 visiting workloads before upgrading; retain old roots for manual history
 migration. Temporary directory cleanup can remove its state and remembered
 settings. The cached
-remote `agent.too` is refetched after one hour. Roaming agents use the source
+remote `agent.too` is refetched after one hour. Its source-owned
+`agent.source.json` cache receipt records the acquired ref and byte digest;
+State captures the same Program and provenance. Roaming agents use the source
 file's sibling `.toolang` directory. `too file.too serve` hosts the workload;
 ordinary host script invocation executes directly without a persistent server.
 
@@ -284,8 +286,11 @@ State directories:
 | Agent composition | `<agent-root>/agents/<agent>/.state/agent/` |
 
 Each directory stores a current-revision pointer, a build or publish lock, and
-immutable revision directories. Layer source identities contain only logical paths,
-canonical byte sizes, and content digests, so the same revisions remain usable
+immutable revision directories. Each layer contains `layer.json`, original
+accepted bytes under `source/`, and fetched bytes under
+`materialized/<sha256-resolved-ref>/`. JSON stores parsed values, file sizes and
+digests, resolutions, and a creation time included in the revision hash. The same
+revisions remain usable
 when root and home are mounted at different absolute paths. Sandbox preparation
 mounts symbolic-linked State source files read-only at their logical guest
 paths. See [agent-state.md](./agent-state.md) for the canonical documents,

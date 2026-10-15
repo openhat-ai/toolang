@@ -143,7 +143,7 @@ def test_nonresident_cap_mutations_remain_rejected(
         commands, "edit_markdown", lambda *_args: pytest.fail("must not open editor")
     )
     monkeypatch.setattr(
-        commands.cap_state,
+        commands.cap_source,
         "resolve_remote_ref",
         lambda *_args, **_kwargs: pytest.fail("must not fetch a cap"),
     )
@@ -1180,7 +1180,7 @@ def test_caps_add_failure_uses_the_operational_failure_block(
         )
         raise ValueError("resolve failed")
 
-    monkeypatch.setattr(caps_cli.commands.cap_state, "resolve_remote_ref", fail)
+    monkeypatch.setattr(caps_cli.commands.cap_source, "resolve_remote_ref", fail)
 
     result = caps_cli.main(
         ["--root", str(tmp_path / "toolang"), "skill", "add", "missing"]

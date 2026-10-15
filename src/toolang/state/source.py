@@ -448,12 +448,6 @@ def build_source_manifest(
             issues.append(source_issue(item.path, exc))
             continue
         raw_digest = sha256(content).hexdigest()
-        if item.path == "config.toml":
-            from toolang.common.config_sources import rebase_config_content
-
-            content = rebase_config_content(
-                content, item.source.parent, include_workspaces=include_workspaces
-            )
         if _observe_file(item.source, relative_path=item.path) != item:
             raise SourceChangedError(f"source changed while reading: {item.source}")
         entries.append(
@@ -617,6 +611,7 @@ class SourceFile:
     digest: str
     size: int
     raw_digest: str
+    raw_content: bytes | None = None
 
     def read_text(self) -> str:
         return self.content.decode("utf-8")
@@ -723,8 +718,10 @@ def source_manifest_from_snapshot(
         entries.append(
             SourceManifestEntry(
                 path=path.as_posix(),
-                size=item.size,
-                digest=item.digest,
+                size=len(item.raw_content)
+                if item.raw_content is not None
+                else item.size,
+                digest=item.raw_digest,
                 raw_digest=item.raw_digest,
             )
         )
@@ -868,6 +865,7 @@ def _collect_file(
         relative_path=path.relative_to(toolang_root).as_posix(),
     )
     content = path.read_bytes()
+    raw_content = content
     raw_digest = sha256(content).hexdigest()
     if category == "config":
         from toolang.common.config_sources import rebase_config_content
@@ -888,6 +886,7 @@ def _collect_file(
             digest=sha256(content).hexdigest(),
             size=len(content),
             raw_digest=raw_digest,
+            raw_content=raw_content,
         )
     ]
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from toolang.catalog import source as cap_source
+
 import json
 
 import pytest
@@ -9,7 +11,6 @@ import pytest
 from toolang.up import source as agent_sources
 
 from toolang.common.layout import AgentLayout
-from toolang.state import state as cap_state
 from toolang.state.prepare import prepare_agent_state
 
 
@@ -47,7 +48,7 @@ def test_cap_inspection_uses_ref_progress_and_completes_before_records(
         observed.append(_ref)
         return b"Review carefully.\n"
 
-    monkeypatch.setattr(cap_state, "_fetch_github_file", fetch)
+    monkeypatch.setattr(cap_source, "_fetch_github_file", fetch)
     command = [kind, "list"] if kind else ["caps" if entrypoint == "too" else "list"]
     target = ["dev"] if scope == "home" else []
     main = too_main if entrypoint == "too" else caps_main
@@ -66,11 +67,11 @@ def test_cached_cap_inspection_has_no_preparation_output(tmp_path, monkeypatch, 
 
     layout = _agent(tmp_path)
     monkeypatch.setattr(
-        cap_state, "_fetch_github_file", lambda _: b"Review carefully.\n"
+        cap_source, "_fetch_github_file", lambda _: b"Review carefully.\n"
     )
     prepare_agent_state(layout)
     monkeypatch.setattr(
-        cap_state,
+        cap_source,
         "_fetch_github_file",
         lambda _: pytest.fail("cached caps must not be fetched again"),
     )
@@ -94,7 +95,7 @@ def test_cap_edit_publishes_with_ref_progress(tmp_path, monkeypatch, capsys):
         assert f"{_REF} fetching" in capsys.readouterr().err
         return b"Review carefully.\n"
 
-    monkeypatch.setattr(cap_state, "_fetch_github_file", fetch)
+    monkeypatch.setattr(cap_source, "_fetch_github_file", fetch)
     assert main(["--root", str(tmp_path), "dev", "prompt", "edit", "note"]) == 0
     output = capsys.readouterr()
     assert "Prompt note updated:" in output.out
@@ -108,7 +109,7 @@ def test_offline_info_finishes_ref_progress_before_setup(tmp_path, monkeypatch, 
 
     layout = _agent(tmp_path)
     monkeypatch.setattr(
-        cap_state, "_fetch_github_file", lambda _: b"Review carefully.\n"
+        cap_source, "_fetch_github_file", lambda _: b"Review carefully.\n"
     )
     from toolang.plugin.toolsets.collections import ToolCollection
 
@@ -156,7 +157,7 @@ def test_remote_cap_inspection_shares_agent_and_cap_progress(
         return b"Review carefully.\n"
 
     monkeypatch.setattr(agent_sources, "_fetch_http_text", source)
-    monkeypatch.setattr(cap_state, "_fetch_github_file", cap)
+    monkeypatch.setattr(cap_source, "_fetch_github_file", cap)
     assert main(["--root", str(tmp_path), selector, *command, "--json"]) == 0
     output = capsys.readouterr()
     assert json.loads(output.out)
@@ -216,7 +217,7 @@ def test_local_script_completes_preparation_before_setup_and_execution(
         tmp_path / "fixture", source="flow run(_: Text):\n  pass\n", responses=[]
     )
     monkeypatch.setattr(
-        cap_state, "_fetch_github_file", lambda _: b"Review carefully.\n"
+        cap_source, "_fetch_github_file", lambda _: b"Review carefully.\n"
     )
 
     preparation_output = []
@@ -286,8 +287,8 @@ def test_cap_add_uses_ref_rows_without_summarizing_reference_validation(
         assert "Prepared" not in output.err
         return b"Review carefully.\n"
 
-    monkeypatch.setattr(cap_state, "_github_remote_exists", exists)
-    monkeypatch.setattr(cap_state, "_fetch_github_file", fetch)
+    monkeypatch.setattr(cap_source, "_github_remote_exists", exists)
+    monkeypatch.setattr(cap_source, "_fetch_github_file", fetch)
     target = ["dev"] if scope == "home" else []
     assert main(["--root", str(tmp_path), *target, "prompt", "add", _REF]) == 0
     output = capsys.readouterr()
@@ -302,7 +303,7 @@ def test_cap_add_resolution_failure_keeps_diagnostics_without_success_summary(
 ):
     from toolang.cli.toolang.main import main
 
-    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda *_: False)
+    monkeypatch.setattr(cap_source, "_github_remote_exists", lambda *_: False)
     assert main(["--root", str(tmp_path), "prompt", "add", _REF]) == 1
     output = capsys.readouterr()
     assert f"{_REF} resolving" in output.err

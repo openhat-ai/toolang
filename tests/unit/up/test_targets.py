@@ -466,3 +466,64 @@ def test_roaming_queries_reject_normalized_home_owned_by_another_source(
     assert "already belongs" in " ".join(capsys.readouterr().err.split())
     assert dispatched == []
     assert layout.program.resolve() == original
+
+
+def test_visiting_acquisition_pins_and_preserves_provenance(tmp_path, monkeypatch):
+    import json
+    from dataclasses import replace
+    from toolang.common.github import pin_github_ref
+    from toolang.state.cache import layer_revision_dir, validate_agent_revision
+    from toolang.state.prepare import prepare_agent_state, load_agent_state
+    from toolang.up.server import resolve_serve
+
+    sha = "c" * 40
+    requested = "gh:owner/agents/dev.too@main"
+    fetched = []
+    content = "# Original\r\nflow work():\r\n  pass\r\n"
+    monkeypatch.setattr(
+        agent_sources,
+        "_resolve_github_commit",
+        lambda ref: (
+            pin_github_ref(
+                ref,
+                lambda url: json.dumps({"sha": sha}).encode(),
+            ).rev
+        ),
+    )
+    monkeypatch.setattr(
+        agent_sources,
+        "fetch_agent_ref",
+        lambda ref, **kwargs: fetched.append(ref) or content,
+    )
+    first = agent_sources.resolve_visiting_layout(requested, toolang_root=tmp_path)
+    assert fetched[0].rev == sha
+    # The hidden server reconstructs paths without live source data.
+    restored = resolve_serve(
+        layout=replace(first, program_acquisition=None, placement="resident"), port=9000
+    ).layout
+    assert restored.program_acquisition == first.program_acquisition
+    state = prepare_agent_state(restored)
+    directory = layer_revision_dir(restored, "home", state.home_revision)
+    layer = json.loads((directory / "layer.json").read_bytes())
+    item = layer["modules"][0]
+    assert item["source"] == "agent.too"
+    assert item["resolution"]["declared_ref"] == requested
+    assert item["resolution"]["resolved_ref"] == f"github://owner/agents/dev.too@{sha}"
+    entry = item["resolution"]["materialized"]
+    assert (directory / "materialized" / entry).read_bytes() == content.encode()
+    assert (directory / "source/agent.too").read_bytes() == content.encode()
+    assert (
+        agent_sources.resolve_visiting_layout(
+            requested, toolang_root=tmp_path
+        ).program_acquisition
+        == first.program_acquisition
+    )
+    assert len(fetched) == 1
+    assert prepare_agent_state(restored, force=True).revision == state.revision
+    monkeypatch.setattr(
+        agent_sources,
+        "parse_agent_target",
+        lambda *args: pytest.fail("historical source resolution"),
+    )
+    assert load_agent_state(restored, state.revision).modules == state.modules
+    validate_agent_revision(restored, state.revision)

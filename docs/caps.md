@@ -202,27 +202,28 @@ Home local capabilities:
 
 ## State Capability Paths
 
-Materialized capabilities live inside immutable State layer revisions:
+Capabilities live inside immutable State layer revisions:
 
-- authored capabilities are copied under `files/caps/authored`
-- configured capabilities are materialized under `files/caps/configured`
-- inline module capabilities use `files/caps/inline/<module>`
-- referenced module capabilities use `files/caps/referenced/<module>`
+- `source/<original-relative-path>` preserves accepted authored files.
+- `materialized/<acquisition-key>/<original-relative-path>` holds fetched files
+  and assets, shared across consuming modules and aliases.
+- `layer.json` holds parsed metadata and bodies for every accepted candidate.
+  Inline declarations produce no generated Markdown files.
+
+The acquisition key is SHA-256 of the canonical resolved Source Ref. GitHub
+versions pin a full commit SHA before fetching; HTTP(S) refreshes compare fetched
+bytes. Source owners control normalization and selection, so new sources require
+no State-specific layout rules.
 
 Root layers live under `${TOOLANG_ROOT}/.state/root/revs/<revision>`.
 Home layers live under
 `${TOOLANG_ROOT}/agents/<agent>/.state/home/revs/<revision>`. See
-[agent-state.md](./agent-state.md) for the complete layout and revision rules.
+[agent-state.md](./agent-state.md) for documents, times, and integrity rules.
 
-Inline skills are single files at
-`files/caps/inline/<module>/skill/<name>.md`, containing description frontmatter
-and the literal guidance body. Their inspection location is the authored `.too`
-file and declaration line; they have no bundled asset list. See
+Inline skills retain literal guidance and description directly in their Cap
+value. Their inspection location is the authored `.too` file and declaration
+line; they have no bundled asset list. See
 [inline cap syntax](./program.md#inline-caps) for declaration and selection.
-State preparation rebuilds older cached modules that omitted inline skills;
-current-State loading rejects those caches so watchers also rebuild them on
-startup without source edits. Explicit historical snapshot loads retain their
-original capability sets.
 
 
 ## Local Cap Frontmatter

@@ -1,5 +1,7 @@
 """Capability inspection and management routes."""
 
+from toolang.catalog import source as cap_source
+
 from collections.abc import Mapping
 from typing import Literal
 
@@ -15,7 +17,6 @@ from toolang.catalog import cap as caps, templates
 from toolang.catalog import config as cap_config
 from toolang.catalog.types import CapKind
 from toolang.common.errors import ToolangError
-from toolang.state import state as cap_state
 from toolang.state.collections import cap_collection, query_cap_views
 from toolang.state.schemas import CapDetail, CapInfo
 from toolang.state.state import StateCap, AgentState
@@ -102,9 +103,9 @@ async def put_configured_cap(
     kind = _collection_kind(_collection_from_path(str(request.url.path)))
     scope = payload.scope
     canonical_ref = await run_in_threadpool(
-        _wrap_user_error, cap_state.resolve_remote_ref, kind, payload.ref
+        _wrap_user_error, cap_source.resolve_remote_ref, kind, payload.ref
     )
-    if cap_state.remote_entry_name(kind, canonical_ref) != name:
+    if cap_source.remote_entry_name(kind, canonical_ref) != name:
         raise HTTPException(
             status_code=400,
             detail=f"Configured {kind} ref {payload.ref!r} does not match requested name {name!r}.",

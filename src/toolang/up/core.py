@@ -46,6 +46,9 @@ class AgentCore:
         workspace_additions: Mapping[str, str] | None = None,
         workdir: str | None = None,
     ) -> None:
+        from .source import restore_program_acquisition
+
+        layout = restore_program_acquisition(layout)
         self.layout = layout
         self.drivers = drivers
         self.store = RunStore(layout.run_store)

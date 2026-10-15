@@ -8,6 +8,8 @@ from pathlib import Path
 import re
 from typing import Literal
 
+from .source import AcquiredSource
+
 AgentPlacement = Literal["resident", "visiting", "roaming"]
 
 IMPLICIT_WORKSPACE_NAME = "lab"
@@ -51,6 +53,9 @@ class AgentLayout:
     managed_membership: bool | None = None
     toolang_root: Path | None = field(default=None, compare=False)
     source_id: str | None = None
+    program_acquisition: AcquiredSource | None = field(
+        default=None, compare=False, repr=False
+    )
 
     def __post_init__(self) -> None:
         root = self.root.expanduser().resolve()

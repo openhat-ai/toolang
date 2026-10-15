@@ -56,7 +56,6 @@ def accept_sources(
     scope: Literal["root", "home"],
     previous_module_caps: dict[str, tuple[StateCap, ...]] | None = None,
     progress: ProgressSink | None = None,
-    reuse_remote: bool = True,
     include_programs: bool = True,
 ) -> AcceptedSources:
     """Exclude invalid units without changing the captured observations."""
@@ -218,14 +217,10 @@ def accept_sources(
                         str(exc),
                     )
                 ) from exc
-        cache: _RemoteEntryCache = (
-            layer_remote_cache(
-                authored,
-                scope="home",
-                entries=(previous_module_caps or {}).get(name, ()),
-            )
-            if reuse_remote
-            else {}
+        cache: _RemoteEntryCache = layer_remote_cache(
+            authored,
+            scope="home",
+            entries=(previous_module_caps or {}).get(name, ()),
         )
         caps, generated = materialize_program_caps(
             authored,

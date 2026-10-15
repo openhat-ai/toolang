@@ -159,8 +159,8 @@ def test_model_creates_discovers_calls_edits_and_deletes_module(tmp_path, kind, 
             second_revision = values["republish"]["revision"]
             assert len({initial_revision, first_revision, second_revision}) == 3
             assert values["reject"]["revision"] != second_revision
-            assert values["recover"]["revision"] == second_revision
-            assert values["publish_delete"]["revision"] == initial_revision
+            assert values["recover"]["revision"] != second_revision
+            assert values["publish_delete"]["revision"] != initial_revision
             assert {
                 "scope": "home",
                 "key": key,

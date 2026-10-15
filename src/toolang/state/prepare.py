@@ -10,20 +10,19 @@ from pathlib import Path
 import re
 
 from toolang.common.layout import AgentLayout, ensure_scratch_workspace
-from toolang.common.source import parse_remote_source
+from toolang.catalog import source as cap_source
 
 from ..common.progress import ProgressSink, emit_progress
 from ..lang.ast import AgicDecl, FlowDecl, Program, parse_cap_declarations
 from .acceptance import accept_sources
 from .state import (
     AgentState,
-    agent_state_revision,
-    KIND_BY_DIR_NAME,
     compose_agent_state,
     effective_caps,
     runnable_export,
     runnable_module_name,
     public_runnable_index,
+    merge_materialized_files,
     program_runnable_index,
     _allowed_caps,
 )
@@ -69,7 +68,7 @@ from .cache import (
     load_root_layer,
     layer_build_lock,
     publish_layer_current,
-    validate_layer_revision,
+    publish_agent_current,
     write_layer,
 )
 from .state import (
@@ -135,13 +134,15 @@ def prepare_agent_state(
             force=force,
             progress=progress,
         )
-        revision = agent_state_revision(
-            root.revision,
-            home.revision,
-            name=layout.name,
+        revision = _persist_agent_revision(
+            layout,
+            root_revision=root.revision,
+            home_revision=home.revision,
             allow_overrides=overrides,
             workspace_additions=workspace_additions,
+            publish=False,
         )
+        created_at = load_agent_revisions(layout, revision)[-1]
         revision_dir = agent_revision_dir(layout, revision)
         state = (
             previous
@@ -156,15 +157,10 @@ def prepare_agent_state(
                 allow_overrides=overrides,
                 workspace_additions=workspace_additions,
                 revision_dir=revision_dir,
+                created_at=created_at,
             )
         )
-        _persist_agent_revision(
-            layout,
-            root_revision=root.revision,
-            home_revision=home.revision,
-            allow_overrides=overrides,
-            workspace_additions=workspace_additions,
-        )
+        publish_agent_current(layout, revision)
         return state
 
 
@@ -177,6 +173,7 @@ def compose_layer_state(
     name: str,
     allow_overrides: Mapping[str, tuple[str, ...]] | None = None,
     workspace_additions: Mapping[str, str] | None = None,
+    created_at: str | None = None,
 ) -> AgentState:
     """Compose runtime State from one exact root/home layer pair."""
 
@@ -187,6 +184,11 @@ def compose_layer_state(
         workspace_additions=workspace_additions,
         root_revision=root.revision,
         home_revision=home.revision,
+        created_at=created_at,
+        source_requests=tuple(
+            (resolution.kind, resolution.declared_ref, resolution.resolved_ref)
+            for resolution in (*root.resolutions, *home.resolutions)
+        ),
         root_config=root.config,
         home_config=home.config,
         root_caps=root.caps,
@@ -207,16 +209,7 @@ def compose_layer_state(
 def _source_files(scope: LayerScope, source: SourceRecord) -> tuple[StateFile, ...]:
     if not isinstance(source, SourceManifest):
         return ()
-    return tuple(
-        StateFile(scope, item.path, digest)
-        for item in source.files
-        # Older config digests may identify rebased bytes, never the authored file.
-        if (
-            digest := item.raw_digest
-            or (item.digest if item.path != "config.toml" else None)
-        )
-        is not None
-    )
+    return tuple(StateFile(scope, item.path, item.digest) for item in source.files)
 
 
 def load_agent_state(
@@ -225,26 +218,24 @@ def load_agent_state(
 ) -> AgentState:
     """Load one durable Agent State without consulting authored source."""
 
-    (effective, root_revision, home_revision, name, overrides, workspace_additions) = (
-        load_agent_revisions(layout, revision)
-    )
+    (
+        effective,
+        root_revision,
+        home_revision,
+        name,
+        overrides,
+        workspace_additions,
+        created_at,
+    ) = load_agent_revisions(layout, revision)
     root = load_root_layer(layout, root_revision)
     home = load_home_layer(layout, home_revision)
-    if revision is None and (
-        root.schema != LAYER_SCHEMA or home.schema != LAYER_SCHEMA
-    ):
-        raise ValueError("current Agent State uses an outdated layer schema")
-    if revision is None and _has_missing_inline_caps(home):
-        raise ValueError("current Agent State is missing inline capabilities")
-    if revision is None:
-        _validate_current_sources(root)
-        _validate_current_sources(home)
     state = compose_layer_state(
         root,
         home,
         revision_dir=agent_revision_dir(layout, effective),
         toolang_root=layout.root,
         name=name,
+        created_at=created_at,
         allow_overrides=overrides,
         workspace_additions=workspace_additions,
     )
@@ -481,7 +472,6 @@ def _matching_root(
         if layer.source != source:
             return None
         _validate_current_sources(layer)
-        validate_layer_revision(layout, "root", revision)
         return layer
     except (FileNotFoundError, KeyError, TypeError, ValueError):
         return None
@@ -502,33 +492,34 @@ def _matching_home(
             return None
         if layer.source != source:
             return None
-        if _has_missing_inline_caps(layer):
+        if "workspaces" in layer.config:
+            from toolang.common.config_sources import rebase_config
+
+            raw = parse_config((layer.revision_dir / "source/config.toml").read_bytes())
+            if (
+                rebase_config(raw, layout.home).get("workspaces")
+                != layer.config["workspaces"]
+            ):
+                return None
+        acquired = layout.program_acquisition
+        expected = {"agent": acquired.resolution()} if acquired else {}
+        if layer.module_resolutions != expected:
             return None
         _validate_current_sources(layer)
-        validate_layer_revision(layout, "home", revision)
         return layer
     except (FileNotFoundError, KeyError, TypeError, ValueError):
         return None
 
 
 def _validate_current_sources(layer: RootLayer | HomeLayer) -> None:
-    """Current caches obey source policy; explicit historical loads retain theirs."""
+    """Ask Source owners whether effective selection still matches cached results."""
     for resolution in layer.resolutions:
-        parse_remote_source(resolution.declared_ref)
-
-
-def _has_missing_inline_caps(layer: HomeLayer) -> bool:
-    """Detect older layers that parsed caps without materializing them."""
-
-    for module, program in layer.modules.items():
-        materialized = {
-            (cap.kind, cap.name)
-            for cap in layer.module_caps.get(module, ())
-            if cap.source.form == "inline"
-        }
-        if any((cap.kind, cap.name) not in materialized for cap in program.caps):
-            return True
-    return False
+        if not cap_source.reusable(
+            resolution.kind, resolution.declared_ref, resolution.resolved_ref
+        ):
+            raise ValueError(
+                "Source selection changed; recorded resolution cannot be reused"
+            )
 
 
 def _prepare_layer(
@@ -592,6 +583,22 @@ def _prepare_layer_revision(
     reuse_remote: bool,
     progress: ProgressSink | None,
 ) -> tuple[str, int]:
+    with cap_source.acquisition_session(refresh=not reuse_remote):
+        return _build_layer_revision(
+            layout,
+            scope=scope,
+            cap_scope=cap_scope,
+            progress=progress,
+        )
+
+
+def _build_layer_revision(
+    layout: AgentLayout,
+    *,
+    scope: LayerScope,
+    cap_scope: CapScope,
+    progress: ProgressSink | None,
+) -> tuple[str, int]:
     for _ in range(_MAX_SOURCE_SNAPSHOT_ATTEMPTS):
         observation = _observe_scope_source(layout, scope=scope)
         try:
@@ -605,14 +612,7 @@ def _prepare_layer_revision(
         source = source_manifest_from_snapshot(authored, scope=scope)
         if observation != _observe_scope_source(layout, scope=scope):
             continue
-        previous_entries = (
-            _previous_state_caps(
-                layout,
-                scope=scope,
-            )
-            if reuse_remote
-            else ()
-        )
+        previous_entries = _previous_state_caps(layout, scope=scope)
         remote_cache = layer_remote_cache(
             authored,
             scope=cap_scope,
@@ -624,7 +624,6 @@ def _prepare_layer_revision(
             scope=scope,
             previous_module_caps=dict(previous.module_caps) if previous else {},
             progress=progress,
-            reuse_remote=reuse_remote,
         )
         selected = accepted.snapshot
         entries, generated_files = materialize_scope(
@@ -646,10 +645,8 @@ def _prepare_layer_revision(
                 prepared.source,
                 prepared.program,
             )
-            here_entries, here_files = _namespace_module_materialization(
-                name, prepared.caps, prepared.files
-            )
-            generated_files.update(here_files)
+            here_entries, here_files = prepared.caps, prepared.files
+            merge_materialized_files(generated_files, here_files)
             modules[name] = program
             module_sources[name] = module_source.authored_path
             module_digests[name] = module_source.digest
@@ -660,11 +657,6 @@ def _prepare_layer_revision(
             generated_files,
             cap_scope=cap_scope,
         )
-        for name, module_source, _program in drafts if scope == "home" else ():
-            files.setdefault(
-                module_sources[name],
-                module_source.source_text.encode("utf-8"),
-            )
         entries = tuple(
             _snapshot_entry(
                 entry,
@@ -690,6 +682,20 @@ def _prepare_layer_revision(
             module_entries = tuple(
                 entry for entries in module_caps.values() for entry in entries
             )
+        module_resolutions = {}
+        acquired = layout.program_acquisition if scope == "home" else None
+        if acquired is not None and "agent" in modules:
+            captured = acquired.acquisition
+            if files.get("source/agent.too") != captured.files[captured.entry]:
+                raise ValueError("visiting Program changed after acquisition")
+            merge_materialized_files(
+                files,
+                {
+                    f"materialized/{captured.key}/{key}": content
+                    for key, content in captured.files.items()
+                },
+            )
+            module_resolutions["agent"] = acquired.resolution()
         resolutions = _cap_resolutions((*entries, *module_entries), files)
         if observation != _observe_scope_source(layout, scope=scope):
             continue
@@ -698,7 +704,7 @@ def _prepare_layer_revision(
             scope=scope,
             source=source,
             resolutions=resolutions,
-            config=_snapshot_config(files),
+            config=_snapshot_config(selected, cap_scope=cap_scope),
             caps=entries,
             modules=modules,
             module_sources=module_sources,
@@ -707,6 +713,7 @@ def _prepare_layer_revision(
             files=files,
             records=accepted.records,
             chores=accepted.chores,
+            module_resolutions=module_resolutions,
         )
         publish_layer_current(
             layout,
@@ -724,7 +731,6 @@ def _previous_state_caps(
 ) -> tuple[StateCap, ...]:
     try:
         revision = load_current_revision(layout, scope)
-        validate_layer_revision(layout, scope, revision)
         if scope == "root":
             return load_root_layer(layout, revision).caps
         return load_home_layer(layout, revision).caps
@@ -735,7 +741,6 @@ def _previous_state_caps(
 def _previous_home_layer(layout: AgentLayout) -> HomeLayer | None:
     try:
         revision = load_current_revision(layout, "home")
-        validate_layer_revision(layout, "home", revision)
         return load_home_layer(layout, revision)
     except (FileNotFoundError, KeyError, TypeError, ValueError):
         return None
@@ -902,57 +907,25 @@ def _module_error(
     )
 
 
-def _namespace_module_materialization(
-    module: str,
-    entries: tuple[StateCap, ...],
-    files: dict[str, bytes],
-) -> tuple[tuple[StateCap, ...], dict[str, bytes]]:
-    remapped_entries: list[StateCap] = []
-    remapped_files: dict[str, bytes] = {}
-    for entry in entries:
-        source_path = Path(entry.path)
-        target_path = _generated_cap_path(source_path, module=module)
-        remapped_entries.append(replace(entry, path=target_path.as_posix()))
-        source_root = (
-            source_path.parent if entry.shape == "file" else source_path.parent
-        )
-        target_root = target_path.parent
-        for path, content in files.items():
-            candidate = Path(path)
-            if candidate == source_path:
-                remapped_files[target_path.as_posix()] = content
-            elif entry.shape == "dir" and candidate.is_relative_to(source_root):
-                remapped_files[
-                    (target_root / candidate.relative_to(source_root)).as_posix()
-                ] = content
-    return tuple(remapped_entries), remapped_files
-
-
 def _snapshot_files(
-    authored: SourceSnapshot,
-    generated_files: dict[str, bytes],
-    *,
-    cap_scope: CapScope,
+    authored: SourceSnapshot, generated_files: dict[str, bytes], *, cap_scope: CapScope
 ) -> dict[str, bytes]:
     files: dict[str, bytes] = {}
     for item in authored.files:
         if not _file_belongs_to_cap_scope(item, cap_scope=cap_scope):
             continue
-        target = _authored_snapshot_path(
-            item,
+        relative = _scope_relative_path(
+            Path(item.relative_path),
             agent_name=authored.agent_name,
             cap_scope=cap_scope,
         )
-        content = (
-            canonical_state_config(item.content)
-            if item.category == "config"
-            else item.content
+        files[f"source/{relative.as_posix()}"] = (
+            item.raw_content if item.raw_content is not None else item.content
         )
-        if item.category != "config" or content:
-            files[target.as_posix()] = content
     for path, content in generated_files.items():
-        target = _generated_snapshot_path(Path(path))
-        files[target.as_posix()] = content
+        if path in files and files[path] != content:
+            raise ValueError(f"conflicting acquired file: {path}")
+        files[path] = content
     return files
 
 
@@ -962,54 +935,6 @@ def _file_belongs_to_cap_scope(
     cap_scope: CapScope,
 ) -> bool:
     return item.origin == ("root" if cap_scope == "root" else "agent")
-
-
-def _authored_snapshot_path(
-    item: SourceFile,
-    *,
-    agent_name: str,
-    cap_scope: CapScope,
-) -> Path:
-    relative = _scope_relative_path(
-        Path(item.relative_path),
-        agent_name=agent_name,
-        cap_scope=cap_scope,
-    )
-    if item.category == "cap":
-        if len(relative.parts) < 2:
-            raise ValueError(f"unexpected authored cap path: {relative}")
-        kind = KIND_BY_DIR_NAME.get(relative.parts[0])
-        if kind is None:
-            raise ValueError(f"unexpected authored cap directory: {relative.parts[0]}")
-        return Path("caps") / "authored" / kind / Path(*relative.parts[1:])
-    if item.category in {"program", "chore"}:
-        return relative
-    if item.category == "config":
-        return Path("config.toml")
-    return Path("authored") / relative
-
-
-def _generated_snapshot_path(
-    path: Path,
-) -> Path:
-    if path.parts[:1] == ("caps",):
-        return path
-    return _generated_cap_path(path)
-
-
-def _generated_cap_path(path: Path, *, module: str | None = None) -> Path:
-    if len(path.parts) < 3:
-        raise ValueError(f"unexpected materialized cap path: {path}")
-    form = path.parts[0]
-    if form not in {"inline", "configured", "referenced"}:
-        raise ValueError(f"unexpected materialized cap bucket: {path.parts[0]}")
-    kind = KIND_BY_DIR_NAME.get(path.parts[1])
-    if kind is None:
-        raise ValueError(f"unexpected materialized cap directory: {path.parts[1]}")
-    prefix = Path("caps") / form
-    if module is not None:
-        prefix /= module
-    return prefix / kind / Path(*path.parts[2:])
 
 
 def _scope_relative_path(
@@ -1028,105 +953,51 @@ def _scope_relative_path(
 
 
 def _snapshot_entry(
-    entry: StateCap,
-    *,
-    agent_name: str,
-    files: dict[str, bytes],
-    cap_scope: CapScope,
+    entry: StateCap, *, agent_name: str, files: dict[str, bytes], cap_scope: CapScope
 ) -> StateCap:
-    path = _entry_snapshot_path(
-        entry,
-        agent_name=agent_name,
-        cap_scope=cap_scope,
-    )
-    source = replace(entry.source, path=entry.source.path)
-    if source.origin == "remote":
-        source = replace(
-            source,
-            fingerprint=_remote_snapshot_fingerprint(
-                source.fingerprint,
-                path=path,
-                shape=entry.shape,
-                files=files,
-            ),
-        )
     return replace(
         entry,
-        path=f"files/{path.as_posix()}",
-        source=source,
+        path=_entry_snapshot_path(
+            entry, agent_name=agent_name, cap_scope=cap_scope
+        ).as_posix(),
     )
 
 
 def _entry_snapshot_path(
-    entry: StateCap,
-    *,
-    agent_name: str,
-    cap_scope: CapScope,
+    entry: StateCap, *, agent_name: str, cap_scope: CapScope
 ) -> Path:
-    if entry.source.form == "authored":
+    if entry.source.form in {"authored", "inline"}:
         relative = _scope_relative_path(
-            Path(entry.path),
+            Path(entry.path if entry.source.form == "authored" else entry.source.path),
             agent_name=agent_name,
             cap_scope=cap_scope,
         )
-        if len(relative.parts) < 2:
-            raise ValueError(f"unexpected authored cap path: {relative}")
-        return Path("caps") / "authored" / entry.kind / Path(*relative.parts[1:])
-    return _generated_snapshot_path(Path(entry.path))
-
-
-def _remote_snapshot_fingerprint(
-    authored_fingerprint: str,
-    *,
-    path: Path,
-    shape: str,
-    files: dict[str, bytes],
-) -> str:
-    selected = (
-        [(path.as_posix(), files[path.as_posix()])]
-        if shape == "file" and path.as_posix() in files
-        else [
-            (candidate, content)
-            for candidate, content in files.items()
-            if Path(candidate).is_relative_to(path.parent)
-        ]
-    )
-    digest = sha256()
-    digest.update(authored_fingerprint.encode("ascii"))
-    digest.update(b"\0")
-    for candidate, content in sorted(selected):
-        digest.update(candidate.encode("utf-8"))
-        digest.update(b"\0")
-        digest.update(sha256(content).digest())
-        digest.update(b"\n")
-    return digest.hexdigest()
+        return Path("source") / relative
+    return Path(entry.path)
 
 
 def _cap_resolutions(
-    entries: tuple[StateCap, ...],
-    files: dict[str, bytes],
+    entries: tuple[StateCap, ...], files: dict[str, bytes]
 ) -> tuple[CapResolution, ...]:
-    resolutions: list[CapResolution] = []
+    result: list[CapResolution] = []
     for entry in entries:
         if entry.source.origin != "remote":
             continue
-        materialized = Path(entry.path)
-        selected = _entry_materialized_files(entry, files)
-        resolved_files = [
-            MaterializedFile(
-                path=f"files/{path}",
-                size=len(content),
-                sha256=sha256(content).hexdigest(),
-            )
-            for path, content in selected
+        path = Path(entry.path)
+        selected = [
+            (key, content)
+            for key, content in sorted(files.items())
+            if key == entry.path
+            or (entry.shape == "dir" and Path(key).is_relative_to(path.parent))
         ]
+        captured = tuple(
+            MaterializedFile(key, len(content), sha256(content).hexdigest())
+            for key, content in selected
+        )
         digest = sha256()
-        for file in resolved_files:
-            digest.update(file.path.encode("utf-8"))
-            digest.update(b"\0")
-            digest.update(file.sha256.encode("ascii"))
-            digest.update(b"\n")
-        resolutions.append(
+        for file in captured:
+            digest.update(f"{file.path}\0{file.sha256}\n".encode())
+        result.append(
             CapResolution(
                 kind=entry.kind,
                 name=entry.name,
@@ -1134,22 +1005,13 @@ def _cap_resolutions(
                 declared_ref=entry.source.declared_ref or entry.ref,
                 resolved_ref=entry.ref,
                 line=entry.source.line,
-                definition=(f"files/{_resolved_definition_path(entry).as_posix()}"),
-                materialized=materialized.as_posix(),
+                definition=f"source/{_resolved_definition_path(entry).as_posix()}",
+                materialized=entry.path,
                 content_hash=digest.hexdigest(),
-                files=tuple(resolved_files),
+                files=captured,
             )
         )
-    resolutions.sort(
-        key=lambda resolution: (
-            resolution.kind,
-            resolution.name,
-            resolution.form,
-            resolution.definition,
-            resolution.materialized,
-        )
-    )
-    return tuple(resolutions)
+    return tuple(result)
 
 
 def _resolved_definition_path(entry: StateCap) -> Path:
@@ -1161,25 +1023,16 @@ def _resolved_definition_path(entry: StateCap) -> Path:
     return path
 
 
-def _entry_materialized_files(
-    entry: StateCap,
-    files: dict[str, bytes],
-) -> list[tuple[str, bytes]]:
-    path = Path(entry.path)
-    relative = Path(*path.parts[1:])
-    if entry.shape == "file":
-        content = files.get(relative.as_posix())
-        return [] if content is None else [(relative.as_posix(), content)]
-    root = relative.parent
-    return sorted(
-        (candidate, content)
-        for candidate, content in files.items()
-        if Path(candidate).is_relative_to(root)
+def _snapshot_config(
+    authored: SourceSnapshot, *, cap_scope: CapScope
+) -> dict[str, object]:
+    item = next(
+        (
+            item
+            for item in authored.files
+            if item.category == "config"
+            and _file_belongs_to_cap_scope(item, cap_scope=cap_scope)
+        ),
+        None,
     )
-
-
-def _snapshot_config(files: dict[str, bytes]) -> dict[str, object]:
-    content = files.get("config.toml")
-    if content is None:
-        return {}
-    return parse_config(content)
+    return parse_config(canonical_state_config(item.content)) if item else {}

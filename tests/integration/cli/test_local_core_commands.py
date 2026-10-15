@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from toolang.catalog import source as cap_source
+
 from toolang.up import source as agent_sources
 
 from toolang.lang.types import Value
@@ -3389,7 +3391,6 @@ def test_root_cap_inspection_uses_resolved_metadata_and_shared_cache(
     all_: bool,
 ) -> None:
     from toolang.cli.caps import main as caps_cli
-    from toolang.state import state as cap_state
 
     (tmp_path / "config.toml").write_text(
         "[prompts]\n"
@@ -3404,7 +3405,7 @@ def test_root_cap_inspection_uses_resolved_metadata_and_shared_cache(
         description = "Rewrite" if ref.path.endswith("rewrite.md") else "Other"
         return f"---\ndescription: {description}\n---\nPrompt text.\n".encode()
 
-    monkeypatch.setattr(cap_state, "_fetch_github_file", fetch)
+    monkeypatch.setattr(cap_source, "_fetch_github_file", fetch)
     if prepared:
         _create_agent(tmp_path)
         agent = _invoke(tmp_path, "alice", "caps")
@@ -3450,7 +3451,6 @@ def test_root_cap_inspection_uses_resolved_metadata_and_shared_cache(
 def test_root_caps_reports_unresolvable_remote_metadata(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from toolang.state import state as cap_state
 
     (tmp_path / "config.toml").write_text(
         '[prompts]\nmissing = { ref = "github://acme/caps/missing.md@main" }\n'
@@ -3459,7 +3459,7 @@ def test_root_caps_reports_unresolvable_remote_metadata(
     def fail_fetch(ref):
         raise ValueError("remote prompt not found")
 
-    monkeypatch.setattr(cap_state, "_fetch_github_file", fail_fetch)
+    monkeypatch.setattr(cap_source, "_fetch_github_file", fail_fetch)
     result = _invoke(tmp_path, "caps", "--all")
 
     assert result.exit_code == 1

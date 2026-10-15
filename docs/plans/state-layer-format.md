@@ -2,14 +2,12 @@
 
 ## Status and Goal
 
-Proposed; implementation requires approval of this definition. This PR changes
-documentation only. Make each revision readable as a directory, directly usable
-from its JSON document, verifiable offline, and comparable with upstream content.
-
-The baseline is [Agent State](../agent-state.md), layer schema 21, and the
-[merged Source Ref contract](names-handles-and-source-refs.md). GitHub aliases
-and HTTP(S) are supported; `oh:` and `openhat:` are explicitly unsupported.
-Current `resolved_ref` values canonicalize locations but do not pin Git commits.
+Approved in #813 and implemented with layer schema 22 and composition schema 3.
+Each revision is readable as a directory, directly usable from its JSON document,
+verifiable offline, and comparable with upstream content. See
+[Agent State](../agent-state.md) and the
+[Source Ref contract](names-handles-and-source-refs.md).
+GitHub aliases and HTTP(S) are supported; this work does not activate OpenHat.
 
 ## Scope
 
@@ -234,10 +232,9 @@ Time describes local creation, not strict causality under clock changes.
 
 ## Compatibility and Implementation Touchpoints
 
-Increment layer and composition schemas. Rebuild incompatible current caches;
-do not rewrite historical directories, invent old creation times, or change
-execution records. Keep explicit historical loaders for existing schemas; new
-loaders restore old Cap content through compatibility paths where necessary.
+Old layer and composition schemas are unsupported; no compatibility or historical
+migration is required. Derived current caches are rebuilt from authored inputs.
+Historical directories and execution records are not converted or rewritten.
 Raw config archival and timestamped identities are intentional format changes.
 
 | Files | Responsibility |
@@ -269,7 +266,7 @@ Acceptance tests must cover:
 - All-store timestamps, no-op reuse, A/B/A evolution, concurrent publication,
   document/file tampering, extra/missing files, bad references, invalid value
   schemas, and recursive validation fail or pass as specified above.
-- Historical loads, rebuilds without history rewrites, documented examples, and
+- New-format historical loads, old-schema rejection, documented examples, and
   the default offline verification suite.
 
 Raw config capture expands archived content compared with schema 21; its byte
@@ -277,4 +274,4 @@ preservation must be deliberate. Direct values add JSON size but remove routine
 parsing. Timestamped identities require auditing all pure revision computations;
 filesystem mtime and provider versions must not substitute for stored identity.
 HTTP requires fetching to detect updates and cannot provide Git-like version
-history. No protocol decisions remain open; implementation awaits plan approval.
+history. No protocol decisions remain open.

@@ -2,24 +2,25 @@
 
 from __future__ import annotations
 
+from toolang.catalog import source as cap_source
+
 from pathlib import Path
 
 import pytest
 
 from toolang.base.types.progress import ProgressEvent
-from toolang.state import state as caps
 
 
 def test_remote_shorthand_falls_back_to_main_when_branch_lookup_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        caps,
+        cap_source,
         "_github_repo_default_branch",
         lambda _owner, _repo: (_ for _ in ()).throw(ValueError("rate limited")),
     )
     monkeypatch.setattr(
-        caps,
+        cap_source,
         "_github_remote_exists",
         lambda kind, ref: (
             kind == "psyche"
@@ -27,7 +28,7 @@ def test_remote_shorthand_falls_back_to_main_when_branch_lookup_fails(
         ),
     )
 
-    assert caps.resolve_remote_ref("psyche", "gh:briceyan/senior-engineer") == (
+    assert cap_source.resolve_remote_ref("psyche", "gh:briceyan/senior-engineer") == (
         "github://briceyan/agents/psyches/senior-engineer.md@main"
     )
 
@@ -35,19 +36,23 @@ def test_remote_shorthand_falls_back_to_main_when_branch_lookup_fails(
 def test_remote_cap_keeps_one_progress_id_across_prepare_stages(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(caps, "_github_repo_default_branch", lambda *_args: "main")
-    monkeypatch.setattr(caps, "_github_remote_exists", lambda *_args: True)
-    monkeypatch.setattr(caps, "_fetch_github_file", lambda _ref: b"Review carefully\n")
+    monkeypatch.setattr(
+        cap_source, "_github_repo_default_branch", lambda *_args: "main"
+    )
+    monkeypatch.setattr(cap_source, "_github_remote_exists", lambda *_args: True)
+    monkeypatch.setattr(
+        cap_source, "_fetch_github_file", lambda _ref: b"Review carefully\n"
+    )
     events: list[ProgressEvent] = []
     progress_id = "cap:psyche:briceyan/reviewer"
 
-    canonical = caps.resolve_remote_ref(
+    canonical = cap_source.resolve_remote_ref(
         "psyche",
         "gh:briceyan/reviewer",
         progress=events.append,
         progress_id=progress_id,
     )
-    caps._fetch_remote_cap_files(
+    cap_source._fetch_remote_cap_files(
         relative_entry_path=Path("referenced/psyches/reviewer.md"),
         kind="psyche",
         name="reviewer",
@@ -76,7 +81,9 @@ def test_alias_preparation_tasks_have_distinct_progress_identity(tmp_path, monke
         f'[prompts]\none = {{ref="{ref}"}}\ntwo = {{ref="{ref}"}}\n'
     )
     monkeypatch.setattr(
-        caps, "_fetch_github_file", lambda *_: b"---\ndescription: Shared\n---\nBody.\n"
+        cap_source,
+        "_fetch_github_file",
+        lambda *_: b"---\ndescription: Shared\n---\nBody.\n",
     )
     events = []
     prepare_agent_state(layout, progress=events.append)
@@ -110,7 +117,7 @@ def test_source_change_retry_remains_visible_without_double_counting_caps(
             layout.program.write_text("# Changed while fetching\n")
         return b"---\ndescription: Shared\n---\nBody.\n"
 
-    monkeypatch.setattr(caps, "_fetch_github_file", fetch)
+    monkeypatch.setattr(cap_source, "_fetch_github_file", fetch)
     stream = StringIO()
     with PreparationProgress(stream=stream) as progress:
         prepare_agent_state(layout, progress=progress)

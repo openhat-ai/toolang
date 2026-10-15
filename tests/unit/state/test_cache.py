@@ -60,13 +60,13 @@ def _write_home(
         scope="home",
         source=source,
         resolutions=(),
-        config={"models": {"default": "fast"}},
+        config={},
         caps=(),
         modules={"agent": Program.from_source(source_text)},
         module_sources={"agent": "agent.too"},
         module_digests={"agent": sha256(source_text.encode()).hexdigest()},
         module_caps={"agent": ()},
-        files={"agent.too": source_text.encode()},
+        files={"source/agent.too": source_text.encode()},
     )
 
 
@@ -100,7 +100,10 @@ def test_agent_state_revision_round_trips_exact_layers(tmp_path: Path) -> None:
         )
 
     assert revision == agent_state_revision(
-        root_revision, home_revision, name=layout.name
+        root_revision,
+        home_revision,
+        name=layout.name,
+        created_at=load_agent_revisions(layout, revision)[-1],
     )
     assert load_current_agent_revision(layout) == revision
     assert load_agent_revisions(layout, revision) == (
@@ -110,6 +113,7 @@ def test_agent_state_revision_round_trips_exact_layers(tmp_path: Path) -> None:
         layout.name,
         {},
         {},
+        load_agent_revisions(layout, revision)[-1],
     )
     layers = layout.agent_state / "revs" / revision / "layers.json"
     assert sha256(layers.read_bytes()).hexdigest() == revision
@@ -149,7 +153,7 @@ def test_layer_publish_and_load_use_revision_strings(tmp_path: Path) -> None:
     assert load_root_layer(layout).revision == root_revision
     home = load_home_layer(layout)
     assert home.revision == home_revision
-    assert home.config == {"models": {"default": "fast"}}
+    assert home.config == {}
     assert home.modules["agent"].find_agic("hello") is not None
 
 
@@ -240,11 +244,11 @@ def test_explicit_layer_validation_rejects_file_set_and_content_damage(
     layout = _layout(tmp_path)
     revision = _write_home(layout)
     revision_dir = layer_revision_dir(layout, "home", revision)
-    program = revision_dir / "files" / "agent.too"
+    program = revision_dir / "source" / "agent.too"
     if damage == "missing":
         program.unlink()
     elif damage == "extra":
-        (revision_dir / "files" / "extra.txt").write_text("extra", encoding="utf-8")
+        (revision_dir / "source" / "extra.txt").write_text("extra", encoding="utf-8")
     else:
         program.write_text("changed", encoding="utf-8")
 
@@ -272,8 +276,8 @@ def test_layer_loader_trusts_noncanonical_json_until_explicit_validation(
 @pytest.mark.parametrize(
     ("field", "value", "message"),
     [
-        ("kind", "memory", "cap kind"),
-        ("shape", "archive", "cap shape"),
+        ("ref", "memory/review", "cap kind"),
+        ("form", "archive", "cap form"),
     ],
 )
 def test_explicit_layer_validation_rejects_invalid_cap_domains(
@@ -287,19 +291,10 @@ def test_explicit_layer_validation_rejects_invalid_cap_domains(
     original_dir = layer_revision_dir(layout, "home", original)
     document = json.loads((original_dir / "layer.json").read_text(encoding="utf-8"))
     cap = {
-        "kind": "prompt",
-        "meta": {},
-        "name": "review",
-        "path": "files/agent.too",
-        "ref": "local://prompts/review",
-        "shape": "file",
-        "source": {
-            "fingerprint": "0" * 64,
-            "form": "authored",
-            "origin": "local",
-            "path": "agents/alice/prompts/review.md",
-            "updated_at": "2026-01-01T00:00:00Z",
-        },
+        "ref": "prompt/review",
+        "form": "authored",
+        "source": "agent.too",
+        "value": {"meta": {}, "body": "Review carefully."},
     }
     cap[field] = value
     document["caps"] = [cap]

@@ -1,12 +1,13 @@
 """Blocking resource preparation stays visible until the command can continue."""
 
+from toolang.catalog import source as cap_source
+
 from io import StringIO
 
 import pytest
 
 from toolang.cli.toolang.main import main
 from toolang.common.layout import AgentLayout
-from toolang.state import state as cap_state
 
 
 @pytest.mark.parametrize("command", ["edit", "new"])
@@ -21,8 +22,8 @@ def test_cap_materialization_only_starts_after_saving(
     (layout.home / "prompts").mkdir()
     (layout.home / "prompts" / "note.md").write_text("Local note.\n")
     monkeypatch.setattr("sys.stdin", StringIO())
-    monkeypatch.setattr(cap_state, "_github_repo_default_branch", lambda *_: "main")
-    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda *_: True)
+    monkeypatch.setattr(cap_source, "_github_repo_default_branch", lambda *_: "main")
+    monkeypatch.setattr(cap_source, "_github_remote_exists", lambda *_: True)
     edited = []
 
     def edit(text):
@@ -39,7 +40,7 @@ def test_cap_materialization_only_starts_after_saving(
         assert "acme/remote resolving" in capsys.readouterr().err
         return {str(relative_entry_path): b"Remote content.\n"}
 
-    monkeypatch.setattr(cap_state, "_fetch_remote_cap_files", fetch_files)
+    monkeypatch.setattr(cap_source, "_fetch_remote_cap_files", fetch_files)
     arguments = ["prompt", command, "note" if command == "edit" else "another"]
     assert main(["--root", str(tmp_path), "alice", *arguments]) == 0
     assert observed == ([True] if save else [])

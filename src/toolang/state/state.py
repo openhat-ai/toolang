@@ -4,22 +4,18 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextvars import copy_context
 from dataclasses import dataclass, field, replace
-from functools import lru_cache
 import hashlib
 from hashlib import sha256
-import io
 import json
 from pathlib import Path
 import re
-import tarfile
 from typing import Literal, cast
-from urllib.error import HTTPError, URLError
-from urllib.parse import quote, urlparse
-from urllib.request import Request, urlopen
 
 import frontmatter
 
+from toolang.catalog import source as cap_source
 from toolang.catalog.chores import Chore, inline_chores, merge_chores
 from toolang.catalog.config import ConfiguredCaps
 from toolang.catalog.types import (
@@ -44,14 +40,6 @@ from ..lang.ast import (
     to_data,
 )
 from toolang.lang.types import unnamed_runnable_name
-from toolang.common.github import (
-    GitHubRef,
-    github_raw_url,
-    parse_github_ref,
-    GitHubShorthand,
-)
-
-from toolang.common.source import parse_remote_source
 
 from .config import WORKSPACE_ORDER_KEY, validate_workspace_name
 from .types import (
@@ -274,6 +262,9 @@ class StateCap:
     path: str
     source: CapSource
     meta: Mapping[str, object]
+    body: str | None = None
+    materialized: str | None = None
+    resources: tuple[MaterializedFile, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "meta", freeze_mapping(self.meta))
@@ -327,12 +318,16 @@ class StateCap:
 
     def read_text(self) -> str:
         """Read this capability from its immutable layer file."""
-
+        if self.source.form == "inline" and self.body is not None:
+            post = frontmatter.Post(self.body)
+            post.metadata = dict(self.meta)
+            return frontmatter.dumps(post)
         return Path(self.path).read_text(encoding="utf-8")
 
     def read_content(self) -> str:
         """Read the capability body lazily from its immutable layer file."""
-
+        if self.body is not None:
+            return self.body
         return frontmatter.loads(self.read_text()).content.strip()
 
     def to_snapshot(self) -> dict[str, object]:
@@ -547,6 +542,8 @@ class AgentState:
     revision_dir: Path | None = None
     allow_overrides: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
     workspace_additions: Mapping[str, str] = field(default_factory=dict)
+    created_at: str | None = None
+    source_requests: tuple[tuple[EntryKind, str, str], ...] = ()
     workspaces: Mapping[str, str] = field(init=False)
     caps_by_module: Mapping[str, tuple[StateCap, ...]] = field(init=False, repr=False)
     skills: Mapping[str, StateCap] = field(init=False, repr=False)
@@ -587,6 +584,7 @@ class AgentState:
             name=self.name,
             allow_overrides=self.allow_overrides,
             workspace_additions=self.workspace_additions,
+            created_at=self.created_at,
         ):
             raise ValueError("Agent State revision does not match its layer revisions")
         if self.revision_dir is not None and self.revision_dir.name != self.revision:
@@ -831,6 +829,8 @@ def compose_agent_state(
     name: str,
     allow_overrides: Mapping[str, tuple[str, ...]] | None = None,
     workspace_additions: Mapping[str, str] | None = None,
+    created_at: str | None = None,
+    source_requests: tuple[tuple[EntryKind, str, str], ...] = (),
 ) -> AgentState:
     """Compose runtime State from one exact root/home layer pair."""
 
@@ -844,8 +844,11 @@ def compose_agent_state(
             name=name,
             allow_overrides=allow_overrides,
             workspace_additions=workspace_additions,
+            created_at=created_at,
         ),
         name=name,
+        created_at=created_at,
+        source_requests=source_requests,
         allow_overrides=allow_overrides or {},
         workspace_additions=workspace_additions or {},
         root_revision=root_revision,
@@ -914,9 +917,10 @@ def validate_program_term(
         path = Path(cap.path)
         if path.is_absolute():
             continue
-        parts = path.parts[1:] if path.parts[:1] == ("files",) else path.parts
-        if parts[:4] != ("caps", cap.source.form, name, cap.kind):
-            raise ValueError("State Program cap path must include its module name")
+        if cap.source.form == "inline" and path != Path("source") / source:
+            raise ValueError("inline Cap must reference its module source")
+        if cap.source.form == "referenced" and path.parts[:1] != ("materialized",):
+            raise ValueError("referenced Cap must use its acquired files")
 
 
 def _merge_config(
@@ -937,7 +941,7 @@ def _merge_config(
     return merged
 
 
-AGENT_STATE_SCHEMA = 2
+AGENT_STATE_SCHEMA = 3
 
 
 def agent_layers_document(
@@ -947,12 +951,14 @@ def agent_layers_document(
     name: str,
     allow_overrides: Mapping[str, tuple[str, ...]] | None = None,
     workspace_additions: Mapping[str, str] | None = None,
+    created_at: str | None = None,
 ) -> dict[str, object]:
     """Describe the exact inputs that identify one prepared Agent State."""
 
     _require_revision(root_revision, name="root revision")
     _require_revision(home_revision, name="home revision")
     return {
+        **({"created_at": created_at} if created_at is not None else {}),
         "home_revision": home_revision,
         "root_revision": root_revision,
         "name": name,
@@ -973,6 +979,7 @@ def agent_state_revision(
     name: str,
     allow_overrides: Mapping[str, tuple[str, ...]] | None = None,
     workspace_additions: Mapping[str, str] | None = None,
+    created_at: str | None = None,
 ) -> str:
     """Identify the layers and frozen policy used to construct a State."""
 
@@ -983,6 +990,7 @@ def agent_state_revision(
             name=name,
             allow_overrides=allow_overrides,
             workspace_additions=workspace_additions,
+            created_at=created_at,
         ),
         allow_nan=False,
         ensure_ascii=False,
@@ -1038,232 +1046,10 @@ def _require_layer_path(value: str, *, label: str) -> None:
         not value
         or path.is_absolute()
         or ".." in path.parts
-        or path.parts[:1] != ("files",)
+        or path.parts[:1] not in {("source",), ("materialized",)}
         or "\\" in value
     ):
         raise ValueError(f"{label} path must be portable and inside files/")
-
-
-def resolve_remote_ref(
-    kind: EntryKind,
-    ref: str,
-    *,
-    progress: ProgressSink | None = None,
-    progress_id: str | None = None,
-) -> str:
-    """Resolve one remote cap ref or shorthand to a canonical ref."""
-
-    text = ref.strip()
-    item_id = progress_id or _cap_progress_id(kind, text)
-    emit_progress(
-        progress,
-        id=item_id,
-        kind="prepare",
-        stage="resolve",
-        label=f"Resolving {kind}...",
-        status="running",
-        detail=text,
-        subject="cap",
-        ref=text,
-    )
-    try:
-        parsed = parse_remote_source(text)
-        if not isinstance(parsed, GitHubShorthand):
-            canonical = canonicalize_remote_ref(kind, text)
-            if canonical.startswith("github://") and not _github_remote_exists(
-                kind, canonical
-            ):
-                raise ValueError(
-                    f"remote {kind} not found or missing entry file: {ref}"
-                )
-        else:
-            candidates = _remote_ref_candidates(kind, parsed)
-            canonical = next(
-                (
-                    candidate
-                    for candidate in candidates
-                    if _github_remote_exists(kind, candidate)
-                ),
-                "",
-            )
-            if not canonical:
-                raise ValueError(f"could not resolve remote {kind} shorthand: {ref}")
-    except Exception as exc:
-        emit_progress(
-            progress,
-            id=item_id,
-            kind="prepare",
-            stage="resolve",
-            label=f"Failed to resolve {kind}",
-            status="failed",
-            detail=str(exc),
-            subject="cap",
-            ref=text,
-            complete=True,
-        )
-        raise
-    emit_progress(
-        progress,
-        id=item_id,
-        kind="prepare",
-        stage="resolve",
-        label=f"Resolved {kind}",
-        status="ok",
-        detail=canonical,
-        subject="cap",
-        ref=text,
-        complete=True,
-    )
-    return canonical
-
-
-def canonicalize_remote_ref(kind: EntryKind, ref: str) -> str:
-    """Canonicalize one explicit or shorthand remote cap ref."""
-
-    source = parse_remote_source(ref)
-    if isinstance(source, GitHubShorthand):
-        return _remote_ref_candidates(kind, source)[0]
-    if isinstance(source, GitHubRef):
-        if kind == "skill" and Path(source.path).name == "SKILL.md":
-            source = replace(source, path=Path(source.path).parent.as_posix())
-        return source.render()
-    url = urlparse(source.url)
-    if kind == "skill" and Path(url.path).name == "SKILL.md":
-        url = url._replace(path=url.path.removesuffix("/SKILL.md"))
-    return url.geturl()
-
-
-def remote_entry_name(kind: EntryKind, ref: str) -> str:
-    """Return the default authored name for one remote cap ref."""
-
-    canonical_ref = canonicalize_remote_ref(kind, ref)
-    if canonical_ref.startswith("github://"):
-        path = parse_github_ref(canonical_ref).path.rstrip("/")
-        if not path:
-            raise ValueError(f"invalid remote ref: {ref}")
-        return Path(path).name if kind == "skill" else Path(path).stem
-    parsed = urlparse(canonical_ref)
-    path = parsed.path.rstrip("/")
-    if not path:
-        raise ValueError(f"invalid remote ref: {ref}")
-    name = Path(path).name.split("@", 1)[0]
-    return name if kind == "skill" else Path(name).stem
-
-
-def _remote_ref_candidates(kind: EntryKind, source: GitHubShorthand) -> tuple[str, ...]:
-    owner, name = source.owner, source.name
-    if source.repo is not None:
-        return _remote_ref_candidates_for_repo(kind, owner, source.repo, name)
-    repositories: dict[EntryKind, tuple[tuple[str, str], ...]] = {
-        "skill": (
-            ("agents", f"skills/{name}"),
-            ("agent-skills", name),
-            ("agent-skills", f"skills/{name}"),
-            ("skills", name),
-            ("skills", f"skills/{name}"),
-        ),
-        "service": (
-            ("agents", f"services/{name}.md"),
-            ("agent-services", f"{name}.md"),
-            ("services", f"{name}.md"),
-        ),
-        "prompt": (
-            ("agents", f"prompts/{name}.md"),
-            ("agent-prompts", f"{name}.md"),
-            ("prompts", f"{name}.md"),
-        ),
-        "psyche": (
-            ("agents", f"psyches/{name}.md"),
-            ("agent-psyches", f"{name}.md"),
-            ("psyches", f"{name}.md"),
-        ),
-    }
-    return tuple(
-        _github_remote_ref_with_default_branch(owner, repo, path)
-        for repo, path in repositories[kind]
-    )
-
-
-def _remote_ref_candidates_for_repo(
-    kind: EntryKind,
-    owner: str,
-    repo: str,
-    name: str,
-) -> tuple[str, ...]:
-    return tuple(
-        _github_remote_ref_with_default_branch(owner, repo, path)
-        for path in _remote_path_candidates_for_repo(kind, repo, name)
-    )
-
-
-def _remote_path_candidates_for_repo(
-    kind: EntryKind,
-    repo: str,
-    name: str,
-) -> tuple[str, ...]:
-    if kind == "skill":
-        if repo in {"agent-skills", "skills"}:
-            return (name, f"skills/{name}")
-        return (f"skills/{name}", name)
-    directory = DIR_NAME_BY_KIND[kind]
-    if repo in {f"agent-{directory}", directory}:
-        return (f"{name}.md",)
-    return (f"{directory}/{name}.md", f"{name}.md")
-
-
-def _github_remote_ref_with_default_branch(owner: str, repo: str, path: str) -> str:
-    try:
-        rev = _github_repo_default_branch(owner, repo)
-    except ValueError:
-        rev = "main"
-    return GitHubRef(owner=owner, repo=repo, path=path, rev=rev).render()
-
-
-def _github_remote_exists(kind: EntryKind, ref: str) -> bool:
-    github_ref = parse_github_ref(ref)
-    probe_ref = github_ref
-    if kind == "skill":
-        probe_ref = GitHubRef(
-            owner=github_ref.owner,
-            repo=github_ref.repo,
-            path=(Path(github_ref.path) / "SKILL.md").as_posix(),
-            rev=github_ref.rev,
-        )
-    request = Request(
-        github_raw_url(probe_ref),
-        method="HEAD",
-        headers={"User-Agent": "toolang/0.1"},
-    )
-    try:
-        with urlopen(request, timeout=30):
-            return True
-    except (HTTPError, URLError):
-        return False
-
-
-@lru_cache
-def _github_repo_default_branch(owner: str, repo: str) -> str:
-    api_url = (
-        f"https://api.github.com/repos/{quote(owner, safe='')}/{quote(repo, safe='')}"
-    )
-    request = Request(
-        api_url,
-        headers={
-            "Accept": "application/vnd.github+json",
-            "User-Agent": "toolang/0.1",
-            "X-GitHub-Api-Version": "2022-11-28",
-        },
-    )
-    try:
-        with urlopen(request, timeout=30) as response:
-            data = json.loads(response.read().decode("utf-8"))
-    except (HTTPError, URLError, json.JSONDecodeError) as exc:
-        raise ValueError(
-            f"could not resolve GitHub default branch: {owner}/{repo}"
-        ) from exc
-    if not isinstance(data, dict) or not isinstance(data.get("default_branch"), str):
-        raise ValueError(f"unexpected GitHub repository response: {owner}/{repo}")
-    return data["default_branch"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -1279,7 +1065,7 @@ class _RemoteEntryRequest:
 
     @property
     def progress_id(self) -> str:
-        return _cap_progress_id(self.kind, self.ref)
+        return cap_source._cap_progress_id(self.kind, self.ref)
 
     @property
     def progress_scope(self) -> str:
@@ -1289,7 +1075,9 @@ class _RemoteEntryRequest:
 @dataclass(frozen=True, slots=True)
 class _CachedRemoteEntry:
     ref: str
+    name: str
     files: tuple[tuple[str, bytes], ...]
+    entry: str
 
 
 _RemoteEntryCacheKey = tuple[
@@ -1358,19 +1146,7 @@ def entry_source(entry: StateCap, *, agent_name: str, root: Path | None) -> str:
 
     form = entry_form(entry)
     if form in {"referenced", "configured"}:
-        ref = entry_ref(entry, agent_name=agent_name)
-        if not ref.startswith("github://"):
-            return ref
-        try:
-            github = parse_github_ref(ref)
-        except ValueError:
-            return ref
-        view = "blob" if entry.shape == "file" else "tree"
-        return (
-            f"https://github.com/{quote(github.owner, safe='')}/"
-            f"{quote(github.repo, safe='')}/{view}/{quote(github.rev, safe='/')}/"
-            f"{quote(github.path, safe='/')}"
-        )
+        return cap_source.source_location(entry.ref, shape=entry.shape)
     if root is None:
         raise ValueError("local cap locations require the Toolang root")
     source_path = root / entry_definition_file(entry)
@@ -1453,8 +1229,8 @@ def _collect_scope_entries_with_files(
         if include_program
         else ((), {})
     )
-    files.update(embedded_files)
-    files.update(use_files)
+    merge_materialized_files(files, embedded_files)
+    merge_materialized_files(files, use_files)
     entries = _dedupe_entries(
         (*local_entries, *remote_entries, *embedded_entries, *use_entries)
     )
@@ -1509,7 +1285,7 @@ def materialize_program_caps(
         program=program,
     )
     files = dict(embedded_files)
-    files.update(referenced_files)
+    merge_materialized_files(files, referenced_files)
     entries = _dedupe_entries((*embedded, *referenced))
     _ensure_no_conflicts(entries)
     return entries, files
@@ -1540,7 +1316,9 @@ def layer_remote_cache(
         )
         cache[key] = _CachedRemoteEntry(
             ref=entry.ref,
+            name=entry.name,
             files=files,
+            entry=Path(*Path(entry.materialized or "").parts[1:]).as_posix(),
         )
     return cache
 
@@ -1563,21 +1341,25 @@ def _remote_entry_cache_key(
 
 
 def _cache_entry_files(
-    toolang_root: Path,
-    entry: StateCap,
+    toolang_root: Path, entry: StateCap
 ) -> tuple[tuple[str, bytes], ...] | None:
-    entry_path = toolang_root / entry.path
-    if entry.shape == "dir":
-        root = entry_path.parent
-        if not root.is_dir():
-            return None
-        return tuple(
-            (path.relative_to(root).as_posix(), path.read_bytes())
-            for path in sorted(item for item in root.rglob("*") if item.is_file())
-        )
-    if not entry_path.is_file():
+    if entry.materialized is None:
         return None
-    return (("", entry_path.read_bytes()),)
+    path = Path(entry.path)
+    parts = Path(entry.materialized).parts
+    root = path.parents[len(parts) - 1]
+    acquisition = root / parts[0]
+    result: list[tuple[str, bytes]] = []
+    try:
+        for file in entry.resources:
+            target = root / Path(file.path).relative_to("materialized")
+            content = target.read_bytes()
+            if len(content) != file.size or sha256(content).hexdigest() != file.sha256:
+                return None
+            result.append((target.relative_to(acquisition).as_posix(), content))
+    except OSError:
+        return None
+    return tuple(result) or None
 
 
 def _cached_remote_entry(
@@ -1596,44 +1378,19 @@ def _cached_remote_entry(
     return remote_cache.get(key)
 
 
-def _remap_cached_remote_files(
-    cached: _CachedRemoteEntry,
-    relative_entry_path: Path,
-) -> dict[str, bytes]:
-    if len(cached.files) == 1 and cached.files[0][0] == "":
-        return {relative_entry_path.as_posix(): cached.files[0][1]}
-    root = relative_entry_path.parent
-    return {
-        (root / relative_path).as_posix(): content
-        for relative_path, content in cached.files
-    }
-
-
 def _emit_cached_remote_progress(
     request: _RemoteEntryRequest,
     canonical_ref: str,
     *,
     progress: ProgressSink | None,
 ) -> None:
-    text = request.ref.strip()
-    if isinstance(parse_remote_source(text), GitHubShorthand):
-        emit_progress(
-            progress,
-            id=request.progress_id,
-            kind="prepare",
-            stage="resolve",
-            label=f"Resolved {request.kind} {canonical_ref}",
-            status="ok",
-            detail=canonical_ref,
-        )
-        return
     emit_progress(
         progress,
         id=request.progress_id,
         kind="prepare",
         stage="fetch",
         label=f"Fetched {request.kind} {canonical_ref}",
-        status="ok",
+        status="skipped",
         detail="cached",
     )
 
@@ -1782,9 +1539,10 @@ def _ensure_no_conflicts(entries: tuple[StateCap, ...]) -> None:
 
 
 def _dedupe_entries(entries: tuple[StateCap, ...]) -> tuple[StateCap, ...]:
-    by_ref: dict[str, StateCap] = {}
+    by_ref: dict[tuple[str, str, str, str], StateCap] = {}
     for entry in sorted(entries, key=_entry_sort_key):
-        by_ref.setdefault(entry.ref, entry)
+        key = (entry.effective_ref, entry.ref, entry.source.path, entry.source.form)
+        by_ref.setdefault(key, entry)
     return tuple(sorted(by_ref.values(), key=_entry_sort_key))
 
 
@@ -1963,7 +1721,7 @@ def _collect_program_embedded_entries(
             source_fingerprint=program_source.digest,
         )
         entries.append(entry)
-        files.update(entry_files)
+        merge_materialized_files(files, entry_files)
     return tuple(sorted(entries, key=_entry_sort_key)), files
 
 
@@ -1975,7 +1733,6 @@ def _embedded_entry_from_cap(
 ) -> tuple[StateCap, dict[str, bytes]]:
     kind = cap.kind
     relative_entry_path = Path("inline") / DIR_NAME_BY_KIND[kind] / f"{cap.name}.md"
-    content = _embedded_materialized_content(cap)
     return (
         StateCap(
             kind=kind,
@@ -1991,17 +1748,11 @@ def _embedded_entry_from_cap(
                 fingerprint=source_fingerprint,
                 line=cap.span.line,
             ),
-            meta=_load_meta_text(content.decode("utf-8")),
+            meta=cast(dict[str, object], _json_compatible(dict(cap.meta))),
+            body=cap.body.strip(),
         ),
-        {relative_entry_path.as_posix(): content},
+        {},
     )
-
-
-def _embedded_materialized_content(cap: CapDecl) -> bytes:
-    if not cap.meta:
-        return cap.body.encode("utf-8")
-    post = frontmatter.Post(cap.body, **dict(cap.meta))
-    return frontmatter.dumps(post).encode("utf-8")
 
 
 def _remote_entry_from_ref(
@@ -2018,156 +1769,114 @@ def _remote_entry_from_ref(
     remote_cache: _RemoteEntryCache | None = None,
     progress: ProgressSink | None = None,
 ) -> tuple[StateCap, dict[str, bytes]]:
-    parsed_source = parse_remote_source(ref)
+    from toolang.common.source import Acquisition
+
     request = _RemoteEntryRequest(
-        scope=scope,
-        kind=kind,
-        ref=ref,
-        name=name,
-        relative_config_path=relative_config_path,
-        source_fingerprint=source_fingerprint,
-        form=form,
-        source_line=source_line,
+        scope,
+        kind,
+        ref,
+        name,
+        relative_config_path,
+        source_fingerprint,
+        form,
+        source_line,
     )
-    progress_id = request.progress_id
     cached = _cached_remote_entry(remote_cache, request)
-    original_progress = progress
-    display_ref = ref
+    captured = (
+        Acquisition(
+            cached.ref,
+            cached.entry,
+            dict(cached.files),
+            cached.name,
+        )
+        if cached is not None
+        else None
+    )
+
+    using_cached = False
 
     def report(event: ProgressEvent) -> None:
-        if original_progress is not None:
-            original_progress(
+        if progress is not None:
+            progress(
                 replace(
                     event,
                     subject="cap",
-                    ref=display_ref,
+                    ref=ref,
                     scope=request.progress_scope,
-                    cached=cached is not None,
-                    complete=(
-                        event.stage == "materialize"
-                        and event.status in {"ok", "skipped", "failed"}
-                    ),
+                    cached=using_cached,
                 )
             )
 
-    progress = report if original_progress is not None else None
-    if cached is not None:
-        canonical_ref = cached.ref
-        _emit_cached_remote_progress(request, canonical_ref, progress=progress)
-    elif materialize and isinstance(parsed_source, GitHubShorthand):
-        canonical_ref = resolve_remote_ref(
+    if materialize:
+        acquired = cap_source.acquire(
             kind,
             ref,
-            progress=progress,
-            progress_id=progress_id,
+            cached=captured,
+            progress=report if progress else None,
+            progress_id=request.progress_id,
         )
-    else:
-        canonical_ref = canonicalize_remote_ref(kind, ref)
-    display_ref = canonical_ref
-    if name is None:
-        name = remote_entry_name(kind, canonical_ref)
-    relative_entry_path = _relative_remote_entry_path(
-        kind=kind,
-        name=name,
-        form=form,
-    )
-    if cached is not None:
-        entry_files = _remap_cached_remote_files(cached, relative_entry_path)
-    elif materialize and progress is not None:
-        entry_files = _fetch_remote_cap_files(
-            relative_entry_path=relative_entry_path,
-            kind=kind,
-            name=name,
-            ref=canonical_ref,
-            progress=progress,
-            progress_id=progress_id,
-        )
-    elif materialize:
-        entry_files = _fetch_remote_cap_files(
-            relative_entry_path=relative_entry_path,
-            kind=kind,
-            name=name,
-            ref=canonical_ref,
-        )
-    else:
-        entry_files = {
-            relative_entry_path.as_posix(): _remote_placeholder_content(
-                kind=kind,
-                name=name,
-                ref=canonical_ref,
-            )
+        canonical, name = acquired.resolved_ref, name or acquired.name
+        materialized = f"{acquired.key}/{acquired.entry}"
+        path = f"materialized/{materialized}"
+        files = {
+            f"materialized/{acquired.key}/{key}": content
+            for key, content in acquired.files.items()
         }
-    if materialize and cached is None:
+        content = acquired.files[acquired.entry]
+        using_cached = acquired is captured
+        if using_cached:
+            _emit_cached_remote_progress(request, canonical, progress=report)
+    else:
+        canonical = cap_source.canonicalize_remote_ref(kind, ref)
+        name = name or cap_source.remote_entry_name(kind, canonical)
+        path = _relative_remote_entry_path(kind=kind, name=name, form=form).as_posix()
+        materialized = None
+        content = _remote_placeholder_content(kind=kind, name=name, ref=canonical)
+        files = {path: content}
+    reused = materialize and acquired is captured
+    if not reused:
         emit_progress(
-            progress,
-            id=progress_id,
+            report,
+            id=request.progress_id,
             kind="prepare",
             stage="materialize",
-            label=f"Updating {kind} {name}...",
+            label=f"Preparing {kind} {name}...",
             status="running",
-            detail=str(relative_entry_path),
+            detail=path,
         )
-    try:
-        entry_content = entry_files[relative_entry_path.as_posix()]
-        entry = StateCap(
-            kind=kind,
-            name=name,
-            shape="dir" if kind == "skill" else "file",
-            ref=canonical_ref,
-            path=relative_entry_path.as_posix(),
-            source=CapSource(
-                origin="remote",
-                form=form,
-                path=relative_config_path.as_posix(),
-                updated_at=_PORTABLE_SOURCE_UPDATED_AT,
-                fingerprint=source_fingerprint,
-                declared_ref=ref,
-                line=source_line,
-            ),
-            meta=_load_meta_text(entry_content.decode("utf-8")),
-        )
-    except Exception as exc:
-        if materialize:
-            emit_progress(
-                progress,
-                id=progress_id,
-                kind="prepare",
-                stage="materialize",
-                label=f"Failed to update {kind} {name}",
-                status="failed",
-                detail=str(exc),
-            )
-        raise
-    if materialize:
-        if cached is not None:
-            emit_progress(
-                progress,
-                id=progress_id,
-                kind="prepare",
-                stage="materialize",
-                label=f"Skipped updating {kind} {name}",
-                status="skipped",
-                detail="cached",
-            )
-        else:
-            emit_progress(
-                progress,
-                id=progress_id,
-                kind="prepare",
-                stage="materialize",
-                label=f"Updating {kind} {name}...",
-                status="running",
-                detail=str(relative_entry_path),
-            )
-            emit_progress(
-                progress,
-                id=progress_id,
-                kind="prepare",
-                stage="materialize",
-                label=f"Updated {kind} {name}",
-                status="ok",
-            )
-    return entry, entry_files
+    post = frontmatter.loads(content.decode("utf-8"))
+    entry = StateCap(
+        kind=kind,
+        name=name,
+        shape="dir" if kind == "skill" else "file",
+        ref=canonical,
+        path=path,
+        source=CapSource(
+            origin="remote",
+            form=form,
+            path=relative_config_path.as_posix(),
+            updated_at=_PORTABLE_SOURCE_UPDATED_AT,
+            fingerprint=source_fingerprint,
+            declared_ref=ref,
+            line=source_line,
+        ),
+        meta=cast(dict[str, object], _json_compatible(dict(post.metadata))),
+        body=post.content.strip(),
+        materialized=materialized,
+    )
+    emit_progress(
+        report,
+        id=request.progress_id,
+        kind="prepare",
+        stage="materialize",
+        label=f"Skipped updating {kind} {name}"
+        if reused
+        else f"Prepared {kind} {name}",
+        status="skipped" if reused else "ok",
+        detail="cached" if reused else path,
+        complete=True,
+    )
+    return entry, files
 
 
 def _materialize_remote_entry_requests(
@@ -2196,6 +1905,7 @@ def _materialize_remote_entry_requests(
     try:
         futures = {
             executor.submit(
+                copy_context().run,
                 _remote_entry_from_request,
                 request,
                 materialize=materialize,
@@ -2224,7 +1934,7 @@ def _materialize_remote_entry_requests(
             continue
         entry, entry_files = result
         entries.append(entry)
-        files.update(entry_files)
+        merge_materialized_files(files, entry_files)
     return tuple(sorted(entries, key=_entry_sort_key)), files
 
 
@@ -2245,8 +1955,18 @@ def _materialize_remote_entry_requests_serial(
             progress=progress,
         )
         entries.append(entry)
-        files.update(entry_files)
+        merge_materialized_files(files, entry_files)
     return tuple(sorted(entries, key=_entry_sort_key)), files
+
+
+def merge_materialized_files(
+    target: dict[str, bytes], captured: Mapping[str, bytes]
+) -> None:
+    """Share equal acquired bytes while rejecting conflicting captures."""
+    for path, content in captured.items():
+        if path in target and target[path] != content:
+            raise ValueError(f"conflicting acquired file: {path}")
+        target[path] = content
 
 
 def _remote_entry_from_request(
@@ -2276,34 +1996,13 @@ def _emit_remote_entry_pending(
     *,
     progress: ProgressSink | None,
 ) -> None:
-    ref = request.ref.strip()
-    object_label = f" {request.name}" if request.name is not None else ""
-    if "://" in ref:
-        try:
-            ref = canonicalize_remote_ref(request.kind, ref)
-        except ValueError:
-            pass
-        emit_progress(
-            progress,
-            id=request.progress_id,
-            kind="prepare",
-            stage="fetch",
-            label=f"Fetching {request.kind}{object_label}...",
-            status="pending",
-            detail=ref,
-            subject="cap",
-            ref=request.ref,
-            scope=request.progress_scope,
-        )
-        return
     emit_progress(
         progress,
         id=request.progress_id,
         kind="prepare",
-        stage="resolve",
-        label=f"Resolving {request.kind}{object_label}...",
+        stage="materialize",
+        label=f"Preparing {request.kind}...",
         status="pending",
-        detail=ref,
         subject="cap",
         ref=request.ref,
         scope=request.progress_scope,
@@ -2335,142 +2034,3 @@ def _remote_placeholder_content(
         remote=True,
     )
     return frontmatter.dumps(post).encode("utf-8")
-
-
-def _fetch_remote_cap_files(
-    *,
-    relative_entry_path: Path,
-    kind: EntryKind,
-    name: str,
-    ref: str,
-    progress: ProgressSink | None = None,
-    progress_id: str | None = None,
-) -> dict[str, bytes]:
-    """Fetch remote cap bytes keyed by their relative prepared paths."""
-
-    source = parse_remote_source(ref)
-    if isinstance(source, GitHubShorthand):
-        raise ValueError(
-            f"remote {kind} source must be resolved before fetching: {ref}"
-        )
-    item_id = progress_id or _cap_progress_id(kind, ref)
-    emit_progress(
-        progress,
-        id=item_id,
-        kind="prepare",
-        stage="fetch",
-        label=f"Fetching {kind} {name}...",
-        status="running",
-        detail=ref,
-    )
-    if kind == "skill":
-        try:
-            if isinstance(source, GitHubRef):
-                files = _fetch_github_directory(source)
-            else:
-                url = urlparse(source.url)
-                entry_url = url._replace(
-                    path=f"{url.path.rstrip('/')}/SKILL.md"
-                ).geturl()
-                files = {"SKILL.md": _fetch_url_bytes(entry_url)}
-        except Exception as exc:
-            emit_progress(
-                progress,
-                id=item_id,
-                kind="prepare",
-                stage="fetch",
-                label=f"Failed to fetch {kind} {name}",
-                status="failed",
-                detail=str(exc),
-            )
-            raise
-        if "SKILL.md" not in files:
-            emit_progress(
-                progress,
-                id=item_id,
-                kind="prepare",
-                stage="fetch",
-                label=f"Failed to fetch {kind} {name}",
-                status="failed",
-                detail=f"remote skill is missing SKILL.md: {ref}",
-            )
-            raise ValueError(f"remote skill is missing SKILL.md: {ref}")
-        root = relative_entry_path.parent
-        materialized = {
-            (root / relative_path).as_posix(): content
-            for relative_path, content in files.items()
-        }
-    else:
-        try:
-            materialized = {
-                relative_entry_path.as_posix(): (
-                    _fetch_github_file(source)
-                    if isinstance(source, GitHubRef)
-                    else _fetch_url_bytes(source.url)
-                )
-            }
-        except Exception as exc:
-            emit_progress(
-                progress,
-                id=item_id,
-                kind="prepare",
-                stage="fetch",
-                label=f"Failed to fetch {kind} {name}",
-                status="failed",
-                detail=str(exc),
-            )
-            raise
-    emit_progress(
-        progress,
-        id=item_id,
-        kind="prepare",
-        stage="fetch",
-        label=f"Fetched {kind} {name}",
-        status="ok",
-        detail=f"{len(materialized)} {'file' if len(materialized) == 1 else 'files'}",
-    )
-    return materialized
-
-
-def _cap_progress_id(kind: EntryKind, ref: str) -> str:
-    return f"cap:{kind}:{ref.strip()}"
-
-
-def _fetch_github_directory(ref: GitHubRef) -> dict[str, bytes]:
-    root = ref.path.strip("/")
-    prefix = f"{root}/"
-    archive_url = (
-        f"https://codeload.github.com/{quote(ref.owner, safe='')}/"
-        f"{quote(ref.repo, safe='')}/tar.gz/{quote(ref.rev, safe='')}"
-    )
-    archive_bytes = _fetch_url_bytes(archive_url)
-    files: dict[str, bytes] = {}
-    with tarfile.open(fileobj=io.BytesIO(archive_bytes), mode="r:gz") as archive:
-        for member in archive.getmembers():
-            if not member.isfile():
-                continue
-            member_path = Path(member.name)
-            path = "/".join(member_path.parts[1:])
-            if not path.startswith(prefix):
-                continue
-            relative_path = path.removeprefix(prefix)
-            extracted = archive.extractfile(member)
-            if extracted is None:
-                continue
-            files[relative_path] = extracted.read()
-    if not files:
-        raise ValueError(f"could not fetch remote directory: {ref.render()}")
-    return files
-
-
-def _fetch_github_file(ref: GitHubRef) -> bytes:
-    return _fetch_url_bytes(github_raw_url(ref))
-
-
-def _fetch_url_bytes(url: str) -> bytes:
-    request = Request(url, headers={"User-Agent": "toolang/0.1"})
-    try:
-        with urlopen(request, timeout=30) as response:
-            return response.read()
-    except (HTTPError, URLError) as exc:
-        raise ValueError(f"could not fetch remote content: {url}") from exc

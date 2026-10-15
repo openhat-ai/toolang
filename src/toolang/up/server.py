@@ -133,6 +133,9 @@ def resolve_serve(
 ) -> ServeSpec:
     """Resolve explicit CLI values without constructing runtime snapshots."""
 
+    from .source import restore_program_acquisition
+
+    layout = restore_program_acquisition(layout)
     return ServeSpec(
         layout=layout,
         toolang_root=toolang_root or layout.toolang_root or layout.root,

@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 import fcntl
 from hashlib import sha256
 import json
@@ -14,37 +15,44 @@ import shutil
 from typing import Literal, cast
 from uuid import uuid4
 
-from toolang.common.layout import AgentLayout
+from toolang.common.layout import AgentLayout, validate_agent_name
 from toolang.common.progress import ProgressSink, emit_progress
 
 from ..common.immutable import freeze_mapping
-from ..lang.ast import Program, program_from_data
-from .types import StateFile
-from toolang.catalog.chore import ChoreFile
-from toolang.catalog.chores import Chore, file_chore
+from ..lang.ast import Program, Span, program_from_data
+from .types import StateFile, EntryKind, CapForm
+from .config import (
+    CAP_ALLOW_FIELDS,
+    WORKSPACE_ORDER_KEY,
+    resolve_cap_allows,
+    validate_workspace_name,
+)
+from toolang.catalog.chores import Chore, inline_chores, merge_chores
 from .source import (
     SOURCE_SCHEMA,
-    CANONICAL_SOURCE_SCHEMA,
-    LegacySourceTree,
     SourceManifest,
     SourceRecord,
+    SourceManifestEntry,
+    SourceIssue,
 )
 from .state import (
     AGENT_STATE_SCHEMA,
     agent_layers_document,
     CapResolution,
     StateCap,
-    program_term_data,
     public_runnable_index,
     validate_program_term,
+    CapSource,
+    MaterializedFile,
+    runnable_module_name,
 )
 
 LayerScope = Literal["root", "home"]
-LAYER_SCHEMA = 21
-_SOURCE_RECEIPTS_SCHEMA = 20
+LAYER_SCHEMA = 22
 _LAYER_FILE = "layer.json"
 _LAYERS_FILE = "layers.json"
-_FILES_DIR = "files"
+_SOURCE_DIR = "source"
+_MATERIALIZED_DIR = "materialized"
 _REVS_DIR = "revs"
 
 
@@ -59,6 +67,7 @@ class RootLayer:
     resolutions: tuple[CapResolution, ...]
     config: Mapping[str, object]
     caps: tuple[StateCap, ...]
+    created_at: str = ""
     records: tuple[StateFile, ...] = ()
 
     def __post_init__(self) -> None:
@@ -88,6 +97,8 @@ class HomeLayer:
     module_sources: Mapping[str, str]
     module_digests: Mapping[str, str]
     module_caps: Mapping[str, tuple[StateCap, ...]]
+    created_at: str = ""
+    module_resolutions: Mapping[str, Mapping[str, str]] = field(default_factory=dict)
     records: tuple[StateFile, ...] = ()
     chores: tuple[Chore, ...] = ()
 
@@ -105,6 +116,9 @@ class HomeLayer:
         object.__setattr__(self, "module_sources", freeze_mapping(self.module_sources))
         object.__setattr__(self, "module_digests", freeze_mapping(self.module_digests))
         object.__setattr__(self, "module_caps", freeze_mapping(self.module_caps))
+        object.__setattr__(
+            self, "module_resolutions", freeze_mapping(self.module_resolutions)
+        )
 
 
 def state_root(layout: AgentLayout, scope: LayerScope) -> Path:
@@ -166,52 +180,60 @@ def load_layer_source(
     return _source_record(document)
 
 
-def load_root_layer(
-    layout: AgentLayout,
-    revision: str | None = None,
-) -> RootLayer:
-    """Load one trusted root State layer without integrity validation."""
-
+def load_root_layer(layout: AgentLayout, revision: str | None = None) -> RootLayer:
     effective = load_current_revision(layout, "root") if revision is None else revision
-    document, revision_dir = _load_layer(layout, "root", effective)
+    document, directory = _load_layer(layout, "root", effective)
+    caps = _decode_caps(document, directory, layout.name)
+    _decode_chores(document, modules={})
     return RootLayer(
         revision=effective,
-        revision_dir=revision_dir,
-        schema=_schema(document),
+        revision_dir=directory,
+        schema=LAYER_SCHEMA,
+        created_at=_timestamp(document),
         source=_source_record(document),
-        resolutions=_resolutions(document),
+        resolutions=_cap_resolutions(document),
         config=_config(document),
-        caps=_caps(document, revision_dir=revision_dir),
+        caps=caps,
         records=_source_receipts(document),
     )
 
 
-def load_home_layer(
-    layout: AgentLayout,
-    revision: str | None = None,
-) -> HomeLayer:
-    """Load one trusted home State layer without integrity validation."""
-
+def load_home_layer(layout: AgentLayout, revision: str | None = None) -> HomeLayer:
     effective = load_current_revision(layout, "home") if revision is None else revision
-    document, revision_dir = _load_layer(layout, "home", effective)
-    modules, module_sources, module_digests, module_caps = _program_indexes(
-        document,
-        revision_dir=revision_dir,
+    document, directory = _load_layer(layout, "home", effective)
+    modules, sources, digests = _decode_modules(document)
+    caps = _decode_caps(
+        document, directory, layout.name, modules=modules, module_sources=sources
     )
+    shared = tuple(cap for cap in caps if cap.scope != "here")
+    local = {
+        name: tuple(
+            cap
+            for cap in caps
+            if cap.scope == "here" and _source_key(cap, "home", layout.name) == source
+        )
+        for name, source in sources.items()
+    }
     return HomeLayer(
         revision=effective,
-        revision_dir=revision_dir,
-        schema=_schema(document),
+        revision_dir=directory,
+        schema=LAYER_SCHEMA,
+        created_at=_timestamp(document),
         source=_source_record(document),
-        resolutions=_resolutions(document),
+        resolutions=_cap_resolutions(document),
         config=_config(document),
-        caps=_caps(document, revision_dir=revision_dir),
-        modules=modules,
-        module_sources=module_sources,
-        module_digests=module_digests,
-        module_caps=module_caps,
+        caps=shared,
         records=_source_receipts(document),
-        chores=_chore_definitions(document, revision_dir),
+        modules=modules,
+        module_sources=sources,
+        module_digests=digests,
+        module_caps=local,
+        chores=_decode_chores(document, modules=modules),
+        module_resolutions={
+            str(item["ref"]): cast(dict[str, str], item["resolution"])
+            for item in _items(document, "modules")
+            if "resolution" in item
+        },
     )
 
 
@@ -230,10 +252,9 @@ def write_layer(
     files: Mapping[str, bytes],
     records: tuple[StateFile, ...] = (),
     chores: tuple[Chore, ...] = (),
+    module_resolutions: Mapping[str, Mapping[str, str]] | None = None,
 ) -> str:
-    """Atomically store one complete immutable State layer."""
-
-    normalized_files = _normalized_files(files)
+    normalized = _normalized_files(files)
     document = _layer_document(
         scope=scope,
         source=source,
@@ -244,44 +265,52 @@ def write_layer(
         module_sources=module_sources,
         module_digests=module_digests,
         module_caps=module_caps,
-        files=normalized_files,
+        files=normalized,
         records=records,
         chores=chores,
+        agent_name=layout.name,
+        module_resolutions=module_resolutions or {},
     )
+    try:
+        current = load_current_revision(layout, scope)
+        previous, directory = _load_layer(layout, scope, current)
+        if canonical_json(_without_time(previous)) == canonical_json(document):
+            _validate_layer_dir(directory, scope=scope, revision=current)
+            return current
+    except (OSError, KeyError, TypeError, ValueError):
+        pass
+    document["created_at"] = _creation_time()
     encoded = canonical_json(document)
     revision = sha256(encoded).hexdigest()
     target = layer_revision_dir(layout, scope, revision)
-    revs = target.parent
-    revs.mkdir(parents=True, exist_ok=True)
-
-    def validate(path: Path) -> bool:
-        return _is_valid_layer_dir(path, scope=scope, revision=revision)
-
-    if _path_exists(target) and validate(target):
-        return revision
-    staging = revs / f".{revision}.tmp-{uuid4().hex}"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    staging = target.with_name(f".{revision}.tmp-{uuid4().hex}")
     try:
         staging.mkdir()
         (staging / _LAYER_FILE).write_bytes(encoded)
-        files_dir = staging / _FILES_DIR
-        files_dir.mkdir()
-        for relative, content in normalized_files.items():
-            destination = files_dir / relative
+        (staging / _SOURCE_DIR).mkdir()
+        (staging / _MATERIALIZED_DIR).mkdir()
+        for key, content in normalized.items():
+            destination = staging / _layer_file_path(key)
             destination.parent.mkdir(parents=True, exist_ok=True)
-            destination.write_bytes(content)
-        _install_revision(staging, target, validate=validate)
+            with destination.open("xb") as output:
+                output.write(content)
+        _validate_layer_dir(staging, scope=scope, revision=revision)
+        _install_revision(
+            staging,
+            target,
+            validate=lambda path: _is_valid_layer_dir(
+                path, scope=scope, revision=revision
+            ),
+        )
     finally:
         _remove_path(staging)
     return revision
 
 
 def publish_layer_current(
-    layout: AgentLayout,
-    scope: LayerScope,
-    revision: str,
+    layout: AgentLayout, scope: LayerScope, revision: str
 ) -> None:
-    """Atomically publish one already persisted State layer."""
-
     _write_revision(layer_current_path(layout, scope), revision)
 
 
@@ -292,9 +321,8 @@ def _persist_agent_revision(
     home_revision: str,
     allow_overrides: Mapping[str, tuple[str, ...]] | None = None,
     workspace_additions: Mapping[str, str] | None = None,
+    publish: bool = True,
 ) -> str:
-    """Persist and publish one composition while the agent publish lock is held."""
-
     document = agent_layers_document(
         root_revision=root_revision,
         home_revision=home_revision,
@@ -302,84 +330,76 @@ def _persist_agent_revision(
         allow_overrides=allow_overrides,
         workspace_additions=workspace_additions,
     )
+    try:
+        current = load_current_agent_revision(layout)
+        previous = _load_object(
+            agent_revision_dir(layout, current) / _LAYERS_FILE, label=_LAYERS_FILE
+        )
+        if canonical_json(_without_time(previous)) == canonical_json(document):
+            _validate_agent_dir(agent_revision_dir(layout, current), revision=current)
+            return current
+    except (OSError, KeyError, TypeError, ValueError):
+        pass
+    document["created_at"] = _creation_time()
     encoded = canonical_json(document)
     revision = sha256(encoded).hexdigest()
     target = agent_revision_dir(layout, revision)
-    revs = target.parent
-    revs.mkdir(parents=True, exist_ok=True)
-
-    def validate(path: Path) -> bool:
-        return _is_valid_agent_dir(path, revision=revision)
-
-    if _path_exists(target) and validate(target):
-        _write_revision(agent_current_path(layout), revision)
-        return revision
-    staging = revs / f".{revision}.tmp-{uuid4().hex}"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    staging = target.with_name(f".{revision}.tmp-{uuid4().hex}")
     try:
         staging.mkdir()
         (staging / _LAYERS_FILE).write_bytes(encoded)
-        _install_revision(staging, target, validate=validate)
+        _install_revision(
+            staging,
+            target,
+            validate=lambda path: _is_valid_agent_dir(path, revision=revision),
+        )
     finally:
         _remove_path(staging)
-    _write_revision(agent_current_path(layout), revision)
+    if publish:
+        publish_agent_current(layout, revision)
     return revision
 
 
-def load_agent_revisions(
-    layout: AgentLayout,
-    revision: str | None = None,
-) -> tuple[str, str, str, str, dict[str, tuple[str, ...]], dict[str, str]]:
-    """Load one trusted Agent State composition without integrity validation."""
+def publish_agent_current(layout: AgentLayout, revision: str) -> None:
+    """Publish only after the captured composition has passed runtime validation."""
+    _write_revision(agent_current_path(layout), revision)
 
+
+def load_agent_revisions(
+    layout: AgentLayout, revision: str | None = None
+) -> tuple[str, str, str, str, dict[str, tuple[str, ...]], dict[str, str], str]:
     effective = load_current_agent_revision(layout) if revision is None else revision
-    revision_dir = agent_revision_dir(layout, effective)
-    document = _load_object(revision_dir / _LAYERS_FILE, label="layers.json")
-    if document["schema"] != AGENT_STATE_SCHEMA:
-        raise ValueError(f"unsupported Agent State schema: {document['schema']!r}")
-    root_revision = _revision_field(document, "root_revision")
-    home_revision = _revision_field(document, "home_revision")
+    document = _load_object(
+        agent_revision_dir(layout, effective) / _LAYERS_FILE, label=_LAYERS_FILE
+    )
+    _check_agent_document(document)
     overrides = cast(dict[str, list[str]], document["allow_overrides"])
     return (
         effective,
-        root_revision,
-        home_revision,
+        _revision_field(document, "root_revision"),
+        _revision_field(document, "home_revision"),
         str(document["name"]),
         {key: tuple(value) for key, value in overrides.items()},
         dict(cast(list[tuple[str, str]], document.get("workspace_additions", []))),
+        _timestamp(document),
     )
 
 
 def validate_layer_revision(
-    layout: AgentLayout,
-    scope: LayerScope,
-    revision: str,
+    layout: AgentLayout, scope: LayerScope, revision: str
 ) -> None:
-    """Explicitly validate one layer document and its complete file manifest."""
-
     _validate_layer_dir(
-        layer_revision_dir(layout, scope, revision),
-        scope=scope,
-        revision=revision,
+        layer_revision_dir(layout, scope, revision), scope=scope, revision=revision
     )
 
 
 def validate_agent_revision(layout: AgentLayout, revision: str) -> None:
-    """Explicitly validate one Agent State revision and both referenced layers."""
-
     document = _validate_agent_dir(
-        agent_revision_dir(layout, revision),
-        revision=revision,
+        agent_revision_dir(layout, revision), revision=revision
     )
-    validate_layer_revision(
-        layout,
-        "root",
-        _revision_field(document, "root_revision"),
-    )
-    validate_layer_revision(
-        layout,
-        "home",
-        _revision_field(document, "home_revision"),
-    )
+    validate_layer_revision(layout, "root", _revision_field(document, "root_revision"))
+    validate_layer_revision(layout, "home", _revision_field(document, "home_revision"))
 
 
 @contextmanager
@@ -463,6 +483,482 @@ def canonical_json(value: object) -> bytes:
     ).encode("utf-8")
 
 
+def _creation_time() -> str:
+    return (
+        datetime.now(timezone.utc)
+        .isoformat(timespec="microseconds")
+        .replace("+00:00", "Z")
+    )
+
+
+def _timestamp(document: Mapping[str, object]) -> str:
+    value = document.get("created_at")
+    if not isinstance(value, str):
+        raise ValueError("State revision requires created_at")
+    try:
+        parsed = datetime.strptime(value, "%Y-%m-%dT%H:%M:%S.%fZ")
+    except ValueError as error:
+        raise ValueError(
+            "created_at must be a UTC timestamp with microseconds"
+        ) from error
+    if parsed.strftime("%Y-%m-%dT%H:%M:%S.%fZ") != value:
+        raise ValueError("created_at must have fixed-width microseconds")
+    return value
+
+
+def _without_time(document: Mapping[str, object]) -> dict[str, object]:
+    return {key: value for key, value in document.items() if key != "created_at"}
+
+
+def _object(value: object, label: str) -> dict[str, object]:
+    if not isinstance(value, dict) or any(not isinstance(key, str) for key in value):
+        raise TypeError(f"{label} must be an object")
+    return cast(dict[str, object], value)
+
+
+def _items(document: Mapping[str, object], key: str) -> tuple[dict[str, object], ...]:
+    value = document.get(key)
+    if not isinstance(value, list):
+        raise TypeError(f"{key} must be a list")
+    return tuple(_object(item, key) for item in value)
+
+
+def _file_maps(document: Mapping[str, object]) -> dict[str, dict[str, object]]:
+    result: dict[str, dict[str, object]] = {}
+    for directory in (_SOURCE_DIR, _MATERIALIZED_DIR):
+        records = _object(document.get(directory), directory)
+        for key, value in records.items():
+            _relative_file_path(key)
+            record = _object(value, "file record")
+            required = {"size", "sha256"}
+            if set(record) - {"error"} != required or (
+                directory == _MATERIALIZED_DIR and "error" in record
+            ):
+                raise ValueError("file record fields do not match the schema")
+            size, digest = record["size"], record["sha256"]
+            if size is None or digest is None:
+                if size is not None or digest is not None or "error" not in record:
+                    raise ValueError(
+                        "unreadable source requires null size/digest and error"
+                    )
+            else:
+                if not isinstance(size, int) or isinstance(size, bool) or size < 0:
+                    raise ValueError("file size must be a non-negative integer")
+                if not isinstance(digest, str):
+                    raise TypeError("file digest must be a string")
+                _require_revision(digest)
+            if "error" in record:
+                error = _object(record["error"], "source error")
+                if set(error) - {"line"} != {"code", "message"} or not all(
+                    isinstance(error[field], str) for field in ("code", "message")
+                ):
+                    raise ValueError("invalid source error")
+                line = error.get("line")
+                if line is not None and (
+                    not isinstance(line, int) or isinstance(line, bool) or line < 1
+                ):
+                    raise ValueError("invalid source error line")
+            result[f"{directory}/{key}"] = record
+    return result
+
+
+def _source_record(document: Mapping[str, object]) -> SourceManifest:
+    files: list[SourceManifestEntry] = []
+    issues: list[SourceIssue] = []
+    for key, raw in _object(document.get("source"), "source").items():
+        record = _object(raw, "source record")
+        digest = record["sha256"]
+        if isinstance(digest, str):
+            files.append(
+                SourceManifestEntry(key, cast(int, record["size"]), digest, digest)
+            )
+        else:
+            error = _object(record["error"], "source error")
+            issues.append(SourceIssue(key, str(error["code"]), str(error["message"])))
+    return SourceManifest(
+        tuple(sorted(files, key=lambda item: item.path)),
+        issues=tuple(sorted(issues, key=lambda item: item.path)),
+    )
+
+
+def _source_receipts(document: Mapping[str, object]) -> tuple[StateFile, ...]:
+    result: list[StateFile] = []
+    scope = cast(LayerScope, document["scope"])
+    for key, raw in sorted(_object(document.get("source"), "source").items()):
+        record = _object(raw, "source record")
+        error = _object(record["error"], "source error") if "error" in record else {}
+        result.append(
+            StateFile(
+                scope,
+                key,
+                cast(str | None, record["sha256"]),
+                not error,
+                cast(str | None, error.get("code")),
+                cast(str | None, error.get("message")),
+                cast(int | None, error.get("line")),
+            )
+        )
+    return tuple(result)
+
+
+def _source_key(cap: StateCap, scope: str, agent_name: str) -> str:
+    path = Path(cap.source.path)
+    if (
+        cap.kind == "skill"
+        and cap.source.form == "authored"
+        and path.name != "SKILL.md"
+    ):
+        path /= "SKILL.md"
+    return (
+        path.relative_to(Path("agents") / agent_name).as_posix()
+        if scope == "home"
+        else path.as_posix()
+    )
+
+
+def _cap_resolutions(document: Mapping[str, object]) -> tuple[CapResolution, ...]:
+    result: list[CapResolution] = []
+    materialized = _object(document["materialized"], "materialized")
+    for item in _items(document, "caps"):
+        if "resolution" not in item:
+            continue
+        resolution = _object(item["resolution"], "resolution")
+        kind, name = str(item["ref"]).split("/", 1)
+        entry = str(resolution["materialized"])
+        root = Path(entry).parent
+        selected = [
+            key
+            for key in sorted(materialized)
+            if key == entry or (kind == "skill" and Path(key).is_relative_to(root))
+        ]
+        files = tuple(
+            MaterializedFile(
+                f"materialized/{key}",
+                cast(int, _object(materialized[key], "file")["size"]),
+                str(_object(materialized[key], "file")["sha256"]),
+            )
+            for key in selected
+        )
+        digest = sha256()
+        for file in files:
+            digest.update(f"{file.path}\0{file.sha256}\n".encode())
+        result.append(
+            CapResolution(
+                kind=cast(EntryKind, kind),
+                name=name,
+                form=cast(CapForm, item["form"]),
+                declared_ref=str(resolution["declared_ref"]),
+                resolved_ref=str(resolution["resolved_ref"]),
+                definition=f"source/{item['source']}",
+                materialized=f"materialized/{entry}",
+                content_hash=digest.hexdigest(),
+                files=files,
+            )
+        )
+    return tuple(result)
+
+
+def _decode_modules(
+    document: Mapping[str, object],
+) -> tuple[dict[str, Program], dict[str, str], dict[str, str]]:
+    modules: dict[str, Program] = {}
+    sources: dict[str, str] = {}
+    digests: dict[str, str] = {}
+    inputs = _object(document["source"], "source")
+    for item in _items(document, "modules"):
+        if set(item) - {"resolution"} != {"ref", "source", "value"}:
+            raise ValueError("module fields do not match the schema")
+        name, source = str(item["ref"]), item["source"]
+        if name in modules:
+            raise ValueError("duplicate State module")
+        if source is None:
+            if name != "agent":
+                raise ValueError("only the default agent Program can omit source")
+            path, digest = "agent.too", sha256(b"").hexdigest()
+        else:
+            path = str(source)
+            record = _object(inputs[path], "module source")
+            if "error" in record:
+                raise ValueError("module references an excluded source")
+            if name != ("agent" if path == "agent.too" else runnable_module_name(path)):
+                raise ValueError("module name does not match source")
+            digest = str(record["sha256"])
+        program = program_from_data(item["value"])
+        if source is None and program != Program(span=Span(1)):
+            raise ValueError("a source-free agent Program must be empty")
+        if "resolution" in item:
+            _check_resolution(
+                _object(item["resolution"], "module resolution"),
+                _object(document["materialized"], "materialized"),
+            )
+            if source is None:
+                raise ValueError("an acquired module requires its captured source")
+            entry = str(_object(item["resolution"], "resolution")["materialized"])
+            if _object(document["materialized"], "materialized")[entry] != inputs[path]:
+                raise ValueError(
+                    "acquired module bytes do not match its captured source"
+                )
+        validate_program_term(
+            name=name, source=path, digest=digest, program=program, here_caps=()
+        )
+        modules[name], sources[name], digests[name] = program, path, digest
+    if document["scope"] == "home" and "agent" not in modules:
+        raise ValueError("home State layer requires the agent Program")
+    if document["scope"] == "root" and modules:
+        raise ValueError("root State layer cannot contain modules")
+    if modules:
+        public_runnable_index(modules, sources)
+    return modules, sources, digests
+
+
+def _decode_caps(
+    document: Mapping[str, object],
+    directory: Path,
+    agent_name: str,
+    *,
+    modules: Mapping[str, Program] | None = None,
+    module_sources: Mapping[str, str] | None = None,
+) -> tuple[StateCap, ...]:
+    result: list[StateCap] = []
+    scope = str(document["scope"])
+    inputs = _object(document["source"], "source")
+    materialized = _object(document["materialized"], "materialized")
+    if modules is None or module_sources is None:
+        modules, module_sources, _ = _decode_modules(document)
+    seen: set[tuple[str, str]] = set()
+    for item in _items(document, "caps"):
+        if set(item) - {"resolution"} != {"ref", "form", "source", "value"}:
+            raise ValueError("cap fields do not match the schema")
+        ref = str(item["ref"])
+        kind, name = ref.split("/", 1)
+        if (
+            not name.strip()
+            or name in {".", ".."}
+            or "/" in name
+            or "\\" in name
+            or kind not in {"skill", "psyche", "service", "prompt"}
+        ):
+            raise ValueError("invalid cap kind or name")
+        form, source = str(item["form"]), str(item["source"])
+        record = _object(inputs[source], "cap source")
+        if "error" in record:
+            raise ValueError("cap references an excluded source")
+        here = form in {"inline", "referenced"}
+        if form not in {"authored", "configured", "inline", "referenced"}:
+            raise ValueError("invalid cap form")
+        if form == "configured" and source != "config.toml":
+            raise ValueError("configured Cap must reference its config source")
+        expected_source = (
+            f"skills/{name}/SKILL.md" if kind == "skill" else f"{kind}s/{name}.md"
+        )
+        if form == "authored" and source != expected_source:
+            raise ValueError("authored Cap source must match its kind and name")
+        if here and (scope != "home" or source not in module_sources.values()):
+            raise ValueError("module-local cap has no owning module")
+        identity = (source if here else "", ref)
+        if identity in seen:
+            raise ValueError("conflicting State capabilities in one scope")
+        seen.add(identity)
+        value = _object(item["value"], "cap value")
+        if set(value) != {"meta", "body"} or not isinstance(value["body"], str):
+            raise ValueError("cap value requires meta and body")
+        meta = _object(value["meta"], "cap metadata")
+        line = None
+        if here:
+            program = modules[
+                next(key for key, path in module_sources.items() if path == source)
+            ]
+            if form == "inline":
+                lines = [
+                    cap.span.line
+                    for cap in program.caps
+                    if cap.kind == kind and cap.name == name
+                ]
+            else:
+                declared = _object(item.get("resolution"), "resolution").get(
+                    "declared_ref"
+                )
+                lines = [
+                    use.span.line
+                    for use in program.withs
+                    if use.cap_kind == kind and use.reference == declared
+                ]
+            if len(lines) != 1:
+                raise ValueError("cap does not match its Program declaration")
+            line = lines[0]
+        remote = form in {"configured", "referenced"}
+        if remote != ("resolution" in item):
+            raise ValueError("remote caps require one complete resolution")
+        resource_digest = sha256()
+        resource_digest.update(str(record["sha256"]).encode())
+        if remote:
+            resolution = _object(item["resolution"], "resolution")
+            _check_resolution(resolution, materialized)
+            canonical = str(resolution["resolved_ref"])
+            entry = str(resolution["materialized"])
+            path = f"materialized/{entry}"
+            records = materialized
+        else:
+            canonical = f"{('inline' if here else scope)}://{kind}s/{name}"
+            entry, path, records = source, f"source/{source}", inputs
+        if kind == "skill" and not here or remote:
+            keys = (
+                [entry]
+                if kind != "skill"
+                else [
+                    key
+                    for key in sorted(records)
+                    if Path(key).is_relative_to(Path(entry).parent)
+                ]
+            )
+            for key in keys:
+                resource_digest.update(
+                    f"{key}\0{_object(records[key], 'file')['sha256']}\n".encode()
+                )
+        fingerprint = (
+            resource_digest.hexdigest()
+            if kind == "skill" or remote
+            else str(record["sha256"])
+        )
+        definition = (
+            Path(source).parent.as_posix()
+            if kind == "skill" and form == "authored"
+            else source
+        )
+        provenance = (
+            f"agents/{agent_name}/{definition}" if scope == "home" else definition
+        )
+        result.append(
+            StateCap(
+                kind=cast(EntryKind, kind),
+                name=name,
+                shape="dir" if kind == "skill" and form != "inline" else "file",
+                ref=canonical,
+                path=str(directory / path),
+                source=CapSource(
+                    origin="remote" if remote else "local",
+                    form=cast(CapForm, form),
+                    path=provenance,
+                    updated_at="1970-01-01T00:00:00+00:00",
+                    fingerprint=fingerprint,
+                    declared_ref=str(
+                        _object(item["resolution"], "resolution")["declared_ref"]
+                    )
+                    if remote
+                    else None,
+                    line=line,
+                ),
+                meta=meta,
+                body=str(value["body"]),
+                materialized=entry if remote else None,
+                resources=tuple(
+                    MaterializedFile(
+                        f"materialized/{key}",
+                        cast(int, _object(materialized[key], "file")["size"]),
+                        str(_object(materialized[key], "file")["sha256"]),
+                    )
+                    for key in sorted(materialized)
+                    if remote and Path(key).parts[0] == Path(entry).parts[0]
+                ),
+            )
+        )
+    return tuple(result)
+
+
+def _check_resolution(
+    resolution: dict[str, object], materialized: dict[str, object]
+) -> None:
+    if set(resolution) != {"declared_ref", "resolved_ref", "materialized"} or not all(
+        isinstance(value, str) and value for value in resolution.values()
+    ):
+        raise ValueError("resolution requires declared_ref, resolved_ref, materialized")
+    key, entry = str(resolution["resolved_ref"]), str(resolution["materialized"])
+    path = _relative_file_path(entry)
+    if (
+        len(path.parts) < 2
+        or path.parts[0] != sha256(key.encode()).hexdigest()
+        or entry not in materialized
+    ):
+        raise ValueError("resolution does not match its materialized acquisition")
+
+
+def _decode_chores(
+    document: Mapping[str, object], *, modules: Mapping[str, Program] | None = None
+) -> tuple[Chore, ...]:
+    result: list[Chore] = []
+    inputs = _object(document["source"], "source")
+    for item in _items(document, "chores"):
+        if set(item) != {"ref", "source", "value"}:
+            raise ValueError("chore fields do not match the schema")
+        ref, source = str(item["ref"]), str(item["source"])
+        if not ref.startswith("chore/") or document["scope"] != "home":
+            raise ValueError("invalid chore ref or scope")
+        if "error" in _object(inputs[source], "chore source"):
+            raise ValueError("chore references excluded source")
+        value = _object(item["value"], "chore value")
+        if set(value) != {"title", "body", "schedule"} or not isinstance(
+            value["body"], str
+        ):
+            raise ValueError("invalid chore value")
+        for key in ("title", "schedule"):
+            if value[key] is not None and not isinstance(value[key], str):
+                raise TypeError(f"chore {key} must be text or null")
+        line = None
+        if (
+            source != "agent.too"
+            and source != f"chores/{ref.removeprefix('chore/')}.md"
+        ):
+            raise ValueError("chore source does not match its name")
+        if source == "agent.too":
+            if modules is None:
+                modules = _decode_modules(document)[0]
+            program = modules["agent"]
+            matches = [
+                chore.span.line
+                for chore in program.chores
+                if chore.name == ref.removeprefix("chore/")
+            ]
+            if len(matches) != 1:
+                raise ValueError("chore does not match Program")
+            line = matches[0]
+        chore = Chore(
+            ref.removeprefix("chore/"),
+            cast(str | None, value["title"]),
+            str(value["body"]),
+            cast(str | None, value["schedule"]),
+            Path(source),
+            line,
+        )
+        if any(previous.id == chore.id for previous in result):
+            raise ValueError("duplicate chore")
+        result.append(chore)
+    return tuple(result)
+
+
+def _config(document: Mapping[str, object]) -> dict[str, object]:
+    config = _object(document.get("config"), "State config")
+    if set(config) - {"workspaces", "allow", WORKSPACE_ORDER_KEY}:
+        raise ValueError("config contains fields not owned by State")
+    workspaces = _object(config.get("workspaces", {}), "workspaces")
+    for name, path in workspaces.items():
+        validate_workspace_name(name)
+        if not isinstance(path, str) or not Path(path).is_absolute():
+            raise ValueError("stored workspace paths must be absolute")
+    order = config.get(WORKSPACE_ORDER_KEY)
+    if order is not None and (
+        not isinstance(order, list)
+        or not all(isinstance(name, str) for name in order)
+        or len(order) != len(workspaces)
+        or set(order) != set(workspaces)
+    ):
+        raise ValueError("workspace order must list each configured workspace once")
+    allow = _object(config.get("allow", {}), "allow")
+    if set(allow) - set(CAP_ALLOW_FIELDS):
+        raise ValueError("config contains unsupported State allow fields")
+    resolve_cap_allows((config,))
+    return config
+
+
 def _layer_document(
     *,
     scope: LayerScope,
@@ -475,336 +971,262 @@ def _layer_document(
     module_digests: Mapping[str, str],
     module_caps: Mapping[str, tuple[StateCap, ...]],
     files: Mapping[str, bytes],
-    records: tuple[StateFile, ...] = (),
-    chores: tuple[Chore, ...] = (),
+    records: tuple[StateFile, ...],
+    chores: tuple[Chore, ...],
+    agent_name: str,
+    module_resolutions: Mapping[str, Mapping[str, str]],
 ) -> dict[str, object]:
-    if scope == "root" and modules:
-        raise ValueError("root State layer cannot contain program modules")
-    if scope == "root" and chores:
-        raise ValueError("root State layer cannot contain chore definitions")
-    if not records:
-        records = tuple(
-            StateFile(scope, item.path, item.raw_digest or item.digest)
-            for item in source.files
-        ) + tuple(
-            StateFile(scope, item.path, None, False, item.code, item.message)
-            for item in source.issues
-        )
-        records = tuple(sorted(records, key=lambda item: item.key))
-    return {
-        "caps": [cap.to_data() for cap in sorted(caps, key=_cap_key)],
-        "chores": [
-            chore.to_data()
-            for chore in sorted(chores, key=lambda item: item.path.as_posix())
-        ],
-        "config": dict(config),
-        "files": [
-            {
-                "path": f"files/{path}",
-                "sha256": sha256(content).hexdigest(),
-                "size": len(content),
+    from toolang.lang.ast import to_data
+    import frontmatter
+
+    manifests: dict[str, dict[str, object]] = {"source": {}, "materialized": {}}
+    for path, content in files.items():
+        relative = _layer_file_path(path)
+        manifests[relative.parts[0]][Path(*relative.parts[1:]).as_posix()] = {
+            "size": len(content),
+            "sha256": sha256(content).hexdigest(),
+        }
+    observed = {item.path: item for item in source.files}
+    selected = records or tuple(
+        StateFile(scope, item.path, item.raw_digest or item.digest)
+        for item in source.files
+    )
+    for record in selected:
+        if not record.accepted:
+            original = observed.get(record.key)
+            error: dict[str, object] = {"code": record.code, "message": record.message}
+            if record.line is not None:
+                error["line"] = record.line
+            manifests["source"][record.key] = {
+                "size": original.size if original else None,
+                "sha256": record.digest,
+                "error": error,
             }
-            for path, content in files.items()
-        ],
-        "modules": [
-            program_term_data(
-                name=name,
-                source=module_sources[name],
-                digest=module_digests[name],
-                program=modules[name],
-                here_caps=module_caps[name],
+
+    def cap_item(cap: StateCap) -> dict[str, object]:
+        key = _source_key(cap, scope, agent_name)
+        if cap.body is not None:
+            body = cap.body
+        else:
+            post = frontmatter.loads(files[cap.path].decode("utf-8"))
+            body = post.content.strip()
+        result: dict[str, object] = {
+            "ref": cap.effective_ref,
+            "form": cap.source.form,
+            "source": key,
+            "value": {"meta": dict(cap.meta), "body": body},
+        }
+        if cap.source.origin == "remote":
+            match = next(
+                resolution
+                for resolution in resolutions
+                if resolution.materialized == cap.path
+                and resolution.definition == f"source/{key}"
             )
-            for name in sorted(modules)
-        ],
-        "resolutions": [
-            item.to_data() for item in sorted(resolutions, key=_resolution_key)
-        ],
+            result["resolution"] = {
+                "declared_ref": match.declared_ref,
+                "resolved_ref": match.resolved_ref,
+                "materialized": Path(match.materialized)
+                .relative_to("materialized")
+                .as_posix(),
+            }
+        return result
+
+    all_caps = (*caps, *(cap for values in module_caps.values() for cap in values))
+    combined = (
+        merge_chores(
+            chores, inline_chores(modules["agent"].chores, path=Path("agent.too"))
+        )
+        if "agent" in modules
+        else {}
+    )
+    return {
         "schema": LAYER_SCHEMA,
         "scope": scope,
-        "source": source.to_data(),
-        "sources": [item.to_data() for item in records],
+        "config": {
+            key: value
+            for key, value in config.items()
+            if key not in {"skills", "psyches", "services", "prompts"}
+        },
+        "source": manifests["source"],
+        "materialized": manifests["materialized"],
+        "modules": [
+            {
+                "ref": name,
+                "source": module_sources[name]
+                if module_sources[name] in manifests["source"]
+                and "error"
+                not in _object(
+                    manifests["source"][module_sources[name]], "module source"
+                )
+                else None,
+                "value": to_data(program),
+                **(
+                    {"resolution": dict(module_resolutions[name])}
+                    if name in module_resolutions
+                    else {}
+                ),
+            }
+            for name, program in sorted(modules.items())
+        ],
+        "caps": [
+            cap_item(cap)
+            for cap in sorted(
+                all_caps,
+                key=lambda cap: (cap.effective_ref, cap.source.path, cap.source.form),
+            )
+        ],
+        "chores": [
+            {
+                "ref": chore.ref,
+                "source": chore.path.as_posix(),
+                "value": {
+                    "title": chore.title,
+                    "body": chore.body,
+                    "schedule": chore.schedule,
+                },
+            }
+            for chore in sorted(combined.values(), key=lambda chore: chore.ref)
+        ],
     }
 
 
-def _load_layer(
-    layout: AgentLayout,
-    scope: LayerScope,
-    revision: str,
-) -> tuple[dict[str, object], Path]:
-    revision_dir = layer_revision_dir(layout, scope, revision)
-    return _load_object(revision_dir / _LAYER_FILE, label="layer.json"), revision_dir
-
-
-def _validate_layer_dir(
-    revision_dir: Path,
-    *,
-    scope: LayerScope,
-    revision: str,
-) -> dict[str, object]:
-    _validate_top_level(revision_dir, required={_LAYER_FILE, _FILES_DIR})
-    encoded = (revision_dir / _LAYER_FILE).read_bytes()
-    document = _canonical_object(encoded, label="layer.json")
-    if sha256(encoded).hexdigest() != revision:
-        raise ValueError("State layer revision does not match layer.json")
-    required = {
-        "caps",
-        "chores",
-        "config",
-        "files",
-        "modules",
-        "resolutions",
+def _check_layer_document(
+    document: Mapping[str, object], *, scope: LayerScope
+) -> dict[str, dict[str, object]]:
+    if document.get("schema") != LAYER_SCHEMA:
+        raise ValueError(f"unsupported State layer schema: {document.get('schema')!r}")
+    if set(document) != {
         "schema",
         "scope",
+        "created_at",
+        "config",
         "source",
-        "sources",
-    }
-    if set(document) != required:
-        raise ValueError("layer.json fields do not match the State layer schema")
-    if document["schema"] != LAYER_SCHEMA:
-        raise ValueError(f"unsupported State layer schema: {document['schema']!r}")
-    if document["scope"] != scope:
-        raise ValueError(
-            f"State layer scope mismatch: expected {scope!r}, found {document['scope']!r}"
-        )
-    source = _source_record(document)
-    if not isinstance(source, SourceManifest) or source.schema != SOURCE_SCHEMA:
-        raise ValueError("current State layer requires a source manifest")
-    _config(document)
-    records = _source_receipts(document)
-    observed = {item.path: item.raw_digest for item in source.files}
-    for record in records:
-        if record.digest is not None and observed.get(record.key) != record.digest:
-            raise ValueError("source receipt does not match observed manifest")
-    if {record.key for record in records} != set(observed) | {
-        issue.path for issue in source.issues
+        "materialized",
+        "modules",
+        "caps",
+        "chores",
     }:
-        raise ValueError("source receipts must cover the complete observed manifest")
-    manifest = _validate_file_manifest(revision_dir, document)
-    kinds = {
-        "skills": "skill",
-        "psyches": "psyche",
-        "services": "service",
-        "prompts": "prompt",
-    }
-    for record in records:
-        key = Path(record.key)
-        head = key.parts[0]
-        stored = (
-            Path("caps/authored") / kinds[head] / Path(*key.parts[1:])
-            if head in kinds
-            else key
-        )
-        path = f"files/{stored.as_posix()}"
-        if key == Path("config.toml"):
-            continue  # Config storage contains only canonical State-owned fields.
-        if record.accepted:
-            if path not in manifest or manifest[path][1] != record.digest:
-                raise ValueError("accepted source does not match persisted bytes")
-        elif path in manifest and not (
-            key == Path("agent.too") and manifest[path][1] == sha256(b"").hexdigest()
-        ):
-            raise ValueError(
-                "excluded source must not be persisted as accepted content"
-            )
-    resolutions = _resolutions(document)
-    caps = _caps(document, revision_dir=revision_dir)
-    modules, module_sources, module_digests, module_caps = _program_indexes(
-        document,
-        revision_dir=revision_dir,
-        required=scope == "home",
-    )
-    if scope == "root" and modules:
-        raise ValueError("root State layer cannot contain program modules")
-    if any(cap.scope != scope for cap in caps):
-        raise ValueError(f"{scope} State layer contains a cap from another scope")
-    referenced = {file.path for resolution in resolutions for file in resolution.files}
-    referenced.update(resolution.definition for resolution in resolutions)
-    referenced.update(resolution.materialized for resolution in resolutions)
-    referenced.update(_document_file_references(document))
-    missing = referenced - set(manifest)
-    if missing:
-        raise FileNotFoundError(
-            f"State layer references files outside its manifest: {sorted(missing)!r}"
-        )
-    for name, source in module_sources.items():
-        if manifest[f"files/{source}"][1] != module_digests[name]:
-            raise ValueError(f"State Program digest mismatch: {name}")
-    for resolution in resolutions:
-        for file in resolution.files:
-            if manifest[file.path] != (file.size, file.sha256):
-                raise ValueError(
-                    f"resolved cap file does not match the manifest: {file.path}"
+        raise ValueError("layer.json fields do not match the State layer schema")
+    if document["schema"] != LAYER_SCHEMA or document["scope"] != scope:
+        raise ValueError("unsupported State layer schema or scope")
+    _timestamp(document)
+    _config(document)
+    records = _file_maps(document)
+    materialized = _object(document["materialized"], "materialized")
+    acquisitions = set()
+    for collection in ("modules", "caps"):
+        for item in _items(document, collection):
+            if "resolution" in item:
+                resolution = _object(item["resolution"], "resolution")
+                _check_resolution(resolution, materialized)
+                acquisitions.add(
+                    sha256(str(resolution["resolved_ref"]).encode()).hexdigest()
                 )
-    all_caps = (*caps, *(cap for entries in module_caps.values() for cap in entries))
-    for resolution in resolutions:
-        matches = tuple(
-            cap
-            for cap in all_caps
-            if (
-                cap.kind == resolution.kind
-                and cap.name == resolution.name
-                and cap.source.form == resolution.form
-                and cap.source.declared_ref == resolution.declared_ref
-                and cap.ref == resolution.resolved_ref
-                and _stored_cap_path(cap, revision_dir=revision_dir)
-                == resolution.materialized
-            )
-        )
-        if len(matches) != 1:
-            raise ValueError(
-                f"resolved cap does not match exactly one State capability: "
-                f"{resolution.kind}/{resolution.name}"
-            )
-    for chore in _chore_definitions(document, revision_dir):
-        captured = file_chore(
-            ChoreFile.parse(
-                (revision_dir / "files" / chore.path).read_text(encoding="utf-8"),
-                path=chore.path,
-            )
-        )
-        if captured != chore:
-            raise ValueError("chore terms do not match accepted source bytes")
-    return document
-
-
-def _source_receipts(document: Mapping[str, object]) -> tuple[StateFile, ...]:
-    if document.get("schema") not in {LAYER_SCHEMA, _SOURCE_RECEIPTS_SCHEMA}:
-        return ()
-    source = document.get("source")
-    if not isinstance(source, Mapping):
-        return ()
-    if cast(Mapping[str, object], source).get("schema") != SOURCE_SCHEMA:
-        return ()
-    raw = document.get("sources", [])
-    if not isinstance(raw, list) or not all(isinstance(item, Mapping) for item in raw):
-        raise TypeError("State source receipts must be objects")
-    records = tuple(
-        StateFile.from_data(cast(Mapping[str, object], item)) for item in raw
-    )
-    keys = tuple((item.scope, item.key) for item in records)
-    if keys != tuple(sorted(set(keys))):
-        raise ValueError("source receipts must be sorted and unique")
-    if any(item.scope != document.get("scope") for item in records):
-        raise ValueError("source receipt scope mismatch")
+    if any(
+        len(Path(key).parts) < 2 or Path(key).parts[0] not in acquisitions
+        for key in materialized
+    ):
+        raise ValueError("materialized file has no owning acquisition")
     return records
 
 
-def _chore_definitions(
-    document: Mapping[str, object], revision_dir: Path
-) -> tuple[Chore, ...]:
-    if document.get("schema") == LAYER_SCHEMA:
-        raw = document.get("chores")
-        if not isinstance(raw, list) or not all(
-            isinstance(item, Mapping) for item in raw
-        ):
-            raise TypeError("State chore terms must be objects")
-        chores = tuple(
-            Chore.from_data(cast(Mapping[str, object], item)) for item in raw
-        )
-        paths = tuple(chore.path.as_posix() for chore in chores)
-        if paths != tuple(sorted(set(paths))):
-            raise ValueError("State chore terms must be sorted and unique")
-        accepted = {
-            record.key
-            for record in _source_receipts(document)
-            if record.accepted
-            and Path(record.key).parent == Path("chores")
-            and Path(record.key).suffix == ".md"
-        }
-        if set(paths) != accepted:
-            raise ValueError(
-                "chore terms must cover exactly the accepted Markdown sources"
-            )
-        if document.get("scope") != "home" and chores:
-            raise ValueError("only home layers can contain chore definitions")
-        return chores
-    if (
-        document.get("schema") != _SOURCE_RECEIPTS_SCHEMA
-        or document.get("scope") != "home"
-    ):
-        return ()
-    # Schema 20 captured Markdown bytes but had no serialized chore terms.
-    return tuple(
-        file_chore(
-            ChoreFile.parse(
-                (revision_dir / "files" / record.key).read_text(encoding="utf-8"),
-                path=Path(record.key),
-            )
-        )
-        for record in _source_receipts(document)
-        if record.accepted
-        and Path(record.key).parent == Path("chores")
-        and Path(record.key).suffix == ".md"
-    )
+def _load_layer(
+    layout: AgentLayout, scope: LayerScope, revision: str
+) -> tuple[dict[str, object], Path]:
+    directory = layer_revision_dir(layout, scope, revision)
+    document = _load_object(directory / _LAYER_FILE, label=_LAYER_FILE)
+    _check_layer_document(document, scope=scope)
+    return document, directory
 
 
-def _stored_cap_path(cap: StateCap, *, revision_dir: Path) -> str:
-    path = Path(cap.path)
-    return (
-        path.relative_to(revision_dir).as_posix()
-        if path.is_absolute()
-        else path.as_posix()
-    )
-
-
-def _document_file_references(document: Mapping[str, object]) -> set[str]:
-    references: set[str] = set()
-    raw_caps = document.get("caps", [])
-    raw_modules = document.get("modules", [])
-    if not isinstance(raw_caps, list) or not isinstance(raw_modules, list):
-        raise TypeError("State layer caps and modules must be lists")
-    for raw in raw_caps:
-        if isinstance(raw, dict):
-            raw_cap = cast(dict[object, object], raw)
-            references.add(str(raw_cap.get("path", "")))
-    for raw in raw_modules:
-        if not isinstance(raw, dict):
-            continue
-        raw_module = cast(dict[object, object], raw)
-        references.add(str(raw_module.get("materialized_path", "")))
-        raw_here_caps = raw_module.get("here_caps", [])
-        if not isinstance(raw_here_caps, list):
-            raise TypeError("State module here_caps must be a list")
-        for raw_cap in raw_here_caps:
-            if isinstance(raw_cap, dict):
-                cap = cast(dict[object, object], raw_cap)
-                references.add(str(cap.get("path", "")))
-    for path in references:
-        _layer_file_path(path)
-    return references
-
-
-def _validate_agent_dir(
-    revision_dir: Path,
-    *,
-    revision: str,
+def _validate_layer_dir(
+    directory: Path, *, scope: LayerScope, revision: str
 ) -> dict[str, object]:
-    _validate_top_level(revision_dir, required={_LAYERS_FILE})
-    encoded = (revision_dir / _LAYERS_FILE).read_bytes()
-    document = _canonical_object(encoded, label="layers.json")
+    _validate_top_level(
+        directory, required={_LAYER_FILE, _SOURCE_DIR, _MATERIALIZED_DIR}
+    )
+    encoded = (directory / _LAYER_FILE).read_bytes()
+    document = _canonical_object(encoded, label=_LAYER_FILE)
     if sha256(encoded).hexdigest() != revision:
-        raise ValueError("Agent State revision does not match layers.json")
-    if set(document) - {"workspace_additions"} != {
-        "home_revision",
-        "root_revision",
-        "name",
-        "allow_overrides",
-        "schema",
-    }:
-        raise ValueError("layers.json fields do not match the Agent State schema")
-    if document["schema"] != AGENT_STATE_SCHEMA:
-        raise ValueError(f"unsupported Agent State schema: {document['schema']!r}")
-    _revision_field(document, "root_revision")
-    _revision_field(document, "home_revision")
+        raise ValueError("State layer revision does not match layer.json")
+    records = _check_layer_document(document, scope=scope)
+    expected = {key: record for key, record in records.items() if "error" not in record}
+    actual: dict[str, Path] = {}
+    for name in (_SOURCE_DIR, _MATERIALIZED_DIR):
+        if not (directory / name).is_dir():
+            raise ValueError("State file store must be a directory")
+        for path in (directory / name).rglob("*"):
+            if path.is_symlink():
+                raise ValueError("State files cannot be symbolic links")
+            if path.is_file():
+                actual[path.relative_to(directory).as_posix()] = path
+    if set(actual) != set(expected):
+        raise ValueError("State layer file manifest mismatch")
+    for key, path in actual.items():
+        content = path.read_bytes()
+        if (
+            len(content) != expected[key]["size"]
+            or sha256(content).hexdigest() != expected[key]["sha256"]
+        ):
+            raise ValueError(f"State file size or hash mismatch: {key}")
+    modules, sources, _ = _decode_modules(document)
+    _decode_caps(
+        document, directory, "validation", modules=modules, module_sources=sources
+    )
+    _decode_chores(document, modules=modules)
     return document
 
 
-def _is_valid_layer_dir(
-    path: Path,
-    *,
-    scope: LayerScope,
-    revision: str,
-) -> bool:
+def _check_agent_document(document: Mapping[str, object]) -> None:
+    if document.get("schema") != AGENT_STATE_SCHEMA:
+        raise ValueError("unsupported Agent State schema")
+    if set(document) - {"workspace_additions"} != {
+        "schema",
+        "created_at",
+        "root_revision",
+        "home_revision",
+        "name",
+        "allow_overrides",
+    }:
+        raise ValueError("layers.json fields do not match the Agent State schema")
+    _timestamp(document)
+    _revision_field(document, "root_revision")
+    _revision_field(document, "home_revision")
+    validate_agent_name(str(document["name"]))
+    overrides = _object(document["allow_overrides"], "allow_overrides")
+    resolve_cap_allows((), overrides=cast(dict[str, tuple[str, ...]], overrides))
+    additions = document.get("workspace_additions", [])
+    if not isinstance(additions, list):
+        raise ValueError("workspace additions must be an ordered list")
+    seen = set()
+    for pair in additions:
+        if not isinstance(pair, list) or len(pair) != 2:
+            raise ValueError("workspace additions require name/path pairs")
+        name, path = pair
+        if (
+            not isinstance(name, str)
+            or not isinstance(path, str)
+            or not Path(path).is_absolute()
+        ):
+            raise ValueError("invalid workspace addition")
+        validate_workspace_name(name)
+        if name in seen or name == "lab":
+            raise ValueError("duplicate or reserved workspace addition")
+        seen.add(name)
+
+
+def _validate_agent_dir(directory: Path, *, revision: str) -> dict[str, object]:
+    _validate_top_level(directory, required={_LAYERS_FILE})
+    encoded = (directory / _LAYERS_FILE).read_bytes()
+    document = _canonical_object(encoded, label=_LAYERS_FILE)
+    if sha256(encoded).hexdigest() != revision:
+        raise ValueError("Agent State revision does not match layers.json")
+    _check_agent_document(document)
+    return document
+
+
+def _is_valid_layer_dir(path: Path, *, scope: LayerScope, revision: str) -> bool:
     try:
         _validate_layer_dir(path, scope=scope, revision=revision)
     except (OSError, KeyError, TypeError, ValueError):
@@ -870,229 +1292,6 @@ def _remove_path(path: Path) -> None:
         shutil.rmtree(path)
 
 
-def _validate_file_manifest(
-    revision_dir: Path,
-    document: Mapping[str, object],
-) -> dict[str, tuple[int, str]]:
-    raw_files = document.get("files")
-    if not isinstance(raw_files, list):
-        raise TypeError("State layer files must be a list")
-    declared: dict[str, tuple[int, str]] = {}
-    for raw in raw_files:
-        if not isinstance(raw, dict):
-            raise TypeError("State layer file must be an object")
-        item = cast(dict[object, object], raw)
-        path = str(item.get("path", ""))
-        _layer_file_path(path)
-        size = item.get("size")
-        digest = str(item.get("sha256", ""))
-        if not isinstance(size, int) or isinstance(size, bool):
-            raise TypeError("State layer file size must be an integer")
-        _require_revision(digest)
-        if path in declared:
-            raise ValueError(f"duplicate State layer file: {path}")
-        declared[path] = (size, digest)
-    if list(declared) != sorted(declared):
-        raise ValueError("State layer files must be sorted by path")
-    files_dir = revision_dir / _FILES_DIR
-    actual: dict[str, Path] = {}
-    for path in sorted(files_dir.rglob("*")):
-        if path.is_symlink():
-            raise ValueError(f"State layer files cannot be symbolic links: {path}")
-        if path.is_file():
-            actual[f"files/{path.relative_to(files_dir).as_posix()}"] = path
-    if set(actual) != set(declared):
-        missing = sorted(set(declared) - set(actual))
-        extra = sorted(set(actual) - set(declared))
-        raise ValueError(
-            f"State layer file manifest mismatch: missing={missing!r}, extra={extra!r}"
-        )
-    for relative, path in actual.items():
-        expected_size, expected_hash = declared[relative]
-        content = path.read_bytes()
-        if len(content) != expected_size:
-            raise ValueError(f"State layer file size mismatch: {relative}")
-        if sha256(content).hexdigest() != expected_hash:
-            raise ValueError(f"State layer file hash mismatch: {relative}")
-    return declared
-
-
-def _caps(
-    document: Mapping[str, object],
-    *,
-    revision_dir: Path,
-) -> tuple[StateCap, ...]:
-    raw_caps = document.get("caps")
-    if not isinstance(raw_caps, list):
-        raise TypeError("State layer caps must be a list")
-    caps = tuple(_state_cap(raw, revision_dir=revision_dir) for raw in raw_caps)
-    if tuple(sorted(caps, key=_cap_key)) != caps:
-        raise ValueError("State layer caps must be sorted")
-    if len({_cap_key(cap) for cap in caps}) != len(caps):
-        raise ValueError("State layer caps must be unique")
-    return caps
-
-
-def _program_indexes(
-    document: Mapping[str, object],
-    *,
-    revision_dir: Path,
-    required: bool = True,
-) -> tuple[
-    dict[str, Program],
-    dict[str, str],
-    dict[str, str],
-    dict[str, tuple[StateCap, ...]],
-]:
-    raw_modules = document.get("modules")
-    if not isinstance(raw_modules, list):
-        raise TypeError("State layer modules must be a list")
-    if required and not raw_modules:
-        raise ValueError("home State layer requires program modules")
-    modules: dict[str, Program] = {}
-    sources: dict[str, str] = {}
-    digests: dict[str, str] = {}
-    caps: dict[str, tuple[StateCap, ...]] = {}
-    names: set[str] = set()
-    for raw in raw_modules:
-        if not isinstance(raw, dict):
-            raise TypeError("State module must be an object")
-        data = {
-            str(key): value for key, value in cast(dict[object, object], raw).items()
-        }
-        name = str(data["name"])
-        kind = str(data["kind"])
-        source = str(data["authored_path"])
-        digest = str(data["digest"])
-        materialized = str(data["materialized_path"])
-        if kind not in {"agent", "runnable"}:
-            raise ValueError(f"invalid State Program kind: {kind!r}")
-        if (name == "agent") != (kind == "agent"):
-            raise ValueError("State Program name and kind do not match")
-        if materialized != f"files/{source}":
-            raise ValueError("State Program materialized path does not match source")
-        raw_caps = data.get("here_caps", [])
-        if not isinstance(raw_caps, list):
-            raise TypeError("State Program here_caps must be a list")
-        here_caps = tuple(
-            _materialize_cap(
-                StateCap.from_data(
-                    {
-                        str(key): value
-                        for key, value in cast(dict[object, object], item).items()
-                    }
-                ),
-                revision_dir=revision_dir,
-            )
-            for item in raw_caps
-            if isinstance(item, dict)
-        )
-        if len(here_caps) != len(raw_caps):
-            raise TypeError("State Program here cap must be an object")
-        if document.get("schema") != LAYER_SCHEMA:
-            from toolang.lang.ast import validate_source_syntax
-            from toolang.lang.errors import ToolangSourceError
-
-            try:
-                validate_source_syntax((revision_dir / materialized).read_text())
-            except ToolangSourceError as exc:
-                raise ValueError(
-                    "Legacy Flow snapshot requires source migration and a newly prepared snapshot"
-                ) from exc
-        program = program_from_data(data["program"])
-        validate_program_term(
-            name=name,
-            source=source,
-            digest=digest,
-            program=program,
-            here_caps=here_caps,
-        )
-        expected_export = program_term_data(
-            name=name,
-            source=source,
-            digest=digest,
-            program=program,
-            here_caps=here_caps,
-        )["export"]
-        if data.get("export") != expected_export:
-            raise ValueError("State Program export does not match its Program")
-        folded_name = name.casefold()
-        if folded_name in names:
-            raise ValueError(f"duplicate State Program: {name}")
-        names.add(folded_name)
-        modules[name] = program
-        sources[name] = source
-        digests[name] = digest
-        caps[name] = here_caps
-    if tuple(sorted(modules)) != tuple(modules):
-        raise ValueError("State Programs must be sorted by name")
-    if required and "agent" not in modules:
-        raise ValueError("home State layer requires the agent Program")
-    if modules:
-        public_runnable_index(modules, sources)
-    return modules, sources, digests, caps
-
-
-def _state_cap(raw: object, *, revision_dir: Path) -> StateCap:
-    if not isinstance(raw, dict):
-        raise TypeError("State cap must be an object")
-    cap = StateCap.from_data(
-        {str(key): value for key, value in cast(dict[object, object], raw).items()}
-    )
-    return _materialize_cap(cap, revision_dir=revision_dir)
-
-
-def _materialize_cap(cap: StateCap, *, revision_dir: Path) -> StateCap:
-    relative = _layer_file_path(cap.path)
-    path = revision_dir / relative
-    return replace(cap, path=str(path))
-
-
-def _resolutions(document: Mapping[str, object]) -> tuple[CapResolution, ...]:
-    raw = document.get("resolutions")
-    if not isinstance(raw, list):
-        raise TypeError("State layer resolutions must be a list")
-    result = tuple(
-        CapResolution.from_data(cast(dict[str, object], item))
-        for item in raw
-        if isinstance(item, dict)
-    )
-    if len(result) != len(raw):
-        raise TypeError("State layer resolution must be an object")
-    if tuple(sorted(result, key=_resolution_key)) != result:
-        raise ValueError("State layer resolutions must be sorted")
-    if len({_resolution_key(item) for item in result}) != len(result):
-        raise ValueError("State layer resolutions must be unique")
-    return result
-
-
-def _source_record(document: Mapping[str, object]) -> SourceRecord:
-    raw = document.get("source")
-    if not isinstance(raw, dict):
-        raise TypeError("State layer source must be an object")
-    data = {str(key): value for key, value in cast(dict[object, object], raw).items()}
-    schema = data.get("schema")
-    if not isinstance(schema, int) or isinstance(schema, bool):
-        raise TypeError("State layer source schema must be an integer")
-    if schema in {SOURCE_SCHEMA, CANONICAL_SOURCE_SCHEMA}:
-        return SourceManifest.from_data(data)
-    return LegacySourceTree.from_data(data)
-
-
-def _config(document: Mapping[str, object]) -> dict[str, object]:
-    raw = document.get("config")
-    if not isinstance(raw, dict):
-        raise TypeError("State layer config must be an object")
-    return {str(key): value for key, value in raw.items()}
-
-
-def _schema(document: Mapping[str, object]) -> int:
-    value = document.get("schema")
-    if not isinstance(value, int) or isinstance(value, bool):
-        raise TypeError("State layer schema must be an integer")
-    return value
-
-
 def _canonical_object(encoded: bytes, *, label: str) -> dict[str, object]:
     value = json.loads(encoded.decode("utf-8"))
     if not isinstance(value, dict):
@@ -1127,6 +1326,8 @@ def _relative_file_path(value: str) -> Path:
         not value
         or path.is_absolute()
         or ".." in path.parts
+        or "\\" in value
+        or not path.parts
         or path.as_posix() != value
     ):
         raise ValueError(
@@ -1137,8 +1338,10 @@ def _relative_file_path(value: str) -> Path:
 
 def _layer_file_path(value: str) -> Path:
     path = _relative_file_path(value)
-    if path.parts[:1] != (_FILES_DIR,) or len(path.parts) < 2:
-        raise ValueError(f"State layer path must be inside files/: {value!r}")
+    if path.parts[0] not in {_SOURCE_DIR, _MATERIALIZED_DIR} or len(path.parts) < 2:
+        raise ValueError(
+            f"State layer path must be inside source/ or materialized/: {value!r}"
+        )
     return path
 
 
@@ -1188,17 +1391,3 @@ def _revision_field(document: Mapping[str, object], key: str) -> str:
 def _require_revision(value: str) -> None:
     if len(value) != 64 or any(char not in "0123456789abcdef" for char in value):
         raise ValueError("revision must be a lowercase SHA-256 hex digest")
-
-
-def _cap_key(cap: StateCap) -> tuple[str, str, str]:
-    return cap.kind, cap.name, cap.ref
-
-
-def _resolution_key(item: CapResolution) -> tuple[str, str, str, str, str]:
-    return (
-        item.kind,
-        item.name,
-        item.form,
-        item.definition,
-        item.materialized,
-    )

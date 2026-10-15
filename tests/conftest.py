@@ -79,6 +79,26 @@ def isolated_toolang_root(tmp_path):
 
 
 @pytest.fixture(autouse=True)
+def offline_source_versions(request):
+    """Fake-fetch tests own versions; pinning tests override these network seams."""
+    if (
+        request.node.get_closest_marker("live_provider") is not None
+        or request.node.get_closest_marker("live_docker") is not None
+    ):
+        yield None
+        return
+    from toolang.catalog import source
+    from toolang.up import source as agent_source
+
+    original = source._resolve_github_commit
+    # Own the patch lifecycle so unrelated fixtures keep their teardown order.
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(agent_source, "_resolve_github_commit", lambda ref: ref.rev)
+        patch.setattr(source, "_resolve_github_commit", lambda ref: ref.rev)
+        yield original
+
+
+@pytest.fixture(autouse=True)
 def offline_token_encoding(request):
     """Keep protocol/execution tests independent of downloaded tokenizer data."""
     if request.node.get_closest_marker("live_provider") is not None:
