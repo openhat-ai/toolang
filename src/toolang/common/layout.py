@@ -67,6 +67,9 @@ class AgentLayout:
         label = _safe_agent_label(name)
         identity = f"{toolang_root.expanduser().resolve()}\0{source}"
         digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
+        # Keep the full source ID within a 255-byte filesystem component.
+        label_bytes = 255 - len(f"toolang--{digest}")
+        label = label.encode("utf-8")[:label_bytes].decode("utf-8", errors="ignore")
         return cls(
             root=Path("/tmp") / f"toolang-{label}-{digest}",
             name=name,

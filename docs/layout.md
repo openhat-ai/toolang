@@ -76,6 +76,9 @@ root derived from the resolved Toolang root and source selector:
 
 - `/tmp/toolang-<agent>-<hash:16>/`
 
+The readable agent label is shortened only if needed to keep the directory name
+within 255 bytes; the complete 16-character source hash is retained.
+
 Repeated launches of the same source under the same Toolang root reuse this
 agent root; a different Toolang root gets a different visiting root. Earlier
 eight-character roots are left untouched and are no longer selected. Stop old
@@ -155,7 +158,9 @@ Each reference contains only its version, absolute authoritative status path,
 and launch ID. `RuntimeRegistration` publishes into one Toolang root and uses
 one shared `instances/register.lock` for publication and conditional removal.
 The guard is released before starting or waiting for a workload. Pure reads
-neither acquire nor create it. For example:
+neither acquire nor create it. Cleanup of an existing reference creates a missing
+guard, including when only an old guard remains after an upgrade; cleanup of an
+absent reference creates no files. Old guards are retained. For example:
 
 ```json
 {"version": 1, "status": "/project/.toolang/agents/aid/.runtime/status.json", "launch_id": "<fresh-launch-id>"}

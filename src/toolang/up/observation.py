@@ -148,7 +148,9 @@ class RuntimeRegistration:
 
 def _remove_reference(path: Path, launch_id: str) -> None:
     try:
-        with file_write_lock(_register_lock(path), create=False):
+        if not path.is_file():
+            return
+        with file_write_lock(_register_lock(path)):
             reference = json.loads(path.read_text())
             if isinstance(reference, dict) and reference.get("launch_id") == launch_id:
                 path.unlink(missing_ok=True)

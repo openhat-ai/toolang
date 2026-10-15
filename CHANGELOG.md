@@ -119,6 +119,14 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Fixed
 
+- Existing reference cleanup creates a missing `register.lock`, including when
+  only the old `update.lock` remains, so stopped references are removed; pure
+  reads and cleanup of an absent reference create no guard. (#808)
+
+- Visiting roots shorten only the readable label to fit a 255-byte filesystem
+  component, preserving usable long names, the full logical agent name, and the
+  complete 16-character source hash. (#808)
+
 - Visiting agents under `/tmp/toolang-<agent>-<hash:16>/` now use the complete
   16-character source hash already used by their discovery references instead of
   truncating it to eight, while the source key and reference filenames stay

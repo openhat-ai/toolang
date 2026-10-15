@@ -65,6 +65,20 @@ def test_visiting_layout_is_stable_and_root_and_source_specific(tmp_path: Path) 
     assert first.root != other_root.root
 
 
+@pytest.mark.parametrize("name_length", [231, 232])
+def test_visiting_root_fits_long_agent_names(tmp_path: Path, name_length: int) -> None:
+    name = "a" * name_length
+    layout = AgentLayout.visiting(
+        f"https://example.com/{name}.too", name, toolang_root=tmp_path
+    )
+
+    (tmp_path / layout.root.name).mkdir()
+
+    assert layout.name == name
+    assert layout.root.name.endswith(f"-{layout.source_id}")
+    assert layout.source_id is not None and len(layout.source_id) == 16
+
+
 def test_roaming_layout_is_local_to_source(tmp_path: Path) -> None:
     source = tmp_path / "demo.too"
     layout = AgentLayout.roaming(source)

@@ -328,6 +328,42 @@ def test_short_lived_scripts_share_one_register_lock_and_readable_references(tmp
     assert document is not None and document["instances"] == {}
 
 
+@pytest.mark.parametrize("legacy_guard", ["update.lock", None])
+def test_cleanup_creates_register_guard_for_an_existing_reference(
+    tmp_path, legacy_guard
+):
+    from toolang.up.process import stop_runtime_state
+
+    layout = AgentLayout.resident(tmp_path, "gus")
+    registration = RuntimeRegistration(
+        layout, toolang_root=tmp_path, drivers=frozenset()
+    )
+    registration.__enter__()
+    stop_runtime_state(layout, expected_pid=os.getpid(), launch_id=registration.token)
+    guard = registration.path.parent / "register.lock"
+    if legacy_guard is None:
+        guard.unlink()
+    else:
+        guard.rename(guard.with_name(legacy_guard))
+    assert running_instances(tmp_path) == ()
+    assert not guard.exists()
+
+    registration.close()
+
+    assert not registration.path.exists()
+    assert guard.exists()
+    if legacy_guard is not None:
+        assert guard.with_name(legacy_guard).exists()
+
+
+def test_missing_reference_cleanup_does_not_create_discovery_directories(tmp_path):
+    from toolang.up.observation import _remove_reference
+
+    path = tmp_path / ".runtime" / "instances" / "gus.json"
+    _remove_reference(path, "finished")
+    assert not path.parent.exists()
+
+
 def test_register_guard_keeps_a_new_reference_when_old_cleanup_races(tmp_path):
     from concurrent.futures import ThreadPoolExecutor
     from threading import Event
