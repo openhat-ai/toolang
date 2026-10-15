@@ -518,6 +518,12 @@ def test_visiting_acquisition_pins_and_preserves_provenance(tmp_path, monkeypatc
         ).program_acquisition
         == first.program_acquisition
     )
+    assert (
+        agent_sources.resolve_visiting_layout(
+            requested.replace("gh:", "github:"), toolang_root=tmp_path
+        ).program_acquisition
+        == first.program_acquisition
+    )
     assert len(fetched) == 1
     assert prepare_agent_state(restored, force=True).revision == state.revision
     monkeypatch.setattr(

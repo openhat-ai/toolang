@@ -482,7 +482,7 @@ def _resolve_visiting_layout(
 
     layout = _visiting_layout(target, toolang_root=toolang_root)
 
-    captured = _cached_visiting_source(layout, target.declared_ref or target.text)
+    captured = _cached_visiting_source(layout)
     if (
         captured is not None
         and reusable_agent_source(target, captured.acquisition.resolved_ref)
@@ -645,15 +645,11 @@ def _resolve_github_commit(ref: GitHubRef) -> str:
     return pin_github_ref(ref, lambda url: _fetch_http_text(url).encode("utf-8")).rev
 
 
-def _cached_visiting_source(
-    layout: AgentLayout, declared_ref: str | None = None
-) -> AcquiredSource | None:
+def _cached_visiting_source(layout: AgentLayout) -> AcquiredSource | None:
     try:
         receipt = json.loads((layout.home / "agent.source.json").read_bytes())
         content = layout.program.read_bytes()
-        if (
-            declared_ref is not None and receipt["declared_ref"] != declared_ref
-        ) or receipt["sha256"] != sha256(content).hexdigest():
+        if receipt["sha256"] != sha256(content).hexdigest():
             return None
         entry = receipt["entry"]
         return AcquiredSource(
