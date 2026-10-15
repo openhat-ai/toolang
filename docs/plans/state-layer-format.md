@@ -94,15 +94,16 @@ Caps follows their `.too` source key and the module index. Runtime module kinds,
 exports, source digests, Cap classifications, and existing public projections
 are reconstructed from the persisted items and maps. Persist no duplicate
 `kind`, `name`, `module`, `here_caps`, remote-ref alias, placeholder source
-timestamp, or source fingerprint. Reconstruct existing fingerprints from source/resource
-identities without using the layer creation time.
+timestamp, or source fingerprint. Reconstruct existing fingerprints from
+source/resource identities without using the layer creation time.
 
 For skill assets, the authored `SKILL.md` parent or resolved materialized entry
 parent defines the asset directory in the corresponding map. Inline skills have
 no bundled assets. Asset reads may open stored files; Cap text, configuration,
-Programs, and chore definitions load directly from JSON. Inline declarations
-remain in their Program for authored semantics; extracted Cap/chore values are
-also available directly without traversing or reparsing that Program.
+Programs, and chore definitions load directly from JSON. Inline declarations,
+including prompt parameters, remain in their Program for authored semantics;
+extracted Cap/chore values provide direct text/metadata access without parsing
+authored syntax again.
 Explicit raw-file/detail requests may read captured bytes to preserve existing
 raw content responses; ordinary summaries and semantic use consume `value`.
 
@@ -142,16 +143,25 @@ within home, with shadowed raw declarations retained in source/Program data.
 Source parsing/acquisition owns aliases, shorthand probes, default Source
 selection, upstream version semantics, and fetching. It returns the original
 `declared_ref`, a fully qualified canonical `resolved_ref`, an entry path, and a
-map of exact fetched bytes. State consumes this normalized result; it must not
-parse Source schemes, whitelist them, or branch on provider names.
+map of exact fetched bytes. Canonical refs distinguish the Source, origin/registry
+when applicable, and complete resource identity; aliases for one target produce
+the same ref and stable entry layout. Sources deliver the existing Mod/Cap
+content formats, so the owning
+language/Cap parser is selected by item type, not transport. State consumes this
+normalized result; it must not parse schemes, whitelist them, or branch on
+provider names. Adding a content type is separate from adding a Source.
 
 `resolved_ref` pins an immutable upstream revision when the Source supports one.
-For mutable locations, captured file digests lock the actual bytes. Ordinary
-preparation reuses recorded acquisitions. Forced refresh asks the Source owner to
-check again; State compares the returned canonical ref, file set, and raw digests.
-A Source owner may reuse intact bytes after proving the upstream revision is
-unchanged. Equal mutable locations alone do not prove no update is needed.
-One preparation must not mix different acquisitions for the same canonical key.
+For mutable locations, captured file digests lock the actual bytes. Before any
+current-State fast reuse, the Source owner checks whether the recorded result is
+reusable under the effective source selection/configuration. Unchanged local
+digests or an unchanged bare declaration alone cannot authorize reuse after a
+default/configuration change. Ordinary preparation may keep recorded versions
+without checking upstream movement; forced refresh asks the Source owner to check
+again. State compares the returned ref, file set, and raw digests. On refresh, an
+owner may reuse intact bytes after proving the upstream revision unchanged;
+equal mutable locations alone do not prove no update is needed. One preparation
+must not mix acquisitions for the same canonical key.
 
 This definition requires the following behavior from existing Source owners:
 
@@ -167,9 +177,10 @@ persistence, restoration, comparison, validation, or materialized path rules.
 OpenHat (`oh:`/`openhat:`) is the intended default Source when its acquisition is
 implemented. That default selection belongs at the Source boundary, not in State.
 State preserves the user's original declaration while storing the fully qualified
-result, including when a declaration omits a future default
-prefix. A default change producing a different canonical result is detectable.
-No duplicated `provider`, `commit`, or `version` fields are needed.
+result, including when a declaration omits a future default prefix. Defaults
+affect new preparation only: existing Runs and historical/offline loads use the
+captured values and refs without consulting current source selection. No
+duplicated `provider`, `commit`, or `version` fields are needed.
 
 The merged parser still rejects unsupported schemes before network access; this
 plan does not activate OpenHat syntax. A failed fetch creates no partial
@@ -193,17 +204,20 @@ recomputing identity from layer revisions alone. Keep atomic writes and existing
 locks; no separate metadata file, counter, or history index is needed.
 
 JSON object keys and unordered item arrays are canonically sorted; preserve
-semantic array order. Normal loading performs structural/reference checks and
-uses captured values without hashing every file or reading authored syntax.
-Explicit offline validation requires:
+semantic array order. Normal loading checks the stored value schemas/references
+without hashing every file. Neither loading nor explicit integrity validation
+parses Source Refs, loads resolvers, reads current configuration, accesses the
+network, or reinterprets source syntax. Explicit offline validation requires:
 
 1. Canonical document bytes and matching revision hashes, including time.
 2. Exact directory file sets: error-free source entries and every materialized
    entry, with matching sizes/digests; reject symlinks and escaping paths.
 3. Valid item sources, resource entry/asset membership, scope/module ownership,
    acquisition keys, and resolution/path consistency, without a scheme whitelist.
-4. Parsed values consistent with captured inputs, using the owning parsers only
-   during validation; recursively validate a composition's root/home revisions.
+4. Valid stored value schemas and recursively valid root/home revisions for a
+   composition. The document hash protects `value` and resolved configuration;
+   integrity validation does not rerun parsing or environment-dependent path
+   resolution to reproduce them. Preparation tests verify interpretation.
 
 Rejected bytes are not stored, so verification authenticates their observation
 records through the layer hash but cannot rehash absent originals. These hashes
@@ -231,7 +245,7 @@ Raw config archival and timestamped identities are intentional format changes.
 | `common/github.py`, `common/source.py` | Source syntax/default boundary; current syntax unchanged. |
 | `up/source.py`, existing Cap acquisition code | Source-specific fetch/provenance behind the common result; visiting-cache handoff. |
 | `state/source.py`, `acceptance.py`, `config.py` | Raw capture, records, policy. |
-| `state/state.py`, `prepare.py` | Direct values, ownership, generic comparison, reconstructed runtime fields. |
+| `state/state.py`, `prepare.py` | Direct values, Source-owned cache eligibility, generic comparison, reconstructed runtime fields. |
 | `state/cache.py` | Schemas, maps, timestamps, reuse, persistence, validation. |
 | `state/schemas.py`, `collections.py` | Preserve public projections without routine Cap text reads. |
 | `docs/agent-state.md`, `caps.md`, `layout.md`, `CHANGELOG.md` | Update current behavior documentation with implementation. |
@@ -247,12 +261,14 @@ Acceptance tests must cover:
   differing Sources/repos/paths/queries without overwrite or incorrect deduplication.
 - GitHub branch/tag movement, consistent pinned fetches, equal-content changed
   commits, no-op refresh, HTTP changed bytes, and visiting Mod reuse.
-- A synthetic new Source and changed default need no State changes; unknown
-  schemes restore/validate offline without resolvers, while current acquisition
-  still rejects unsupported OpenHat sources before network access.
+- A synthetic new Source and a default/configuration change with identical local
+  inputs bypass stale cache reuse without State changes; explicit refs stay
+  unaffected by a default change. Frozen Runs and unknown schemes restore/validate
+  offline with resolver/parser/network access prohibited; current acquisition
+  still rejects unsupported OpenHat sources before network.
 - All-store timestamps, no-op reuse, A/B/A evolution, concurrent publication,
-  document/file tampering, extra/missing files, bad references, inconsistent
-  values, and recursive validation fail or pass as specified above.
+  document/file tampering, extra/missing files, bad references, invalid value
+  schemas, and recursive validation fail or pass as specified above.
 - Historical loads, rebuilds without history rewrites, documented examples, and
   the default offline verification suite.
 
