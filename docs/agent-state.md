@@ -19,6 +19,10 @@ and agent home must already exist. A missing `agent.too` produces the empty
 default `agent` module term with an empty Program without creating the source
 file.
 
+The proposed [State layer format](plans/state-layer-format.md) defines a future
+layout with direct Cap values, source/fetched file maps, pinned GitHub commits,
+and creation times. It is not implemented; this page describes current storage.
+
 ## Vocabulary
 
 State has two persistent layers and one composition:
