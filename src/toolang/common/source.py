@@ -13,11 +13,15 @@ from .github import GitHubRef, GitHubShorthand, parse_github_source_ref
 class HttpRef:
     url: str
 
+    @property
+    def path(self) -> str:
+        return unquote(urlsplit(self.url).path)
+
     def render(self) -> str:
         return self.url
 
     def default_name(self) -> str:
-        return Path(unquote(urlsplit(self.url).path)).stem
+        return Path(self.path).stem
 
 
 RemoteSource = GitHubRef | GitHubShorthand | HttpRef

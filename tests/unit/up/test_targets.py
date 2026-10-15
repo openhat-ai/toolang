@@ -1,4 +1,4 @@
-"""Unit tests for agent selector and remote-source handling."""
+"""Unit tests for agent targets and remote-source handling."""
 
 from __future__ import annotations
 
@@ -14,14 +14,14 @@ from toolang.up import source as agent_sources
 
 from toolang.base.types.progress import ProgressEvent
 from toolang.common.layout import AgentLayout
-from toolang.common.github import GitHubRef
+from toolang.common.github import GitHubRef, GitHubShorthand
 
 
-def test_agent_selector_parsing_supports_name_shorthand_and_ref() -> None:
+def test_agent_target_parsing_supports_name_shorthand_and_ref() -> None:
     local = agent_sources.parse_agent_target("alice")
     explicit_local = agent_sources.parse_agent_target("agent:alice")
     github_short = agent_sources.parse_agent_target("gh:brice/alice")
-    host_short = agent_sources.parse_agent_target("https://toolang.ai/alice.too")
+    http_ref = agent_sources.parse_agent_target("https://toolang.ai/alice.too")
     github_ref = agent_sources.parse_agent_target(
         "github://brice/agents/team/alice.too@main"
     )
@@ -30,30 +30,57 @@ def test_agent_selector_parsing_supports_name_shorthand_and_ref() -> None:
     assert local.name == "alice"
     assert explicit_local.form == "name"
     assert explicit_local.name == "alice"
-    assert github_short.github_owner == "brice"
-    assert github_short.name == "alice"
-    assert host_short.resolved_ref().render() == "https://toolang.ai/alice.too"
+    assert github_short.form == "shorthand"
+    assert github_short.source == GitHubShorthand("brice", "alice")
+    assert http_ref.form == "ref"
+    assert http_ref.resolved_ref().render() == "https://toolang.ai/alice.too"
     assert github_ref.resolved_ref().render() == (
         "github://brice/agents/team/alice.too@main"
     )
 
 
-def test_agent_selector_parsing_supports_repo_shorthand() -> None:
-    selector = agent_sources.parse_agent_target("gh:brice/project/alice")
+def test_agent_target_parsing_supports_repo_shorthand() -> None:
+    target = agent_sources.parse_agent_target("gh:brice/project/alice")
 
-    assert selector.github_owner == "brice"
-    assert selector.github_repo == "project"
-    assert selector.name == "alice"
+    assert target.source == GitHubShorthand("brice", "alice", "project")
+    assert target.default_name() == "alice"
 
 
-def test_agent_selector_canonicalizes_raw_refs_heads_url() -> None:
-    selector = agent_sources.parse_agent_target(
+def test_agent_target_canonicalizes_raw_refs_heads_url() -> None:
+    target = agent_sources.parse_agent_target(
         "https://raw.githubusercontent.com/briceyan/agents/refs/heads/main/dev.too"
     )
 
-    assert selector.resolved_ref().render() == (
+    assert target.resolved_ref().render() == (
         "github://briceyan/agents/dev.too@refs/heads/main"
     )
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "gh:owner/repo/report%2Etoo@main",
+        "github://owner/repo/report%2Etoo@main",
+        "https://github.com/owner/repo/blob/main/report%252Etoo",
+        "https://raw.githubusercontent.com/owner/repo/main/report%252Etoo",
+        "https://example.com/report%252Etoo",
+    ],
+)
+def test_agent_target_rejects_suffixes_requiring_a_second_url_decode(source):
+    with pytest.raises(ValueError, match="must point to a .too program"):
+        agent_sources.parse_agent_target(source)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "https://github.com/owner/repo/blob/main/report%2Etoo",
+        "https://raw.githubusercontent.com/owner/repo/main/report%2Etoo",
+        "https://example.com/report%2Etoo",
+    ],
+)
+def test_agent_target_accepts_a_url_encoded_too_suffix(source):
+    assert agent_sources.parse_agent_target(source).default_name() == "report"
 
 
 def test_agent_shorthand_falls_back_to_main_when_branch_probe_fails(
@@ -139,7 +166,17 @@ def test_resolve_visiting_layout_materializes_and_reuses_program(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    source = f"https://agents.example{tmp_path}/researcher.too"
+    # Exercise source caching without leaving a stable visiting root in /tmp.
+    monkeypatch.setattr(
+        AgentLayout,
+        "visiting",
+        classmethod(
+            lambda cls, source, name, **kwargs: cls(
+                root=tmp_path / "visitor", name=name, placement="visiting", **kwargs
+            )
+        ),
+    )
+    source = "https://agents.example/researcher.too"
     fetches: list[str] = []
 
     def fake_fetch(
@@ -317,9 +354,7 @@ def test_materialize_roaming_program_links_source_and_config(tmp_path: Path) -> 
     assert config_sources(layout)[-1].path == config
 
 
-def test_concurrent_roaming_materialization_accepts_the_same_program_link(
-    tmp_path, monkeypatch
-):
+def test_concurrent_roaming_materialization_accepts_the_same_program_link(tmp_path):
     from concurrent.futures import ThreadPoolExecutor
     from toolang.up.source import materialize_roaming_program
 

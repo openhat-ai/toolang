@@ -152,6 +152,13 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Fixed
 
+- Remote Mod targets are rejected unless their actual source path is a `.too`
+  program: an HTTP(S) URL path is decoded exactly once during parsing while a
+  canonical `github://` path is used literally, so a GitHub URL ending in
+  `report%252Etoo` or a literal `github://.../report%2Etoo` ref no longer
+  passes as `report.too`, while a normally encoded `report%2Etoo` URL still
+  resolves. ([#812](https://github.com/openhat-ai/toolang/pull/812))
+
 - Remote caps hosted on ordinary HTTP Markdown servers no longer fail to
   fetch with `406 Not Acceptable`: URL requests send only a `User-Agent`
   header instead of GitHub-only `Accept` and `X-GitHub-Api-Version`

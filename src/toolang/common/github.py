@@ -78,18 +78,6 @@ def parse_github_ref(text: str) -> GitHubRef:
     return GitHubRef(owner=owner, repo=repo, path=path, rev=rev)
 
 
-def parse_github_url(text: str) -> GitHubRef | None:
-    """Parse a GitHub tree, blob, or raw-content URL when recognized."""
-
-    return _parse_github_url(text, web_views=frozenset({"blob", "tree"}))
-
-
-def parse_github_file_url(text: str) -> GitHubRef | None:
-    """Parse a GitHub blob or raw-content URL when recognized."""
-
-    return _parse_github_url(text, web_views=frozenset({"blob"}))
-
-
 def github_raw_url(ref: GitHubRef) -> str:
     """Return the raw-content URL for one GitHub reference."""
 
@@ -100,13 +88,15 @@ def github_raw_url(ref: GitHubRef) -> str:
     return f"https://raw.githubusercontent.com/{owner}/{repo}/{rev}/{path}"
 
 
-def _parse_github_url(text: str, *, web_views: frozenset[str]) -> GitHubRef | None:
+def parse_github_url(text: str) -> GitHubRef | None:
+    """Parse a GitHub tree, blob, or raw-content URL when recognized."""
+
     parsed = urlsplit(text)
     if parsed.scheme not in {"http", "https"}:
         return None
     if parsed.netloc == "github.com":
         parts = _url_path_parts(parsed.path)
-        if len(parts) < 5 or parts[2] not in web_views:
+        if len(parts) < 5 or parts[2] not in {"blob", "tree"}:
             raise ValueError(f"invalid GitHub URL: {text}")
         owner, repo = parts[:2]
         rev, path = _split_url_revision(parts[3:], original=text)

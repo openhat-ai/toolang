@@ -103,8 +103,10 @@ Source parsing belongs in `common/github.py` and `common/source.py`; shared Name
 rules belong in `common/layout.py`. `up/source.py` owns agent source resolution
 and materialization; `up/process.py` owns workload control/query. Cap acquisition
 stays with State, and `state/collections.py` / `state/schemas.py` own public Cap
-projections consumed by CLI/API. Update help, examples, docs, and tests with the
-contract; do not add a provider framework or duplicate parsers.
+projections consumed by CLI/API. Targets retain the parsed Source instead of
+duplicating provider fields; shared source parsing owns URL path decoding, and
+Mod validation consumes that path unchanged. Update help, examples, docs, and
+tests with the contract; do not add a provider framework or duplicate parsers.
 
 Handle parsing, registration, length rules, bindings, public Talk/Hub routing,
 OpenHat source parsing/defaults, shared script servers, and directory renames are

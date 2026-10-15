@@ -5,7 +5,6 @@ import pytest
 from toolang.common.github import (
     GitHubRef,
     github_raw_url,
-    parse_github_file_url,
     parse_github_ref,
     parse_github_url,
 )
@@ -61,13 +60,6 @@ def test_parse_github_url_supports_raw_refs_heads_url() -> None:
         path="dev.too",
         rev="refs/heads/main",
     )
-
-
-def test_parse_github_file_url_rejects_tree_view() -> None:
-    with pytest.raises(ValueError, match="invalid GitHub URL"):
-        parse_github_file_url(
-            "https://github.com/acme/agents/tree/main/agents/reviewer.too"
-        )
 
 
 def test_parse_github_url_ignores_other_hosts() -> None:

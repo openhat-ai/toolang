@@ -1077,7 +1077,7 @@ def resolve_remote_ref(
                     f"remote {kind} not found or missing entry file: {ref}"
                 )
         else:
-            candidates = _remote_ref_candidates(kind, text)
+            candidates = _remote_ref_candidates(kind, parsed)
             canonical = next(
                 (
                     candidate
@@ -1087,12 +1087,7 @@ def resolve_remote_ref(
                 "",
             )
             if not canonical:
-                message = (
-                    f"invalid remote ref: {ref}"
-                    if not candidates
-                    else f"could not resolve remote {kind} shorthand: {ref}"
-                )
-                raise ValueError(message)
+                raise ValueError(f"could not resolve remote {kind} shorthand: {ref}")
     except Exception as exc:
         emit_progress(
             progress,
@@ -1127,7 +1122,7 @@ def canonicalize_remote_ref(kind: EntryKind, ref: str) -> str:
 
     source = parse_remote_source(ref)
     if isinstance(source, GitHubShorthand):
-        return _remote_ref_candidates(kind, ref)[0]
+        return _remote_ref_candidates(kind, source)[0]
     if isinstance(source, GitHubRef):
         if kind == "skill" and Path(source.path).name == "SKILL.md":
             source = replace(source, path=Path(source.path).parent.as_posix())
@@ -1155,10 +1150,7 @@ def remote_entry_name(kind: EntryKind, ref: str) -> str:
     return name if kind == "skill" else Path(name).stem
 
 
-def _remote_ref_candidates(kind: EntryKind, ref: str) -> tuple[str, ...]:
-    source = parse_remote_source(ref)
-    if not isinstance(source, GitHubShorthand):
-        return ()
+def _remote_ref_candidates(kind: EntryKind, source: GitHubShorthand) -> tuple[str, ...]:
     owner, name = source.owner, source.name
     if source.repo is not None:
         return _remote_ref_candidates_for_repo(kind, owner, source.repo, name)

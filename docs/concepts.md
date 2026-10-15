@@ -53,6 +53,8 @@ Local `.too` paths select roaming Mods. Remote sources must be explicit:
 [kind-specific](caps.md#source-refs). `with skill SOURCE-REF` supplies the kind
 separately from the source. Cap records expose `cap: skill/reviewer` and
 `source: RESOLVED-SOURCE-REF`; queries default to `cap`.
+Remote Mods require a `.too` source path. URL paths are decoded once before
+suffix validation; canonical `github://` paths are already literal paths.
 
 Unprefixed remote refs (`owner/name`), `oh:`, and `openhat:` are unsupported and
 fail before network access. Use `gh:owner/name` for old implicit GitHub refs and

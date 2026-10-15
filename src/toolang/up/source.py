@@ -10,7 +10,7 @@ from pathlib import Path
 from stat import S_ISLNK
 import time
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote, unquote, urlsplit
+from urllib.parse import quote
 from urllib.request import Request, urlopen
 from typing import Literal
 
@@ -18,7 +18,7 @@ from toolang.common.files import EditLock, atomic_write_text
 from toolang.common.github import GitHubRef, GitHubShorthand, github_raw_url
 from toolang.common.layout import AgentLayout, derive_agent_name, validate_agent_name
 from toolang.common.progress import ProgressSink, emit_progress
-from toolang.common.source import HttpRef, parse_remote_source
+from toolang.common.source import HttpRef, RemoteSource, parse_remote_source
 
 AgentTargetForm = Literal["name", "shorthand", "ref"]
 _MAX_ROAMING_PROJECTION_ATTEMPTS = 3
@@ -31,21 +31,26 @@ AgentRef = HttpRef | GitHubRef
 class AgentTarget:
     """One parsed resident or remote agent target."""
 
-    form: AgentTargetForm
     text: str
     name: str | None = None
-    ref: AgentRef | None = None
-    github_owner: str | None = None
-    github_repo: str | None = None
+    source: RemoteSource | None = None
+
+    @property
+    def form(self) -> AgentTargetForm:
+        if self.source is None:
+            return "name"
+        return "shorthand" if isinstance(self.source, GitHubShorthand) else "ref"
 
     def resolved_ref(self) -> AgentRef:
-        if self.ref is None:
+        if self.source is None or isinstance(self.source, GitHubShorthand):
             raise ValueError(f"target is not a remote ref: {self.text}")
-        return self.ref
+        return self.source
 
     def default_name(self) -> str:
         if self.name is not None:
             return derive_agent_name(self.name)
+        if isinstance(self.source, GitHubShorthand):
+            return derive_agent_name(self.source.name)
         return derive_agent_name(self.resolved_ref().default_name())
 
 
@@ -53,28 +58,19 @@ def parse_agent_target(text: str) -> AgentTarget:
     """Parse an explicit resident Agent Name or remote Source Ref."""
     if text.startswith("agent:"):
         return AgentTarget(
-            form="name",
             text=text,
             name=validate_agent_name(text.removeprefix("agent:")),
         )
-    raw = text
-    if ":" not in raw and "/" not in raw:
-        return AgentTarget(form="name", text=text, name=validate_agent_name(raw))
-    source = parse_remote_source(raw)
+    if ":" not in text and "/" not in text:
+        return AgentTarget(text=text, name=validate_agent_name(text))
+    source = parse_remote_source(text)
     if isinstance(source, GitHubShorthand):
-        return AgentTarget(
-            form="shorthand",
-            text=source.render(),
-            name=source.name,
-            github_owner=source.owner,
-            github_repo=source.repo,
-        )
-    path = source.path if isinstance(source, GitHubRef) else urlsplit(source.url).path
-    _require_too_path(unquote(path), raw)
+        return AgentTarget(text=source.render(), source=source)
+    _require_too_path(source.path, text)
     identity = (
-        source.render() if raw.strip().startswith(("gh:", "github:")) else raw.strip()
+        source.render() if text.strip().startswith(("gh:", "github:")) else text.strip()
     )
-    return AgentTarget(form="ref", text=identity, ref=source)
+    return AgentTarget(text=identity, source=source)
 
 
 def fetch_agent_ref(
@@ -137,10 +133,9 @@ def resolve_agent_source(
 ) -> AgentRef:
     """Resolve one remote target to one canonical authored ref."""
 
-    if target.ref is not None:
-        return target.ref
-    if target.github_owner is None or target.name is None:
-        raise ValueError(f"target is not a remote ref: {target.text}")
+    source = target.source
+    if not isinstance(source, GitHubShorthand):
+        return target.resolved_ref()
     item_id = progress_id or f"agent:{target.text}"
     emit_progress(
         progress,
@@ -155,9 +150,9 @@ def resolve_agent_source(
     )
     try:
         ref = _resolve_github_agent_shorthand(
-            target.github_owner,
-            target.name,
-            repo=target.github_repo or "agents",
+            source.owner,
+            source.name,
+            repo=source.repo or "agents",
         )
     except Exception as exc:
         emit_progress(
@@ -249,7 +244,6 @@ def _sync_roaming_project(layout: AgentLayout, source: Path) -> None:
         script_sources,
         source_catalog,
     )
-    from toolang.common.files import atomic_write_text
 
     home = layout.home
     root_lock = EditLock(layout.root_edit_lock)
@@ -343,9 +337,7 @@ def _sync_roaming_project(layout: AgentLayout, source: Path) -> None:
                     if not target.exists() or target.read_text() != projected:
                         atomic_write_text(target, projected)
                     if catalog is not None:
-                        _replace_relative_symlink(
-                            catalog_target, catalog, replace_regular_file=False
-                        )
+                        _replace_relative_symlink(catalog_target, catalog)
                     elif catalog_target.is_symlink():
                         catalog_target.unlink()
         # Root edits and home projection never hold each other's guards. An
@@ -359,18 +351,12 @@ def _sync_roaming_project(layout: AgentLayout, source: Path) -> None:
     raise RuntimeError("project sources changed repeatedly while projecting")
 
 
-def _replace_relative_symlink(
-    link_path: Path, target_path: Path, *, replace_regular_file: bool = True
-) -> None:
+def _replace_relative_symlink(link_path: Path, target_path: Path) -> None:
     if link_path.is_symlink() and link_path.resolve() == target_path.resolve():
         return
     if link_path.exists() or link_path.is_symlink():
-        if not link_path.is_symlink() and not replace_regular_file:
+        if not link_path.is_symlink():
             raise FileExistsError(f"cannot replace authored file: {link_path}")
-        if link_path.is_dir() and not link_path.is_symlink():
-            raise IsADirectoryError(
-                f"cannot replace directory with symlink: {link_path}"
-            )
         link_path.unlink()
     link_path.parent.mkdir(parents=True, exist_ok=True)
     relative_target = os.path.relpath(target_path, start=link_path.parent)
