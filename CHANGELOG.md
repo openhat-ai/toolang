@@ -246,6 +246,10 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Fixed
 
+- The `too top` dashboard now shuts down reliably when it is quit while a
+  Stats-window or filter change is replacing its activity subscription: the
+  outgoing subscription's cleanup is no longer cancelled a second time.
+
 - Remote Mod targets are rejected unless their actual source path is a `.too`
   program: an HTTP(S) URL path is decoded exactly once during parsing while a
   canonical `github://` path is used literally, so a GitHub URL ending in
