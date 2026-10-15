@@ -400,3 +400,20 @@ def test_rejected_composition_does_not_publish_its_revision(tmp_path):
         prepare_agent_state(layout, workspace_additions={"repo": str(tmp_path)})
     assert load_current_agent_revision(layout) == before.revision
     assert load_agent_state(layout).revision == before.revision
+
+
+def test_nested_cap_metadata_round_trips_through_json(tmp_path):
+    layout = layout_at(tmp_path)
+    services = layout.home / "services"
+    services.mkdir()
+    (services / "review.md").write_text(
+        "---\ndescription: Review\ntransport: http\ntarget: https://example.com/mcp\n"
+        "headers:\n  x-test: value\nenv: [FIRST, SECOND]\n---\nReview changes."
+    )
+    state = prepare_agent_state(layout)
+    meta = document(layout, state)["caps"][0]["value"]["meta"]
+    assert meta["headers"] == {"x-test": "value"}
+    assert meta["env"] == ["FIRST", "SECOND"]
+    restored = load_agent_state(layout, state.revision)
+    assert restored.services["review"].meta == state.services["review"].meta
+    validate_agent_revision(layout, state.revision)

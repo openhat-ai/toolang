@@ -18,7 +18,7 @@ from uuid import uuid4
 from toolang.common.layout import AgentLayout, validate_agent_name
 from toolang.common.progress import ProgressSink, emit_progress
 
-from ..common.immutable import freeze_mapping
+from ..common.immutable import freeze_mapping, mutable_data
 from ..lang.ast import Program, Span, program_from_data
 from .types import StateFile, EntryKind, CapForm
 from .config import (
@@ -1014,7 +1014,7 @@ def _layer_document(
             "ref": cap.effective_ref,
             "form": cap.source.form,
             "source": key,
-            "value": {"meta": dict(cap.meta), "body": body},
+            "value": {"meta": mutable_data(cap.meta), "body": body},
         }
         if cap.source.origin == "remote":
             match = next(
