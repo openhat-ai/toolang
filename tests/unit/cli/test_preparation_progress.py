@@ -166,6 +166,33 @@ def test_remote_cap_inspection_shares_agent_and_cap_progress(
     assert "Fetching agent" not in output.err
 
 
+@pytest.mark.parametrize("command", ["tools", "models", "providers", "workspace"])
+def test_remote_source_only_route_finishes_before_command_dispatch(
+    tmp_path, monkeypatch, capsys, command
+):
+    from toolang.cli.toolang.routing import dispatch_visiting
+    from toolang.up import process
+
+    selector = "https://example.test/dev.too"
+    monkeypatch.setattr(process, "_fetch_http_text", lambda _: "flow run():\n  pass\n")
+    dispatched = []
+
+    def run_app(args, layout):
+        output = capsys.readouterr()
+        assert output.out == ""
+        assert f"{selector} fetching" in output.err
+        assert output.err.count("Prepared agent in ") == 1
+        dispatched.append(layout)
+        return 0
+
+    assert (
+        dispatch_visiting(["--root", str(tmp_path), selector, command], run_app=run_app)
+        == 0
+    )
+    assert len(dispatched) == 1
+    assert capsys.readouterr().err == ""
+
+
 @pytest.mark.parametrize("quiet", [False, True])
 @pytest.mark.parametrize("setup_fails", [False, True])
 def test_local_script_completes_preparation_before_setup_and_execution(

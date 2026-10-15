@@ -44,7 +44,7 @@ from ...common.output import (
     runtime_value,
     shorten_home_path,
 )
-from ...common.progress import complete_preparation, make_cli_progress
+from ...common.progress import make_cli_progress
 
 
 def new_agent(
@@ -269,7 +269,7 @@ def _local_resources(
                     progress=progress.sink,
                 ),
             )
-            complete_preparation(progress)
+            progress.complete_preparation()
             watcher = (
                 SetupWatcher(layout, model_catalog=model_catalog)
                 if model_catalog is not None

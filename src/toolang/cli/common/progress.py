@@ -18,7 +18,7 @@ from rich.live import Live
 from rich.text import Text
 
 from ...common.events import ProgressEvent
-from ...common.progress import ProgressSink, emit_progress
+from ...common.progress import ProgressSink
 from ...common.time import format_duration
 from .execution_progress.config import resolve_progress_max_width
 from .execution_progress.formatting import one_line, wrap_display, truncate
@@ -150,6 +150,9 @@ class CliProgress:
                 return
             self._closed = True
             self._clear_live()
+
+    def complete_preparation(self) -> None:
+        """Finish a preparation display, when supported by this presenter."""
 
     def failure_message(
         self,
@@ -439,7 +442,11 @@ class CliProgress:
 
 
 class PreparationProgress(CliProgress):
-    """Show uncached preparation in reusable rows, then one dim summary."""
+    """Show uncached preparation in reusable rows, then one dim summary.
+
+    The CLI owner completes the phase explicitly or forwards a State completion
+    event. Closing a scope only releases its display; it never implies success.
+    """
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
@@ -504,18 +511,10 @@ class PreparationProgress(CliProgress):
                 return
             if self._failure_event is not None:
                 if event.subject == "state" and event.complete:
-                    self._preparation_done = True
-                    self._slots.clear()
-                    self._cancel_slot_render()
-                    self._clear_live()
                     if event.status == "ok":
-                        self._print_or_defer(
-                            Text(
-                                self.failure_message(
-                                    RuntimeError("State contains rejected sources")
-                                )
-                            )
-                        )
+                        self.complete_preparation()
+                    else:
+                        self._end_preparation()
                     return
                 if self._failure_event.subject != "cap":
                     return
@@ -536,7 +535,7 @@ class PreparationProgress(CliProgress):
             if event.cached or event.status == "skipped":
                 return
             if event.subject == "state" and event.complete:
-                self._finish_preparation()
+                self.complete_preparation()
                 return
             if event.subject is None:
                 return
@@ -674,12 +673,36 @@ class PreparationProgress(CliProgress):
         if not any(self._slots):
             super()._schedule_refresh()
 
-    def _finish_preparation(self) -> None:
+    def complete_preparation(self) -> None:
+        """Finish the CLI-owned phase without synthesizing domain progress."""
+
+        try:
+            with self._lock:
+                if self._closed or self._preparation_done:
+                    return
+                self._end_preparation()
+                if self._failure_event is not None:
+                    self._print_or_defer(
+                        Text(
+                            self.failure_message(
+                                RuntimeError("State contains rejected sources")
+                            )
+                        )
+                    )
+                else:
+                    self._print_preparation_summary()
+        except Exception:
+            # Presentation is advisory, just like events sent through the sink.
+            return
+
+    def _end_preparation(self) -> None:
         self._preparation_done = True
         self._slots.clear()
         self._cancel_slot_render()
         self._cancel_reveal()
         self._clear_live()
+
+    def _print_preparation_summary(self) -> None:
         if self._started is None or not self._enabled:
             return
         parts = []
@@ -733,21 +756,6 @@ def make_cli_progress(
         enabled=enabled,
         max_width=max_width,
         leading_gap=leading_gap,
-    )
-
-
-def complete_preparation(progress: CliProgress) -> None:
-    """Finish one CLI-owned preparation phase before displaying its result."""
-
-    emit_progress(
-        progress.sink,
-        id="state",
-        kind="prepare",
-        stage="materialize",
-        label="Prepared State",
-        status="ok",
-        subject="state",
-        complete=True,
     )
 
 

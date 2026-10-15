@@ -1252,9 +1252,7 @@ async def _execute(
     )
     sink = progress.sink if progress is not None else None
     if progress is not None:
-        from ...common.progress import complete_preparation
-
-        complete_preparation(progress)
+        progress.complete_preparation()
     setup = await setup_watcher.refresh(progress=sink)
     state = await state_watcher.refresh(progress=sink)
     models = setup.models_effective(progress=sink)

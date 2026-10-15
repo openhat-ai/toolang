@@ -34,7 +34,6 @@ from ..common.routing import (
 
 if TYPE_CHECKING:
     from toolang.state.state import StateCap
-    from ..common.progress import CliProgress
 
 EntryKind = CapKind
 MutableScope = Literal["root", "home"]
@@ -201,7 +200,7 @@ def list_caps(
     )
     entries, allowed = _cap_entries(
         layout,
-        prepare=selected_agent is not None,
+        include_agent=selected_agent is not None,
         kinds=set(CAP_KINDS),
     )
     selected = user_call(
@@ -258,7 +257,7 @@ def _make_cap_list_command(kind: CapKind, title: str) -> Callable[..., None]:
         )
         entries, allowed = _cap_entries(
             layout,
-            prepare=selected_agent is not None,
+            include_agent=selected_agent is not None,
             kinds={kind},
         )
         dataset = cap_collection(
@@ -465,17 +464,19 @@ def _entry_scope_label(entry: "StateCap", *, agent_name: str) -> CapScope:
 def _cap_entries(
     layout: AgentLayout,
     *,
-    prepare: bool,
+    include_agent: bool,
     kinds: set[EntryKind],
 ) -> "tuple[tuple[StateCap, ...], tuple[StateCap, ...]]":
-    from ..common.progress import complete_preparation, make_cli_progress
+    """Inspect root caps, optionally overlaid with the selected agent's caps."""
 
-    if not prepare and not layout.root.exists():
+    from ..common.progress import make_cli_progress
+
+    if not include_agent and not layout.root.exists():
         return (), ()
     progress = make_cli_progress(preparation=True)
     try:
         with progress:
-            if not prepare:
+            if not include_agent:
                 result = user_call(
                     inspect_root_caps,
                     layout,
@@ -486,7 +487,7 @@ def _cap_entries(
                 result = user_call(
                     inspect_agent_caps, layout, kinds=kinds, progress=progress.sink
                 )
-            complete_preparation(progress)
+            progress.complete_preparation()
             return result
     except Exception as exc:
         if progress.failure_stage is not None:
@@ -536,40 +537,27 @@ def _configured_caps(
     )
 
 
-def _make_cap_write_progress() -> "CliProgress":
-    from ..common.progress import make_cli_progress
-
-    return make_cli_progress(preparation=True)
-
-
 def _refresh_agent_state(
     toolang_root: Path,
     agent_name: str,
 ) -> None:
-    from ..common.progress import complete_preparation
+    from ..common.progress import make_cli_progress
 
+    progress = make_cli_progress(preparation=True)
     try:
-        with _make_cap_write_progress() as owned_progress:
-            _prepare_agent_state_with_progress(toolang_root, agent_name, owned_progress)
-            complete_preparation(owned_progress)
+        with progress:
+            user_call(
+                prepare_agent_state,
+                AgentLayout.resident(toolang_root, agent_name),
+                progress=progress.sink,
+            )
+            progress.complete_preparation()
     except Exception as exc:
-        raise ClickException(
-            f"The change was saved, but agent State could not be published: {exc}"
-        ) from exc
-
-
-def _prepare_agent_state_with_progress(
-    toolang_root: Path,
-    agent_name: str,
-    progress: "CliProgress",
-) -> None:
-    try:
-        user_call(
-            prepare_agent_state,
-            AgentLayout.resident(toolang_root, agent_name),
-            progress=progress.sink,
+        message = (
+            progress.failure_message(exc)
+            if progress.failure_stage is not None
+            else str(exc)
         )
-    except Exception as exc:
-        if progress.failure_stage is not None:
-            raise ClickException(progress.failure_message(exc)) from exc
-        raise
+        raise ClickException(
+            f"The change was saved, but agent State could not be published: {message}"
+        ) from exc

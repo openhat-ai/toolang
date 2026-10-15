@@ -898,3 +898,47 @@ def test_closing_reference_validation_does_not_report_prepared_state():
         progress(_startup_event("one", stage="resolve"))
         progress(_startup_event("one", stage="resolve", status="ok", complete=True))
     assert stream.getvalue() == "github://example/caps/one resolving\n"
+
+
+def test_completing_preparation_on_generic_progress_does_not_invent_state_work():
+    stream = StringIO()
+    with CliProgress(stream=stream) as progress:
+        progress.complete_preparation()
+    assert stream.getvalue() == ""
+
+
+@pytest.mark.parametrize("failed", [False, True])
+def test_cli_completion_matches_core_completion_and_is_idempotent(failed):
+    from toolang.cli.common.progress import PreparationProgress
+
+    outputs = []
+    for complete in (_finish_startup, lambda progress: progress.complete_preparation()):
+        stream = StringIO()
+        with PreparationProgress(stream=stream, _clock=lambda: 0.0) as progress:
+            progress(_startup_event("one"))
+            progress(
+                _startup_event(
+                    "one",
+                    stage="materialize",
+                    status="failed" if failed else "ok",
+                    complete=True,
+                )
+            )
+            complete(progress)
+            complete(progress)
+        outputs.append(stream.getvalue())
+    assert outputs[0] == outputs[1]
+    assert outputs[0].count("Prepared 1 cap in ") == (not failed)
+
+
+def test_cli_completion_keeps_presentation_errors_advisory(monkeypatch):
+    from toolang.cli.common.progress import PreparationProgress
+
+    with PreparationProgress(stream=StringIO()) as progress:
+        progress(_startup_event("one"))
+
+        def broken_output(*args, **kwargs):
+            raise RuntimeError("Output unavailable")
+
+        monkeypatch.setattr(progress._console, "print", broken_output)
+        progress.complete_preparation()

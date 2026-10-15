@@ -15,16 +15,18 @@ from ..common.routing import explicit_agent, extract_root_args, explicit_root
 
 TargetPosition = Literal["none", "before", "after"]
 Preparation = Literal["layout", "program"]
+PreparationOwner = Literal["routing", "command"]
 
 
 @dataclass(frozen=True, slots=True)
 class CommandSpec:
-    """The accepted target grammar for one top-level command."""
+    """The target grammar and preparation owner for one top-level command."""
 
     name: str
     targets: frozenset[TargetPosition]
     placements: frozenset[AgentPlacement] = frozenset()
     prepare: Preparation | None = None
+    preparation_owner: PreparationOwner = "routing"
 
     def accepts(self, position: TargetPosition, placement: AgentPlacement) -> bool:
         return position in self.targets and placement in self.placements
@@ -52,12 +54,14 @@ def _command(
     *targets: TargetPosition,
     placements: frozenset[AgentPlacement] = frozenset(),
     prepare: Preparation | None = None,
+    preparation_owner: PreparationOwner = "routing",
 ) -> CommandSpec:
     return CommandSpec(
         name=name,
         targets=frozenset(targets),
         placements=placements,
         prepare=prepare,
+        preparation_owner=preparation_owner,
     )
 
 
@@ -76,6 +80,7 @@ COMMAND_SPECS: Mapping[str, CommandSpec] = {
             "after",
             placements=_ALL_PLACEMENTS,
             prepare="layout",
+            preparation_owner="command",
         ),
         _command(
             "home", "none", "before", placements=_ALL_PLACEMENTS, prepare="program"
@@ -86,6 +91,7 @@ COMMAND_SPECS: Mapping[str, CommandSpec] = {
             "after",
             placements=_ALL_PLACEMENTS,
             prepare="program",
+            preparation_owner="command",
         ),
         _command(
             "start",
@@ -93,6 +99,7 @@ COMMAND_SPECS: Mapping[str, CommandSpec] = {
             "after",
             placements=_RESIDENT,
             prepare="program",
+            preparation_owner="command",
         ),
         _command(
             "stop",
@@ -106,16 +113,39 @@ COMMAND_SPECS: Mapping[str, CommandSpec] = {
         _command("talk", "none"),
         _command("hub", "none"),
         _command("top", "none", "before", placements=_ALL_PLACEMENTS, prepare="layout"),
-        _command("chat", "before", placements=_ALL_PLACEMENTS, prepare="program"),
+        _command(
+            "chat",
+            "before",
+            placements=_ALL_PLACEMENTS,
+            prepare="program",
+            preparation_owner="command",
+        ),
         _command("inspect", "before", placements=_ALL_PLACEMENTS, prepare="layout"),
         _command("steer", "before", placements=_ALL_PLACEMENTS, prepare="layout"),
         _command("cancel", "before", placements=_ALL_PLACEMENTS, prepare="layout"),
-        _command("retry", "before", placements=_ALL_PLACEMENTS, prepare="program"),
-        _command("rerun", "before", placements=_ALL_PLACEMENTS, prepare="program"),
+        _command(
+            "retry",
+            "before",
+            placements=_ALL_PLACEMENTS,
+            prepare="program",
+            preparation_owner="command",
+        ),
+        _command(
+            "rerun",
+            "before",
+            placements=_ALL_PLACEMENTS,
+            prepare="program",
+            preparation_owner="command",
+        ),
         _command("rewind", "before", placements=_ALL_PLACEMENTS, prepare="layout"),
         _command("fork", "before", placements=_ALL_PLACEMENTS, prepare="layout"),
         _command(
-            "caps", "none", "before", placements=_ALL_PLACEMENTS, prepare="program"
+            "caps",
+            "none",
+            "before",
+            placements=_ALL_PLACEMENTS,
+            prepare="program",
+            preparation_owner="command",
         ),
         *(
             _command(
@@ -124,6 +154,7 @@ COMMAND_SPECS: Mapping[str, CommandSpec] = {
                 "before",
                 placements=_ALL_PLACEMENTS,
                 prepare="program",
+                preparation_owner="command",
             )
             for name in CAP_KINDS
         ),
@@ -144,7 +175,13 @@ COMMAND_SPECS: Mapping[str, CommandSpec] = {
         _command("fmt", "none"),
         _command("parse", "none"),
         _command("highlight", "none"),
-        _command("_serve", "after", placements=_RESIDENT, prepare="program"),
+        _command(
+            "_serve",
+            "after",
+            placements=_RESIDENT,
+            prepare="program",
+            preparation_owner="command",
+        ),
     )
 }
 
@@ -279,7 +316,7 @@ def dispatch_visiting(
     if selected is None:
         return None
     from toolang.up import process as agents
-    from ..common.progress import complete_preparation, make_cli_progress
+    from ..common.progress import make_cli_progress
 
     from ..common.context import resolve_root
 
@@ -304,8 +341,8 @@ def dispatch_visiting(
                 if prepare == "program"
                 else agents.visiting_layout(selector, toolang_root=toolang_root)
             )
-            if command not in {"serve", "chat", "retry", "rerun", "caps", *CAP_KINDS}:
-                complete_preparation(progress)
+            if spec.preparation_owner == "routing":
+                progress.complete_preparation()
             return run_app(
                 [
                     *global_args,
