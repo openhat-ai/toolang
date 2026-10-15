@@ -12,7 +12,6 @@ from toolang.cli.common.context import context_root
 from toolang.cli.common.execution_progress.config import resolve_progress_max_width
 from toolang.cli.common.input import resolve_inputbox_max_width
 from toolang.cli.common.messaging import settings, talk_context
-from toolang.cli.common.parameters import TitlePrefixOption
 from toolang.cli.common.terminal_session import prepare_terminal
 from toolang.teaming.client import HubClient
 from toolang.teaming.errors import TeamingError, MessagingError
@@ -42,7 +41,6 @@ def talk_command(
             help="Conversation ID or shorthand. Omit to list conversations",
         ),
     ] = None,
-    title_prefix: TitlePrefixOption = None,
     body: Annotated[
         list[str] | None,
         typer.Argument(
@@ -129,7 +127,6 @@ def talk_command(
                     terminal=prepare_terminal(
                         "talk",
                         root=root,
-                        title_prefix=title_prefix,
                         convo=resolved,
                         context=talk_context(
                             root, config.identity, human, config.endpoint

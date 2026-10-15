@@ -8,7 +8,6 @@ from rich.console import Console
 import typer
 from typer._click.exceptions import ClickException
 
-from toolang.cli.common.parameters import TitlePrefixOption
 from toolang.cli.common.messaging import talk_context
 from toolang.cli.common.terminal_session import prepare_terminal
 from toolang.cli.common.terminal_title import agent_label
@@ -29,7 +28,6 @@ from toolang.up.process import AgentProcess
 
 def top_command(
     ctx: typer.Context,
-    title_prefix: TitlePrefixOption = None,
     once: Annotated[
         bool, typer.Option(help="Print one activity snapshot and exit")
     ] = False,
@@ -115,7 +113,6 @@ def top_command(
             "top",
             layout=layout,
             root=context_root(ctx),
-            title_prefix=title_prefix,
             label=f"top {agent_label(layout.name) if layout is not None else 'team'}",
             context=context,
             eligible=not once and console.is_terminal,

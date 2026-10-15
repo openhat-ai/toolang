@@ -150,6 +150,16 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   workspaces`, `chore` reads `Create or schedule tasks`, `talk` reads `Talk
   with agents through the hub`, and `hub` reads `Control the teaming service`.
 
+### Removed
+
+- **Breaking:** the `--title-prefix TEXT` option is removed from Chat, Talk,
+  Top, Serve, Script Run (including generated script group and runnable
+  commands), Retry, and Rerun; title prefixes now resolve per type from
+  `TOOLANG_TITLE_PREFIX_<TYPE>` over agent-home config over root config over an
+  empty default. Replace a one-off flag with an environment assignment such as
+  `TOOLANG_TITLE_PREFIX_CHAT='[too] ' too alice chat`; existing
+  `[terminal.title.prefix]` settings keep working unchanged.
+
 ### Fixed
 
 - Remote Mod targets are rejected unless their actual source path is a `.too`

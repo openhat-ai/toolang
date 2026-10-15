@@ -57,7 +57,6 @@ from ...common.parameters import (
     DEVELOPMENT_WHEEL_HELP,
     AllowOptions,
     LimitOptions,
-    TitlePrefixOption,
 )
 from ...common.terminal_session import prepare_terminal
 from ...common.runnable_parameters import runnable_parameters, runnable_usage
@@ -299,7 +298,6 @@ def _flow_outline(flow: FlowDecl) -> Text:
 def run_script(
     ctx: typer.Context,
     file: Annotated[str, typer.Argument(metavar="FILE", help="Path to a .too file")],
-    title_prefix: TitlePrefixOption = None,
     runnable: Annotated[
         str | None,
         typer.Argument(metavar="RUNNABLE", help="Runnable name", show_default=False),
@@ -324,11 +322,7 @@ def run_script(
     # File dispatch chooses main or shows help when the file has no main entry.
     if ctx.get_parameter_source("runnable") == ParameterSource.DEFAULT:
         runnable = None
-    tail = (
-        (["--title-prefix", title_prefix] if title_prefix is not None else [])
-        + ([runnable] if runnable is not None else [])
-        + (arguments or [])
-    )
+    tail = ([runnable] if runnable is not None else []) + (arguments or [])
     raise typer.Exit(dispatch([], [file, *tail], prog_name=ctx.command_path))
 
 
@@ -427,7 +421,6 @@ def _runnable_command(
 
     def callback(
         ctx: typer.Context,
-        title_prefix: TitlePrefixOption = None,
         quiet: Annotated[
             bool,
             typer.Option("--quiet", "-q", help="Hide run progress"),
@@ -472,8 +465,6 @@ def _runnable_command(
         allow = [*inherited.get("allow", ()), *(allow or ())]
         limit = [*inherited.get("limit", ()), *(limit or ())]
         quiet = quiet or inherited.get("quiet", False)
-        if ctx.get_parameter_source("title_prefix") != ParameterSource.COMMANDLINE:
-            title_prefix = inherited.get("title_prefix", title_prefix)
         if ctx.get_parameter_source("model") != ParameterSource.COMMANDLINE:
             model = inherited.get("model", model)
         if ctx.get_parameter_source("sandbox") != ParameterSource.COMMANDLINE:
@@ -508,7 +499,6 @@ def _runnable_command(
             quiet=quiet,
             workspace_options=tuple(workspace),
             workdir=selected_workdir,
-            title_prefix=title_prefix,
         )
 
     kind = runnable.kind if runnable is not None else "runnable"
@@ -684,7 +674,6 @@ def _run(
     quiet: bool,
     workspace_options: tuple[str, ...] = (),
     workdir: str | None = None,
-    title_prefix: str | None = None,
 ) -> int:
     from toolang.common.ids import IdIssuer
     from toolang.execution.store import RunStore
@@ -730,7 +719,6 @@ def _run(
             prepare_terminal(
                 "run",
                 layout=layout,
-                title_prefix=title_prefix,
                 label=label,
                 eligible=not quiet and save is None,
                 stream=sys.stderr,

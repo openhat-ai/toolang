@@ -24,7 +24,6 @@ import typer
 from typer._click.exceptions import ClickException
 
 from toolang.cli.common.parameters import (
-    TitlePrefixOption,
     AllowOptions,
     CompactModelOption,
     DriverOption,
@@ -82,7 +81,6 @@ class RuntimeLaunch:
 
 def run(
     ctx: typer.Context,
-    title_prefix: TitlePrefixOption = None,
     agent: str | None = typer.Argument(
         None,
         help="Agent Name, .too file, gh:/github: Source Ref, or HTTP(S) URL",
@@ -145,7 +143,6 @@ def run(
                 prepare_terminal(
                     "serve",
                     layout=target,
-                    title_prefix=title_prefix,
                     label=f"serve {agent_label(target.name)}",
                     stream=sys.stderr,
                 )

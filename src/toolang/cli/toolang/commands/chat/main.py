@@ -101,7 +101,6 @@ def chat_command(
     driver: str | None = None,
     workspace: list[str] | None = None,
     workdir: str | None = None,
-    title_prefix: str | None = None,
 ) -> None:
     thread_id = _target_thread_id(ctx, thread) if thread is not None else None
     _chat_interactive(
@@ -117,7 +116,6 @@ def chat_command(
         driver=driver,
         workspace=workspace,
         workdir=workdir,
-        title_prefix=title_prefix,
     )
 
 
@@ -135,7 +133,6 @@ def _chat_interactive(
     driver: str | None = None,
     workspace: list[str] | None = None,
     workdir: str | None = None,
-    title_prefix: str | None = None,
 ) -> None:
     with _chat_runtime(
         ctx,
@@ -173,7 +170,6 @@ def _chat_interactive(
             thread_id=thread_id,
             setting=setting,
             client=client,
-            title_prefix=title_prefix,
         )
 
 
@@ -298,7 +294,6 @@ def _chat_interactive_prompt_toolkit(
     thread_id: str | None,
     setting: SessionSetting,
     client: ChatClient,
-    title_prefix: str | None = None,
 ) -> None:
     environ = load_runtime_environ(context_layout(ctx), base_environ=os.environ)
     progress_max_width = user_call(resolve_progress_max_width, environ)
@@ -317,7 +312,6 @@ def _chat_interactive_prompt_toolkit(
         terminal=prepare_terminal(
             "chat",
             layout=context_layout(ctx),
-            title_prefix=title_prefix,
             thread=thread_id or "",
         ),
     )

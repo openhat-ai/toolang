@@ -689,13 +689,11 @@ def test_interactive_tty_passes_the_unmodified_thread_to_the_tui(
         thread_id: str | None,
         setting: SessionSetting,
         client: object,
-        title_prefix: object = None,
     ) -> None:
         captured.update(
             thread=thread_id,
             setting=setting,
             client=client,
-            title_prefix=title_prefix,
         )
 
     monkeypatch.setattr(chat.sys.stdin, "isatty", lambda: True)
@@ -709,7 +707,6 @@ def test_interactive_tty_passes_the_unmodified_thread_to_the_tui(
         thread_id=thread_id,
     )
 
-    assert captured.pop("title_prefix") is None
     assert captured == {
         "thread": thread_id,
         "setting": client.initial_setting(),
@@ -734,9 +731,7 @@ def test_chat_invocation_defaults_initialize_the_session(
         thread_id: str | None,
         setting: SessionSetting,
         client: object,
-        title_prefix: object = None,
     ) -> None:
-        del title_prefix
         del thread_id, client
         captured["setting"] = setting
 

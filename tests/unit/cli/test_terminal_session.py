@@ -26,39 +26,20 @@ def test_prefix_precedence_preserves_empty_and_spaces(kind):
         source("home", **{kind: " home  "}),
     ]
     key = f"TOOLANG_TITLE_PREFIX_{kind.upper()}"
+    assert resolve_title_prefix(kind, sources=sources, environment={}) == " home  "
+    assert resolve_title_prefix(kind, sources=sources, environment={key: ""}) == ""
+    assert resolve_title_prefix(kind, sources=sources, environment={key: " "}) == " "
     assert (
-        resolve_title_prefix(kind, sources=sources, environment={}, option=None)
-        == " home  "
+        resolve_title_prefix(kind, sources=sources, environment={key: "env "}) == "env "
     )
-    assert (
-        resolve_title_prefix(kind, sources=sources, environment={key: ""}, option=None)
-        == ""
-    )
-    assert (
-        resolve_title_prefix(
-            kind, sources=sources, environment={key: "env"}, option=" "
-        )
-        == " "
-    )
-    assert (
-        resolve_title_prefix(kind, sources=sources, environment={key: "env"}, option="")
-        == ""
-    )
-    assert resolve_title_prefix(kind, sources=[], environment={}, option=None) == ""
+    assert resolve_title_prefix(kind, sources=[], environment={}) == ""
 
 
 def test_partial_prefix_tables_merge_by_type():
     sources = [source("root", chat="chat", top="top"), source("home", chat="")]
-    assert (
-        resolve_title_prefix("top", sources=sources, environment={}, option=None)
-        == "top"
-    )
-    assert (
-        resolve_title_prefix("chat", sources=sources, environment={}, option=None) == ""
-    )
-    assert (
-        resolve_title_prefix("talk", sources=sources, environment={}, option=None) == ""
-    )
+    assert resolve_title_prefix("top", sources=sources, environment={}) == "top"
+    assert resolve_title_prefix("chat", sources=sources, environment={}) == ""
+    assert resolve_title_prefix("talk", sources=sources, environment={}) == ""
 
 
 @pytest.mark.parametrize(
@@ -77,13 +58,12 @@ def test_partial_prefix_tables_merge_by_type():
         ),
     ],
 )
-def test_invalid_prefix_reports_source_and_key_even_with_cli_override(config, key):
+def test_invalid_prefix_reports_source_and_key_even_with_env_override(config, key):
     with pytest.raises(ValueError) as error:
         resolve_title_prefix(
             "chat",
             sources=[ConfigSource(Path("broken.toml"), config)],
-            environment={},
-            option="override",
+            environment={"TOOLANG_TITLE_PREFIX_CHAT": "override"},
         )
     assert "broken.toml" in str(error.value) and key in str(error.value)
 
@@ -198,7 +178,10 @@ def test_resident_and_root_only_sources(tmp_path, terminal_io, placement):
             },
             "process alice",
         ),
-        ({"layout": layout, "title_prefix": ""}, "alice"),
+        (
+            {"layout": layout, "environment": {"TOOLANG_TITLE_PREFIX_CHAT": ""}},
+            "alice",
+        ),
         ({"root": tmp_path}, "root-env alice"),
     ]:
         terminal_io.seek(0)
@@ -210,7 +193,10 @@ def test_resident_and_root_only_sources(tmp_path, terminal_io, placement):
         assert terminal_io.getvalue() == f"\x1b]0;{expected}\x07\x1b]0;\x07"
 
 
-def test_roaming_uses_captured_project_layers_and_no_dotenv(tmp_path, terminal_io):
+@pytest.mark.parametrize("prefix", [None, "env ", ""])
+def test_roaming_uses_captured_project_layers_and_no_dotenv(
+    tmp_path, terminal_io, prefix
+):
     from dataclasses import replace
 
     terminal_io = terminal_io()
@@ -234,9 +220,13 @@ def test_roaming_uses_captured_project_layers_and_no_dotenv(tmp_path, terminal_i
     layout.root_config.write_text('[terminal.title.prefix]\nrun="wrong"\n')
     layout.env.write_text("TOOLANG_TITLE_PREFIX_RUN=wrong\n")
     layout.root_env.write_text("TOOLANG_TITLE_PREFIX_RUN=wrong\n")
-    with prepare_terminal("run", layout=layout, environment={}, label="run file.too"):
+    environment = {} if prefix is None else {"TOOLANG_TITLE_PREFIX_RUN": prefix}
+    with prepare_terminal(
+        "run", layout=layout, environment=environment, label="run file.too"
+    ):
         pass
-    assert terminal_io.getvalue() == "\x1b]0;inner run file.too\x07\x1b]0;\x07"
+    expected = "inner " if prefix is None else prefix
+    assert terminal_io.getvalue() == f"\x1b]0;{expected}run file.too\x07\x1b]0;\x07"
 
 
 @pytest.mark.parametrize("excluded", ["input", "output", "presentation", "eligible"])
