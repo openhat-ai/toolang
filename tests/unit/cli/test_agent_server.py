@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
+import httpx
 
 from toolang.cli.common import agent_server
 from toolang.common.layout import AgentLayout
@@ -163,6 +164,163 @@ def test_agent_server_attaches_to_a_compatible_running_agent(
             sandbox="docker:python:3.13-slim",
             endpoint="http://127.0.0.1:7001",
         )
+
+
+@pytest.mark.parametrize("failure", ["profile", "lease", "closing"])
+@pytest.mark.parametrize("attach_only", [False, True])
+def test_automatic_server_exiting_during_acquisition(
+    tmp_path, monkeypatch, failure, attach_only
+):
+    layout = AgentLayout.resident(tmp_path, "alice")
+    old = AgentServerRef("host", "http://old", launch_id="old", lifetime="automatic")
+    replacement = AgentServerRef(
+        "host", "http://new", launch_id="new", lifetime="automatic"
+    )
+    prepared = []
+    probes = []
+    reference = SimpleNamespace(launch_id="old", ref=object())
+
+    class Process:
+        def __init__(self, _layout):
+            pass
+
+        @property
+        def reference(self):
+            return reference
+
+    async def running(_ref):
+        probes.append(True)
+        return len(probes) < 3
+
+    def prepare(*_args, **_kwargs):
+        if prepared:
+            assert len(probes) == 3
+        prepared.append(True)
+        return old if len(prepared) == 1 else replacement
+
+    def respond(request):
+        if (
+            request.url.host == "old"
+            and request.method == "PUT"
+            and failure == "closing"
+        ):
+            return httpx.Response(409, json={"detail": "server is closing"})
+        if request.url.host == "old" and (
+            request.method == "GET" if failure == "profile" else request.method == "PUT"
+        ):
+            raise httpx.ConnectError(
+                "server exited after health check", request=request
+            )
+        return httpx.Response(
+            200,
+            json={"runtime": {"launch_id": request.url.host, "lifetime": "automatic"}},
+        )
+
+    client = httpx.Client
+    monkeypatch.setattr(agent_server.agents, "AgentProcess", Process)
+    monkeypatch.setattr(
+        agent_server.sandbox_runtime,
+        "load_state_sandbox",
+        lambda *_args: SimpleNamespace(running=running),
+    )
+    monkeypatch.setattr(agent_server, "_prepare_agent_server", prepare)
+    monkeypatch.setattr(
+        httpx,
+        "Client",
+        lambda **kwargs: client(transport=httpx.MockTransport(respond), **kwargs),
+    )
+
+    def acquire():
+        with agent_server.acquire_agent_server(
+            layout, sandbox=None, show_progress=False, attach_only=attach_only
+        ) as selected:
+            assert selected is not None and selected.launch_id == "new"
+
+    if attach_only:
+        with pytest.raises(agent_server.ServerClosingError):
+            acquire()
+        assert len(prepared) == 1
+        assert len(probes) == 3
+    else:
+        acquire()
+        assert len(prepared) == 2
+
+
+def test_acquisition_does_not_replace_an_automatic_server_that_is_still_alive(
+    tmp_path, monkeypatch
+):
+    layout = AgentLayout.resident(tmp_path, "alice")
+    server = AgentServerRef(
+        "host", "http://server", launch_id="launch", lifetime="automatic"
+    )
+    prepared = []
+
+    def prepare(*_args, **_kwargs):
+        prepared.append(True)
+        return server
+
+    def retain(_server):
+        raise agent_server.ServerClosingError("connection closed during acquisition")
+
+    async def running(_ref):
+        return True
+
+    monkeypatch.setattr(agent_server, "AGENT_READY_TIMEOUT_SEC", 0)
+    monkeypatch.setattr(agent_server, "_prepare_agent_server", prepare)
+    monkeypatch.setattr(agent_server, "_retain_server", retain)
+    monkeypatch.setattr(
+        agent_server.agents,
+        "AgentProcess",
+        lambda _layout: SimpleNamespace(
+            reference=SimpleNamespace(launch_id="launch", ref=object())
+        ),
+    )
+    monkeypatch.setattr(
+        agent_server.sandbox_runtime,
+        "load_state_sandbox",
+        lambda *_args: SimpleNamespace(running=running),
+    )
+    with pytest.raises(agent_server.AgentServerAcquisitionError) as error:
+        with agent_server.acquire_agent_server(
+            layout, sandbox=None, show_progress=False
+        ):
+            pytest.fail("an unretained server cannot be acquired")
+    assert type(error.value) is agent_server.AgentServerAcquisitionError
+    assert "shutdown did not complete" in str(error.value)
+    assert len(prepared) == 1
+
+
+def test_managed_attachment_checks_its_profile_instead_of_waiting_for_health(
+    tmp_path, monkeypatch
+):
+    layout = AgentLayout.resident(tmp_path, "alice")
+
+    class Process:
+        def __init__(self, _layout):
+            pass
+
+        def status(self, *, ui_base_url, check_health):
+            assert not check_health
+            return _status(value="running", endpoint="http://server", sandbox="host")
+
+    monkeypatch.setattr(agent_server.agents, "AgentProcess", Process)
+    monkeypatch.setattr(
+        agent_server,
+        "read_record",
+        lambda *_args: {
+            "launch_id": "launch",
+            "workload": {"lifetime": "automatic", "lifecycle_protocol": 1},
+        },
+    )
+    retained = []
+
+    def retain(server):
+        retained.append(server.launch_id)
+        return server, None
+
+    monkeypatch.setattr(agent_server, "_retain_server", retain)
+    with agent_server.acquire_agent_server(layout, sandbox=None, show_progress=False):
+        assert retained == ["launch"]
 
 
 @pytest.mark.parametrize("dev", [Path("."), Path("dist")])

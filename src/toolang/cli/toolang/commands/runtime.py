@@ -406,7 +406,7 @@ def _retain_started(
 
     with sandbox_runtime.management_lock(layout):
         process = agents.AgentProcess(layout)
-        status = process.status(ui_base_url=ui_base_url(), check_health=True)
+        status = process.status(ui_base_url=ui_base_url())
         if status is not None and status.status in {"preparing", "starting"}:
             status = process.wait_ready(status, ui_base_url=ui_base_url(), timeout=30)
         if status is None or status.status != "running":
@@ -463,19 +463,7 @@ def _retain_started(
                 )
                 return True
         except ServerClosingError:
-            import time
-
-            deadline = time.monotonic() + 30
-            while time.monotonic() < deadline:
-                current = process.status(ui_base_url=ui_base_url())
-                if current is None or current.status not in {
-                    "running",
-                    "starting",
-                    "preparing",
-                }:
-                    return False
-                time.sleep(0.05)
-            raise ClickException("server shutdown did not complete") from None
+            return False
         except (AgentServerAcquisitionError, httpx.HTTPError, ValueError) as exc:
             raise ClickException(str(exc)) from exc
 

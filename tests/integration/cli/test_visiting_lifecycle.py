@@ -12,6 +12,7 @@ import time
 import httpx
 import pytest
 
+from tests.support.chat_tui_pty import ChatTuiPtySession
 from toolang.up.process import AgentProcess
 from toolang.up.source import visiting_layout
 
@@ -167,3 +168,26 @@ def test_lease_loss_ends_an_idle_client_without_relaunch(tmp_path):
         assert "Traceback" not in output
         status = AgentProcess(layout).status(ui_base_url="")
         assert status is not None and status.status == "stopped"
+
+
+def test_lease_loss_ends_a_terminal_client_without_relaunch(tmp_path):
+    with _visiting_chat(tmp_path) as (layout, url, _chat, command, _requests):
+        session = ChatTuiPtySession.start(
+            "toolang.cli.toolang",
+            "--root",
+            tmp_path / "root",
+            url,
+            "chat",
+            "--sandbox",
+            "host",
+        )
+        try:
+            session.wait_for("Describe your task", timeout=40)
+            command(url, "stop")
+            assert session.wait_for_exit(timeout=25) == 1
+            assert "retention lease was lost" in session.output
+            assert "Traceback" not in session.output
+            status = AgentProcess(layout).status(ui_base_url="")
+            assert status is not None and status.status == "stopped"
+        finally:
+            session.close()

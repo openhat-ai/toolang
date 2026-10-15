@@ -129,9 +129,9 @@ def acquire_agent_server(
                     try:
                         selected_server, lease = _retain_server(selected_server)
                     except ServerClosingError:
-                        if attach_only or time.monotonic() >= deadline:
+                        _wait_for_closing_server(layout, selected_server, deadline)
+                        if attach_only:
                             raise
-                        time.sleep(0.05)
                         continue
                 if isinstance(acquired, AgentServerRef):
                     progress.complete_preparation()
@@ -223,18 +223,24 @@ def _server_reference(
 def _retain_server(server: AgentServerRef) -> tuple[AgentServerRef, ServerLease | None]:
     if server.launch_id is None:
         return server, None
-    with httpx.Client(timeout=3.0) as http:
-        response = http.get(f"{server.endpoint}/api/v1/profile")
-        response.raise_for_status()
-        runtime = response.json()["runtime"]
-    if runtime.get("launch_id") != server.launch_id:
-        raise AgentServerAcquisitionError("server launch changed; acquire it again")
-    server = replace(server, lifetime=runtime["lifetime"])
-    if server.lifetime != "automatic":
-        return server, None
-    lease = ServerLease(server)
     try:
+        with httpx.Client(timeout=3.0) as http:
+            response = http.get(f"{server.endpoint}/api/v1/profile")
+            response.raise_for_status()
+            runtime = response.json()["runtime"]
+        if runtime.get("launch_id") != server.launch_id:
+            raise AgentServerAcquisitionError("server launch changed; acquire it again")
+        server = replace(server, lifetime=runtime["lifetime"])
+        if server.lifetime != "automatic":
+            return server, None
+        lease = ServerLease(server)
         lease.register()
+    except httpx.TransportError as exc:
+        if server.lifetime != "automatic":
+            raise
+        raise ServerClosingError(
+            "server stopped during acquisition; acquire it again"
+        ) from exc
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code == 409 and "closing" in exc.response.text:
             raise ServerClosingError("server is closing; wait for it to stop") from exc
@@ -242,6 +248,34 @@ def _retain_server(server: AgentServerRef) -> tuple[AgentServerRef, ServerLease 
     return replace(
         server, client_id=lease.client_id, check_retention=lease.check
     ), lease
+
+
+def _wait_for_closing_server(
+    layout: AgentLayout, server: AgentServerRef, deadline: float
+) -> None:
+    """Wait for the selected workload to exit, including its shutdown cleanup."""
+
+    while True:
+        reference = agents.AgentProcess(layout).reference
+        if reference is None or reference.launch_id != server.launch_id:
+            return
+        implementation = sandbox_runtime.load_state_sandbox(layout, reference)
+        try:
+            running = asyncio.run(
+                asyncio.wait_for(
+                    implementation.running(reference.ref),
+                    timeout=max(0.0, deadline - time.monotonic()),
+                )
+            )
+        except TimeoutError as exc:
+            raise AgentServerAcquisitionError(
+                "server shutdown did not complete"
+            ) from exc
+        if not running:
+            return
+        if time.monotonic() >= deadline:
+            raise AgentServerAcquisitionError("server shutdown did not complete")
+        time.sleep(0.05)
 
 
 def _prepare_agent_server(
@@ -260,8 +294,16 @@ def _prepare_agent_server(
     required_driver: DriverName | None = None,
     attach_only: bool = False,
 ) -> AgentServerRef | sandbox_runtime.SandboxHandle | None:
+    entry = read_record(layout.runtime_status, layout.instance) or {}
+    managed = (
+        layout.placement in {"resident", "visiting"}
+        and entry.get("workload", {}).get("lifecycle_protocol") == 1
+    )
     status = agents.AgentProcess(layout).status(
-        ui_base_url=ui_base_url, check_health=not temporary
+        # Managed attachment checks the live profile and registers retention below.
+        # A separate health wait would mistake idle shutdown for failed startup.
+        ui_base_url=ui_base_url,
+        check_health=not temporary and not managed,
     )
     if status is not None and status.status in {"preparing", "starting"}:
         if temporary:
