@@ -25,7 +25,7 @@ from ...catalog.agent import LocalAgents
 from ...common.layout import AgentLayout
 from ...common import version as _version
 from ..common.context import CliContext, resolve_root
-from ..common.help import CliCommand, CliGroup, CliHelpFormatter, HelpContext, show_help
+from ..common.help import CliCommand, CliGroup, HelpContext, show_help
 from ..common.lazy import LazyCommand, lazy_typer_command, lazy_typer_group
 from ..common.output import echo_error
 from ..common.routing import (
@@ -179,6 +179,7 @@ class _ChatCommand(_ThreadRunCommand):
 
 class _InspectCommand(_TargetAgentCommand):
     def write_help_sections(self, ctx: Context, formatter: HelpFormatter) -> None:
+        super().write_help_sections(ctx, formatter)
         from .commands.inspect import write_inspect_help
 
         write_inspect_help(ctx, formatter)
@@ -186,6 +187,7 @@ class _InspectCommand(_TargetAgentCommand):
 
 class _TalkCommand(CliCommand):
     def write_help_sections(self, ctx: Context, formatter: HelpFormatter) -> None:
+        super().write_help_sections(ctx, formatter)
         prefix = f"{ctx.find_root().info_name} talk"
         with formatter.section("Examples"):
             formatter.write_dl(
@@ -201,7 +203,7 @@ class _TalkCommand(CliCommand):
             )
 
 
-class _ToolangHelpFormatter(CliHelpFormatter):
+class _ToolangHelpFormatter(HelpFormatter):
     def write_description(self, ctx: Context) -> None:
         description = Text(f"{ctx.command.help}.")
         version = _version.toolang_version()

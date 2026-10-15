@@ -35,6 +35,29 @@ class Mode(str, Enum):
 
 
 class HelpMetadataTest(unittest.TestCase):
+    def test_argument_metavars_uppercase_only_placeholder_names(self):
+        for metavar, expected in (
+            (None, "VALUE"),
+            ("source", "SOURCE"),
+            ("files...", "FILES..."),
+            ("report.json", "report.json"),
+            ("path|url", "path|url"),
+            ("Part[]", "Part[]"),
+            ("name=VALUE", "name=VALUE"),
+            ("<NAME>.json", "<NAME>.json"),
+        ):
+            with self.subTest(metavar=metavar):
+                argument = TyperArgument(
+                    param_decls=["value"], metavar=metavar, required=True
+                )
+                command = TyperCommand("demo", params=[argument])
+                output = _format_help(typer.Context(command), theme=PLAIN)
+                rows = output.split("Arguments:\n", 1)[1].split("\n\n", 1)[0]
+                self.assertEqual(rows.strip(), f"* {expected}")
+                usage = output.split("Usage:", 1)[1].split("\n\n", 1)[0]
+                self.assertIn(expected, usage)
+                self.assertEqual(argument.metavar, metavar)
+
     def test_top_description_gets_a_period_without_changing_command_summaries(self):
         for description, expected in (
             ("Run the task", "Run the task."),

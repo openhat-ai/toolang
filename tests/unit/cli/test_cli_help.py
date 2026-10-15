@@ -17,7 +17,7 @@ from typer.models import TyperPath
 from typer.testing import CliRunner
 
 from toolang.cli.caps.main import app as caps_app, main as caps_main
-from toolang.cli.common.help import CliCommand, CliGroup
+from toolang.cli.common.help import CliCommand, CliGroup, HelpContext
 from toolang.cli.common.lazy import LazyCommand, lazy_typer_command
 from toolang.cli.common.parameters import PathType
 from toolang.cli.toolang.main import app, main as too_main
@@ -160,11 +160,25 @@ def test_field_tables_cover_parser_fields_and_repetition_rules(
     assert "--compact-model requires an exact model for a new runtime" in text
 
 
-def test_callers_compose_sections_and_preserve_footer_and_hidden_options():
+@pytest.mark.parametrize("custom_context", [False, True])
+def test_callers_compose_sections_and_preserve_footer_and_hidden_options(
+    custom_context,
+):
     from toolang.common.typer.ui import HelpFormatter
 
+    class AlternateFormatter(HelpFormatter):
+        def write_epilog(self, ctx: Context) -> None:
+            super().write_epilog(ctx)
+            self.write_text("Custom footer.")
+
+    class AlternateContext(HelpContext):
+        formatter_class = AlternateFormatter
+
     class CustomCommand(CliCommand):
+        context_class = AlternateContext if custom_context else HelpContext
+
         def write_help_sections(self, ctx: Context, formatter: HelpFormatter) -> None:
+            super().write_help_sections(ctx, formatter)
             with formatter.section("Custom fields"):
                 formatter.write_dl([("example", "A caller-owned description")])
                 formatter.write_paragraph()
@@ -195,6 +209,8 @@ def test_callers_compose_sections_and_preserve_footer_and_hidden_options():
     assert positions == sorted(positions)
     assert "\n  A caller-owned paragraph.\n" in output
     assert "Default fields:" not in output and "--default" not in output
+    if custom_context:
+        assert output.rstrip().endswith("Custom footer.")
 
 
 @pytest.mark.parametrize("theme", [PLAIN, UV])

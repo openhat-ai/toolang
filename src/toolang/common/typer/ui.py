@@ -215,6 +215,9 @@ class HelpFormatter(TyperHelpFormatter):
             "Options",
             shared_columns=False,
         )
+        write_sections = getattr(command, "write_help_sections", None)
+        if callable(write_sections):
+            write_sections(ctx, self)
         self.write_epilog(ctx)
 
     def write_description(self, ctx: Context) -> None:
@@ -349,7 +352,7 @@ class HelpFormatter(TyperHelpFormatter):
     ) -> tuple[Text, Text, Text]:
         marker = Text("*" if param.required else "", style="cli.required")
         name = param.metavar or param.name or ""
-        if not _BRACKETED_METAVAR.search(name) and "=" not in name:
+        if name.removesuffix("...").isidentifier():
             name = name.upper()
         label = Text(name, style="cli.argument.name")
         return marker, label, _parameter_help(param, ctx)
@@ -422,7 +425,7 @@ def argument_usage(param: TyperArgument) -> str:
         label = label[1:-1]
         if param.nargs != 1:
             label = label.removesuffix("...")
-    elif not _BRACKETED_METAVAR.search(label):
+    elif label.removesuffix("...").isidentifier():
         label = label.upper()
     if param.required and (bracketed or not _BRACKETED_METAVAR.search(label)):
         label = f"<{label}>"
