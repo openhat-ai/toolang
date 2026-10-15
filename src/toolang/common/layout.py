@@ -68,7 +68,7 @@ class AgentLayout:
         identity = f"{toolang_root.expanduser().resolve()}\0{source}"
         digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
         return cls(
-            root=Path("/tmp") / f"toolang-{label}-{digest[:8]}",
+            root=Path("/tmp") / f"toolang-{label}-{digest}",
             name=name,
             placement="visiting",
             toolang_root=toolang_root,

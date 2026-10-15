@@ -59,6 +59,8 @@ def test_visiting_layout_is_stable_and_root_and_source_specific(tmp_path: Path) 
     assert first == repeated
     assert first.placement == "visiting"
     assert first.root.parent == Path("/tmp").resolve()
+    assert first.source_id is not None and len(first.source_id) == 16
+    assert first.root.name == f"toolang-researcher-{first.source_id}"
     assert first.root != other.root
     assert first.root != other_root.root
 

@@ -30,7 +30,8 @@ def test_reference_names_use_stable_host_source_identity(tmp_path):
 
     assert instance_filename(resident) == "gus.json"
     assert instance_filename(visiting) == f"lex@v{visiting_hash[:16]}.json"
-    assert visiting.root.name.endswith(visiting_hash[:8])
+    assert visiting.root.name == f"toolang-lex-{visiting_hash[:16]}"
+    assert visiting.source_id == visiting_hash[:16]
     assert instance_filename(roaming) == f"aid@r{roaming_hash[:16]}.json"
     assert instance_filename(replace(roaming)) == instance_filename(roaming)
     assert instance_filename(
@@ -157,7 +158,7 @@ def test_discovery_reads_do_not_wait_for_reference_updates(tmp_path):
         layout, toolang_root=tmp_path, drivers=frozenset()
     ) as registration:
         with ThreadPoolExecutor(max_workers=1) as pool:
-            with file_write_lock(registration.path.parent / "update.lock"):
+            with file_write_lock(registration.path.parent / "register.lock"):
                 assert (
                     len(pool.submit(running_instances, tmp_path).result(timeout=1)) == 1
                 )
@@ -306,7 +307,7 @@ def test_unbound_guest_discovery_preserves_unknown_workload(tmp_path):
         assert layout.runtime_status.read_bytes() == before
 
 
-def test_short_lived_scripts_share_one_update_lock_and_readable_references(tmp_path):
+def test_short_lived_scripts_share_one_register_lock_and_readable_references(tmp_path):
     scope = tmp_path / "toolang"
     layout = AgentLayout.roaming(tmp_path / "echo.too")
     directory = scope / ".runtime" / "instances"
@@ -320,14 +321,14 @@ def test_short_lived_scripts_share_one_update_lock_and_readable_references(tmp_p
         ) as registration:
             assert registration.path.name.startswith(f"echo@r{layout.source_id}@")
             assert registration.path.name.endswith(f"@script{index}.json")
-    assert tuple(path.name for path in directory.iterdir()) == ("update.lock",)
+    assert tuple(path.name for path in directory.iterdir()) == ("register.lock",)
     from toolang.up.records import read_document
 
     document = read_document(layout.runtime_status)
     assert document is not None and document["instances"] == {}
 
 
-def test_update_guard_keeps_a_new_reference_when_old_cleanup_races(tmp_path):
+def test_register_guard_keeps_a_new_reference_when_old_cleanup_races(tmp_path):
     from concurrent.futures import ThreadPoolExecutor
     from threading import Event
     from toolang.common.files import file_write_lock
@@ -336,7 +337,7 @@ def test_update_guard_keeps_a_new_reference_when_old_cleanup_races(tmp_path):
     layout = AgentLayout.resident(tmp_path, "gus")
     old = RuntimeRegistration(layout, toolang_root=tmp_path, drivers=frozenset())
     old.__enter__()
-    guard = old.path.parent / "update.lock"
+    guard = old.path.parent / "register.lock"
     current = RuntimeRegistration(
         layout, toolang_root=tmp_path, drivers=frozenset(), launch_id="new"
     )

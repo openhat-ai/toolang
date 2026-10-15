@@ -34,7 +34,7 @@ ${TOOLANG_ROOT}/
       gus.json                       # Resident
       lex@v<source-hash>.json         # Visiting
       aid@r<source-hash>.json         # Roaming server
-      update.lock
+      register.lock
   hub/
   .sandbox/
     <agent>/launches/<launch-id>/  # Docker bootstrap materials only
@@ -74,11 +74,14 @@ Each resident agent lives under:
 Visiting agents fetched by `too serve <remote>` use a stable temporary agent
 root derived from the resolved Toolang root and source selector:
 
-- `/tmp/toolang-<agent>-<hash:8>/`
+- `/tmp/toolang-<agent>-<hash:16>/`
 
 Repeated launches of the same source under the same Toolang root reuse this
-agent root; a different Toolang root gets a different visiting root. Temporary
-directory cleanup can remove its state and remembered settings. The cached
+agent root; a different Toolang root gets a different visiting root. Earlier
+eight-character roots are left untouched and are no longer selected. Stop old
+visiting workloads before upgrading; retain old roots for manual history
+migration. Temporary directory cleanup can remove its state and remembered
+settings. The cached
 remote `agent.too` is refetched after one hour. Roaming agents use the source
 file's sibling `.toolang` directory. `too file.too serve` hosts the workload;
 ordinary host script invocation executes directly without a persistent server.
@@ -105,7 +108,7 @@ state, and runtime path from that identity.
 | Placement | Root calculation |
 | --- | --- |
 | `resident` | The explicit Toolang root |
-| `visiting` | `/tmp/toolang-<agent>-<toolang-root-and-source-hash:8>/` |
+| `visiting` | `/tmp/toolang-<agent>-<toolang-root-and-source-hash:16>/` |
 | `roaming` | `<source-directory>/.toolang/` |
 
 All three placements use the same layout below their calculated root:
@@ -136,7 +139,8 @@ Discovery references live under `${TOOLANG_ROOT}/.runtime/instances/`:
 
 The hash is the first 16 hex characters of SHA-256. Visiting uses the same key
 as its agent root: the canonical Toolang root, a NUL separator, and the source
-selector. Its temporary root retains the first eight characters of that hash.
+selector. Its temporary root and discovery reference use that same 16-character
+hash.
 Roaming uses the canonical host absolute `.too` source path. The host saves
 `source_id` with its control bindings so guest mounts cannot change identity.
 Changing ports, sandbox, launch IDs, or source contents does not change this hash.
@@ -149,7 +153,7 @@ script servers.
 
 Each reference contains only its version, absolute authoritative status path,
 and launch ID. `RuntimeRegistration` publishes into one Toolang root and uses
-one shared `instances/update.lock` for publication and conditional removal.
+one shared `instances/register.lock` for publication and conditional removal.
 The guard is released before starting or waiting for a workload. Pure reads
 neither acquire nor create it. For example:
 
@@ -242,7 +246,7 @@ Other locks remain beside their protected objects:
 | `<database-name>.init.lock` | SQLite initialization |
 | `<thread-id>.compact.lock` | Thread compaction across model calls |
 | `status.json.lock` | Transient shared host/guest writer claim for the authoritative record |
-| `.runtime/instances/update.lock` | Discovery publication/removal within one Toolang root |
+| `.runtime/instances/register.lock` | Discovery publication/removal within one Toolang root |
 | `hub/hub.lock` | One Hub process per root for its lifetime |
 
 Thread fork/rewind use SQLite transactions, without `runs.db.threads.lock`.

@@ -22,6 +22,12 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Changed
 
+- The directory-wide native guard over discovery references is renamed from
+  `instances/update.lock` to `instances/register.lock`, still protecting only
+  reference registration, replacement, and conditional removal. Stop all old
+  host and guest processes sharing the Toolang root before upgrading, then
+  restart. Old guards are left untouched and can be removed only offline.
+
 - **Breaking:** the implicit `lab` workspace is now backed by
   `<agent home>/.lab` instead of `<agent home>/lab`; its `lab://` name is
   unchanged, but existing data in the old directory is neither migrated nor
@@ -68,7 +74,7 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   Toolang root, a NUL, and the source selector for visiting, and over the
   canonical host absolute source path for roaming; each record carries
   `version`, the absolute status path, and the launch ID, all references share
-  one `instances/update.lock`, and are read through that record, and legacy
+  one `instances/register.lock`, and are read through that record, and legacy
   registrations are never adopted; a visiting agent is identified per Toolang
   root as well as source, so the same remote source materializes once per root.
   Stop all old host and guest processes sharing the root before upgrading, and
@@ -113,6 +119,14 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Fixed
 
+- Visiting agents under `/tmp/toolang-<agent>-<hash:16>/` now use the complete
+  16-character source hash already used by their discovery references instead of
+  truncating it to eight, while the source key and reference filenames stay
+  unchanged. Because this selects a different root, stop old visiting workloads
+  before upgrading and restart into the new root; old eight-character roots are
+  left untouched for explicit offline history migration, with no automatic move
+  or deletion.
+
 - Runtime inspection skips invalid discovery references, status instance maps,
   and entry shapes while keeping valid peers visible. Non-object references
   also no longer break reference cleanup.
@@ -141,7 +155,7 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 - Repeated short-lived script executions no longer leave one `.json.lock`
   beside every instance discovery reference: references share one
-  `instances/update.lock`, so a directory keeps a single lock instead of one
+  `instances/register.lock`, so a directory keeps a single lock instead of one
   per instance. Orphan locks left by earlier versions are not removed
   automatically, so stop those processes before deleting them.
 
