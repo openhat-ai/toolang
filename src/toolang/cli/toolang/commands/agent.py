@@ -249,7 +249,7 @@ def _local_resources(
     source: Path | None = None,
     selector: str | None = None,
 ) -> list[tuple[str, str]]:
-    progress = make_cli_progress()
+    progress = make_cli_progress(preparation=True)
     try:
         with progress:
             if source is not None:
@@ -269,6 +269,7 @@ def _local_resources(
                     progress=progress.sink,
                 ),
             )
+            progress.complete_preparation()
             watcher = (
                 SetupWatcher(layout, model_catalog=model_catalog)
                 if model_catalog is not None

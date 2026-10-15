@@ -63,6 +63,23 @@ summary or timer reset. Fetch/parse failure starts no dependencies or server.
 Preserve remote-source cache freshness policy. Cache hits in either phase are
 silent; show and summarize only work performed.
 
+## Shared CLI Presentation
+
+Cap inspection, publication after saved cap changes, offline `info`, and local
+scripts use the same preparation presenter. Inspection still resolves caps
+without preparing executable State. Remote-cap validation shows ref rows but
+does not produce a preparation summary unless State is subsequently published.
+
+The CLI owner explicitly completes its preparation display before command
+records, Setup inspection, or execution progress. Context closure only releases
+the display. Visiting routes that only acquire source complete before command
+dispatch; routes whose commands prepare dependencies share that command's
+session and completion boundary. Keep this ownership in the command registry.
+
+Completing a display is a presenter operation, not a synthetic State event.
+Core-owned State completion events may finish the same display. Setup and
+runtime events retain their operational presentation.
+
 ## Slots And Output
 
 - Active TTY rows contain only `<ref> fetching`, `<ref> updating`, or another

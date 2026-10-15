@@ -93,7 +93,7 @@ def test_source_change_retry_remains_visible_without_double_counting_caps(
     tmp_path, monkeypatch
 ):
     from io import StringIO
-    from toolang.cli.common.progress import StartupProgress
+    from toolang.cli.common.progress import PreparationProgress
     from toolang.common.layout import AgentLayout
     from toolang.state.prepare import prepare_agent_state
 
@@ -112,7 +112,7 @@ def test_source_change_retry_remains_visible_without_double_counting_caps(
 
     monkeypatch.setattr(caps, "_fetch_github_file", fetch)
     stream = StringIO()
-    with StartupProgress(stream=stream) as progress:
+    with PreparationProgress(stream=stream) as progress:
         prepare_agent_state(layout, progress=progress)
         progress(
             ProgressEvent(

@@ -223,6 +223,14 @@ as work finishes, then one dim summary replaces the region. No spinner or
 running counter is shown. Plain output uses operation transitions and a summary
 without terminal controls; fully cached preparation produces no summary.
 
+Cap inspection, publication after saved edits, offline `info`, and local script
+execution use this same presentation. Preparation completes before command
+records, Setup inspection, or run progress are displayed. Cap inspection retains
+its existing boundary: it resolves capabilities without preparing executable State.
+Remote-cap additions also show ref rows during validation; validation alone
+does not produce a preparation summary. After an agent-scoped change is saved,
+its State publication owns that summary.
+
 State passes unchanged source text to `Program.from_source`; all syntax belongs
 to `toolang.lang` and its tree-sitter grammar. Legacy `agent NAME` and `agent:`
 headers are rejected. Missing optional source is represented by empty text.

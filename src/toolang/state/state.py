@@ -1061,6 +1061,8 @@ def resolve_remote_ref(
         label=f"Resolving {kind}...",
         status="running",
         detail=text,
+        subject="cap",
+        ref=text,
     )
     try:
         if "://" in text:
@@ -1097,6 +1099,9 @@ def resolve_remote_ref(
             label=f"Failed to resolve {kind}",
             status="failed",
             detail=str(exc),
+            subject="cap",
+            ref=text,
+            complete=True,
         )
         raise
     emit_progress(
@@ -1107,6 +1112,9 @@ def resolve_remote_ref(
         label=f"Resolved {kind}",
         status="ok",
         detail=canonical,
+        subject="cap",
+        ref=text,
+        complete=True,
     )
     return canonical
 

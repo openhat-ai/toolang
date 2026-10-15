@@ -697,7 +697,7 @@ def _run(
     from ...common.agent_server import acquire_agent_server
     from ...common.progress import make_cli_progress
 
-    progress = make_cli_progress(enabled=not quiet)
+    progress = make_cli_progress(enabled=not quiet, preparation=True)
     layout: AgentLayout | None = None
     store: RunStore | None = None
     run_id: str | None = None
@@ -1251,6 +1251,8 @@ async def _execute(
         workspace_additions=state.workspace_additions,
     )
     sink = progress.sink if progress is not None else None
+    if progress is not None:
+        progress.complete_preparation()
     setup = await setup_watcher.refresh(progress=sink)
     state = await state_watcher.refresh(progress=sink)
     models = setup.models_effective(progress=sink)

@@ -8,6 +8,12 @@ presentation and terminal-handoff sections of
 change the approved `ProgressEvent` contract or the Run grammar. Pull request
 #375 was superseded by the split implementation of this definition.
 
+The preparation presentation below is superseded by
+[Agent Startup Preparation](agent-startup-state-preparation.md), including its
+shared CLI scope. The current contract is documented in
+[Prepare, Publish, and Load](../agent-state.md#prepare-publish-and-load).
+Setup and runtime presentation retain this plan's operational grammar.
+
 ## Verified Current Behavior
 
 - Run presentation has a terminal-independent projector, exact row and marker

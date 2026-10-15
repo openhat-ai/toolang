@@ -576,12 +576,12 @@ def _finish_startup(progress: CliProgress) -> None:
 
 
 def test_startup_slots_reuse_rows_then_collapse_to_one_dim_summary(monkeypatch) -> None:
-    from toolang.cli.common.progress import StartupProgress
+    from toolang.cli.common.progress import PreparationProgress
 
     monkeypatch.setenv("TERM", "xterm-256color")
     stream = _TTYBuffer()
     now = [0.0]
-    with StartupProgress(
+    with PreparationProgress(
         stream=stream, _clock=lambda: now[0], _reveal_seconds=3600
     ) as progress:
         progress(_startup_event("one"))
@@ -621,11 +621,11 @@ def test_startup_slots_reuse_rows_then_collapse_to_one_dim_summary(monkeypatch) 
 
 @pytest.mark.parametrize("terminal", [False, True])
 def test_cached_startup_is_silent_even_after_reveal_threshold(terminal: bool) -> None:
-    from toolang.cli.common.progress import StartupProgress
+    from toolang.cli.common.progress import PreparationProgress
 
     stream = _TTYBuffer() if terminal else StringIO()
     now = [0.0]
-    with StartupProgress(stream=stream, _clock=lambda: now[0]) as progress:
+    with PreparationProgress(stream=stream, _clock=lambda: now[0]) as progress:
         progress(_startup_event("cached", cached=True))
         progress(
             _startup_event(
@@ -646,10 +646,10 @@ def test_cached_startup_is_silent_even_after_reveal_threshold(terminal: bool) ->
 def test_startup_distinguishes_scopes_omits_cache_and_keeps_plain_output_bounded() -> (
     None
 ):
-    from toolang.cli.common.progress import StartupProgress
+    from toolang.cli.common.progress import PreparationProgress
 
     stream = StringIO()
-    with StartupProgress(stream=stream) as progress:
+    with PreparationProgress(stream=stream) as progress:
         progress(_startup_event("same", scope="root"))
         progress(_startup_event("same", scope="home"))
         progress(_startup_event("cached", cached=True))
@@ -679,10 +679,10 @@ def test_startup_distinguishes_scopes_omits_cache_and_keeps_plain_output_bounded
 
 
 def test_startup_failure_and_interruption_clear_slots_without_success() -> None:
-    from toolang.cli.common.progress import StartupProgress
+    from toolang.cli.common.progress import PreparationProgress
 
     stream = _TTYBuffer()
-    with StartupProgress(stream=stream, _reveal_seconds=3600) as progress:
+    with PreparationProgress(stream=stream, _reveal_seconds=3600) as progress:
         progress(_startup_event("one"))
         progress(_startup_event("one", status="failed", complete=True))
         _finish_startup(progress)
@@ -691,7 +691,7 @@ def test_startup_failure_and_interruption_clear_slots_without_success() -> None:
     assert "Prepared" not in stream.getvalue()
     stream = _TTYBuffer()
     with pytest.raises(KeyboardInterrupt):
-        with StartupProgress(stream=stream, _reveal_seconds=3600) as progress:
+        with PreparationProgress(stream=stream, _reveal_seconds=3600) as progress:
             progress(_startup_event("one"))
             raise KeyboardInterrupt
     progress(_startup_event("late"))
@@ -728,12 +728,14 @@ def test_startup_narrow_terminal_preserves_action_and_short_terminal_limits_rows
     monkeypatch,
 ) -> None:
     import os
-    from toolang.cli.common.progress import StartupProgress
+    from toolang.cli.common.progress import PreparationProgress
 
     stream = _TTYBuffer()
     monkeypatch.setattr(stream, "fileno", lambda: 1)
     monkeypatch.setattr(os, "get_terminal_size", lambda *_: os.terminal_size((24, 2)))
-    with StartupProgress(stream=stream, max_width=24, _reveal_seconds=3600) as progress:
+    with PreparationProgress(
+        stream=stream, max_width=24, _reveal_seconds=3600
+    ) as progress:
         progress(_startup_event("one"))
         progress(_startup_event("two"))
         text = progress._live_text().plain
@@ -761,10 +763,10 @@ def test_nested_launch_does_not_reuse_an_ended_startup_session(ended):
 
 
 def test_suspended_startup_defers_worker_output_and_summary():
-    from toolang.cli.common.progress import StartupProgress
+    from toolang.cli.common.progress import PreparationProgress
 
     stream = StringIO()
-    with StartupProgress(stream=stream) as progress:
+    with PreparationProgress(stream=stream) as progress:
         with progress.suspended():
             progress(_startup_event("one"))
             assert stream.getvalue() == ""
@@ -778,10 +780,10 @@ def test_suspended_startup_defers_worker_output_and_summary():
 
 def test_rejected_cap_error_survives_a_successful_state_publication():
     from dataclasses import replace
-    from toolang.cli.common.progress import StartupProgress
+    from toolang.cli.common.progress import PreparationProgress
 
     stream = StringIO()
-    with StartupProgress(stream=stream) as progress:
+    with PreparationProgress(stream=stream) as progress:
         progress(_startup_event("broken"))
         progress(
             replace(
@@ -801,10 +803,10 @@ def test_rejected_cap_error_survives_a_successful_state_publication():
 @pytest.mark.parametrize("terminal", [False, True])
 def test_cap_failure_keeps_parallel_slots_and_replacements_visible(terminal):
     from dataclasses import replace
-    from toolang.cli.common.progress import StartupProgress
+    from toolang.cli.common.progress import PreparationProgress
 
     stream = _TTYBuffer() if terminal else StringIO()
-    with StartupProgress(stream=stream, _reveal_seconds=3600) as progress:
+    with PreparationProgress(stream=stream, _reveal_seconds=3600) as progress:
         for item_id in ("one", "broken", "three", "four"):
             progress(_startup_event(item_id))
         progress(
@@ -853,10 +855,10 @@ def test_cap_failure_keeps_parallel_slots_and_replacements_visible(terminal):
 
 def test_failed_state_clears_parallel_slots_after_a_cap_failure():
     from dataclasses import replace
-    from toolang.cli.common.progress import StartupProgress
+    from toolang.cli.common.progress import PreparationProgress
 
     stream = _TTYBuffer()
-    with StartupProgress(stream=stream, _reveal_seconds=3600) as progress:
+    with PreparationProgress(stream=stream, _reveal_seconds=3600) as progress:
         progress(_startup_event("broken"))
         progress(_startup_event("still-running"))
         progress(_startup_event("broken", status="failed"))
@@ -873,3 +875,70 @@ def test_failed_state_clears_parallel_slots_after_a_cap_failure():
         assert progress._live_display is None
         assert progress._slot_timer is None
     assert "Prepared" not in stream.getvalue()
+
+
+def test_enabled_preparation_does_not_reuse_a_disabled_outer_session():
+    stream = StringIO()
+    with make_cli_progress(enabled=False, preparation=True) as outer:
+        with make_cli_progress(stream=stream, preparation=True) as inner:
+            assert inner is not outer
+            inner(_startup_event("one"))
+            inner(
+                _startup_event("one", stage="materialize", status="ok", complete=True)
+            )
+            _finish_startup(inner)
+    assert stream.getvalue().count("Prepared 1 cap in ") == 1
+
+
+def test_closing_reference_validation_does_not_report_prepared_state():
+    from toolang.cli.common.progress import PreparationProgress
+
+    stream = StringIO()
+    with PreparationProgress(stream=stream) as progress:
+        progress(_startup_event("one", stage="resolve"))
+        progress(_startup_event("one", stage="resolve", status="ok", complete=True))
+    assert stream.getvalue() == "github://example/caps/one resolving\n"
+
+
+def test_completing_preparation_on_generic_progress_does_not_invent_state_work():
+    stream = StringIO()
+    with CliProgress(stream=stream) as progress:
+        progress.complete_preparation()
+    assert stream.getvalue() == ""
+
+
+@pytest.mark.parametrize("failed", [False, True])
+def test_cli_completion_matches_core_completion_and_is_idempotent(failed):
+    from toolang.cli.common.progress import PreparationProgress
+
+    outputs = []
+    for complete in (_finish_startup, lambda progress: progress.complete_preparation()):
+        stream = StringIO()
+        with PreparationProgress(stream=stream, _clock=lambda: 0.0) as progress:
+            progress(_startup_event("one"))
+            progress(
+                _startup_event(
+                    "one",
+                    stage="materialize",
+                    status="failed" if failed else "ok",
+                    complete=True,
+                )
+            )
+            complete(progress)
+            complete(progress)
+        outputs.append(stream.getvalue())
+    assert outputs[0] == outputs[1]
+    assert outputs[0].count("Prepared 1 cap in ") == (not failed)
+
+
+def test_cli_completion_keeps_presentation_errors_advisory(monkeypatch):
+    from toolang.cli.common.progress import PreparationProgress
+
+    with PreparationProgress(stream=StringIO()) as progress:
+        progress(_startup_event("one"))
+
+        def broken_output(*args, **kwargs):
+            raise RuntimeError("Output unavailable")
+
+        monkeypatch.setattr(progress._console, "print", broken_output)
+        progress.complete_preparation()

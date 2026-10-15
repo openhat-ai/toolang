@@ -27,8 +27,8 @@ from .execution_progress.formatting import one_line, wrap_display, truncate
 _LIVE_REVEAL_SECONDS = 0.15
 _ELAPSED_REVEAL_SECONDS = 1.0
 _MAX_DETAIL = 80
-_STARTUP_PROGRESS: ContextVar[StartupProgress | None] = ContextVar(
-    "startup_progress", default=None
+_PREPARATION_PROGRESS: ContextVar[PreparationProgress | None] = ContextVar(
+    "preparation_progress", default=None
 )
 
 
@@ -150,6 +150,9 @@ class CliProgress:
                 return
             self._closed = True
             self._clear_live()
+
+    def complete_preparation(self) -> None:
+        """Finish a preparation display, when supported by this presenter."""
 
     def failure_message(
         self,
@@ -438,8 +441,12 @@ class CliProgress:
         return max(1, min(terminal_width, self._max_width))
 
 
-class StartupProgress(CliProgress):
-    """Show uncached preparation in reusable rows, then one dim summary."""
+class PreparationProgress(CliProgress):
+    """Show uncached preparation in reusable rows, then one dim summary.
+
+    The CLI owner completes the phase explicitly or forwards a State completion
+    event. Closing a scope only releases its display; it never implies success.
+    """
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
@@ -450,15 +457,15 @@ class StartupProgress(CliProgress):
         self._agent_work = False
         self._preparation_done = False
         self._depth = 0
-        self._token: Token[StartupProgress | None] | None = None
+        self._token: Token[PreparationProgress | None] | None = None
         self._last_slot_render = float("-inf")
         self._slot_timer: Timer | None = None
         self._suspended = 0
         self._deferred_output: Text | None = None
 
-    def __enter__(self) -> StartupProgress:
+    def __enter__(self) -> PreparationProgress:
         if self._depth == 0:
-            self._token = _STARTUP_PROGRESS.set(self)
+            self._token = _PREPARATION_PROGRESS.set(self)
         self._depth += 1
         return self
 
@@ -466,7 +473,7 @@ class StartupProgress(CliProgress):
         self._depth -= 1
         if self._depth == 0:
             if self._token is not None:
-                _STARTUP_PROGRESS.reset(self._token)
+                _PREPARATION_PROGRESS.reset(self._token)
                 self._token = None
             super().__exit__(exc_type, exc, traceback)
 
@@ -504,18 +511,10 @@ class StartupProgress(CliProgress):
                 return
             if self._failure_event is not None:
                 if event.subject == "state" and event.complete:
-                    self._preparation_done = True
-                    self._slots.clear()
-                    self._cancel_slot_render()
-                    self._clear_live()
                     if event.status == "ok":
-                        self._print_or_defer(
-                            Text(
-                                self.failure_message(
-                                    RuntimeError("State contains rejected sources")
-                                )
-                            )
-                        )
+                        self.complete_preparation()
+                    else:
+                        self._end_preparation()
                     return
                 if self._failure_event.subject != "cap":
                     return
@@ -536,7 +535,7 @@ class StartupProgress(CliProgress):
             if event.cached or event.status == "skipped":
                 return
             if event.subject == "state" and event.complete:
-                self._finish_preparation()
+                self.complete_preparation()
                 return
             if event.subject is None:
                 return
@@ -674,12 +673,36 @@ class StartupProgress(CliProgress):
         if not any(self._slots):
             super()._schedule_refresh()
 
-    def _finish_preparation(self) -> None:
+    def complete_preparation(self) -> None:
+        """Finish the CLI-owned phase without synthesizing domain progress."""
+
+        try:
+            with self._lock:
+                if self._closed or self._preparation_done:
+                    return
+                self._end_preparation()
+                if self._failure_event is not None:
+                    self._print_or_defer(
+                        Text(
+                            self.failure_message(
+                                RuntimeError("State contains rejected sources")
+                            )
+                        )
+                    )
+                else:
+                    self._print_preparation_summary()
+        except Exception:
+            # Presentation is advisory, just like events sent through the sink.
+            return
+
+    def _end_preparation(self) -> None:
         self._preparation_done = True
         self._slots.clear()
         self._cancel_slot_render()
         self._cancel_reveal()
         self._clear_live()
+
+    def _print_preparation_summary(self) -> None:
         if self._started is None or not self._enabled:
             return
         parts = []
@@ -720,13 +743,14 @@ def make_cli_progress(
     if (
         preparation
         and enabled
-        and (current := _STARTUP_PROGRESS.get()) is not None
+        and (current := _PREPARATION_PROGRESS.get()) is not None
+        and current._enabled
         and not current._closed
         and not current._preparation_done
         and current._failure_event is None
     ):
         return current
-    presenter = StartupProgress if preparation else CliProgress
+    presenter = PreparationProgress if preparation else CliProgress
     return presenter(
         stream=stream,
         enabled=enabled,

@@ -119,6 +119,12 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Fixed
 
+- Cap inspection, publication after saved edits, offline `info`, and local
+  scripts now use the same parallel preparation rows and dim summary as managed
+  startup. Summaries name the agent or affected cap count, cached work stays
+  silent, and preparation completes before command records, Setup inspection,
+  or run progress are displayed.
+
 - Existing reference cleanup creates a missing `register.lock`, including when
   only the old `update.lock` remains, so stopped references are removed; pure
   reads and cleanup of an absent reference create no guard. (#808)

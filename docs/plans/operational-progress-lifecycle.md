@@ -12,6 +12,11 @@ authoritative for Run presentation.
 defines the exact operational row grammar and terminal handoffs for this
 contract.
 
+[Agent Startup Preparation](agent-startup-state-preparation.md) extends the
+preparation stages and event metadata and supersedes preparation presentation,
+including shared CLI consumers. Setup and runtime lifecycle contracts below
+remain unchanged.
+
 ## Current Problem
 
 - `ProgressEvent` uses untyped dotted phases. Agent, cap, state, startup, and
