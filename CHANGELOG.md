@@ -152,6 +152,12 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Fixed
 
+- Concurrent starts of the same roaming script no longer mistake a link
+  published by the other caller for an authored file: the roaming program
+  link's file type comes from one `lstat` observation, while atomic link
+  creation still rejects a different source owning the normalized home.
+  ([#812](https://github.com/openhat-ai/toolang/pull/812))
+
 - Automatic agent port selection and last-port reuse skip unsupported legacy
   agent directories such as `old.name`, so an invalid peer no longer blocks
   a valid agent from selecting or reusing its port, and valid peers'

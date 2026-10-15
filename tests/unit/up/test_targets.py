@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from errno import ENOENT
 import os
 from pathlib import Path
 import subprocess
@@ -328,6 +329,38 @@ def test_concurrent_roaming_materialization_accepts_the_same_program_link(
         layouts = list(pool.map(materialize_roaming_program, [source, source]))
     assert layouts[0] == layouts[1]
     assert layouts[0].program.resolve() == source
+
+
+@pytest.mark.parametrize("same_source", [True, False])
+def test_roaming_link_published_after_missing_stat_is_checked_at_claim(
+    tmp_path, monkeypatch, same_source
+):
+    source = tmp_path / "aid.too"
+    source.write_text("flow main():\n  pass\n")
+    competitor = source if same_source else tmp_path / "aid-.too"
+    competitor.write_text(source.read_text())
+    layout = AgentLayout.roaming(source)
+    lstat = Path.lstat
+    published = False
+
+    def race(path, *args, **kwargs):
+        nonlocal published
+        if path == layout.program and not published:
+            published = True
+            path.parent.mkdir(parents=True)
+            path.symlink_to(competitor)
+            # The observation was missing just before another caller published.
+            raise FileNotFoundError(ENOENT, "No such file or directory", str(path))
+        return lstat(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "lstat", race)
+    if same_source:
+        assert agent_sources.materialize_roaming_program(source) == layout
+    else:
+        with pytest.raises(FileExistsError, match="already belongs"):
+            agent_sources.materialize_roaming_program(source)
+    assert published
+    assert layout.program.resolve() == competitor
 
 
 @pytest.mark.parametrize("prefix", ["gh:", "github:", "github://"])

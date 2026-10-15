@@ -7,6 +7,7 @@ from functools import lru_cache
 import json
 import os
 from pathlib import Path
+from stat import S_ISLNK
 import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, unquote, urlsplit
@@ -194,12 +195,17 @@ def roaming_layout(source_path: Path) -> AgentLayout:
     """Resolve a roaming home without reading another source's state or writing."""
     source = source_path.expanduser().resolve()
     layout = AgentLayout.roaming(source)
-    if layout.program.is_symlink():
-        if layout.program.resolve() != source:
+    try:
+        mode = layout.program.lstat().st_mode
+    except FileNotFoundError:
+        return layout
+    if S_ISLNK(mode):
+        owner = layout.program.resolve()
+        if owner != source:
             raise FileExistsError(
-                f"agent home {layout.home} already belongs to {layout.program.resolve()}"
+                f"agent home {layout.home} already belongs to {owner}"
             )
-    elif layout.program.exists():
+    else:
         raise FileExistsError(f"cannot replace authored file: {layout.program}")
     return layout
 
