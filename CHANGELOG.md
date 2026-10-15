@@ -22,6 +22,12 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Changed
 
+- **Breaking:** the implicit `lab` workspace is now backed by
+  `<agent home>/.lab` instead of `<agent home>/lab`; its `lab://` name is
+  unchanged, but existing data in the old directory is neither migrated nor
+  used. Move any data you still need into `.lab` and update absolute paths that
+  point to the old directory.
+
 - A temporary execution's runtime metadata is retired once its workload has
   stopped and its resources are released, so a finished temporary run leaves no
   leftover entry in its agent's runtime record while its execution history stays

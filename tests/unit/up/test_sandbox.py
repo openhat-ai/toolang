@@ -1161,7 +1161,7 @@ def test_guest_launch_snapshots_workspace_mounts_and_unavailable_roots(
         assert isinstance(prepare, tuple)
         request = cast(SandboxRequest, prepare[2])
         hosted = Path("/runtime/agents/alice/.workspaces/repo")
-        lab_root = spec.serve.layout.home / "lab"
+        lab_root = spec.serve.layout.home / ".lab"
         hosted_lab = Path("/runtime/agents/alice/.workspaces/lab")
         assert SandboxMount(repo, hosted) in request.mounts
         assert SandboxMount(lab_root.resolve(), hosted_lab) in request.mounts

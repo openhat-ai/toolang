@@ -17,7 +17,11 @@ from toolang.base.protocols.model import ModelAdapter, ModelCatalog
 from toolang.base.protocols.tool import Toolset
 from toolang.base.types.model import Model, ModelOverride, Provider
 from toolang.base.types.policy import RunDefaults, RunLimits
-from toolang.common.layout import AgentLayout, IMPLICIT_WORKSPACE_NAME
+from toolang.common.layout import (
+    AgentLayout,
+    IMPLICIT_WORKSPACE_DIRECTORY,
+    IMPLICIT_WORKSPACE_NAME,
+)
 from toolang.common.progress import ProgressSink
 from .progress import setup_progress
 from .teaming import TeamingSetup
@@ -264,7 +268,7 @@ class AgentSetup:
 
     def workspace_grants(self, grants: Mapping[str, str]) -> dict[str, str]:
         """Add the implicit lab grant before configured workspaces; first name wins."""
-        scratch_source = str(self.layout.home / IMPLICIT_WORKSPACE_NAME)
+        scratch_source = str(self.layout.home / IMPLICIT_WORKSPACE_DIRECTORY)
         if (
             self.environment is not None
             and self.environment.workspace_location == "guest"

@@ -10,6 +10,7 @@ from typing import Literal
 AgentPlacement = Literal["resident", "visiting", "roaming"]
 
 IMPLICIT_WORKSPACE_NAME = "lab"
+IMPLICIT_WORKSPACE_DIRECTORY = ".lab"
 
 
 @dataclass(frozen=True, slots=True)
@@ -218,7 +219,7 @@ def ensure_scratch_workspace(home: Path) -> Path:
     resolved_home = home.expanduser().resolve()
     if not resolved_home.is_dir():
         raise FileNotFoundError(f"agent home is not available: {resolved_home}")
-    root = resolved_home / IMPLICIT_WORKSPACE_NAME
+    root = resolved_home / IMPLICIT_WORKSPACE_DIRECTORY
     if root.is_symlink():
         raise ValueError(f"implicit lab workspace must not be a symlink: {root}")
     root.mkdir(exist_ok=True)

@@ -20,7 +20,7 @@ the current workdir, not a separate concept.
   with `lab`, then preserves workspace configuration insertion order. The last listed name
   is the runtime default; do not explain that selection rule in the protocol. Merge names
   with first-wins semantics, so a configured `lab` entry is ignored.
-- `lab` is an implicit workspace rooted at `<agent home>/lab`, not stored in config. The
+- `lab` is an implicit workspace rooted at `<agent home>/.lab`, not stored in config. The
   runtime creates and mounts it. Runs fail preparation if `lab` cannot be made usable.
 - A Chat session's workdir is memory-only. At session creation, seed it from the selected
   thread's latest root Run final workdir, or from the runtime default if there is no root
@@ -47,13 +47,13 @@ workspace list on every Model Call alongside workdir.
 ### Workspace config, State, Setup, and mounts
 
 **Current:** Workspace grants and hosted workspace mounts include the implicit `lab` root at
-`<agent home>/lab` before configured workspaces. Configured grants retain their configuration
+`<agent home>/.lab` before configured workspaces. Configured grants retain their configuration
 order; a configured `lab` entry cannot replace the implicit grant.
 
 **Modify:** Preserve config insertion order; produce one ordered usable-name list with
 implicit `lab` first and configured workspaces after it. Use that list for the workspace
 declaration and runtime default; ignore any later configured entry also named `lab`. Add
-`<agent home>/lab` as an implicit grant without writing config, create it during agent-home
+`<agent home>/.lab` as an implicit grant without writing config, create it during agent-home
 preparation, and include it in host/guest root mapping and sandbox mount capture. Fail Run
 preparation if it cannot be created or mounted.
 

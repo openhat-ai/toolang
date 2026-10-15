@@ -80,7 +80,7 @@ workspace.
 The runtime sends `<toolang:workspace list="lab,repo1"/>` and the current
 `<toolang:workdir path="repo1://src"/>` on every Model Call. The list contains
 currently usable workspaces, with implicit `lab` first and configured workspaces
-in configuration order. `lab` is rooted at `<agent home>/lab` and is not a config
+in configuration order. `lab` is rooted at `<agent home>/.lab` and is not a config
 grant. The last listed name is the runtime default.
 
 ## Shell

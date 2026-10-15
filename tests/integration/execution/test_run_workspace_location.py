@@ -314,8 +314,8 @@ def test_lab_workspace_is_implicit_and_old_scratch_is_untouched(tmp_path):
                 )
             )
             assert run.status == "succeeded", run.error
-            assert (home / "lab/marker").read_text() == "scratch"
-            assert not (home / "lab/existing.txt").exists()
+            assert (home / ".lab/marker").read_text() == "scratch"
+            assert not (home / ".lab/existing.txt").exists()
             assert not (configured_lab / "marker").exists()
             assert (old_scratch / "existing.txt").read_text() == "leave me alone"
             assert not (old_scratch / "marker").exists()
@@ -363,7 +363,7 @@ def test_explicit_workspace_named_tmp_remains_configurable(tmp_path):
             )
             assert run.status == "succeeded", run.error
             assert (configured / "marker").read_text() == "configured"
-            assert (home / "lab").is_dir()
+            assert (home / ".lab").is_dir()
             assert _workspace_lists(harness.adapter.invocations[0].call) == ["lab,tmp"]
             assert harness.store.current_cwd(run.id) == "tmp://"
 
@@ -1122,7 +1122,7 @@ def test_guest_tool_paths_use_captured_mount_not_state_host_source(tmp_path):
     host.mkdir()
     guest.mkdir()
     home = _configured_home(tmp_path, {"repo": host})
-    lab_root = home / "lab"
+    lab_root = home / ".lab"
     lab_root.mkdir()
     guest_lab = guest / "lab-workspace"
     guest_lab.mkdir()
