@@ -318,6 +318,8 @@ def test_foreground_serve_is_one_process_and_kill_preserves_restart_settings(
     layout.home.mkdir(parents=True)
     layout.program.write_text("# Agent alice\n")
     layout.config.write_text("[teaming]\nenabled = false\n")
+    # An unsupported legacy peer must not block automatic port reuse on restart.
+    (layout.root / "agents" / "old.name").mkdir()
     port = _available_port()
     base = (sys.executable, "-m", "toolang.cli.toolang", "--root", str(layout.root))
     with (tmp_path / "serve.log").open("w+") as log:

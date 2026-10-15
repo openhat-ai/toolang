@@ -32,6 +32,9 @@ def test_authored_write_returns_published_content(tmp_path, description, scope):
             assert response.status_code == 200, response.text
             assert response.json()["content"] == content
             assert response.json()["scope"] == scope
+            assert response.json()["cap"] == "psyche/note"
+            assert response.json()["source"] == f"{scope}://psyches/note"
+            assert "ref" not in response.json()
             assert core.state.current().revision != before.revision
             detail = client.get("/api/v1/psyches/note")
             assert detail.json()["content"] == content
@@ -112,7 +115,7 @@ def test_configured_write_materializes_content_and_delete_publishes(
         ) as client:
             response = client.put(
                 "/api/v1/prompts/rewrite/configured",
-                json={"scope": scope, "ref": "acme/rewrite"},
+                json={"scope": scope, "ref": "gh:acme/rewrite"},
             )
             assert response.status_code == 200, response.text
             assert response.json()["content"] == "Remote body.\n"

@@ -1,7 +1,7 @@
-# Program Syntax
+# Mod Syntax
 
-This document defines the source-level program model for `.too` files. Flow
-statements are specified in [flow-syntax.md](./flow-syntax.md), and content
+A Mod is a `.too` module; its parsed representation is `Program`. This document
+defines its source syntax. Flow statements are specified in [flow-syntax.md](./flow-syntax.md), and content
 parsing is specified in [input-syntax.md](./input-syntax.md). Follow the
 [authoring conventions](./toolang-authoring-conventions.md) for source style,
 type annotations, and documentation comments.
@@ -136,7 +136,13 @@ and each module comment's authored spelling.
 
 ## External Caps
 
-`with` adds one external cap reference to the authored program:
+`with KIND SOURCE-REF` adds external Cap content to the authored Mod. Kind is
+separate from the Source Ref; selection after merging uses a Cap Ref such as
+`skill/fund`. Sources support explicit `gh:`/`github:` refs and complete HTTP(S)
+URLs; bare remote refs and OpenHat prefixes are unsupported. See
+[Source Refs](caps.md#source-refs).
+
+For example:
 
 ```too
 with skill https://github.com/coinbase/agentic-wallet-skills/tree/main/skills/fund

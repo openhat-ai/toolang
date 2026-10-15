@@ -29,7 +29,7 @@ N          non-negative count or selection size
 P          positive concurrency limit
 VALUE_STMT a result-producing statement (excludes repeat and exec)
 RUNNABLE   named agic or flow
-AGENT      agent selector
+AGENT      agent Target
 MAPPER     per-input runnable returning one complete result
 REDUCER    per-item runnable updating an accumulator
 FILTER     per-item runnable returning Boolean

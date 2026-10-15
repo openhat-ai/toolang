@@ -18,9 +18,9 @@ effective resources. Column order is fixed in both views.
 | Models | `ref`: `provider/id` | `REF`, `CONTEXT`, `MAX_OUTPUT`, `PRICE`, `INPUT`, `OUTPUT`, `FEATURES`, `TAGS` |
 | Providers | `id` (external TQ only) | `ID`, `MODELS`, `ADAPTER`, `API`, `ENV` |
 | Tools | `ref`: `toolset/name` | `REF`, `DESCRIPTION`, `TAGS` |
-| Caps | `ref`: `kind/name` | `REF`, `DESCRIPTION`, `LOCATION`, `TAGS` |
+| Caps | `cap`: `kind/name` | `CAP`, `DESCRIPTION`, `LOCATION`, `TAGS` |
 
-`REF` is at most 40 display cells wide; longer refs wrap, preferably after `/`,
+`REF` and `CAP` are at most 40 display cells wide; longer refs wrap, preferably after `/`,
 without losing characters. Arrays display comma-separated values; missing values
 and empty arrays display `-`. Locations remain complete for copying.
 Model REF continuation lines are right-aligned; other fields start on the second
@@ -75,16 +75,20 @@ Tools and caps use their records directly:
 | Record | Fields |
 | --- | --- |
 | Tool | `ref`, `toolset`, `name`, `description`, `parameters`, `tags` |
-| Cap | `ref`, `name`, `description`, `location`, `tags` |
+| Cap | `cap`, `source`, `name`, `description`, `location`, `tags` |
 
 Tool `parameters` lists parameter names. Package identity belongs to plugin
 inventories, not tool records. Cap `location` points to actual content: an
 absolute root-resolved authored file (a skill's `SKILL.md`), inline `file:line`,
-or a configured/referenced GitHub HTTPS blob/tree URL. Only inline locations
-include a line. Source refs remain internal for identity/deduplication.
+or a configured/referenced HTTP(S) URL (a blob/tree URL for GitHub). Only inline
+locations include a line. `source` exposes the resolved, canonical Source Ref;
+it differs from the Cap
+Ref in `cap` and the human-facing `location`.
 Cap kinds are `psyche`, `skill`, `service`, and `prompt`; combined and kind-specific
-lists require the full identity pattern. HTTP and Chat inspection keep their
-existing response fields and envelopes; their queries match these CLI records.
+lists require the full identity pattern. HTTP Cap summaries/details also expose `cap` and `source`; query matching uses
+these CLI records. External TQ consumers must switch their identity key from
+`ref` to `cap`; API Cap response `ref` becomes `source`. Bare Cap Ref queries
+retain their meaning.
 
 ## Native TQ semantics
 
@@ -103,16 +107,19 @@ registry, or date conversion.
 Missing fields and operator/type compatibility follow TQ, so unknown fields
 normally produce no matches rather than setup validation errors.
 
-Every built-in consumer parses and validates with `{"key": "ref"}`, without a
-filter list. TQ validation rejects predicates on the key: select refs through
-identity syntax. Its optional CLI currently omits this validation; external
-parity therefore applies to validated expressions.
+Built-in model and tool consumers validate with `{"key": "ref"}`; Cap consumers
+use `{"key": "cap"}`, without a filter list. TQ validation rejects predicates on
+the identity key: select `skill/reviewer` directly, rather than
+`*[cap="skill/reviewer"]`. Other fields remain filters, for example
+`skill/*[source="https://example.com/reviewer"]`. The optional TQ CLI currently
+omits this validation; external parity therefore applies to validated expressions.
 
 With the optional `tq-json[cli]` extra:
 
 ```sh
 too models --json | tq -r -k ref '*[tags has all (ready,local)]'
 too providers --all --json | tq -k id '*[_toolang.ready_count=0]'
+too caps --json | tq -k cap 'skill/*'
 ```
 
 TQ CLI emits individual objects. `-r` preserves model query branch priority.

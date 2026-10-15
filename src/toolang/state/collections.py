@@ -26,7 +26,6 @@ from .types import EntryKind
 class CapView:
     record: StateCap
     data: dict[str, object]
-    source_ref: str
 
     @property
     def kind(self) -> EntryKind:
@@ -37,8 +36,12 @@ class CapView:
         return self.record.name
 
     @property
-    def ref(self) -> str:
-        return str(self.data["ref"])
+    def cap(self) -> str:
+        return str(self.data["cap"])
+
+    @property
+    def source_ref(self) -> str:
+        return str(self.data["source"])
 
 
 def cap_view(
@@ -48,7 +51,8 @@ def cap_view(
     return CapView(
         entry,
         {
-            "ref": f"{entry.kind}/{entry.name}",
+            "cap": entry.effective_ref,
+            "source": entry_ref(entry, agent_name=agent_name),
             "name": entry.name,
             "description": description if isinstance(description, str) else None,
             "location": entry_source(entry, agent_name=agent_name, root=root),
@@ -59,7 +63,6 @@ def cap_view(
                 entry_form(entry),
             ],
         },
-        source_ref=entry_ref(entry, agent_name=agent_name),
     )
 
 
@@ -70,7 +73,7 @@ class CapCollection:
     def query(self, queries: str | Sequence[str] | None = None) -> tuple[CapView, ...]:
         if queries is None:
             return self.items
-        query = Query.parse(queries).validate({"key": "ref"})
+        query = Query.parse(queries).validate({"key": "cap"})
         return tuple(view for view in self.items if query.match(view.data) is not None)
 
     def require_each(self, queries: Sequence[str], *, label: str) -> None:
@@ -82,7 +85,7 @@ class CapCollection:
         self, operations: Sequence[tuple[SetOperator, Sequence[str]]]
     ) -> tuple[CapView, ...]:
         def key(view: CapView) -> tuple[str, str]:
-            return view.ref, view.source_ref
+            return view.cap, view.source_ref
 
         active = {key(view) for view in self.items}
         for operator, queries in operations:
@@ -115,7 +118,7 @@ def cap_collection(
                 root=root,
                 allowed=allowed is None or (entry.kind, entry.name) in allowed,
             )
-            views.setdefault((view.ref, view.source_ref), view)
+            views.setdefault((view.cap, view.source_ref), view)
     return CapCollection(tuple(views.values()))
 
 

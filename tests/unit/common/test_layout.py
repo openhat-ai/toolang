@@ -3,7 +3,12 @@ from pathlib import Path
 
 import pytest
 
-from toolang.common.layout import AgentLayout, ensure_scratch_workspace
+from toolang.common.layout import (
+    AgentLayout,
+    derive_agent_name,
+    ensure_scratch_workspace,
+    validate_agent_name,
+)
 
 
 @pytest.mark.parametrize("existing", [False, True])
@@ -44,16 +49,16 @@ def test_resident_layout_derives_agent_paths(tmp_path: Path) -> None:
 def test_visiting_layout_is_stable_and_root_and_source_specific(tmp_path: Path) -> None:
     root = tmp_path / "toolang"
     first = AgentLayout.visiting(
-        "octo/agents/researcher", "researcher", toolang_root=root
+        "gh:octo/agents/researcher", "researcher", toolang_root=root
     )
     repeated = AgentLayout.visiting(
-        "octo/agents/researcher", "researcher", toolang_root=root
+        "gh:octo/agents/researcher", "researcher", toolang_root=root
     )
     other = AgentLayout.visiting(
-        "other/agents/researcher", "researcher", toolang_root=root
+        "gh:other/agents/researcher", "researcher", toolang_root=root
     )
     other_root = AgentLayout.visiting(
-        "octo/agents/researcher", "researcher", toolang_root=tmp_path / "other"
+        "gh:octo/agents/researcher", "researcher", toolang_root=tmp_path / "other"
     )
 
     assert first == repeated
@@ -65,8 +70,10 @@ def test_visiting_layout_is_stable_and_root_and_source_specific(tmp_path: Path) 
     assert first.root != other_root.root
 
 
-@pytest.mark.parametrize("name_length", [231, 232])
-def test_visiting_root_fits_long_agent_names(tmp_path: Path, name_length: int) -> None:
+@pytest.mark.parametrize("name_length", [1, 64])
+def test_visiting_root_preserves_bounded_agent_names(
+    tmp_path: Path, name_length: int
+) -> None:
     name = "a" * name_length
     layout = AgentLayout.visiting(
         f"https://example.com/{name}.too", name, toolang_root=tmp_path
@@ -100,3 +107,36 @@ def test_layout_is_immutable(tmp_path: Path) -> None:
 def test_layout_rejects_invalid_agent_names(tmp_path: Path, name: str) -> None:
     with pytest.raises(ValueError, match="invalid agent name"):
         AgentLayout.resident(tmp_path, name)
+
+
+@pytest.mark.parametrize("name", ["a", "a" * 64, "daily_report", "a0", "a__"])
+def test_explicit_agent_names_are_preserved(name):
+    assert validate_agent_name(name) == name
+    assert derive_agent_name(name) == name
+
+
+@pytest.mark.parametrize(
+    "name", ["a" * 65, "Gus", "gus-by3", "a.b", "_a", "1a", "a ", "中文", ""]
+)
+def test_explicit_agent_names_are_not_normalized(name):
+    with pytest.raises(ValueError, match="invalid agent name"):
+        validate_agent_name(name)
+
+
+@pytest.mark.parametrize(
+    ("stem", "expected"),
+    [
+        ("Daily-Report.v2", "daily_report_v2"),
+        ("2026 report", "script_2026_report"),
+        ("Some 中文 Name", "some_name"),
+        ("__Gus__", "gus"),
+    ],
+)
+def test_derived_names_normalize_characters(stem, expected):
+    assert derive_agent_name(stem) == expected
+
+
+@pytest.mark.parametrize("stem", ["中文", "---", "A" * 65, "1" * 58])
+def test_derived_names_reject_empty_or_overlong_results(stem):
+    with pytest.raises(ValueError, match="invalid agent name"):
+        derive_agent_name(stem)

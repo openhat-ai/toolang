@@ -6,6 +6,8 @@ import json
 
 import pytest
 
+from toolang.up import source as agent_sources
+
 from toolang.common.layout import AgentLayout
 from toolang.state import state as cap_state
 from toolang.state.prepare import prepare_agent_state
@@ -140,7 +142,6 @@ def test_remote_cap_inspection_shares_agent_and_cap_progress(
     tmp_path, monkeypatch, capsys, command
 ):
     from toolang.cli.toolang.main import main
-    from toolang.up import process
 
     selector = "https://example.test/dev.too"
     calls = []
@@ -154,7 +155,7 @@ def test_remote_cap_inspection_shares_agent_and_cap_progress(
         calls.append("cap")
         return b"Review carefully.\n"
 
-    monkeypatch.setattr(process, "_fetch_http_text", source)
+    monkeypatch.setattr(agent_sources, "_fetch_http_text", source)
     monkeypatch.setattr(cap_state, "_fetch_github_file", cap)
     assert main(["--root", str(tmp_path), selector, *command, "--json"]) == 0
     output = capsys.readouterr()
@@ -171,10 +172,11 @@ def test_remote_source_only_route_finishes_before_command_dispatch(
     tmp_path, monkeypatch, capsys, command
 ):
     from toolang.cli.toolang.routing import dispatch_visiting
-    from toolang.up import process
 
     selector = "https://example.test/dev.too"
-    monkeypatch.setattr(process, "_fetch_http_text", lambda _: "flow run():\n  pass\n")
+    monkeypatch.setattr(
+        agent_sources, "_fetch_http_text", lambda _: "flow run():\n  pass\n"
+    )
     dispatched = []
 
     def run_app(args, layout):

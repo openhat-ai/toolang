@@ -866,7 +866,7 @@ def test_independent_files_can_be_saved_before_composition_is_valid(context):
 
 @pytest.mark.parametrize("source_name", ["parrot.too", " parrot .too"])
 def test_roaming_main_preserves_canonical_link_and_source_mode(tmp_path, source_name):
-    from toolang.up.process import materialize_roaming_program
+    from toolang.up.source import materialize_roaming_program
 
     source = tmp_path / source_name
     source.write_text("agic:\n  Original.\n")
@@ -917,7 +917,7 @@ def test_valid_long_asset_filename_can_be_created_and_replaced(context, exists):
 
 @pytest.mark.parametrize("operation", ["list", "get", "update", "delete"])
 def test_roaming_link_loop_returns_a_structured_error(tmp_path, operation):
-    from toolang.up.process import materialize_roaming_program
+    from toolang.up.source import materialize_roaming_program
 
     source = tmp_path / "parrot.too"
     source.write_text("agic:\n  Original.\n")
@@ -940,7 +940,7 @@ def test_roaming_link_loop_returns_a_structured_error(tmp_path, operation):
 
 @pytest.mark.parametrize("relative", ["other.too", "other/parrot.too"])
 def test_roaming_program_cannot_edit_another_home_source(tmp_path, relative):
-    from toolang.up.process import materialize_roaming_program
+    from toolang.up.source import materialize_roaming_program
 
     source = tmp_path / "parrot.too"
     source.write_text("agic:\n  Original.\n")

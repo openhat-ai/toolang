@@ -11,9 +11,10 @@ import typer
 from typer._click.exceptions import ClickException
 from typer._click.utils import strip_ansi
 
+from toolang.up import source as agent_sources
+
 from toolang.catalog.agent import LocalAgents
 from toolang.common.layout import AgentLayout
-from toolang.up import process as agents
 from toolang.cli.common.context import CliContext
 import toolang.cli.toolang.commands.home as home_command
 import toolang.cli.toolang.main as cli
@@ -143,7 +144,7 @@ def test_home_help_describes_optional_agent(
     output = strip_ansi(capsys.readouterr().out)
     assert "Usage: too [AGENT] home [OPTIONS]" in output
     assert "Open a shell in agent home" in output
-    assert "Agent name, .too file, reference, or URL" in output
+    assert "Agent Name, .too file, gh:/github: Source Ref, or HTTP(S) URL" in output
     assert "* AGENT" not in output
     assert "root" not in output.lower()
 
@@ -346,7 +347,7 @@ def test_home_prepares_nonresident_home_and_reuses_it(
         selector = (
             "https://agents.example/alice.too"
             if selector_kind == "url"
-            else "agents.example/alice"
+            else "https://agents.example/alice.too"
         )
         layout = AgentLayout(tmp_path / "visiting", "alice", "visiting")
         monkeypatch.setattr(
@@ -355,7 +356,7 @@ def test_home_prepares_nonresident_home_and_reuses_it(
             classmethod(lambda _cls, source, name, **kwargs: layout),
         )
 
-    def fetch(ref: agents.AgentRef, **_kwargs: Any) -> str:
+    def fetch(ref: agent_sources.AgentRef, **_kwargs: Any) -> str:
         fetches.append(ref.render())
         return source_text
 
@@ -366,7 +367,7 @@ def test_home_prepares_nonresident_home_and_reuses_it(
         calls.append((args, kwargs))
         return subprocess.CompletedProcess(args, 0)
 
-    monkeypatch.setattr(agents, "fetch_agent_ref", fetch)
+    monkeypatch.setattr(agent_sources, "fetch_agent_ref", fetch)
     monkeypatch.setattr(home_command.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr(home_command.sys.stdout, "isatty", lambda: True)
     monkeypatch.setenv("TOOLANG_ROOT", str(tmp_path / "unrelated"))
@@ -404,7 +405,7 @@ def test_home_reports_remote_preparation_failure_without_launching(
     def fetch(*_args: Any, **_kwargs: Any) -> str:
         raise OSError("remote source unavailable")
 
-    monkeypatch.setattr(agents, "fetch_agent_ref", fetch)
+    monkeypatch.setattr(agent_sources, "fetch_agent_ref", fetch)
     monkeypatch.setattr(home_command.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr(home_command.sys.stdout, "isatty", lambda: True)
     monkeypatch.setattr(
@@ -476,11 +477,11 @@ def test_home_does_not_prepare_targets_for_help_or_invalid_invocations(
 
     fetches: list[str] = []
 
-    def fetch(ref: agents.AgentRef, **_kwargs: Any) -> str:
+    def fetch(ref: agent_sources.AgentRef, **_kwargs: Any) -> str:
         fetches.append(ref.render())
         return "agic:\n  Reply directly.\n"
 
-    monkeypatch.setattr(agents, "fetch_agent_ref", fetch)
+    monkeypatch.setattr(agent_sources, "fetch_agent_ref", fetch)
     monkeypatch.setattr(home_command.sys.stdin, "isatty", lambda: stdin_tty)
     monkeypatch.setattr(home_command.sys.stdout, "isatty", lambda: stdout_tty)
     monkeypatch.setattr(

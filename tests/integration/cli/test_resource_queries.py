@@ -177,7 +177,7 @@ def test_cap_location_query_uses_the_same_root_in_allow_and_inspection(
     )
     assert result.exit_code == 0, result.stderr
     records = json.loads(result.stdout)
-    assert [record["ref"] for record in records] == ["skill/reviewer"]
+    assert [record["cap"] for record in records] == ["skill/reviewer"]
     assert records[0]["location"] == str(skill)
     assert records[0]["tags"] == ["ready", "local", "root", "authored"]
 
@@ -198,5 +198,5 @@ def test_roaming_cap_location_uses_selected_layout_root(tmp_path, monkeypatch, c
     output = capsys.readouterr()
     assert result == 0, output.err
     records = json.loads(output.out)
-    assert [record["ref"] for record in records] == ["skill/reviewer"]
+    assert [record["cap"] for record in records] == ["skill/reviewer"]
     assert records[0]["location"] == str(skill)

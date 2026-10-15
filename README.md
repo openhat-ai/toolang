@@ -36,7 +36,7 @@ Use a shared agent by its URL or GitHub shorthand, with no agent configuration r
 
 ```bash
 too https://toolang.ai/lex.too chat  # Practice English with Lex
-too briceyan/dev chat                # Write and review code with Dev
+too gh:briceyan/dev chat                # Write and review code with Dev
 ```
 
 Toolang downloads the `.too` source and its declared dependencies and runs the agent locally. This lets you share an agent as a file, without separate installation or configuration instructions.
@@ -48,8 +48,11 @@ Create an agent from scratch, or clone a shared one as a starting point:
 ```bash
 too new NAME
 too clone https://toolang.ai/lex.too NAME
-too clone briceyan/dev NAME
+too clone gh:briceyan/dev NAME
 ```
+
+Agent Names use 1–64 lowercase ASCII letters, digits, or underscores and start
+with a letter. See [source and naming rules](docs/concepts.md#agent-sources).
 
 Once created, the agent is ready for a conversation:
 

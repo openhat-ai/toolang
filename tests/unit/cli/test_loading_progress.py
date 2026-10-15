@@ -17,7 +17,7 @@ def test_cap_materialization_only_starts_after_saving(
     layout = AgentLayout.resident(tmp_path, "alice")
     layout.home.mkdir(parents=True)
     layout.program.write_text("flow run():\n  pass\n")
-    layout.config.write_text('[prompts]\nremote = { ref = "acme/remote" }\n')
+    layout.config.write_text('[prompts]\nremote = { ref = "gh:acme/remote" }\n')
     (layout.home / "prompts").mkdir()
     (layout.home / "prompts" / "note.md").write_text("Local note.\n")
     monkeypatch.setattr("sys.stdin", StringIO())

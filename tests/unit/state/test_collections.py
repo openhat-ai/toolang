@@ -147,7 +147,7 @@ def test_cap_public_records_have_copyable_refs_and_native_tags(kind: EntryKind) 
     entry = replace(_cap(kind, "reviewer"), meta={"description": "Review changes"})
     collection = cap_collection((entry,), root=Path("/toolang"), agent_name="default")
     record = collection.items[0].data
-    assert record["ref"] == f"{kind}/reviewer"
+    assert record["cap"] == f"{kind}/reviewer"
     assert record["location"] == f"/toolang/{kind}s/reviewer" + (
         "/SKILL.md" if kind == "skill" else ""
     )
@@ -158,3 +158,21 @@ def test_cap_public_records_have_copyable_refs_and_native_tags(kind: EntryKind) 
     assert collection.query(f'"{kind}/reviewer"') == collection.items
     assert collection.query("*[tags has root]") == collection.items
     assert collection.query("*[future.field=value]") == ()
+
+
+def test_cap_override_retains_identity_and_updates_source():
+    from toolang.state.state import effective_caps
+
+    root = _cap("skill", "reviewer")
+    home = replace(
+        root,
+        ref="home://skills/reviewer",
+        source=replace(root.source, path="agents/gus/skills/reviewer"),
+    )
+    entries = effective_caps((root,), (home,))
+    collection = cap_collection(entries, root=Path("/toolang"), agent_name="gus")
+    (selected,) = collection.query("skill/reviewer")
+    assert selected.data["cap"] == "skill/reviewer"
+    assert selected.data["source"] == "home://skills/reviewer"
+    assert collection.query('*[source="root://skills/reviewer"]') == ()
+    assert collection.query('*[source="home://skills/reviewer"]') == collection.items

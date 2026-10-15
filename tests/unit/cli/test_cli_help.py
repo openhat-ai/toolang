@@ -492,7 +492,7 @@ def test_virtual_agent_usage_keeps_position_and_normal_weight(
         (
             "serve",
             "Run an agent in the foreground",
-            "Agent name, .too file, reference, or URL",
+            "Agent Name, .too file, gh:/github: Source Ref, or HTTP(S) URL",
         ),
         ("_serve", "Run an agent server", "Local agent name"),
     ],
@@ -546,7 +546,7 @@ def test_agent_help_matches_target_scope(command, tmp_path, capsys):
         line for line in output.splitlines() if line.lstrip().startswith("* AGENT ")
     )
     if command == "new":
-        expected = "New local agent name"
+        expected = "Agent Name: [a-z][a-z0-9_]{0,63}"
     elif command.split()[0] in {
         "remove",
         "start",
@@ -556,7 +556,7 @@ def test_agent_help_matches_target_scope(command, tmp_path, capsys):
     }:
         expected = "Local agent name"
     else:
-        expected = "Agent name, .too file, reference, or URL"
+        expected = "Agent Name, .too file, gh:/github: Source Ref, or HTTP(S) URL"
     assert " ".join(row.split()) == f"* AGENT {expected}"
 
 
@@ -569,7 +569,7 @@ def test_cap_agent_help_distinguishes_mutation_and_listing(
     assert main(["--root", str(tmp_path), kind, command, "--help"]) == 0
     output = " ".join(strip_ansi(capsys.readouterr().out).split())
     agent_help = (
-        "Agent name, .too file, reference, or URL"
+        "Agent Name, .too file, gh:/github: Source Ref, or HTTP(S) URL"
         if main is too_main
         else "Local agent name"
     )
@@ -585,7 +585,10 @@ def test_cap_agent_help_distinguishes_mutation_and_listing(
 def test_inspection_help_describes_all_agent_targets(command, tmp_path, capsys):
     assert too_main(["--root", str(tmp_path), command, "--help"]) == 0
     output = " ".join(strip_ansi(capsys.readouterr().out).split())
-    assert "AGENT Agent name, .too file, reference, or URL; omit for root" in output
+    assert (
+        "AGENT Agent Name, .too file, gh:/github: Source Ref, or HTTP(S) URL; omit for root"
+        in output
+    )
 
 
 @pytest.mark.parametrize("main", [too_main, caps_main])

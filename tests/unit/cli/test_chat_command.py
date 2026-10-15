@@ -14,6 +14,8 @@ from typer._click.exceptions import ClickException
 from typer._click.utils import strip_ansi
 
 from tests.support.execution_fixtures import project_run_start
+from toolang.up import source as agent_sources
+
 from toolang.base.types.message import Message, TextPart
 from toolang.base.types.model import (
     ModelRequest,
@@ -46,7 +48,6 @@ from toolang.execution.types import (
 )
 from toolang.lang.input import CallInput
 from toolang.up.types import AgentServerRef
-from toolang.up import process as agents
 
 _HOST_DESCRIPTION = "macOS 27.0 arm64"
 
@@ -207,9 +208,9 @@ def test_chat_latest_uses_selected_history_for_agent_sessions(
         layout = AgentLayout(
             root=tmp_path / "visiting", name="alice", placement="visiting"
         )
-        selector = "owner/alice"
+        selector = "gh:owner/alice"
         monkeypatch.setattr(
-            agents, "resolve_visiting_layout", lambda *_args, **_kwargs: layout
+            agent_sources, "resolve_visiting_layout", lambda *_args, **_kwargs: layout
         )
     if placement != "resident":
         with closing(RunStore(chat_layout.run_store)) as store:

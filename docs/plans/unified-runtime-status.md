@@ -25,11 +25,15 @@ health/metrics endpoints. Host `serve` executes in one process.
 - Discovery stays in `toolang_root/.runtime/instances/`: `gus.json` for residents,
   `lex@v<hash>.json` for visitors, and `aid@r<hash>.json` for roaming servers.
   Use 16 hex characters of SHA-256: visitors share the visiting-root key
-  (`canonical Toolang root + NUL + source selector`) and use the same complete
+  (`canonical Toolang root + NUL + Source Ref target`) and use the same complete
   16-character hash in both directory and reference names; roaming uses the
-  canonical host absolute source path. Save this host-resolved `source_id` in control
+  canonical host absolute source path. GitHub prefix aliases normalize before
+  hashing without resolving shorthand branches; complete URL spelling is kept.
+  Save this host-resolved `source_id` in control
   bindings; guest paths, ports, sandbox, file contents, and launch IDs do not
-  affect the source hash. Escape agent names to prevent marker collisions.
+  affect the source hash. Agent Names follow the
+  [Name contract](names-handles-and-source-refs.md#agent-names); they cannot
+  contain `@` or `-`, so reference names need no escaping.
   References contain only version, absolute status path, and launch ID;
   database/logs stay in agent root. No `ids.json`, `channels/`, or new directories.
   References share one native `instances/register.lock`, held only for publication
@@ -48,8 +52,8 @@ health/metrics endpoints. Host `serve` executes in one process.
   Keep chat-specific API availability conditional on the chat driver and retain
   existing generic execution APIs. Preserve public command targeting/flags,
   independent script isolation, Hub activity, and offline history.
-  Switching scripts to a shared server is a follow-up behavior change; it will
-  remove the temporary execution suffix rather than change the source hash.
+  Shared script servers are outside this contract; execution isolation does not
+  change the source hash or prepared Agent State identity.
 
 ## Restart, retention, and mounts
 
@@ -66,7 +70,6 @@ health/metrics endpoints. Host `serve` executes in one process.
   `host`. Reuse only the selector, with current plugin config and a fresh launch;
   never reuse a container ID, process, old credentials, or one-off workspace/dev
   options. An unavailable selected sandbox fails without falling back to host.
-  This adds a historical fallback to today's config-or-host default.
 - Store the successful port/endpoint and sandbox selector in `control` only after
   readiness. Failed attempts cannot overwrite them. Successful stop retains
   `status.json`, these settings, final lifecycle/timestamps/errors,

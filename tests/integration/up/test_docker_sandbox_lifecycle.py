@@ -24,6 +24,8 @@ from urllib.request import Request, urlopen
 
 import pytest
 
+from toolang.up import source as agent_sources
+
 from toolang.common.layout import AgentLayout
 from toolang.up.records import SandboxState
 
@@ -47,7 +49,7 @@ _AGENT_SOURCE = f"# Agent alice\n\n{_ECHO_PROGRAM}"
 def test_docker_foreground_nonresident_uses_selected_root_and_cleans_reference(
     tmp_path: Path, docker_wheel_dir: Path, local_model_port: int, placement: str
 ) -> None:
-    from toolang.up.process import visiting_layout
+    from toolang.up.source import visiting_layout
     from toolang.up.records import read_record
 
     program = "flow complete:\n  let result = Done\n"
@@ -273,18 +275,18 @@ def test_killed_temporary_controller_is_recovered_by_next_control_operation(
     tmp_path, docker_wheel_dir, local_model_port
 ):
     from dataclasses import replace
-    from toolang.up import process, sandbox
+    from toolang.up import sandbox
     from toolang.up.records import read_record
 
     source = tmp_path / "temporary.too"
     source.write_text("flow complete:\n  let result = Done\n")
-    layout = process.materialize_roaming_program(source)
+    layout = agent_sources.materialize_roaming_program(source)
     old = replace(layout, instance="abandoned")
     code = """
 from pathlib import Path
 from dataclasses import replace
 import sys, time
-from toolang.up.process import materialize_roaming_program
+from toolang.up.source import materialize_roaming_program
 from toolang.cli.common.agent_server import acquire_agent_server
 layout = replace(materialize_roaming_program(Path(sys.argv[1])), instance='abandoned')
 with acquire_agent_server(layout, sandbox='docker', dev=Path(sys.argv[2]), temporary=True, show_progress=False):

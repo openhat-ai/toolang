@@ -82,7 +82,7 @@ def _allocate_and_create_job(root: str) -> None:
     )
 
 
-@pytest.mark.parametrize("agent_name", ["alice", "Alice", "bob"])
+@pytest.mark.parametrize("agent_name", ["alice", "daily_report", "bob"])
 def test_authored_job_ids_use_the_layout_agent_name(
     tmp_path: Path, agent_name: str
 ) -> None:

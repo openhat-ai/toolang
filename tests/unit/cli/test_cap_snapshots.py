@@ -21,7 +21,9 @@ def test_authoring_does_not_resolve_unrelated_caps(
     (base / "prompts").mkdir()
     source = base / "prompts" / "note.md"
     source.write_text("Original body.\n")
-    (base / "config.toml").write_text('[prompts]\nremote = { ref = "acme/remote" }\n')
+    (base / "config.toml").write_text(
+        '[prompts]\nremote = { ref = "gh:acme/remote" }\n'
+    )
     monkeypatch.setattr(
         cap_state,
         "_github_repo_default_branch",
@@ -51,7 +53,7 @@ def test_remove_unresolvable_configured_cap(tmp_path, monkeypatch, capsys, scope
     layout.home.mkdir(parents=True)
     layout.program.write_text(templates.load_template("agent").raw_text)
     config = layout.root_config if scope == "root" else layout.config
-    config.write_text('[prompts]\nrewrite = { ref = "acme/rewrite" }\n')
+    config.write_text('[prompts]\nrewrite = { ref = "gh:acme/rewrite" }\n')
 
     def unavailable(*args, **kwargs):
         raise ValueError("remote repository is unavailable")
@@ -61,7 +63,7 @@ def test_remove_unresolvable_configured_cap(tmp_path, monkeypatch, capsys, scope
     result = main(["--root", str(tmp_path), *target, "prompt", "remove", "rewrite"])
     output = capsys.readouterr()
     assert result == 0, output.err
-    assert "Prompt rewrite removed: acme/rewrite" in output.out
+    assert "Prompt rewrite removed: gh:acme/rewrite" in output.out
     assert (
         ConfiguredCaps(config, lock_path=root_edit_lock_path(config.parent)).get(
             "prompt", "rewrite"
@@ -84,7 +86,9 @@ def test_delete_authored_cap_resolves_same_scope_conflict(
     (base / "prompts").mkdir()
     source = base / "prompts" / "rewrite.md"
     source.write_text("Local body.\n")
-    (base / "config.toml").write_text('[prompts]\nrewrite = { ref = "acme/rewrite" }\n')
+    (base / "config.toml").write_text(
+        '[prompts]\nrewrite = { ref = "gh:acme/rewrite" }\n'
+    )
     monkeypatch.setattr(cap_state, "_github_repo_default_branch", lambda *_: "main")
     monkeypatch.setattr(cap_state, "_github_remote_exists", lambda *_: True)
     monkeypatch.setattr(
@@ -109,13 +113,13 @@ def test_root_add_does_not_resolve_unrelated_configured_caps(
     from toolang.cli.toolang.main import main
 
     config = tmp_path / "config.toml"
-    config.write_text('[prompts]\nstale = { ref = "acme/stale" }\n')
+    config.write_text('[prompts]\nstale = { ref = "gh:acme/stale" }\n')
     monkeypatch.setattr(cap_state, "_github_repo_default_branch", lambda *_: "main")
     monkeypatch.setattr(
         cap_state, "_github_remote_exists", lambda _kind, ref: "rewrite" in ref
     )
 
-    result = main(["--root", str(tmp_path), "prompt", "add", "acme/rewrite"])
+    result = main(["--root", str(tmp_path), "prompt", "add", "gh:acme/rewrite"])
     output = capsys.readouterr()
 
     assert result == 0, output.err

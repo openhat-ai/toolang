@@ -22,7 +22,7 @@ from toolang.execution.tools.state.types import StateToolContext
 from toolang.state.config import ConfiguredWorkspaces
 from toolang.state.prepare import prepare_agent_state
 from toolang.state.watcher import StateWatcher
-from toolang.up.process import materialize_roaming_program
+from toolang.up.source import materialize_roaming_program
 
 
 def _first_writer(lock_path, target, start, written):

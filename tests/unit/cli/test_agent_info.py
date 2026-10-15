@@ -3,6 +3,8 @@
 from pathlib import Path
 
 import pytest
+from toolang.up import source as agent_sources
+
 from toolang.cli.toolang.main import main
 from toolang.cli.common.client import RuntimeClient
 from toolang.cli.common.errors import RuntimeClientError
@@ -74,7 +76,6 @@ def test_model_summary_counts_effective_setup_resources(
 def test_running_info_uses_runtime_resources_without_loading_local_sources(
     tmp_path, monkeypatch, capsys, sandbox, placement, target_first
 ):
-    from toolang.up import process
 
     monkeypatch.setenv("HOME", str(tmp_path))
     selector = "alice"
@@ -87,18 +88,20 @@ def test_running_info_uses_runtime_resources_without_loading_local_sources(
         layout = AgentLayout.roaming(source)
         selector, global_args = str(source), []
         monkeypatch.setattr(
-            process,
+            agent_sources,
             "materialize_roaming_program",
             lambda *_: pytest.fail("running info must not project sources"),
         )
     elif placement == "visiting":
-        selector, global_args = "acme/alice", []
+        selector, global_args = "gh:acme/alice", []
         layout = AgentLayout(
             root=tmp_path / "visiting", name="alice", placement="visiting"
         )
-        monkeypatch.setattr(process, "visiting_layout", lambda _, **kwargs: layout)
         monkeypatch.setattr(
-            process,
+            agent_sources, "visiting_layout", lambda _, **kwargs: layout
+        )
+        monkeypatch.setattr(
+            agent_sources,
             "resolve_visiting_layout",
             lambda *a, **kw: pytest.fail("running info must not fetch sources"),
         )
@@ -107,7 +110,10 @@ def test_running_info_uses_runtime_resources_without_loading_local_sources(
         *([selector, "info"] if target_first else ["info", selector]),
     ]
     layout.home.mkdir(parents=True)
-    layout.program.write_text("invalid Toolang!!!")
+    if placement == "roaming":
+        layout.program.symlink_to(source)
+    else:
+        layout.program.write_text("invalid Toolang!!!")
     monkeypatch.setattr(
         AgentProcess,
         "status",
@@ -169,18 +175,19 @@ def test_running_info_uses_runtime_resources_without_loading_local_sources(
 def test_offline_info_prepares_a_fresh_nonresident_target(
     tmp_path, monkeypatch, capsys, placement, target_first
 ):
-    from toolang.up import process
 
     source = tmp_path / "alice.too"
     source.write_text("flow run():\n  pass\n")
     selector = str(source)
     layout = AgentLayout.roaming(source)
     if placement == "visiting":
-        selector = "acme/alice"
+        selector = "gh:acme/alice"
         layout = AgentLayout(
             root=tmp_path / "visiting", name="alice", placement="visiting"
         )
-        monkeypatch.setattr(process, "visiting_layout", lambda _, **kwargs: layout)
+        monkeypatch.setattr(
+            agent_sources, "visiting_layout", lambda _, **kwargs: layout
+        )
 
         def fetch(selected, *, progress, toolang_root=None):
             assert selected == selector
@@ -190,7 +197,7 @@ def test_offline_info_prepares_a_fresh_nonresident_target(
             layout.program.write_text(source.read_text())
             return layout
 
-        monkeypatch.setattr(process, "resolve_visiting_layout", fetch)
+        monkeypatch.setattr(agent_sources, "resolve_visiting_layout", fetch)
     setup = _setup(tmp_path, ())
 
     class Watcher:

@@ -9,6 +9,14 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Added
 
+- Remote agents and caps accept explicit Source Refs: `gh:owner/name`,
+  `github:owner/name`, `gh:owner/repo/name`, and complete HTTP(S) URLs,
+  alongside the existing `github://owner/repo/path@rev` form. A `gh:`/`github:`
+  ref that carries `@rev` normalizes to one exact `github://` ref without
+  repository or path probes. HTTP(S) sources fetch file-backed caps directly:
+  a skill from its directory URL or `SKILL.md` URL fetches only `SKILL.md`,
+  while GitHub skill sources still include the directory's files. ([#812](https://github.com/openhat-ai/toolang/pull/812))
+
 - Managed agent startup prepares State locally before entering or creating a
   workload, so a preparation failure reports its cause and creates no workload.
   Required work appears on stderr as dim `<ref> fetching`, `parsing`,
@@ -21,6 +29,31 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   an unparsable agent blocks them.
 
 ### Changed
+
+- **Breaking:** remote agent and cap sources must be explicit Source Refs:
+  unprefixed `owner/name`, `owner/repo/name`, and `host/name` shorthand and the
+  `oh:` and `openhat:` prefixes are rejected before any network access. Prefix
+  former implicit GitHub refs with `gh:` (or `github:`) and replace domain/path
+  shorthand with a complete HTTP(S) URL. Cap Ref queries such as
+  `skill/reviewer` and local sources are unaffected. ([#812](https://github.com/openhat-ai/toolang/pull/812))
+
+- **Breaking:** Agent Names are validated as 1–64 lowercase ASCII letters,
+  digits, or underscores starting with a letter. Explicit names (`too new NAME`,
+  `too clone SOURCE NAME`, and `agent:NAME`) are rejected unchanged when
+  invalid, while filename-derived names are normalized: lowercase, runs outside
+  `[a-z0-9_]` become `_`, surrounding `_` is trimmed, and a leading digit gains
+  a `script_` prefix, so `Daily-Report.v2.too` roams as `daily_report_v2` and
+  keeps its filename. A home named with dots, hyphens, uppercase letters, or
+  more than 64 characters is no longer discovered or addressable, so stop its
+  workload with the previous Toolang version, then rename the home and its
+  paths manually; State and histories are not moved. ([#812](https://github.com/openhat-ai/toolang/pull/812))
+
+- **Breaking:** Cap records expose `cap` (`kind/name`) and `source` (the
+  resolved Source Ref) instead of `ref`, and cap lists show a `CAP` column
+  instead of `REF`; `location` remains the human-facing content address.
+  Migrate explicit query keys from `ref` to `cap` and API Cap response `ref` to
+  `source`; configured cap write requests still use `ref` for the supplied
+  Source Ref. ([#812](https://github.com/openhat-ai/toolang/pull/812))
 
 - The directory-wide native guard over discovery references is renamed from
   `instances/update.lock` to `instances/register.lock`, still protecting only
@@ -118,6 +151,39 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   with agents through the hub`, and `hub` reads `Control the teaming service`.
 
 ### Fixed
+
+- Remote Mod targets are rejected unless their actual source path is a `.too`
+  program: an HTTP(S) URL path is decoded exactly once during parsing while a
+  canonical `github://` path is used literally, so a GitHub URL ending in
+  `report%252Etoo` or a literal `github://.../report%2Etoo` ref no longer
+  passes as `report.too`, while a normally encoded `report%2Etoo` URL still
+  resolves. ([#812](https://github.com/openhat-ai/toolang/pull/812))
+
+- Remote caps hosted on ordinary HTTP Markdown servers no longer fail to
+  fetch with `406 Not Acceptable`: URL requests send only a `User-Agent`
+  header instead of GitHub-only `Accept` and `X-GitHub-Api-Version`
+  headers. ([#812](https://github.com/openhat-ai/toolang/pull/812))
+
+- Concurrent starts of the same roaming script no longer mistake a link
+  published by the other caller for an authored file: the roaming program
+  link's file type comes from one `lstat` observation, while atomic link
+  creation still rejects a different source owning the normalized home.
+  ([#812](https://github.com/openhat-ai/toolang/pull/812))
+
+- Automatic agent port selection and last-port reuse skip unsupported legacy
+  agent directories such as `old.name`, so an invalid peer no longer blocks
+  a valid agent from selecting or reusing its port, and valid peers'
+  reservations are preserved.
+  ([#812](https://github.com/openhat-ai/toolang/pull/812))
+
+- Read-only roaming queries reject a home owned by another source, while
+  current State caches must contain supported Source Refs so explicit-ref
+  requirements cannot be bypassed and explicitly loaded historical revisions
+  stay readable, and GitHub web and raw URLs decode percent-escaped paths
+  exactly once before building raw fetch URLs. ([#812](https://github.com/openhat-ai/toolang/pull/812))
+
+- `too skill add` reports the underlying Source Ref error for an unsupported or
+  unresolved source instead of only a generic not-found message. ([#812](https://github.com/openhat-ai/toolang/pull/812))
 
 - Cap inspection, publication after saved edits, offline `info`, and local
   scripts now use the same parallel preparation rows and dim summary as managed

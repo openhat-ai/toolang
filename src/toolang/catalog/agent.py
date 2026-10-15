@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 import shutil
 
+from toolang.common.layout import is_agent_name, validate_agent_name
+
 
 class LocalAgents:
     """CRUD for agent homes below one explicitly supplied directory."""
@@ -18,7 +20,9 @@ class LocalAgents:
         return tuple(
             path.name
             for path in sorted(self.directory.iterdir())
-            if path.is_dir() and (path / "agent.too").is_file()
+            if is_agent_name(path.name)
+            and path.is_dir()
+            and (path / "agent.too").is_file()
         )
 
     def get(self, name: str) -> Path | None:
@@ -56,10 +60,5 @@ class LocalAgents:
         return home
 
     def path(self, name: str) -> Path:
-        _validate_name(name)
+        validate_agent_name(name)
         return self.directory / name
-
-
-def _validate_name(name: str) -> None:
-    if not name.strip() or name in {".", ".."} or "/" in name or "\\" in name:
-        raise ValueError(f"invalid agent name: {name!r}")

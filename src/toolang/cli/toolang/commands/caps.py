@@ -11,7 +11,7 @@ from toolang.cli.common.routing import OptionalPrefixAgentGroup
 
 
 class _CapGroup(OptionalPrefixAgentGroup):
-    argument_help = "Agent name, .too file, reference, or URL; omit for root scope"
+    argument_help = "Agent Name, .too file, gh:/github: Source Ref, or HTTP(S) URL; omit for root scope"
 
 
 @cache
@@ -20,7 +20,7 @@ def _apps() -> dict[CapKind, typer.Typer]:
 
     return create_cap_apps(
         group_cls=_CapGroup,
-        agent_help="Agent name, .too file, reference, or URL",
+        agent_help="Agent Name, .too file, gh:/github: Source Ref, or HTTP(S) URL",
     )
 
 

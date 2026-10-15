@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote, unquote, urlsplit
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,6 +27,39 @@ class GitHubRef:
         return Path(self.path).stem
 
 
+@dataclass(frozen=True, slots=True)
+class GitHubShorthand:
+    """GitHub source syntax; callers own repository and kind-specific probes."""
+
+    owner: str
+    name: str
+    repo: str | None = None
+
+    def render(self) -> str:
+        path = f"{self.repo}/{self.name}" if self.repo is not None else self.name
+        return f"gh:{self.owner}/{path}"
+
+
+def parse_github_source_ref(text: str) -> GitHubRef | GitHubShorthand | None:
+    """Parse explicit GitHub aliases and URLs without network access."""
+    if text.startswith("github://"):
+        return parse_github_ref(text)
+    if text.startswith(("gh:", "github:")):
+        payload = text.partition(":")[2]
+        if "@" in payload:
+            return parse_github_ref(f"github://{payload}")
+        parts = payload.split("/")
+        if len(parts) not in {2, 3} or any(
+            not part or part in {".", ".."} or any(char in part for char in ":?#\\")
+            for part in parts
+        ):
+            raise ValueError(f"invalid GitHub Source Ref: {text}")
+        return GitHubShorthand(
+            owner=parts[0], name=parts[-1], repo=parts[1] if len(parts) == 3 else None
+        )
+    return parse_github_url(text)
+
+
 def parse_github_ref(text: str) -> GitHubRef:
     """Parse one canonical ``github://`` reference with an explicit revision."""
 
@@ -45,18 +78,6 @@ def parse_github_ref(text: str) -> GitHubRef:
     return GitHubRef(owner=owner, repo=repo, path=path, rev=rev)
 
 
-def parse_github_url(text: str) -> GitHubRef | None:
-    """Parse a GitHub tree, blob, or raw-content URL when recognized."""
-
-    return _parse_github_url(text, web_views=frozenset({"blob", "tree"}))
-
-
-def parse_github_file_url(text: str) -> GitHubRef | None:
-    """Parse a GitHub blob or raw-content URL when recognized."""
-
-    return _parse_github_url(text, web_views=frozenset({"blob"}))
-
-
 def github_raw_url(ref: GitHubRef) -> str:
     """Return the raw-content URL for one GitHub reference."""
 
@@ -67,13 +88,15 @@ def github_raw_url(ref: GitHubRef) -> str:
     return f"https://raw.githubusercontent.com/{owner}/{repo}/{rev}/{path}"
 
 
-def _parse_github_url(text: str, *, web_views: frozenset[str]) -> GitHubRef | None:
+def parse_github_url(text: str) -> GitHubRef | None:
+    """Parse a GitHub tree, blob, or raw-content URL when recognized."""
+
     parsed = urlsplit(text)
     if parsed.scheme not in {"http", "https"}:
         return None
     if parsed.netloc == "github.com":
         parts = _url_path_parts(parsed.path)
-        if len(parts) < 5 or parts[2] not in web_views:
+        if len(parts) < 5 or parts[2] not in {"blob", "tree"}:
             raise ValueError(f"invalid GitHub URL: {text}")
         owner, repo = parts[:2]
         rev, path = _split_url_revision(parts[3:], original=text)
@@ -89,7 +112,7 @@ def _parse_github_url(text: str, *, web_views: frozenset[str]) -> GitHubRef | No
 
 
 def _url_path_parts(path: str) -> list[str]:
-    return [part for part in path.strip("/").split("/") if part]
+    return [unquote(part) for part in path.strip("/").split("/") if part]
 
 
 def _split_url_revision(parts: list[str], *, original: str) -> tuple[str, str]:

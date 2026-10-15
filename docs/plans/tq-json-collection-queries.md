@@ -26,10 +26,11 @@ records. Internal cap forms, source refs, and model status bits are unchanged.
 
 ## Query semantics
 
-Every resource-query consumer, including setup and policy validation, uses:
+Every resource-query consumer, including setup and policy validation, uses
+`identity_key = "ref"` for models/tools and `identity_key = "cap"` for Caps:
 
 ```python
-query = Query.parse(expressions).validate({"key": "ref"})
+query = Query.parse(expressions).validate({"key": identity_key})
 branch = query.match(record)
 ```
 

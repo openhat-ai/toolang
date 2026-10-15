@@ -255,7 +255,7 @@ class _ScriptGroup(OptionalValueGroup, CliGroup):
         if separator and kind in {"agic", "flow", "runnable"}:
             lookup = name.strip()
             if not lookup:
-                raise ValueError(f"{kind} selector cannot be empty")
+                raise ValueError(f"{kind} target cannot be empty")
             requested_kind = None if kind == "runnable" else kind
         else:
             lookup = token
@@ -689,7 +689,7 @@ def _run(
     from toolang.common.ids import IdIssuer
     from toolang.execution.store import RunStore
     from toolang.state.prepare import prepare_agent_state
-    from toolang.up import process as agents
+    from toolang.up import source as agent_sources
     from toolang.up.observation import RuntimeRegistration
     from toolang.cli.common.context import resolve_root
     from toolang.up.logging import configure_logging_plan, resolve_agent_logging
@@ -706,7 +706,7 @@ def _run(
     runnable_ref = f"{runnable_kind}:{runnable}"
     try:
         layout = replace(
-            agents.materialize_roaming_program(source_path), instance=uuid4().hex
+            agent_sources.materialize_roaming_program(source_path), instance=uuid4().hex
         )
         workspaces = resolve_workspaces(
             layout,

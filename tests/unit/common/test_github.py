@@ -5,7 +5,6 @@ import pytest
 from toolang.common.github import (
     GitHubRef,
     github_raw_url,
-    parse_github_file_url,
     parse_github_ref,
     parse_github_url,
 )
@@ -63,13 +62,6 @@ def test_parse_github_url_supports_raw_refs_heads_url() -> None:
     )
 
 
-def test_parse_github_file_url_rejects_tree_view() -> None:
-    with pytest.raises(ValueError, match="invalid GitHub URL"):
-        parse_github_file_url(
-            "https://github.com/acme/agents/tree/main/agents/reviewer.too"
-        )
-
-
 def test_parse_github_url_ignores_other_hosts() -> None:
     assert parse_github_url("https://example.com/acme/agents/main/dev.too") is None
 
@@ -85,4 +77,28 @@ def test_github_raw_url_quotes_revision_and_path() -> None:
     assert github_raw_url(ref) == (
         "https://raw.githubusercontent.com/acme/agents/"
         "refs/heads/feature%20branch/agents/reviewer%20file.too"
+    )
+
+
+@pytest.mark.parametrize(
+    "host_path",
+    ["github.com/acme/agents/blob", "raw.githubusercontent.com/acme/agents"],
+)
+@pytest.mark.parametrize(
+    "encoded, decoded",
+    [
+        ("Daily%20Report.too", "Daily Report.too"),
+        ("Daily%2520Report.too", "Daily%20Report.too"),
+    ],
+)
+def test_web_source_paths_are_decoded_once_before_rendering_raw_urls(
+    host_path, encoded, decoded
+):
+    ref = parse_github_url(f"https://{host_path}/main/{encoded}")
+    assert ref is not None
+    assert ref.path == decoded
+    assert ref.default_name() == decoded.removesuffix(".too")
+    assert (
+        github_raw_url(ref)
+        == f"https://raw.githubusercontent.com/acme/agents/main/{encoded}"
     )

@@ -1,158 +1,136 @@
 # Agent Names and Source Refs
 
-Design decisions for review, not a description of current support. Define these
-contracts before public release; implement them separately. Scope is local Agent
-Names and explicit GitHub/HTTP(S) Source Refs, with room for future OpenHat and
-Handle rules. Keep `runnables/` unchanged. This PR records the plan only.
+Approved contract for local Agent Names, explicit Mod/Cap sources, and effective
+Cap identity. Runtime roots, source hashes, lifecycle ownership, and discovery
+follow [Unified runtime status](unified-runtime-status.md).
 
 ## Terms
 
 | Term | Meaning |
 | --- | --- |
-| Display Name | Non-unique label such as `Brice Yan` or `Gus`; allows spaces, case, and Unicode. Changing it does not change identity or paths. |
-| Agent Name | An agent's local name, including a default derived from a source filename. A future registered name may differ. |
-| Handle | Future public participant identity, such as `by3` or `gus-by3`; terminology only here. |
-| Mod (Module) | A `.too` module: the main `agent.too` or a runnable module. Its internal parsed representation remains `Program`. |
-| Cap (Capability) | A skill, psyche, service, or prompt resource. |
-| Source | A provider of Mod or Cap content, such as OpenHat, GitHub, or an HTTP service. |
-| Source Ref | A content/source location without a Cap-kind discriminator, such as `gh:owner/some-name`, `github://…@rev`, a URL, or `root://skills/some-name`. |
-| Cap Ref | A Cap's `kind/name` identity in the selected effective State/module context, such as `skill/some-name`; independent of its provenance. |
-| Target | Command input interpreted in context, such as an Agent Name, file path, Source Ref, or Cap Ref. Replaces the user-facing term Selector. |
+| Display Name | Non-unique human-facing label such as `Brice Yan` or `Gus`; not an identity or filesystem path. |
+| Agent Name | Local agent identifier, including a default derived from a source filename. A future public registration may choose a different name. |
+| Handle | Future public participant identity, such as human `by3` or agent `gus-by3`; terminology only in this scope. |
+| Mod (Module) | A `.too` module: `agent.too` or a runnable module. Its parsed representation remains `Program`. |
+| Cap (Capability) | A skill, psyche, service, or prompt. |
+| Source | A provider of Mod or Cap content. |
+| Source Ref | Content location without a Cap-kind discriminator, such as `gh:owner/name`, `github://…@rev`, an HTTP(S) URL, or `root://skills/name`. |
+| Cap Ref | Effective `kind/name` identity in the selected State/module, such as `skill/reviewer`, independent of provenance. |
+| Target | Command input interpreted in context as an Agent Name, file path, Source Ref, or Cap Ref. |
 
-Runnable remains the execution unit (`agic` or `flow`); Mod is the module unit.
+A runnable is an execution entry (`agic` or `flow`) in a Mod. Keep `runnables/`
+and internal `Program` types. Use Target for command inputs; TQ selectors and
+sandbox selectors retain their separate meanings.
 
-Use **Source Ref** and **Cap Ref** explicitly. `with skill SOURCE-REF` supplies
-the kind separately; source paths may contain a directory called `skills`, but
-that is not a kind field. Shorthand resolution receives the kind from its caller
-for kind-specific path probes. Configuration and acquisition use Source Refs;
-merged-Cap queries and policies use Cap Refs. The same `skill/some-name` may come
-from `root://skills/some-name` or a remote source after layer composition. Do
-not infer the category from the `x/y` spelling or change layer precedence.
+## Agent Names
 
-Cap records use explicit field names in CLI JSON/queries and API summaries/details:
+- Explicit Agent Names match `[a-z][a-z0-9_]{0,63}`: 1–64 lowercase ASCII
+  characters, starting with a letter. Validate without trimming or conversion.
+- For a filename-derived default, preserve a valid stem. Otherwise lowercase it,
+  replace each run outside `[a-z0-9_]` with `_`, trim surrounding underscores,
+  and prefix a digit-leading result with `script_`. `Daily-Report.v2.too` becomes
+  `daily_report_v2`; `2026 report.too` becomes `script_2026_report`.
+- Reject an empty or overlong final result. Keep the original filename and Source
+  Ref; do not truncate names or add hash suffixes. `clone SOURCE NAME` can supply
+  a valid explicit name instead of an invalid derived default.
+- Apply the same rules to creation, cloning, visiting/roaming layouts, and script
+  entry points (direct, `too run`, and shebang). `fmt` and `parse` do not restrict
+  source filenames. Validate before fetching or writing when the name is known.
+- A roaming home belongs to one canonical source path. Concurrent callers for
+  that source may reuse it; a different source normalizing to the same home
+  must fail without replacing the link or reading that source's state. Source
+  hashes remain independent of the normalized name.
+- Ignore invalid legacy names during discovery and automatic port reservations,
+  keeping valid peers usable. Migration is explicit; no automatic state moves.
+
+The local 64-character bound is not a public Handle policy. Local `_` and the
+absence of `-` leave room for future qualified Handles without implementing them.
+
+## Source Refs
+
+| Form | Interpretation |
+| --- | --- |
+| `gh:owner/name`, `github:owner/name` | GitHub shorthand with owner-specific repository/path probes. |
+| `gh:owner/repo/name`, `github:owner/repo/name` | GitHub shorthand in one explicit repository. |
+| `gh:owner/repo/path@rev`, `github:owner/repo/path@rev`, `github://owner/repo/path@rev` | Equivalent exact refs, canonicalized to `github://…@rev`; no shorthand probes. |
+| Complete `http://` or `https://` URL | Mod file or Cap content. Recognized GitHub blob/tree/raw URLs resolve to GitHub refs. |
+| `home://`, `root://`, `inline://` | Existing local Source Refs retain their meanings. |
+| Unprefixed remote refs, `oh:`, `openhat:`, or unknown prefixes | Unsupported; reject before network access. |
+
+Shared parsing selects the Source without I/O. Agent and Cap owners retain their
+own repository/path probes; exact refs do not trigger shorthand discovery.
+[Agent Sources](../concepts.md#agent-sources) and
+[Cap Source Refs](../caps.md#source-refs) define those probes.
+
+`with KIND SOURCE-REF` supplies the kind separately. A directory called `skills`
+in a source path is an ordinary provider path, not a kind field. HTTP file-backed
+Caps fetch their URL directly; HTTP skills fetch only `SKILL.md` from a directory
+or entry URL. GitHub skills retain the directory's files. URL path decoding occurs
+once before GitHub fetch URLs are encoded.
+
+Current State caches obey these source rules even when authored bytes have not
+changed. Explicit historical revision loads retain their captured declarations.
+
+## Cap Projection
+
+CLI JSON/queries and API summaries/details distinguish identity and provenance:
 
 ```json
 {
-  "cap": "skill/some-name",
-  "source": "github://owner/repo/skills/some-name@main"
+  "cap": "skill/reviewer",
+  "source": "github://owner/repo/skills/reviewer@main"
 }
 ```
 
-`cap` is the Cap Ref; `source` is the resolved, canonical Source Ref, not the
-authored shorthand or a display path. Local sources retain `root://`, `home://`,
-or `inline://`. Keep `location` for human-facing paths/URLs. Default Cap queries
-match `cap`; bare `skill/some-name` queries retain their meaning. Replace the
-ambiguous public Cap-record `ref` field and document explicit query-key migration
-(`ref` to `cap`) and API field migration (`ref` to `source`, with `cap` added).
-Internal provenance metadata remains distinct from this string projection; do
-not globally rename every `ref` or `source` field.
+`cap` is the Cap Ref; `source` is the resolved Source Ref, including local
+`root://`, `home://`, or `inline://` forms. `location` is the separate human-facing
+content address. Cap TQ uses `cap` as its identity key; bare `skill/reviewer`
+queries retain their meaning. Layer precedence and allow policies are unchanged.
+Configured write requests retain `ref` for the supplied Source Ref; internal
+provenance and unrelated `ref` fields are not globally renamed.
 
-## Agent names
+## Command and Implementation Boundaries
 
-- Local Agent Names use `[a-z][a-z0-9_]{0,63}`: 1–64 characters, no dots or
-  hyphens. Explicit Agent Names are validated without trimming, case conversion,
-  or truncation.
-- For HTTP/GitHub/file-derived Agent Names, preserve an already valid filename
-  stem; otherwise lowercase it, replace each run outside `[a-z0-9_]` with `_`,
-  and trim surrounding underscores. Prefix a digit-leading result with `script_`.
-  `Daily-Report.v2.too` becomes `daily_report_v2`; `2026 report.too` becomes
-  `script_2026_report`. Reject an empty result or a final Agent Name over 64
-  characters: do not truncate or add a hash. Keep the original filename and
-  Source Ref.
-- Cover resident creation, clone, visiting/roaming execution, and scripts
-  (direct, `too run`, shebang). Pure source tools such as `fmt` and `parse` do
-  not constrain filenames.
-- If another source already owns the resulting home, reject the collision;
-  `daily-report.too` and `daily_report.too` must not overwrite each other or
-  silently share state. Hashes use source identity from
-  [the runtime contract](unified-runtime-status.md), not the derived Agent Name.
-- Validate before fetching/materializing/launching where the Agent Name is known.
-  `clone` can supply an explicit Agent Name instead of using a derived default.
-  Replace the visiting-root byte-truncation workaround with bounded Agent Names.
-- Reserve `-` outside local Agent Names for future qualified Handles. The local
-  64-character bound is not a Handle-length policy or a public-name conversion.
-
-## Source refs
-
-| Form | Source and interpretation |
+| Entry point | Contract |
 | --- | --- |
-| `gh:briceyan/gus`, `github:briceyan/gus` | GitHub shorthand using existing repository/path probes. `gh:owner/repo/name` selects a repository explicitly. |
-| `gh:owner/repo/path@rev`, `github:owner/repo/path@rev`, `github://owner/repo/path@rev` | Equivalent exact GitHub Source Refs; normalize to `github://…@rev`. |
-| `https://example.com/gus.too` | Agent Mod URL; complete HTTP(S) URLs remain supported. |
-| `https://example.com/review.md` | Cap URL, including in `with`. |
-| `oh:…`, `openhat:…` | Unsupported in this implementation; OpenHat parsing is deferred. |
-| Unprefixed remote Source Refs such as `by3/some-skill` or `owner/repo/name` | Unsupported; reserved for a future OpenHat default. No implicit GitHub or HTTP resolution. |
+| `too new NAME` | Create a resident agent with an explicit Agent Name. |
+| `too clone SOURCE [NAME]` | Copy a resident agent or fetch a remote Mod. Local cloning requires a target name. |
+| `too serve TARGET` | Host a resident name, roaming file, or visiting remote Mod. |
+| `with KIND SOURCE-REF` | Acquire Cap content for the authored Mod. |
+| Cap CLI/API queries | Select effective Cap Refs and filter public source/provenance fields. |
 
-Select the Source first; aliases resolve to the same canonical Source Ref.
-Reject unsupported forms before network access, without parsing OpenHat payloads
-or adding an OpenHat provider stub. Unknown source prefixes fail explicitly.
-Local Agent Names and `.too` paths are not unprefixed remote Source Refs.
-Cap Refs and existing local Source Refs (`home://`, `root://`, `inline://`) keep
-their meanings; `skill/some-name` remains valid as a Cap Ref.
-Use complete HTTP(S) URLs instead of domain/path shorthand.
-For `gh:`/`github:`, `@rev` selects an exact repository/path with no probing;
-without it, the documented shorthand forms retain their existing probes.
+Source parsing belongs in `common/github.py` and `common/source.py`; shared Name
+rules belong in `common/layout.py`. `up/source.py` owns agent source resolution
+and materialization; `up/process.py` owns workload control/query. Cap acquisition
+stays with State, and `state/collections.py` / `state/schemas.py` own public Cap
+projections consumed by CLI/API. Targets retain the parsed Source instead of
+duplicating provider fields; shared source parsing owns URL path decoding, and
+Mod validation consumes that path unchanged. Update help, examples, docs, and
+tests with the contract; do not add a provider framework or duplicate parsers.
 
-## Command behavior
+Handle parsing, registration, length rules, bindings, public Talk/Hub routing,
+OpenHat source parsing/defaults, shared script servers, and directory renames are
+outside this implementation. Existing messaging and script execution isolation
+are unchanged; repeated execution of the same source/config reuses prepared
+Agent State without making separate invocation histories the same execution.
 
-| Command | Target and operation |
-| --- | --- |
-| `with <kind> <source-ref>` | Reference Cap content, including HTTPS URLs. Kind is separate from the Source Ref; this is not a Cap Ref query. |
-| `too clone SOURCE [NAME]` | Copy a local agent or fetch published Mod content into a resident home. A local source requires an explicit target Agent Name. |
-| `too serve TARGET` | Run a resident Agent Name, roaming file, or fetched visiting Mod in the selected environment. |
+## Migration and Acceptance
 
-`clone` and `serve` share source parsing: bare local Agent Names remain local;
-remote content uses an explicit supported Source Ref. A bare value such as
-`gus-by3` fails local Agent Name validation without triggering Handle recognition
-or public lookup. `talk` and existing messaging/Hub behavior are unchanged by
-this plan.
+Prefix former implicit GitHub sources with `gh:` or `github:`; replace domain/path
+shorthand with complete HTTP(S) URLs. External TQ Cap consumers switch their
+identity key from `ref` to `cap`; API readers switch response `ref` to `source`
+and receive `cap` separately. Stop invalidly named legacy workloads with the
+previous version before renaming homes/paths manually. Keep state and histories.
 
-## Delivery and verification
+Acceptance checks:
 
-Currently, `with` syntax/formatting preserves these prefixes, but cap and agent
-resolvers misinterpret them as GitHub owners. Bare remote Source Refs still use
-GitHub, generic HTTP Cap fetching is not implemented, and Agent Names have no
-length limit. Cap query records use `ref` for `kind/name`, while `CapInfo.ref`
-contains a Source Ref. These are current gaps, not the proposed contracts.
-
-The later implementation must update code, current documentation, and CLI help
-together. Consolidate shared GitHub syntax/alias parsing around `GitHubRef` in
-`common/github.py`; separate agent source parsing/materialization from process
-control in `up/process.py`. Keep agent-specific and Cap-kind repository/path
-rules with their owners, using one policy per concern instead of parallel parsers
-or a provider framework. Keep Source Ref resolution separate from effective-Cap
-querying and layer merging. Share Agent Name validation/derivation between
-`common/layout.py`, `catalog/agent.py`, and their callers.
-Align Cap projections in `state/collections.py` and `state/schemas.py` with their
-CLI/API consumers; existing `StateCap.effective_ref` and `CapView.source_ref`
-provide the two distinct values.
-
-Update CLI routing, argument descriptions, usage examples, and errors alongside
-the refactoring. Reconcile README, source/Cap/Mod/layout docs, and bundled
-examples/templates; replace implicit GitHub refs and stale Selector terminology.
-Generate the implementation changelog through `too aid.too update_changelog`.
-Existing GitHub `owner/name` or `owner/repo/name` source declarations need a `gh:`
-or `github:` prefix; existing exact GitHub Source Refs and URLs retain their
-meaning. Provide migration guidance for Cap record/query fields, invalid old
-Agent Names, and changed paths; do not automatically move state or histories.
-
-Acceptance: test 64-character boundaries, character normalization, empty/overlong
-results, and stem collisions without partial writes; cover script entry points
-and explicit clone targets. Verify AST/format round trips, equivalent shorthand
-and exact source aliases, URL support across `with`/`clone`/`serve`, and rejection
-of OpenHat prefixes/unprefixed remote Source Refs with zero network calls. Verify
-local Targets and local Source Refs still work. Verify CLI/API `cap` and `source`
-agree, shorthand resolves before populating `source`, and queries use the new
-keys. Bare Cap Ref queries, policy selection, and layer precedence retain their
-behavior; an override may change `source` while retaining `cap`. CLI help/docs
-must distinguish the two Ref categories and show supported forms and migration.
-Keep valid peers visible beside invalid legacy entries; Handle-like input
-triggers no Handle lookup. Implementation changes run the default checks.
-
-## Outside this scope
-
-Handle recognition, syntax/length validation, registration, local bindings,
-ownership changes, Talk/public-Hub routing, and registration/content service
-protocols require separate designs. OpenHat source/prefix parsing and an
-unprefixed remote Source Ref default are also deferred. This plan reserves
-compatible syntax only, without implementing those features.
+- Explicit/derived name boundaries, normalization, rejection before writes,
+  clone overrides, all script entry points, and unrestricted source-only tools.
+- Same-source concurrent materialization, conflicting sources, stable source
+  hashes, and valid peers beside invalid legacy homes.
+- `with` AST/format round trips; exact aliases, shorthand probes, HTTP acquisition,
+  local refs, and unsupported sources rejected with zero network calls.
+- Matching CLI/API `cap` and `source`, override precedence, unchanged Cap Ref
+  queries, configured write `ref`, and current-cache/historical-load behavior.
+- Current documentation/help/examples agree with the contract, and the default
+  Ruff, type, and offline pytest checks pass.

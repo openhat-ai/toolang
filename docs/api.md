@@ -65,7 +65,7 @@ Cap commands:
 - `caps [AGENT] <kind> new <name>`
 - `caps [AGENT] <kind> edit <name>`
 - `caps [AGENT] <kind> delete <name>`
-- `caps [AGENT] <kind> add <ref>`
+- `caps [AGENT] <kind> add <source-ref>`
 - `caps [AGENT] <kind> remove <name>`
 
 `<kind>` is one of `psyche`, `skill`, `service`, or `prompt`. Without `AGENT`,
@@ -75,9 +75,13 @@ cap mutations target root caps. With `AGENT`, they target the selected agent hom
 Cap creation opens that content in the editor. For a stdio service, edit the
 generated definition to use `transport: stdio` and a command-line `target`.
 
-List output uses `REF`, `DESCRIPTION`, `LOCATION`, and `TAGS` for combined and
+List output uses `CAP`, `DESCRIPTION`, `LOCATION`, and `TAGS` for combined and
 kind-specific lists. `location` addresses actual content, with `file:line` only
-for inline caps. JSON and query keys are lowercase.
+for inline caps. JSON and query keys are lowercase. Cap records use `cap` for `kind/name` and
+`source` for the resolved Source Ref; Cap API summaries/details use the same
+fields. External TQ consumers use `cap` instead of `ref` as the identity key;
+API readers migrate Cap response `ref` to `source`. Configured write requests
+retain `ref` for the supplied Source Ref.
 
 Resource query parameters use native TQ over public model/tool/cap records.
 Cap identities have singular prefixes such as `skill/reviewer`, including
@@ -98,9 +102,9 @@ too ./examples/flows/proposal_workshop.too --help
 too ./examples/flows/proposal_workshop.too -- "Propose a weekly release process"
 toolang serve alice
 toolang serve alice --sandbox docker
-toolang serve brice/alice
+too serve gh:brice/alice
 toolang serve https://toolang.ai/alice.too
-toolang clone brice/alice
+too clone gh:brice/alice
 toolang start alice
 toolang start alice --sandbox docker
 toolang stop alice
@@ -155,7 +159,7 @@ that command and are not reclassified.
 
 A target without a command shows the commands accepted by that placement.
 Plain resident names are recognized from the selected root's agent catalog;
-explicit resident selectors and remote selectors are unambiguous. Showing
+explicit resident Targets and remote Source Refs are unambiguous. Showing
 remote target help does not resolve or fetch the agent. An incomplete selected
 command shows its own help before target existence or other runtime validation.
 
@@ -310,41 +314,23 @@ backend/schema failures `503`, with `code`/`detail` JSON. Once streaming starts,
 cancel local runs. Event retention and repair boundaries are specified in the
 [team observation contract](plans/team-observation.md).
 
-## Agent Selectors
+## Agent Targets
 
-Runtime commands accept these selector forms:
+`serve` and runtime queries accept a local Agent Name (`alice` or `agent:alice`), a `.too`
+file, an explicit GitHub Source Ref (`gh:owner/name`, `github:owner/name`, or
+`github://owner/repo/path.too@rev`), or a complete HTTP(S) URL. Exact
+`gh:owner/repo/path.too@rev` and `github:owner/repo/path.too@rev` aliases normalize
+to `github://` without repository/path probes. Bare remote refs, domain/path
+shorthand, and OpenHat prefixes are unsupported. See
+[Agent Sources](concepts.md#agent-sources) for syntax, naming, and migration.
+`start` and `stop` accept resident names only; stop a foreground nonresident
+server by interrupting `serve`.
 
-| Form | Meaning |
-| --- | --- |
-| `name` | A local managed agent such as `alice` |
-| `agent:name` | An explicit local managed agent, including a name that collides with a command |
-| `shorthand` | A convention-based remote selector such as `brice/alice` or `toolang.ai/alice` |
-| `ref` | A canonical remote ref such as `github://brice/agents/alice.too@main` or `https://toolang.ai/alice.too` |
+Runtime port selection distinguishes persistent servers from temporary execution:
 
-Current shorthand expansion rules are:
-
-| Shorthand | Expanded refs |
-| --- | --- |
-| `owner/name` | probes `github://owner/agents/agents/name.too@<default-branch>`, then `github://owner/agents/name.too@<default-branch>` |
-| `owner/repo/name` | probes `github://owner/repo/agents/name.too@<default-branch>`, then `github://owner/repo/name.too@<default-branch>` |
-| `host/name` | `https://host/name.too` |
-
-Three-part shorthand specifies the repository exactly. It does not probe other
-repository names.
-
-GitHub refs must include one revision suffix:
-
-- `github://owner/repo/path/to/agent.too@rev`
-
-`rev` is one git revision token. Toolang does not distinguish branch, tag, and
-commit in selector syntax.
-
-Foreground runtime port selection depends on the agent mode:
-
-| Mode | Selector | Default port behavior |
+| Mode | Target | Default port behavior |
 | --- | --- | --- |
-| Resident | Local managed name such as `alice` | Reuse the agent's last port except `7001` when available, otherwise choose from `7002-7999` |
-| Visiting | Remote selector such as `brice/alice` or `https://toolang.ai/alice.too` | Reuse the visiting root's last port when available, otherwise choose an OS temporary port |
+| Resident, visiting, or roaming server | Agent Name, remote Source Ref, or `.too` path with `serve` | Reuse the last successful available port except `7001`, otherwise choose from `7002-7999` |
 | Script run | Local `.too` path with an agic or flow name | No port for embedded host execution; attached and temporary guest execution use the selected AgentServer endpoint |
 
 
@@ -495,14 +481,13 @@ same-named runnable with `agic:`, `flow:`, or `runnable:` to invoke it. The
 removed `threads` and `runs` command names are available to authored runnables
 without a typed prefix.
 
-Visiting selectors support the same agent-self and execution-history commands:
+Visiting Targets support the same agent-self and execution-history commands:
 
 ```bash
-toolang brice/alice info
-toolang brice/alice run
-toolang brice/alice chat [--thread [THREAD]]
-toolang brice/alice inspect SUBJECT... [PROJECTOR] [--human | --json]
-toolang brice/alice retry RUN
+too gh:brice/alice info
+too gh:brice/alice chat [--thread [THREAD]]
+too gh:brice/alice inspect SUBJECT... [PROJECTOR] [--human | --json]
+too gh:brice/alice retry RUN
 ```
 
 Commands that execute or inspect current program state (`info`, `serve`, `chat`,
@@ -723,7 +708,7 @@ Behavior:
 | --- | --- |
 | `toolang serve` | Runs a local agent, or fetches one remote agent program into a stable visiting root and runs it in the foreground |
 | `toolang clone` | Clones one local agent, or fetches one remote agent program into a new local managed agent |
-| `toolang start` | Starts one local managed agent only. Remote selectors must be cloned first |
+| `toolang start` | Starts one local managed agent only. Remote sources must be cloned first |
 
 `too serve` and `too start` resolve concrete startup inputs at the control
 boundary. Host `serve` executes in the foreground command's process; host
@@ -1091,8 +1076,8 @@ field formats setup's stored ready/total counts, unchanged by `--all`.
 
 Human headers uppercase record keys. Models use short inspection fields including
 `CONTEXT`, `MAX_OUTPUT`, and `PRICE`; providers show `ID`, `MODELS`, `ADAPTER`,
-`API`, `ENV`. Tools show `REF`, `DESCRIPTION`, `TAGS`; caps additionally show
-`LOCATION` before `TAGS`. Models/tools/caps have availability tags; providers do
+`API`, `ENV`. Tools show `REF`, `DESCRIPTION`, `TAGS`; caps show `CAP`,
+`DESCRIPTION`, `LOCATION`, `TAGS`. Models/tools/caps have availability tags; providers do
 not. Caps also include form, scope, and origin; models include origin.
 See [Resource Queries](queries.md) for the records, columns, and tag groups.
 Providers have no built-in query option; their JSON supports external TQ.
@@ -1264,9 +1249,9 @@ Collections:
 The cap summary and collection endpoints accept repeatable `query` parameters.
 They match the public cap records documented in [Resource Queries](queries.md),
 using `kind/name` identities and `tags`, then retain source order. The summary
-returns the existing grouped response and counts. Response `ref` values remain
-source URIs; query records instead use `kind/name` as `ref` and a content address
-as `location`. Source URIs are not a field in the query projection.
+retains its grouped response and counts. Both response items and query records
+use `cap` for `kind/name` and `source` for the resolved Source Ref. CLI records
+also expose the human-facing content address as `location`.
 
 Cap list items include `form` and the additive `summary` display field.
 `summary` is at most 256 Unicode code points and selects the first nonblank
@@ -1319,7 +1304,7 @@ Authored write bodies use:
 Configured write bodies use:
 
 - `scope`: `home` or `root`; defaults to `home`
-- `ref`: external cap ref
+- `ref`: supplied Source Ref (kind is determined by the endpoint)
 
 Capability mutations write through the authored/configured catalogs, then await
 State publication. PUT responses read the exact published root/home layer,
@@ -1336,17 +1321,17 @@ items include:
 - `scope`
 - `origin`
 - `form`
-- `ref`
+- `cap`: effective `kind/name` Cap Ref
+- `source`: resolved Source Ref
 - `definition_file`
 - `line` when known
 - `editable`
 
 Read and write payloads use the same `root`, `home`, and `here` scope
 vocabulary. Read payloads retain `form`, `scope`, and `origin`; CLI query
-records expose all three through `tags`. CLI `ref` is `kind/name`, and
-`location` addresses the actual content as an absolute path or GitHub HTTPS URL.
-Only inline caps append a declaration line as `file:line`; CLI records have no
-separate `source`, `definition`, or `line` field.
+records expose all three through `tags`. `location` addresses actual content
+as an absolute path or remote URL. Only inline caps append a declaration line
+as `file:line`; CLI records have no separate `definition` or `line` field.
 
 
 ## Chat Client Orchestration

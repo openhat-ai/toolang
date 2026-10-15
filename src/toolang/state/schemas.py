@@ -32,7 +32,8 @@ class CapInfo:
     scope: CapScope
     origin: SourceOrigin
     form: CapForm
-    ref: str
+    cap: str
+    source: str
     definition_file: str
     editable: bool
     line: int | None = None
@@ -51,7 +52,8 @@ class CapInfo:
             scope=entry_scope(cap, agent_name=agent_name),
             origin=entry_origin(cap),
             form=entry_form(cap),
-            ref=entry_ref(cap, agent_name=agent_name),
+            cap=cap.effective_ref,
+            source=entry_ref(cap, agent_name=agent_name),
             definition_file=entry_definition_file(cap),
             editable=cap.source.form == "authored",
             line=entry_line(cap),
@@ -88,7 +90,8 @@ class CapDetail(CapInfo):
             scope=info.scope,
             origin=info.origin,
             form=info.form,
-            ref=info.ref,
+            cap=info.cap,
+            source=info.source,
             definition_file=info.definition_file,
             editable=info.editable,
             line=info.line,

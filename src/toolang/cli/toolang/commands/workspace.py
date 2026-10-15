@@ -23,11 +23,11 @@ from ...common.routing import RequiredPrefixAgentCommand, RequiredPrefixAgentGro
 
 
 class _WorkspaceGroup(RequiredPrefixAgentGroup):
-    argument_help = "Agent name, .too file, reference, or URL"
+    argument_help = "Agent Name, .too file, gh:/github: Source Ref, or HTTP(S) URL"
 
 
 class _WorkspaceCommand(RequiredPrefixAgentCommand):
-    argument_help = "Agent name, .too file, reference, or URL"
+    argument_help = "Agent Name, .too file, gh:/github: Source Ref, or HTTP(S) URL"
 
 
 def workspace_app() -> typer.Typer:
@@ -145,6 +145,6 @@ __all__ = ["workspace_app"]
 
 def _refresh_project(layout: AgentLayout) -> None:
     if layout.placement == "roaming":
-        from toolang.up.process import materialize_roaming_program
+        from toolang.up.source import materialize_roaming_program
 
         materialize_roaming_program(layout.program.resolve(strict=True))

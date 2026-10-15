@@ -315,7 +315,7 @@ def dispatch_visiting(
     selected = _selected_visiting(body)
     if selected is None:
         return None
-    from toolang.up import process as agents
+    from toolang.up import source as agent_sources
     from ..common.progress import make_cli_progress
 
     from ..common.context import resolve_root
@@ -333,13 +333,13 @@ def dispatch_visiting(
     try:
         with progress:
             layout = (
-                agents.resolve_visiting_layout(
+                agent_sources.resolve_visiting_layout(
                     selector,
                     toolang_root=toolang_root,
                     progress=progress.sink,
                 )
                 if prepare == "program"
-                else agents.visiting_layout(selector, toolang_root=toolang_root)
+                else agent_sources.visiting_layout(selector, toolang_root=toolang_root)
             )
             if spec.preparation_owner == "routing":
                 progress.complete_preparation()
@@ -471,19 +471,19 @@ def _preparation(
 
 
 def _roaming_layout(source: Path, prepare: Preparation | None) -> AgentLayout:
-    if prepare == "program":
-        from toolang.up import process as agents
+    from toolang.up import source as agent_sources
 
-        return agents.materialize_roaming_program(source)
-    return AgentLayout.roaming(source)
+    if prepare == "program":
+        return agent_sources.materialize_roaming_program(source)
+    return agent_sources.roaming_layout(source)
 
 
 def _source_path(token: str) -> Path | None:
-    text = token.strip()
+    text = token
     if (
         not text
         or text.startswith(("-", "agent:", "agic:", "flow:", "runnable:"))
-        or "://" in text
+        or ":" in text.split("/", 1)[0]
     ):
         return None
     try:
@@ -494,10 +494,10 @@ def _source_path(token: str) -> Path | None:
 
 
 def _is_visiting(token: str) -> bool:
-    from toolang.up import process as agents
+    from toolang.up import source as agent_sources
 
     try:
-        return agents.parse_agent_selector(token).form != "name"
+        return agent_sources.parse_agent_target(token).form != "name"
     except ValueError:
         return False
 
