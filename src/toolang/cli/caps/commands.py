@@ -15,6 +15,7 @@ from toolang.cli.common.editor import edit_markdown
 from ...catalog import templates
 from ...catalog.errors import CatalogConflictError
 from ...common.layout import AgentLayout, home_edit_lock_path, root_edit_lock_path
+from toolang.catalog import source as cap_source
 from toolang.catalog import cap as cap_store
 from toolang.catalog import config as cap_config
 from toolang.catalog.types import CAP_KINDS, CapKind
@@ -363,12 +364,12 @@ def _make_add_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
         progress = make_cli_progress(preparation=True)
         try:
             with progress:
-                canonical_ref = cap_state.resolve_remote_ref(
+                canonical_ref = cap_source.resolve_remote_ref(
                     kind,
                     ref,
                     progress=progress.sink,
                 )
-                name = cap_state.remote_entry_name(kind, canonical_ref)
+                name = cap_source.remote_entry_name(kind, canonical_ref)
                 entry = _configured_caps(context_root(ctx), agent_name, scope).create(
                     cap_config.CapRef(kind=kind, name=name, ref=canonical_ref)
                 )
@@ -379,7 +380,7 @@ def _make_add_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
                 )
         except CatalogConflictError as exc:
             raise ClickException(
-                f"{title} {cap_state.remote_entry_name(kind, ref)} already exists"
+                f"{title} {cap_source.remote_entry_name(kind, ref)} already exists"
             ) from exc
         except ValueError as exc:
             if progress.failure_stage is not None:
@@ -387,7 +388,7 @@ def _make_add_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
             message = str(exc)
             if "conflicting entries" in message:
                 raise ClickException(
-                    f"{title} {cap_state.remote_entry_name(kind, ref)} already exists"
+                    f"{title} {cap_source.remote_entry_name(kind, ref)} already exists"
                 ) from exc
             raise ClickException(str(exc)) from exc
         typer.echo(f"{kind.title()} {entry.name} added: {entry.ref}")

@@ -56,7 +56,7 @@ def test_workspace_changes_are_captured_by_revision(tmp_path, monkeypatch, chang
     assert restored.workspaces == original
 
 
-def test_full_config_bytes_affect_revision_without_copying_unowned_content(tmp_path):
+def test_raw_config_is_archived_separately_from_state_projection(tmp_path):
     layout = _layout(tmp_path)
     content = '[models.providers.test]\napi_key = "fake-test-credential"\n'
     layout.config.write_text(content)
@@ -76,7 +76,7 @@ def test_full_config_bytes_affect_revision_without_copying_unowned_content(tmp_p
     config = next(item for item in layer.source.files if item.path == "config.toml")
     assert config.digest == sha256(content.encode()).hexdigest()
     assert config.size == len(content.encode())
-    assert not (layer.revision_dir / "files/config.toml").exists()
+    assert (layer.revision_dir / "source/config.toml").read_text() == content
     assert "fake-test-credential" not in (layer.revision_dir / "layer.json").read_text()
 
 
@@ -151,7 +151,8 @@ def test_old_composition_is_rejected_and_current_cache_is_rebuilt(tmp_path):
     with pytest.raises(ValueError, match="unsupported Agent State schema"):
         load_agent_state(layout, legacy)
     restored = asyncio.run(StateWatcher(layout).refresh())
-    assert restored == current
+    assert restored.revision != current.revision
+    assert restored.modules == current.modules
     assert (directory / "layers.json").read_bytes() == encoded
 
 
@@ -176,8 +177,8 @@ def test_raw_config_changes_have_distinct_state_identity_after_rebasing(
         "observed_digest": sha256(content).hexdigest(),
         "accepted_digest": sha256(content).hexdigest(),
     }
-    before_files = before.to_snapshot()["files"]
-    after_files = after.to_snapshot()["files"]
+    before_files = [file.to_data() for file in before.files]
+    after_files = [file.to_data() for file in after.files]
     assert isinstance(before_files, list) and isinstance(after_files, list)
     assert expected in before_files
     assert {
@@ -188,47 +189,3 @@ def test_raw_config_changes_have_distinct_state_identity_after_rebasing(
     path.unlink()
     assert load_agent_state(layout, before.revision).files == before.files
     assert load_agent_state(layout, after.revision).files == after.files
-
-
-def test_historical_canonical_manifests_do_not_claim_raw_config_identity(tmp_path):
-    import json
-    import shutil
-
-    from toolang.state.cache import (
-        LAYER_SCHEMA,
-        _agent_publish_lock,
-        _persist_agent_revision,
-        layer_revision_dir,
-        publish_layer_current,
-    )
-
-    layout = _layout(tmp_path)
-    layout.config.write_text('[workspaces]\nrepo = "."\n')
-    current = prepare_agent_state(layout)
-    current_dir = layer_revision_dir(layout, "home", current.home_revision)
-    document = json.loads((current_dir / "layer.json").read_text())
-    document["schema"] = LAYER_SCHEMA - 1
-    document["source"]["schema"] = 3
-    for item in document["source"]["files"]:
-        item.pop("raw_sha256")
-    encoded = canonical_json(document)
-    legacy_home = sha256(encoded).hexdigest()
-    legacy_dir = layer_revision_dir(layout, "home", legacy_home)
-    shutil.copytree(current_dir, legacy_dir)
-    (legacy_dir / "layer.json").write_bytes(encoded)
-    publish_layer_current(layout, "home", legacy_home)
-    with _agent_publish_lock(layout):
-        legacy_revision = _persist_agent_revision(
-            layout, root_revision=current.root_revision, home_revision=legacy_home
-        )
-    historical = load_agent_state(layout, legacy_revision)
-    assert [item.key for item in historical.files if item.scope == "home"] == [
-        "agent.too"
-    ]
-    assert historical.files[0].digest == sha256(layout.program.read_bytes()).hexdigest()
-    rebuilt = prepare_agent_state(layout)
-    assert rebuilt.revision == current.revision
-    assert rebuilt.files == current.files
-    assert (legacy_dir / "layer.json").read_bytes() == encoded
-    layout.config.write_text("invalid toml [")
-    assert load_agent_state(layout, legacy_revision).files == historical.files

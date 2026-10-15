@@ -198,7 +198,11 @@ def test_copied_config_rebases_relative_workspaces_in_cached_state(tmp_path):
     previous = prepare_agent_state(original)
     relocated = AgentLayout.resident(tmp_path / "relocated", "helper")
     shutil.copytree(original.root, relocated.root)
-    current = prepare_agent_state(relocated)
+    import asyncio
+    from toolang.state.watcher import StateWatcher
+
+    current = asyncio.run(StateWatcher(relocated)._perform_check(requested=False)).state
+    assert prepare_agent_state(relocated).revision == current.revision
     assert previous.workspaces == {"repo": str(original.home.parent)}
     assert current.workspaces == {"repo": str(relocated.home.parent)}
     assert current.revision != previous.revision

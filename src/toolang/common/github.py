@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from collections.abc import Callable
+import json
+import re
 from pathlib import Path
 from urllib.parse import quote, unquote, urlsplit
 
@@ -15,6 +18,11 @@ class GitHubRef:
     repo: str
     path: str
     rev: str
+
+    @property
+    def is_pinned(self) -> bool:
+        """Whether the revision is a full immutable commit SHA."""
+        return re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", self.rev) is not None
 
     def render(self) -> str:
         """Render this reference as one canonical ``github://`` URI."""
@@ -121,3 +129,21 @@ def _split_url_revision(parts: list[str], *, original: str) -> tuple[str, str]:
     if len(parts) >= 2:
         return parts[0], "/".join(parts[1:])
     raise ValueError(f"invalid GitHub URL: {original}")
+
+
+def pin_github_ref(ref: GitHubRef, fetch: Callable[[str], bytes]) -> GitHubRef:
+    """Pin a selector using bytes acquired by its owning source service."""
+    if ref.is_pinned:
+        return ref
+    url = (
+        f"https://api.github.com/repos/{quote(ref.owner, safe='')}/"
+        f"{quote(ref.repo, safe='')}/commits/{quote(ref.rev, safe='')}"
+    )
+    data = json.loads(fetch(url))
+    if (
+        not isinstance(data, dict)
+        or not isinstance(data.get("sha"), str)
+        or not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", data["sha"])
+    ):
+        raise ValueError(f"invalid GitHub commit response: {ref.render()}")
+    return replace(ref, rev=data["sha"])

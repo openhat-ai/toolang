@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from toolang.catalog import source as source_owner
+
 import asyncio
 from collections import deque
 from collections.abc import AsyncIterator, Mapping
@@ -481,7 +483,8 @@ class StateWatcher:
         state = self._state
         try:
             return (
-                bool(self._checked_root_source and self._checked_root_source.issues)
+                not self._sources_reusable(state)
+                or bool(self._checked_root_source and self._checked_root_source.issues)
                 or bool(self._checked_home_source and self._checked_home_source.issues)
                 or load_current_agent_revision(self.layout) != state.revision
                 or _current_layer_revisions(self.layout)
@@ -503,7 +506,9 @@ class StateWatcher:
         state = self._state
         try:
             return (
-                load_current_agent_revision(self.layout) != state.revision
+                self._checked_home_observation is None
+                or not self._sources_reusable(state)
+                or load_current_agent_revision(self.layout) != state.revision
                 or _current_layer_revisions(self.layout)
                 != self._checked_layer_revisions
                 or root_source != self._checked_root_source
@@ -511,6 +516,13 @@ class StateWatcher:
             )
         except (OSError, TypeError, ValueError):
             return True
+
+    @staticmethod
+    def _sources_reusable(state: AgentState) -> bool:
+        return all(
+            source_owner.reusable(kind, declared, resolved)
+            for kind, declared, resolved in state.source_requests
+        )
 
     def _remember(self, state: AgentState) -> AgentState:
         existing = self._states.get(state.revision)

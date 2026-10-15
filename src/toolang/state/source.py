@@ -18,10 +18,7 @@ from toolang.catalog.types import CAP_DIRECTORY_NAMES
 from ..lang.ast import AgicDecl, FlowDecl, Program
 from ..common.progress import ProgressSink, emit_progress
 
-SourceNodeKind = Literal["file", "directory"]
 SOURCE_SCHEMA = 4
-CANONICAL_SOURCE_SCHEMA = 3
-LEGACY_SOURCE_SCHEMA = 2
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _AGENT_PROGRAMS: OrderedDict[tuple[Path, str], Program] = OrderedDict()
 _AGENT_PROGRAMS_LOCK = RLock()
@@ -120,65 +117,6 @@ def source_issue(path: str, error: Exception) -> SourceIssue:
 
 
 @dataclass(frozen=True, slots=True)
-class LegacySourceNode:
-    """One node from a schema-2 metadata source tree."""
-
-    name: str
-    kind: SourceNodeKind
-    mtime_ns: int
-    size: int
-    digest: str | None = None
-    children: tuple[LegacySourceNode, ...] = ()
-
-    @classmethod
-    def from_data(cls, data: Mapping[str, object]) -> LegacySourceNode:
-        """Load one schema-2 source node for historical revisions."""
-
-        kind = str(data["type"])
-        if kind not in {"file", "directory"}:
-            raise ValueError(f"invalid source node type: {kind!r}")
-        raw_children = cast(list[dict[str, object]], data.get("children", []))
-        children = tuple(cls.from_data(child) for child in raw_children)
-        if kind == "file" and children:
-            raise ValueError("source file node cannot contain children")
-        if tuple(sorted(children, key=lambda child: child.name)) != children:
-            raise ValueError("source node children must be sorted by name")
-        return cls(
-            name=str(data["name"]),
-            kind=cast(SourceNodeKind, kind),
-            mtime_ns=_integer_field(data, "mtime_ns"),
-            size=_integer_field(data, "size"),
-            digest=(
-                str(data["digest"]) if isinstance(data.get("digest"), str) else None
-            ),
-            children=children,
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class LegacySourceTree:
-    """A schema-2 metadata tree retained only for historical layer loading."""
-
-    root: LegacySourceNode
-    schema: int = LEGACY_SOURCE_SCHEMA
-
-    @classmethod
-    def from_data(cls, data: Mapping[str, object]) -> LegacySourceTree:
-        """Load a schema-2 tree without treating it as a current manifest."""
-
-        schema = _integer_field(data, "schema")
-        if schema != LEGACY_SOURCE_SCHEMA:
-            raise ValueError(f"unsupported source schema: {schema}")
-        raw_root = data.get("root")
-        if not isinstance(raw_root, Mapping):
-            raise TypeError("legacy source root must be an object")
-        return cls(
-            schema=schema,
-            root=LegacySourceNode.from_data(cast(Mapping[str, object], raw_root)),
-        )
-
-
-@dataclass(frozen=True, slots=True)
 class SourceObservationEntry:
     """Process-local stat identity for one selected logical source file."""
 
@@ -271,7 +209,7 @@ class SourceManifest:
     issues: tuple[SourceIssue, ...] = ()
 
     def __post_init__(self) -> None:
-        if self.schema not in {SOURCE_SCHEMA, CANONICAL_SOURCE_SCHEMA}:
+        if self.schema != SOURCE_SCHEMA:
             raise ValueError(f"unsupported source manifest schema: {self.schema}")
         paths = tuple(item.path for item in self.files)
         if paths != tuple(sorted(paths)) or len(paths) != len(set(paths)):
@@ -297,7 +235,7 @@ class SourceManifest:
         if set(data) not in ({"files", "schema"}, {"files", "schema", "issues"}):
             raise ValueError("source manifest fields do not match schema")
         schema = _integer_field(data, "schema")
-        if schema not in {SOURCE_SCHEMA, CANONICAL_SOURCE_SCHEMA}:
+        if schema != SOURCE_SCHEMA:
             raise ValueError(f"unsupported source manifest schema: {schema}")
         raw_files = data.get("files")
         if not isinstance(raw_files, list):
@@ -322,9 +260,6 @@ class SourceManifest:
                 for item in raw_issues
             ),
         )
-
-
-SourceRecord = SourceManifest | LegacySourceTree
 
 
 class SourceChangedError(RuntimeError):
@@ -413,7 +348,6 @@ def build_source_manifest(
     previous_observation: SourceObservation | None = None,
     previous_manifest: SourceManifest | None = None,
     invalidated: Collection[str] = (),
-    include_workspaces: bool = True,
 ) -> SourceManifest:
     """Hash changed files and reuse unchanged facts from one prior observation."""
 
@@ -448,19 +382,13 @@ def build_source_manifest(
             issues.append(source_issue(item.path, exc))
             continue
         raw_digest = sha256(content).hexdigest()
-        if item.path == "config.toml":
-            from toolang.common.config_sources import rebase_config_content
-
-            content = rebase_config_content(
-                content, item.source.parent, include_workspaces=include_workspaces
-            )
         if _observe_file(item.source, relative_path=item.path) != item:
             raise SourceChangedError(f"source changed while reading: {item.source}")
         entries.append(
             SourceManifestEntry(
                 path=item.path,
                 size=len(content),
-                digest=sha256(content).hexdigest(),
+                digest=raw_digest,
                 raw_digest=raw_digest,
             )
         )
@@ -496,7 +424,6 @@ def root_source_manifest(
         previous_observation=previous_observation,
         previous_manifest=previous_manifest,
         invalidated=invalidated,
-        include_workspaces=False,
     )
 
 
@@ -617,6 +544,7 @@ class SourceFile:
     digest: str
     size: int
     raw_digest: str
+    raw_content: bytes | None = None
 
     def read_text(self) -> str:
         return self.content.decode("utf-8")
@@ -723,8 +651,10 @@ def source_manifest_from_snapshot(
         entries.append(
             SourceManifestEntry(
                 path=path.as_posix(),
-                size=item.size,
-                digest=item.digest,
+                size=len(item.raw_content)
+                if item.raw_content is not None
+                else item.size,
+                digest=item.raw_digest,
                 raw_digest=item.raw_digest,
             )
         )
@@ -868,6 +798,7 @@ def _collect_file(
         relative_path=path.relative_to(toolang_root).as_posix(),
     )
     content = path.read_bytes()
+    raw_content = content
     raw_digest = sha256(content).hexdigest()
     if category == "config":
         from toolang.common.config_sources import rebase_config_content
@@ -888,6 +819,7 @@ def _collect_file(
             digest=sha256(content).hexdigest(),
             size=len(content),
             raw_digest=raw_digest,
+            raw_content=raw_content,
         )
     ]
 

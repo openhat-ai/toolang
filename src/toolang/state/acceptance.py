@@ -23,6 +23,7 @@ from .state import (
     StateCap,
     _local_entry_from_file,
     materialize_program_caps,
+    merge_materialized_files,
     layer_remote_cache,
     program_runnable_index,
     runnable_export,
@@ -56,7 +57,6 @@ def accept_sources(
     scope: Literal["root", "home"],
     previous_module_caps: dict[str, tuple[StateCap, ...]] | None = None,
     progress: ProgressSink | None = None,
-    reuse_remote: bool = True,
     include_programs: bool = True,
 ) -> AcceptedSources:
     """Exclude invalid units without changing the captured observations."""
@@ -154,6 +154,7 @@ def accept_sources(
     ]
     external: dict[str, tuple[Program, AgicDecl | FlowDecl]] = {}
     programs: list[AcceptedProgram] = []
+    program_files_captured: dict[str, bytes] = {}
     names: dict[str, list[str]] = defaultdict(list)
     for file in program_files:
         relative = key(file.relative_path)
@@ -218,14 +219,10 @@ def accept_sources(
                         str(exc),
                     )
                 ) from exc
-        cache: _RemoteEntryCache = (
-            layer_remote_cache(
-                authored,
-                scope="home",
-                entries=(previous_module_caps or {}).get(name, ()),
-            )
-            if reuse_remote
-            else {}
+        cache: _RemoteEntryCache = layer_remote_cache(
+            authored,
+            scope="home",
+            entries=(previous_module_caps or {}).get(name, ()),
         )
         caps, generated = materialize_program_caps(
             authored,
@@ -244,6 +241,7 @@ def accept_sources(
             continue
         try:
             prepared = prepare_program(file)
+            merge_materialized_files(program_files_captured, prepared.files)
             programs.append(prepared)
             if prepared.name != "agent":
                 public, local = runnable_export(relative, prepared.program)

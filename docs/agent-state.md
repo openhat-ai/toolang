@@ -19,9 +19,9 @@ and agent home must already exist. A missing `agent.too` produces the empty
 default `agent` module term with an empty Program without creating the source
 file.
 
-The proposed [State layer format](plans/state-layer-format.md) defines a future
-layout with direct Cap values, source/fetched file maps, pinned GitHub commits,
-and creation times. It is not implemented; this page describes current storage.
+The [State layer format](plans/state-layer-format.md) specifies direct parsed
+values, exact source/fetched file maps, pinned upstream versions, and revision
+creation times.
 
 ## Vocabulary
 
@@ -62,11 +62,11 @@ ${TOOLANG_ROOT}/.state/root/
   build.lock
   revs/<root-revision>/
     layer.json
-    files/
+    source/
       config.toml
-      caps/
-        authored/<kind>/<name>/...
-        configured/<kind>/<name>/...
+      prompts/<name>.md
+      skills/<name>/SKILL.md
+    materialized/<acquisition-key>/<original-relative-path>
 
 ${TOOLANG_ROOT}/agents/<agent>/.state/home/
   current
@@ -74,16 +74,14 @@ ${TOOLANG_ROOT}/agents/<agent>/.state/home/
   build.lock
   revs/<home-revision>/
     layer.json
-    files/
+    source/
       agent.too
       config.toml
       runnables/<name>.too
       chores/<name>.md
-      caps/
-        authored/<kind>/<name>/...
-        configured/<kind>/<name>/...
-        inline/<module>/<kind>/<name>/...
-        referenced/<module>/<kind>/<name>/...
+      prompts/<name>.md
+      skills/<name>/SKILL.md
+    materialized/<acquisition-key>/<original-relative-path>
 
 ${TOOLANG_ROOT}/agents/<agent>/.state/agent/
   current
@@ -100,49 +98,73 @@ publish locks coordinate derived State writes. Old
 
 ## Canonical Documents and Revisions
 
-`layer.json` is a complete root or home layer identity document. It contains:
+`layer.json` (schema 22) contains `scope`, `created_at`, normalized State
+`config`, `source` and `materialized` file maps, and `modules`, `caps`, and
+`chores` arrays. Each item has `ref`, `source`, and `value`; caps also have
+`form`. The `source` field names its original file in the source map. Only an
+empty default agent module has `source: null`, when `agent.too` is absent or
+excluded.
 
-- schema and scope;
-- a portable source manifest of sorted logical paths, captured byte sizes and
-  SHA-256 digests, plus each raw authored file's SHA-256 digest;
-- parsed config;
-- configured and referenced resolutions;
-- State capabilities;
-- accepted Markdown chore terms (name, title, body, schedule, and source path);
-- home program modules and their module-local capabilities; and
-- a sorted manifest of every file below `files/`, including path, size, and
-  SHA-256.
+Program values hold the parsed AST. Cap values hold `meta` and `body`. Chore
+values hold `title`, `body`, and `schedule`, after home Markdown/agent-inline
+precedence. All accepted Cap candidates remain in the layer, including candidates
+shadowed in another scope or module. Selection and `shadowed` inspection data
+are computed in context.
 
-`layers.json` records the composition schema, selected root and home revisions,
-agent name, frozen cap overrides, and workspace additions when present:
+Each file map records `{size, sha256}` for exact raw bytes. Accepted inputs are
+copied unchanged under `source/`, including config comments and line endings;
+known relative configuration paths are resolved separately in `config`. Rejected
+inputs add `error: {code, message, line?}` and have no stored copy; unreadable
+inputs have null size and digest. Config cap declarations are represented in
+`caps`, rather than repeated in normalized config.
+
+Fetched items include one complete `resolution` object:
 
 ```json
-{"allow_overrides":{},"home_revision":"<sha256>","name":"alice","root_revision":"<sha256>","schema":2}
+{"declared_ref":"gh:owner/review","resolved_ref":"github://owner/skills/review@<full-commit-sha>","materialized":"<acquisition-key>/review/SKILL.md"}
 ```
 
-Both documents use canonical UTF-8 JSON: keys are sorted, separators contain
-no whitespace, Unicode is emitted directly, non-finite numbers are rejected,
-and no trailing newline is written. Their exact bytes define revisions:
+`resolution.materialized` selects an entry in the materialized map. Its acquisition
+key is SHA-256 of the UTF-8 canonical `resolved_ref`. Equal acquisitions share
+files across consumers. Conflicting file sets or bytes exclude the conflicting
+Program during acceptance; conflicts with configured acquisitions fail preparation.
+Source owners supply canonical refs, entry paths, and original relative paths.
+State does not interpret schemes or choose a default source. Visiting Mod
+provenance is passed from its source cache into its module item with the exact
+acquired Program bytes.
+If that cached Program is edited locally, the new module keeps the captured
+local source and omits the fetched resolution. Restoring the acquired bytes
+restores their provenance; the visiting source-cache lifecycle is unchanged.
+
+`layers.json` (composition schema 3) records `created_at`, selected root/home
+revisions, agent name, frozen cap overrides, and optional workspace additions.
+Both documents use canonical UTF-8 JSON: sorted object keys, compact separators,
+direct Unicode, finite numbers, and no trailing newline. Unordered item arrays
+are sorted; semantic order, such as workspace order, is retained. Exact bytes
+define revisions:
 
 ```text
 layer revision = sha256(layer.json bytes)
 State revision = sha256(layers.json bytes)
 ```
 
-Revision values are lowercase 64-character SHA-256 hex strings. State does not
-persist an absolute source path, filesystem identity, Toolang version, or
-observation timestamp as identity metadata. Captured config resolves known relative
-paths before use. The source manifest also retains raw-byte digests, so comments,
-line endings, and Setup-only config changes affect identity even when prepared
-State terms do not change. Raw config content is not copied into State storage.
+Revisions are lowercase 64-character SHA-256 strings. Each new revision includes
+a fixed-width UTC creation time with microseconds, such as
+`2026-10-15T08:30:00.000000Z`. Before assigning time, preparation compares the
+candidate without `created_at` to the current document. A no-op reuses that
+revision and time, including on forced refresh. Returning to earlier content
+after an intervening change creates a new revision.
 
-Every newly prepared AgentState exposes sorted source records containing
-`scope`, `key`, `observed_digest`, and `accepted_digest`. Digests identify exact
-raw authored bytes. Valid sources have equal digests; invalid readable sources
-have a null accepted digest and flat `code`, `message`, and optional `line`.
-Unreadable files/directories have null digests and a read diagnostic. Valid
-shadowed inputs and skill assets are included; deleted files are absent. These
-records are persisted and included in `to_snapshot()`.
+List home revisions by creation time from an agent home:
+
+```sh
+jq -r 'select(.created_at != null) | [.created_at, input_filename] | @tsv' \
+  .state/home/revs/*/layer.json | sort
+```
+
+Public source receipts keep `scope`, `key`, `observed_digest`, `accepted_digest`,
+and flat diagnostics. These runtime projections are reconstructed from the map;
+there is no duplicate persisted receipt list.
 
 Invalid cap, chore, and Program units are excluded independently while valid
 siblings publish. Invalid inline resources exclude their whole Program. No
@@ -164,29 +186,20 @@ last published revision or null. Sync performs one serialized check without an
 additional reporting scan. It does not replace active code or refresh Setup.
 See [the state interface](tools.md#current-agent).
 
-New layers use schema 21 and source manifest schema 4. Accepted Markdown chore
-terms are stored alongside their captured bytes and restored without parsing
-authored syntax. Explicit integrity validation checks those terms against the
-captured Markdown and acceptance records. Schema 20 histories restore Markdown
-chores from their captured bytes; older schemas have no Markdown chore index.
-Preparation rebuilds older current layers without rewriting history. Explicit
-historical loads retain known file identities; schema-3 config and schema-2 source
-trees lack reliable raw
-identities and are not exposed as tracked files.
+Normal loading checks persisted values and references without hashing files or
+parsing captured syntax. Cap text and summaries use JSON values; explicit raw
+details and skill asset reads may open captured files. Loading never reads
+current authored source, chooses a default source, resolves refs, or contacts a
+provider.
 
-Normal loading trusts a revision to be complete and reads its persisted
-documents directly. It does not hash document or materialized file content.
-Explicit validation separately requires canonical document bytes, matching
-revision digests, an exact recursive `files/` manifest, and valid capability,
-module, and resolution references. No normal runtime path implicitly requests
-that validation. Loading a revision never reads current authored source, falls
-back to `current`, or contacts a remote provider. Current-schema loading restores
-accepted terms without parsing source; legacy compatibility paths may consult
-captured bytes.
-
-Current caches must contain supported Source Refs, even when authored bytes have
-not changed. Preparation rebuilds incompatible caches; explicitly loading a
-historical revision preserves its captured declarations.
+Explicit offline validation checks canonical document bytes, revision hashes,
+exact source/materialized file sets, sizes/digests, paths, item ownership,
+resolutions, and stored value schemas. It recursively validates composition
+layers without resolving Source Refs or reinterpreting raw syntax. Hashes protect
+captured data against a known revision; they do not authenticate a publisher.
+Rejected bytes are absent, so only their observation records can be verified.
+Old layer/composition schemas are unsupported. Derived current caches can be
+rebuilt from authored inputs; historical data is not migrated or converted.
 
 ## Programs And Module Terms
 
@@ -202,11 +215,9 @@ A runnable module exports exactly one unnamed or filename-matching agic or flow.
 Renaming an unnamed-entry file therefore renames its public runnable
 without editing its source.
 
-Module-local capability files include the module name in their path:
-
-```text
-files/caps/<inline|referenced>/<module>/<kind>/<name>/...
-```
+Inline Cap values stay in `layer.json`; no generated Markdown files are written.
+Referenced Caps use shared acquisitions under `materialized/`, with no module
+or Cap-kind directory prefix.
 
 Programs preserve omitted agic and flow names as `None`. State binds an unnamed
 top-level declaration under the lined lookup key `<entry:LINE>`, applies
@@ -243,14 +254,16 @@ State passes unchanged source text to `Program.from_source`; all syntax belongs
 to `toolang.lang` and its tree-sitter grammar. Legacy `agent NAME` and `agent:`
 headers are rejected. Missing optional source is represented by empty text.
 
-Normal preparation hashes the selected source bytes and compares the portable
-manifest with the published layer. An unchanged current layer is loaded without
-parsing Programs, materializing capabilities, or polling remote refs. Layer
-schema 8 rebuilds older caches with structured module and parameter documentation
-from grammar 0.3.2, in addition to strict source parsing and unnamed declaration
-binding. Exact historical loads retain their recorded Programs and run references.
-These rules also apply when the root and home are mounted at different absolute
-paths. An explicit refresh resolves remote refs again.
+Normal preparation compares raw source identities and asks the Source owner
+whether each recorded selection remains reusable under current source policy.
+The watcher performs that eligibility check even when local files are unchanged.
+Reusable versions do not require upstream polling. A forced State refresh
+rechecks Cap acquisitions: GitHub selectors resolve to full commit SHAs before
+files are fetched at that SHA; HTTP(S) URLs are fetched again and compared by
+bytes. A changed Git commit changes provenance even when content is equal.
+Visiting Mod acquisition keeps its one-hour source-cache lifecycle; State records
+the supplied Program and resolution. Historical/offline loads use their captured
+refs without consulting current selection policy.
 
 When rebuilding a layer, a writer:
 
@@ -263,8 +276,8 @@ When rebuilding a layer, a writer:
 6. atomically installs the immutable revision; and
 7. atomically publishes the layer `current` pointer.
 
-After both layers are prepared, preparation persists `layers.json` before
-atomically publishing `agent/current`. Re-publishing the same revision is a
+After both layers are prepared, preparation persists `layers.json` and validates
+the runtime composition before atomically publishing `agent/current`. Re-publishing the same revision is a
 no-op. Root, home, and agent revisions remain on disk so execution records can
 be resolved later. Readers assume these immutable revision directories are
 complete; integrity checks happen only through explicit validation.
@@ -291,10 +304,6 @@ check and waits for that specific check to finish; concurrent calls do not run
 checks in parallel or merely join an older check. An internal `current`
 publication whose revision is already current does not produce another
 candidate check.
-
-A legacy source metadata tree remains decodable only when loading an exact
-historical layer. It never matches current authored source; a legacy current
-layer is rebuilt with the portable manifest schema.
 
 The complete check and publication transaction also holds the agent-scoped
 `publish.lock`, so multiple processes cannot interleave checks for the same agent

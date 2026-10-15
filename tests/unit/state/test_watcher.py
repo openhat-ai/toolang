@@ -565,7 +565,8 @@ def test_invalid_runnable_is_excluded_until_repaired(
         flow.write_text(f"{kind} research:\n  pass\n", encoding="utf-8")
         repaired = await watcher.refresh()
 
-        assert repaired is initial
+        assert repaired.revision != initial.revision
+        assert repaired.modules == initial.modules
         assert "research" in repaired.runnables
         assert watcher.diagnostics() == ()
 

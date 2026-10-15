@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import asyncio
+from toolang.catalog import source as cap_source
+
 from concurrent.futures import ProcessPoolExecutor
-from dataclasses import replace
 from hashlib import sha256
 import json
 import multiprocessing
@@ -22,28 +22,20 @@ from toolang.execution.runnables import (
     resolve_state_runnable,
 )
 from toolang.lang.ast import Program
-from toolang.state import cache as state_cache
 from toolang.state import prepare as state_prepare
-from toolang.state import state as cap_state
-from toolang.state import watcher as state_watcher
 from toolang.state.cache import (
-    LAYER_SCHEMA,
     LayerScope,
     _agent_publish_lock,
-    _persist_agent_revision,
     agent_revision_dir,
     canonical_json,
     load_home_layer,
     load_root_layer,
     layer_revision_dir,
-    publish_layer_current,
     validate_agent_revision,
 )
-from toolang.state.errors import StatePreparationError
 from toolang.state.schemas import CapDetail
 from toolang.state.watcher import StateWatcher
 from toolang.state.prepare import (
-    _validate_runnable_source_names,
     compose_layer_state,
     load_agent_state,
     prepare_agent_state,
@@ -110,40 +102,6 @@ def test_unnamed_entry_can_coexist_with_explicit_main(tmp_path, kind):
     assert "main" in state.runnables
 
 
-def test_prepare_rebuilds_old_unnamed_agic_without_rewriting_history(
-    tmp_path, monkeypatch
-):
-    layout = _layout(tmp_path)
-    layout.home.mkdir(parents=True)
-    layout.program.write_text("agic:\n  Hello.\n")
-    parse = ProgramSource.parse
-
-    def legacy_parse(self, **kwargs):
-        program = parse(self, **kwargs)
-        return replace(
-            program,
-            agics=tuple(replace(agic, name="default") for agic in program.agics),
-        )
-
-    with monkeypatch.context() as legacy:
-        legacy.setattr(state_cache, "LAYER_SCHEMA", LAYER_SCHEMA - 1)
-        legacy.setattr(state_prepare, "LAYER_SCHEMA", LAYER_SCHEMA - 1)
-        legacy.setattr(ProgramSource, "parse", legacy_parse)
-        old = prepare_agent_state(layout)
-    old_program = old.modules["agent"]
-    assert old_program.agics[0].name == "default"
-
-    current = prepare_agent_state(layout)
-    assert current.home_revision != old.home_revision
-    assert current.modules["agent"].agics[0].name is None
-    assert (
-        next(v for k, v in current.runnables.items() if k.startswith("<entry:"))
-        is current.modules["agent"].agics[0]
-    )
-    assert load_agent_state(layout, old.revision).modules["agent"] == old_program
-    assert prepare_agent_state(layout).home_revision == current.home_revision
-
-
 def test_unnamed_flow_export_is_locally_entry(tmp_path):
     layout = _layout(tmp_path)
     source = layout.home / "runnables" / "research.too"
@@ -154,25 +112,6 @@ def test_unnamed_flow_export_is_locally_entry(tmp_path):
     assert (
         state.module_runnable("runnables::research", "_") is state.runnables["research"]
     )
-
-
-def test_prepare_reports_main_conflict_in_legacy_cached_source(tmp_path, monkeypatch):
-    layout = _layout(tmp_path)
-    layout.home.mkdir(parents=True)
-    layout.program.write_text("agic:\n  Hello.\n\nflow:\n  pass\n")
-
-    def legacy_parse(self):
-        return Program.from_source(self.source_text.replace("agic:", "agic default:"))
-
-    with monkeypatch.context() as legacy:
-        legacy.setattr(state_cache, "LAYER_SCHEMA", LAYER_SCHEMA - 1)
-        legacy.setattr(state_prepare, "LAYER_SCHEMA", LAYER_SCHEMA - 1)
-        legacy.setattr(ProgramSource, "parse", legacy_parse)
-        old = prepare_agent_state(layout)
-
-    state = prepare_agent_state(layout)
-    _assert_excluded(state, match="Runnable name is not unique: entry")
-    assert load_agent_state(layout, old.revision).modules == old.modules
 
 
 def test_prepare_reuses_explicit_default_agic_cache(tmp_path, monkeypatch):
@@ -203,22 +142,6 @@ def test_state_rejects_headers_rejected_by_the_language(tmp_path, header):
         AgentLayout.resident(state.toolang_root, state.name), initial_state=state
     ).diagnostics()
     assert str(language_error.value) in "; ".join(item.message for item in state_error)
-
-
-def test_state_rejects_legacy_headers_in_published_cache(tmp_path, monkeypatch):
-    layout = _layout(tmp_path)
-    layout.home.mkdir(parents=True)
-    body = "agic chat:\n  Hello.\n"
-    layout.program.write_text("agent alice\n\n" + body)
-    with monkeypatch.context() as legacy:
-        legacy.setattr(state_cache, "LAYER_SCHEMA", LAYER_SCHEMA - 1)
-        legacy.setattr(state_prepare, "LAYER_SCHEMA", LAYER_SCHEMA - 1)
-        legacy.setattr(ProgramSource, "parse", lambda _: Program.from_source(body))
-        old = prepare_agent_state(layout)
-    state = prepare_agent_state(layout)
-    _assert_excluded(state, match="line 1:1: Parse error")
-    with pytest.raises(ValueError, match="source migration"):
-        load_agent_state(layout, old.revision)
 
 
 def _prepare_revisions_in_process(toolang_root: str) -> tuple[str, str, str]:
@@ -353,25 +276,13 @@ def test_prepare_root_home_snapshot_root_and_home(tmp_path: Path) -> None:
     assert not (toolang_root / ".caps").exists()
     assert not (home / ".caps").exists()
     assert Path(root.caps[0].path) == (
-        root.revision_dir / "files" / "caps" / "authored" / "prompt" / "review.md"
+        root.revision_dir / "source" / "prompts" / "review.md"
     )
     assert Path(home_layer.caps[0].path) == (
-        home_layer.revision_dir
-        / "files"
-        / "caps"
-        / "authored"
-        / "skill"
-        / "pdf"
-        / "SKILL.md"
+        home_layer.revision_dir / "source" / "skills" / "pdf" / "SKILL.md"
     )
     assert (
-        home_layer.revision_dir
-        / "files"
-        / "caps"
-        / "authored"
-        / "skill"
-        / "pdf"
-        / "notes.txt"
+        home_layer.revision_dir / "source" / "skills" / "pdf" / "notes.txt"
     ).read_text(encoding="utf-8") == "asset\n"
     assert home_layer.modules["agent"].span.line == 1
     assert root.config == {}
@@ -648,7 +559,12 @@ def test_setup_only_config_changes_revision_but_not_state_terms(
     assert first_root.config == second_root.config == {}
     assert first.modules == second.modules
     assert first.caps_by_module == second.caps_by_module
-    assert not (first_root.revision_dir / "files" / "config.toml").exists()
+    assert (
+        first_root.revision_dir / "source/config.toml"
+    ).read_bytes() != config.read_bytes()
+    assert (
+        second_root.revision_dir / "source/config.toml"
+    ).read_bytes() == config.read_bytes()
 
 
 def test_setup_only_config_creation_and_removal_changes_dependency_revision(
@@ -672,68 +588,9 @@ def test_setup_only_config_creation_and_removal_changes_dependency_revision(
 
     assert created.revision != first.revision
     assert created.root_revision != first.root_revision
-    assert removed.revision == first.revision
-    assert removed.root_revision == first.root_revision
-
-
-def test_prepare_rebuilds_a_current_layer_from_an_older_schema(
-    tmp_path: Path,
-) -> None:
-    toolang_root = tmp_path / "toolang"
-    home = toolang_root / "agents" / "alice"
-    home.mkdir(parents=True)
-    (home / "agent.too").write_text("# Agent alice\n", encoding="utf-8")
-    layout = _layout(toolang_root)
-    current_root, current_home = prepare_root_home(layout)
-    current_dir = layer_revision_dir(layout, "home", current_home.revision)
-    document = json.loads((current_dir / "layer.json").read_text(encoding="utf-8"))
-    document["schema"] = LAYER_SCHEMA - 1
-    document["source"] = {
-        "root": {
-            "children": [
-                {
-                    "children": [],
-                    "mtime_ns": 0,
-                    "name": "agent.too",
-                    "size": 0,
-                    "type": "file",
-                }
-            ],
-            "mtime_ns": 0,
-            "name": ".",
-            "size": 0,
-            "type": "directory",
-        },
-        "schema": 2,
-    }
-    encoded = canonical_json(document)
-    stale_revision = sha256(encoded).hexdigest()
-    stale_dir = layer_revision_dir(layout, "home", stale_revision)
-    shutil.copytree(current_dir, stale_dir)
-    (stale_dir / "layer.json").write_bytes(encoded)
-    publish_layer_current(layout, "home", stale_revision)
-    with _agent_publish_lock(layout):
-        stale_state_revision = _persist_agent_revision(
-            layout,
-            root_revision=current_root.revision,
-            home_revision=stale_revision,
-        )
-
-    with pytest.raises(ValueError, match="outdated layer schema"):
-        load_agent_state(layout)
-    assert (
-        load_agent_state(layout, stale_state_revision).home_revision == stale_revision
-    )
-
-    prepared_state = prepare_agent_state(layout)
-    prepared_home = load_home_layer(layout, prepared_state.home_revision)
-
-    assert prepared_home.revision != stale_revision
-    prepared_document = json.loads(
-        (prepared_home.revision_dir / "layer.json").read_text(encoding="utf-8")
-    )
-    assert prepared_document["schema"] == LAYER_SCHEMA
-    assert load_agent_state(layout).revision == prepared_state.revision
+    assert removed.revision != first.revision
+    assert removed.root_revision != first.root_revision
+    assert removed.config == first.config
 
 
 def test_prepare_repairs_a_corrupt_content_addressed_layer(tmp_path: Path) -> None:
@@ -746,14 +603,14 @@ def test_prepare_repairs_a_corrupt_content_addressed_layer(tmp_path: Path) -> No
     revision_dir = layer_revision_dir(layout, "home", first.home_revision)
     layer_path = revision_dir / "layer.json"
     document = json.loads(layer_path.read_text(encoding="utf-8"))
-    document["source"]["files"] = [{"path": "../escape", "sha256": "0" * 64}]
+    document["source"]["../escape"] = {"size": 0, "sha256": "0" * 64}
     layer_path.write_bytes(canonical_json(document))
 
     repaired = prepare_agent_state(layout)
 
-    assert repaired.revision == first.revision
-    assert repaired.home_revision == first.home_revision
-    assert load_agent_state(layout).revision == first.revision
+    assert repaired.revision != first.revision
+    assert repaired.home_revision != first.home_revision
+    assert load_agent_state(layout).revision == repaired.revision
 
 
 def test_prepare_repairs_corrupt_materialized_layer_content(tmp_path: Path) -> None:
@@ -765,15 +622,18 @@ def test_prepare_repairs_corrupt_materialized_layer_content(tmp_path: Path) -> N
     layout = _layout(toolang_root)
     first = prepare_agent_state(layout)
     materialized = (
-        layer_revision_dir(layout, "home", first.home_revision) / "files" / "agent.too"
+        layer_revision_dir(layout, "home", first.home_revision) / "source" / "agent.too"
     )
     materialized.write_text("corrupt\n", encoding="utf-8")
 
-    repaired = prepare_agent_state(layout)
+    repaired = prepare_agent_state(layout, force=True)
 
-    assert repaired.revision == first.revision
-    assert repaired.home_revision == first.home_revision
-    assert materialized.read_bytes() == program.read_bytes()
+    assert repaired.revision != first.revision
+    assert repaired.home_revision != first.home_revision
+    restored = (
+        layer_revision_dir(layout, "home", repaired.home_revision) / "source/agent.too"
+    )
+    assert restored.read_bytes() == program.read_bytes()
     validate_agent_revision(layout, repaired.revision)
 
 
@@ -789,11 +649,11 @@ def test_prepare_repairs_a_corrupt_agent_composition(tmp_path: Path) -> None:
 
     repaired = prepare_agent_state(layout)
 
-    assert repaired.revision == first.revision
-    assert load_agent_state(layout).revision == first.revision
+    assert repaired.revision != first.revision
+    assert load_agent_state(layout).revision == repaired.revision
 
 
-def test_prepare_materializes_inline_caps_as_independent_files(
+def test_prepare_stores_inline_caps_directly_without_generated_files(
     tmp_path: Path,
 ) -> None:
     toolang_root = tmp_path / "toolang"
@@ -815,20 +675,12 @@ def test_prepare_materializes_inline_caps_as_independent_files(
         "home",
         state.home_revision,
     )
-    assert Path(entry.path) == (
-        home_revision_dir
-        / "files"
-        / "caps"
-        / "inline"
-        / "agent"
-        / "prompt"
-        / "summarize.md"
-    )
-    assert Path(entry.path).read_text(encoding="utf-8") == "Summarize this."
+    assert Path(entry.path) == home_revision_dir / "source/agent.too"
+    assert not tuple((home_revision_dir / "materialized").rglob("*.md"))
     assert entry.read_content() == "Summarize this."
     assert entry.source.path == "agents/alice/agent.too"
     layer = json.loads((home_revision_dir / "layer.json").read_text(encoding="utf-8"))
-    assert "content" not in layer["modules"][0]["here_caps"][0]
+    assert layer["caps"][0]["value"]["body"] == "Summarize this."
 
     (home / "agent.too").write_text(
         "# Agent alice\n\nprompt summarize:\n  Changed later.\n",
@@ -876,12 +728,8 @@ def test_inline_skill_materialization_preserves_source_and_snapshots(
     )
     assert Path(entry.path) == (
         layer_revision_dir(layout, "home", state.home_revision)
-        / "files"
-        / "caps"
-        / "inline"
-        / module
-        / "skill"
-        / "review.md"
+        / "source"
+        / ("runnables/review.too" if source_kind == "flow" else "agent.too")
     )
     detail = CapDetail.from_cap(entry, agent_name=layout.name)
     assert detail.definition_file == entry.source.path
@@ -934,64 +782,6 @@ def test_inline_skill_precedence_is_module_local(tmp_path: Path, scope: str) -> 
         assert entry.scope == expected_scope
 
 
-@pytest.mark.parametrize("module_file", ["agent.too", "runnables/review.too"])
-@pytest.mark.parametrize("allowed", [True, False])
-def test_inline_skill_rebuilds_old_cache_without_rewriting_history(
-    tmp_path: Path, monkeypatch, module_file: str, allowed: bool
-) -> None:
-    layout = _layout(tmp_path)
-    source = layout.home / module_file
-    source.parent.mkdir(parents=True)
-    source.write_text(
-        "skill review:\n  description = Review changes.\n\n  Review carefully.\n"
-        "\nflow:\n  pass\n"
-    )
-    if not allowed:
-        layout.config.write_text('[allow]\nskills = ["none"]\n')
-    collect = cap_state._collect_program_embedded_entries
-
-    def without_skills(*args, **kwargs):
-        kwargs["kinds"] = {"psyche", "service", "prompt"}
-        return collect(*args, **kwargs)
-
-    with monkeypatch.context() as legacy:
-        legacy.setattr(cap_state, "_collect_program_embedded_entries", without_skills)
-        old = prepare_agent_state(layout)
-    module = "agent" if module_file == "agent.too" else "runnables::review"
-    assert not old.module_caps[module]
-    old_layer = layer_revision_dir(layout, "home", old.home_revision) / "layer.json"
-    old_bytes = old_layer.read_bytes()
-
-    with pytest.raises(ValueError, match="missing inline capabilities"):
-        load_agent_state(layout)
-    watcher = state_watcher.StateWatcher(layout)
-
-    async def one_timeout(*_args, **_kwargs):
-        yield set()
-
-    monkeypatch.setattr(state_watcher, "awatch", one_timeout)
-
-    async def start_watching():
-        async for _ in watcher.updates(stop_signal=asyncio.Event()):
-            pass
-        return watcher.current()
-
-    current = asyncio.run(start_watching())
-
-    assert current.home_revision != old.home_revision
-    assert current.root_revision == old.root_revision
-    (entry,) = current.module_caps[module]
-    assert entry.kind == "skill" and entry.read_content() == "Review carefully."
-    assert bool(current.caps_for(module)) is allowed
-    assert load_agent_state(layout).revision == current.revision
-    assert not load_agent_state(layout, old.revision).module_caps[module]
-    assert old_layer.read_bytes() == old_bytes
-    monkeypatch.setattr(
-        ProgramSource, "parse", lambda _: pytest.fail("rebuilt repaired inline skill")
-    )
-    assert prepare_agent_state(layout).revision == current.revision
-
-
 def test_inline_skill_conflicts_with_same_name_reference(tmp_path: Path, monkeypatch):
     layout = _layout(tmp_path)
     layout.home.mkdir(parents=True)
@@ -1000,7 +790,7 @@ def test_inline_skill_conflicts_with_same_name_reference(tmp_path: Path, monkeyp
         "skill review:\n  description = Review changes.\n\n  Review carefully.\n"
     )
     monkeypatch.setattr(
-        cap_state,
+        cap_source,
         "_fetch_remote_cap_files",
         lambda *, relative_entry_path, **_kwargs: {
             relative_entry_path.as_posix(): b"---\ndescription: Remote review\n---\nReview.\n"
@@ -1147,17 +937,21 @@ def test_remote_refresh_changes_resolved_and_root_revision(
     home = toolang_root / "agents" / "alice"
     home.mkdir(parents=True)
     (home / "agent.too").write_text("# Agent alice\n", encoding="utf-8")
+    version = {"sha": "1" * 40}
+    monkeypatch.setattr(
+        cap_source, "_resolve_github_commit", lambda ref: version["sha"]
+    )
     content = {"value": b"---\ndescription: Rewrite\n---\nFirst.\n"}
     monkeypatch.setattr(
-        cap_state, "_github_repo_default_branch", lambda _owner, _repo: "main"
+        cap_source, "_github_repo_default_branch", lambda _owner, _repo: "main"
     )
-    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(cap_source, "_github_remote_exists", lambda _kind, _ref: True)
 
     def fake_fetch_cap_files(*, relative_entry_path, kind, name, ref):
         del kind, name, ref
         return {str(relative_entry_path): content["value"]}
 
-    monkeypatch.setattr(cap_state, "_fetch_remote_cap_files", fake_fetch_cap_files)
+    monkeypatch.setattr(cap_source, "_fetch_remote_cap_files", fake_fetch_cap_files)
 
     first_root, _ = prepare_root_home(
         _layout(toolang_root),
@@ -1166,6 +960,7 @@ def test_remote_refresh_changes_resolved_and_root_revision(
     cached_root, _ = prepare_root_home(
         _layout(toolang_root),
     )
+    version["sha"] = "2" * 40
     refreshed = refresh_agent_state(
         _layout(toolang_root),
     )
@@ -1175,34 +970,15 @@ def test_remote_refresh_changes_resolved_and_root_revision(
     )
 
     assert cached_root.revision == first_root.revision
-    assert (
-        cached_root.revision_dir
-        / "files"
-        / "caps"
-        / "configured"
-        / "prompt"
-        / "rewrite.md"
-    ).read_bytes() == b"---\ndescription: Rewrite\n---\nFirst.\n"
+    assert Path(cached_root.caps[0].path).read_bytes().endswith(b"First.\n")
     assert second_root.revision != first_root.revision
     assert second_root.resolutions != first_root.resolutions
     assert (
         second_root.caps[0].source.fingerprint != first_root.caps[0].source.fingerprint
     )
-    assert (
-        second_root.revision_dir
-        / "files"
-        / "caps"
-        / "configured"
-        / "prompt"
-        / "rewrite.md"
-    ).read_bytes() == content["value"]
-    assert Path(second_root.caps[0].path) == (
-        second_root.revision_dir
-        / "files"
-        / "caps"
-        / "configured"
-        / "prompt"
-        / "rewrite.md"
+    assert Path(second_root.caps[0].path).read_bytes() == content["value"]
+    assert Path(second_root.caps[0].path).is_relative_to(
+        second_root.revision_dir / "materialized"
     )
 
 
@@ -1219,11 +995,11 @@ def test_local_change_reuses_unchanged_remote_materialization(
     home.mkdir(parents=True)
     (home / "agent.too").write_text("# Agent alice\n", encoding="utf-8")
     monkeypatch.setattr(
-        cap_state, "_github_repo_default_branch", lambda _owner, _repo: "main"
+        cap_source, "_github_repo_default_branch", lambda _owner, _repo: "main"
     )
-    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(cap_source, "_github_remote_exists", lambda _kind, _ref: True)
     monkeypatch.setattr(
-        cap_state,
+        cap_source,
         "_fetch_remote_cap_files",
         lambda *, relative_entry_path, **_kwargs: {
             str(relative_entry_path): (
@@ -1238,7 +1014,7 @@ def test_local_change_reuses_unchanged_remote_materialization(
     local.parent.mkdir()
     local.write_text("---\ndescription: Local\n---\nLocal content.\n", encoding="utf-8")
     monkeypatch.setattr(
-        cap_state,
+        cap_source,
         "_fetch_remote_cap_files",
         lambda **_kwargs: (_ for _ in ()).throw(
             AssertionError("unchanged remote cap must be reused")
@@ -1281,11 +1057,11 @@ def test_local_change_does_not_reuse_corrupt_remote_materialization(
     home.mkdir(parents=True)
     (home / "agent.too").write_text("# Agent alice\n", encoding="utf-8")
     monkeypatch.setattr(
-        cap_state, "_github_repo_default_branch", lambda _owner, _repo: "main"
+        cap_source, "_github_repo_default_branch", lambda _owner, _repo: "main"
     )
-    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(cap_source, "_github_remote_exists", lambda _kind, _ref: True)
     monkeypatch.setattr(
-        cap_state,
+        cap_source,
         "_fetch_remote_cap_files",
         lambda *, relative_entry_path, **_kwargs: {
             str(relative_entry_path): b"---\ndescription: Rewrite\n---\nFirst.\n"
@@ -1306,7 +1082,7 @@ def test_local_change_does_not_reuse_corrupt_remote_materialization(
             str(relative_entry_path): b"---\ndescription: Rewrite\n---\nRepaired.\n"
         }
 
-    monkeypatch.setattr(cap_state, "_fetch_remote_cap_files", rematerialize)
+    monkeypatch.setattr(cap_source, "_fetch_remote_cap_files", rematerialize)
 
     second, _ = prepare_root_home(layout)
 
@@ -1329,9 +1105,9 @@ def test_declared_ref_change_refreshes_remote_materialization(
     home.mkdir(parents=True)
     (home / "agent.too").write_text("# Agent alice\n", encoding="utf-8")
     monkeypatch.setattr(
-        cap_state, "_github_repo_default_branch", lambda _owner, _repo: "main"
+        cap_source, "_github_repo_default_branch", lambda _owner, _repo: "main"
     )
-    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(cap_source, "_github_remote_exists", lambda _kind, _ref: True)
     calls: list[str] = []
 
     def fake_fetch_cap_files(*, relative_entry_path, kind, name, ref):
@@ -1343,7 +1119,7 @@ def test_declared_ref_change_refreshes_remote_materialization(
             )
         }
 
-    monkeypatch.setattr(cap_state, "_fetch_remote_cap_files", fake_fetch_cap_files)
+    monkeypatch.setattr(cap_source, "_fetch_remote_cap_files", fake_fetch_cap_files)
 
     first, _ = prepare_root_home(
         _layout(toolang_root),
@@ -1467,24 +1243,33 @@ def test_runnable_module_names_reject_nonportable_source_paths(
         runnable_module_name(authored_path)
 
 
-def test_runnable_module_names_reject_casefold_collisions() -> None:
-    def source(path: str) -> ProgramSource:
-        text = "flow:\n  pass\n"
-        return ProgramSource(
-            agent_name="alice",
-            kind="runnable",
-            authored_path=path,
-            source_path=f"agents/alice/{path}",
-            source_text=text,
-            digest=sha256(text.encode()).hexdigest(),
-        )
+def test_runnable_module_names_reject_casefold_collisions(tmp_path) -> None:
+    from toolang.state.acceptance import accept_sources
+    from toolang.state.source import SourceFile, SourceSnapshot
 
-    with pytest.raises(StatePreparationError) as raised:
-        _validate_runnable_source_names(
-            (source("runnables/Report.too"), source("runnables/report.too"))
+    content = b"flow:\n  pass\n"
+    digest = sha256(content).hexdigest()
+    paths = ("runnables/Report.too", "runnables/report.too")
+    files = tuple(
+        SourceFile(
+            path=tmp_path / "agents/alice" / path,
+            relative_path=f"agents/alice/{path}",
+            category="program",
+            origin="agent",
+            content=content,
+            digest=digest,
+            size=len(content),
+            raw_digest=digest,
         )
-
-    assert raised.value.diagnostics[0].code == "invalid-runnable-filename"
+        for path in paths
+    )
+    accepted = accept_sources(SourceSnapshot(tmp_path, "alice", files), scope="home")
+    assert {record.key for record in accepted.records} == set(paths)
+    assert all(
+        not record.accepted and record.code == "invalid-runnable-filename"
+        for record in accepted.records
+    )
+    assert [program.name for program in accepted.programs] == ["agent"]
 
 
 @pytest.mark.parametrize(
@@ -1602,11 +1387,11 @@ def test_flow_modules_can_reference_the_same_cap(
     (flows / "one.too").write_text(source, encoding="utf-8")
     (flows / "two.too").write_text(source, encoding="utf-8")
     monkeypatch.setattr(
-        cap_state, "_github_repo_default_branch", lambda _owner, _repo: "main"
+        cap_source, "_github_repo_default_branch", lambda _owner, _repo: "main"
     )
-    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(cap_source, "_github_remote_exists", lambda _kind, _ref: True)
     monkeypatch.setattr(
-        cap_state,
+        cap_source,
         "_fetch_remote_cap_files",
         lambda *, relative_entry_path, **_kwargs: {
             relative_entry_path.as_posix(): (
@@ -1620,62 +1405,10 @@ def test_flow_modules_can_reference_the_same_cap(
     one = state.module_caps["runnables::one"][0]
     two = state.module_caps["runnables::two"][0]
     assert one.ref == two.ref
-    assert one.path != two.path
+    assert one.path == two.path
     assert one.read_content() == "Review carefully."
     assert two.read_content() == "Review carefully."
     assert not (home / "agent.too").exists()
-
-
-@pytest.mark.parametrize("module_file", ["agent.too", "runnables/review.too"])
-def test_prepare_rebinds_parameter_docs_without_rewriting_history(
-    tmp_path, monkeypatch, module_file
-):
-    layout = _layout(tmp_path)
-    source = layout.home / module_file
-    source.parent.mkdir(parents=True)
-    source.write_text(
-        "#@ Review module.\n## Review the material.\n"
-        "## @param _ Source material.\n## @param style Preferred style.\n"
-        "flow(_: Text, style?: Text):\n  pass\n"
-    )
-    parse = ProgramSource.parse
-
-    def legacy_parse(self, **kwargs):
-        program = parse(self, **kwargs)
-        return replace(
-            program,
-            doc=None,
-            flows=tuple(
-                replace(
-                    flow,
-                    doc="Review the material.\n@param _ Source material.\n@param style Preferred style.",
-                    input=replace(flow.input, doc=None) if flow.input else None,
-                    params=tuple(replace(param, doc=None) for param in flow.params),
-                )
-                for flow in program.flows
-            ),
-        )
-
-    with monkeypatch.context() as legacy:
-        legacy.setattr(state_cache, "LAYER_SCHEMA", 7)
-        legacy.setattr(state_prepare, "LAYER_SCHEMA", 7)
-        legacy.setattr(ProgramSource, "parse", legacy_parse)
-        old = prepare_agent_state(layout)
-    old_home = layer_revision_dir(layout, "home", old.home_revision) / "layer.json"
-    old_document = old_home.read_bytes()
-    current = prepare_agent_state(layout)
-    module = "agent" if module_file == "agent.too" else "runnables::review"
-    program = current.modules[module]
-    runnable = program.flows[0]
-    assert current.home_revision != old.home_revision
-    assert program.doc == "Review module."
-    assert runnable.doc == "Review the material."
-    assert runnable.input is not None
-    assert runnable.input.doc == "Source material."
-    assert runnable.params[0].doc == "Preferred style."
-    assert load_agent_state(layout, old.revision).modules == old.modules
-    assert old_home.read_bytes() == old_document
-    assert prepare_agent_state(layout).revision == current.revision
 
 
 @pytest.mark.parametrize("target", ["research", "private_helper"])
@@ -1701,55 +1434,6 @@ def test_main_composition_does_not_import_private_helpers_or_types(tmp_path):
     layout.program.write_text("flow parent(_: Secret):\n  run research\n")
     state = prepare_agent_state(layout)
     _assert_excluded(state, match="Unknown Toolang type")
-
-
-@pytest.mark.parametrize(
-    "old_body,new_body",
-    [
-        ("scatter: Items", "run -> Text[]: Items"),
-        ("storm 2 using: Items", "generate 2: Items"),
-        (
-            "run -> Text[]: Items\n  settle: {{_}}",
-            "run -> Text[]: Items\n  reduce: {{_}}",
-        ),
-        (
-            "run -> Text[]: Items\n  map using: {{_}}",
-            "run -> Text[]: Items\n  map: {{_}}",
-        ),
-    ],
-)
-def test_obsolete_flow_snapshot_requires_migration_even_with_current_ast(
-    tmp_path, monkeypatch, old_body, new_body
-):
-    layout = _layout(tmp_path)
-    layout.home.mkdir(parents=True)
-    old_source = f"flow main():\n  {old_body}\n"
-    new_source = f"flow main():\n  {new_body}\n"
-    layout.program.write_text(old_source)
-    current_ast = Program.from_source(new_source)
-    with monkeypatch.context() as legacy:
-        legacy.setattr(state_cache, "LAYER_SCHEMA", LAYER_SCHEMA - 1)
-        legacy.setattr(state_prepare, "LAYER_SCHEMA", LAYER_SCHEMA - 1)
-        legacy.setattr(ProgramSource, "parse", lambda _: current_ast)
-        old = prepare_agent_state(layout)
-    revision_dir = layer_revision_dir(layout, "home", old.home_revision)
-    before = {
-        path.relative_to(revision_dir): path.read_bytes()
-        for path in revision_dir.rglob("*")
-        if path.is_file()
-    }
-    with pytest.raises(ValueError, match="source migration"):
-        load_agent_state(layout, old.revision)
-    state = prepare_agent_state(layout)
-    _assert_excluded(state)
-    layout.program.write_text(new_source)
-    current = prepare_agent_state(layout)
-    assert current.revision != old.revision
-    assert before == {
-        path.relative_to(revision_dir): path.read_bytes()
-        for path in revision_dir.rglob("*")
-        if path.is_file()
-    }
 
 
 def test_visiting_agent_parses_once_before_parallel_dependencies(tmp_path, monkeypatch):
@@ -1781,7 +1465,7 @@ def test_visiting_agent_parses_once_before_parallel_dependencies(tmp_path, monke
         return b"---\ndescription: A prompt\n---\nPrompt.\n"
 
     monkeypatch.setattr(Program, "from_source", parse)
-    monkeypatch.setattr(cap_state, "_fetch_github_file", fetch)
+    monkeypatch.setattr(cap_source, "_fetch_github_file", fetch)
     events = []
     state_prepare.parse_visiting_agent(
         layout, ref="https://example.test/agent.too", progress=events.append
@@ -1803,7 +1487,7 @@ def test_visiting_agent_parses_once_before_parallel_dependencies(tmp_path, monke
         Program, "from_source", lambda *_a, **_k: pytest.fail("warm parse")
     )
     monkeypatch.setattr(
-        cap_state, "_fetch_github_file", lambda *_a: pytest.fail("warm fetch")
+        cap_source, "_fetch_github_file", lambda *_a: pytest.fail("warm fetch")
     )
     warm_events = []
     warm = prepare_agent_state(layout, progress=warm_events.append)

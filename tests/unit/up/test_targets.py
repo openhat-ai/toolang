@@ -466,3 +466,117 @@ def test_roaming_queries_reject_normalized_home_owned_by_another_source(
     assert "already belongs" in " ".join(capsys.readouterr().err.split())
     assert dispatched == []
     assert layout.program.resolve() == original
+
+
+def test_visiting_acquisition_pins_and_preserves_provenance(tmp_path, monkeypatch):
+    import json
+    from dataclasses import replace
+    from toolang.common.github import pin_github_ref
+    from toolang.state.cache import layer_revision_dir, validate_agent_revision
+    from toolang.state.prepare import prepare_agent_state, load_agent_state
+    from toolang.up.server import resolve_serve
+
+    sha = "c" * 40
+    requested = "gh:owner/agents/dev.too@main"
+    fetched = []
+    content = "# Original\r\nflow work():\r\n  pass\r\n"
+    monkeypatch.setattr(
+        agent_sources,
+        "_resolve_github_commit",
+        lambda ref: (
+            pin_github_ref(
+                ref,
+                lambda url: json.dumps({"sha": sha}).encode(),
+            ).rev
+        ),
+    )
+    monkeypatch.setattr(
+        agent_sources,
+        "fetch_agent_ref",
+        lambda ref, **kwargs: fetched.append(ref) or content,
+    )
+    first = agent_sources.resolve_visiting_layout(requested, toolang_root=tmp_path)
+    assert fetched[0].rev == sha
+    # The hidden server reconstructs paths without live source data.
+    restored = resolve_serve(
+        layout=replace(first, program_acquisition=None, placement="resident"), port=9000
+    ).layout
+    assert restored.program_acquisition == first.program_acquisition
+    state = prepare_agent_state(restored)
+    directory = layer_revision_dir(restored, "home", state.home_revision)
+    layer = json.loads((directory / "layer.json").read_bytes())
+    item = layer["modules"][0]
+    assert item["source"] == "agent.too"
+    assert item["resolution"]["declared_ref"] == requested
+    assert item["resolution"]["resolved_ref"] == f"github://owner/agents/dev.too@{sha}"
+    entry = item["resolution"]["materialized"]
+    assert (directory / "materialized" / entry).read_bytes() == content.encode()
+    assert (directory / "source/agent.too").read_bytes() == content.encode()
+    assert (
+        agent_sources.resolve_visiting_layout(
+            requested, toolang_root=tmp_path
+        ).program_acquisition
+        == first.program_acquisition
+    )
+    assert (
+        agent_sources.resolve_visiting_layout(
+            requested.replace("gh:", "github:"), toolang_root=tmp_path
+        ).program_acquisition
+        == first.program_acquisition
+    )
+    assert len(fetched) == 1
+    assert prepare_agent_state(restored, force=True).revision == state.revision
+    monkeypatch.setattr(
+        agent_sources,
+        "parse_agent_target",
+        lambda *args: pytest.fail("historical source resolution"),
+    )
+    assert load_agent_state(restored, state.revision).modules == state.modules
+    validate_agent_revision(restored, state.revision)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("resolved_ref", "invalid:cached"),
+        ("resolved_ref", 42),
+        ("declared_ref", None),
+        ("declared_ref", "invalid:cached"),
+        ("entry", "other.too"),
+    ],
+)
+def test_invalid_visiting_receipt_is_refetched(tmp_path, monkeypatch, field, value):
+    import json
+    from toolang.state.prepare import prepare_agent_state
+
+    url = "https://example.com/dev.too"
+    content = "flow main():\n  pass\n"
+    cached = agent_sources.materialize_visiting_program(
+        agent_sources.HttpRef(url),
+        content,
+        toolang_root=tmp_path,
+    )
+    path = cached.home / "agent.source.json"
+    receipt = json.loads(path.read_bytes())
+    receipt[field] = value
+    path.write_text(json.dumps(receipt))
+    fetched = []
+    monkeypatch.setattr(
+        agent_sources,
+        "fetch_agent_ref",
+        lambda ref, **kwargs: fetched.append(ref) or content,
+    )
+    actual = agent_sources.resolve_visiting_layout(url, toolang_root=tmp_path)
+    assert len(fetched) == 1
+    assert actual.program_acquisition is not None
+    assert actual.program_acquisition.declared_ref == url
+    assert prepare_agent_state(actual).runnables["main"]
+
+
+def test_visiting_reuse_honors_an_explicit_commit():
+    requested = f"github://owner/repo/dev.too@{'b' * 40}"
+    target = agent_sources.parse_agent_target(requested)
+    assert not agent_sources.reusable_agent_source(
+        target, f"github://owner/repo/dev.too@{'a' * 40}"
+    )
+    assert agent_sources.reusable_agent_source(target, requested)

@@ -9,6 +9,12 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Added
 
+- A cached remote `agent.too` now keeps an `agent.source.json` receipt beside it
+  recording the declared ref, the resolved ref, the entry path, and the SHA-256
+  of the Program bytes. Reuse requires receipt and file to agree, so a cache
+  written by an older version is fetched again, and the recorded provenance
+  travels with the Program into its prepared State module.
+
 - Remote agents and caps accept explicit Source Refs: `gh:owner/name`,
   `github:owner/name`, `gh:owner/repo/name`, and complete HTTP(S) URLs,
   alongside the existing `github://owner/repo/path@rev` form. A `gh:`/`github:`
@@ -29,6 +35,25 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   an unparsable agent blocks them.
 
 ### Changed
+
+- **Breaking:** State revisions move to layer schema 22 and composition schema
+  3: accepted bytes are stored under `source/` and fetched bytes under
+  `materialized/<acquisition-key>/` instead of `files/`, and `layer.json`
+  holds parsed config, Program values, Cap `meta` and `body`, chore values,
+  exact file sizes and digests, one `resolution` per fetched item, and a
+  `created_at` time included in the revision hash. Older layer and composition
+  schemas are unsupported, so current caches rebuild from authored inputs on
+  the next preparation; existing revision directories stay unread and
+  unmodified, and no manual migration is required.
+
+- GitHub agent and cap sources are pinned to an exact upstream version:
+  selectors resolve to a full commit SHA before any file is fetched, so the
+  recorded resolution names that commit and a moved upstream commit counts as
+  new provenance even when the bytes match, while HTTP(S) sources keep their
+  canonical URL and compare fetched bytes on refresh. Preparation also
+  rechecks recorded selections against current source policy, so a
+  configuration change that invalidates a remote selection rebuilds State
+  even when authored files are unchanged.
 
 - **Breaking:** remote agent and cap sources must be explicit Source Refs:
   unprefixed `owner/name`, `owner/repo/name`, and `host/name` shorthand and the
