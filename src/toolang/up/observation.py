@@ -62,8 +62,8 @@ def instance_filename(layout: AgentLayout) -> str:
     return f"{name}.json"
 
 
-def _update_lock(path: Path) -> Path:
-    return path.parent / "update.lock"
+def _register_lock(path: Path) -> Path:
+    return path.parent / "register.lock"
 
 
 class RuntimeRegistration:
@@ -124,7 +124,7 @@ class RuntimeRegistration:
                 self.layout.runtime_status, begin, instance=self.layout.instance
             )
         try:
-            with file_write_lock(_update_lock(self.path)):
+            with file_write_lock(_register_lock(self.path)):
                 atomic_write_text(self.path, json.dumps(self.payload))
         except BaseException:
             self.close()
@@ -148,7 +148,9 @@ class RuntimeRegistration:
 
 def _remove_reference(path: Path, launch_id: str) -> None:
     try:
-        with file_write_lock(_update_lock(path), create=False):
+        if not path.is_file():
+            return
+        with file_write_lock(_register_lock(path)):
             reference = json.loads(path.read_text())
             if isinstance(reference, dict) and reference.get("launch_id") == launch_id:
                 path.unlink(missing_ok=True)

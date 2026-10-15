@@ -25,13 +25,14 @@ health/metrics endpoints. Host `serve` executes in one process.
 - Discovery stays in `toolang_root/.runtime/instances/`: `gus.json` for residents,
   `lex@v<hash>.json` for visitors, and `aid@r<hash>.json` for roaming servers.
   Use 16 hex characters of SHA-256: visitors share the visiting-root key
-  (`canonical Toolang root + NUL + source selector`); roaming uses the canonical
-  host absolute source path. Save this host-resolved `source_id` in control
+  (`canonical Toolang root + NUL + source selector`) and use the same complete
+  16-character hash in both directory and reference names; roaming uses the
+  canonical host absolute source path. Save this host-resolved `source_id` in control
   bindings; guest paths, ports, sandbox, file contents, and launch IDs do not
   affect the source hash. Escape agent names to prevent marker collisions.
   References contain only version, absolute status path, and launch ID;
   database/logs stay in agent root. No `ids.json`, `channels/`, or new directories.
-  References share one native `instances/update.lock`, held only for publication
+  References share one native `instances/register.lock`, held only for publication
   or conditional removal, never workload startup/waiting. Pure reads do not lock
   or create this guard. Temporary executions currently append `@<execution-id>`
   to avoid overwriting parallel executions; they leave no per-reference locks.
@@ -176,8 +177,9 @@ malformed references do not break queries/cleanup, and pure reads create no guar
 - **Compatibility:** stop old workloads with the previous version before upgrading.
   Stopped legacy reports migrate; leftover sandbox refs require old-version
   cleanup. Keep databases/logs. Visiting roots now include the Toolang root in
-  their source hash; preserve old roots for explicit history migration. For
-  rollback, stop new workloads first and restore backed-up legacy status/roots.
+  their source hash and use all 16 characters, matching discovery references;
+  old eight-character roots are left untouched for explicit history migration.
+  For rollback, stop new workloads first and restore backed-up legacy status/roots.
   Replace observation-root settings with `TOOLANG_ROOT`. Unified health/metrics
   transport remains a future plan.
   After stopping old versions, orphan discovery `<id>.json.lock` files may be
