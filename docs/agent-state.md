@@ -126,8 +126,8 @@ Fetched items include one complete `resolution` object:
 
 `resolution.materialized` selects an entry in the materialized map. Its acquisition
 key is SHA-256 of the UTF-8 canonical `resolved_ref`. Equal acquisitions share
-files across consumers; different file sets or bytes under the same key reject
-preparation.
+files across consumers. Conflicting file sets or bytes exclude the conflicting
+Program during acceptance; conflicts with configured acquisitions fail preparation.
 Source owners supply canonical refs, entry paths, and original relative paths.
 State does not interpret schemes or choose a default source. Visiting Mod
 provenance is passed from its source cache into its module item with the exact

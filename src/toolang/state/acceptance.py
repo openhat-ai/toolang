@@ -23,6 +23,7 @@ from .state import (
     StateCap,
     _local_entry_from_file,
     materialize_program_caps,
+    merge_materialized_files,
     layer_remote_cache,
     program_runnable_index,
     runnable_export,
@@ -153,6 +154,7 @@ def accept_sources(
     ]
     external: dict[str, tuple[Program, AgicDecl | FlowDecl]] = {}
     programs: list[AcceptedProgram] = []
+    program_files_captured: dict[str, bytes] = {}
     names: dict[str, list[str]] = defaultdict(list)
     for file in program_files:
         relative = key(file.relative_path)
@@ -239,6 +241,7 @@ def accept_sources(
             continue
         try:
             prepared = prepare_program(file)
+            merge_materialized_files(program_files_captured, prepared.files)
             programs.append(prepared)
             if prepared.name != "agent":
                 public, local = runnable_export(relative, prepared.program)

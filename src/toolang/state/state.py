@@ -9,6 +9,7 @@ from dataclasses import dataclass, field, replace
 import hashlib
 from hashlib import sha256
 import json
+from math import isfinite
 from pathlib import Path
 import re
 from typing import Literal, cast
@@ -1421,6 +1422,8 @@ def _load_meta_text(text: str) -> dict[str, object]:
 
 
 def _json_compatible(value: object) -> object:
+    if isinstance(value, float) and not isfinite(value):
+        raise ValueError("Cap metadata requires finite numbers")
     if value is None or isinstance(value, str | int | float | bool):
         return value
     if isinstance(value, list | tuple):

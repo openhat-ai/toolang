@@ -256,6 +256,67 @@ def test_conflicting_bytes_for_shared_acquisition_are_rejected(tmp_path, monkeyp
         prepare_agent_state(layout)
 
 
+def test_conflicting_module_acquisitions_exclude_only_the_conflicting_program(
+    tmp_path, monkeypatch
+):
+    layout = layout_at(tmp_path)
+    runnables = layout.home / "runnables"
+    runnables.mkdir()
+    for name in ("first", "second"):
+        (runnables / f"{name}.too").write_text(
+            f"with prompt future:owner/style\nflow {name}():\n  pass\n"
+        )
+    (runnables / "other.too").write_text("flow other():\n  pass\n")
+    bodies = iter((b"First.", b"Second."))
+
+    def acquire(*args, **kwargs):
+        return Acquisition(
+            "future:owner/style@v1", "style.md", {"style.md": next(bodies)}, "style"
+        )
+
+    monkeypatch.setattr(source_owner, "acquire", acquire)
+    monkeypatch.setattr(source_owner, "reusable", lambda *args: True)
+    state = prepare_agent_state(layout)
+    assert set(state.runnables) == {"work", "first", "other"}
+    assert state.caps_for("runnables::first")[0].read_content() == "First."
+    rejected = next(file for file in state.files if not file.accepted)
+    assert rejected.key == "runnables/second.too"
+    assert rejected.message and "conflicting acquired files" in rejected.message
+    layer = document(layout, state)
+    assert len(layer["caps"]) == len(layer["materialized"]) == 1
+    validate_agent_revision(layout, state.revision)
+    assert prepare_agent_state(layout).revision == state.revision
+
+
+@pytest.mark.parametrize("form", ["authored", "referenced"])
+@pytest.mark.parametrize("number", [".nan", ".inf", "-.inf"])
+def test_nonfinite_metadata_excludes_only_its_resource(
+    tmp_path, monkeypatch, form, number
+):
+    layout = layout_at(tmp_path)
+    prompts = layout.home / "prompts"
+    prompts.mkdir()
+    (prompts / "good.md").write_text("Valid prompt.")
+    content = f"---\nweights:\n  - {number}\n---\nInvalid metadata."
+    if form == "authored":
+        source = "prompts/bad.md"
+        (layout.home / source).write_text(content)
+    else:
+        source = "agent.too"
+        layout.program.write_text(
+            "with prompt future:owner/style\nflow work():\n  pass\n"
+        )
+        install_sources(
+            monkeypatch, {"future:owner/style": ("future:owner/style@v1", content)}
+        )
+    state = prepare_agent_state(layout)
+    assert set(state.prompts) == {"good"}
+    rejected = next(file for file in state.files if not file.accepted)
+    assert rejected.key == source
+    assert rejected.message and "finite" in rejected.message
+    validate_agent_revision(layout, state.revision)
+
+
 @pytest.mark.parametrize("second_assets", [{}, {"second.py": b"pass\n"}])
 def test_shared_acquisitions_require_the_same_file_set(
     tmp_path, monkeypatch, second_assets
