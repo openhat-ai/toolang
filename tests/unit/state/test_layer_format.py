@@ -489,6 +489,46 @@ def test_visiting_dependency_failure_excludes_only_its_program(tmp_path, monkeyp
     validate_agent_revision(layout, state.revision)
 
 
+def test_local_visiting_program_edits_publish_without_stale_provenance(
+    tmp_path, monkeypatch
+):
+    from toolang.up import source as agent_source
+    from toolang.state import prepare
+
+    original = "flow original():\n  pass\n"
+    layout = agent_source.materialize_visiting_program(
+        agent_source.HttpRef("https://example.com/dev.too"),
+        original,
+        toolang_root=tmp_path,
+    )
+    acquired = prepare_agent_state(layout)
+    assert document(layout, acquired)["modules"][0]["resolution"]
+    layout.program.write_text("flow edited():\n  pass\n")
+    edited = prepare_agent_state(layout)
+    assert set(edited.runnables) == {"edited"}
+    layer = document(layout, edited)
+    assert "resolution" not in layer["modules"][0]
+    assert not layer["materialized"]
+    validate_agent_revision(layout, edited.revision)
+    assert set(load_agent_state(layout, acquired.revision).runnables) == {"original"}
+
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            prepare,
+            "_prepare_layer_revision",
+            lambda **kwargs: pytest.fail("unchanged local edit should reuse State"),
+        )
+        assert prepare_agent_state(layout).revision == edited.revision
+    layout.program.write_text(original)
+    restored = prepare_agent_state(layout)
+    assert (
+        document(layout, restored)["modules"][0]["resolution"]
+        == document(layout, acquired)["modules"][0]["resolution"]
+    )
+    assert len({acquired.revision, edited.revision, restored.revision}) == 3
+    validate_agent_revision(layout, restored.revision)
+
+
 def test_configured_aliases_keep_their_own_declared_refs(tmp_path, monkeypatch):
     layout = layout_at(tmp_path)
     refs = {

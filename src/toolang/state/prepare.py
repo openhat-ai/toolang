@@ -9,6 +9,7 @@ import logging
 from pathlib import Path
 
 from toolang.common.layout import AgentLayout, ensure_scratch_workspace
+from toolang.common.source import AcquiredSource
 from toolang.catalog import source as cap_source
 
 from ..common.progress import ProgressSink, emit_progress
@@ -478,7 +479,7 @@ def _matching_home(
                 != layer.config["workspaces"]
             ):
                 return None
-        acquired = layout.program_acquisition
+        acquired = _matching_program_acquisition(layout, source)
         expected = {"agent": acquired.resolution()} if acquired else {}
         if layer.module_resolutions != expected:
             return None
@@ -497,6 +498,24 @@ def _validate_current_sources(layer: RootLayer | HomeLayer) -> None:
             raise ValueError(
                 "Source selection changed; recorded resolution cannot be reused"
             )
+
+
+def _matching_program_acquisition(
+    layout: AgentLayout, source: SourceManifest
+) -> AcquiredSource | None:
+    """Keep upstream provenance only for the exact captured Program bytes."""
+    acquired = layout.program_acquisition
+    if acquired is None:
+        return None
+    captured = acquired.acquisition
+    digest = sha256(captured.files[captured.entry]).hexdigest()
+    return (
+        acquired
+        if any(
+            file.path == "agent.too" and file.digest == digest for file in source.files
+        )
+        else None
+    )
 
 
 def _prepare_layer(
@@ -650,7 +669,9 @@ def _build_layer_revision(
                 for name in modules
             }
         module_resolutions = {}
-        acquired = layout.program_acquisition if scope == "home" else None
+        acquired = (
+            _matching_program_acquisition(layout, source) if scope == "home" else None
+        )
         if acquired is not None and "source/agent.too" in files:
             captured = acquired.acquisition
             if files.get("source/agent.too") != captured.files[captured.entry]:

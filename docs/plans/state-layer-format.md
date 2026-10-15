@@ -114,6 +114,9 @@ value:
 resolution fields occur together. Local authored/inline items omit resolution.
 A visiting module keeps its captured `agent.too` source and the exact fetched
 bytes supplied by `up/source.py`.
+Local edits to the cached Program publish as local source without a fetched
+resolution. Matching acquired bytes regain their provenance; neither operation
+changes the visiting source-cache lifecycle.
 
 ## Source Ownership and Refresh
 

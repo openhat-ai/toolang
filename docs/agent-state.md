@@ -132,6 +132,9 @@ Source owners supply canonical refs, entry paths, and original relative paths.
 State does not interpret schemes or choose a default source. Visiting Mod
 provenance is passed from its source cache into its module item with the exact
 acquired Program bytes.
+If that cached Program is edited locally, the new module keeps the captured
+local source and omits the fetched resolution. Restoring the acquired bytes
+restores their provenance; the visiting source-cache lifecycle is unchanged.
 
 `layers.json` (composition schema 3) records `created_at`, selected root/home
 revisions, agent name, frozen cap overrides, and optional workspace additions.
