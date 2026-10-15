@@ -66,7 +66,7 @@ from toolang.up.records import (
 )
 from toolang.up.observation import RuntimeRegistration
 from toolang.up.server import ServeSpec, build_serve_argv, resolve_serve
-from toolang.up.types import ExecutionDrivers
+from toolang.up.types import ExecutionDrivers, ServerLifetime
 
 SANDBOX_READY_TIMEOUT_SEC = 30.0
 SANDBOX_ATTACH_GRACE_SEC = 0.2
@@ -133,6 +133,7 @@ async def resolve_launch(
     workspace_additions: Mapping[str, str] | None = None,
     workdir: str | None = None,
     toolang_root: Path | None = None,
+    lifetime: ServerLifetime = "persistent",
 ) -> LaunchSpec:
     """Resolve source state, server inputs, and one sandbox selection."""
 
@@ -145,6 +146,7 @@ async def resolve_launch(
     serve = resolve_serve(
         layout=layout,
         toolang_root=toolang_root,
+        lifetime=lifetime,
         drivers=drivers,
         host=host,
         endpoint_host=endpoint_host,
@@ -380,6 +382,7 @@ async def _launch_locked(
                 )
             ),
             local_dev_artifact=spec.dev_artifact,
+            remove_on_exit=spec.serve.lifetime == "automatic",
         )
         intent_reference = getattr(implementation, "intent_reference", None)
         if intent_reference is not None:
@@ -474,6 +477,7 @@ async def _launch_locked(
             _wait_ready(
                 implementation,
                 ref,
+                launch_id=launch_id,
                 timeout_sec=SANDBOX_READY_TIMEOUT_SEC,
             )
         )
@@ -906,17 +910,33 @@ async def _wait_ready(
     implementation: Sandbox,
     ref: SandboxRef,
     *,
+    launch_id: str,
     timeout_sec: float,
 ) -> None:
     deadline = time.monotonic() + timeout_sec
-    url = f"{ref.endpoint.rstrip('/')}/healthz"
+    url = f"{ref.endpoint.rstrip('/')}/api/v1/profile"
     while time.monotonic() < deadline:
         if not await implementation.running(ref):
             raise RuntimeError("agent server exited before becoming ready")
-        if await asyncio.to_thread(_health_ready, url):
+        if await asyncio.to_thread(_launch_ready, url, launch_id):
             return
         await asyncio.sleep(0.1)
     raise TimeoutError(f"agent server did not become ready: {ref.endpoint}")
+
+
+def _launch_ready(url: str, launch_id: str) -> bool:
+    """Confirm that the listening API belongs to the workload being launched."""
+    try:
+        with urlopen(url, timeout=0.5) as response:
+            payload = json.load(response)
+            runtime = payload.get("runtime") if isinstance(payload, dict) else None
+            return (
+                response.status == 200
+                and isinstance(runtime, dict)
+                and runtime.get("launch_id") == launch_id
+            )
+    except (OSError, ValueError):
+        return False
 
 
 def _health_ready(url: str) -> bool:

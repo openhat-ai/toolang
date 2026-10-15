@@ -43,6 +43,7 @@ class TargetHelp:
 
 _ALL_PLACEMENTS = frozenset[AgentPlacement]({"resident", "visiting", "roaming"})
 _RESIDENT = frozenset[AgentPlacement]({"resident"})
+_HOSTED = frozenset[AgentPlacement]({"resident", "visiting"})
 
 
 def _extract_global_args(argv: list[str]) -> tuple[list[str], list[str]]:
@@ -97,15 +98,15 @@ COMMAND_SPECS: Mapping[str, CommandSpec] = {
             "start",
             "before",
             "after",
-            placements=_RESIDENT,
-            prepare="program",
+            placements=_HOSTED,
+            prepare="layout",
             preparation_owner="command",
         ),
         _command(
             "stop",
             "before",
             "after",
-            placements=_RESIDENT,
+            placements=_HOSTED,
             prepare="layout",
         ),
         _command("workspace", "before", placements=_ALL_PLACEMENTS, prepare="program"),
@@ -349,7 +350,9 @@ def dispatch_visiting(
                     *_selected_command_args(
                         body,
                         position,
-                        target=selector if command == "info" else layout.name,
+                        target=selector
+                        if command in {"info", "start"}
+                        else layout.name,
                     ),
                 ],
                 layout,

@@ -11,7 +11,13 @@ from fastapi.sse import EventSourceResponse, ServerSentEvent
 from toolang.api.common import StreamAttachmentDep, sse_stream
 from toolang.execution.subscriptions import StreamScope
 from toolang.api.app import AgentCoreDep
-from toolang.api.schemas import RuntimeIdentityPayload, RuntimeSandboxPayload
+from toolang.api.schemas import (
+    RuntimeIdentityPayload,
+    RuntimeSandboxPayload,
+    RuntimeLaunchRequest,
+    RuntimeLifecyclePayload,
+)
+from toolang.up.lifecycle import LifecycleConflict, ServerLifecycle
 from toolang.base.types.model import Model
 from toolang.common.errors import ToolangError
 from toolang.common.version import toolang_version
@@ -54,6 +60,13 @@ async def agent_stream(
 @router.get("/profile", summary="Get Profile")
 def profile(core: AgentCoreDep) -> dict[str, object]:
     runtime_state = agents.AgentProcess(core.layout).state() or {}
+    runtime = (
+        _profile_runtime(runtime_state=runtime_state)
+        .model_copy(update={"drivers": tuple(sorted(core.drivers))})
+        .model_dump()
+    )
+    if core.lifecycle is not None:
+        runtime.update(_lifecycle_payload(core.lifecycle).model_dump())
     return {
         "agent": core.layout.name,
         "display_name": core.layout.name,
@@ -61,12 +74,54 @@ def profile(core: AgentCoreDep) -> dict[str, object]:
         "summary": None,
         "description": None,
         "avatar": None,
-        "runtime": _profile_runtime(runtime_state=runtime_state)
-        .model_copy(update={"drivers": tuple(sorted(core.drivers))})
-        .model_dump(),
+        "runtime": runtime,
         "environment": _profile_environment(core, runtime_state=runtime_state),
         "metrics": _profile_metrics(core),
     }
+
+
+def _lifecycle(core: AgentCore) -> ServerLifecycle:
+    if core.lifecycle is None:
+        raise HTTPException(status_code=409, detail="server lifecycle is unmanaged")
+    return core.lifecycle
+
+
+def _lifecycle_payload(lifecycle: ServerLifecycle) -> RuntimeLifecyclePayload:
+    return RuntimeLifecyclePayload(
+        launch_id=lifecycle.launch_id, lifetime=lifecycle.lifetime
+    )
+
+
+@router.put("/runtime/leases/{client_id}", summary="Retain Server")
+def retain_server(
+    core: AgentCoreDep, client_id: str, payload: RuntimeLaunchRequest
+) -> RuntimeLifecyclePayload:
+    lifecycle = _lifecycle(core)
+    try:
+        lifecycle.lease(payload.launch_id, client_id)
+    except LifecycleConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return _lifecycle_payload(lifecycle)
+
+
+@router.delete("/runtime/leases/{client_id}", summary="Release Server")
+def release_server(
+    core: AgentCoreDep, client_id: str, payload: RuntimeLaunchRequest
+) -> dict[str, bool]:
+    _lifecycle(core).release(payload.launch_id, client_id)
+    return {"ok": True}
+
+
+@router.post("/runtime/promote", summary="Keep Server Running")
+def promote_server(
+    core: AgentCoreDep, payload: RuntimeLaunchRequest
+) -> RuntimeLifecyclePayload:
+    lifecycle = _lifecycle(core)
+    try:
+        lifecycle.promote(payload.launch_id)
+    except LifecycleConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return _lifecycle_payload(lifecycle)
 
 
 @router.get("/models", summary="List Agent Models")

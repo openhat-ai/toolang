@@ -8,12 +8,26 @@ from collections.abc import Mapping
 from contextlib import suppress
 from pathlib import Path
 import subprocess
+import time
 import psutil
 
 from toolang.base.types.sandbox import SandboxMount
 
 DEFAULT_HOST_GATEWAY = "host.docker.internal"
 DOCKER_DIAGNOSTIC_TAIL_LINES = 2000
+DOCKER_REMOVE_TIMEOUT_SEC = 10.0
+
+
+def _container_missing(stderr: str, container_id: str) -> bool:
+    for line in stderr.splitlines():
+        detail, separator, identity = line.strip().rpartition(": ")
+        if (
+            separator
+            and detail.lower().endswith(("no such object", "no such container"))
+            and identity == container_id
+        ):
+            return True
+    return False
 
 
 def docker_container_running(container_id: str) -> bool:
@@ -31,7 +45,7 @@ def docker_container_running(container_id: str) -> bool:
     if result is None:
         raise RuntimeError("docker command not found")
     if result.returncode != 0:
-        if "No such object:" in result.stderr or "No such container:" in result.stderr:
+        if _container_missing(result.stderr, container_id):
             if docker_launch_pending(container_id):
                 raise RuntimeError("docker container creation is still pending")
             return False
@@ -108,20 +122,40 @@ def docker_stop_container(container_id: str, *, force: bool) -> None:
         raise RuntimeError("docker command not found")
     if result.returncode != 0:
         detail = result.stderr.strip()
-        if "No such container" not in detail and docker_container_running(container_id):
+        if not _container_missing(detail, container_id) and docker_container_running(
+            container_id
+        ):
             raise RuntimeError(detail or f"docker {command} failed")
 
 
 def docker_remove_container(container_id: str) -> None:
     if docker_launch_pending(container_id):
         raise RuntimeError("docker container creation is still pending")
-    result = _docker("rm", "--force", container_id, check=False)
-    if result is None:
-        raise RuntimeError("docker command not found")
-    if result.returncode != 0:
+    deadline = time.monotonic() + DOCKER_REMOVE_TIMEOUT_SEC
+    while True:
+        try:
+            result = _docker(
+                "rm",
+                "--force",
+                container_id,
+                check=False,
+                timeout=max(0.1, deadline - time.monotonic()),
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError("docker rm timed out") from exc
+        if result is None:
+            raise RuntimeError("docker command not found")
+        if result.returncode == 0 or _container_missing(result.stderr, container_id):
+            return
         detail = result.stderr.strip()
-        if "No such container" not in detail:
-            raise RuntimeError(detail or "docker rm failed")
+        if (
+            "removal of container" in detail
+            and "already in progress" in detail
+            and time.monotonic() < deadline
+        ):
+            time.sleep(0.1)
+            continue
+        raise RuntimeError(detail or "docker rm failed")
 
 
 def docker_append_container_logs(container_id: str, log_path: Path) -> None:
@@ -158,6 +192,7 @@ async def docker_run_detached(
     hosted_port: int,
     env_values: Mapping[str, str],
     log_path: Path | None,
+    remove_on_exit: bool = False,
 ) -> str:
     args = [
         "docker",
@@ -172,6 +207,8 @@ async def docker_run_detached(
         "--add-host",
         f"{DEFAULT_HOST_GATEWAY}:host-gateway",
     ]
+    if remove_on_exit:
+        args.append("--rm")
     for mount in mounts:
         suffix = ":ro" if mount.read_only else ""
         args.extend(["--volume", f"{mount.local_path}:{mount.hosted_path}{suffix}"])
@@ -275,14 +312,7 @@ def docker_container_states(identities: tuple[str, ...]) -> dict[str, bool]:
                     pass
     if result.returncode != 0:
         for identity in identities:
-            if any(
-                line.strip()
-                in {
-                    f"Error: No such object: {identity}",
-                    f"Error: No such container: {identity}",
-                }
-                for line in result.stderr.splitlines()
-            ):
+            if _container_missing(result.stderr, identity):
                 try:
                     if not docker_launch_pending(identity):
                         states[identity] = False

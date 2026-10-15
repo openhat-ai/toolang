@@ -10,17 +10,22 @@ with a captured State/Setup snapshot.
 | `talk` | Incoming Hub message batches | One durable `talk_` per agent |
 | `chore` | One-off, scheduled, or manual work | `chore_<name-derived-id>` |
 
-Resident agents enable all three by default. Visitors enable chat/talk; roaming
-agents and standalone scripts enable none. `--enable chat,talk,chore` replaces
-the defaults; `--enable none` disables all drivers. Only `serve`, `start`, and
+Fresh resident start/serve enable all three by default; visiting start/serve
+enable chat/talk. Implicit resident/visiting Chat, retry/rerun, and fork/rewind
+servers enable chat only. Roaming and standalone script defaults remain none.
+`--enable chat,talk,chore` replaces the defaults; `--enable none` disables all
+drivers. Only `serve`, `start`, and
 `chat` expose this option. `talk` sends Hub messages; script execution owns its
 run lifecycle. Neither accepts a driver option.
 
-Chat starts an inactive agent using these defaults or the explicit selection,
-and rejects a selection without chat before starting. For an existing runtime,
+Chat rejects a selection without chat before starting; roaming Chat still requires
+an explicit selection containing chat. For an existing runtime,
 an omitted selection preserves its drivers; an explicit selection must match.
 A mismatch or disabled chat fails with restart guidance without changing the
 running agent. Runtime profile, status, and startup logs report enabled drivers.
+Lifetime is independent of drivers: resident implicit servers persist, visiting
+implicit servers automatically reclaim when clients and accepted work finish,
+and explicit start/serve retain availability. See [execution ownership](execution.md).
 
 The management HTTP API, health, inspection, cancellation, and script execution
 remain available with chat disabled. Interactive clients create threads at

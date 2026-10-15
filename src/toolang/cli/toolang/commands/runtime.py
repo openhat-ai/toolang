@@ -22,6 +22,7 @@ from toolang.cli.common.terminal_title import agent_label
 
 import typer
 from typer._click.exceptions import ClickException
+from typer._click.core import ParameterSource
 
 from toolang.cli.common.parameters import (
     AllowOptions,
@@ -33,6 +34,16 @@ from toolang.cli.common.parameters import (
 )
 
 from toolang.common.layout import AgentLayout
+from toolang.up.types import ServerLifetime
+from toolang.up.config import format_drivers, parse_drivers
+from toolang.cli.common.agent_server import (
+    acquire_agent_server,
+    AgentServerAcquisitionError,
+    ServerClosingError,
+)
+
+import httpx
+
 from toolang.plugin.catalogs.models_dev.path import MODEL_CATALOG_ENV
 from toolang.cli.common.policy import (
     resolve_default_overrides,
@@ -245,7 +256,9 @@ def _report_foreground_ready(
 
 def start(
     ctx: typer.Context,
-    agent: str | None = typer.Argument(None, help="Local agent name", hidden=True),
+    agent: str | None = typer.Argument(
+        None, help="Agent Name or remote Source Ref", hidden=True
+    ),
     sandbox: Annotated[
         str | None,
         typer.Option(
@@ -278,22 +291,48 @@ def start(
     ] = None,
 ) -> None:
     from ...common.progress import make_cli_progress
+    from toolang.up import sandbox as sandbox_runtime
 
     selector = require_runtime_agent(ctx, agent)
-    if user_call(agent_sources.parse_agent_target, selector).form != "name":
-        raise ClickException(
-            "start only supports local agent names; clone the remote source first"
-        )
     progress = make_cli_progress(preparation=True)
     launch: RuntimeLaunch | None = None
     launch_started = False
     try:
-        with progress:
-            target = agent_sources.resolve_run_layout(
-                context_root(ctx),
-                selector,
-                progress=progress.sink,
+        with progress, ExitStack() as locks:
+            target = cli_context(ctx).layout
+            if target is None:
+                parsed = user_call(agent_sources.parse_agent_target, selector)
+                target = (
+                    AgentLayout.resident(context_root(ctx), selector)
+                    if parsed.form == "name"
+                    else agent_sources.visiting_layout(
+                        selector, toolang_root=context_root(ctx)
+                    )
+                )
+            locks.enter_context(
+                sandbox_runtime.management_lock(target, progress=progress.sink)
             )
+            if _retain_started(
+                ctx,
+                target,
+                sandbox=sandbox,
+                driver=driver,
+                dev=dev,
+                model_catalog=model_catalog,
+                compact_model=compact_model,
+                allows=allows,
+                defaults=defaults,
+                limits=limits,
+                port=port,
+                endpoint_host=endpoint_host,
+            ):
+                return
+            if target.placement == "visiting":
+                target = agent_sources.resolve_visiting_layout(
+                    selector,
+                    toolang_root=context_root(ctx),
+                    progress=progress.sink,
+                )
             launch = resolve_startup(
                 target,
                 toolang_root=context_root(ctx),
@@ -342,12 +381,98 @@ def start(
                 development_build=development_source()[0],
             )
         ) from exc
-    typer.echo(f"Agent {launch.target.name} started: {handle.state.ref.endpoint}")
+    typer.echo(
+        f"Agent {launch.target.name} started: {handle.state.ref.endpoint} "
+        f"drivers={format_drivers(launch.startup.serve.drivers)} lifetime=persistent"
+    )
+
+
+def _retain_started(
+    ctx: typer.Context,
+    layout: AgentLayout,
+    *,
+    sandbox: str | None,
+    driver: str | None,
+    dev: Path | None,
+    model_catalog: Path | None,
+    compact_model: str | None,
+    allows: list[str] | None,
+    defaults: list[str] | None,
+    limits: list[str] | None,
+    port: int | None,
+    endpoint_host: str | None,
+) -> bool:
+    from toolang.up import sandbox as sandbox_runtime
+
+    with sandbox_runtime.management_lock(layout):
+        process = agents.AgentProcess(layout)
+        status = process.status(ui_base_url=ui_base_url())
+        if status is not None and status.status in {"preparing", "starting"}:
+            status = process.wait_ready(status, ui_base_url=ui_base_url(), timeout=30)
+        if status is None or status.status != "running":
+            return False
+        if (
+            allows
+            or defaults
+            or limits
+            or endpoint_host is not None
+            or ctx.get_parameter_source("host") == ParameterSource.COMMANDLINE
+        ):
+            raise ClickException(
+                "startup options cannot be verified on attachment; stop and restart the agent"
+            )
+        if port is not None and port != status.port:
+            raise ClickException(
+                "--port differs from the running agent; stop and restart it"
+            )
+        try:
+            with acquire_agent_server(
+                layout,
+                sandbox=sandbox,
+                drivers=parse_drivers(driver) if driver is not None else None,
+                dev=dev,
+                model_catalog=model_catalog,
+                compact_override=resolve_compact_override({}, compact_model),
+                attach_only=True,
+            ) as server:
+                if server is None:
+                    raise RuntimeError("agent acquisition requires a server")
+                if server.launch_id is None:
+                    raise ClickException(
+                        "server lifetime is unmanaged; stop and restart it to use start"
+                    )
+                if server.lifetime == "foreground":
+                    raise ClickException("start cannot detach foreground serve")
+                if server.launch_id is not None:
+                    with httpx.Client(timeout=3.0) as http:
+                        response = http.post(
+                            f"{server.endpoint}/api/v1/runtime/promote",
+                            json={"launch_id": server.launch_id},
+                        )
+                        response.raise_for_status()
+                actual = process.state() or {}
+                raw_drivers = actual.get("drivers")
+                running = (
+                    parse_drivers(",".join(str(d) for d in raw_drivers) or "none")
+                    if isinstance(raw_drivers, list)
+                    else parse_drivers("none")
+                )
+                typer.echo(
+                    f"Agent {layout.name} running: {server.endpoint} "
+                    f"drivers={format_drivers(running)} lifetime=persistent"
+                )
+                return True
+        except ServerClosingError:
+            return False
+        except (AgentServerAcquisitionError, httpx.HTTPError, ValueError) as exc:
+            raise ClickException(str(exc)) from exc
 
 
 def stop(
     ctx: typer.Context,
-    agent: str | None = typer.Argument(None, help="Local agent name", hidden=True),
+    agent: str | None = typer.Argument(
+        None, help="Agent Name or remote Source Ref", hidden=True
+    ),
     force: Annotated[
         bool,
         typer.Option(help="Force-stop when graceful shutdown does not complete"),
@@ -357,7 +482,7 @@ def stop(
 
     agent_name = require_runtime_agent(ctx, agent)
     root = context_root(ctx)
-    layout = AgentLayout.resident(root, agent_name)
+    layout = cli_context(ctx).layout or AgentLayout.resident(root, agent_name)
     progress = make_cli_progress()
     try:
         with progress:
@@ -417,6 +542,9 @@ def serve(
     sandbox: Annotated[str, typer.Option("--sandbox", hidden=True)] = "host",
     location: Annotated[str, typer.Option("--location", hidden=True)] = "host",
     launch_id: Annotated[str | None, typer.Option("--launch-id", hidden=True)] = None,
+    lifetime: Annotated[
+        ServerLifetime, typer.Option("--lifetime", hidden=True)
+    ] = "persistent",
     runtime_instance: Annotated[
         str | None, typer.Option("--runtime-instance", hidden=True)
     ] = None,
@@ -439,6 +567,7 @@ def serve(
         source_policy not in {"project", "root"}
         or membership not in {"managed", "unmanaged"}
         or location not in {"host", "guest"}
+        or lifetime not in {"persistent", "foreground", "automatic"}
     ):
         raise ClickException("invalid workload startup inputs")
     layout = AgentLayout(
@@ -458,6 +587,7 @@ def serve(
         layout=layout,
         toolang_root=context_root(ctx),
         launch_id=launch_id,
+        lifetime=lifetime,
         drivers=user_call(parse_drivers, driver) if driver is not None else ALL_DRIVERS,
         host=host,
         endpoint_host=endpoint_host,
@@ -557,6 +687,7 @@ def resolve_startup(
         sandbox_runtime.resolve_launch(
             layout=target,
             drivers=drivers,
+            lifetime="persistent" if background else "foreground",
             host=host,
             endpoint_host=endpoint_host,
             port=port,

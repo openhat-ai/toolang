@@ -33,7 +33,6 @@ import toolang.cli.toolang.commands.agent as agent_commands
 import toolang.cli.toolang.commands.plugin as plugin_commands
 import toolang.cli.toolang.commands.thread as thread_commands
 import toolang.cli.toolang.main as cli
-from toolang.lang.input import CallInput
 from tests.support.execution_fixtures import (
     project_run_control,
     project_run_end,
@@ -61,7 +60,6 @@ from toolang.execution.inspection.history import RunHistory
 from toolang.execution.records import (
     RunControlPayload,
     RetryControlPayload,
-    SteerControlPayload,
     ThreadRecord,
 )
 from toolang.execution.schemas import RerunRequest, RetryRequest, ThreadInfo
@@ -82,6 +80,7 @@ from toolang.lang.types import Array, Struct
 from toolang.setup import AgentSetup, ToolCollection
 from toolang.up import process as agents
 from toolang.up.types import AgentServerRef
+from toolang.up.lifecycle import ServerLifecycle
 from toolang.up import AgentCore
 from toolang.api.app import create_app
 from toolang.catalog import CapsManager, ChoresManager
@@ -2480,7 +2479,7 @@ def hosted_agent(monkeypatch):
     async_client = httpx.AsyncClient
 
     def host(layout):
-        core = AgentCore(layout)
+        core = AgentCore(layout, lifecycle=ServerLifecycle("fixture", "persistent"))
         cores.append(core)
         agents.write_runtime_state(
             layout,
@@ -2501,7 +2500,12 @@ def hosted_agent(monkeypatch):
         @contextmanager
         def acquire(selected, **_kwargs):
             assert selected == layout
-            yield AgentServerRef(sandbox="host", endpoint="http://runtime.test:7001")
+            yield AgentServerRef(
+                sandbox="host",
+                endpoint="http://runtime.test:7001",
+                launch_id="fixture",
+                lifetime="persistent",
+            )
 
         def client_factory(**kwargs):
             return async_client(
@@ -2519,7 +2523,7 @@ def hosted_agent(monkeypatch):
         asyncio.run(core.close())
 
 
-def test_run_controls_are_persisted_through_the_agent_api(
+def test_run_controls_reject_stale_history_without_live_ownership(
     tmp_path: Path, hosted_agent
 ) -> None:
     root = tmp_path / "toolang"
@@ -2541,10 +2545,9 @@ def test_run_controls_are_persisted_through_the_agent_api(
     steer = _invoke(root, "alice", "steer", "term_active", "Focus on tests")
     cancel = _invoke(root, "alice", "cancel", "run_active")
 
-    assert steer.exit_code == 0
-    assert steer.stdout.strip() == "steered run_active"
-    assert cancel.exit_code == 0
-    assert cancel.stdout.strip() == "canceled run_active"
+    assert steer.exit_code == cancel.exit_code == 1
+    assert "live execution owner" in " ".join(steer.stderr.split())
+    assert "live execution owner" in " ".join(cancel.stderr.split())
     assert [path for method, path in requests if method == "POST"] == [
         "/api/v1/runs/run_active/steer",
         "/api/v1/runs/run_active/cancel",
@@ -2556,13 +2559,7 @@ def test_run_controls_are_persisted_through_the_agent_api(
         reopened.close()
     assert [(item.kind, item.timing, item.status) for item in controls] == [
         ("run", "immediate", "applied"),
-        ("steer", "next_step", "pending"),
-        ("cancel", "immediate", "pending"),
     ]
-    assert isinstance(controls[1].payload, SteerControlPayload)
-    assert controls[1].payload.input == CallInput(
-        {"_": Array("Part[]", Message.user("Focus on tests").parts)}
-    )
 
 
 @pytest.mark.parametrize("tty", (False, True), ids=("non-tty", "tty"))

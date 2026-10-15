@@ -163,9 +163,10 @@ explicit resident Targets and remote Source Refs are unambiguous. Showing
 remote target help does not resolve or fetch the agent. An incomplete selected
 command shows its own help before target existence or other runtime validation.
 
-Thread and run inspection, retry, rerun, steering, cancellation, rewind, and
-fork open the selected agent's durable execution store directly. They do not
-start or call the agent HTTP server. A run id selects its owning thread; a
+Thread and run inspection reads the selected agent's durable execution store
+without starting a server. Retry/rerun and fork/rewind ensure a shared server
+and mutate through its API. Resident/visiting steer/cancel attach to a live
+owner without starting a replacement. A run id selects its owning thread; a
 thread id selects its active run for steering or cancellation and its latest
 terminal run for retry, rerun, rewind, or fork. Retry reopens the same root run
 and optionally starts at `--anchor`; rerun starts a new root run from the source
@@ -323,10 +324,11 @@ file, an explicit GitHub Source Ref (`gh:owner/name`, `github:owner/name`, or
 to `github://` without repository/path probes. Bare remote refs, domain/path
 shorthand, and OpenHat prefixes are unsupported. See
 [Agent Sources](concepts.md#agent-sources) for syntax, naming, and migration.
-`start` and `stop` accept resident names only; stop a foreground nonresident
-server by interrupting `serve`.
+`start` and `stop` accept resident names and visiting Source Refs in either target
+position; local `.too` targets do not accept these two commands. Stop uses the
+visiting source identity without fetching the source.
 
-Runtime port selection distinguishes persistent servers from temporary execution:
+Runtime port selection distinguishes shared agent servers from temporary execution:
 
 | Mode | Target | Default port behavior |
 | --- | --- | --- |
@@ -696,11 +698,11 @@ Inspection is read-only and historical and does not load a runnable.
 
 ## Runtime Commands
 
-| Command | `name` | `shorthand` | `ref` |
+| Command | Resident name | Local `.too` | Remote Source Ref |
 | --- | --- | --- | --- |
-| `toolang serve` | yes | yes | yes |
-| `toolang clone` | yes | yes | yes |
-| `toolang start` | yes | no | no |
+| `too serve` | yes | yes | yes |
+| `too start` | yes | no | yes |
+| `too stop` | yes | no | yes |
 
 Behavior:
 
@@ -708,7 +710,8 @@ Behavior:
 | --- | --- |
 | `toolang serve` | Runs a local agent, or fetches one remote agent program into a stable visiting root and runs it in the foreground |
 | `toolang clone` | Clones one local agent, or fetches one remote agent program into a new local managed agent |
-| `toolang start` | Starts one local managed agent only. Remote sources must be cloned first |
+| `too start` | Starts a persistent resident/visiting server, promotes an automatic one in place, or reuses a compatible persistent one |
+| `too stop` | Stops the selected generation, including active work, without fetching its source |
 
 `too serve` and `too start` resolve concrete startup inputs at the control
 boundary. Host `serve` executes in the foreground command's process; host
@@ -797,15 +800,19 @@ these settings and database/log history. Temporary script ports remain temporary
 Docker sandbox control is supported from Linux and macOS hosts. Windows users
 must run Toolang through WSL2; native Windows host control is not supported.
 
-Chat uses the same selection when no AgentServer is
-active and starts a persistent server for either host or guest execution.
+Chat uses the same sandbox selection when no AgentServer is active.
+For resident/visiting agents, fresh implicit servers enable chat only; explicit
+start/serve keep placement driver defaults. Resident servers remain running;
+visiting implicit servers automatically stop after all clients and accepted work
+finish. Start retains either placement until stop and cannot detach foreground
+serve. Roaming and standalone script behavior is unchanged. See
+[execution ownership](execution.md) for the lifecycle and command combinations.
 If an AgentServer is already running, Chat attaches to it and rejects an explicit
 incompatible selector without executing or restarting the server.
 `chat --dev [PATH]` installs a local Toolang wheel in a new non-host runtime;
 bare `--dev` searches the working directory. It is rejected for host execution
 or when Chat attaches to an existing
-AgentServer. Chat leaves the server running on exit; use `too stop <agent>` to
-stop it.
+AgentServer. Use `too stop <agent-or-ref>` to stop a retained server explicitly.
 
 For execution commands, `--catalog` and `--compact-model` apply only when
 starting a runtime. Stop the existing agent before changing those startup
@@ -1155,6 +1162,9 @@ script runs and TUI execution do not consume this endpoint.
 - `GET /api/v1/workspaces`
 - `GET /api/v1/agics`
 - `GET /api/v1/flows`
+- `PUT /api/v1/runtime/leases/{client_id}`
+- `DELETE /api/v1/runtime/leases/{client_id}`
+- `POST /api/v1/runtime/promote`
 
 `GET /api/v1/workspaces` reads the server's current Setup and State. It returns
 `revision`, ordered `items` (`name`, source `path`, and runtime `available`), and
@@ -1178,6 +1188,9 @@ filesystem paths do not determine remote availability.
 - profile metadata
 - runtime identity:
   - the server process's Toolang source `version`
+  - enabled `drivers`
+  - `launch_id`, `lifetime` (`persistent`, `foreground`, or `automatic`), and
+    `lifecycle_protocol: 1` on servers supporting managed lifetime
   - `sandbox.driver`
   - the complete `sandbox.selector`
   - the complete, unprojected `sandbox.instance` for Docker, otherwise `null`
@@ -1199,6 +1212,19 @@ plugin description, while Docker continues to use `sandbox.instance`. Runtime
 profile readers ignore unknown additive fields, so TUI and executor releases can
 be upgraded independently. Breaking protocol changes require a separately
 versioned contract rather than making an additive display field mandatory.
+
+Lease upsert/release and promotion accept `{"launch_id": "<generation>"}`.
+Upsert and promotion return `launch_id`, `lifetime`, and `lifecycle_protocol`;
+release returns `{"ok": true}` and ignores a different generation. Promotion
+keeps the same endpoint/drivers, disables automatic shutdown, and rejects a
+foreground server. A stale generation or closing server rejects upsert/promotion
+with HTTP 409. Legacy servers require stop/restart to adopt this protocol.
+
+Mutating requests may carry `X-Toolang-Launch-ID` to reject a replaced execution
+owner before writes. Resident/visiting CLI clients send it automatically. Lease
+renewal is independent of SSE; readers do not retain automatic servers. See
+[the lifetime contract](plans/resident-visiting-server-lifecycle.md) for timing,
+shutdown eligibility, and failure handling.
 
 `GET /api/v1/models` returns the server's current effective
 `AgentSetup.models` collection. Runnable `models` directives are applied when a
@@ -1408,8 +1434,9 @@ selection bare. Positional thread IDs are no longer accepted.
 A resident, roaming, or visiting agent uses its recorded endpoint through
 `RemoteRunClient`. Chat starts the agent when needed; concurrent starters share
 one runtime, and an existing startup must become ready before Chat connects.
-Readiness failures are reported. Retry/rerun and steer/cancel/fork/rewind also
-ensure the agent is ready and mutate run/thread state through its API.
+Readiness failures are reported. Retry/rerun and fork/rewind also ensure a server
+and mutate through its API. Resident/visiting steer/cancel attach only to a live
+owner; fork/rewind with `--chat` keeps one acquisition across both phases.
 Explicit Chat policy options become remotely validated session
 commands, while the server keeps ownership of setup, environment, providers,
 working directory, and sandbox.
@@ -1478,7 +1505,12 @@ run's durable output edge. It is `null` until the run has an output edge and
 may be an empty array when the resolved runnable result is empty.
 
 `steer` and `cancel` operate on active (`pending` or `running`) runs. Steer
-accepts a user message whose parts may be empty. `retry` and `rerun` accept a
+accepts a user message whose parts may be empty. Both accept optional
+`expected_control` (`<run_id>@<control_index>`). The server checks live ownership
+and this invocation before writing; mismatch returns HTTP 409. Resident/visiting
+CLI controls always pin the invocation, preventing a delayed command from
+reaching a retry of the same run ID. Existing callers may omit the field.
+`retry` and `rerun` accept a
 terminal root run. Retry reopens that run from an optional canonical step-path
 `anchor`; omitting it selects the latest retryable step. Rerun starts a new root
 run from the source invocation and replaces the source in the visible thread

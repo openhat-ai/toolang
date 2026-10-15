@@ -5,9 +5,14 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
+from dataclasses import replace
 import os
 from pathlib import Path
+from typing import cast
 import sys
+import time
+
+import httpx
 
 from toolang.base.errors import ToolangError
 from toolang.base.types.model import ModelOverride
@@ -15,12 +20,20 @@ from toolang.common.layout import AgentLayout
 from toolang.common.version import development_source
 from toolang.plugin.catalogs.models_dev.path import MODEL_CATALOG_ENV
 from toolang.up import process as agents
+from toolang.up.records import read_record
 from toolang.up import sandbox as sandbox_runtime
 from toolang.up.logging import resolve_agent_logging
-from toolang.up.types import ALL_DRIVERS, AgentServerRef, DriverName, ExecutionDrivers
+from toolang.up.types import (
+    ALL_DRIVERS,
+    AgentServerRef,
+    DriverName,
+    ExecutionDrivers,
+    ServerLifetime,
+)
 from toolang.up.config import default_drivers, format_drivers, parse_drivers
 
 from .context import load_runtime_environ, resolve_root
+from .server_lease import ServerLease
 from .parameters import DEVELOPMENT_WHEEL_HELP as DEVELOPMENT_WHEEL_HELP
 from .policy import (
     resolve_ceiling_overrides,
@@ -43,6 +56,10 @@ class AgentServerAcquisitionError(RuntimeError):
     """One AgentServer selection or lifecycle failure."""
 
 
+class ServerClosingError(AgentServerAcquisitionError):
+    """Acquisition may retry after this owner has finished shutdown."""
+
+
 @contextmanager
 def acquire_agent_server(
     layout: AgentLayout,
@@ -58,31 +75,67 @@ def acquire_agent_server(
     temporary: bool = False,
     drivers: ExecutionDrivers | None = None,
     required_driver: DriverName | None = None,
+    attach_only: bool = False,
 ) -> Iterator[AgentServerRef | None]:
-    """Ensure a persistent server; temporary scripts retain their existing lifecycle."""
+    """Acquire a shared server; temporary scripts retain their existing lifecycle."""
 
     # Share the management lock with start/serve/stop, releasing it before caller work.
+    lease: ServerLease | None = None
     try:
         with (
             make_cli_progress(enabled=show_progress, preparation=True) as progress,
             sandbox_runtime.management_lock(layout, progress=progress.sink),
         ):
-            acquired = _prepare_agent_server(
-                layout,
-                sandbox=sandbox,
-                dev=dev,
-                model_catalog=model_catalog,
-                ui_base_url=ui_base_url,
-                base_environ=base_environ,
-                progress=progress,
-                compact_override=compact_override,
-                workspace_additions=workspace_additions,
-                temporary=temporary,
-                drivers=drivers,
-                required_driver=required_driver,
-            )
-            if isinstance(acquired, AgentServerRef):
-                progress.complete_preparation()
+            deadline = time.monotonic() + AGENT_READY_TIMEOUT_SEC
+            while True:
+                acquired = _prepare_agent_server(
+                    layout,
+                    sandbox=sandbox,
+                    dev=dev,
+                    model_catalog=model_catalog,
+                    ui_base_url=ui_base_url,
+                    base_environ=base_environ,
+                    progress=progress,
+                    compact_override=compact_override,
+                    workspace_additions=workspace_additions,
+                    temporary=temporary,
+                    drivers=drivers,
+                    required_driver=required_driver,
+                    attach_only=attach_only,
+                )
+                try:
+                    selected_server = (
+                        acquired
+                        if isinstance(acquired, AgentServerRef)
+                        else _server_reference(
+                            layout, acquired.state.sandbox, acquired.state.ref.endpoint
+                        )
+                        if isinstance(acquired, sandbox_runtime.SandboxHandle)
+                        else None
+                    )
+                except ValueError:
+                    if isinstance(acquired, sandbox_runtime.SandboxHandle):
+                        asyncio.run(
+                            sandbox_runtime.stop_handle(
+                                layout, acquired, progress=progress.sink
+                            )
+                        )
+                    raise
+                if (
+                    not temporary
+                    and layout.placement in {"resident", "visiting"}
+                    and selected_server is not None
+                ):
+                    try:
+                        selected_server, lease = _retain_server(selected_server)
+                    except ServerClosingError:
+                        _wait_for_closing_server(layout, selected_server, deadline)
+                        if attach_only:
+                            raise
+                        continue
+                if isinstance(acquired, AgentServerRef):
+                    progress.complete_preparation()
+                break
     except AgentServerAcquisitionError:
         raise
     except (
@@ -92,20 +145,27 @@ def acquire_agent_server(
         ToolangError,
         TypeError,
         ValueError,
+        httpx.HTTPError,
     ) as exc:
         raise AgentServerAcquisitionError(str(exc)) from exc
 
+    if lease is not None:
+        lease.start()
     if not isinstance(acquired, sandbox_runtime.SandboxHandle):
-        yield acquired
+        try:
+            yield selected_server
+        finally:
+            if lease is not None:
+                lease.close()
+                if sys.exc_info()[0] in {None, KeyboardInterrupt}:
+                    lease.check()
         return
 
     handle = acquired
     server: AgentServerRef | None = None
     body_error: BaseException | None = None
     try:
-        server = AgentServerRef(
-            sandbox=handle.state.sandbox, endpoint=handle.state.ref.endpoint
-        )
+        server = selected_server
         yield server
     except BaseException as exc:
         body_error = exc
@@ -113,6 +173,10 @@ def acquire_agent_server(
             raise AgentServerAcquisitionError(str(exc)) from exc
         raise
     finally:
+        if lease is not None:
+            lease.close()
+            if body_error is None or isinstance(body_error, KeyboardInterrupt):
+                lease.check()
         if temporary or server is None:
             shutdown_progress = make_cli_progress(
                 enabled=show_progress,
@@ -139,6 +203,81 @@ def acquire_agent_server(
                     raise AgentServerAcquisitionError(message) from exc
 
 
+def _server_reference(
+    layout: AgentLayout, sandbox: str, endpoint: str
+) -> AgentServerRef:
+    entry = read_record(layout.runtime_status, layout.instance) or {}
+    state = entry.get("workload", {})
+    managed = (
+        layout.placement in {"resident", "visiting"}
+        and state.get("lifecycle_protocol") == 1
+    )
+    return AgentServerRef(
+        sandbox=sandbox,
+        endpoint=endpoint,
+        launch_id=str(entry["launch_id"]) if managed else None,
+        lifetime=cast(ServerLifetime, state.get("lifetime")) if managed else None,
+    )
+
+
+def _retain_server(server: AgentServerRef) -> tuple[AgentServerRef, ServerLease | None]:
+    if server.launch_id is None:
+        return server, None
+    try:
+        with httpx.Client(timeout=3.0) as http:
+            response = http.get(f"{server.endpoint}/api/v1/profile")
+            response.raise_for_status()
+            runtime = response.json()["runtime"]
+        if runtime.get("launch_id") != server.launch_id:
+            raise AgentServerAcquisitionError("server launch changed; acquire it again")
+        server = replace(server, lifetime=runtime["lifetime"])
+        if server.lifetime != "automatic":
+            return server, None
+        lease = ServerLease(server)
+        lease.register()
+    except httpx.TransportError as exc:
+        if server.lifetime != "automatic":
+            raise
+        raise ServerClosingError(
+            "server stopped during acquisition; acquire it again"
+        ) from exc
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 409 and "closing" in exc.response.text:
+            raise ServerClosingError("server is closing; wait for it to stop") from exc
+        raise
+    return replace(
+        server, client_id=lease.client_id, check_retention=lease.check
+    ), lease
+
+
+def _wait_for_closing_server(
+    layout: AgentLayout, server: AgentServerRef, deadline: float
+) -> None:
+    """Wait for the selected workload to exit, including its shutdown cleanup."""
+
+    while True:
+        reference = agents.AgentProcess(layout).reference
+        if reference is None or reference.launch_id != server.launch_id:
+            return
+        implementation = sandbox_runtime.load_state_sandbox(layout, reference)
+        try:
+            running = asyncio.run(
+                asyncio.wait_for(
+                    implementation.running(reference.ref),
+                    timeout=max(0.0, deadline - time.monotonic()),
+                )
+            )
+        except TimeoutError as exc:
+            raise AgentServerAcquisitionError(
+                "server shutdown did not complete"
+            ) from exc
+        if not running:
+            return
+        if time.monotonic() >= deadline:
+            raise AgentServerAcquisitionError("server shutdown did not complete")
+        time.sleep(0.05)
+
+
 def _prepare_agent_server(
     layout: AgentLayout,
     *,
@@ -153,9 +292,18 @@ def _prepare_agent_server(
     temporary: bool,
     drivers: ExecutionDrivers | None = None,
     required_driver: DriverName | None = None,
+    attach_only: bool = False,
 ) -> AgentServerRef | sandbox_runtime.SandboxHandle | None:
+    entry = read_record(layout.runtime_status, layout.instance) or {}
+    managed = (
+        layout.placement in {"resident", "visiting"}
+        and entry.get("workload", {}).get("lifecycle_protocol") == 1
+    )
     status = agents.AgentProcess(layout).status(
-        ui_base_url=ui_base_url, check_health=not temporary
+        # Managed attachment checks the live profile and registers retention below.
+        # A separate health wait would mistake idle shutdown for failed startup.
+        ui_base_url=ui_base_url,
+        check_health=not temporary and not managed,
     )
     if status is not None and status.status in {"preparing", "starting"}:
         if temporary:
@@ -206,11 +354,18 @@ def _prepare_agent_server(
             )
         return _attached_server(layout, status, requested=sandbox)
 
-    effective_drivers = (
+    if attach_only:
+        raise AgentServerAcquisitionError(
+            "run has no healthy live execution owner; no server was started"
+        )
+
+    effective_drivers: ExecutionDrivers = (
         drivers
         if drivers is not None
         else frozenset()
         if temporary
+        else frozenset({"chat"})
+        if layout.placement in {"resident", "visiting"}
         else default_drivers(layout.placement)
     )
     if required_driver is not None and required_driver not in effective_drivers:
@@ -237,6 +392,7 @@ def _prepare_agent_server(
         workspace_additions=workspace_additions,
         temporary_port=temporary,
         drivers=effective_drivers,
+        automatic=not temporary and layout.placement == "visiting",
     )
     with progress.suspended():
         warn_development_package_source(launch)
@@ -318,10 +474,7 @@ def _attached_server(
         raise AgentServerAcquisitionError(
             f"--sandbox {requested} does not match running sandbox {status.sandbox}"
         )
-    return AgentServerRef(
-        sandbox=status.sandbox,
-        endpoint=status.endpoint.strip(),
-    )
+    return _server_reference(layout, status.sandbox, status.endpoint.strip())
 
 
 def _resolve_inactive_launch(
@@ -334,6 +487,7 @@ def _resolve_inactive_launch(
     compact_override: ModelOverride | None = None,
     workspace_additions: Mapping[str, str] | None = None,
     temporary_port: bool = False,
+    automatic: bool = False,
     drivers: ExecutionDrivers | None = None,
 ) -> sandbox_runtime.LaunchSpec:
     try:
@@ -359,6 +513,7 @@ def _resolve_inactive_launch(
                 layout=layout,
                 toolang_root=toolang_root,
                 drivers=drivers,
+                lifetime="automatic" if automatic else "persistent",
                 sandbox=sandbox,
                 port=None
                 if temporary_port

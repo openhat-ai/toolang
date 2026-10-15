@@ -582,7 +582,9 @@ class ChatTuiApp:
         self.status_elapsed_task = asyncio.create_task(self._refresh_status_elapsed())
         try:
             with patch_stdout(raw=True):
-                await self.app.run_async()
+                # OS signals must reach the CLI's lease-loss/interrupt handling;
+                # keyboard Ctrl+C remains a normal input binding in raw mode.
+                await self.app.run_async(handle_sigint=False)
         finally:
             self.title.clear()
             self.terminal.close()

@@ -117,9 +117,12 @@ See [examples](https://github.com/openhat-ai/toolang/tree/main/examples) for run
 
 Use these commands to run and manage agents. Add `--help` to any command for its usage and options.
 
-Chat, retry/rerun, and run/thread control commands start the agent when needed and
-use its API. The agent keeps running after the command exits; use `too stop <agent>`
-to stop it.
+For resident and visiting agents, Chat, retry/rerun, and fork/rewind start a shared
+server when needed, enabling only chat by default. Resident servers keep running;
+visiting servers exit after the last client leaves and all accepted work finishes.
+`start` keeps either placement running until `stop`; `serve` owns a foreground
+server. Start before Chat to enable background talk/chore drivers. Steer/cancel
+require a live owner. See [execution ownership](docs/execution.md) for details.
 
 ```bash
 too new <agent>                       # Create a local agent
@@ -132,8 +135,8 @@ too talk alice,bob                    # Observe an existing conversation between
 too talk                             # List conversations
 too [agent] home                      # Open a shell in agent home
 too serve <ref>                       # Run an agent in the foreground
-too start <agent>                     # Start an agent in the background
-too stop <agent>                      # Stop a running agent
+too start <agent-or-ref>              # Start or retain a background agent
+too stop <agent-or-ref>               # Stop a running agent
 
 too init <dir>                        # Create aid.too and toolang.toml
 too [run] <file.too> [runnable]       # Execute a .too file; run is optional

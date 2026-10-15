@@ -45,6 +45,128 @@ agic echo(_: Text) -> Text:
 _AGENT_SOURCE = f"# Agent alice\n\n{_ECHO_PROGRAM}"
 
 
+@pytest.mark.parametrize("promote", [False, True])
+def test_visiting_chat_reclaims_or_explicitly_stops_an_automatic_container(
+    tmp_path: Path, docker_wheel_dir: Path, local_model_port: int, promote: bool
+) -> None:
+    from toolang.plugin.sandboxes.docker._cli import docker_container_running
+    from toolang.up.source import visiting_layout
+
+    class Source(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"flow:\n  pass\n")
+
+        def log_message(self, format: str, *args: object) -> None:
+            pass
+
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "config.toml").write_text(
+        f'[teaming]\nenabled = false\n[default]\nmodel = "{_MODEL}"\n'
+        '[allow]\nmodels = ["ollama/*"]\ntools = []\n'
+    )
+    source = ThreadingHTTPServer(("127.0.0.1", 0), Source)
+    source_thread = threading.Thread(target=source.serve_forever, daemon=True)
+    source_thread.start()
+    selector = f"http://127.0.0.1:{source.server_port}/remote.too"
+    layout = visiting_layout(selector, toolang_root=root)
+    base = (sys.executable, "-m", "toolang.cli.toolang", "--root", str(root), selector)
+    env = {
+        **os.environ,
+        "TOOLANG_ROOT": str(root),
+        "TOOLANG_TMUX": "0",
+        "OLLAMA_HOST": f"http://127.0.0.1:{local_model_port}",
+        "LLAMA_CPP_HOST": f"http://127.0.0.1:{local_model_port}",
+    }
+    state = None
+    with (tmp_path / "chat.log").open("w+") as log:
+        client = subprocess.Popen(
+            (*base, "chat", "--sandbox", "docker", "--dev", str(docker_wheel_dir)),
+            env=env,
+            stdin=subprocess.PIPE,
+            stdout=log,
+            stderr=log,
+            text=True,
+        )
+        try:
+            deadline = time.monotonic() + 180
+            while time.monotonic() < deadline:
+                log.seek(0)
+                output = log.read()
+                assert client.poll() is None, output
+                if "> " in output:
+                    break
+                time.sleep(0.1)
+            else:
+                pytest.fail(output)
+            state = SandboxState.load(layout.runtime_status)
+            assert state is not None
+            stage_dir = state.ref.meta["stage_dir"]
+            assert isinstance(stage_dir, str)
+            stage = Path(stage_dir)
+            inspected = subprocess.run(
+                ("docker", "inspect", state.ref.runtime_id),
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=10,
+            )
+            assert json.loads(inspected.stdout)[0]["HostConfig"]["AutoRemove"] is True
+            if promote:
+                started = subprocess.run(
+                    (*base, "start"),
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                assert started.returncode == 0, started.stderr
+                assert "drivers=chat lifetime=persistent" in started.stdout
+            assert client.stdin is not None
+            client.stdin.close()
+            assert client.wait(timeout=15) == 0
+            if promote:
+                stopped = subprocess.run(
+                    (*base, "stop"), env=env, capture_output=True, text=True, timeout=30
+                )
+                assert stopped.returncode == 0, stopped.stderr
+                assert not stage.exists()
+            deadline = time.monotonic() + 20
+            while time.monotonic() < deadline:
+                absent = subprocess.run(
+                    ("docker", "inspect", state.ref.runtime_id),
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                if absent.returncode != 0:
+                    assert "no such object:" in absent.stderr.lower(), absent.stderr
+                    break
+                time.sleep(0.1)
+            else:
+                pytest.fail("automatic container was not removed")
+            assert not docker_container_running(state.ref.runtime_id)
+            assert layout.run_store.exists() and layout.runtime_log.exists()
+        finally:
+            if client.poll() is None:
+                client.kill()
+            client.wait(timeout=10)
+            if state is None:
+                state = SandboxState.load(layout.runtime_status)
+            if state is not None:
+                subprocess.run(
+                    (*base, "stop", "--force"),
+                    env=env,
+                    capture_output=True,
+                    timeout=30,
+                )
+            source.shutdown()
+            source.server_close()
+            source_thread.join(timeout=2)
+
+
 @pytest.mark.parametrize("placement", ["roaming", "visiting"])
 def test_docker_foreground_nonresident_uses_selected_root_and_cleans_reference(
     tmp_path: Path, docker_wheel_dir: Path, local_model_port: int, placement: str

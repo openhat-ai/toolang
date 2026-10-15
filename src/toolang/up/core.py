@@ -15,6 +15,7 @@ from toolang.execution.threads import ThreadManager
 from toolang.setup import SetupWatcher
 from toolang.state.watcher import StateWatcher
 from .types import ALL_DRIVERS, ExecutionDrivers
+from .lifecycle import ServerLifecycle
 
 
 class AgentCore:
@@ -27,6 +28,7 @@ class AgentCore:
         "history",
         "ids",
         "layout",
+        "lifecycle",
         "setup",
         "state",
         "store",
@@ -38,6 +40,7 @@ class AgentCore:
         layout: AgentLayout,
         *,
         sandbox: str = "host",
+        lifecycle: ServerLifecycle | None = None,
         drivers: ExecutionDrivers = ALL_DRIVERS,
         ceiling_overrides: Mapping[str, tuple[str, ...] | None] | None = None,
         default_overrides: Mapping[str, ModelOverride | str | None] | None = None,
@@ -50,6 +53,7 @@ class AgentCore:
 
         layout = restore_program_acquisition(layout)
         self.layout = layout
+        self.lifecycle = lifecycle
         self.drivers = drivers
         self.store = RunStore(layout.run_store)
         self.activity = ActivityReader(self.store.db_path, f"agent:{layout.name}")
@@ -85,6 +89,7 @@ class AgentCore:
             sync_state=self.state.sync,
             load_state=lambda revision: self.state.load(revision),
             default_workdir=workdir,
+            admission=lifecycle.admit if lifecycle is not None else None,
         )
         self.threads = ThreadManager(self.store, self.ids, stream=self.executor.stream)
         self.executor.start()

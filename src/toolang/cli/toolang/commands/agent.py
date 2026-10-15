@@ -233,6 +233,10 @@ def info_agent(
     drivers = runtime_state.get("drivers")
     if isinstance(drivers, list):
         rows.append(("Drivers", ",".join(str(item) for item in drivers) or "none"))
+    if lifetime := runtime_state.get("lifetime"):
+        rows.append(("Lifetime", str(lifetime)))
+    if launch_id := runtime_state.get("launch_id"):
+        rows.append(("Launch", str(launch_id)))
     if status.sandbox:
         rows.append(("Sandbox", status.sandbox))
     if runtime_identity is not None and status.status != "stopped":

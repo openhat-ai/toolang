@@ -481,6 +481,7 @@ def cancel_run(
             request_id=payload.request_id if payload else None,
             client_id=payload.client_id if payload else None,
             reason=payload.reason if payload else None,
+            expected_control=payload.expected_control if payload else None,
         )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -512,6 +513,7 @@ def steer_run(
             request_id=payload.request_id,
             client_id=payload.client_id,
             message=parse_user_message(payload.message),
+            expected_control=payload.expected_control,
         )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc

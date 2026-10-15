@@ -108,18 +108,43 @@ replacement clears unfinished Parts before presentation. Disconnecting detaches 
 owned HTTP resources without canceling server runs or managing the server
 process.
 
-Terminal Chat ensures a compatible AgentServer is ready for any materialized
-layout, starting a persistent host or guest runtime when needed. Concurrent
-starters reuse the same runtime. Chat uses its API after endpoint health and
-profile checks. Non-run HTTP operations remain in the Chat client:
-runtime/model/runnable inspection, run-default
-adoption, thread creation, and result reads. If cursor recovery fails after acceptance, Chat falls back to durable run detail
-without retrying execution. Closing Chat leaves the runtime running.
-Retry/rerun and steer/cancel/fork/rewind likewise ensure a hosted runtime and
-perform mutations through its API. A retry/rerun observation failure reports the
-accepted run ID without canceling execution; an explicit CLI interrupt requests
-cancellation. Script lifecycle remains separate: an
-inactive host runs embedded, and a script-created guest stops on exit.
+Terminal Chat shares a compatible AgentServer for the same agent, Toolang root,
+source identity, and startup settings. Resident implicit servers remain running;
+visiting implicit servers exit once no client leases or accepted work remain.
+Fresh implicit resident/visiting servers enable chat only. Fresh start/serve
+keep placement defaults: resident chat,talk,chore; visiting chat,talk.
+Roaming and standalone script lifetimes remain unchanged.
+
+Use `too start <agent-or-ref>` for unattended availability. It promotes an
+automatic visiting server in place or reuses a persistent server, reports actual
+drivers, and never adds drivers implicitly. To change a running server's drivers
+or startup configuration, stop and restart it with the desired options.
+`too stop <agent-or-ref>` explicitly ends the current generation and active work;
+clients do not relaunch it. Start cannot detach foreground serve.
+
+The server owns idle exit, with no supervisor process. Automatic clients renew
+leases every five seconds; leases expire fifteen seconds after the last renewal.
+Once a renewal confirms promotion to persistent, clients stop renewing. Expired
+clients stop submitting work, including after suspension or a delayed response.
+Accepted pending/running roots, independent spawn roots, owned async children, and terminal
+cleanup retain the server even without clients. Client transport loss never
+cancels accepted work. Startup has a thirty-second hold, consumed on the first
+client registration. Docker removes automatic containers on exit; history and diagnostics
+remain on host mounts. Host staging cleanup may wait for a later management call.
+
+Generation checks reject delayed requests to replacement servers. Steer/cancel
+attach only to a healthy live owner and pin the target invocation; stale history
+cannot start a replacement or redirect a control to a retry. Fork/rewind --chat
+retains one acquisition through both phases. Legacy servers stay unmanaged and
+retained; stop/restart them to use lifecycle promotion and guarded controls.
+
+Chat checks health/profile before use. It retains session defaults locally and
+uses HTTP for runtime/model/runnable inspection, thread creation, and result
+reads. Failed cursor recovery falls back to durable detail without repeating
+execution. Lease-loss errors include the last accepted Chat run ID when known.
+Retry/rerun observation failures report accepted run IDs without
+canceling; explicit interruption requests cancellation. Standalone scripts remain
+separate: inactive host execution is embedded and script-created guests stop on exit.
 
 The process-local executor remains the execution engine:
 
@@ -128,8 +153,8 @@ The process-local executor remains the execution engine:
 ```text
 start()                                             -> None
 run(RunSpec, run_id?, request_id?, tracer?)         -> LocalRunHandle
-cancel(run_id, timing, request_id?, reason?)         -> ControlRecord
-steer(run_id, message, timing, request_id?)          -> ControlRecord
+cancel(run_id, timing, request_id?, reason?, expected_control?) -> ControlRecord
+steer(run_id, message, timing, request_id?, expected_control?)   -> ControlRecord
 cancel_control(run_id, index)                        -> ControlRecord
 stop()                                               -> None
 ```
@@ -143,8 +168,9 @@ provides same-process `cancel()`, `steer()`, and
 Cross-process callers address the run by ID through their local `RunExecutor`.
 
 `steer()` and `cancel()` only accept durable controls; `cancel_control()` changes
-one pending steer or cancel to `revoked`. These controls do not require the
-target run to be owned by the submitting process. Run execution remains local:
+one pending steer or cancel to `revoked`. Without `expected_control`, these
+controls do not require ownership by the submitting process. Supplying it
+requires the expected invocation to be live in that executor. Run execution remains local:
 the process that calls `run(spec)` accepts and executes that run. `stop()` is
 terminal and cancels the run tasks owned by that executor instance. The process
 owner closes the shared `RunStore` after the executor stops.

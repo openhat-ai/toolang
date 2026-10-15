@@ -416,6 +416,8 @@ def write_runtime_state(
     message: str | None = None,
     launch_id: str | None = None,
     location: str = "host",
+    lifetime: str | None = None,
+    lifecycle_protocol: int | None = None,
 ) -> Path:
     """Persist one minimal runtime state file for a running agent."""
 
@@ -434,6 +436,9 @@ def write_runtime_state(
         "workspace_additions": dict(workspace_additions or {}),
         "message": message,
     }
+    if lifetime is not None:
+        payload["lifetime"] = lifetime
+        payload["lifecycle_protocol"] = lifecycle_protocol
     if sandbox_instance is not None:
         payload["sandbox_instance"] = sandbox_instance
     if sandbox_description is not None:

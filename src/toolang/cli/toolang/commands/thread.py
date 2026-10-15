@@ -19,6 +19,7 @@ from toolang.cli.common.parameters import (
     TextType,
 )
 from toolang.cli.common.terminal_session import prepare_terminal
+from toolang.cli.common.server_lease import ServerLeaseLostError
 
 from toolang.base.errors import ToolangError
 from toolang.base.model_settings import parse_model_body
@@ -39,6 +40,7 @@ from toolang.execution.schemas import (
     RerunRequest,
     RetryRequest,
     RunDetail,
+    ThreadInfo,
 )
 from toolang.execution.types import (
     RunCommand,
@@ -90,9 +92,21 @@ def steer_command(
         if resources is None:  # pragma: no cover
             raise RuntimeError("execution resources were not opened")
         run_id = _active_run_id(RunHistory(resources.store), run)
+        record = resources.store.get_run(run_id=run_id)
+        expected = (
+            record.control
+            if record is not None
+            and context_layout(ctx).placement in {"resident", "visiting"}
+            else None
+        )
     _remote_action(
         context_layout(ctx),
-        lambda client: client.steer(run_id, Message.user(message)),
+        lambda client: client.steer(
+            run_id,
+            Message.user(message),
+            **({"expected_control": expected} if expected is not None else {}),
+        ),
+        active_only=context_layout(ctx).placement in {"resident", "visiting"},
     )
     typer.echo(f"steered {run_id}")
 
@@ -114,7 +128,20 @@ def cancel_command(
         if resources is None:  # pragma: no cover
             raise RuntimeError("execution resources were not opened")
         run_id = _active_run_id(RunHistory(resources.store), run)
-    _remote_action(context_layout(ctx), lambda client: client.cancel(run_id))
+        record = resources.store.get_run(run_id=run_id)
+        expected = (
+            record.control
+            if record is not None
+            and context_layout(ctx).placement in {"resident", "visiting"}
+            else None
+        )
+    _remote_action(
+        context_layout(ctx),
+        lambda client: client.cancel(
+            run_id, **({"expected_control": expected} if expected is not None else {})
+        ),
+        active_only=context_layout(ctx).placement in {"resident", "visiting"},
+    )
     typer.echo(f"canceled {run_id}")
 
 
@@ -266,12 +293,20 @@ def rewind_command(
             raise RuntimeError("execution resources were not opened")
         history = RunHistory(resources.store)
         thread_id, run_id = _anchor(history, point)
+    shared_chat = chat and context_layout(ctx).placement in {"resident", "visiting"}
+
+    def continue_chat(_result: object, server: AgentServerRef) -> None:
+        typer.echo(f"rewound {thread_id} before {run_id}")
+        _open_chat(ctx, thread_id, server)
+
     _remote_action(
         context_layout(ctx),
         lambda client: client.rewind_thread(thread_id, run_id=run_id),
+        on_result=continue_chat if shared_chat else None,
     )
-    typer.echo(f"rewound {thread_id} before {run_id}")
-    if chat:
+    if not shared_chat:
+        typer.echo(f"rewound {thread_id} before {run_id}")
+    if chat and not shared_chat:
         _open_chat(ctx, thread_id)
 
 
@@ -296,13 +331,21 @@ def fork_command(
             raise RuntimeError("execution resources were not opened")
         history = RunHistory(resources.store)
         thread_id, run_id = _anchor(history, point)
+    shared_chat = chat and context_layout(ctx).placement in {"resident", "visiting"}
+
+    def continue_chat(result: ThreadInfo, server: AgentServerRef) -> None:
+        typer.echo(f"forked {result.id} through {run_id}")
+        _open_chat(ctx, result.id, server)
+
     forked = _remote_action(
         context_layout(ctx),
         lambda client: client.fork_thread(thread_id, run_id=run_id),
+        on_result=continue_chat if shared_chat else None,
     )
     forked_id = forked.id
-    typer.echo(f"forked {forked_id} through {run_id}")
-    if chat:
+    if not shared_chat:
+        typer.echo(f"forked {forked_id} through {run_id}")
+    if chat and not shared_chat:
         _open_chat(ctx, forked_id)
 
 
@@ -312,16 +355,28 @@ _Result = TypeVar("_Result")
 def _remote_action(
     layout: AgentLayout,
     action: Callable[[RemoteRunClient], Awaitable[_Result]],
+    *,
+    active_only: bool = False,
+    on_result: Callable[[_Result, AgentServerRef], None] | None = None,
 ) -> _Result:
     async def execute(server: AgentServerRef) -> _Result:
         async with acquire_run_client(server) as client:
             return await action(client)
 
     try:
-        with acquire_agent_server(layout, sandbox=None) as server:
+        with acquire_agent_server(
+            layout, sandbox=None, attach_only=active_only
+        ) as server:
             if server is None:
                 raise AgentServerAcquisitionError("agent acquisition requires a server")
-            return asyncio.run(execute(server))
+            if active_only and server.launch_id is None:
+                raise AgentServerAcquisitionError(
+                    "server does not support guarded controls; stop and restart it"
+                )
+            result = asyncio.run(execute(server))
+            if on_result is not None:
+                on_result(result, server)
+            return result
     except (OSError, ToolangError, ValueError, RuntimeError) as exc:
         raise ClickException(str(exc)) from exc
 
@@ -356,10 +411,17 @@ def _anchor(history: RunHistory, target: str) -> tuple[str, str]:
     return thread.id, thread.latest_run.id
 
 
-def _open_chat(ctx: typer.Context, thread_id: str) -> None:
+def _open_chat(
+    ctx: typer.Context, thread_id: str, server: AgentServerRef | None = None
+) -> None:
     from .chat import chat_command
 
-    chat_command(ctx, thread=thread_id)
+    if server is None:
+        chat_command(ctx, thread=thread_id)
+    else:
+        from .chat.main import chat_command as continue_chat
+
+        continue_chat(ctx, thread=thread_id, server=server)
 
 
 def _run_retry_or_rerun(
@@ -491,6 +553,13 @@ async def _execute_retry_or_rerun(
             try:
                 return await handle.wait()
             except (asyncio.CancelledError, KeyboardInterrupt):
+                if server.check_retention is not None:
+                    try:
+                        server.check_retention()
+                    except ServerLeaseLostError as exc:
+                        raise ServerLeaseLostError(
+                            f"{exc}; inspect accepted run {handle.run_id}"
+                        ) from exc
                 await _cancel_restart(client, handle, operation=kind)
                 raise
             except RemoteRunClientError as exc:

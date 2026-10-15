@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field, replace
 import json
+from typing import cast
 
 import httpx
 import pytest
@@ -487,6 +488,103 @@ def test_remote_client_maps_cancel_and_empty_steer_controls() -> None:
 
         await client.disconnect()
         await http.aclose()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("action", ["cancel", "steer"])
+@pytest.mark.parametrize("status", ["pending", "running"])
+@pytest.mark.parametrize("child", [False, True])
+def test_guarded_controls_pin_the_current_active_invocation(action, status, child):
+    detail = replace(
+        _detail(),
+        status=status,
+        finished_at=None,
+        control=RunControlRefData(run="run_remote", index=7),
+        parent=StepRef.from_local("run_parent", (0,)) if child else None,
+        root_run_id="run_parent" if child else "run_remote",
+    )
+
+    async def handler(request):
+        if request.method == "GET":
+            return httpx.Response(
+                200, json=_DETAIL_ADAPTER.dump_python(detail, mode="json")
+            )
+        return httpx.Response(
+            200,
+            json={
+                "command": _CONTROL_ADAPTER.dump_python(_control(action), mode="json")
+            },
+        )
+
+    async def scenario():
+        transport = _Transport(handler)
+        async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
+            client = RemoteRunClient("http://runtime.test", client=http, guarded=True)
+            await client.connect()
+            try:
+                if action == "cancel":
+                    await client.cancel("run_remote")
+                else:
+                    await client.steer("run_remote", Message.user("revise"))
+                assert [method for method, _, _ in transport.requests] == [
+                    "GET",
+                    "POST",
+                ]
+                payload = transport.requests[-1][2]
+                assert isinstance(payload, dict)
+                assert (
+                    cast(dict[str, object], payload)["expected_control"]
+                    == "run_remote@7"
+                )
+            finally:
+                await client.disconnect()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("action", ["cancel", "steer"])
+def test_guarded_control_conflicts_do_not_refresh_the_target_invocation(action):
+    detail = replace(
+        _detail(),
+        status="running",
+        finished_at=None,
+        control=RunControlRefData(run="run_remote", index=7),
+    )
+
+    async def handler(request):
+        if request.method == "GET":
+            return httpx.Response(
+                200, json=_DETAIL_ADAPTER.dump_python(detail, mode="json")
+            )
+        return httpx.Response(409, json={"detail": "run invocation changed"})
+
+    async def scenario():
+        transport = _Transport(handler)
+        async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
+            client = RemoteRunClient("http://runtime.test", client=http, guarded=True)
+            await client.connect()
+            try:
+                with pytest.raises(
+                    RemoteRunClientError, match="run invocation changed"
+                ) as error:
+                    if action == "cancel":
+                        await client.cancel("run_remote")
+                    else:
+                        await client.steer("run_remote", Message.user("revise"))
+                assert error.value.status_code == 409
+                assert [method for method, _, _ in transport.requests] == [
+                    "GET",
+                    "POST",
+                ]
+                payload = transport.requests[-1][2]
+                assert isinstance(payload, dict)
+                assert (
+                    cast(dict[str, object], payload)["expected_control"]
+                    == "run_remote@7"
+                )
+            finally:
+                await client.disconnect()
 
     asyncio.run(scenario())
 

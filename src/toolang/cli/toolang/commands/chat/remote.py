@@ -16,6 +16,9 @@ from urllib.parse import urlsplit
 from uuid import uuid4
 
 import httpx
+
+from toolang.up.types import AgentServerRef
+from toolang.up.lifecycle import LAUNCH_HEADER
 from pydantic import TypeAdapter, ValidationError
 
 from toolang.base.types.message import Message
@@ -101,7 +104,7 @@ class _CallbackTracer(RunTracer):
 
 
 class RemoteChatSession:
-    """Expose the Chat client contract through one resident AgentServer."""
+    """Expose the Chat client contract through one AgentServer."""
 
     def __init__(
         self,
@@ -110,8 +113,12 @@ class RemoteChatSession:
         expected_sandbox: str,
         transport: httpx.AsyncBaseTransport | None = None,
         workdir: str | None = None,
+        server: AgentServerRef | None = None,
     ) -> None:
-        self._client_id = f"client_{uuid4().hex}"
+        self._server = server
+        self._client_id = (
+            server.client_id if server is not None else None
+        ) or f"client_{uuid4().hex}"
         self._invocation_workdir = workdir
         self._procdir = Path.cwd().resolve()
         self._endpoint = endpoint
@@ -127,6 +134,7 @@ class RemoteChatSession:
         self.run_client: RemoteRunClient | None = None
         self.executor_metadata: ChatExecutorMetadata
         self._surface: SessionSetting | None = None
+        self.last_accepted_run_id: str | None = None
         self._blocked_run_id: str | None = None
         self._blocked_message: str | None = None
         self._closed = False
@@ -374,15 +382,24 @@ class RemoteChatSession:
             self._loop.call_soon_threadsafe(self._loop.stop)
             self._thread.join()
 
+    async def _check_retention(self, _request: httpx.Request) -> None:
+        if self._server is not None and self._server.check_retention is not None:
+            self._server.check_retention()
+
     async def _initialize(self) -> None:
         self._http = httpx.AsyncClient(
             transport=self._transport,
+            headers={LAUNCH_HEADER: self._server.launch_id}
+            if self._server is not None and self._server.launch_id
+            else None,
+            event_hooks={"request": [self._check_retention]},
             timeout=httpx.Timeout(3.0),
         )
         self.run_client = RemoteRunClient(
             self._endpoint,
             client=self._http,
             interactive=True,
+            guarded=self._server is not None and self._server.launch_id is not None,
             client_id=self._client_id,
         )
         await self.run_client.connect()
@@ -820,6 +837,7 @@ class RemoteChatSession:
             )
             return
 
+        self.last_accepted_run_id = handle.run_id
         _emit_state(on_state, RunAccepted(handle.run_id))
         try:
             detail = await handle.wait()

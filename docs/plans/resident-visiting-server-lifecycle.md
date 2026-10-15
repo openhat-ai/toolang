@@ -1,9 +1,8 @@
 # Resident and visiting Chat server lifecycle
 
-Status: Revised feature definition; awaiting human approval. This PR contains
-no implementation changes.
+Status: Approved in [#814](https://github.com/openhat-ai/toolang/pull/814).
 
-## Goal, scope, and baseline
+## Goal and scope
 
 Compatible Chat clients share one server for the same agent and Toolang root.
 Resident servers remain running; visiting servers started on demand exit after
@@ -16,11 +15,6 @@ Do not change workspace grants, thread/history selection, source identities,
 authored run/spawn semantics, or historical stores. Add no supervisor process,
 server pool, driver hot reload, or detached-job abstraction.
 
-Currently Chat already shares a persistent server and closes only its client.
-There are no retention leases or automatic idle shutdown. Start/stop accept
-resident agents only; serve accepts visiting targets. Fresh hosting defaults
-are resident chat,talk,chore and visiting chat,talk, including implicit Chat.
-
 Verified sources: [acquisition](../../src/toolang/cli/common/agent_server.py),
 [Chat](../../src/toolang/cli/toolang/commands/chat/main.py),
 [routing](../../src/toolang/cli/toolang/routing.py),
@@ -28,7 +22,7 @@ Verified sources: [acquisition](../../src/toolang/cli/common/agent_server.py),
 [defaults](../../src/toolang/up/config.py),
 [source identity](../../src/toolang/up/source.py),
 [launch records](../../src/toolang/up/records.py), and
-[spawn ownership](../../src/toolang/execution/executor/awaitables.py).
+[spawn ownership](../../src/toolang/execution/executor/spawn.py).
 This definition supersedes only the in-scope startup/lifetime rules in
 [execution drivers](serve-execution-drivers.md) and
 [canonical subscriptions](local-subscriptions.md).
@@ -84,10 +78,14 @@ independently of terminal input and SSE. Only automatic servers need leases.
 
 1. Under the existing host management lock, elect/reuse a launch, check identity
    and configuration, and register the caller before returning. Release the lock
-   before caller work. Add generation-checked lease upsert/release and promotion
+   before caller work. A newly launched API must report the expected launch_id
+   before startup succeeds. Add generation-checked lease upsert/release and promotion
    endpoints; profile/status exposes generation and lifetime. Renew every five
    seconds; expire after fifteen seconds of server monotonic time. A thirty-second
    hold from readiness covers startup; consume it on the first registration.
+   Acknowledged promotion to persistent ends client renewal. Clients check a
+   conservative deadline from request dispatch before submitting more work;
+   a late response cannot revive expired retention.
    Release is immediate, idempotent, and best effort after command completion.
    Failure to release cannot turn a successful operation into failure or affect
    another generation.
@@ -96,8 +94,9 @@ independently of terminal input and SSE. Only automatic servers need leases.
    Retain work from admission before acknowledgement through descendants,
    terminal persistence, and cleanup, for every executor ingress. Use live
    ownership, never persisted running rows or all background asyncio tasks.
-   Existing spawn stays parent-owned: parent completion drains/cancels unfinished
-   children; this feature introduces no independent child lifetime.
+   Spawn creates independent roots, which retain the server after their source
+   finishes. Parent completion drains/cancels owned async run children. Preserve
+   both existing lifetimes.
 3. Lease changes, admissions, promotion, and exit election share a short
    server-local gate, held across neither execution nor network I/O. Close
    admissions before graceful shutdown. Racing acquisition joins first or gets
@@ -108,8 +107,9 @@ independently of terminal input and SSE. Only automatic servers need leases.
    precondition; reject stale generations before mutation if an endpoint is reused.
    Protocol additions are optional for other existing callers; only the in-scope
    CLI paths opt in, preserving roaming/script behavior.
-4. Closing Chat or losing its process/transport releases or expires its lease;
-   it does not cancel accepted work. Preserve explicit user interruption/cancel
+4. Closing Chat releases its lease; process death or loss of renewal transport
+   lets it expire. SSE reconnection does not renew or release leases. These events
+   do not cancel accepted work. Preserve explicit user interruption/cancel
    semantics. Runs obey existing limits and remain controllable by another
    caller. Report accepted IDs or uncertain acceptance; never resubmit silently.
    Renewal failure beyond the lease window ends the client session clearly.
@@ -140,8 +140,7 @@ executor semantics unchanged elsewhere and reuse existing control references.
 
 ## Command combinations and acceptance
 
-Examples use too, the alias for toolang. The table describes target behavior;
-visiting start/stop and automatic shutdown are not implemented yet.
+Examples use too, the alias for toolang. The table defines required behavior.
 
 | Combination | Required outcome |
 | --- | --- |
@@ -169,10 +168,10 @@ and deferred host-file cleanup. Verify roaming/script behavior is unchanged.
 
 ## Implementation touchpoints and risks
 
-Likely files: cli/common/{agent_server,client,run_client}.py;
+Key files: cli/common/{agent_server,run_client,server_lease}.py;
 cli/toolang/{routing,commands/runtime,commands/thread}.py and
 commands/chat/{main,remote}.py; up/{types,core,records,process,server,sandbox}.py;
-api/{app,schemas,routers/agent,routers/runs,routers/threads}.py;
+api/{app,schemas,routers/agent,routers/runs}.py;
 execution/{remote,executor/executor}.py; base/types/sandbox.py and Docker
 sandbox launch/release.
 Use existing factories, source identity, launch records, and executor ownership;
@@ -180,7 +179,7 @@ keep protocol types in schemas and lifecycle with hosting.
 
 Implementation must pass default repository verification, update focused CLI/docs,
 and generate its changelog through too aid.too update_changelog for maintainer
-review. This design-only PR changes no public runtime behavior.
+review.
 
 Risks: repeated visiting calls may incur cold starts; use start for warm reuse.
 Implicit resident Chat no longer starts talk/chore. For background drivers,
@@ -191,4 +190,4 @@ cancel, and stop remain the controls. Lease expiry can end a suspended idle
 client. Host staging files may remain until later management. Server crashes keep
 existing recovery semantics; automatic run resumption is not promised.
 
-Open questions: none in scope. Human approval is required before implementation.
+Open questions: none in scope.

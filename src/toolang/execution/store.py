@@ -1142,6 +1142,7 @@ class RunStore:
         input: CallInput[Value | TypedRef],
         request_id: str | None,
         client_id: str | None = None,
+        expected_control: ControlRef | None = None,
         created_at: str,
     ) -> ControlRecord:
         """Atomically allocate and accept one steer or cancel control."""
@@ -1190,6 +1191,10 @@ class RunStore:
                     raise ValueError(f"run not found: {run_id}")
                 if str(run["status"]) not in {"pending", "running"}:
                     raise ValueError(f"run is not active: {run_id}")
+                if expected_control is not None and str(run["control"]) != str(
+                    expected_control
+                ):
+                    raise ValueError(f"run invocation changed: {run_id}")
                 if kind == "steer":
                     preparation_ref = ControlRef.for_run(run_id, 0)
                     preparation_row = self._conn.execute(

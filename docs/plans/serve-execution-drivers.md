@@ -24,11 +24,16 @@ No generic driver plugin framework, live toggles, Task/Job entity, or migration.
 Chore handler order: explicit runnable call, named `chore` handler, configured
 default runnable, unnamed entry. No available handler means a rejected activation.
 
-| Startup placement | Default drivers |
+| Fresh startup | Default drivers |
 | --- | --- |
-| Resident | chat, talk, chore |
-| Visitor (`visiting` internally) | chat, talk |
+| Resident start/serve | chat, talk, chore |
+| Visiting start/serve | chat, talk |
+| Resident/visiting Chat, retry/rerun, fork/rewind | chat |
 | Roaming or standalone script | none |
+
+Resident/visiting server ownership follows
+[the lifecycle contract](resident-visiting-server-lifecycle.md); driver selection
+does not determine whether a server is persistent or automatic.
 
 - Only `serve`, `start`, and `chat` expose `--enable`. A comma-separated set
   replaces defaults; `none` selects none and cannot accompany another name.
@@ -136,8 +141,8 @@ retain execution history. No separate jobs database or authored lifecycle state.
 
 ## Context, clients, and observation
 
-- New thread prefixes are `chat_`, `talk_`, `chore_`, `worker_`, and `script_`.
-  `spawn` always creates `worker_` with recorded ancestry; ordinary nested calls
+- Thread prefixes are `chat_`, `talk_`, `chore_`, `work_`, and `script_`.
+  `spawn` creates `work_` with recorded ancestry; ordinary nested calls
   retain their thread. Each execution has a `run_` ID.
 - Talk reuses its thread across batches/restarts with normal history/compaction
   and a freshly resolved workdir. Conversation/backend checkpoints remain
