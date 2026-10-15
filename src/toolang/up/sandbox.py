@@ -1186,6 +1186,7 @@ def _begin_launch(spec: LaunchSpec) -> None:
             toolang_root=str(spec.serve.toolang_root or layout.root),
             project_inputs=bool(layout.project_inputs),
             managed_membership=bool(layout.managed_membership),
+            source_id=layout.source_id,
         )
         if layout.instance is not None:
             entry["control"]["owner"] = control_owner()

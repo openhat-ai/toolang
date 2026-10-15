@@ -43,12 +43,17 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   no longer read, `TOOLANG_ROOT` names the Toolang root rather than an agent's
   own root, and the agent root travels with the workload through a hidden
   `--agent-root` argument. Instance discovery records under
-  `<root>/.runtime/instances/<name>-<placement>-<id>.json` now carry
-  `version`, the absolute status path, and the launch ID, are written under one
-  shared `instances/registry.lock`, and are read through that record, and
-  legacy registrations are never adopted; the stable instance ID is unchanged,
-  and a visiting agent is identified per Toolang root as well as source, so the
-  same remote source materializes once per root.
+  `<root>/.runtime/instances/` are now named `gus.json` for residents,
+  `lex@v<hash>.json` for visitors, and `aid@r<hash>.json` for roaming servers,
+  where `<hash>` is the first 16 hex characters of SHA-256 over the canonical
+  Toolang root, a NUL, and the source selector for visiting, and over the
+  canonical host absolute source path for roaming; each record carries
+  `version`, the absolute status path, and the launch ID, all references share
+  one `instances/update.lock`, and are read through that record, and legacy
+  registrations are never adopted; a visiting agent is identified per Toolang
+  root as well as source, so the same remote source materializes once per root.
+  Stop all old host and guest processes sharing the root before upgrading, and
+  do not delete a live guard.
 
 - A stopped agent remembers its last successful launch: `--sandbox` now defaults
   to the agent's configured binding, then its last successful selection, then
@@ -89,6 +94,10 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Fixed
 
+- Runtime inspection skips invalid discovery references, status instance maps,
+  and entry shapes while keeping valid peers visible. Non-object references
+  also no longer break reference cleanup.
+
 - Root `too top --once` now reports local runtime activity when no Hub is
   running instead of failing, so team status can be inspected without the
   teaming service.
@@ -113,7 +122,7 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 - Repeated short-lived script executions no longer leave one `.json.lock`
   beside every instance discovery reference: references share one
-  `instances/registry.lock`, so a directory keeps a single lock instead of one
+  `instances/update.lock`, so a directory keeps a single lock instead of one
   per instance. Orphan locks left by earlier versions are not removed
   automatically, so stop those processes before deleting them.
 

@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+from urllib.parse import quote
 from uuid import uuid4
 
 import psutil
@@ -31,20 +32,38 @@ def _registered_layout(control: dict) -> AgentLayout:
         instance=control["runtime_instance"],
         project_inputs=control.get("project_inputs"),
         managed_membership=control.get("managed_membership"),
+        source_id=control.get("source_id"),
     )
 
 
 def instance_identity(layout: AgentLayout) -> str:
-    return hashlib.sha256(str(layout.run_store).encode()).hexdigest()[:16]
+    identity = _source_identity(layout)
+    if layout.instance is not None:
+        identity = hashlib.sha256(
+            f"{identity}\0{layout.instance}".encode("utf-8")
+        ).hexdigest()[:16]
+    return identity
+
+
+def _source_identity(layout: AgentLayout) -> str:
+    return (
+        layout.source_id
+        or hashlib.sha256(str(layout.program).encode("utf-8")).hexdigest()[:16]
+    )
 
 
 def instance_filename(layout: AgentLayout) -> str:
-    """Keep the stable ID while making references recognizable in a directory."""
-    return f"{layout.name}-{layout.placement}-{instance_identity(layout)}.json"
+    """Name a host-resolved source, retaining distinct temporary executions."""
+    name = quote(layout.name, safe="-_.")
+    if layout.placement != "resident":
+        name += f"@{layout.placement[0]}{_source_identity(layout)}"
+    if layout.instance is not None:
+        name += f"@{layout.instance}"
+    return f"{name}.json"
 
 
-def _registry_lock(path: Path) -> Path:
-    return path.parent / "registry.lock"
+def _update_lock(path: Path) -> Path:
+    return path.parent / "update.lock"
 
 
 class RuntimeRegistration:
@@ -60,7 +79,6 @@ class RuntimeRegistration:
         launch_id: str | None = None,
     ) -> None:
         self.layout = layout
-        self.instance = instance_identity(layout)
         self.token = launch_id or uuid4().hex
         self.embedded = launch_id is None
         self.toolang_root = toolang_root
@@ -89,6 +107,7 @@ class RuntimeRegistration:
                     toolang_root=str(self.toolang_root),
                     project_inputs=bool(self.layout.project_inputs),
                     managed_membership=bool(self.layout.managed_membership),
+                    source_id=self.layout.source_id,
                     sandbox="host",
                     endpoint=self.endpoint,
                 )
@@ -105,7 +124,7 @@ class RuntimeRegistration:
                 self.layout.runtime_status, begin, instance=self.layout.instance
             )
         try:
-            with file_write_lock(_registry_lock(self.path)):
+            with file_write_lock(_update_lock(self.path)):
                 atomic_write_text(self.path, json.dumps(self.payload))
         except BaseException:
             self.close()
@@ -129,8 +148,9 @@ class RuntimeRegistration:
 
 def _remove_reference(path: Path, launch_id: str) -> None:
     try:
-        with file_write_lock(_registry_lock(path), create=False):
-            if json.loads(path.read_text()).get("launch_id") == launch_id:
+        with file_write_lock(_update_lock(path), create=False):
+            reference = json.loads(path.read_text())
+            if isinstance(reference, dict) and reference.get("launch_id") == launch_id:
                 path.unlink(missing_ok=True)
     except (OSError, ValueError):
         pass
@@ -160,17 +180,24 @@ def running_instances(root: Path) -> tuple[dict, ...]:
     for path in sorted((root / ".runtime" / "instances").glob("*.json")):
         try:
             reference = json.loads(path.read_text())
-            if reference.get("version") != 1:
+            if not isinstance(reference, dict) or reference.get("version") != 1:
                 continue  # Never adopt legacy registrations.
             status_path = Path(reference["status"])
             if status_path not in records:
                 document = read_document(status_path)
+                entries = (document or {}).get("instances")
                 records[status_path] = (
                     {
                         entry["launch_id"]: entry
-                        for entry in document["instances"].values()
+                        for entry in entries.values()
+                        if isinstance(entry, dict)
+                        and isinstance(entry.get("launch_id"), str)
+                        and isinstance(entry.get("control"), dict)
+                        and isinstance(entry.get("workload"), dict)
                     }
-                    if document is not None and document.get("version") == 2
+                    if document is not None
+                    and document.get("version") == 2
+                    and isinstance(entries, dict)
                     else {}
                 )
             entry = records[status_path].get(reference["launch_id"])

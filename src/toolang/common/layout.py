@@ -23,6 +23,7 @@ class AgentLayout:
     project_inputs: bool | None = None
     managed_membership: bool | None = None
     toolang_root: Path | None = field(default=None, compare=False)
+    source_id: str | None = None
 
     def __post_init__(self) -> None:
         root = self.root.expanduser().resolve()
@@ -35,6 +36,12 @@ class AgentLayout:
             not self.instance or not self.instance.isalnum()
         ):
             raise ValueError("instance identity must be alphanumeric")
+        if self.source_id is not None and (
+            not isinstance(self.source_id, str)
+            or len(self.source_id) != 16
+            or any(char not in "0123456789abcdef" for char in self.source_id)
+        ):
+            raise ValueError("source identity must be 16 lowercase hex characters")
         object.__setattr__(self, "root", root)
         object.__setattr__(self, "name", name)
         if self.toolang_root is not None:
@@ -58,12 +65,13 @@ class AgentLayout:
 
         label = _safe_agent_label(name)
         identity = f"{toolang_root.expanduser().resolve()}\0{source}"
-        digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:8]
+        digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
         return cls(
-            root=Path("/tmp") / f"toolang-{label}-{digest}",
+            root=Path("/tmp") / f"toolang-{label}-{digest[:8]}",
             name=name,
             placement="visiting",
             toolang_root=toolang_root,
+            source_id=digest,
         )
 
     @classmethod
@@ -75,6 +83,7 @@ class AgentLayout:
             root=source.parent / ".toolang",
             name=source.stem,
             placement="roaming",
+            source_id=hashlib.sha256(str(source).encode("utf-8")).hexdigest()[:16],
         )
 
     @property

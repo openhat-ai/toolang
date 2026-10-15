@@ -31,8 +31,10 @@ ${TOOLANG_ROOT}/
   .state/
   .runtime/
     instances/
-      <agent>-<placement>-<id>.json
-      registry.lock
+      gus.json                       # Resident
+      lex@v<source-hash>.json         # Visiting
+      aid@r<source-hash>.json         # Roaming server
+      update.lock
   hub/
   .sandbox/
     <agent>/launches/<launch-id>/  # Docker bootstrap materials only
@@ -124,13 +126,36 @@ or shared through a `.setup/` cache directory.
 
 ## Runtime Room
 
-Discovery references live under:
+Discovery references live under `${TOOLANG_ROOT}/.runtime/instances/`:
 
-- `${TOOLANG_ROOT}/.runtime/instances/<agent>-<placement>-<id>.json`
+| Placement | Reference name |
+| --- | --- |
+| Resident | `gus.json` |
+| Visiting | `lex@v<hash>.json` |
+| Roaming server | `aid@r<hash>.json` |
+
+The hash is the first 16 hex characters of SHA-256. Visiting uses the same key
+as its agent root: the canonical Toolang root, a NUL separator, and the source
+selector. Its temporary root retains the first eight characters of that hash.
+Roaming uses the canonical host absolute `.too` source path. The host saves
+`source_id` with its control bindings so guest mounts cannot change identity.
+Changing ports, sandbox, launch IDs, or source contents does not change this hash.
+Agent names are percent-encoded to keep literal `@` names distinct from markers.
+
+Until scripts switch to a shared server, an isolated temporary execution appends
+`@<execution-id>` before `.json`; its source hash remains stable and parallel
+executions remain independently visible. This change does not introduce shared
+script servers.
 
 Each reference contains only its version, absolute authoritative status path,
 and launch ID. `RuntimeRegistration` publishes into one Toolang root and uses
-one shared `instances/registry.lock`; queries do not create this lock.
+one shared `instances/update.lock` for publication and conditional removal.
+The guard is released before starting or waiting for a workload. Pure reads
+neither acquire nor create it. For example:
+
+```json
+{"version": 1, "status": "/project/.toolang/agents/aid/.runtime/status.json", "launch_id": "<fresh-launch-id>"}
+```
 
 Each agent runtime stores operational state under:
 
@@ -217,7 +242,7 @@ Other locks remain beside their protected objects:
 | `<database-name>.init.lock` | SQLite initialization |
 | `<thread-id>.compact.lock` | Thread compaction across model calls |
 | `status.json.lock` | Transient shared host/guest writer claim for the authoritative record |
-| `.runtime/instances/registry.lock` | Discovery publication/removal within one Toolang root |
+| `.runtime/instances/update.lock` | Discovery publication/removal within one Toolang root |
 | `hub/hub.lock` | One Hub process per root for its lifetime |
 
 Thread fork/rewind use SQLite transactions, without `runs.db.threads.lock`.

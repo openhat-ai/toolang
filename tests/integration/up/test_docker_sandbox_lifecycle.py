@@ -116,8 +116,13 @@ def test_docker_foreground_nonresident_uses_selected_root_and_cleans_reference(
             entry = read_record(layout.runtime_status)
             assert entry is not None and entry["control"]["placement"] == placement
             assert entry["control"]["toolang_root"] == str(root)
+            assert entry["control"]["source_id"] == layout.source_id
             references = tuple((root / ".runtime" / "instances").glob("*.json"))
-            assert len(references) == 1 and placement in references[0].name
+            assert len(references) == 1
+            assert (
+                references[0].name
+                == f"{layout.name}@{placement[0]}{layout.source_id}.json"
+            )
             assert json.loads(references[0].read_text())["status"] == str(
                 layout.runtime_status
             )

@@ -22,11 +22,19 @@ health/metrics endpoints. Host `serve` executes in one process.
   Every writer locks, rereads, validates launch ID, patches owned fields, and
   atomically replaces the file. Only successful control-side resource release
   clears refs; old workload writes cannot affect a new launch.
-- Discovery remains `toolang_root/.runtime/instances/<name>-<placement>-<id>.json`, with
-  version, absolute status path, and launch ID. Keep stable instance identities;
+- Discovery stays in `toolang_root/.runtime/instances/`: `gus.json` for residents,
+  `lex@v<hash>.json` for visitors, and `aid@r<hash>.json` for roaming servers.
+  Use 16 hex characters of SHA-256: visitors share the visiting-root key
+  (`canonical Toolang root + NUL + source selector`); roaming uses the canonical
+  host absolute source path. Save this host-resolved `source_id` in control
+  bindings; guest paths, ports, sandbox, file contents, and launch IDs do not
+  affect the source hash. Escape agent names to prevent marker collisions.
+  References contain only version, absolute status path, and launch ID;
   database/logs stay in agent root. No `ids.json`, `channels/`, or new directories.
-  References share one native `instances/registry.lock`; temporary executions
-  never leave one lock per instance. Queries do not create this guard.
+  References share one native `instances/update.lock`, held only for publication
+  or conditional removal, never workload startup/waiting. Pure reads do not lock
+  or create this guard. Temporary executions currently append `@<execution-id>`
+  to avoid overwriting parallel executions; they leave no per-reference locks.
   `RuntimeRegistration` accepts one Toolang root; removal uses saved control
   bindings rather than the workload's execution policy.
 - Resolve placement into concrete `ServeSpec` inputs at the control boundary:
@@ -39,6 +47,8 @@ health/metrics endpoints. Host `serve` executes in one process.
   Keep chat-specific API availability conditional on the chat driver and retain
   existing generic execution APIs. Preserve public command targeting/flags,
   independent script isolation, Hub activity, and offline history.
+  Switching scripts to a shared server is a follow-up behavior change; it will
+  remove the temporary execution suffix rather than change the source hash.
 
 ## Restart, retention, and mounts
 
@@ -153,6 +163,10 @@ restart precedence, remembered-port conflicts, unavailable sandbox failure,
 failed-start history retention, and repeated stop/reconciliation. Verify guest
 access to required inputs and runtime data without mounting discovery references.
 Run Ruff checks/formatting, `ty check`, and the default offline pytest suite.
+Reference checks: all placements use the documented names; relaunch and source
+symlink aliases preserve source identity; distinct sources/roots remain distinct;
+parallel temporary runs remain visible; old cleanup cannot delete a new launch;
+malformed references do not break queries/cleanup, and pure reads create no guard.
 
 ## Compatibility and trust
 
