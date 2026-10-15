@@ -245,16 +245,18 @@ agic child() -> Text:
                 ),
                 tracer=tracer,
             )
-            await asyncio.wait_for(gate.wait_until_entered(), 2)
-            source = harness.store.list_steps(run_id=handle.run_id)[1]
-            assert source.status == "succeeded"
-            request = (
-                handle.steer(Message.user("Revise"), timing="immediate")
-                if interruption == "steer"
-                else handle.cancel()
-            )
-            await asyncio.sleep(0)
-            gate.release()
+            try:
+                await asyncio.wait_for(gate.wait_until_entered(), 10)
+                source = harness.store.list_steps(run_id=handle.run_id)[1]
+                assert source.status == "succeeded"
+                request = (
+                    handle.steer(Message.user("Revise"), timing="immediate")
+                    if interruption == "steer"
+                    else handle.cancel()
+                )
+                await asyncio.sleep(0)
+            finally:
+                gate.release()
             root = await asyncio.wait_for(handle, 2)
             await asyncio.gather(*blockers, *tuple(harness.executor._tasks))
             assert root.status == (

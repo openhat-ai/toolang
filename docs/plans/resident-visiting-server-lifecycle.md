@@ -78,7 +78,8 @@ independently of terminal input and SSE. Only automatic servers need leases.
 
 1. Under the existing host management lock, elect/reuse a launch, check identity
    and configuration, and register the caller before returning. Release the lock
-   before caller work. Add generation-checked lease upsert/release and promotion
+   before caller work. A newly launched API must report the expected launch_id
+   before startup succeeds. Add generation-checked lease upsert/release and promotion
    endpoints; profile/status exposes generation and lifetime. Renew every five
    seconds; expire after fifteen seconds of server monotonic time. A thirty-second
    hold from readiness covers startup; consume it on the first registration.

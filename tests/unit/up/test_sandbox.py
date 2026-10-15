@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import replace
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 from pathlib import Path
+import threading
 from typing import Any, cast
 
 import pytest
@@ -1029,9 +1031,56 @@ def test_readiness_fails_when_workload_exits() -> None:
             sandbox._wait_ready(
                 implementation,
                 SandboxRef("workload-1", "http://localhost:1"),
+                launch_id="launch",
                 timeout_sec=0.1,
             )
         )
+
+
+def test_launch_cannot_adopt_a_healthy_server_from_another_generation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    class OtherServer(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            payload = (
+                {"ok": True}
+                if self.path == "/healthz"
+                else {"runtime": {"launch_id": "another-launch"}}
+            )
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(json.dumps(payload).encode())
+
+        def log_message(self, format: str, *args: object) -> None:
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), OtherServer)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    implementation = FakeSandbox()
+    probes = 0
+
+    async def running(ref: SandboxRef) -> bool:
+        nonlocal probes
+        probes += 1
+        return probes == 1
+
+    monkeypatch.setattr(implementation, "running", running)
+    monkeypatch.setattr(sandbox, "create_sandbox", lambda _name, config: implementation)
+    spec = _launch_spec(tmp_path)
+    spec = replace(spec, serve=replace(spec.serve, port=server.server_port))
+    try:
+        with pytest.raises(RuntimeError, match="exited before becoming ready"):
+            asyncio.run(sandbox.launch(spec))
+        assert SandboxState.load(spec.serve.layout.runtime_status) is None
+        assert any(
+            isinstance(call, tuple) and call[0] == "release"
+            for call in implementation.calls
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
 
 
 def test_resolve_dev_artifact_accepts_one_toolang_wheel(tmp_path: Path) -> None:

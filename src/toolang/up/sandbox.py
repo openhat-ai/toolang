@@ -477,6 +477,7 @@ async def _launch_locked(
             _wait_ready(
                 implementation,
                 ref,
+                launch_id=launch_id,
                 timeout_sec=SANDBOX_READY_TIMEOUT_SEC,
             )
         )
@@ -909,17 +910,33 @@ async def _wait_ready(
     implementation: Sandbox,
     ref: SandboxRef,
     *,
+    launch_id: str,
     timeout_sec: float,
 ) -> None:
     deadline = time.monotonic() + timeout_sec
-    url = f"{ref.endpoint.rstrip('/')}/healthz"
+    url = f"{ref.endpoint.rstrip('/')}/api/v1/profile"
     while time.monotonic() < deadline:
         if not await implementation.running(ref):
             raise RuntimeError("agent server exited before becoming ready")
-        if await asyncio.to_thread(_health_ready, url):
+        if await asyncio.to_thread(_launch_ready, url, launch_id):
             return
         await asyncio.sleep(0.1)
     raise TimeoutError(f"agent server did not become ready: {ref.endpoint}")
+
+
+def _launch_ready(url: str, launch_id: str) -> bool:
+    """Confirm that the listening API belongs to the workload being launched."""
+    try:
+        with urlopen(url, timeout=0.5) as response:
+            payload = json.load(response)
+            runtime = payload.get("runtime") if isinstance(payload, dict) else None
+            return (
+                response.status == 200
+                and isinstance(runtime, dict)
+                and runtime.get("launch_id") == launch_id
+            )
+    except (OSError, ValueError):
+        return False
 
 
 def _health_ready(url: str) -> bool:

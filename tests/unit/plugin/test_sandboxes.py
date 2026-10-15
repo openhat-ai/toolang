@@ -34,13 +34,101 @@ from toolang.up.mounts import prepare_root_mounts
 _CONTAINER_ID = "176191c1528b8e2861cc16422dee13ade59d4977c2148a9ebf5d36a06f090abb"
 
 
-def test_absent_container_with_pending_native_creation_is_unknown(monkeypatch):
+@pytest.mark.parametrize(
+    "prefix",
+    [
+        "Error: No such object:",
+        "error: no such object:",
+        "Error: No such container:",
+        "error: no such container:",
+        "Error response from daemon: No such container:",
+    ],
+)
+def test_docker_missing_container_diagnostics_are_case_insensitive(monkeypatch, prefix):
+    monkeypatch.setattr(
+        docker_cli,
+        "_docker",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args, 1, stdout="", stderr=f"{prefix} {_CONTAINER_ID}\n"
+        ),
+    )
+    assert docker_cli.docker_container_running(_CONTAINER_ID) is False
+    assert docker_cli.docker_container_states((_CONTAINER_ID,)) == {
+        _CONTAINER_ID: False
+    }
+
+
+def test_docker_absence_keeps_container_name_case_significant(monkeypatch):
+    monkeypatch.setattr(docker_cli, "docker_launch_pending", lambda _identity: False)
+    monkeypatch.setattr(
+        docker_cli,
+        "_docker",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args, 1, stdout="", stderr="error: no such object: toolang-Alice\n"
+        ),
+    )
+    assert docker_cli.docker_container_states(("toolang-Alice", "toolang-alice")) == {
+        "toolang-Alice": False
+    }
+    with pytest.raises(RuntimeError, match="no such object"):
+        docker_cli.docker_container_running("toolang-alice")
+
+
+@pytest.mark.parametrize("removed", [True, False])
+def test_docker_remove_waits_for_native_automatic_removal(monkeypatch, removed):
+    replies = iter(
+        [
+            subprocess.CompletedProcess(
+                [],
+                1,
+                stderr=f"Error: removal of container {_CONTAINER_ID} is already in progress",
+            ),
+            subprocess.CompletedProcess(
+                [],
+                1 if removed else 0,
+                stderr=f"Error: No such container: {_CONTAINER_ID}" if removed else "",
+            ),
+        ]
+    )
+    calls = []
+
+    def docker(*args, **kwargs):
+        calls.append(args)
+        return next(replies)
+
+    monkeypatch.setattr(docker_cli, "_docker", docker)
+    docker_cli.docker_remove_container(_CONTAINER_ID)
+    assert calls == [("rm", "--force", _CONTAINER_ID)] * 2
+
+
+@pytest.mark.parametrize(
+    "detail",
+    ["permission denied", "removal of container is already in progress"],
+)
+def test_docker_remove_keeps_failures_and_bounds_automatic_removal_wait(
+    monkeypatch, detail
+):
+    calls = []
+
+    def docker(*args, **kwargs):
+        calls.append(args)
+        return subprocess.CompletedProcess(args, 1, stderr=detail)
+
+    monkeypatch.setattr(docker_cli, "_docker", docker)
+    monkeypatch.setattr(docker_cli, "DOCKER_REMOVE_TIMEOUT_SEC", 0)
+    with pytest.raises(RuntimeError, match=detail):
+        docker_cli.docker_remove_container(_CONTAINER_ID)
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("prefix", ["Error: No such object:", "error: no such object:"])
+def test_absent_container_with_pending_native_creation_is_unknown(monkeypatch, prefix):
     name = "toolang-alice-launch"
     monkeypatch.setattr(
         docker_cli,
         "_docker",
         lambda *args, **kwargs: subprocess.CompletedProcess(
-            args, 1, stdout="", stderr=f"Error: No such object: {name}\n"
+            args, 1, stdout="", stderr=f"{prefix} {name}\n"
         ),
     )
     monkeypatch.setattr(docker_cli, "docker_launch_pending", lambda identity: True)
