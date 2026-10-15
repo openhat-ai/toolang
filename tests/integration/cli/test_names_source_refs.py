@@ -75,12 +75,11 @@ def test_clone_rejects_deferred_sources_without_network_or_writes(
 def test_script_entry_points_keep_the_filename_and_share_the_normalized_home(
     tmp_path, mode, filename
 ):
-    import os
     import subprocess
     import sys
 
     source = tmp_path / filename
-    source.write_text('#!/usr/bin/env too\nflow main() -> Text:\n  return "done"\n')
+    source.write_text("#!/usr/bin/env too\nflow main(_: Text) -> Text:\n  pass\n")
     source.chmod(0o755)
     cli = Path(sys.executable).with_name("too")
     command = (
@@ -88,13 +87,13 @@ def test_script_entry_points_keep_the_filename_and_share_the_normalized_home(
         if mode == "shebang"
         else [str(cli), *(["run"] if mode == "run" else []), source.name]
     )
-    env = dict(
-        os.environ,
-        TOOLANG_ROOT=str(tmp_path / "registry"),
-        PATH=f"{cli.parent}:{os.environ.get('PATH', '')}",
-    )
+    env = {
+        "HOME": str(tmp_path),
+        "PATH": f"{cli.parent}:/usr/bin:/bin",
+        "TOOLANG_ROOT": str(tmp_path / "registry"),
+    }
     result = subprocess.run(
-        [*command, "main", "--quiet"],
+        [*command, "main", "--quiet", "--out", "-", "--", "done"],
         cwd=tmp_path,
         env=env,
         text=True,
@@ -102,5 +101,6 @@ def test_script_entry_points_keep_the_filename_and_share_the_normalized_home(
         timeout=30,
     )
     assert result.returncode == 0, result.stderr
+    assert result.stdout == "done"
     assert source.is_file()
     assert (tmp_path / ".toolang/agents/daily_report_v2/agent.too").resolve() == source

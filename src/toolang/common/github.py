@@ -24,7 +24,7 @@ class GitHubRef:
     def default_name(self) -> str:
         """Return the filename-derived default name for this reference."""
 
-        return Path(unquote(self.path)).stem
+        return Path(self.path).stem
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,7 +122,7 @@ def _parse_github_url(text: str, *, web_views: frozenset[str]) -> GitHubRef | No
 
 
 def _url_path_parts(path: str) -> list[str]:
-    return [part for part in path.strip("/").split("/") if part]
+    return [unquote(part) for part in path.strip("/").split("/") if part]
 
 
 def _split_url_revision(parts: list[str], *, original: str) -> tuple[str, str]:

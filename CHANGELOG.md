@@ -152,6 +152,12 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Fixed
 
+- Read-only roaming queries reject a home owned by another source, while
+  current State caches must contain supported Source Refs so explicit-ref
+  requirements cannot be bypassed and explicitly loaded historical revisions
+  stay readable, and GitHub web and raw URLs decode percent-escaped paths
+  exactly once before building raw fetch URLs. ([#812](https://github.com/openhat-ai/toolang/pull/812))
+
 - `too skill add` reports the underlying Source Ref error for an unsupported or
   unresolved source instead of only a generic not-found message. ([#812](https://github.com/openhat-ai/toolang/pull/812))
 

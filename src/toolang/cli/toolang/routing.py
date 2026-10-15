@@ -471,11 +471,11 @@ def _preparation(
 
 
 def _roaming_layout(source: Path, prepare: Preparation | None) -> AgentLayout:
-    if prepare == "program":
-        from toolang.up import source as agent_sources
+    from toolang.up import source as agent_sources
 
+    if prepare == "program":
         return agent_sources.materialize_roaming_program(source)
-    return AgentLayout.roaming(source)
+    return agent_sources.roaming_layout(source)
 
 
 def _source_path(token: str) -> Path | None:

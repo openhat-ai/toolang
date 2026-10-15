@@ -110,7 +110,10 @@ def test_running_info_uses_runtime_resources_without_loading_local_sources(
         *([selector, "info"] if target_first else ["info", selector]),
     ]
     layout.home.mkdir(parents=True)
-    layout.program.write_text("invalid Toolang!!!")
+    if placement == "roaming":
+        layout.program.symlink_to(source)
+    else:
+        layout.program.write_text("invalid Toolang!!!")
     monkeypatch.setattr(
         AgentProcess,
         "status",

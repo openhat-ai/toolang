@@ -190,6 +190,20 @@ def resolve_agent_source(
 VISITING_PROGRAM_CACHE_TTL_SEC = 3600
 
 
+def roaming_layout(source_path: Path) -> AgentLayout:
+    """Resolve a roaming home without reading another source's state or writing."""
+    source = source_path.expanduser().resolve()
+    layout = AgentLayout.roaming(source)
+    if layout.program.is_symlink():
+        if layout.program.resolve() != source:
+            raise FileExistsError(
+                f"agent home {layout.home} already belongs to {layout.program.resolve()}"
+            )
+    elif layout.program.exists():
+        raise FileExistsError(f"cannot replace authored file: {layout.program}")
+    return layout
+
+
 def materialize_roaming_program(source_path: Path) -> AgentLayout:
     """Materialize one local .too source into its fixed roaming root."""
 
@@ -198,7 +212,7 @@ def materialize_roaming_program(source_path: Path) -> AgentLayout:
         raise FileNotFoundError(f"agent program not found: {resolved_source}")
     if resolved_source.suffix != ".too":
         raise ValueError(f"agent program must point to a .too file: {resolved_source}")
-    layout = AgentLayout.roaming(resolved_source)
+    layout = roaming_layout(resolved_source)
     _link_roaming_program(layout, resolved_source)
     _sync_roaming_project(layout, resolved_source)
     return layout

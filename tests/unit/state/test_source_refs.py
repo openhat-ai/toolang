@@ -108,3 +108,60 @@ def test_http_caps_are_prepared_and_projected_consistently(tmp_path, monkeypatch
     assert cap_collection((entry,), root=tmp_path, agent_name="gus").query(
         f'{kind}/some-name[source="{info.source}"]'
     )
+
+
+@pytest.mark.parametrize("form", ["configured", "referenced"])
+def test_current_cache_rejects_legacy_implicit_refs_without_rewriting_history(
+    tmp_path, monkeypatch, form
+):
+    from toolang.common.github import GitHubShorthand
+    from toolang.state.prepare import load_agent_state
+
+    layout = AgentLayout.resident(tmp_path, "gus")
+    layout.home.mkdir(parents=True)
+    if form == "configured":
+        layout.config.write_text('[prompts]\nreview = { ref = "owner/review" }\n')
+        layout.program.write_text("flow chat():\n  pass\n")
+    else:
+        layout.program.write_text("with prompt owner/review\nflow chat():\n  pass\n")
+    parse = caps.parse_remote_source
+    with monkeypatch.context() as legacy:
+        legacy.setattr(
+            caps,
+            "parse_remote_source",
+            lambda text: (
+                GitHubShorthand("owner", "review")
+                if text == "owner/review"
+                else parse(text)
+            ),
+        )
+        legacy.setattr(caps, "_github_repo_default_branch", lambda *args: "main")
+        legacy.setattr(caps, "_github_remote_exists", lambda *args: True)
+        legacy.setattr(
+            caps,
+            "_fetch_remote_cap_files",
+            lambda **kwargs: {
+                kwargs["relative_entry_path"].as_posix(): b"Review changes.\n"
+            },
+        )
+        old = prepare_agent_state(layout)
+    old_caps = old.base_caps if form == "configured" else old.module_caps["agent"]
+    assert old_caps
+    monkeypatch.setattr(
+        caps,
+        "urlopen",
+        lambda *a, **k: pytest.fail("legacy source reached the network"),
+    )
+    with pytest.raises(ValueError, match="unsupported Source Ref"):
+        load_agent_state(layout)
+    if form == "configured":
+        with pytest.raises(ValueError, match="unsupported Source Ref"):
+            prepare_agent_state(layout)
+    else:
+        current = prepare_agent_state(layout)
+        assert not current.module_caps["agent"]
+        assert any(
+            not item.accepted and "unsupported Source Ref" in (item.message or "")
+            for item in current.files
+        )
+    assert load_agent_state(layout, old.revision).revision == old.revision

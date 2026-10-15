@@ -86,3 +86,27 @@ def test_github_raw_url_quotes_revision_and_path() -> None:
         "https://raw.githubusercontent.com/acme/agents/"
         "refs/heads/feature%20branch/agents/reviewer%20file.too"
     )
+
+
+@pytest.mark.parametrize(
+    "host_path",
+    ["github.com/acme/agents/blob", "raw.githubusercontent.com/acme/agents"],
+)
+@pytest.mark.parametrize(
+    "encoded, decoded",
+    [
+        ("Daily%20Report.too", "Daily Report.too"),
+        ("Daily%2520Report.too", "Daily%20Report.too"),
+    ],
+)
+def test_web_source_paths_are_decoded_once_before_rendering_raw_urls(
+    host_path, encoded, decoded
+):
+    ref = parse_github_url(f"https://{host_path}/main/{encoded}")
+    assert ref is not None
+    assert ref.path == decoded
+    assert ref.default_name() == decoded.removesuffix(".too")
+    assert (
+        github_raw_url(ref)
+        == f"https://raw.githubusercontent.com/acme/agents/main/{encoded}"
+    )

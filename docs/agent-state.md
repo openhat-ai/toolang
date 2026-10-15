@@ -180,6 +180,10 @@ back to `current`, or contacts a remote provider. Current-schema loading restore
 accepted terms without parsing source; legacy compatibility paths may consult
 captured bytes.
 
+Current caches must contain supported Source Refs, even when authored bytes have
+not changed. Preparation rebuilds incompatible caches; explicitly loading a
+historical revision preserves its captured declarations.
+
 ## Programs And Module Terms
 
 `agent.too` is the special `agent` module term. Each direct

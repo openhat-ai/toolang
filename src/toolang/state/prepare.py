@@ -10,6 +10,7 @@ from pathlib import Path
 import re
 
 from toolang.common.layout import AgentLayout, ensure_scratch_workspace
+from toolang.common.source import parse_remote_source
 
 from ..common.progress import ProgressSink, emit_progress
 from ..lang.ast import AgicDecl, FlowDecl, Program, parse_cap_declarations
@@ -235,6 +236,9 @@ def load_agent_state(
         raise ValueError("current Agent State uses an outdated layer schema")
     if revision is None and _has_missing_inline_caps(home):
         raise ValueError("current Agent State is missing inline capabilities")
+    if revision is None:
+        _validate_current_sources(root)
+        _validate_current_sources(home)
     state = compose_layer_state(
         root,
         home,
@@ -476,6 +480,7 @@ def _matching_root(
             return None
         if layer.source != source:
             return None
+        _validate_current_sources(layer)
         validate_layer_revision(layout, "root", revision)
         return layer
     except (FileNotFoundError, KeyError, TypeError, ValueError):
@@ -499,10 +504,17 @@ def _matching_home(
             return None
         if _has_missing_inline_caps(layer):
             return None
+        _validate_current_sources(layer)
         validate_layer_revision(layout, "home", revision)
         return layer
     except (FileNotFoundError, KeyError, TypeError, ValueError):
         return None
+
+
+def _validate_current_sources(layer: RootLayer | HomeLayer) -> None:
+    """Current caches obey source policy; explicit historical loads retain theirs."""
+    for resolution in layer.resolutions:
+        parse_remote_source(resolution.declared_ref)
 
 
 def _has_missing_inline_caps(layer: HomeLayer) -> bool:

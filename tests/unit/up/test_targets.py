@@ -373,3 +373,28 @@ def test_invalid_script_name_creates_no_agent_state(tmp_path, stem):
 def test_explicit_agent_prefix_cannot_normalize_or_select_a_remote_source(name):
     with pytest.raises(ValueError, match="invalid agent name"):
         agent_sources.parse_agent_target(f"agent:{name}")
+
+
+@pytest.mark.parametrize(
+    "command", [["info"], ["top"], ["inspect", "runs"], ["workspace", "list"]]
+)
+def test_roaming_queries_reject_normalized_home_owned_by_another_source(
+    tmp_path, capsys, command
+):
+    from toolang.cli.toolang.routing import dispatch_roaming
+
+    original = tmp_path / "daily-report.too"
+    other = tmp_path / "daily_report.too"
+    for source in (original, other):
+        source.write_text("flow main():\n  pass\n")
+    layout = agent_sources.materialize_roaming_program(original)
+    dispatched = []
+    result = dispatch_roaming(
+        [str(other), *command],
+        prog_name="too",
+        run_app=lambda *args: dispatched.append(args) or 0,
+    )
+    assert result == 1
+    assert "already belongs" in " ".join(capsys.readouterr().err.split())
+    assert dispatched == []
+    assert layout.program.resolve() == original
