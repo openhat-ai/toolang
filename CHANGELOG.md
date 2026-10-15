@@ -152,6 +152,12 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Fixed
 
+- Automatic agent port selection and last-port reuse skip unsupported legacy
+  agent directories such as `old.name`, so an invalid peer no longer blocks
+  a valid agent from selecting or reusing its port, and valid peers'
+  reservations are preserved.
+  ([#812](https://github.com/openhat-ai/toolang/pull/812))
+
 - Read-only roaming queries reject a home owned by another source, while
   current State caches must contain supported Source Refs so explicit-ref
   requirements cannot be bypassed and explicitly loaded historical revisions

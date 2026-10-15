@@ -77,6 +77,39 @@ def test_resident_default_port_reuses_free_record_or_selects_available(
     )
 
 
+@pytest.mark.parametrize("preferred", [None, 7123])
+def test_automatic_port_selection_ignores_invalid_legacy_peers(
+    tmp_path, monkeypatch, preferred
+):
+    from toolang.up.records import update_record
+
+    layout = AgentLayout.resident(tmp_path, "alice")
+    if preferred is not None:
+        update_record(
+            layout.runtime_status,
+            lambda entry: entry["control"].update(
+                last_successful={"endpoint": f"http://localhost:{preferred}"}
+            ),
+        )
+    for name, port in (
+        ("bob", 7002),
+        ("old.name", 7123),
+        ("old-name", 7123),
+        ("Gus", 7123),
+        ("a" * 65, 7123),
+    ):
+        update_record(
+            tmp_path / "agents" / name / ".runtime" / "status.json",
+            lambda entry, port=port: entry["control"].update(
+                last_successful={"endpoint": f"http://localhost:{port}"}
+            ),
+        )
+    monkeypatch.setattr(server, "_port_is_available", lambda host, port: True)
+    assert server.resolve_runtime_port(
+        host="127.0.0.1", explicit_port=None, layout=layout, temporary=False
+    ) == (preferred or 7003)
+
+
 @pytest.mark.parametrize(
     "preferred,expected", [(None, 7002), (7001, 7002), (7123, 7123), (8123, 8123)]
 )

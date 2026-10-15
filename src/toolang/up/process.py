@@ -507,17 +507,15 @@ def assigned_runtime_ports(
 ) -> set[int]:
     """Return ports already recorded by local agents, including stopped ones."""
 
+    from .discovery import agent_layouts
+
     agents_dir = toolang_root / "agents"
     if not agents_dir.is_dir():
         return set()
     ports: set[int] = set()
-    for home in agents_dir.iterdir():
-        if not home.is_dir():
+    for layout in agent_layouts(toolang_root):
+        if layout.name == exclude_agent:
             continue
-        agent_name = home.name
-        if exclude_agent is not None and agent_name == exclude_agent:
-            continue
-        layout = AgentLayout.resident(toolang_root, agent_name)
         port = preferred_runtime_port(layout)
         if port is not None:
             ports.add(port)

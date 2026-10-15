@@ -80,13 +80,15 @@ Tools and caps use their records directly:
 Tool `parameters` lists parameter names. Package identity belongs to plugin
 inventories, not tool records. Cap `location` points to actual content: an
 absolute root-resolved authored file (a skill's `SKILL.md`), inline `file:line`,
-or a configured/referenced GitHub HTTPS blob/tree URL. Only inline locations
-include a line. `source` exposes the resolved, canonical Source Ref; it differs from the Cap
+or a configured/referenced HTTP(S) URL (a blob/tree URL for GitHub). Only inline
+locations include a line. `source` exposes the resolved, canonical Source Ref;
+it differs from the Cap
 Ref in `cap` and the human-facing `location`.
 Cap kinds are `psyche`, `skill`, `service`, and `prompt`; combined and kind-specific
 lists require the full identity pattern. HTTP Cap summaries/details also expose `cap` and `source`; query matching uses
-these CLI records. Migrate explicit Cap query keys from `ref` to `cap`, and API
-Cap response `ref` to `source`. Bare Cap Ref queries retain their meaning.
+these CLI records. External TQ consumers must switch their identity key from
+`ref` to `cap`; API Cap response `ref` becomes `source`. Bare Cap Ref queries
+retain their meaning.
 
 ## Native TQ semantics
 
@@ -105,16 +107,19 @@ registry, or date conversion.
 Missing fields and operator/type compatibility follow TQ, so unknown fields
 normally produce no matches rather than setup validation errors.
 
-Every built-in consumer parses and validates with `{"key": "ref"}`, without a
-filter list. TQ validation rejects predicates on the key: select refs through
-identity syntax. Its optional CLI currently omits this validation; external
-parity therefore applies to validated expressions.
+Built-in model and tool consumers validate with `{"key": "ref"}`; Cap consumers
+use `{"key": "cap"}`, without a filter list. TQ validation rejects predicates on
+the identity key: select `skill/reviewer` directly, rather than
+`*[cap="skill/reviewer"]`. Other fields remain filters, for example
+`skill/*[source="https://example.com/reviewer"]`. The optional TQ CLI currently
+omits this validation; external parity therefore applies to validated expressions.
 
 With the optional `tq-json[cli]` extra:
 
 ```sh
 too models --json | tq -r -k ref '*[tags has all (ready,local)]'
 too providers --all --json | tq -k id '*[_toolang.ready_count=0]'
+too caps --json | tq -k cap 'skill/*'
 ```
 
 TQ CLI emits individual objects. `-r` preserves model query branch priority.
