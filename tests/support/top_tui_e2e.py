@@ -101,7 +101,9 @@ flow review(_: Text) -> Text:
         with socket.socket() as listener:
             listener.bind(("127.0.0.1", 0))
             endpoint = f"http://127.0.0.1:{listener.getsockname()[1]}"
-            server = uvicorn.Server(uvicorn.Config(app, log_level="error"))
+            server = uvicorn.Server(
+                uvicorn.Config(app, log_level="error", timeout_graceful_shutdown=1)
+            )
             serving = asyncio.create_task(
                 asyncio.to_thread(server.run, sockets=[listener])
             )

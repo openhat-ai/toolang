@@ -40,7 +40,7 @@ def top_command(
     ] = False,
     sort: Annotated[
         Literal["activity", "spend", "cost", "time"],
-        typer.Option(help="Sort whole objects by displayed values"),
+        typer.Option(help="Sort rows by this metric"),
     ] = "activity",
     recent: Annotated[
         str, typer.Option(help="Rolling activity range: 30m, 1d, 1w, all")
@@ -48,7 +48,7 @@ def top_command(
     since: Annotated[
         str,
         typer.Option(
-            help="Stats: session, all, rolling duration, or fixed timezone-aware timestamp"
+            help="Stats since session, all, a duration, or a timestamp with timezone"
         ),
     ] = "session",
     filter: Annotated[

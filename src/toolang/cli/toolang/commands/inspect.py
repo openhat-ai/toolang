@@ -13,9 +13,11 @@ from rich.console import Console, RenderableType
 from rich.table import Table
 from rich.text import Text
 import typer
+from typer._click import Context
 from typer._click.exceptions import ClickException, UsageError
 
 from toolang.cli.common.parameters import TextType
+from toolang.common.typer.ui import HelpFormatter
 
 from toolang.cli.common.human_values import (
     human_scalar_text,
@@ -113,6 +115,7 @@ class _ProjectorTransition:
     name: str
     project: Callable[[RunStore, _InspectSubject], object]
     render: Callable[[Console, _InspectSubject, object], None]
+    help: str
     supports: Callable[[_InspectSubject], bool] = lambda _subject: True
 
 
@@ -670,19 +673,27 @@ INSPECT_SUBJECT_TRANSITIONS: tuple[_SubjectTransition, ...] = (
 )
 
 INSPECT_PROJECTORS: tuple[_ProjectorTransition, ...] = (
-    _ProjectorTransition("run", "output", _project_run_output, _render_run_output),
+    _ProjectorTransition(
+        "run",
+        "output",
+        _project_run_output,
+        _render_run_output,
+        help="Resolved run result",
+    ),
     _ProjectorTransition(
         "run",
         "tree",
         _project_structural_tree,
         _render_execution_tree,
+        help="Stored execution tree",
     ),
     _ProjectorTransition(
         "step",
         "call",
         _project_step_call,
         _render_step_call,
-        lambda subject: (
+        help="Historical call owned by the step",
+        supports=lambda subject: (
             _selected_step(subject).kind in {"model", "tool", "run", "par", "loop"}
         ),
     ),
@@ -694,24 +705,44 @@ _STATIC_SUBJECT_NAMES = frozenset(
 _PROJECTOR_NAMES = frozenset(projector.name for projector in INSPECT_PROJECTORS)
 
 
-def _inspect_subject_help() -> str:
-    roots = ", ".join(_allowed_transitions(_InspectSubject(kind="agent")))
-    relations = "; ".join(
-        f"{'LOOP_STEP' if transition.source == 'step' and transition.name == 'steps' else transition.source.upper()} "
-        f"{transition.name}"
-        for transition in INSPECT_SUBJECT_TRANSITIONS
-        if transition.source != "agent"
-    )
-    projectors = "; ".join(
-        f"{projector.source.upper()} {projector.name}"
-        for projector in INSPECT_PROJECTORS
-    )
-    return (
-        f"Subject chain. Root subjects: {roots}, or POINTER. "
-        f"Relations: {relations}. Projectors: {projectors}. "
-        "Run tree is a durable structural snapshot; Step call is the "
-        "Step-owned historical call; Run output is its resolved result"
-    )
+def write_inspect_help(ctx: Context, formatter: HelpFormatter) -> None:
+    """Keep query syntax separate from the subject argument's summary."""
+    with formatter.section("Subjects"):
+        formatter.write_dl(
+            [
+                (name, f"List {name}")
+                for name in _allowed_transitions(_InspectSubject(kind="agent"))
+            ]
+            + [("<POINTER>", "Select a thread, control, run, step, or field")]
+        )
+    with formatter.section("Relations"):
+        formatter.write_dl(
+            [
+                (
+                    f"<{'LOOP_STEP' if item.source == 'step' and item.name == 'steps' else item.source.upper()}> {item.name}",
+                    f"List child {item.name}",
+                )
+                for item in INSPECT_SUBJECT_TRANSITIONS
+                if item.source != "agent"
+            ]
+        )
+    with formatter.section("Projections"):
+        formatter.write_dl(
+            [
+                (f"<{projector.source.upper()}> {projector.name}", projector.help)
+                for projector in INSPECT_PROJECTORS
+            ]
+        )
+    with formatter.section("Examples"):
+        command = f"{ctx.find_root().info_name} alice inspect"
+        formatter.write_dl(
+            [
+                (f"{command} runs", "List runs"),
+                (f"{command} run_abcd1234 steps", "List steps in a run"),
+                (f"{command} run_abcd1234 output", "Show a run result"),
+            ],
+            col_max=formatter.width,
+        )
 
 
 def inspect_command(
@@ -719,15 +750,17 @@ def inspect_command(
     subjects: Annotated[
         list[str],
         typer.Argument(
-            click_type=TextType(), metavar="SUBJECT", help=_inspect_subject_help()
+            click_type=TextType(),
+            metavar="SUBJECT",
+            help="Subject chain; see Subjects, Relations, and Projections",
         ),
     ],
     human: Annotated[
         bool,
-        typer.Option("--human", help="Render human-readable output (default)"),
+        typer.Option("--human", help="Output human-readable text (default)"),
     ] = False,
     json_view: Annotated[
-        bool, typer.Option("--json", help="Render JSON (resolved value for Run output)")
+        bool, typer.Option("--json", help="Output JSON (resolved value for run output)")
     ] = False,
 ) -> None:
     """Inspect execution subjects."""

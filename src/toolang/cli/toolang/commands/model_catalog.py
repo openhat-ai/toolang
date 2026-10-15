@@ -54,7 +54,7 @@ def models_command(
         ),
     ] = None,
     json_: Annotated[
-        bool, typer.Option("--json", help="Write public model records as JSON")
+        bool, typer.Option("--json", help="Output models as JSON")
     ] = False,
     human: Annotated[
         bool, typer.Option("--human", help="Display a table (default)")
@@ -94,7 +94,7 @@ def providers_command(
         ),
     ] = False,
     json_: Annotated[
-        bool, typer.Option("--json", help="Write public provider records as JSON")
+        bool, typer.Option("--json", help="Output providers as JSON")
     ] = False,
     human: Annotated[
         bool, typer.Option("--human", help="Display a table (default)")

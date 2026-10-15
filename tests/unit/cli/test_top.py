@@ -6,6 +6,7 @@ import io
 import sqlite3
 from types import SimpleNamespace
 
+from anyio import CancelScope
 import pytest
 import httpx
 import typer
@@ -144,4 +145,73 @@ def test_local_details_handles_store_becoming_unsupported(tmp_path, monkeypatch)
     with create_pipe_input() as pipe:
         monkeypatch.setattr(activity, "create_input", lambda **kwargs: pipe)
         monkeypatch.setattr(activity, "create_output", lambda **kwargs: DummyOutput())
+        asyncio.run(scenario(pipe))
+
+
+@pytest.mark.parametrize("suppress_first_cancel", [False, True])
+def test_quit_during_query_change_preserves_subscription_cleanup(
+    tmp_path, monkeypatch, suppress_first_cancel
+):
+    from toolang.cli.common import activity
+
+    async def scenario(pipe):
+        listening = asyncio.Event()
+        closing = asyncio.Event()
+        released = asyncio.Event()
+        stopping = asyncio.Event()
+        interrupted = asyncio.Event()
+
+        async def updates(query):
+            listening.set()
+            try:
+                try:
+                    await asyncio.Event().wait()
+                except asyncio.CancelledError:
+                    if not suppress_first_cancel:
+                        raise
+                    await asyncio.Event().wait()
+                yield "activity_checkpoint", {"agents": []}
+            finally:
+                closing.set()
+                with CancelScope(shield=True):
+                    try:
+                        await released.wait()
+                    except asyncio.CancelledError:
+                        interrupted.set()
+                        raise
+
+        class Output(DummyOutput):
+            def disable_bracketed_paste(self):
+                stopping.set()
+
+        source = LocalObservation(ActivityReader(tmp_path / "runs.db", "agent:alice"))
+        monkeypatch.setattr(source, "updates", updates)
+        monkeypatch.setattr(activity, "create_output", lambda **kwargs: Output())
+        task = asyncio.create_task(
+            watch(
+                None,
+                agent="agent:alice",
+                backend=None,
+                once=False,
+                console=Console(file=io.StringIO()),
+                source=source,
+            )
+        )
+        try:
+            async with asyncio.timeout(3):
+                await listening.wait()
+                pipe.send_text("\x1b[19~")  # F8 replaces the current subscription.
+                await closing.wait()
+                pipe.send_text("q")
+                await stopping.wait()
+                released.set()
+                await task
+            assert not interrupted.is_set()
+        finally:
+            released.set()
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    with create_pipe_input() as pipe:
+        monkeypatch.setattr(activity, "create_input", lambda **kwargs: pipe)
         asyncio.run(scenario(pipe))

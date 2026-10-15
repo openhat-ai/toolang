@@ -3,6 +3,11 @@
 from __future__ import annotations
 
 import pytest
+from rich.console import Console
+from typer._click import Context
+from typer.core import TyperCommand
+
+from toolang.common.typer.ui import HelpFormatter
 
 from toolang.base.types.message import (
     ReasoningPart,
@@ -66,13 +71,28 @@ def test_registered_projector_drives_allowed_values(
     assert projector.name in inspect_commands._allowed_projectors(projector.source)
 
 
-def test_inspect_help_is_derived_from_registered_transitions() -> None:
-    help_text = inspect_commands._inspect_subject_help()
+@pytest.mark.parametrize(
+    "projectors",
+    [inspect_commands.INSPECT_PROJECTORS, inspect_commands.INSPECT_PROJECTORS[:1]],
+    ids=["all", "subset"],
+)
+def test_inspect_help_is_derived_from_registered_transitions(
+    projectors: tuple[inspect_commands._ProjectorTransition, ...],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(inspect_commands, "INSPECT_PROJECTORS", projectors)
+    formatter = HelpFormatter(console=Console(color_system=None, width=120))
+    inspect_commands.write_inspect_help(
+        Context(TyperCommand("inspect"), info_name="too"), formatter
+    )
+    help_text = formatter.getvalue()
 
     for transition in inspect_commands.INSPECT_SUBJECT_TRANSITIONS:
         assert transition.name in help_text
-    for projector in inspect_commands.INSPECT_PROJECTORS:
-        assert projector.name in help_text
+    projections = help_text.split("Projections:\n", 1)[1].split("\n\n", 1)[0]
+    assert [" ".join(row.split()[:2]) for row in projections.splitlines()] == [
+        f"<{projector.source.upper()}> {projector.name}" for projector in projectors
+    ]
 
 
 def test_projector_registry_uses_distinct_run_and_step_vocabulary() -> None:

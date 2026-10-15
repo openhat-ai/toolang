@@ -341,7 +341,7 @@ def test_cli_control_commands_have_consistent_order_and_descriptions() -> None:
 def test_cli_visible_commands_follow_the_public_panel_order(arguments, capsys) -> None:
     group = typer.main.get_command(cli.app)
     expected = {
-        "Agent Commands": (
+        "Agent commands": (
             "new",
             "clone",
             "remove",
@@ -350,10 +350,10 @@ def test_cli_visible_commands_follow_the_public_panel_order(arguments, capsys) -
             "home",
             "workspace",
         ),
-        "Cap Commands": ("psyche", "skill", "service", "prompt"),
-        "Runtime Commands": ("serve", "start", "stop", "hub"),
-        "Work Commands": ("chat", "talk", "chore"),
-        "Inspection Commands": (
+        "Cap commands": ("psyche", "skill", "service", "prompt"),
+        "Runtime commands": ("serve", "start", "stop", "hub"),
+        "Work commands": ("chat", "talk", "chore"),
+        "Inspection commands": (
             "caps",
             "tools",
             "models",
@@ -361,7 +361,7 @@ def test_cli_visible_commands_follow_the_public_panel_order(arguments, capsys) -
             "inspect",
             "top",
         ),
-        "Script Commands": ("init", "run"),
+        "Script commands": ("init", "run"),
     }
 
     assert isinstance(group, TyperGroup)
@@ -673,13 +673,13 @@ def test_cli_bare_resident_target_shows_its_command_help(
     output = capsys.readouterr()
     stdout = strip_ansi(output.out)
     panels = (
-        "Agent Commands",
-        "Cap Commands",
-        "Runtime Commands",
-        "Work Commands",
-        "Inspection Commands",
-        "Run Commands",
-        "Thread Commands",
+        "Agent commands",
+        "Cap commands",
+        "Runtime commands",
+        "Work commands",
+        "Inspection commands",
+        "Run commands",
+        "Thread commands",
     )
 
     assert result == 0
@@ -687,15 +687,15 @@ def test_cli_bare_resident_target_shows_its_command_help(
     for control in ("steer", "cancel", "retry", "rerun", "fork", "rewind"):
         assert control in stdout
     assert "models" in stdout
-    assert "Teaming Commands" not in stdout
+    assert "Teaming commands" not in stdout
     sections = {
         panel: stdout.split(f"{panel}:\n", 1)[1].split("\n\n", 1)[0]
-        for panel in ("Agent Commands", "Runtime Commands", "Inspection Commands")
+        for panel in ("Agent commands", "Runtime commands", "Inspection commands")
     }
-    assert "workspace" in sections["Agent Commands"]
+    assert "workspace" in sections["Agent commands"]
     for command in ("serve", "start", "stop"):
-        assert command in sections["Runtime Commands"]
-    assert "top" in sections["Inspection Commands"]
+        assert command in sections["Runtime commands"]
+    assert "top" in sections["Inspection commands"]
     assert "talk" not in stdout
     assert "hub" not in stdout
     assert tuple(stdout.index(panel) for panel in panels) == tuple(

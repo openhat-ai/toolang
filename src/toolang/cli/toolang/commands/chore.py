@@ -35,7 +35,7 @@ ChoreName = Annotated[
 
 
 def list_chores(ctx: typer.Context) -> None:
-    """List the current definitions and their execution state"""
+    """List chores and status"""
     require_prefix_agent(ctx)
     layout = context_layout(ctx)
     runs: Iterable[ChoreRun] = ()
@@ -100,7 +100,7 @@ def list_chores(ctx: typer.Context) -> None:
 
 
 def new_chore(ctx: typer.Context, name: ChoreName = None) -> None:
-    """Create a definition in chores/"""
+    """Create a chore"""
     require_prefix_agent(ctx)
     layout = context_layout(ctx)
     text = edit_markdown(templates.load_template("chore").raw_text)
@@ -114,7 +114,7 @@ def new_chore(ctx: typer.Context, name: ChoreName = None) -> None:
 
 
 def edit_chore(ctx: typer.Context, chore: ChoreRef) -> None:
-    """Edit a definition without changing its name or progress"""
+    """Edit a chore"""
     catalog = AuthoredChores(
         context_layout(ctx).home, lock_path=context_layout(ctx).home_edit_lock
     )
@@ -130,7 +130,7 @@ def edit_chore(ctx: typer.Context, chore: ChoreRef) -> None:
 
 
 def delete_chore(ctx: typer.Context, chore: ChoreRef) -> None:
-    """Remove a definition; keep completed work and execution history"""
+    """Delete a chore; keep history"""
     catalog = AuthoredChores(
         context_layout(ctx).home, lock_path=context_layout(ctx).home_edit_lock
     )
@@ -141,7 +141,7 @@ def delete_chore(ctx: typer.Context, chore: ChoreRef) -> None:
 
 
 def run_chore(ctx: typer.Context, chore: ChoreRef) -> None:
-    """Request one manual occurrence, serialized with any active run"""
+    """Queue one manual chore run"""
     runtime_post(
         ctx,
         f"/api/v1/chores/{quote(chore.removeprefix('chore/'), safe='')}/run",
@@ -151,7 +151,7 @@ def run_chore(ctx: typer.Context, chore: ChoreRef) -> None:
 
 
 def cancel_chore(ctx: typer.Context, chore: ChoreRef) -> None:
-    """Cancel the active or pending occurrence; keep future scheduled work"""
+    """Cancel the current chore occurrence; keep future scheduled work"""
     runtime_post(
         ctx,
         f"/api/v1/chores/{quote(chore.removeprefix('chore/'), safe='')}/cancel",
@@ -169,7 +169,7 @@ def _path(chore: ChoreFile) -> Path:
 def _create_app() -> typer.Typer:
     app = typer.Typer(
         cls=PrefixAgentChoreGroup,
-        help="Manage one-off and scheduled work",
+        help="Manage one-off and scheduled chores",
         add_completion=False,
         no_args_is_help=True,
         pretty_exceptions_enable=False,
@@ -180,8 +180,12 @@ def _create_app() -> typer.Typer:
         ("new", new_chore, "Create a chore"),
         ("edit", edit_chore, "Edit a chore"),
         ("delete", delete_chore, "Delete a chore; keep history"),
-        ("run", run_chore, "Run a chore once"),
-        ("cancel", cancel_chore, "Cancel a chore occurrence"),
+        ("run", run_chore, "Queue one manual chore run"),
+        (
+            "cancel",
+            cancel_chore,
+            "Cancel the current chore occurrence; keep future scheduled work",
+        ),
     ):
         app.command(
             name,

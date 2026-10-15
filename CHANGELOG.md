@@ -64,6 +64,13 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Changed
 
+- CLI help is now consistent across built-in and generated commands: command and
+  help headings use sentence case, argument labels are uppercased, summaries are
+  reworded and shortened, runnable usage shows one `[ARGUMENTS]` group instead of
+  `[NAME=VALUE...] [-- <INPUT> | -]`, commands list only their supported field
+  sections after Options, and examples render as compact command/description rows.
+  Invocation, parsing, and exit codes are unchanged.
+
 - **Breaking:** a server started implicitly by Chat, retry/rerun, fork, or
   rewind now enables only the chat driver for resident and visiting agents, so
   Chat with a resident agent no longer starts the talk and chore drivers.
@@ -238,6 +245,10 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   `[terminal.title.prefix]` settings keep working unchanged.
 
 ### Fixed
+
+- The `too top` dashboard now shuts down reliably when it is quit while a
+  Stats-window or filter change is replacing its activity subscription: the
+  outgoing subscription's cleanup is no longer cancelled a second time.
 
 - Remote Mod targets are rejected unless their actual source path is a `.too`
   program: an HTTP(S) URL path is decoded exactly once during parsing while a

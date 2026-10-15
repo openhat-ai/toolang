@@ -221,7 +221,7 @@ class RuntimeAgentCommand(CliCommand):
     """Render one required agent argument before the command name in help."""
 
     usage_agent_metavar = "<AGENT>"
-    argument_help = "Agent Name, .too file, gh:/github: Source Ref, or HTTP(S) URL"
+    argument_help = "Agent name, .too path, GitHub ref, or URL"
 
     def _real_params(self, ctx: Context) -> list[Parameter]:
         return TyperCommand.get_params(self, ctx)

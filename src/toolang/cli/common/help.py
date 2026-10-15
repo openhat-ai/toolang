@@ -16,6 +16,7 @@ from typer._click.exceptions import ClickException, UsageError
 from typer.core import TyperArgument, TyperCommand, TyperGroup
 
 from toolang.common.typer.ui import HelpFormatter, argument_usage
+from .help_sections import write_field_sections
 
 
 def parameter_usage(param: Parameter, ctx: Context) -> list[str]:
@@ -68,6 +69,10 @@ class CliCommand(TyperCommand):
 
     context_class = HelpContext
 
+    def write_help_sections(self, ctx: Context, formatter: HelpFormatter) -> None:
+        """Write option fields; subclasses can append caller-owned sections."""
+        write_field_sections(ctx, formatter)
+
     def format_help(self, ctx: Context, formatter: NativeHelpFormatter) -> None:
         _format_help(ctx, formatter)
 
@@ -82,6 +87,10 @@ class CliGroup(TyperGroup):
     """Apply the same help conventions to command groups."""
 
     context_class = HelpContext
+
+    def write_help_sections(self, ctx: Context, formatter: HelpFormatter) -> None:
+        """Write option fields; subclasses can append caller-owned sections."""
+        write_field_sections(ctx, formatter)
 
     def __init__(self, *, subcommand_metavar: str | None = None, **kwargs: Any) -> None:
         super().__init__(

@@ -35,6 +35,29 @@ class Mode(str, Enum):
 
 
 class HelpMetadataTest(unittest.TestCase):
+    def test_argument_metavars_uppercase_only_placeholder_names(self):
+        for metavar, expected in (
+            (None, "VALUE"),
+            ("source", "SOURCE"),
+            ("files...", "FILES..."),
+            ("report.json", "report.json"),
+            ("path|url", "path|url"),
+            ("Part[]", "Part[]"),
+            ("name=VALUE", "name=VALUE"),
+            ("<NAME>.json", "<NAME>.json"),
+        ):
+            with self.subTest(metavar=metavar):
+                argument = TyperArgument(
+                    param_decls=["value"], metavar=metavar, required=True
+                )
+                command = TyperCommand("demo", params=[argument])
+                output = _format_help(typer.Context(command), theme=PLAIN)
+                rows = output.split("Arguments:\n", 1)[1].split("\n\n", 1)[0]
+                self.assertEqual(rows.strip(), f"* {expected}")
+                usage = output.split("Usage:", 1)[1].split("\n\n", 1)[0]
+                self.assertIn(expected, usage)
+                self.assertEqual(argument.metavar, metavar)
+
     def test_top_description_gets_a_period_without_changing_command_summaries(self):
         for description, expected in (
             ("Run the task", "Run the task."),
@@ -148,7 +171,7 @@ class HelpMetadataTest(unittest.TestCase):
         arguments = result.stdout.split("Arguments:\n", 1)[1].split("\n\n", 1)[0]
         self.assertEqual(
             [line.strip() for line in arguments.splitlines()],
-            ["* source", "* label", "* count", "* score", "tag"],
+            ["* SOURCE", "* LABEL", "* COUNT", "* SCORE", "TAG"],
         )
         for label in ("--model <STR>", "--limit <INT>"):
             self.assertIn(label, result.stdout)
@@ -181,7 +204,7 @@ class HelpMetadataTest(unittest.TestCase):
         output = _format_help(ctx, theme=PLAIN)
         arguments = output.split("Arguments:\n", 1)[1].split("\n\n", 1)[0]
         self.assertEqual(
-            [line.strip() for line in arguments.splitlines()], ["* mode", "* date"]
+            [line.strip() for line in arguments.splitlines()], ["* MODE", "* DATE"]
         )
         options = {
             param.opts[0]: param
@@ -258,8 +281,8 @@ class HelpMetadataTest(unittest.TestCase):
         self.assertNotIn("hidden-command", result.stdout)
         self.assertIn("execute", result.stdout)
         self.assertIn("nested", result.stdout)
-        self.assertIn("\n  source\n", result.stdout)
-        self.assertIn("\n  destination\n", result.stdout)
+        self.assertIn("\n  SOURCE\n", result.stdout)
+        self.assertIn("\n  DESTINATION\n", result.stdout)
         self.assertIn("\n  --help", result.stdout)
         self.assertIn("\n  --cache", result.stdout)
         self.assertIn("\n  --offline", result.stdout)
@@ -404,7 +427,7 @@ class HelpMetadataTest(unittest.TestCase):
         self.assertIn("Usage: demo [OPTIONS] <NAME> [TAGS...]", result.stdout)
         arguments = result.stdout.split("Arguments:\n", 1)[1].split("\n\n", 1)[0]
         self.assertEqual(
-            [line.strip() for line in arguments.splitlines()], ["* NAME", "tags"]
+            [line.strip() for line in arguments.splitlines()], ["* NAME", "TAGS"]
         )
         self.assertIn("-t,", result.stdout)
         self.assertIn("--target <PATH>", result.stdout)

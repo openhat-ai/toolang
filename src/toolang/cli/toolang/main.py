@@ -49,16 +49,16 @@ _SELECTED_LAYOUT: ContextVar[AgentLayout | None] = ContextVar(
 _SELECTED_SOURCE: ContextVar[Path | None] = ContextVar(
     "toolang_cli_selected_source", default=None
 )
-AGENT_COMMAND_PANEL = "Agent Commands"
-WORK_COMMAND_PANEL = "Work Commands"
-CAPS_COMMAND_PANEL = "Cap Commands"
-INSPECTION_COMMAND_PANEL = "Inspection Commands"
-SCRIPT_COMMAND_PANEL = "Script Commands"
-PLUGIN_COMMAND_PANEL = "Plugin Commands"
-RUN_COMMAND_PANEL = "Run Commands"
-THREAD_COMMAND_PANEL = "Thread Commands"
-RUNTIME_COMMAND_PANEL = "Runtime Commands"
-LANGUAGE_COMMAND_PANEL = "Language Commands"
+AGENT_COMMAND_PANEL = "Agent commands"
+WORK_COMMAND_PANEL = "Work commands"
+CAPS_COMMAND_PANEL = "Cap commands"
+INSPECTION_COMMAND_PANEL = "Inspection commands"
+SCRIPT_COMMAND_PANEL = "Script commands"
+PLUGIN_COMMAND_PANEL = "Plugin commands"
+RUN_COMMAND_PANEL = "Run commands"
+THREAD_COMMAND_PANEL = "Thread commands"
+RUNTIME_COMMAND_PANEL = "Runtime commands"
+LANGUAGE_COMMAND_PANEL = "Language commands"
 _AGENT_PANEL_COMMAND_ORDER = (
     "new",
     "clone",
@@ -139,7 +139,7 @@ class _ScriptEntryCommand(CliCommand):
 
 
 class _ResidentVisitingCommand(RuntimeAgentCommand):
-    argument_help = "Agent Name, gh:/github: Source Ref, or HTTP(S) URL"
+    argument_help = "Agent name, GitHub ref, or URL"
 
 
 class _StartCommand(OptionalValueCommand, _ResidentVisitingCommand):
@@ -147,19 +147,23 @@ class _StartCommand(OptionalValueCommand, _ResidentVisitingCommand):
 
 
 class _TargetAgentCommand(RequiredPrefixAgentCommand):
-    argument_help = "Agent Name, .too file, gh:/github: Source Ref, or HTTP(S) URL"
+    argument_help = "Agent name, .too path, GitHub ref, or URL"
 
 
 class _TargetListCommand(OptionalPrefixAgentListCommand):
-    argument_help = "Agent Name, .too file, gh:/github: Source Ref, or HTTP(S) URL; omit for root caps only"
+    argument_help = "Agent name, .too path, GitHub ref, or URL; omit for root caps only"
 
 
 class _TargetSetupCommand(OptionalPrefixAgentSetupCommand):
-    argument_help = "Agent Name, .too file, gh:/github: Source Ref, or HTTP(S) URL; omit for root configuration"
+    argument_help = (
+        "Agent name, .too path, GitHub ref, or URL; omit for root configuration"
+    )
 
 
 class _HomeCommand(OptionalPrefixAgentCommand):
-    argument_help = "Agent Name, .too file, gh:/github: Source Ref, or HTTP(S) URL"
+    argument_help = (
+        "Agent name, .too path, GitHub ref, or URL; omit for the Toolang root"
+    )
 
 
 class _ThreadRunCommand(OptionalValueCommand, _TargetAgentCommand):
@@ -171,6 +175,32 @@ class _ChatCommand(_ThreadRunCommand):
         "thread": OptionalValue(bare_value=BARE_VALUE, show_bare="latest thread"),
         "dev": OptionalValue(bare_value="."),
     }
+
+
+class _InspectCommand(_TargetAgentCommand):
+    def write_help_sections(self, ctx: Context, formatter: HelpFormatter) -> None:
+        super().write_help_sections(ctx, formatter)
+        from .commands.inspect import write_inspect_help
+
+        write_inspect_help(ctx, formatter)
+
+
+class _TalkCommand(CliCommand):
+    def write_help_sections(self, ctx: Context, formatter: HelpFormatter) -> None:
+        super().write_help_sections(ctx, formatter)
+        prefix = f"{ctx.find_root().info_name} talk"
+        with formatter.section("Examples"):
+            formatter.write_dl(
+                [
+                    (prefix, "List conversations"),
+                    (f"{prefix} alice", "Open a conversation with an agent"),
+                    (f"{prefix} all", "Open the system group"),
+                    (f"{prefix} alice,bob", "View a conversation between agents"),
+                    (f"{prefix} gc_abcd1234", "Open a conversation by ID"),
+                    (f'{prefix} alice "Hello"', "Send a message and exit"),
+                ],
+                col_max=formatter.width,
+            )
 
 
 class _ToolangHelpFormatter(HelpFormatter):
@@ -395,7 +425,7 @@ _registered_command(
 _registered_group(
     "toolang.cli.toolang.commands.chore:chore_app",
     name="chore",
-    help="Create or schedule tasks",
+    help="Manage one-off and scheduled chores",
     no_args_is_help=True,
     rich_help_panel=WORK_COMMAND_PANEL,
 )
@@ -404,15 +434,7 @@ _registered_command(
     "talk",
     "toolang.cli.toolang.commands.talk:talk_command",
     help="Talk with agents through the hub",
-    epilog=(
-        "\nExamples:\n"
-        "  too talk                     List conversations\n"
-        "  too talk alice               Talk to an agent\n"
-        "  too talk all                 Open the system group\n"
-        "  too talk alice,bob           View a conversation between agents\n"
-        "  too talk gc_abcd1234         Open a conversation by ID\n"
-        '  too talk alice "Hello"       Send a message and exit'
-    ),
+    cls=_TalkCommand,
     context_settings={"allow_interspersed_args": False},
     rich_help_panel=WORK_COMMAND_PANEL,
 )
@@ -421,7 +443,7 @@ _registered_command(
     "top",
     "toolang.cli.toolang.commands.top:top_command",
     help="Monitor runtime activity",
-    epilog="Observe runtime instances, threads, and runs. Local activity is available without the Hub.",
+    epilog="Observe runtime instances, threads, and runs. Local activity is available without the hub.",
     rich_help_panel=INSPECTION_COMMAND_PANEL,
 )
 
@@ -446,7 +468,7 @@ _registered_command(
     "toolang.cli.toolang.commands.inspect:inspect_command",
     help="Inspect run history and details",
     no_args_is_help=True,
-    cls=_TargetAgentCommand,
+    cls=_InspectCommand,
     rich_help_panel=INSPECTION_COMMAND_PANEL,
 )
 _registered_command(

@@ -53,7 +53,7 @@ def _kind_command_cls(label: str) -> type[OptionalPrefixAgentCommand]:
     return type(
         f"{label.title().replace(' ', '')}ScopeCommand",
         (OptionalPrefixAgentCommand,),
-        {"argument_help": f"Modify the agent's home {label}; omit for root {label}"},
+        {"argument_help": f"Local agent name; omit for root {label}"},
     )
 
 
@@ -112,31 +112,31 @@ def create_cap_apps(
         ),
         CapCommandSpec(
             name="new",
-            help=lambda kind: f"Create a file-backed {kind}",
+            help=lambda kind: f"Create a local {kind}",
             factory=_make_new_cap_command,
             no_args_is_help=True,
         ),
         CapCommandSpec(
             name="edit",
-            help=lambda kind: f"Edit a file-backed {kind}",
+            help=lambda kind: f"Edit a local {kind}",
             factory=_make_edit_cap_command,
             no_args_is_help=True,
         ),
         CapCommandSpec(
             name="delete",
-            help=lambda kind: f"Delete a file-backed {kind}",
+            help=lambda kind: f"Delete a local {kind}",
             factory=_make_delete_cap_command,
             no_args_is_help=True,
         ),
         CapCommandSpec(
             name="add",
-            help=lambda kind: f"Wire a {kind} Source Ref",
+            help=lambda kind: f"Add a remote {kind} reference",
             factory=_make_add_cap_command,
             no_args_is_help=True,
         ),
         CapCommandSpec(
             name="remove",
-            help=lambda kind: f"Unwire a {kind}",
+            help=lambda kind: f"Remove a {kind} reference",
             factory=_make_remove_cap_command,
             no_args_is_help=True,
         ),
@@ -181,9 +181,7 @@ def list_caps(
     all_: Annotated[
         bool, typer.Option("--all", "-a", help="Include allow-excluded caps")
     ] = False,
-    json_: Annotated[
-        bool, typer.Option("--json", help="Write public cap records as JSON")
-    ] = False,
+    json_: Annotated[bool, typer.Option("--json", help="Output caps as JSON")] = False,
     human: Annotated[
         bool, typer.Option("--human", help="Display a table (default)")
     ] = False,
@@ -239,7 +237,7 @@ def _make_cap_list_command(kind: CapKind, title: str) -> Callable[..., None]:
             bool, typer.Option("--all", "-a", help="Include allow-excluded caps")
         ] = False,
         json_: Annotated[
-            bool, typer.Option("--json", help="Write public cap records as JSON")
+            bool, typer.Option("--json", help="Output caps as JSON")
         ] = False,
         human: Annotated[
             bool, typer.Option("--human", help="Display a table (default)")
@@ -353,7 +351,7 @@ def _make_add_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
             typer.Argument(
                 metavar="SOURCE-REF",
                 click_type=TextType(),
-                help=f"{title} source: gh:/github: ref or complete HTTP(S) URL",
+                help=f"{title} source: GitHub ref or URL",
             ),
         ],
     ) -> None:

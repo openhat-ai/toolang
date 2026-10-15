@@ -104,7 +104,8 @@ class GroupedLayoutTest(unittest.TestCase):
                 )
                 for output, offset in ((required, 2), (optional, 0)):
                     for name in ("source", "destination", "tag"):
-                        self.assertEqual(column(output, name), base + offset)
+                        panels = output.split("\n\n", 1)[1]
+                        self.assertEqual(column(panels, name.upper()), base + offset)
                     self.assertEqual(
                         len(
                             {

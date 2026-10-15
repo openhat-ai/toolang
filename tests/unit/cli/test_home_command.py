@@ -144,9 +144,9 @@ def test_home_help_describes_optional_agent(
     output = strip_ansi(capsys.readouterr().out)
     assert "Usage: too [AGENT] home [OPTIONS]" in output
     assert "Open a shell in agent home" in output
-    assert "Agent Name, .too file, gh:/github: Source Ref, or HTTP(S) URL" in output
+    assert "Agent name, .too path, GitHub ref, or URL" in output
     assert "* AGENT" not in output
-    assert "root" not in output.lower()
+    assert "omit for the Toolang root" in " ".join(output.split())
 
 
 @pytest.mark.parametrize(

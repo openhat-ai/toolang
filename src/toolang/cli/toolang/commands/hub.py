@@ -53,7 +53,7 @@ def _settings(ctx: typer.Context, port: int | None):
 
 
 def start(ctx: typer.Context, port: PortOption = None) -> None:
-    """Start the Hub in the background; Redis/Valkey must already be running"""
+    """Start the hub in the background; requires Redis/Valkey"""
     _, selected = _settings(ctx, port)
     root = context_root(ctx)
     record = user_call(
@@ -74,7 +74,7 @@ def start(ctx: typer.Context, port: PortOption = None) -> None:
 
 
 def serve(ctx: typer.Context, port: PortOption = None) -> None:
-    """Run the Hub in the foreground"""
+    """Run the hub in the foreground"""
     config, selected = _settings(ctx, port)
     with prepare_terminal(
         "serve",
@@ -91,14 +91,14 @@ def stop(
         bool, typer.Option(help="Kill after graceful shutdown times out")
     ] = False,
 ) -> None:
-    """Stop this root's Hub, leaving agents and Redis/Valkey running"""
+    """Stop this root's hub; keep agents and Redis/Valkey running"""
     if not user_call(HubProcess(context_root(ctx)).stop, force=force):
         raise ClickException("Hub is not running")
     typer.echo("Hub stopped")
 
 
 def status(ctx: typer.Context) -> None:
-    """Show the Hub's endpoint, version, and current backend readiness"""
+    """Show the hub endpoint, version, and readiness"""
     hub = HubProcess(context_root(ctx))
     record = user_call(hub.current)
     if record is None:

@@ -78,11 +78,11 @@ def runnable_parameters(
 
 def runnable_usage(parameters: Iterable[CliParameter]) -> list[str]:
     """Describe named assignments and primary input accepted by the collector."""
-    names = {param.name for param in parameters if isinstance(param, RunnableArgument)}
-    pieces = ["[NAME=VALUE...]"] if names - {"_"} else []
-    if "_" in names:
-        pieces.append("[-- <INPUT> | -]")
-    return pieces
+    return (
+        ["[ARGUMENTS]"]
+        if any(isinstance(param, RunnableArgument) for param in parameters)
+        else []
+    )
 
 
 def _argument(parameter: Parameter, *, input_help: str | None = None) -> TyperArgument:

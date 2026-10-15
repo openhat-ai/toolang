@@ -115,7 +115,8 @@ def test_policy_options_follow_cli_display_order(
     positions = tuple(match.start() for match in matches if match is not None)
     assert positions == tuple(sorted(positions))
     if "--compact-model" in options:
-        assert "effort=LEVEL" in output
+        assert "Model parameters:" in output
+        assert "Reasoning level, token budget, or auto" in " ".join(output.split())
 
 
 def test_session_and_restart_commands_expose_only_valid_runtime_options() -> None:

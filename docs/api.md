@@ -341,8 +341,8 @@ Runtime port selection distinguishes shared agent servers from temporary executi
 A script run uses one local `.too` source path:
 
 ```text
-toolang run <SCRIPT> [RUNNABLE] [OPTIONS] [NAME=VALUE...] [-- <INPUT> | -]
-toolang <SCRIPT> [RUNNABLE] [OPTIONS] [NAME=VALUE...] [-- <INPUT> | -]
+toolang run <SCRIPT> [RUNNABLE] [OPTIONS] [ARGUMENTS]
+toolang <SCRIPT> [RUNNABLE] [OPTIONS] [ARGUMENTS]
 ```
 
 Script progress, inspection output, and chat TUI activity use the shared
@@ -361,15 +361,21 @@ Arguments:
   `-` reads stdin through EOF, and omitted command-line text reads piped or
   redirected stdin
 
-The synopsis omits `[NAME=VALUE...]` when there are no named parameters and
-`[-- <INPUT> | -]` when the signature forbids primary input. The input group is
-optional on the command line because piped or redirected stdin can supply it.
+The synopsis uses `[ARGUMENTS]` when the signature accepts named or primary input;
+empty signatures omit it. The category brackets do not change input requirements.
 The **Arguments** panel shows per-name metavars such as `begin=<BEGIN>`, without a
 separate type label, with parameter doc comments or `Named input (Text)` using
 the authored type. INPUT is last, with an authored description or a typed fallback
 such as `Primary input (Part[])`, followed by
 `reads stdin with - or when input is omitted`. A `*` marks required
 parameters; brackets in Usage do not make required signature inputs optional.
+
+Built-in help uses sentence-case section headings and concise descriptions.
+Options with multiple fields link to `Allow fields`, `Limit fields`,
+`Default fields`, or `Model parameters`, shown only where supported. Field tables
+include value formats, units, and repetition rules. Examples use compact
+command/description rows; wrapped descriptions stay aligned with their column.
+Callers compose sections with the formatter's existing layout primitives.
 
 Runnable descriptions use `Run KIND NAME.` or `Run KIND NAME - DESCRIPTION`
 when a doc comment exists, followed by Usage, **Arguments**, and **Options**.

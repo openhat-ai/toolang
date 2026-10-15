@@ -31,7 +31,7 @@ class CliContext:
 
 ModelCatalogOption = Annotated[
     Path | None,
-    typer.Option("--catalog", metavar="PATH", help="Use a specified model catalog"),
+    typer.Option("--catalog", metavar="PATH", help="Use this model catalog"),
 ]
 
 
