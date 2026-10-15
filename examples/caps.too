@@ -1,6 +1,6 @@
 # Example: Define and use caps in agics.
 
-with skill briceyan/review
+with skill gh:briceyan/review
 
 psyche careful:
   Work from evidence and state what you could not verify.

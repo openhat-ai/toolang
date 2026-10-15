@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from toolang.common.layout import AgentLayout
+from toolang.common.layout import AgentLayout, is_agent_name
 
 
 def agent_layouts(root: Path) -> tuple[AgentLayout, ...]:
@@ -11,7 +11,7 @@ def agent_layouts(root: Path) -> tuple[AgentLayout, ...]:
         return tuple(
             AgentLayout.resident(root, home.name)
             for home in sorted(directory.iterdir())
-            if home.is_dir()
+            if is_agent_name(home.name) and home.is_dir()
         )
     except FileNotFoundError:
         return ()

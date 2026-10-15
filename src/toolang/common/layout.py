@@ -5,12 +5,38 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import hashlib
 from pathlib import Path
+import re
 from typing import Literal
 
 AgentPlacement = Literal["resident", "visiting", "roaming"]
 
 IMPLICIT_WORKSPACE_NAME = "lab"
 IMPLICIT_WORKSPACE_DIRECTORY = ".lab"
+_AGENT_NAME = re.compile(r"[a-z][a-z0-9_]{0,63}\Z")
+
+
+def is_agent_name(name: str) -> bool:
+    return _AGENT_NAME.fullmatch(name) is not None
+
+
+def validate_agent_name(name: str) -> str:
+    """Validate an explicit Agent Name without silently changing it."""
+    if not is_agent_name(name):
+        raise ValueError(
+            f"invalid agent name {name!r}: use 1–64 lowercase ASCII letters, "
+            "digits, or underscores, starting with a letter"
+        )
+    return name
+
+
+def derive_agent_name(stem: str) -> str:
+    """Normalize a source filename stem without truncation or hash suffixes."""
+    if is_agent_name(stem):
+        return stem
+    name = re.sub(r"[^a-z0-9_]+", "_", stem.lower()).strip("_")
+    if name and name[0].isdigit():
+        name = f"script_{name}"
+    return validate_agent_name(name)
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,11 +54,9 @@ class AgentLayout:
 
     def __post_init__(self) -> None:
         root = self.root.expanduser().resolve()
-        name = self.name.strip()
+        name = validate_agent_name(self.name)
         if self.placement not in {"resident", "visiting", "roaming"}:
             raise ValueError(f"invalid agent placement: {self.placement!r}")
-        if not name or Path(name).name != name or name in {".", ".."}:
-            raise ValueError(f"invalid agent name: {self.name!r}")
         if self.instance is not None and (
             not self.instance or not self.instance.isalnum()
         ):
@@ -62,16 +86,13 @@ class AgentLayout:
 
     @classmethod
     def visiting(cls, source: str, name: str, *, toolang_root: Path) -> AgentLayout:
-        """Create the stable temporary layout for one remote source selector."""
+        """Create the stable temporary layout for one remote Source Ref."""
 
-        label = _safe_agent_label(name)
+        validate_agent_name(name)
         identity = f"{toolang_root.expanduser().resolve()}\0{source}"
         digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
-        # Keep the full source ID within a 255-byte filesystem component.
-        label_bytes = 255 - len(f"toolang--{digest}")
-        label = label.encode("utf-8")[:label_bytes].decode("utf-8", errors="ignore")
         return cls(
-            root=Path("/tmp") / f"toolang-{label}-{digest}",
+            root=Path("/tmp") / f"toolang-{name}-{digest}",
             name=name,
             placement="visiting",
             toolang_root=toolang_root,
@@ -85,7 +106,7 @@ class AgentLayout:
         source = source.expanduser().resolve()
         return cls(
             root=source.parent / ".toolang",
-            name=source.stem,
+            name=derive_agent_name(source.stem),
             placement="roaming",
             source_id=hashlib.sha256(str(source).encode("utf-8")).hexdigest()[:16],
         )
@@ -198,14 +219,6 @@ def root_edit_lock_path(root: Path) -> Path:
 
 def home_edit_lock_path(home: Path) -> Path:
     return home / ".state" / "home" / "edit.lock"
-
-
-def _safe_agent_label(value: str) -> str:
-    text = "".join(
-        char.lower() if char.isalnum() or char in {"-", "_"} else "-"
-        for char in value.strip()
-    )
-    return text.strip("-_") or "agent"
 
 
 def _safe_log_label(value: str) -> str:

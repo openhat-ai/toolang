@@ -46,7 +46,7 @@ def echo_records(
         if path in {"context", "max_output"} and isinstance(value, int):
             return f"{value:,}"
         text = str(value)
-        if path == "ref":
+        if path in {"ref", "cap"}:
             return _wrap_ref(text)
         if path in {"location", "price", "models"}:
             return text
@@ -84,7 +84,9 @@ def echo_records(
             justify=tuple(
                 "right" if column in right_align else "left" for column in columns
             ),
-            max_widths=tuple(40 if column == "ref" else None for column in columns),
+            max_widths=tuple(
+                40 if column in {"ref", "cap"} else None for column in columns
+            ),
         )
 
 

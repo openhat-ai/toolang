@@ -1141,7 +1141,7 @@ def test_remote_refresh_changes_resolved_and_root_revision(
     toolang_root = tmp_path / "toolang"
     toolang_root.mkdir()
     (toolang_root / "config.toml").write_text(
-        '[prompts]\nrewrite = { ref = "acme/rewrite" }\n',
+        '[prompts]\nrewrite = { ref = "gh:acme/rewrite" }\n',
         encoding="utf-8",
     )
     home = toolang_root / "agents" / "alice"
@@ -1212,7 +1212,7 @@ def test_local_change_reuses_unchanged_remote_materialization(
     toolang_root = tmp_path / "toolang"
     toolang_root.mkdir()
     (toolang_root / "config.toml").write_text(
-        '[prompts]\nrewrite = { ref = "acme/rewrite" }\n',
+        '[prompts]\nrewrite = { ref = "gh:acme/rewrite" }\n',
         encoding="utf-8",
     )
     home = toolang_root / "agents" / "alice"
@@ -1274,7 +1274,7 @@ def test_local_change_does_not_reuse_corrupt_remote_materialization(
     toolang_root = tmp_path / "toolang"
     toolang_root.mkdir()
     (toolang_root / "config.toml").write_text(
-        '[prompts]\nrewrite = { ref = "acme/rewrite" }\n',
+        '[prompts]\nrewrite = { ref = "gh:acme/rewrite" }\n',
         encoding="utf-8",
     )
     home = toolang_root / "agents" / "alice"
@@ -1322,7 +1322,7 @@ def test_declared_ref_change_refreshes_remote_materialization(
     toolang_root.mkdir()
     config = toolang_root / "config.toml"
     config.write_text(
-        '[prompts]\nrewrite = { ref = "acme/rewrite" }\n',
+        '[prompts]\nrewrite = { ref = "gh:acme/rewrite" }\n',
         encoding="utf-8",
     )
     home = toolang_root / "agents" / "alice"
@@ -1349,7 +1349,7 @@ def test_declared_ref_change_refreshes_remote_materialization(
         _layout(toolang_root),
     )
     config.write_text(
-        '[prompts]\nrewrite = { ref = "acme/rewrite-v2" }\n',
+        '[prompts]\nrewrite = { ref = "gh:acme/rewrite-v2" }\n',
         encoding="utf-8",
     )
     second, _ = prepare_root_home(
@@ -1358,9 +1358,9 @@ def test_declared_ref_change_refreshes_remote_materialization(
 
     assert len(calls) == 2
     assert first.revision != second.revision
-    assert first.caps[0].source.declared_ref == "acme/rewrite"
-    assert second.caps[0].source.declared_ref == "acme/rewrite-v2"
-    assert second.resolutions[0].declared_ref == "acme/rewrite-v2"
+    assert first.caps[0].source.declared_ref == "gh:acme/rewrite"
+    assert second.caps[0].source.declared_ref == "gh:acme/rewrite-v2"
+    assert second.resolutions[0].declared_ref == "gh:acme/rewrite-v2"
 
 
 @pytest.mark.parametrize("kind", ["agic", "flow"])
@@ -1598,7 +1598,7 @@ def test_flow_modules_can_reference_the_same_cap(
     home = toolang_root / "agents" / "alice"
     flows = home / "runnables"
     flows.mkdir(parents=True)
-    source = "with skill acme/reviewer\n\nflow:\n  pass\n"
+    source = "with skill gh:acme/reviewer\n\nflow:\n  pass\n"
     (flows / "one.too").write_text(source, encoding="utf-8")
     (flows / "two.too").write_text(source, encoding="utf-8")
     monkeypatch.setattr(

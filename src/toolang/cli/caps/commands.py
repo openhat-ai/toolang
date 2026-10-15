@@ -129,7 +129,7 @@ def create_cap_apps(
         ),
         CapCommandSpec(
             name="add",
-            help=lambda kind: f"Wire a {kind} ref",
+            help=lambda kind: f"Wire a {kind} Source Ref",
             factory=_make_add_cap_command,
             no_args_is_help=True,
         ),
@@ -174,7 +174,7 @@ def list_caps(
             "--query",
             "-q",
             metavar="QUERY",
-            help="TQ query; repeat for union. See --json for fields",
+            help="TQ query over cap (kind/name), source, and tags; repeat for union",
         ),
     ] = None,
     all_: Annotated[
@@ -213,7 +213,7 @@ def list_caps(
     )
     echo_records(
         [view.data for view in selected],
-        ("ref", "description", "location", "tags"),
+        ("cap", "description", "location", "tags"),
         json_=json_,
     )
     if not json_:
@@ -231,7 +231,7 @@ def _make_cap_list_command(kind: CapKind, title: str) -> Callable[..., None]:
                 "--query",
                 "-q",
                 metavar="QUERY",
-                help="TQ query; repeat for union. See --json for fields",
+                help="TQ query over cap (kind/name), source, and tags; repeat for union",
             ),
         ] = None,
         all_: Annotated[
@@ -270,7 +270,7 @@ def _make_cap_list_command(kind: CapKind, title: str) -> Callable[..., None]:
         selected = user_call(dataset.query, query)
         echo_records(
             [view.data for view in selected],
-            ("ref", "description", "location", "tags"),
+            ("cap", "description", "location", "tags"),
             json_=json_,
         )
         if not json_:
@@ -349,7 +349,11 @@ def _make_add_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
         ctx: typer.Context,
         ref: Annotated[
             str,
-            typer.Argument(metavar="REF", click_type=TextType(), help=f"{title} ref"),
+            typer.Argument(
+                metavar="SOURCE-REF",
+                click_type=TextType(),
+                help=f"{title} source: gh:/github: ref or complete HTTP(S) URL",
+            ),
         ],
     ) -> None:
         scope, agent_name = _target_scope(ctx)
@@ -385,7 +389,7 @@ def _make_add_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
                 raise ClickException(
                     f"{title} {cap_state.remote_entry_name(kind, ref)} already exists"
                 ) from exc
-            raise ClickException(f"Configured {kind} {ref} not found") from exc
+            raise ClickException(str(exc)) from exc
         typer.echo(f"{kind.title()} {entry.name} added: {entry.ref}")
 
     return add_cap

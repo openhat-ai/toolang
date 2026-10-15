@@ -9,18 +9,19 @@ import sys
 
 import pytest
 
+from toolang.up import source as agent_sources
+
 from toolang.base.types.progress import ProgressEvent
 from toolang.common.layout import AgentLayout
-from toolang.up import process as agents
 from toolang.common.github import GitHubRef
 
 
 def test_agent_selector_parsing_supports_name_shorthand_and_ref() -> None:
-    local = agents.parse_agent_selector("alice")
-    explicit_local = agents.parse_agent_selector("agent:alice")
-    github_short = agents.parse_agent_selector("brice/alice")
-    host_short = agents.parse_agent_selector("toolang.ai/alice")
-    github_ref = agents.parse_agent_selector(
+    local = agent_sources.parse_agent_target("alice")
+    explicit_local = agent_sources.parse_agent_target("agent:alice")
+    github_short = agent_sources.parse_agent_target("gh:brice/alice")
+    host_short = agent_sources.parse_agent_target("https://toolang.ai/alice.too")
+    github_ref = agent_sources.parse_agent_target(
         "github://brice/agents/team/alice.too@main"
     )
 
@@ -37,7 +38,7 @@ def test_agent_selector_parsing_supports_name_shorthand_and_ref() -> None:
 
 
 def test_agent_selector_parsing_supports_repo_shorthand() -> None:
-    selector = agents.parse_agent_selector("brice/project/alice")
+    selector = agent_sources.parse_agent_target("gh:brice/project/alice")
 
     assert selector.github_owner == "brice"
     assert selector.github_repo == "project"
@@ -45,7 +46,7 @@ def test_agent_selector_parsing_supports_repo_shorthand() -> None:
 
 
 def test_agent_selector_canonicalizes_raw_refs_heads_url() -> None:
-    selector = agents.parse_agent_selector(
+    selector = agent_sources.parse_agent_target(
         "https://raw.githubusercontent.com/briceyan/agents/refs/heads/main/dev.too"
     )
 
@@ -59,7 +60,7 @@ def test_agent_shorthand_falls_back_to_main_when_branch_probe_fails(
 ) -> None:
     probes: list[str] = []
     monkeypatch.setattr(
-        agents,
+        agent_sources,
         "_github_repo_default_branch",
         lambda _owner, _repo: (_ for _ in ()).throw(ValueError("rate limited")),
     )
@@ -68,9 +69,11 @@ def test_agent_shorthand_falls_back_to_main_when_branch_probe_fails(
         probes.append(ref.render())
         return ref.path == "dev.too"
 
-    monkeypatch.setattr(agents, "_github_agent_ref_exists", fake_exists)
+    monkeypatch.setattr(agent_sources, "_github_agent_ref_exists", fake_exists)
 
-    ref = agents.resolve_agent_selector_ref(agents.parse_agent_selector("briceyan/dev"))
+    ref = agent_sources.resolve_agent_source(
+        agent_sources.parse_agent_target("gh:briceyan/dev")
+    )
 
     assert ref.render() == "github://briceyan/agents/dev.too@main"
     assert probes == [
@@ -86,9 +89,9 @@ def test_github_agent_fetch_uses_raw_url(monkeypatch: pytest.MonkeyPatch) -> Non
         captured["url"] = url
         return "# Agent dev\n"
 
-    monkeypatch.setattr(agents, "_fetch_http_text", fake_fetch)
+    monkeypatch.setattr(agent_sources, "_fetch_http_text", fake_fetch)
 
-    text = agents.fetch_agent_ref(
+    text = agent_sources.fetch_agent_ref(
         GitHubRef(owner="briceyan", repo="agents", path="dev.too", rev="main")
     )
 
@@ -99,7 +102,7 @@ def test_github_agent_fetch_uses_raw_url(monkeypatch: pytest.MonkeyPatch) -> Non
 
 
 def test_resolve_resident_layout_does_not_materialize_files(tmp_path: Path) -> None:
-    layout = agents.resolve_run_layout(tmp_path / "toolang", "alice")
+    layout = agent_sources.resolve_run_layout(tmp_path / "toolang", "alice")
 
     assert layout == AgentLayout.resident(tmp_path / "toolang", "alice")
     assert layout.placement == "resident"
@@ -110,19 +113,19 @@ def test_visiting_layout_derivation_does_not_resolve_or_fetch(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    selector = "brice/researcher"
+    selector = "gh:brice/researcher"
     monkeypatch.setattr(
-        agents,
-        "resolve_agent_selector_ref",
+        agent_sources,
+        "resolve_agent_source",
         lambda *_args, **_kwargs: pytest.fail("history layout must not resolve"),
     )
     monkeypatch.setattr(
-        agents,
+        agent_sources,
         "fetch_agent_ref",
         lambda *_args, **_kwargs: pytest.fail("history layout must not fetch"),
     )
 
-    assert agents.visiting_layout(
+    assert agent_sources.visiting_layout(
         selector, toolang_root=tmp_path
     ) == AgentLayout.visiting(
         selector,
@@ -139,7 +142,7 @@ def test_resolve_visiting_layout_materializes_and_reuses_program(
     fetches: list[str] = []
 
     def fake_fetch(
-        ref: agents.AgentRef,
+        ref: agent_sources.AgentRef,
         *,
         progress=None,
         progress_id: str | None = None,
@@ -148,10 +151,12 @@ def test_resolve_visiting_layout_materializes_and_reuses_program(
         fetches.append(ref.render())
         return "# Agent researcher\n"
 
-    monkeypatch.setattr(agents, "fetch_agent_ref", fake_fetch)
+    monkeypatch.setattr(agent_sources, "fetch_agent_ref", fake_fetch)
 
-    first = agents.resolve_visiting_layout(source, toolang_root=tmp_path / "other")
-    second = agents.resolve_run_layout(tmp_path / "other", source)
+    first = agent_sources.resolve_visiting_layout(
+        source, toolang_root=tmp_path / "other"
+    )
+    second = agent_sources.resolve_run_layout(tmp_path / "other", source)
 
     assert first is not second
     assert (
@@ -186,7 +191,7 @@ import signal
 import sys
 from pathlib import Path
 from toolang.common.layout import AgentLayout
-from toolang.up import process as agents
+from toolang.up import source as agent_sources
 
 AgentLayout.visiting = classmethod(
     lambda cls, source, name, **kwargs: cls(Path(sys.argv[1]), name, "visiting")
@@ -194,8 +199,8 @@ AgentLayout.visiting = classmethod(
 signal.signal(signal.SIGXFSZ, signal.SIG_IGN)
 resource.setrlimit(resource.RLIMIT_FSIZE, (128, 128))
 try:
-    agents.materialize_visiting_program(
-        agents.HttpAgentRef("https://example.com/researcher.too"),
+    agent_sources.materialize_visiting_program(
+        agent_sources.HttpRef("https://example.com/researcher.too"),
         "agic:\\n  " + "Long source. " * 1000,
         toolang_root=Path(sys.argv[1]),
     )
@@ -212,7 +217,7 @@ sys.exit("expected a partial-write failure")
 
     assert result.returncode == 0, result.stderr
     assert (layout.program.read_bytes() if layout.program.exists() else None) == before
-    assert not agents._visiting_program_cache_fresh(layout.program)
+    assert not agent_sources._visiting_program_cache_fresh(layout.program)
     assert set(layout.home.iterdir()) == ({layout.program} if cached else set())
 
 
@@ -220,7 +225,7 @@ def test_visiting_agent_keeps_one_progress_id_across_prepare_stages(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    selector = "owner/researcher"
+    selector = "gh:owner/researcher"
     monkeypatch.setattr(
         AgentLayout,
         "visiting",
@@ -231,20 +236,20 @@ def test_visiting_agent_keeps_one_progress_id_across_prepare_stages(
         ),
     )
     monkeypatch.setattr(
-        agents,
+        agent_sources,
         "_resolve_github_agent_shorthand",
-        lambda *_args, **_kwargs: agents.HttpAgentRef(
+        lambda *_args, **_kwargs: agent_sources.HttpRef(
             url="https://agents.example/researcher.too"
         ),
     )
     monkeypatch.setattr(
-        agents,
+        agent_sources,
         "_fetch_http_text",
         lambda _url: "# Agent researcher\n",
     )
     events: list[ProgressEvent] = []
 
-    agents.resolve_visiting_layout(
+    agent_sources.resolve_visiting_layout(
         selector, toolang_root=tmp_path, progress=events.append
     )
 
@@ -267,21 +272,23 @@ def test_visiting_agent_closes_materialize_progress_on_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     source = f"https://agents.example{tmp_path}/broken.too"
-    monkeypatch.setattr(agents, "_visiting_program_cache_fresh", lambda _path: False)
     monkeypatch.setattr(
-        agents,
+        agent_sources, "_visiting_program_cache_fresh", lambda _path: False
+    )
+    monkeypatch.setattr(
+        agent_sources,
         "_fetch_http_text",
         lambda _url: "# Agent broken\n",
     )
     monkeypatch.setattr(
-        agents,
+        agent_sources,
         "materialize_visiting_program",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("write failed")),
     )
     events: list[ProgressEvent] = []
 
     with pytest.raises(OSError, match="write failed"):
-        agents.resolve_visiting_layout(
+        agent_sources.resolve_visiting_layout(
             source, toolang_root=tmp_path, progress=events.append
         )
 
@@ -298,7 +305,7 @@ def test_materialize_roaming_program_links_source_and_config(tmp_path: Path) -> 
     config = tmp_path / "toolang.toml"
     config.write_text("[models]\n", encoding="utf-8")
 
-    layout = agents.materialize_roaming_program(source)
+    layout = agent_sources.materialize_roaming_program(source)
 
     assert layout == AgentLayout.roaming(source)
     assert layout.program.is_symlink()
@@ -313,21 +320,56 @@ def test_concurrent_roaming_materialization_accepts_the_same_program_link(
     tmp_path, monkeypatch
 ):
     from concurrent.futures import ThreadPoolExecutor
-    import threading
-    from toolang.up.process import materialize_roaming_program
+    from toolang.up.source import materialize_roaming_program
 
     source = tmp_path / "aid.too"
     source.write_text("flow run():\n  pass\n")
-    barrier = threading.Barrier(2)
-    symlink_to = Path.symlink_to
-
-    def simultaneous_symlink(path, target, **kwargs):
-        if path.name == "agent.too":
-            barrier.wait(timeout=10)
-        return symlink_to(path, target, **kwargs)
-
-    monkeypatch.setattr(Path, "symlink_to", simultaneous_symlink)
     with ThreadPoolExecutor(max_workers=2) as pool:
         layouts = list(pool.map(materialize_roaming_program, [source, source]))
     assert layouts[0] == layouts[1]
     assert layouts[0].program.resolve() == source
+
+
+@pytest.mark.parametrize("prefix", ["gh:", "github:", "github://"])
+def test_visiting_aliases_share_a_root_and_normalized_name(tmp_path, prefix):
+    canonical = "github://owner/repo/Daily-Report.v2.too@main"
+    layout = agent_sources.visiting_layout(
+        f"{prefix}owner/repo/Daily-Report.v2.too@main", toolang_root=tmp_path
+    )
+    assert layout == agent_sources.visiting_layout(canonical, toolang_root=tmp_path)
+    assert layout.name == "daily_report_v2"
+
+
+def test_roaming_normalization_rejects_source_collision_without_replacing_state(
+    tmp_path,
+):
+    first = tmp_path / "daily-report.too"
+    other = tmp_path / "daily_report.too"
+    for source in (first, other):
+        source.write_text("flow main():\n  pass\n")
+    layout = agent_sources.materialize_roaming_program(first)
+    marker = layout.home / "keep.txt"
+    marker.write_text("history")
+    before = {path.relative_to(layout.home) for path in layout.home.rglob("*")}
+    with pytest.raises(FileExistsError, match="already belongs"):
+        agent_sources.materialize_roaming_program(other)
+    assert layout.program.resolve() == first
+    assert marker.read_text() == "history"
+    assert {path.relative_to(layout.home) for path in layout.home.rglob("*")} == before
+
+
+@pytest.mark.parametrize("stem", ["---", "中文", "A" * 65])
+def test_invalid_script_name_creates_no_agent_state(tmp_path, stem):
+    source = tmp_path / f"{stem}.too"
+    source.write_text("flow main():\n  pass\n")
+    with pytest.raises(ValueError, match="invalid agent name"):
+        agent_sources.materialize_roaming_program(source)
+    assert not (tmp_path / ".toolang").exists()
+
+
+@pytest.mark.parametrize(
+    "name", ["gus ", "Gus", "gus-by3", "gh:owner/name", "https://example.com/gus.too"]
+)
+def test_explicit_agent_prefix_cannot_normalize_or_select_a_remote_source(name):
+    with pytest.raises(ValueError, match="invalid agent name"):
+        agent_sources.parse_agent_target(f"agent:{name}")

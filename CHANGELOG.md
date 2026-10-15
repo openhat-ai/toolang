@@ -9,6 +9,14 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Added
 
+- Remote agents and caps accept explicit Source Refs: `gh:owner/name`,
+  `github:owner/name`, `gh:owner/repo/name`, and complete HTTP(S) URLs,
+  alongside the existing `github://owner/repo/path@rev` form. A `gh:`/`github:`
+  ref that carries `@rev` normalizes to one exact `github://` ref without
+  repository or path probes. HTTP(S) sources fetch file-backed caps directly:
+  a skill from its directory URL or `SKILL.md` URL fetches only `SKILL.md`,
+  while GitHub skill sources still include the directory's files.
+
 - Managed agent startup prepares State locally before entering or creating a
   workload, so a preparation failure reports its cause and creates no workload.
   Required work appears on stderr as dim `<ref> fetching`, `parsing`,
@@ -21,6 +29,31 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   an unparsable agent blocks them.
 
 ### Changed
+
+- **Breaking:** remote agent and cap sources must be explicit Source Refs:
+  unprefixed `owner/name`, `owner/repo/name`, and `host/name` shorthand and the
+  `oh:` and `openhat:` prefixes are rejected before any network access. Prefix
+  former implicit GitHub refs with `gh:` (or `github:`) and replace domain/path
+  shorthand with a complete HTTP(S) URL. Cap Ref queries such as
+  `skill/reviewer` and local sources are unaffected.
+
+- **Breaking:** Agent Names are validated as 1–64 lowercase ASCII letters,
+  digits, or underscores starting with a letter. Explicit names (`too new NAME`,
+  `too clone SOURCE NAME`, and `agent:NAME`) are rejected unchanged when
+  invalid, while filename-derived names are normalized: lowercase, runs outside
+  `[a-z0-9_]` become `_`, surrounding `_` is trimmed, and a leading digit gains
+  a `script_` prefix, so `Daily-Report.v2.too` roams as `daily_report_v2` and
+  keeps its filename. A home named with dots, hyphens, uppercase letters, or
+  more than 64 characters is no longer discovered or addressable, so stop its
+  workload with the previous Toolang version, then rename the home and its
+  paths manually; State and histories are not moved.
+
+- **Breaking:** Cap records expose `cap` (`kind/name`) and `source` (the
+  resolved Source Ref) instead of `ref`, and cap lists show a `CAP` column
+  instead of `REF`; `location` remains the human-facing content address.
+  Migrate explicit query keys from `ref` to `cap` and API Cap response `ref` to
+  `source`; configured cap write requests still use `ref` for the supplied
+  Source Ref.
 
 - The directory-wide native guard over discovery references is renamed from
   `instances/update.lock` to `instances/register.lock`, still protecting only
@@ -118,6 +151,9 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   with agents through the hub`, and `hub` reads `Control the teaming service`.
 
 ### Fixed
+
+- `too skill add` reports the underlying Source Ref error for an unsupported or
+  unresolved source instead of only a generic not-found message.
 
 - Cap inspection, publication after saved edits, offline `info`, and local
   scripts now use the same parallel preparation rows and dim summary as managed

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from toolang.up import source as agent_sources
+
 from toolang.lang.types import Value
 from toolang.execution.types import TypedRef, value_for_type
 
@@ -2362,7 +2364,7 @@ def test_roaming_source_reads_inspect_collections_and_records(
 ) -> None:
     source = tmp_path / "demo.too"
     source.write_text("agic demo:\n  Reply directly.\n", encoding="utf-8")
-    layout = agents.materialize_roaming_program(source)
+    layout = agent_sources.materialize_roaming_program(source)
     store = RunStore(layout.run_store)
     try:
         run = project_run_start(
@@ -2419,7 +2421,7 @@ def test_visiting_selector_reads_inspection_without_fetching(
     monkeypatch,
     capsys,
 ) -> None:
-    selector = "brice/researcher"
+    selector = "gh:brice/researcher"
     layout = AgentLayout(
         root=tmp_path / "visiting",
         name="researcher",
@@ -2452,8 +2454,10 @@ def test_visiting_selector_reads_inspection_without_fetching(
     def unexpected_fetch(*_args: object, **_kwargs: object) -> AgentLayout:
         raise AssertionError("inspect must not fetch the visiting source")
 
-    monkeypatch.setattr(agents, "visiting_layout", lambda _selector, **kwargs: layout)
-    monkeypatch.setattr(agents, "resolve_visiting_layout", unexpected_fetch)
+    monkeypatch.setattr(
+        agent_sources, "visiting_layout", lambda _selector, **kwargs: layout
+    )
+    monkeypatch.setattr(agent_sources, "resolve_visiting_layout", unexpected_fetch)
 
     result = cli.main([selector, "inspect", "run_visiting.0", "--json"])
     output = capsys.readouterr()
@@ -3354,7 +3358,7 @@ def test_cap_lists_apply_scope_allow_and_display_status(
     )
 
     assert result.exit_code == 0, result.stderr
-    identities = {str(row["ref"]): row for row in rows}
+    identities = {str(row["cap"]): row for row in rows}
     # The collection formatter renders kind-qualified identities for every list.
     by_name = {identity.rsplit("/", 1)[-1]: row for identity, row in identities.items()}
     expected = (
@@ -3370,7 +3374,7 @@ def test_cap_lists_apply_scope_allow_and_display_status(
         assert ("not_allowed" in tags) is not allowed
         assert "local" in tags
         assert ("home" if name == "private_cap" else "root") in tags
-        assert tuple(row) == ("ref", "description", "location", "tags")
+        assert tuple(row) == ("cap", "description", "location", "tags")
 
 
 @pytest.mark.parametrize("command", [("caps",), ("prompt", "list"), ("standalone",)])
@@ -3898,7 +3902,7 @@ def test_visiting_agent_info_uses_the_materialized_layout(
     monkeypatch,
     capsys,
 ) -> None:
-    selector = "brice/researcher"
+    selector = "gh:brice/researcher"
     layout = AgentLayout(
         root=tmp_path / "visiting",
         name="researcher",
@@ -3910,7 +3914,7 @@ def test_visiting_agent_info_uses_the_materialized_layout(
         encoding="utf-8",
     )
     monkeypatch.setattr(agent_commands, "SetupWatcher", _EmptySetupWatcher)
-    monkeypatch.setattr(agents, "visiting_layout", lambda _, **kwargs: layout)
+    monkeypatch.setattr(agent_sources, "visiting_layout", lambda _, **kwargs: layout)
     captured: dict[str, object] = {}
     monkeypatch.setattr(
         agent_commands,
@@ -3922,7 +3926,7 @@ def test_visiting_agent_info_uses_the_materialized_layout(
         ),
     )
     monkeypatch.setattr(
-        agents,
+        agent_sources,
         "resolve_visiting_layout",
         lambda *_args, **_kwargs: layout,
     )
@@ -4227,7 +4231,8 @@ def test_resource_json_human_and_external_tq_select_identical_records(
     assert isinstance(records, list)
     path = tmp_path / "records.json"
     path.write_text(complete.stdout)
-    assert tq_main(["-M", "-c", "-k", "ref", query, str(path)]) == 0
+    identity = "ref" if command == ("tools",) else "cap"
+    assert tq_main(["-M", "-c", "-k", identity, query, str(path)]) == 0
     external = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
     assert external == records
     rows = []
@@ -4241,11 +4246,11 @@ def test_resource_json_human_and_external_tq_select_identical_records(
     )
     human = _invoke(tmp_path, *command, *options, "--query", query, "--human")
     assert human.exit_code == 0, human.stderr
-    assert [row["ref"] for row in rows] == [record["ref"] for record in records]
+    assert [row[identity] for row in rows] == [record[identity] for record in records]
     expected_columns = (
         ("ref", "description", "tags")
         if command == ("tools",)
-        else ("ref", "description", "location", "tags")
+        else ("cap", "description", "location", "tags")
     )
     assert all(tuple(row) == expected_columns for row in rows)
     for row, record in zip(rows, records, strict=True):

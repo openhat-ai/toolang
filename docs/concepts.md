@@ -5,11 +5,11 @@ This document defines the runtime terms used across Toolang.
 
 ## Agent
 
-An agent is one local runnable program and its owned state.
+An agent combines a main Mod with its owned State and runtime.
 
 Each agent has:
 
-- one source program
+- one main Mod
 - one cap set
 - one job set
 - one runtime room
@@ -17,42 +17,49 @@ Each agent has:
 
 ## Agent Sources
 
-Toolang accepts these agent source terms:
-
 | Term | Meaning |
 | --- | --- |
-| `name` | A local managed agent name |
-| `shorthand` | A short selector that expands by convention |
-| `ref` | A canonical remote agent program reference |
-| `selector` | Any accepted input form: `name`, `shorthand`, or `ref` |
+| Display Name | Non-unique human-facing label, such as `Brice Yan` or `Gus`; not an identity or path. |
+| Agent Name | Local agent identifier, such as `gus` or `daily_report`. |
+| Handle | Future public participant identity, such as `by3` or `gus-by3`; recognition and routing are not implemented here. |
+| Mod (Module) | A `.too` module, including `agent.too` and runnable modules; its parsed representation is `Program`. |
+| Cap | A skill, psyche, service, or prompt. |
+| Source | A provider of Mod or Cap content. |
+| Source Ref | Content location, such as `gh:owner/name`, `github://owner/repo/path@rev`, or an HTTP(S) URL; Cap kind is supplied separately. |
+| Cap Ref | The effective `kind/name` identity, such as `skill/reviewer`, independent of its source. |
+| Target | Command input interpreted as an Agent Name, file path, Source Ref, or Cap Ref according to the command. |
 
-Examples:
+Agent Names use `[a-z][a-z0-9_]{0,63}` (1–64 ASCII characters). Explicit names
+are validated unchanged. A filename-derived name preserves a valid stem;
+otherwise it lowercases the stem, replaces runs outside `[a-z0-9_]` with `_`,
+trims surrounding underscores, and prefixes a digit-leading result with
+`script_`. `Daily-Report.v2.too` becomes `daily_report_v2`. The source filename
+stays unchanged. Empty or overlong results are rejected without truncation or
+hash suffixes; `clone SOURCE NAME` can supply a valid name explicitly. Different
+source files that normalize to the same agent home cannot share or replace it.
+Source-only tools such as `fmt` and `parse` accept arbitrary filenames.
 
-| Input | Form |
+Resident Targets are local Agent Names (`alice` or explicit `agent:alice`).
+Local `.too` paths select roaming Mods. Remote sources must be explicit:
+
+| Source Ref | Resolution |
 | --- | --- |
-| `alice` | `name` |
-| `brice/alice` | `shorthand` |
-| `toolang.ai/alice` | `shorthand` |
-| `github://brice/agents/alice.too@main` | `ref` |
-| `https://toolang.ai/alice.too` | `ref` |
+| `gh:owner/name`, `github:owner/name` | Probe `agents/name.too`, then `name.too`, in the owner's `agents` repository. |
+| `gh:owner/repo/name`, `github:owner/repo/name` | The same path probes in the specified repository. |
+| `gh:owner/repo/path.too@rev`, `github:owner/repo/path.too@rev`, `github://owner/repo/path.too@rev` | One exact canonical `github://` Source Ref; no shorthand probing. |
+| `https://example.com/agent.too` | Complete HTTP(S) Mod URL. |
 
-Current shorthand expansion rules are:
+`rev` may identify a branch, tag, or commit. Cap repository/path probing is
+[kind-specific](caps.md#source-refs). `with skill SOURCE-REF` supplies the kind
+separately from the source. Cap records expose `cap: skill/reviewer` and
+`source: RESOLVED-SOURCE-REF`; queries default to `cap`.
 
-| Shorthand | Expanded refs |
-| --- | --- |
-| `owner/name` | probes `github://owner/agents/agents/name.too@<default-branch>`, then `github://owner/agents/name.too@<default-branch>` |
-| `owner/repo/name` | probes `github://owner/repo/agents/name.too@<default-branch>`, then `github://owner/repo/name.too@<default-branch>` |
-| `host/name` | `https://host/name.too` |
-
-Three-part shorthand specifies the repository exactly. It does not probe other
-repository names.
-
-GitHub refs must include one revision suffix:
-
-- `github://owner/repo/path/to/agent.too@rev`
-
-Toolang treats `rev` as one git revision token. It does not distinguish branch,
-tag, and commit in selector syntax.
+Unprefixed remote refs (`owner/name`), `oh:`, and `openhat:` are unsupported and
+fail before network access. Use `gh:owner/name` for old implicit GitHub refs and
+complete HTTP(S) URLs instead of domain/path shorthand. Names containing dots,
+hyphens, uppercase letters, or more than 64 characters must be renamed manually;
+state and histories are not moved automatically. Inspect/stop old workloads
+with the previous version before changing their names or paths.
 
 
 ## Agent Placement
@@ -132,14 +139,14 @@ Caps are assembled from the materialized root and source:
 | `visiting` | Inline caps and referenced caps from the materialized remote source |
 | `roaming` | Source-local `toolang.toml`, inline caps, and referenced caps from the local `.too` source |
 
-Caps do not have a separate placement allowlist. A program cap or reference
-makes a cap available to that program, but it does not make the cap effective
+Caps do not have a separate placement allowlist. A Mod cap declaration or source reference
+makes a Cap available to that Mod, but it does not make the cap effective
 for every agic by itself.
 
 
 ## Runnable
 
-A runnable is a named program entrypoint. Toolang has two runnable kinds:
+A runnable is an execution entry in a Mod. Toolang has two runnable kinds:
 
 - `agic`: a dynamic model/tool loop
 - `flow`: an ordered set of static statements

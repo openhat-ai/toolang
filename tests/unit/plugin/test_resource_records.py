@@ -256,7 +256,7 @@ def test_empty_resource_collections_still_use_tq_validation(expression):
         lambda: filter_models((), (expression,)),
         lambda: ToolCollection().query(expression),
         lambda: cap_collection((), root=Path("/toolang"), agent_name="test").query(
-            expression
+            expression.replace("ref=", "cap=")
         ),
         lambda: resolve_setup_allow(({"allow": {"models": [expression]}},)),
     )
@@ -422,7 +422,7 @@ def test_cap_location_addresses_content_and_tags_preserve_form_and_allow(form, a
         else "/toolang/skills/reviewer/SKILL.md"
     )
     assert record["location"] == expected
-    assert set(record) == {"ref", "name", "description", "location", "tags"}
+    assert set(record) == {"cap", "source", "name", "description", "location", "tags"}
     tags = record["tags"]
     assert isinstance(tags, list)
     assert form in tags

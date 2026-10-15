@@ -72,12 +72,13 @@ Each resident agent lives under:
 - `${TOOLANG_ROOT}/agents/<agent>/`
 
 Visiting agents fetched by `too serve <remote>` use a stable temporary agent
-root derived from the resolved Toolang root and source selector:
+root derived from the resolved Toolang root and Source Ref:
 
 - `/tmp/toolang-<agent>-<hash:16>/`
 
-The readable agent label is shortened only if needed to keep the directory name
-within 255 bytes; the complete 16-character source hash is retained.
+Agent Names are bounded to 64 ASCII characters; the complete 16-character
+source hash is retained without shortening either component. See
+[Agent Sources](concepts.md#agent-sources) for derivation and migration rules.
 
 Repeated launches of the same source under the same Toolang root reuse this
 agent root; a different Toolang root gets a different visiting root. Earlier
@@ -141,13 +142,13 @@ Discovery references live under `${TOOLANG_ROOT}/.runtime/instances/`:
 | Roaming server | `aid@r<hash>.json` |
 
 The hash is the first 16 hex characters of SHA-256. Visiting uses the same key
-as its agent root: the canonical Toolang root, a NUL separator, and the source
-selector. Its temporary root and discovery reference use that same 16-character
+as its agent root: the canonical Toolang root, a NUL separator, and the Source
+Ref. Its temporary root and discovery reference use that same 16-character
 hash.
 Roaming uses the canonical host absolute `.too` source path. The host saves
 `source_id` with its control bindings so guest mounts cannot change identity.
 Changing ports, sandbox, launch IDs, or source contents does not change this hash.
-Agent names are percent-encoded to keep literal `@` names distinct from markers.
+Agent Names contain neither `@` nor `-`; placement markers remain unambiguous.
 
 Until scripts switch to a shared server, an isolated temporary execution appends
 `@<execution-id>` before `.json`; its source hash remains stable and parallel

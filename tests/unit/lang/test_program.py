@@ -1097,3 +1097,24 @@ def test_historical_nested_statements_load_new_default_fields() -> None:
     encoded.pop("window")
     encoded["stmts"][0].pop("initial")
     assert flow_stmt_from_data(encoded) == statement
+
+
+@pytest.mark.parametrize("kind", ["skill", "psyche", "service", "prompt"])
+@pytest.mark.parametrize(
+    "source",
+    [
+        "gh:owner/some-name",
+        "github:owner/repo/some-name",
+        "gh:owner/repo/path/some-name@refs/heads/main",
+        "github:owner/repo/path/some-name@main",
+        "github://owner/repo/path/some-name@main",
+        "https://example.com/some-name.md?version=2",
+    ],
+)
+def test_with_source_refs_round_trip_with_kind_separate(kind, source):
+    from toolang.lang.format import format_source
+
+    text = f"with {kind} {source}\n"
+    (declaration,) = Program.from_source(text).withs
+    assert (declaration.cap_kind, declaration.reference) == (kind, source)
+    assert format_source(text).strip() == text.strip()

@@ -14,6 +14,8 @@ from rich.cells import cell_len
 
 from typer._click.utils import strip_ansi
 
+from toolang.up import source as agent_sources
+
 from toolang.base.errors import ToolangError
 from toolang.base.types.model import ModelRequest
 from toolang.base.types.progress import ProgressEvent
@@ -31,7 +33,6 @@ from toolang.execution.types import (
 )
 from toolang.lang.input import CallInput
 from toolang.lang.ast import FlowDecl, Program, RunStmt, Span
-from toolang.up import process as agents
 from toolang.up.types import AgentServerRef
 from tests.support.execution_harness import ExecutionHarness
 
@@ -1673,7 +1674,7 @@ def test_script_routes_quiet_execution_through_a_remote_runtime(
         )
 
     monkeypatch.setattr(
-        agents,
+        agent_sources,
         "materialize_roaming_program",
         lambda _source: layout,
     )
@@ -1748,7 +1749,7 @@ def test_embedded_script_prepare_failure_uses_the_operational_failure_block(
         raise ValueError("prepare failed")
 
     monkeypatch.setattr(
-        agents,
+        agent_sources,
         "materialize_roaming_program",
         lambda _source: layout,
     )

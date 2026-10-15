@@ -65,8 +65,10 @@ def test_visiting_layout_is_stable_and_root_and_source_specific(tmp_path: Path) 
     assert first.root != other_root.root
 
 
-@pytest.mark.parametrize("name_length", [231, 232])
-def test_visiting_root_fits_long_agent_names(tmp_path: Path, name_length: int) -> None:
+@pytest.mark.parametrize("name_length", [1, 64])
+def test_visiting_root_preserves_bounded_agent_names(
+    tmp_path: Path, name_length: int
+) -> None:
     name = "a" * name_length
     layout = AgentLayout.visiting(
         f"https://example.com/{name}.too", name, toolang_root=tmp_path

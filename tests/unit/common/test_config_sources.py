@@ -19,7 +19,7 @@ from toolang.setup.config import (
 from toolang.plugin.config import merge_plugin_configs
 from toolang.up.sandbox import resolve_selection
 from toolang.state.prepare import prepare_agent_state
-from toolang.up.process import materialize_roaming_program
+from toolang.up.source import materialize_roaming_program
 from toolang.up.mounts import prepare_source_mounts
 
 

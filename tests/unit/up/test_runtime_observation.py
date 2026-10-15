@@ -92,11 +92,10 @@ def test_reference_names_cannot_alias_agent_names_with_markers(tmp_path):
     visiting = AgentLayout.visiting(
         "https://example.com/lex.too", "lex", toolang_root=tmp_path
     )
-    resident = AgentLayout.resident(
-        tmp_path, instance_filename(visiting).removesuffix(".json")
-    )
-    assert instance_filename(resident) != instance_filename(visiting)
-    assert "%40" in instance_filename(resident)
+    with pytest.raises(ValueError, match="invalid agent name"):
+        AgentLayout.resident(
+            tmp_path, instance_filename(visiting).removesuffix(".json")
+        )
 
 
 def test_discovery_ignores_non_object_references_and_cleanup_tolerates_them(tmp_path):

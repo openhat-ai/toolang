@@ -72,10 +72,9 @@ def explicit_agent(token: str) -> str | None:
     prefix, separator, name = token.partition(":")
     if prefix != "agent" or not separator:
         return None
-    name = name.strip()
-    if not name or name in {".", ".."} or "/" in name or "\\" in name:
-        raise ValueError(f"invalid resident agent target: {token}")
-    return name
+    from toolang.common.layout import validate_agent_name
+
+    return validate_agent_name(name)
 
 
 def _prefix_usage_path(ctx: Context, metavar: str) -> Text:
@@ -222,7 +221,7 @@ class RuntimeAgentCommand(CliCommand):
     """Render one required agent argument before the command name in help."""
 
     usage_agent_metavar = "<AGENT>"
-    argument_help = "Agent name, .too file, reference, or URL"
+    argument_help = "Agent Name, .too file, gh:/github: Source Ref, or HTTP(S) URL"
 
     def _real_params(self, ctx: Context) -> list[Parameter]:
         return TyperCommand.get_params(self, ctx)

@@ -41,6 +41,7 @@ from toolang.cli.common.policy import (
     resolve_ceiling_overrides,
     resolve_limit_overrides,
 )
+from toolang.up import source as agent_sources
 from toolang.up import process as agents
 from ....up.logging import (
     LoggingPlan,
@@ -84,7 +85,7 @@ def run(
     title_prefix: TitlePrefixOption = None,
     agent: str | None = typer.Argument(
         None,
-        help="Agent name, .too file, reference, or URL",
+        help="Agent Name, .too file, gh:/github: Source Ref, or HTTP(S) URL",
         hidden=True,
     ),
     sandbox: Annotated[
@@ -134,7 +135,7 @@ def run(
             target = (
                 selected_layout
                 if selected_layout is not None
-                else agents.resolve_run_layout(
+                else agent_sources.resolve_run_layout(
                     context_root(ctx),
                     selector,
                     progress=progress.sink,
@@ -282,7 +283,7 @@ def start(
     from ...common.progress import make_cli_progress
 
     selector = require_runtime_agent(ctx, agent)
-    if user_call(agents.parse_agent_selector, selector).form != "name":
+    if user_call(agent_sources.parse_agent_target, selector).form != "name":
         raise ClickException(
             "start only supports local agent names; clone the remote source first"
         )
@@ -291,7 +292,7 @@ def start(
     launch_started = False
     try:
         with progress:
-            target = agents.resolve_run_layout(
+            target = agent_sources.resolve_run_layout(
                 context_root(ctx),
                 selector,
                 progress=progress.sink,

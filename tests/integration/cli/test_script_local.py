@@ -8,6 +8,8 @@ from pathlib import Path
 import pytest
 from watchfiles import Change
 
+from toolang.up import source as agent_sources
+
 from toolang.base.types.message import Message, TextPart, message_text
 from toolang.catalog.templates import load_template
 from toolang.cli.toolang import main as cli
@@ -16,7 +18,6 @@ from toolang.base.types.model import ModelOverride
 from toolang.cli.toolang.commands import script
 from toolang.execution.store import RunStore
 from toolang.execution.records import RunControlPayload
-from toolang.up import process as agents
 from tests.support.execution_harness import (
     AsyncGate,
     ExecutionHarness,
@@ -74,7 +75,7 @@ def test_local_script_saves_only_to_an_explicit_destination(
     source_text = _SOURCE if entry == "echo" else "agic():\n  Say hello.\n"
     source = tmp_path / "echo.too"
     source.write_text(source_text, encoding="utf-8")
-    layout = agents.materialize_roaming_program(source)
+    layout = agent_sources.materialize_roaming_program(source)
     harness = ExecutionHarness.create(
         tmp_path / "harness",
         source=source_text,
@@ -247,7 +248,7 @@ def test_template_helpers_bind_arguments(
     source_text = load_template("script").raw_text
     source = tmp_path / "work.too"
     source.write_text(source_text, encoding="utf-8")
-    layout = agents.materialize_roaming_program(source)
+    layout = agent_sources.materialize_roaming_program(source)
     harness = ExecutionHarness.create(
         tmp_path / "harness",
         source=source_text,
@@ -315,7 +316,7 @@ def test_local_script_renders_composite_flow_progress(
     source_text = _FLOW_SOURCE.replace("flow research", f"flow {entry}")
     source = tmp_path / "research.too"
     source.write_text(source_text, encoding="utf-8")
-    layout = agents.materialize_roaming_program(source)
+    layout = agent_sources.materialize_roaming_program(source)
     harness = ExecutionHarness.create(
         tmp_path / "harness",
         source=source_text,

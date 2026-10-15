@@ -16,9 +16,10 @@ from toolang.cli.common.parameters import TextType
 
 from toolang.catalog.chore import AuthoredChores
 from toolang.catalog.agent import LocalAgents
-from toolang.common.layout import AgentLayout
+from toolang.common.layout import AgentLayout, validate_agent_name
 from toolang.common.progress import ProgressSink
 from toolang.common.time import format_duration
+from toolang.up import source as agent_sources
 from toolang.up import process as agents
 from toolang.catalog import templates
 from toolang.setup import AgentSetup, SetupWatcher
@@ -52,7 +53,9 @@ def new_agent(
     agent: Annotated[
         str,
         typer.Argument(
-            metavar="AGENT", click_type=TextType(), help="New local agent name"
+            metavar="AGENT",
+            click_type=TextType(),
+            help="Agent Name: [a-z][a-z0-9_]{0,63}",
         ),
     ],
 ) -> None:
@@ -62,6 +65,8 @@ def new_agent(
         home = LocalAgents(root / "agents").create(agent, content=source_text)
     except FileExistsError as exc:
         raise ClickException(f"Agent {agent} already exists") from exc
+    except ValueError as exc:
+        raise ClickException(str(exc)) from exc
     typer.echo(f"Agent {agent} created: {home / 'agent.too'}")
 
 
@@ -72,20 +77,24 @@ def clone_agent(
         typer.Argument(
             metavar="SOURCE",
             click_type=TextType(),
-            help="Agent name, reference, or URL",
+            help="Local Agent Name, gh:/github: Source Ref, or complete HTTP(S) URL",
         ),
     ],
     target: Annotated[
         str | None,
         typer.Argument(
-            metavar="TARGET", click_type=TextType(), help="New local agent name"
+            metavar="TARGET",
+            click_type=TextType(),
+            help="Agent Name: [a-z][a-z0-9_]{0,63}",
         ),
     ] = None,
 ) -> None:
     root = context_root(ctx)
     try:
         homes = LocalAgents(root / "agents")
-        selector = agents.parse_agent_selector(source)
+        if target is not None:
+            validate_agent_name(target)
+        selector = agent_sources.parse_agent_target(source)
         if selector.form == "name":
             if target is None:
                 raise ValueError("target name is required when cloning one local agent")
@@ -101,9 +110,12 @@ def clone_agent(
                 ignore=shutil.ignore_patterns(".caps", ".state", ".runtime"),
             )
         else:
-            ref = agents.resolve_agent_selector_ref(selector)
             name = target or selector.default_name()
-            home = homes.create(name, content=agents.fetch_agent_ref(ref))
+            home = homes.path(name)
+            if home.exists():
+                raise FileExistsError(home)
+            ref = agent_sources.resolve_agent_source(selector)
+            home = homes.create(name, content=agent_sources.fetch_agent_ref(ref))
     except FileExistsError as exc:
         target_name = target or Path(source).stem
         raise ClickException(f"Agent {target_name} already exists") from exc
@@ -158,7 +170,9 @@ def list_agents(ctx: typer.Context) -> None:
 def info_agent(
     ctx: typer.Context,
     agent: str | None = typer.Argument(
-        None, help="Agent name, .too file, reference, or URL", hidden=True
+        None,
+        help="Agent Name, .too file, gh:/github: Source Ref, or HTTP(S) URL",
+        hidden=True,
     ),
     model_catalog: ModelCatalogOption = None,
 ) -> None:
@@ -253,10 +267,10 @@ def _local_resources(
     try:
         with progress:
             if source is not None:
-                user_call(agents.materialize_roaming_program, source)
+                user_call(agent_sources.materialize_roaming_program, source)
             elif selector is not None:
                 user_call(
-                    agents.resolve_visiting_layout,
+                    agent_sources.resolve_visiting_layout,
                     selector,
                     toolang_root=toolang_root,
                     progress=progress.sink,

@@ -18,6 +18,8 @@ from typer.core import TyperGroup
 
 import toolang.cli.caps.main as caps_cli
 import toolang.cli.toolang.main as cli
+from toolang.up import source as agent_sources
+
 from toolang.base.types.progress import ProgressEvent
 from toolang.common.layout import AgentLayout
 from toolang.cli.toolang.commands import script
@@ -36,7 +38,6 @@ from toolang.cli.toolang.routing import (
 from toolang.cli.common.agent_server import AgentServerRef
 from toolang.cli.common.routing import extract_root_args
 from toolang.cli.common.lazy import LazyCommand
-from toolang.up import process as agents
 
 
 def _call_main(arguments: list[str]) -> int:
@@ -93,10 +94,10 @@ def test_caps_inspects_the_selected_agent_layout(
         selector = {
             "resident": "lex",
             "url": "https://example.com/lex.too",
-            "github": "example/lex",
+            "github": "gh:example/lex",
         }[target]
         monkeypatch.setattr(
-            agents, "resolve_visiting_layout", lambda *_args, **_kwargs: layout
+            agent_sources, "resolve_visiting_layout", lambda *_args, **_kwargs: layout
         )
 
     inspect_caps = commands.inspect_agent_caps
@@ -132,11 +133,11 @@ def test_nonresident_cap_mutations_remain_rejected(
     layout = AgentLayout(tmp_path / "cache", "lex", "visiting")
     selectors = {
         "url": "https://example.com/lex.too",
-        "github": "example/lex",
+        "github": "gh:example/lex",
         "source": str(source),
     }
     monkeypatch.setattr(
-        agents, "resolve_visiting_layout", lambda *_args, **_kwargs: layout
+        agent_sources, "resolve_visiting_layout", lambda *_args, **_kwargs: layout
     )
     monkeypatch.setattr(
         commands, "edit_markdown", lambda *_args: pytest.fail("must not open editor")
@@ -550,20 +551,20 @@ def test_cli_command_name_wins_without_explicit_agent_prefix(
             ),
         ),
         (
-            ["agent:alice.too"],
+            ["agent:alice_too"],
             set(),
             TargetHelp(
-                selector="agent:alice.too",
-                label="alice.too",
+                selector="agent:alice_too",
+                label="alice_too",
                 placement="resident",
             ),
         ),
         (
-            ["briceyan/dev"],
+            ["gh:briceyan/dev"],
             set(),
             TargetHelp(
-                selector="briceyan/dev",
-                label="briceyan/dev",
+                selector="gh:briceyan/dev",
+                label="gh:briceyan/dev",
                 placement="visiting",
             ),
         ),
@@ -615,7 +616,7 @@ def test_caps_cli_formats_a_pre_dispatch_error_without_a_panel(
     assert result == 2
     assert stderr.startswith("Error: ")
     assert "╭" not in stderr
-    assert "invalid resident agent target: agent:" in stderr
+    assert "invalid agent name ''" in stderr
 
 
 @pytest.mark.parametrize(
@@ -724,16 +725,16 @@ def test_cli_bare_visiting_target_shows_help_without_resolving_it(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.setattr(
-        agents,
+        agent_sources,
         "resolve_visiting_layout",
         lambda *_args, **_kwargs: pytest.fail("target help must not resolve the agent"),
     )
 
-    result = _call_main(["briceyan/dev"])
+    result = _call_main(["gh:briceyan/dev"])
     output = capsys.readouterr()
 
     assert result == 0
-    assert strip_ansi(output.out).startswith("Run and manage agent briceyan/dev.\n")
+    assert strip_ansi(output.out).startswith("Run and manage agent gh:briceyan/dev.\n")
     assert "chat" in output.out
     assert "No such command" not in output.err
 
@@ -1092,7 +1093,7 @@ def test_cli_routes_visiting_chat_through_materialization(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    selector = "brice/researcher"
+    selector = "gh:brice/researcher"
     layout = AgentLayout(
         root=tmp_path / "visiting",
         name="researcher",
@@ -1110,7 +1111,7 @@ def test_cli_routes_visiting_chat_through_materialization(
         captured.update(args=args, layout=selected)
         return 12
 
-    monkeypatch.setattr(agents, "resolve_visiting_layout", resolve)
+    monkeypatch.setattr(agent_sources, "resolve_visiting_layout", resolve)
 
     result = dispatch_visiting(
         [selector, "chat", "--thread", "term_1"],
@@ -1142,10 +1143,10 @@ def test_cli_visiting_failure_uses_the_operational_failure_block(
         )
         raise ValueError("fetch failed")
 
-    monkeypatch.setattr(agents, "resolve_visiting_layout", fail)
+    monkeypatch.setattr(agent_sources, "resolve_visiting_layout", fail)
 
     result = dispatch_visiting(
-        ["missing/agent", "chat"],
+        ["gh:missing/agent", "chat"],
         run_app=lambda _args, _layout: pytest.fail("failed resolution must not run"),
     )
 
@@ -1196,7 +1197,7 @@ def test_cli_routes_visiting_inspect_without_materialization(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    selector = "brice/researcher"
+    selector = "gh:brice/researcher"
     layout = AgentLayout(
         root=tmp_path / "visiting",
         name="researcher",
@@ -1204,9 +1205,11 @@ def test_cli_routes_visiting_inspect_without_materialization(
     )
     captured: dict[str, object] = {}
 
-    monkeypatch.setattr(agents, "visiting_layout", lambda source, **kwargs: layout)
     monkeypatch.setattr(
-        agents,
+        agent_sources, "visiting_layout", lambda source, **kwargs: layout
+    )
+    monkeypatch.setattr(
+        agent_sources,
         "resolve_visiting_layout",
         lambda *_args, **_kwargs: pytest.fail("inspect must not materialize"),
     )
@@ -1234,7 +1237,7 @@ def test_cli_does_not_route_removed_history_commands_for_visiting(
     command: str,
 ) -> None:
     result = dispatch_visiting(
-        ["brice/researcher", command],
+        ["gh:brice/researcher", command],
         run_app=lambda *_args: pytest.fail("removed command must not be routed"),
     )
 
@@ -1245,7 +1248,7 @@ def test_cli_routes_command_before_visiting_info_without_materialization(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    selector = "brice/researcher"
+    selector = "gh:brice/researcher"
     layout = AgentLayout(
         root=tmp_path / "visiting",
         name="researcher",
@@ -1253,7 +1256,7 @@ def test_cli_routes_command_before_visiting_info_without_materialization(
     )
     captured: dict[str, object] = {}
     monkeypatch.setattr(
-        agents,
+        agent_sources,
         "visiting_layout",
         lambda source, **kwargs: (
             captured.update(
@@ -1284,7 +1287,7 @@ def test_cli_opens_visiting_chat_with_its_exact_layout(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    selector = "brice/researcher"
+    selector = "gh:brice/researcher"
     layout = AgentLayout(
         root=tmp_path / "visiting",
         name="researcher",
@@ -1309,7 +1312,7 @@ def test_cli_opens_visiting_chat_with_its_exact_layout(
         raise EOFError
 
     monkeypatch.setattr(
-        agents, "resolve_visiting_layout", lambda *_args, **_kwargs: layout
+        agent_sources, "resolve_visiting_layout", lambda *_args, **_kwargs: layout
     )
 
     @contextmanager
@@ -1428,9 +1431,8 @@ def test_remote_agent_parse_failure_is_reported_before_command_execution(
     tmp_path, monkeypatch, capsys
 ):
     from toolang.cli.toolang.routing import dispatch_visiting
-    from toolang.up import process as agents
 
-    monkeypatch.setattr(agents, "_fetch_http_text", lambda *_: "flow broken(:\n")
+    monkeypatch.setattr(agent_sources, "_fetch_http_text", lambda *_: "flow broken(:\n")
     result = dispatch_visiting(
         ["--root", str(tmp_path), "https://example.test/broken.too", "serve"],
         run_app=lambda *_: pytest.fail("command ran before agent parsed"),

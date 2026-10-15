@@ -44,7 +44,7 @@ agent home. Remote content follows the same cache and refresh behavior as agent
 State preparation.
 
 `--all` includes resources excluded by allow in the same scope. Both views
-show `REF`, `DESCRIPTION`, `LOCATION`, and `TAGS`; availability is `ready` or
+show `CAP`, `DESCRIPTION`, `LOCATION`, and `TAGS`; availability is `ready` or
 `not_allowed`, alongside origin, scope, and form tags. The full view does not restore
 shadowed definitions or grant runtime access. This applies to aggregate and
 kind-specific lists through both CLIs, for example `too alice caps --all`,
@@ -115,7 +115,7 @@ in this order:
 
 | Column | Meaning |
 | --- | --- |
-| `REF` | Qualified query identity, such as `skill/reviewer` |
+| `CAP` | Cap Ref for queries, such as `skill/reviewer` |
 | `DESCRIPTION` | Cap description, or `-` when absent |
 | `LOCATION` | Absolute content path, inline `file:line`, or configured/referenced GitHub HTTPS URL |
 | `TAGS` | Availability, access, origin, scope, and form tags |
@@ -132,10 +132,12 @@ headers. Locations remain complete for copying; authored skills point to
 
 ## Source Refs
 
-API and read/write source refs identify the selected cap itself. These URIs
-also serve as identities for persistence and deduplication. CLI query records
-use `kind/name` as `ref` and expose the content address as `location`, without a
-`source` field:
+CLI query/JSON records and API summaries/details expose `cap` (`kind/name`)
+and `source` (the resolved, canonical Source Ref). `location` is a separate
+human-facing content address. Default queries match `cap`; bare
+`skill/reviewer` still selects that identity. Migrate explicit query keys from
+`ref` to `cap`; API Cap response `ref` becomes `source`, with `cap` added.
+Configured write requests still use `ref` for the supplied Source Ref.
 
 | Ref | Meaning |
 | --- | --- |
@@ -144,26 +146,35 @@ use `kind/name` as `ref` and expose the content address as `location`, without a
 | `root://skills/reviewer` | Local capability under the Toolang root |
 | `github://user/repo/path/name.md@rev` | Remote cap target |
 
-GitHub cap refs must include `@rev`. Shorthand refs such as `owner/name`
+GitHub cap refs must include `@rev`. Shorthand Source Refs such as `gh:owner/name`
 resolve to the matched repository's default branch before they are stored.
-Three-part shorthand such as `owner/repo/name` specifies the repository exactly
+Three-part shorthand such as `gh:owner/repo/name` specifies the repository exactly
 and probes only paths inside that repository.
 
 Current cap shorthand probe rules are:
 
 | Kind | Input | Probe order |
 | --- | --- | --- |
-| `skill` | `owner/name` | `github://owner/agents/skills/name@<default-branch>`, `github://owner/agent-skills/name@<default-branch>`, `github://owner/agent-skills/skills/name@<default-branch>`, `github://owner/skills/name@<default-branch>`, `github://owner/skills/skills/name@<default-branch>` |
-| `psyche` | `owner/name` | `github://owner/agents/psyches/name.md@<default-branch>`, `github://owner/agent-psyches/name.md@<default-branch>`, `github://owner/psyches/name.md@<default-branch>` |
-| `service` | `owner/name` | `github://owner/agents/services/name.md@<default-branch>`, `github://owner/agent-services/name.md@<default-branch>`, `github://owner/services/name.md@<default-branch>` |
-| `prompt` | `owner/name` | `github://owner/agents/prompts/name.md@<default-branch>`, `github://owner/agent-prompts/name.md@<default-branch>`, `github://owner/prompts/name.md@<default-branch>` |
+| `skill` | `gh:owner/name` | `github://owner/agents/skills/name@<default-branch>`, `github://owner/agent-skills/name@<default-branch>`, `github://owner/agent-skills/skills/name@<default-branch>`, `github://owner/skills/name@<default-branch>`, `github://owner/skills/skills/name@<default-branch>` |
+| `psyche` | `gh:owner/name` | `github://owner/agents/psyches/name.md@<default-branch>`, `github://owner/agent-psyches/name.md@<default-branch>`, `github://owner/psyches/name.md@<default-branch>` |
+| `service` | `gh:owner/name` | `github://owner/agents/services/name.md@<default-branch>`, `github://owner/agent-services/name.md@<default-branch>`, `github://owner/services/name.md@<default-branch>` |
+| `prompt` | `gh:owner/name` | `github://owner/agents/prompts/name.md@<default-branch>`, `github://owner/agent-prompts/name.md@<default-branch>`, `github://owner/prompts/name.md@<default-branch>` |
 
-For `owner/repo/name`, Toolang uses the specified repository and probes only
+For `gh:owner/repo/name`, Toolang uses the specified repository and probes only
 kind-specific paths in that repository. Agents use `agents/name.too`, then
 `name.too`. Skills use `skills/name`, then `name`, except dedicated
 `agent-skills` and `skills` repositories prefer `name` first. File-backed caps
 use `{kind}s/name.md`, then `name.md`, except dedicated cap repositories prefer
 `name.md`.
+
+`github:` aliases `gh:`. Exact `gh:owner/repo/path@rev` and
+`github:owner/repo/path@rev` normalize to `github://` without shorthand probes.
+Bare remote Source Refs, `oh:`, and `openhat:` are unsupported. This restriction
+does not apply to Cap Ref queries (`skill/reviewer`) or local Source Refs.
+HTTP(S) URLs fetch file-backed Caps directly. For skills, use a directory URL or
+its `SKILL.md` URL; HTTP acquisition fetches only `SKILL.md`, while GitHub skill
+sources include the directory's files. `with skill SOURCE-REF` supplies the kind
+separately; source paths are ordinary provider paths.
 
 Skill existence checks look for `SKILL.md` inside the candidate directory.
 GitHub URLs are exact refs, not shorthand; a URL ending in
@@ -313,6 +324,6 @@ carry `scope` and `ref`. Deletes use a `scope` query parameter. Scope is
 Each kind has one bundled `default` template. Template lists contain that one
 entry; default detail responses include metadata and raw content. Cap read
 requests return the effective runtime view with `scope`, `origin`, `form`,
-`ref`, `definition_file`, and optional `line`. CLI lists use `REF`, `DESCRIPTION`, `LOCATION`, and `TAGS`. Location addresses
+`cap`, `source`, `definition_file`, and optional `line`. CLI lists use `CAP`, `DESCRIPTION`, `LOCATION`, and `TAGS`. Location addresses
 actual content; only inline caps use `file:line`. Form, origin, scope, and allow
 status are tags. See [Resource Queries](queries.md) for the complete record shape.

@@ -48,8 +48,10 @@ from toolang.common.github import (
     GitHubRef,
     github_raw_url,
     parse_github_ref,
-    parse_github_url,
+    GitHubShorthand,
 )
+
+from toolang.common.source import parse_remote_source
 
 from .config import WORKSPACE_ORDER_KEY, validate_workspace_name
 from .types import (
@@ -1065,7 +1067,8 @@ def resolve_remote_ref(
         ref=text,
     )
     try:
-        if "://" in text:
+        parsed = parse_remote_source(text)
+        if not isinstance(parsed, GitHubShorthand):
             canonical = canonicalize_remote_ref(kind, text)
             if canonical.startswith("github://") and not _github_remote_exists(
                 kind, canonical
@@ -1122,25 +1125,17 @@ def resolve_remote_ref(
 def canonicalize_remote_ref(kind: EntryKind, ref: str) -> str:
     """Canonicalize one explicit or shorthand remote cap ref."""
 
-    text = ref.strip()
-    if "://" in text:
-        github_ref = parse_github_url(text)
-        if github_ref is None and text.startswith("github://"):
-            github_ref = parse_github_ref(text)
-        if github_ref is not None:
-            if kind == "skill" and Path(github_ref.path).name == "SKILL.md":
-                github_ref = GitHubRef(
-                    owner=github_ref.owner,
-                    repo=github_ref.repo,
-                    path=Path(github_ref.path).parent.as_posix(),
-                    rev=github_ref.rev,
-                )
-            return github_ref.render()
-        return text
-    candidates = _remote_ref_candidates(kind, text)
-    if not candidates:
-        raise ValueError(f"invalid remote ref: {ref}")
-    return candidates[0]
+    source = parse_remote_source(ref)
+    if isinstance(source, GitHubShorthand):
+        return _remote_ref_candidates(kind, ref)[0]
+    if isinstance(source, GitHubRef):
+        if kind == "skill" and Path(source.path).name == "SKILL.md":
+            source = replace(source, path=Path(source.path).parent.as_posix())
+        return source.render()
+    url = urlparse(source.url)
+    if kind == "skill" and Path(url.path).name == "SKILL.md":
+        url = url._replace(path=url.path.removesuffix("/SKILL.md"))
+    return url.geturl()
 
 
 def remote_entry_name(kind: EntryKind, ref: str) -> str:
@@ -1161,17 +1156,12 @@ def remote_entry_name(kind: EntryKind, ref: str) -> str:
 
 
 def _remote_ref_candidates(kind: EntryKind, ref: str) -> tuple[str, ...]:
-    slash_count = ref.count("/")
-    if slash_count == 2:
-        owner, repo, name = ref.split("/", 2)
-        if not owner or not repo or not name:
-            return ()
-        return _remote_ref_candidates_for_repo(kind, owner, repo, name)
-    if slash_count != 1:
+    source = parse_remote_source(ref)
+    if not isinstance(source, GitHubShorthand):
         return ()
-    owner, name = ref.split("/", 1)
-    if not owner or not name:
-        return ()
+    owner, name = source.owner, source.name
+    if source.repo is not None:
+        return _remote_ref_candidates_for_repo(kind, owner, source.repo, name)
     repositories: dict[EntryKind, tuple[tuple[str, str], ...]] = {
         "skill": (
             ("agents", f"skills/{name}"),
@@ -1634,7 +1624,7 @@ def _emit_cached_remote_progress(
     progress: ProgressSink | None,
 ) -> None:
     text = request.ref.strip()
-    if "://" not in text:
+    if isinstance(parse_remote_source(text), GitHubShorthand):
         emit_progress(
             progress,
             id=request.progress_id,
@@ -2036,6 +2026,7 @@ def _remote_entry_from_ref(
     remote_cache: _RemoteEntryCache | None = None,
     progress: ProgressSink | None = None,
 ) -> tuple[StateCap, dict[str, bytes]]:
+    parsed_source = parse_remote_source(ref)
     request = _RemoteEntryRequest(
         scope=scope,
         kind=kind,
@@ -2071,7 +2062,7 @@ def _remote_entry_from_ref(
     if cached is not None:
         canonical_ref = cached.ref
         _emit_cached_remote_progress(request, canonical_ref, progress=progress)
-    elif materialize and "://" not in ref:
+    elif materialize and isinstance(parsed_source, GitHubShorthand):
         canonical_ref = resolve_remote_ref(
             kind,
             ref,
@@ -2365,9 +2356,11 @@ def _fetch_remote_cap_files(
 ) -> dict[str, bytes]:
     """Fetch remote cap bytes keyed by their relative prepared paths."""
 
-    if not ref.startswith("github://"):
-        raise ValueError(f"unsupported remote {kind} ref: {ref}")
-    github_ref = parse_github_ref(ref)
+    source = parse_remote_source(ref)
+    if isinstance(source, GitHubShorthand):
+        raise ValueError(
+            f"remote {kind} source must be resolved before fetching: {ref}"
+        )
     item_id = progress_id or _cap_progress_id(kind, ref)
     emit_progress(
         progress,
@@ -2380,7 +2373,14 @@ def _fetch_remote_cap_files(
     )
     if kind == "skill":
         try:
-            files = _fetch_github_directory(github_ref)
+            if isinstance(source, GitHubRef):
+                files = _fetch_github_directory(source)
+            else:
+                url = urlparse(source.url)
+                entry_url = url._replace(
+                    path=f"{url.path.rstrip('/')}/SKILL.md"
+                ).geturl()
+                files = {"SKILL.md": _fetch_url_bytes(entry_url)}
         except Exception as exc:
             emit_progress(
                 progress,
@@ -2411,7 +2411,11 @@ def _fetch_remote_cap_files(
     else:
         try:
             materialized = {
-                relative_entry_path.as_posix(): _fetch_github_file(github_ref)
+                relative_entry_path.as_posix(): (
+                    _fetch_github_file(source)
+                    if isinstance(source, GitHubRef)
+                    else _fetch_url_bytes(source.url)
+                )
             }
         except Exception as exc:
             emit_progress(

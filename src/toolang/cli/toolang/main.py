@@ -144,21 +144,19 @@ class _StartCommand(OptionalValueCommand, LocalRuntimeAgentCommand):
 
 
 class _TargetAgentCommand(RequiredPrefixAgentCommand):
-    argument_help = "Agent name, .too file, reference, or URL"
+    argument_help = "Agent Name, .too file, gh:/github: Source Ref, or HTTP(S) URL"
 
 
 class _TargetListCommand(OptionalPrefixAgentListCommand):
-    argument_help = "Agent name, .too file, reference, or URL; omit for root caps only"
+    argument_help = "Agent Name, .too file, gh:/github: Source Ref, or HTTP(S) URL; omit for root caps only"
 
 
 class _TargetSetupCommand(OptionalPrefixAgentSetupCommand):
-    argument_help = (
-        "Agent name, .too file, reference, or URL; omit for root configuration"
-    )
+    argument_help = "Agent Name, .too file, gh:/github: Source Ref, or HTTP(S) URL; omit for root configuration"
 
 
 class _HomeCommand(OptionalPrefixAgentCommand):
-    argument_help = "Agent name, .too file, reference, or URL"
+    argument_help = "Agent Name, .too file, gh:/github: Source Ref, or HTTP(S) URL"
 
 
 class _ThreadRunCommand(OptionalValueCommand, _TargetAgentCommand):
@@ -653,10 +651,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     if routed is not None:
         return routed
-    target_help = routing.select_target_help(
-        raw_args,
-        residents=_routing_residents(raw_args),
-    )
+    try:
+        target_help = routing.select_target_help(
+            raw_args,
+            residents=_routing_residents(raw_args),
+        )
+    except ValueError as exc:
+        echo_error(str(exc))
+        return 2
     if target_help is not None:
         return _run_target_help(target_help, prog_name=prog_name)
     routed = routing.dispatch_visiting(

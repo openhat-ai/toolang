@@ -6,7 +6,6 @@ import hashlib
 import json
 import os
 from pathlib import Path
-from urllib.parse import quote
 from uuid import uuid4
 
 import psutil
@@ -54,7 +53,7 @@ def _source_identity(layout: AgentLayout) -> str:
 
 def instance_filename(layout: AgentLayout) -> str:
     """Name a host-resolved source, retaining distinct temporary executions."""
-    name = quote(layout.name, safe="-_.")
+    name = layout.name
     if layout.placement != "resident":
         name += f"@{layout.placement[0]}{_source_identity(layout)}"
     if layout.instance is not None:
