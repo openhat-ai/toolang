@@ -614,7 +614,10 @@ def test_start_launches_in_background_and_reports_endpoint(
     )
 
     assert result.exit_code == 0, result.stderr
-    assert result.stdout.strip() == "Agent alice started: http://localhost:8124"
+    assert (
+        result.stdout.strip()
+        == "Agent alice started: http://localhost:8124 drivers=chat,talk,chore lifetime=persistent"
+    )
     assert result.stderr.strip().splitlines() == [
         "Preparing Docker sandbox...",
         "Prepared Docker sandbox",

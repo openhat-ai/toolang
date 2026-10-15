@@ -1,7 +1,6 @@
 # Resident and visiting Chat server lifecycle
 
-Status: Revised feature definition; awaiting human approval. This PR contains
-no implementation changes.
+Status: Approved in [#814](https://github.com/openhat-ai/toolang/pull/814).
 
 ## Goal, scope, and baseline
 
@@ -16,10 +15,10 @@ Do not change workspace grants, thread/history selection, source identities,
 authored run/spawn semantics, or historical stores. Add no supervisor process,
 server pool, driver hot reload, or detached-job abstraction.
 
-Currently Chat already shares a persistent server and closes only its client.
-There are no retention leases or automatic idle shutdown. Start/stop accept
-resident agents only; serve accepts visiting targets. Fresh hosting defaults
-are resident chat,talk,chore and visiting chat,talk, including implicit Chat.
+At approval, Chat shared a persistent server and closed only its client, without
+retention leases or idle shutdown. Start/stop accepted resident agents only;
+serve accepted visiting targets. Fresh hosting defaults were resident
+chat,talk,chore and visiting chat,talk, including implicit Chat.
 
 Verified sources: [acquisition](../../src/toolang/cli/common/agent_server.py),
 [Chat](../../src/toolang/cli/toolang/commands/chat/main.py),
@@ -96,8 +95,9 @@ independently of terminal input and SSE. Only automatic servers need leases.
    Retain work from admission before acknowledgement through descendants,
    terminal persistence, and cleanup, for every executor ingress. Use live
    ownership, never persisted running rows or all background asyncio tasks.
-   Existing spawn stays parent-owned: parent completion drains/cancels unfinished
-   children; this feature introduces no independent child lifetime.
+   Spawn creates independent roots, which retain the server after their source
+   finishes. Parent completion drains/cancels owned async run children. Preserve
+   both existing lifetimes.
 3. Lease changes, admissions, promotion, and exit election share a short
    server-local gate, held across neither execution nor network I/O. Close
    admissions before graceful shutdown. Racing acquisition joins first or gets
@@ -140,8 +140,7 @@ executor semantics unchanged elsewhere and reuse existing control references.
 
 ## Command combinations and acceptance
 
-Examples use too, the alias for toolang. The table describes target behavior;
-visiting start/stop and automatic shutdown are not implemented yet.
+Examples use too, the alias for toolang. The table defines required behavior.
 
 | Combination | Required outcome |
 | --- | --- |
@@ -180,7 +179,7 @@ keep protocol types in schemas and lifecycle with hosting.
 
 Implementation must pass default repository verification, update focused CLI/docs,
 and generate its changelog through too aid.too update_changelog for maintainer
-review. This design-only PR changes no public runtime behavior.
+review.
 
 Risks: repeated visiting calls may incur cold starts; use start for warm reuse.
 Implicit resident Chat no longer starts talk/chore. For background drivers,
@@ -191,4 +190,4 @@ cancel, and stop remain the controls. Lease expiry can end a suspended idle
 client. Host staging files may remain until later management. Server crashes keep
 existing recovery semantics; automatic run resumption is not promised.
 
-Open questions: none in scope. Human approval is required before implementation.
+Open questions: none in scope.

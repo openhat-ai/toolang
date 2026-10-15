@@ -772,6 +772,7 @@ def test_inactive_launch_uses_fresh_environment_and_file_logging(
         "agent_log_path": layout.runtime_log,
     }
     assert captured["launch"] == {
+        "lifetime": "persistent",
         "toolang_root": layout.root,
         "drivers": None,
         "workspace_additions": None,

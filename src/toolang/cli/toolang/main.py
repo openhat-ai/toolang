@@ -29,7 +29,6 @@ from ..common.help import CliCommand, CliGroup, HelpContext, show_help
 from ..common.lazy import LazyCommand, lazy_typer_command, lazy_typer_group
 from ..common.output import echo_error
 from ..common.routing import (
-    LocalRuntimeAgentCommand,
     OptionalPrefixAgentCommand,
     OptionalPrefixAgentListCommand,
     OptionalPrefixAgentSetupCommand,
@@ -139,7 +138,11 @@ class _ScriptEntryCommand(CliCommand):
         )
 
 
-class _StartCommand(OptionalValueCommand, LocalRuntimeAgentCommand):
+class _ResidentVisitingCommand(RuntimeAgentCommand):
+    argument_help = "Agent Name, gh:/github: Source Ref, or HTTP(S) URL"
+
+
+class _StartCommand(OptionalValueCommand, _ResidentVisitingCommand):
     optional_values = {"dev": OptionalValue(bare_value=".")}
 
 
@@ -386,7 +389,7 @@ _registered_command(
     "toolang.cli.toolang.commands.runtime:stop",
     help="Stop an agent",
     no_args_is_help=True,
-    cls=LocalRuntimeAgentCommand,
+    cls=_ResidentVisitingCommand,
     rich_help_panel=RUNTIME_COMMAND_PANEL,
 )
 _registered_group(

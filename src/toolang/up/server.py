@@ -43,7 +43,8 @@ from toolang.up.config import (
     format_drivers,
     resolve_cors_allowed_origins,
 )
-from toolang.up.types import ALL_DRIVERS, ExecutionDrivers
+from toolang.up.types import ALL_DRIVERS, ExecutionDrivers, ServerLifetime
+from toolang.up.lifecycle import ServerLifecycle
 from toolang.up.core import AgentCore
 from toolang.up.logging import (
     DEFAULT_LOG_LEVEL,
@@ -74,6 +75,7 @@ class ServeSpec:
     toolang_root: Path | None = None
     launch_id: str | None = None
     drivers: ExecutionDrivers = ALL_DRIVERS
+    lifetime: ServerLifetime = "persistent"
     ceiling_overrides: Mapping[str, tuple[str, ...] | None] = field(
         default_factory=dict
     )
@@ -130,6 +132,7 @@ def resolve_serve(
     workdir: str | None = None,
     toolang_root: Path | None = None,
     launch_id: str | None = None,
+    lifetime: ServerLifetime = "persistent",
 ) -> ServeSpec:
     """Resolve explicit CLI values without constructing runtime snapshots."""
 
@@ -140,6 +143,7 @@ def resolve_serve(
         layout=layout,
         toolang_root=toolang_root or layout.toolang_root or layout.root,
         launch_id=launch_id,
+        lifetime=lifetime,
         drivers=default_drivers(layout.placement) if drivers is None else drivers,
         workspace_additions=dict(workspace_additions or {}),
         workdir=workdir,
@@ -195,6 +199,7 @@ def build_serve_argv(
         "--enable",
         format_drivers(spec.drivers),
     ]
+    command.extend(["--lifetime", spec.lifetime])
     if spec.layout.instance is not None:
         command.extend(["--runtime-instance", spec.layout.instance])
     if spec.launch_id is not None:
@@ -296,8 +301,22 @@ def serve(
         _restore_termination_signal_defaults()
         runtime_log_spec = _runtime_log_spec_value(spec.log_spec, environ)
         configure_logging(spec=runtime_log_spec, environ=environ)
+
+        def record_promotion() -> None:
+            patch_workload(
+                spec.layout.runtime_status,
+                launch_id,
+                {"lifetime": "persistent"},
+                instance=spec.layout.instance,
+                location=location,
+            )
+
+        lifecycle = ServerLifecycle(
+            launch_id, spec.lifetime, on_promote=record_promotion
+        )
         core = AgentCore(
             spec.layout,
+            lifecycle=lifecycle,
             drivers=spec.drivers,
             sandbox=sandbox,
             ceiling_overrides=spec.ceiling_overrides,
@@ -359,6 +378,8 @@ def serve(
                     launch_id=launch_id,
                     location=location,
                     drivers=sorted(spec.drivers),
+                    lifetime=spec.lifetime,
+                    lifecycle_protocol=1,
                     workspace_additions=spec.workspace_additions,
                     process_created=psutil.Process().create_time(),
                     sandbox_description=environ.get(HOST_SANDBOX_DESCRIPTION_ENV),
@@ -419,6 +440,18 @@ def serve(
                         asyncio.create_task(core.setup.run(stop_signal=stop_signal)),
                     ]
                 )
+
+                async def reap_idle() -> None:
+                    while not stop_signal.is_set():
+                        if lifecycle.lifetime != "automatic":
+                            return
+                        if lifecycle.elect_exit(core.executor.has_owned_work):
+                            shutdown_signal.set()
+                            return
+                        await asyncio.sleep(0.1)
+
+                if spec.lifetime == "automatic":
+                    tasks.append(asyncio.create_task(reap_idle()))
                 yield
             finally:
                 stop_signal.set()
@@ -465,6 +498,7 @@ def serve(
                 extra={"color_message": "Agent starting root=\x1b[1m%s\x1b[0m"},
             ),
             on_running=lambda: (
+                lifecycle.ready(),
                 _record_ready(spec, launch_id, sandbox, host_ref),
                 logger.info(
                     "Agent started webui=%s drivers=%s",
@@ -621,6 +655,9 @@ class _ToolangServer(uvicorn.Server):
             self._on_stopping()
             self._on_stopping = None
         await super().shutdown(sockets=sockets)
+
+    async def on_tick(self, counter: int) -> bool:
+        return self._shutdown_signal.is_set() or await super().on_tick(counter)
 
     def handle_exit(self, sig: int, frame: FrameType | None) -> None:
         self._shutdown_signal.set()

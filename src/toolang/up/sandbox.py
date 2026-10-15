@@ -66,7 +66,7 @@ from toolang.up.records import (
 )
 from toolang.up.observation import RuntimeRegistration
 from toolang.up.server import ServeSpec, build_serve_argv, resolve_serve
-from toolang.up.types import ExecutionDrivers
+from toolang.up.types import ExecutionDrivers, ServerLifetime
 
 SANDBOX_READY_TIMEOUT_SEC = 30.0
 SANDBOX_ATTACH_GRACE_SEC = 0.2
@@ -133,6 +133,7 @@ async def resolve_launch(
     workspace_additions: Mapping[str, str] | None = None,
     workdir: str | None = None,
     toolang_root: Path | None = None,
+    lifetime: ServerLifetime = "persistent",
 ) -> LaunchSpec:
     """Resolve source state, server inputs, and one sandbox selection."""
 
@@ -145,6 +146,7 @@ async def resolve_launch(
     serve = resolve_serve(
         layout=layout,
         toolang_root=toolang_root,
+        lifetime=lifetime,
         drivers=drivers,
         host=host,
         endpoint_host=endpoint_host,
@@ -380,6 +382,7 @@ async def _launch_locked(
                 )
             ),
             local_dev_artifact=spec.dev_artifact,
+            remove_on_exit=spec.serve.lifetime == "automatic",
         )
         intent_reference = getattr(implementation, "intent_reference", None)
         if intent_reference is not None:

@@ -39,7 +39,13 @@ from toolang.execution.schemas import (
     RunRequest,
     ThreadInfo,
 )
-from toolang.execution.types import ControlTiming, RunCommand, RunRef, ThreadRef
+from toolang.execution.types import (
+    ControlRef,
+    ControlTiming,
+    RunCommand,
+    RunRef,
+    ThreadRef,
+)
 
 _LOGGER = logging.getLogger(__name__)
 _RUN_ID_HEADER = "X-Toolang-Run-ID"
@@ -117,9 +123,11 @@ class RemoteRunClient:
         client: httpx.AsyncClient | None = None,
         interactive: bool = False,
         client_id: str | None = None,
+        guarded: bool = False,
     ) -> None:
         self._endpoint = _normalize_endpoint(endpoint)
         self._interactive = interactive
+        self._guarded = guarded
         self.client_id = client_id or f"client_{uuid4().hex}"
         self._http = client
         self._owns_http = client is None
@@ -250,9 +258,13 @@ class RemoteRunClient:
         *,
         timing: ControlTiming = "immediate",
         request_id: str | None = None,
+        expected_control: ControlRef | None = None,
         reason: str | None = None,
     ) -> ControlInfo:
         RunRef.parse(run_id)
+        if self._guarded and expected_control is None:
+            invocation = (await self._run_detail(run_id)).control
+            expected_control = ControlRef.for_run(invocation.run, invocation.index)
         return await self._post_control(
             run_id,
             "cancel",
@@ -260,6 +272,11 @@ class RemoteRunClient:
                 "mode": timing,
                 "request_id": request_id,
                 "client_id": self.client_id,
+                **(
+                    {"expected_control": str(expected_control)}
+                    if expected_control is not None
+                    else {}
+                ),
                 "reason": reason,
             },
         )
@@ -271,8 +288,12 @@ class RemoteRunClient:
         *,
         timing: ControlTiming = "next_step",
         request_id: str | None = None,
+        expected_control: ControlRef | None = None,
     ) -> ControlInfo:
         RunRef.parse(run_id)
+        if self._guarded and expected_control is None:
+            invocation = (await self._run_detail(run_id)).control
+            expected_control = ControlRef.for_run(invocation.run, invocation.index)
         if message.role != "user":
             raise ValueError("run steer requires a user message")
         return await self._post_control(
@@ -282,6 +303,11 @@ class RemoteRunClient:
                 "mode": timing,
                 "request_id": request_id,
                 "client_id": self.client_id,
+                **(
+                    {"expected_control": str(expected_control)}
+                    if expected_control is not None
+                    else {}
+                ),
                 "message": message.to_data(),
             },
         )

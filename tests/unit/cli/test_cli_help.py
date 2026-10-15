@@ -547,10 +547,10 @@ def test_agent_help_matches_target_scope(command, tmp_path, capsys):
     )
     if command == "new":
         expected = "Agent Name: [a-z][a-z0-9_]{0,63}"
+    elif command in {"start", "stop"}:
+        expected = "Agent Name, gh:/github: Source Ref, or HTTP(S) URL"
     elif command.split()[0] in {
         "remove",
-        "start",
-        "stop",
         "_serve",
         "chore",
     }:

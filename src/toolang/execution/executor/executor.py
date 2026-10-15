@@ -4,13 +4,15 @@ from __future__ import annotations
 
 import asyncio
 from contextvars import Context
+from contextlib import AbstractContextManager, nullcontext
+from functools import wraps
 from collections.abc import Awaitable, Callable, Generator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 import logging
 import threading
 import time
 from uuid import uuid4
-from typing import Any, Literal, cast
+from typing import Any, Concatenate, Literal, ParamSpec, TypeVar, cast
 
 from toolang.base.model_settings import apply_model_override
 from toolang.base.types.model import Model, ModelOverride, ModelRequest
@@ -183,6 +185,21 @@ StateLoad = Callable[[str], AgentState]
 IncludeSource = Callable[[AgentSetup], IncludeResolver]
 
 
+_P = ParamSpec("_P")
+_T = TypeVar("_T")
+
+
+def _admitted(
+    method: Callable[Concatenate["RunExecutor", _P], _T],
+) -> Callable[Concatenate["RunExecutor", _P], _T]:
+    @wraps(method)
+    def wrapped(self: RunExecutor, *args: _P.args, **kwargs: _P.kwargs) -> _T:
+        with self._admission():
+            return method(self, *args, **kwargs)
+
+    return wrapped
+
+
 class _RunCanceled(asyncio.CancelledError):
     def __init__(self, control: ControlRecord) -> None:
         super().__init__(control_text(control) or "canceled")
@@ -314,6 +331,7 @@ class RunExecutor:
         include: IncludeSource | None = None,
         default_workdir: str | None = None,
         stream: CanonicalStream | None = None,
+        admission: Callable[[], AbstractContextManager[None]] | None = None,
     ) -> None:
         if (setup is None) != (state is None) or (setup is None) != (
             load_state is None
@@ -321,6 +339,7 @@ class RunExecutor:
             raise TypeError(
                 "run request execution requires setup, state, and load_state together"
             )
+        self._admission = admission or nullcontext
         self.store = store
         self.ids = ids
         self._setup = setup
@@ -341,6 +360,12 @@ class RunExecutor:
         self._stopped = False
         self.stream = stream or CanonicalStream()
         self._observers: set[TraceObserver] = set()
+
+    def has_owned_work(self) -> bool:
+        """Include pending execution and cleanup until the owned task finishes."""
+
+        with self._active_lock:
+            return bool(self._tasks)
 
     def start(self) -> None:
         """Start this executor lifecycle."""
@@ -438,6 +463,7 @@ class RunExecutor:
             inherit_thread_workdir=inherit_thread_workdir,
         )
 
+    @_admitted
     def run(
         self,
         spec: RunSpec | RunRequest,
@@ -513,6 +539,7 @@ class RunExecutor:
             )
         return self._launch(bound, runnable, loop=loop, tracer=tracer)
 
+    @_admitted
     def rerun(
         self,
         source: str | RerunRequest,
@@ -639,6 +666,7 @@ class RunExecutor:
             )
         return self._launch(bound, runnable, loop=loop, tracer=tracer)
 
+    @_admitted
     def retry(
         self,
         run_id: str | RetryRequest,
@@ -1031,21 +1059,26 @@ class RunExecutor:
         run_id: str,
         timing: ControlTiming = "immediate",
         request_id: str | None = None,
+        expected_control: ControlRef | None = None,
         client_id: str | None = None,
         reason: str | None = None,
     ) -> ControlRecord:
         """Persist one cancel control for the process that owns the run."""
 
         self._require_available()
-        control = self.store.accept_run_control(
-            run_id=run_id,
-            kind="cancel",
-            timing=timing,
-            input=CallInput({"_": reason} if reason is not None else {}),
-            request_id=request_id,
-            client_id=client_id,
-            created_at=utc_now(),
-        )
+        with self.stream.publication():
+            if expected_control is not None:
+                self._require_owned_control(run_id, expected_control)
+            control = self.store.accept_run_control(
+                run_id=run_id,
+                kind="cancel",
+                timing=timing,
+                input=CallInput({"_": reason} if reason is not None else {}),
+                request_id=request_id,
+                client_id=client_id,
+                created_at=utc_now(),
+                expected_control=expected_control,
+            )
         self._observe_control(control)
         return control
 
@@ -1056,6 +1089,7 @@ class RunExecutor:
         message: Message,
         timing: ControlTiming,
         request_id: str | None = None,
+        expected_control: ControlRef | None = None,
         client_id: str | None = None,
     ) -> ControlRecord:
         """Persist one steer control for the process that owns the run."""
@@ -1064,17 +1098,31 @@ class RunExecutor:
         if message.role != "user":
             raise ValueError("run steer requires a user message")
         _ = message.parts
-        control = self.store.accept_run_control(
-            run_id=run_id,
-            kind="steer",
-            timing=timing,
-            input=CallInput({"_": Array("Part[]", tuple(message.parts))}),
-            request_id=request_id,
-            client_id=client_id,
-            created_at=utc_now(),
-        )
+        with self.stream.publication():
+            if expected_control is not None:
+                self._require_owned_control(run_id, expected_control)
+            control = self.store.accept_run_control(
+                run_id=run_id,
+                kind="steer",
+                timing=timing,
+                input=CallInput({"_": Array("Part[]", tuple(message.parts))}),
+                request_id=request_id,
+                client_id=client_id,
+                created_at=utc_now(),
+                expected_control=expected_control,
+            )
         self._observe_control(control)
         return control
+
+    def _require_owned_control(self, run_id: str, expected: ControlRef) -> None:
+        with self._active_lock:
+            active = self._active.get(run_id)
+            owned = active is not None and not active.task.done()
+        run = self.store.get_run(run_id=run_id)
+        if not owned or run is None or run.control != expected:
+            raise ValueError(
+                f"run no longer has the expected live execution owner: {run_id}"
+            )
 
     def cancel_control(self, *, run_id: str, index: int) -> ControlRecord:
         """Revoke one pending steer or cancel control."""

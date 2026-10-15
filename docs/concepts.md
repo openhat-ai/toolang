@@ -117,7 +117,10 @@ Host `serve` uses one Toolang process; host `start` has a controller and child
 during startup, then leaves one workload. Docker uses a host controller and one
 guest workload; entry scripts use `exec`. `serve` waits and releases resources
 on handled exit; `start` returns after readiness. Host scripts execute directly;
-guest scripts use temporary servers, and Chat acquires a persistent server.
+guest scripts use temporary servers. Resident Chat retains its shared server;
+visiting Chat uses a shared automatic server that waits for clients and accepted
+work to finish before exiting. Explicit start retains either placement. See
+[execution ownership](execution.md) for lifecycle details.
 
 
 ## Caps

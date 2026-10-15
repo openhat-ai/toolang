@@ -1306,9 +1306,11 @@ def test_docker_release_removes_the_container_when_diagnostics_fail(
     assert not stage_dir.exists()
 
 
+@pytest.mark.parametrize("remove_on_exit", [False, True])
 def test_docker_run_adds_the_canonical_host_gateway(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    remove_on_exit: bool,
 ) -> None:
     captured: list[str] = []
 
@@ -1340,9 +1342,11 @@ def test_docker_run_adds_the_canonical_host_gateway(
             hosted_port=8123,
             env_values={"TOOLANG_ROOT": "/root/.toolang"},
             log_path=None,
+            remove_on_exit=remove_on_exit,
         )
     )
 
+    assert ("--rm" in captured) == remove_on_exit
     assert container_id == "container-id"
     assert captured[captured.index("--add-host") + 1] == (
         "host.docker.internal:host-gateway"

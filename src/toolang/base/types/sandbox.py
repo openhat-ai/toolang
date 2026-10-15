@@ -60,6 +60,7 @@ class SandboxRequest:
     log_path: Path | None
     envs: dict[str, str] = field(default_factory=dict)
     mounts: tuple[SandboxMount, ...] = ()
+    remove_on_exit: bool = False
     local_dev_artifact: Path | None = None
     dotenv_envs: dict[str, str] = field(default_factory=dict)
 

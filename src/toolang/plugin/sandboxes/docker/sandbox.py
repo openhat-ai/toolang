@@ -411,6 +411,7 @@ class DockerSandbox:
                 ),
             ),
             meta={
+                "remove_on_exit": request.remove_on_exit,
                 "container_name": container_name,
                 "image": image,
                 "stage_dir": str(stage_dir),
@@ -461,6 +462,7 @@ class DockerSandbox:
                 hosted_port=port.hosted_port,
                 env_values=plan.envs,
                 log_path=None,
+                **({"remove_on_exit": True} if plan.meta.get("remove_on_exit") else {}),
             )
         except BaseException as exc:
             cleanup_error: BaseException | None = None

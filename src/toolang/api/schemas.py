@@ -18,7 +18,7 @@ from toolang.execution.schemas import (
     RunDetail,
     ThreadInfo,
 )
-from toolang.execution.types import StepRef
+from toolang.execution.types import StepRef, ControlRef
 from toolang.lang.types import parse_public_runnable_ref
 
 NonNegativeInt = Annotated[int, Field(strict=True, ge=0)]
@@ -365,6 +365,20 @@ class RuntimeIdentityPayload(ApiRequest):
     drivers: tuple[str, ...] = ()
 
 
+class RuntimeLaunchRequest(ApiRequest):
+    """Target one server generation for retention or promotion."""
+
+    launch_id: StrictText = Field(min_length=1)
+
+
+class RuntimeLifecyclePayload(ApiRequest):
+    """Live server retention policy, independent of driver selection."""
+
+    launch_id: StrictText
+    lifetime: Literal["persistent", "foreground", "automatic"]
+    lifecycle_protocol: Literal[1] = 1
+
+
 class RunRerunRequest(ApiRequest):
     """Request a new run from one source invocation."""
 
@@ -386,6 +400,8 @@ class RunRetryRequest(ApiRequest):
 class RunCancelRequest(ApiRequest):
     """Request run cancellation."""
 
+    expected_control: ControlRef | None = None
+
     reason: str | None = None
     mode: Literal["immediate", "next_step", "next_call"] = "immediate"
     request_id: str | None = None
@@ -394,6 +410,8 @@ class RunCancelRequest(ApiRequest):
 
 class RunSteerRequest(ApiRequest):
     """Request one steering message for a running run."""
+
+    expected_control: ControlRef | None = None
 
     request_id: str | None = None
     client_id: StrictText | None = Field(default=None, min_length=1)

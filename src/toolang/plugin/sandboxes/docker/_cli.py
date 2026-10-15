@@ -158,6 +158,7 @@ async def docker_run_detached(
     hosted_port: int,
     env_values: Mapping[str, str],
     log_path: Path | None,
+    remove_on_exit: bool = False,
 ) -> str:
     args = [
         "docker",
@@ -172,6 +173,8 @@ async def docker_run_detached(
         "--add-host",
         f"{DEFAULT_HOST_GATEWAY}:host-gateway",
     ]
+    if remove_on_exit:
+        args.append("--rm")
     for mount in mounts:
         suffix = ":ro" if mount.read_only else ""
         args.extend(["--volume", f"{mount.local_path}:{mount.hosted_path}{suffix}"])

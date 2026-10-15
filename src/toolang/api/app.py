@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from contextlib import AbstractAsyncContextManager
+from contextlib import AbstractAsyncContextManager, ExitStack
 from typing import Annotated, Any, cast
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.types import ASGIApp, Scope, Receive, Send, Message
 
 from toolang.api.common import RUN_ID_HEADER, SSESendDeadline
 from toolang.execution.subscriptions import Subscriptions
@@ -16,6 +17,43 @@ from toolang.catalog import CapsManager, ChoresManager
 from toolang.catalog.errors import CatalogConflictError, CatalogNotFoundError
 from toolang.up import AgentCore
 from toolang.driver.chore.scheduler import ChoreDriver
+from toolang.up.lifecycle import LAUNCH_HEADER, LifecycleConflict, ServerLifecycle
+
+
+class _ServerAdmission:
+    """Retain mutations until response admission, without retaining SSE readers."""
+
+    def __init__(self, app: ASGIApp, lifecycle: ServerLifecycle) -> None:
+        self.app = app
+        self.lifecycle = lifecycle
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http" or scope["method"] in {"GET", "HEAD", "OPTIONS"}:
+            await self.app(scope, receive, send)
+            return
+        launch_id = next(
+            (
+                v.decode()
+                for k, v in scope["headers"]
+                if k == LAUNCH_HEADER.lower().encode()
+            ),
+            None,
+        )
+        with ExitStack() as guard:
+            try:
+                guard.enter_context(self.lifecycle.admit(launch_id))
+            except LifecycleConflict as exc:
+                response = JSONResponse(status_code=409, content={"detail": str(exc)})
+                await response(scope, receive, send)
+                return
+
+            async def admitted_send(message: Message) -> None:
+                if message["type"] == "http.response.start":
+                    guard.close()
+                await send(message)
+
+            await self.app(scope, receive, admitted_send)
+
 
 DEFAULT_CORS_ORIGINS = (
     "http://localhost:3000",
@@ -92,6 +130,8 @@ def create_app(
     app.state.chores_manager = chores
     app.state.subscriptions = Subscriptions(core.executor.stream, core.store.db_path)
     app.add_middleware(cast(Any, SSESendDeadline))
+    if core.lifecycle is not None:
+        app.add_middleware(cast(Any, _ServerAdmission), lifecycle=core.lifecycle)
 
     @app.exception_handler(CatalogNotFoundError)
     async def catalog_not_found(

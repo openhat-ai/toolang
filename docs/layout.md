@@ -71,7 +71,7 @@ Each resident agent lives under:
 
 - `${TOOLANG_ROOT}/agents/<agent>/`
 
-Visiting agents fetched by `too serve <remote>` use a stable temporary agent
+Visiting agents fetched by Chat, start, or serve use a stable temporary agent
 root derived from the resolved Toolang root and Source Ref:
 
 - `/tmp/toolang-<agent>-<hash:16>/`
@@ -91,6 +91,9 @@ remote `agent.too` is refetched after one hour. Its source-owned
 State captures the same Program and provenance. Roaming agents use the source
 file's sibling `.toolang` directory. `too file.too serve` hosts the workload;
 ordinary host script invocation executes directly without a persistent server.
+Visiting idle shutdown stops its server and automatic Docker container, preserving
+this root and its history. Host control/stage files can be cleaned by the next
+management call.
 
 Key paths:
 

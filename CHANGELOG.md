@@ -9,6 +9,34 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Added
 
+- A visiting server started implicitly by Chat, retry/rerun, fork, or rewind
+  is automatic: it keeps running while a client is attached or accepted work
+  remains, then stops itself, leaving its history and logs on host mounts while
+  Docker removes the automatic container on exit. Fork or rewind with `--chat`
+  keeps one server acquisition across both phases instead of finishing and
+  reacquiring between them. Accepted work, independent spawns, and pending
+  terminal cleanup also retain the server with no client attached.
+
+- Automatic clients retain their server with a lease renewed every five seconds
+  under a fifteen-second timeout, so a killed client's lease expiry makes an
+  idle server eligible to exit while accepted work can still retain it, and
+  startup is held for thirty seconds until the first client registers. Losing
+  the lease ends the command with an error warning that accepted runs may still
+  be running, while losing transport never cancels accepted work.
+
+- `too start` and `too stop` accept visiting targets as well as resident agents.
+  `start` promotes a running automatic visiting server to persistent in place,
+  keeping its generation, endpoint, and drivers with no second fetch of the
+  source, and reports `drivers=... lifetime=persistent`; `stop` ends the current
+  generation and its active work. `too info` lists the running server's
+  `Lifetime` and `Launch`.
+
+- The agent API adds `PUT` and `DELETE /api/v1/runtime/leases/{client_id}` and
+  `POST /api/v1/runtime/promote` for retention and promotion, reports
+  `launch_id` and `lifetime` in the profile runtime, and accepts an optional
+  `expected_control` on run cancel and steer requests so a control aimed at a
+  replaced invocation is rejected instead of reaching a retry.
+
 - A cached remote `agent.too` now keeps an `agent.source.json` receipt beside it
   recording the declared ref, the resolved ref, the entry path, and the SHA-256
   of the Program bytes. Reuse requires receipt and file to agree, so a cache
@@ -35,6 +63,30 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   an unparsable agent blocks them.
 
 ### Changed
+
+- **Breaking:** a server started implicitly by Chat, retry/rerun, fork, or
+  rewind now enables only the chat driver for resident and visiting agents, so
+  Chat with a resident agent no longer starts the talk and chore drivers.
+  Roaming and standalone script behavior is unchanged and deferred. Run
+  `too start <agent>` before Chat when background talk or chore work must
+  continue unattended; `start` and `serve` keep their placement driver
+  defaults, `start` never adds drivers to a running server, and changing a
+  running server's drivers or startup configuration requires stopping and
+  restarting it.
+
+- **Breaking:** steering or cancelling a resident or visiting run now attaches
+  only to the healthy live owner that accepted it and pins that invocation, so
+  a stale history can neither start a replacement server nor redirect a control
+  to a retry: the server rejects the control with HTTP 409 and the run keeps
+  running. Servers started by earlier versions are unmanaged, so stop and
+  restart them before `too start` can promote one or steer and cancel can use
+  guarded controls.
+
+- `too start` on an agent that is already running attaches to its server
+  instead of starting a duplicate, and verifies what it can: a differing
+  `--port`, or startup options it cannot verify on attachment, fail with
+  stop-and-restart guidance, a foreground `serve` cannot be detached, and the
+  command reports the drivers the server actually runs.
 
 - **Breaking:** State revisions move to layer schema 22 and composition schema
   3: accepted bytes are stored under `source/` and fetched bytes under

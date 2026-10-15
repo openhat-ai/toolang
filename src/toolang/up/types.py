@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from typing import Literal
 
 DriverName = Literal["chat", "talk", "chore"]
 ExecutionDrivers = frozenset[DriverName]
 ALL_DRIVERS: ExecutionDrivers = frozenset(("chat", "talk", "chore"))
+ServerLifetime = Literal["persistent", "foreground", "automatic"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -16,6 +18,12 @@ class AgentServerRef:
 
     sandbox: str
     endpoint: str
+    launch_id: str | None = None
+    lifetime: ServerLifetime | None = None
+    client_id: str | None = None
+    check_retention: Callable[[], None] | None = field(
+        default=None, compare=False, repr=False
+    )
 
     def __post_init__(self) -> None:
         sandbox = self.sandbox.strip()
