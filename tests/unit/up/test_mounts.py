@@ -122,7 +122,7 @@ def test_workspace_mounts_snapshot_only_available_grants(tmp_path: Path) -> None
             AgentLayout.resident(tmp_path, "alice")
         ).workspaces,
     )
-    lab_root = local_home / "lab"
+    lab_root = local_home / ".lab"
     hosted_lab = hosted_home / ".workspaces/lab"
     assert lab_root.is_dir()
     assert mounts == (
@@ -156,7 +156,7 @@ def test_workspace_mounts_include_configured_tmp_as_ordinary_grant(
         ).workspaces,
     )
 
-    lab_root = local_home / "lab"
+    lab_root = local_home / ".lab"
     assert mapping == {
         "lab": (str(lab_root.resolve()), str(hosted_home / ".workspaces/lab")),
         "tmp": (str(configured), str(hosted_home / ".workspaces/tmp")),
@@ -169,7 +169,7 @@ def test_workspace_mounts_reject_symlink_lab_directory(tmp_path: Path) -> None:
     local_home.mkdir(parents=True)
     target = tmp_path / "outside"
     target.mkdir()
-    (local_home / "lab").symlink_to(target, target_is_directory=True)
+    (local_home / ".lab").symlink_to(target, target_is_directory=True)
 
     with pytest.raises(
         ValueError, match="implicit lab workspace must not be a symlink"
@@ -182,7 +182,7 @@ def test_workspace_mounts_reject_symlink_lab_directory(tmp_path: Path) -> None:
 def test_workspace_mounts_reject_file_at_lab_path(tmp_path: Path) -> None:
     local_home = tmp_path / "agents/alice"
     local_home.mkdir(parents=True)
-    (local_home / "lab").write_text("not a directory")
+    (local_home / ".lab").write_text("not a directory")
 
     with pytest.raises(FileExistsError):
         prepare_workspace_mounts(
@@ -209,7 +209,7 @@ def test_nested_mount_order_is_by_root_depth_not_workspace_name(tmp_path: Path) 
     assert [mount.local_path for mount in mounts] == [
         root.resolve(),
         child.resolve(),
-        (local_home / "lab").resolve(),
+        (local_home / ".lab").resolve(),
     ]
     assert mapping["aa"][1] == "/guest/alice/.workspaces/zz/child"
     assert mounts[1].hosted_path.is_relative_to(mounts[0].hosted_path)

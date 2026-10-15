@@ -3,7 +3,25 @@ from pathlib import Path
 
 import pytest
 
-from toolang.common.layout import AgentLayout
+from toolang.common.layout import AgentLayout, ensure_scratch_workspace
+
+
+@pytest.mark.parametrize("existing", [False, True])
+def test_scratch_workspace_uses_hidden_directory(
+    tmp_path: Path, existing: bool
+) -> None:
+    home = tmp_path / "agents" / "alice"
+    home.mkdir(parents=True)
+    scratch = home / ".lab"
+    if existing:
+        scratch.mkdir()
+        (scratch / "marker").write_text("keep")
+
+    assert ensure_scratch_workspace(home) == scratch
+    assert scratch.is_dir()
+    assert not (home / "lab").exists()
+    if existing:
+        assert (scratch / "marker").read_text() == "keep"
 
 
 def test_resident_layout_derives_agent_paths(tmp_path: Path) -> None:

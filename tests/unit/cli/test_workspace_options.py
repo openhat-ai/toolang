@@ -241,7 +241,7 @@ def test_explicit_grants_can_repeat_running_bindings_when_selecting_uri(
 
 def test_configured_lab_does_not_replace_the_implicit_workspace(layout, tmp_path):
     layout.config.write_text('[workspaces]\nlab = "/unavailable-authored-lab"\n')
-    (layout.home / "lab" / "src").mkdir(parents=True)
+    (layout.home / ".lab" / "src").mkdir(parents=True)
     selected = resolve_workspaces(layout, procdir=tmp_path, workdir="lab://src")
     assert selected.workdir == "lab://src"
 
