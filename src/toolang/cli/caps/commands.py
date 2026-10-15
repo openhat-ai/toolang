@@ -357,7 +357,7 @@ def _make_add_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
         selected_agent = context_agent(ctx)
         from ..common.progress import make_cli_progress
 
-        progress = make_cli_progress()
+        progress = make_cli_progress(preparation=True)
         try:
             with progress:
                 canonical_ref = cap_state.resolve_remote_ref(
@@ -546,9 +546,12 @@ def _refresh_agent_state(
     toolang_root: Path,
     agent_name: str,
 ) -> None:
+    from ..common.progress import complete_preparation
+
     try:
         with _make_cap_write_progress() as owned_progress:
             _prepare_agent_state_with_progress(toolang_root, agent_name, owned_progress)
+            complete_preparation(owned_progress)
     except Exception as exc:
         raise ClickException(
             f"The change was saved, but agent State could not be published: {exc}"

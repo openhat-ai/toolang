@@ -886,4 +886,15 @@ def test_enabled_preparation_does_not_reuse_a_disabled_outer_session():
             inner(
                 _startup_event("one", stage="materialize", status="ok", complete=True)
             )
+            _finish_startup(inner)
     assert stream.getvalue().count("Prepared 1 cap in ") == 1
+
+
+def test_closing_reference_validation_does_not_report_prepared_state():
+    from toolang.cli.common.progress import PreparationProgress
+
+    stream = StringIO()
+    with PreparationProgress(stream=stream) as progress:
+        progress(_startup_event("one", stage="resolve"))
+        progress(_startup_event("one", stage="resolve", status="ok", complete=True))
+    assert stream.getvalue() == "github://example/caps/one resolving\n"

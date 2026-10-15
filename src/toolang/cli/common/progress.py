@@ -465,8 +465,6 @@ class PreparationProgress(CliProgress):
     def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
         self._depth -= 1
         if self._depth == 0:
-            if exc_type is None:
-                complete_preparation(self)
             if self._token is not None:
                 _PREPARATION_PROGRESS.reset(self._token)
                 self._token = None

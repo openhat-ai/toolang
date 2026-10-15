@@ -1251,6 +1251,10 @@ async def _execute(
         workspace_additions=state.workspace_additions,
     )
     sink = progress.sink if progress is not None else None
+    if progress is not None:
+        from ...common.progress import complete_preparation
+
+        complete_preparation(progress)
     setup = await setup_watcher.refresh(progress=sink)
     state = await state_watcher.refresh(progress=sink)
     models = setup.models_effective(progress=sink)
@@ -1281,9 +1285,6 @@ async def _execute(
     )
     executor.validate(spec)
     if progress is not None:
-        from ...common.progress import complete_preparation
-
-        complete_preparation(progress)
         progress.close()
     progress_width = None if quiet else resolve_progress_max_width(environ)
     surfaces = (

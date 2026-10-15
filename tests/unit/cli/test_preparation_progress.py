@@ -167,8 +167,9 @@ def test_remote_cap_inspection_shares_agent_and_cap_progress(
 
 
 @pytest.mark.parametrize("quiet", [False, True])
-def test_local_script_completes_preparation_before_execution(
-    tmp_path, monkeypatch, capsys, quiet
+@pytest.mark.parametrize("setup_fails", [False, True])
+def test_local_script_completes_preparation_before_setup_and_execution(
+    tmp_path, monkeypatch, capsys, quiet, setup_fails
 ):
     from io import StringIO
 
@@ -189,7 +190,19 @@ def test_local_script_completes_preparation_before_execution(
         cap_state, "_fetch_github_file", lambda _: b"Review carefully.\n"
     )
 
+    preparation_output = []
+
     async def setup(_watcher, *, progress=None):
+        output = capsys.readouterr()
+        preparation_output.append(output.err)
+        if quiet:
+            assert "Prepared" not in output.err
+            assert "fetching" not in output.err
+        else:
+            assert f"{_REF} fetching" in output.err
+            assert output.err.count("Prepared 1 cap in ") == 1
+        if setup_fails:
+            raise ValueError("Setup unavailable")
         return harness.setup
 
     monkeypatch.setattr(SetupWatcher, "refresh", setup)
@@ -200,20 +213,72 @@ def test_local_script_completes_preparation_before_execution(
     def start(executor):
         output = capsys.readouterr()
         observed.append(output.err)
-        if quiet:
-            assert "Prepared" not in output.err
-            assert "fetching" not in output.err
-        else:
-            assert f"{_REF} fetching" in output.err
-            assert output.err.count("Prepared 1 cap in ") == 1
-            assert "Preparing" not in output.err
+        assert "Prepared" not in output.err
+        assert "fetching" not in output.err
         return original_start(executor)
 
     monkeypatch.setattr(RunExecutor, "start", start)
     try:
         args = [str(source), "flow:run", *(["--quiet"] if quiet else []), "--", "done"]
-        assert script.dispatch([], args, prog_name="too", stdin=StringIO()) == 0
-        assert observed
+        assert script.dispatch([], args, prog_name="too", stdin=StringIO()) == (
+            1 if setup_fails else 0
+        )
+        assert bool(observed) == (not setup_fails)
+        assert preparation_output
+        if setup_fails:
+            output = capsys.readouterr()
+            assert "Setup unavailable" in output.err
+            assert "Prepared" not in output.err
         assert not harness.adapter.invocations
     finally:
         harness.store.close()
+
+
+@pytest.mark.parametrize("scope", ["root", "home"])
+def test_cap_add_uses_ref_rows_without_summarizing_reference_validation(
+    tmp_path, monkeypatch, capsys, scope
+):
+    from toolang.cli.toolang.main import main
+
+    layout = _agent(tmp_path)
+    layout.config.write_text("")
+    observed = []
+
+    def exists(_kind, _ref):
+        output = capsys.readouterr()
+        observed.append(output.err)
+        assert f"{_REF} resolving" in output.err
+        assert "Resolving prompt" not in output.err
+        return True
+
+    def fetch(_ref):
+        output = capsys.readouterr()
+        assert f"{_REF} fetching" in output.err
+        assert "Prepared" not in output.err
+        return b"Review carefully.\n"
+
+    monkeypatch.setattr(cap_state, "_github_remote_exists", exists)
+    monkeypatch.setattr(cap_state, "_fetch_github_file", fetch)
+    target = ["dev"] if scope == "home" else []
+    assert main(["--root", str(tmp_path), *target, "prompt", "add", _REF]) == 0
+    output = capsys.readouterr()
+    assert observed
+    assert "Prompt review added:" in output.out
+    assert output.err.count("Prepared 1 cap in ") == (scope == "home")
+    assert ("Prepared" in output.err) == (scope == "home")
+
+
+def test_cap_add_resolution_failure_keeps_diagnostics_without_success_summary(
+    tmp_path, monkeypatch, capsys
+):
+    from toolang.cli.toolang.main import main
+
+    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda *_: False)
+    assert main(["--root", str(tmp_path), "prompt", "add", _REF]) == 1
+    output = capsys.readouterr()
+    assert f"{_REF} resolving" in output.err
+    assert "Failed to resolve prompt" in output.err
+    assert "Stage: prepare.resolve" in output.err
+    assert "remote prompt not found" in output.err
+    assert "Prepared" not in output.err
+    assert "added:" not in output.out
