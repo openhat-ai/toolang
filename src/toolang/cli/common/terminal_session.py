@@ -97,7 +97,6 @@ def prepare_terminal(
     *,
     layout: AgentLayout | None = None,
     root: Path | None = None,
-    title_prefix: str | None = None,
     label: str = "",
     thread: str = "",
     convo: str = "",
@@ -123,7 +122,6 @@ def prepare_terminal(
         kind,
         sources=sources,
         environment=environ,
-        option=title_prefix,
     )
     output = stream if stream is not None else sys.stdout
     enabled = (

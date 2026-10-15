@@ -74,7 +74,7 @@ import time
 from toolang.cli.common.terminal_session import prepare_terminal
 from toolang.common.layout import AgentLayout
 root = Path({str(tmp_path)!r})
-with prepare_terminal({kind!r}, root=root, title_prefix="",
+with prepare_terminal({kind!r}, root=root,
     layout=AgentLayout.resident(root, {agent!r}) if {agent!r} else None,
     label={label!r}, convo="gc_123" if {kind!r} == "talk" else "",
     context="context" if {kind!r} == "talk" or ({kind!r} == "top" and not {agent!r}) else "") as terminal:
@@ -86,7 +86,16 @@ Path({str(closed)!r}).touch()
 time.sleep(60)
 """
     pane = window.split(
-        shell=shlex.join(["env", "TOOLANG_TMUX=1", sys.executable, "-c", code]),
+        shell=shlex.join(
+            [
+                "env",
+                "TOOLANG_TMUX=1",
+                f"TOOLANG_TITLE_PREFIX_{kind.upper()}=",
+                sys.executable,
+                "-c",
+                code,
+            ]
+        ),
         attach=False,
     )
 

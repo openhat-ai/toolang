@@ -99,7 +99,7 @@ top = "[too] "
 run = ""
 ```
 
-Precedence, highest first: **CLI `--title-prefix TEXT` > env
+Precedence, highest first: **env
 `TOOLANG_TITLE_PREFIX_<TYPE>` > home config > root config > empty default**.
 Environment suffixes are uppercase, for example `TOOLANG_TITLE_PREFIX_CHAT`.
 Merge per type by presence: omission inherits, an explicit `""` clears, and
@@ -113,13 +113,13 @@ strings replace rather than append. Follow existing
 - Reuse root `.env` < home `.env` < process environment ordering; roaming/script
   commands retain process-only environment behavior. No state creation or
   live config watcher is needed for prefix resolution.
-- Add the option through existing command factories. Its absent value is
-  `None`; explicit empty values survive Script parent/runnable option handling
-  and both invocation forms. Reject malformed tables, unknown prefix keys,
-  and non-string values with source/key errors; leave unrelated settings alone.
+- Prefixes have no CLI option; see the
+  [option removal definition](remove-title-prefix-option.md). Reject malformed
+  tables, unknown prefix keys, and non-string values with source/key errors;
+  leave unrelated settings alone.
 
 ```sh
-too alice chat --title-prefix '[too] '
+TOOLANG_TITLE_PREFIX_CHAT='[too] ' too alice chat
 TOOLANG_TITLE_PREFIX_CHAT='' too alice chat
 ```
 
@@ -180,13 +180,13 @@ business logic. Reuse existing callbacks; cleanup stays in the shared lifecycle.
   and obsolete tests; add no compatibility branches for removed behavior.
 - New `cli/common/terminal_title.py` and `terminal_session.py`: title publisher
   and thin lifecycle composition. Command owners construct their labels.
-- `cli/config.py`, `cli/common/{context,parameters}.py`: prefix parsing,
-  source layering, and shared option; keep presentation out of execution schemas.
+- `cli/config.py`, `cli/common/context.py`: prefix parsing and source layering;
+  keep presentation out of execution schemas.
 - `cli/toolang/commands/chat/{main,marks,title,tui}.py` and
   `talk/{__init__,tui}.py`: remove placement; preserve lazy thread creation and
   conversation selection; connect marks/titles. Keep Talk labels in `talk/status.py`.
 - `cli/toolang/commands/{top,runtime,hub,script,thread}.py` and
-  `cli/common/activity.py`: mark/title lifetimes and options, including normal
+  `cli/common/activity.py`: mark/title lifetimes, including normal
   run allocation/acceptance hooks. Public agent Serve is `runtime.run`;
   internal `runtime.serve` does not publish.
 - Paths above are under `src/toolang/`. Update relevant CLI/config/title tests,
@@ -209,7 +209,7 @@ business logic. Reuse existing callbacks; cleanup stays in the shared lifecycle.
    and Chat title results update OSC without changing marks.
 4. Prefix precedence, partial tables, explicit empty values, whitespace, invalid
    config, and resident/visiting/roaming/root-only sources resolve consistently.
-   Direct Script and `too run` options agree; one type never affects another.
+   Direct Script and `too run` prefixes agree; one type never affects another.
 5. Unicode, controls, joined emoji, long prefixes, and long labels produce safe
    payloads within 32 columns. Failed writes can later succeed and still clear;
    closed publishers ignore late updates. Run the repository's default checks

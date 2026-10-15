@@ -2325,26 +2325,38 @@ def test_embedded_script_forwards_progress_to_its_final_state_check(
 
 
 @pytest.mark.parametrize("explicit_run", [False, True])
-@pytest.mark.parametrize(
-    "parent,child,expected",
-    [(None, None, None), ("p ", None, "p "), ("p ", "", ""), ("", " 💬 ", " 💬 ")],
-)
-def test_script_title_prefix_survives_both_dispatch_forms(
-    tmp_path, monkeypatch, explicit_run, parent, child, expected
+@pytest.mark.parametrize("child", [False, True])
+def test_script_help_omits_title_prefix_option(
+    tmp_path, monkeypatch, capsys, explicit_run, child
 ):
     from toolang.cli.toolang import main as cli
 
-    monkeypatch.setattr(script.sys, "stdin", StringIO())
     source = _write_source(tmp_path, "agic demo():\n  Hello.\n")
-    captured = {}
     monkeypatch.setattr(
-        script, "_run", lambda _source, **kwargs: captured.update(kwargs) or 0
+        script, "_run", lambda *_args, **_kwargs: pytest.fail("help must not run")
     )
     args = (["run"] if explicit_run else []) + [str(source)]
-    if parent is not None:
-        args += ["--title-prefix", parent]
-    args += ["demo"]
-    if child is not None:
-        args += ["--title-prefix", child]
+    args += (["demo"] if child else []) + ["--help"]
     assert cli.main(args) == 0
-    assert captured["title_prefix"] == expected
+    output = capsys.readouterr()
+    assert "--title-prefix" not in strip_ansi(output.out)
+    assert not output.err
+
+
+@pytest.mark.parametrize("explicit_run", [False, True])
+@pytest.mark.parametrize("child", [False, True])
+def test_script_rejects_removed_title_prefix_option(
+    tmp_path, monkeypatch, capsys, explicit_run, child
+):
+    from toolang.cli.toolang import main as cli
+
+    source = _write_source(tmp_path, "agic demo():\n  Hello.\n")
+    monkeypatch.setattr(
+        script,
+        "_run",
+        lambda *_args, **_kwargs: pytest.fail("invalid options must not run"),
+    )
+    args = (["run"] if explicit_run else []) + [str(source)]
+    args += (["demo"] if child else []) + ["--title-prefix", "[too] "]
+    assert cli.main(args) == 2
+    assert "No such option: --title-prefix" in strip_ansi(capsys.readouterr().err)

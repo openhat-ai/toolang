@@ -21,7 +21,6 @@ from toolang.cli.common.parameters import (
     DefaultOptions,
     LimitOptions,
     TextType,
-    TitlePrefixOption,
 )
 
 
@@ -37,7 +36,6 @@ def chat_command(
             metavar="[THREAD]",
         ),
     ] = None,
-    title_prefix: TitlePrefixOption = None,
     model_catalog: ModelCatalogOption = None,
     sandbox: Annotated[
         str | None,
@@ -64,7 +62,6 @@ def chat_command(
     run(
         ctx,
         thread=thread,
-        title_prefix=title_prefix,
         model_catalog=model_catalog,
         allows=allows,
         defaults=defaults,

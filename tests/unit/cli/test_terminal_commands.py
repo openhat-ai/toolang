@@ -17,6 +17,32 @@ from toolang.lang.input import CallInput
 from toolang.up.types import AgentServerRef
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        ["chat"],
+        ["talk"],
+        ["top"],
+        ["serve"],
+        ["hub", "serve"],
+        ["retry"],
+        ["rerun"],
+        ["agent:sample", "chat"],
+        ["agent:sample", "top"],
+        ["agent:sample", "serve"],
+    ],
+)
+def test_terminal_commands_remove_title_prefix_option(tmp_path, capsys, command):
+    args = ["--root", str(tmp_path), *command]
+    assert cli.main([*args, "--help"]) == 0
+    output = capsys.readouterr()
+    assert "--title-prefix" not in output.out
+    assert not output.err
+
+    assert cli.main([*args, "--title-prefix", "[too] "]) == 2
+    assert "No such option: --title-prefix" in capsys.readouterr().err
+
+
 @pytest.fixture
 def publication(monkeypatch):
     entries, events = [], []
@@ -91,7 +117,6 @@ def test_script_publishes_basename_and_actual_allocated_run(
             dev=None,
             save=None,
             quiet=False,
-            title_prefix="💬 ",
         )
         == 0
     )
@@ -99,7 +124,6 @@ def test_script_publishes_basename_and_actual_allocated_run(
     assert entries[0][1]["label"] == "run file.too" + (
         " build" if runnable == "build" else ""
     )
-    assert entries[0][1]["title_prefix"] == "💬 "
     assert events == ["start", ("run", allocated[0]), "close"]
 
 
@@ -175,7 +199,7 @@ def test_top_publication_uses_scope_and_no_refresh_hooks(
             tmp_path, layout=AgentLayout.resident(tmp_path, agent) if agent else None
         ),
     )
-    top.top_command(context, once=once, title_prefix="")
+    top.top_command(context, once=once)
     assert entries[0][1]["label"] == f"top {agent or 'team'}"
     if once:
         assert not entries[0][1]["eligible"]
@@ -201,7 +225,7 @@ def test_top_without_hub_keeps_local_observation(tmp_path, monkeypatch, publicat
     monkeypatch.setattr(top, "watch", watch)
     context = typer.Context(typer.main.get_command(cli.app), obj=CliContext(tmp_path))
 
-    top.top_command(context, once=True, title_prefix="")
+    top.top_command(context, once=True)
 
     assert len(observed) == 1
     assert entries[0][1]["context"] == ""
@@ -220,7 +244,7 @@ def test_hub_serve_has_one_outer_lifecycle(tmp_path, monkeypatch, publication):
     monkeypatch.setattr(hub, "serve_hub", serve)
     context = typer.Context(typer.main.get_command(cli.app), obj=CliContext(tmp_path))
     with pytest.raises(typer.Exit) as error:
-        hub.serve(context, title_prefix=" ")
+        hub.serve(context)
     assert error.value.exit_code == 0
     assert entries[0][0] == "serve" and entries[0][1]["label"] == "serve hub"
     assert events == ["start", "close"]
@@ -251,7 +275,7 @@ def test_agent_serve_publishes_once_at_outer_cli(tmp_path, monkeypatch, publicat
         typer.main.get_command(cli.app), obj=CliContext(tmp_path, layout=layout)
     )
     with pytest.raises(typer.Exit) as error:
-        runtime.run(context, title_prefix="")
+        runtime.run(context)
     assert error.value.exit_code == 0
     assert entries[0][0] == "serve" and entries[0][1]["label"] == "serve alice"
     assert entries[0][1]["layout"] == layout

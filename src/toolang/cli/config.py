@@ -37,7 +37,6 @@ def resolve_title_prefix(
     *,
     sources: Sequence[ConfigSource],
     environment: Mapping[str, str],
-    option: str | None,
 ) -> str:
     """Validate each layer, then merge the selected type by presence."""
     if kind not in TITLE_KINDS:
@@ -63,8 +62,4 @@ def resolve_title_prefix(
                 )
             if key == kind:
                 prefix = value
-    return (
-        option
-        if option is not None
-        else environment.get(f"TOOLANG_TITLE_PREFIX_{kind.upper()}", prefix)
-    )
+    return environment.get(f"TOOLANG_TITLE_PREFIX_{kind.upper()}", prefix)

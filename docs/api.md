@@ -996,7 +996,7 @@ untouched; Chat and Talk always run in the invoking terminal.
 | Script Run | `run file.too` or `run file.too runnable` (basename only) |
 | Retry / Rerun | `retry run_id` / `rerun run_id` (source ID) |
 
-Each type accepts `--title-prefix TEXT`, defaulting to an empty string. Configure
+Each type's prefix defaults to an empty string. Configure
 `chat`, `talk`, `top`, `serve`, `run`, `retry`, and `rerun` independently:
 
 ```toml
@@ -1005,11 +1005,18 @@ chat = "💬 "
 top = "[too] "
 ```
 
-Precedence is CLI > `TOOLANG_TITLE_PREFIX_<TYPE>` > agent-home config > root
+Precedence is `TOOLANG_TITLE_PREFIX_<TYPE>` > agent-home config > root
 config > empty. Omitted keys inherit; explicit empty strings clear. Root-only
 views skip agent-home config. Roaming/scripts use their existing outer-to-inner
 project `toolang.toml` layers. Environment values use root dotenv < home dotenv
 < process ordering; roaming/scripts use the process environment only.
+
+For a one-off override, set the type's environment variable:
+
+```sh
+TOOLANG_TITLE_PREFIX_CHAT='[too] ' too alice chat
+TOOLANG_TITLE_PREFIX_CHAT='' too alice chat
+```
 
 Prefixes concatenate directly: `"💬"` gives `💬alice`; `"💬 "` gives `💬 alice`.
 Printable spaces are preserved. Unsafe controls are removed and the complete

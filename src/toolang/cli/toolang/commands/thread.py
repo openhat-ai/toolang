@@ -17,7 +17,6 @@ from toolang.cli.common.parameters import (
     AllowOptions,
     LimitOptions,
     TextType,
-    TitlePrefixOption,
 )
 from toolang.cli.common.terminal_session import prepare_terminal
 
@@ -129,7 +128,6 @@ def retry_command(
             help="Run id to retry. Thread id means its latest visible root run",
         ),
     ],
-    title_prefix: TitlePrefixOption = None,
     model_catalog: ModelCatalogOption = None,
     anchor: Annotated[
         str | None,
@@ -170,7 +168,6 @@ def retry_command(
         model_override=None,
         show_progress=show_progress,
         model_catalog=resolve_model_catalog_option(model_catalog),
-        title_prefix=title_prefix,
     )
     status = _display_status(result.status)
     if not show_progress:
@@ -189,7 +186,6 @@ def rerun_command(
             help="Run id to rerun. Thread id means its latest visible root run",
         ),
     ],
-    title_prefix: TitlePrefixOption = None,
     model_catalog: ModelCatalogOption = None,
     sandbox: Annotated[
         str | None,
@@ -241,7 +237,6 @@ def rerun_command(
         model_override=model_override,
         show_progress=show_progress,
         model_catalog=resolve_model_catalog_option(model_catalog),
-        title_prefix=title_prefix,
     )
     status = _display_status(result.status)
     if not show_progress:
@@ -379,14 +374,12 @@ def _run_retry_or_rerun(
     model_override: ModelOverride | None,
     show_progress: bool,
     model_catalog: Path | None = None,
-    title_prefix: str | None = None,
 ) -> RunDetail:
     try:
         with (
             prepare_terminal(
                 kind,
                 layout=layout,
-                title_prefix=title_prefix,
                 label=f"{kind} {source}",
                 eligible=show_progress,
                 stream=sys.stderr,
