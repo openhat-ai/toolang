@@ -783,7 +783,7 @@ def _decode_caps(
                     for use in program.withs
                     if use.cap_kind == kind and use.reference == declared
                 ]
-            if len(lines) != 1:
+            if not lines or (form == "inline" and len(lines) != 1):
                 raise ValueError("cap does not match its Program declaration")
             line = lines[0]
         remote = form in {"configured", "referenced"}
@@ -1022,6 +1022,7 @@ def _layer_document(
                 for resolution in resolutions
                 if resolution.materialized == cap.path
                 and resolution.definition == f"source/{key}"
+                and resolution.declared_ref == cap.source.declared_ref
             )
             result["resolution"] = {
                 "declared_ref": match.declared_ref,

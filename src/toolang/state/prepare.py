@@ -684,7 +684,7 @@ def _build_layer_revision(
             )
         module_resolutions = {}
         acquired = layout.program_acquisition if scope == "home" else None
-        if acquired is not None and "agent" in modules:
+        if acquired is not None and "source/agent.too" in files:
             captured = acquired.acquisition
             if files.get("source/agent.too") != captured.files[captured.entry]:
                 raise ValueError("visiting Program changed after acquisition")

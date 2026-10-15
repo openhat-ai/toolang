@@ -19,6 +19,11 @@ class GitHubRef:
     path: str
     rev: str
 
+    @property
+    def is_pinned(self) -> bool:
+        """Whether the revision is a full immutable commit SHA."""
+        return re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", self.rev) is not None
+
     def render(self) -> str:
         """Render this reference as one canonical ``github://`` URI."""
 
@@ -128,7 +133,7 @@ def _split_url_revision(parts: list[str], *, original: str) -> tuple[str, str]:
 
 def pin_github_ref(ref: GitHubRef, fetch: Callable[[str], bytes]) -> GitHubRef:
     """Pin a selector using bytes acquired by its owning source service."""
-    if re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", ref.rev):
+    if ref.is_pinned:
         return ref
     url = (
         f"https://api.github.com/repos/{quote(ref.owner, safe='')}/"

@@ -648,10 +648,25 @@ def _resolve_github_commit(ref: GitHubRef) -> str:
 def _cached_visiting_source(layout: AgentLayout) -> AcquiredSource | None:
     try:
         receipt = json.loads((layout.home / "agent.source.json").read_bytes())
+        if not isinstance(receipt, dict) or not all(
+            isinstance(receipt.get(key), str) and receipt[key]
+            for key in ("declared_ref", "resolved_ref", "entry", "sha256")
+        ):
+            return None
         content = layout.program.read_bytes()
         if receipt["sha256"] != sha256(content).hexdigest():
             return None
         entry = receipt["entry"]
+        resolved = parse_remote_source(receipt["resolved_ref"])
+        if (
+            isinstance(resolved, GitHubShorthand)
+            or resolved.render() != receipt["resolved_ref"]
+            or resolved.path.lstrip("/") != entry
+            or not reusable_agent_source(
+                parse_agent_target(receipt["declared_ref"]), receipt["resolved_ref"]
+            )
+        ):
+            return None
         return AcquiredSource(
             receipt["declared_ref"],
             Acquisition(
@@ -685,9 +700,10 @@ def reusable_agent_source(target: AgentTarget, resolved_ref: str) -> bool:
             and previous.default_name() == requested.name
         )
     if isinstance(requested, GitHubRef):
-        return isinstance(previous, GitHubRef) and (
-            previous.owner,
-            previous.repo,
-            previous.path,
-        ) == (requested.owner, requested.repo, requested.path)
+        return (
+            isinstance(previous, GitHubRef)
+            and (not requested.is_pinned or requested.rev == previous.rev)
+            and (previous.owner, previous.repo, previous.path)
+            == (requested.owner, requested.repo, requested.path)
+        )
     return isinstance(requested, HttpRef) and requested == previous

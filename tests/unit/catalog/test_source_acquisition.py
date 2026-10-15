@@ -76,3 +76,20 @@ def test_full_sha_does_not_require_commit_lookup(offline_source_versions):
         offline_source_versions(GitHubRef("owner", "repo", "agent.too", "c" * 40))
         == "c" * 40
     )
+
+
+def test_cached_acquisition_does_not_override_an_explicit_commit(monkeypatch):
+    from toolang.common.source import Acquisition
+
+    previous = Acquisition(
+        f"github://owner/repo/style.md@{'a' * 40}",
+        "style.md",
+        {"style.md": b"Old."},
+        "style",
+    )
+    requested = f"github://owner/repo/style.md@{'b' * 40}"
+    monkeypatch.setattr(source, "_fetch_github_file", lambda ref: b"Requested.")
+    assert not source.reusable("prompt", requested, previous.resolved_ref)
+    captured = source.acquire("prompt", requested, cached=previous)
+    assert captured.resolved_ref == requested
+    assert captured.files["style.md"] == b"Requested."

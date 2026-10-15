@@ -417,3 +417,77 @@ def test_nested_cap_metadata_round_trips_through_json(tmp_path):
     restored = load_agent_state(layout, state.revision)
     assert restored.services["review"].meta == state.services["review"].meta
     validate_agent_revision(layout, state.revision)
+
+
+def test_visiting_dependency_failure_excludes_only_its_program(tmp_path, monkeypatch):
+    from toolang.up import source as agent_source
+
+    layout = agent_source.materialize_visiting_program(
+        agent_source.HttpRef("https://example.com/dev.too"),
+        "with skill https://example.com/missing\nflow main():\n  pass\n",
+        toolang_root=tmp_path,
+    )
+    runnable = layout.home / "runnables/check.too"
+    runnable.parent.mkdir()
+    runnable.write_text("flow check():\n  pass\n")
+
+    def unavailable(*args, **kwargs):
+        raise ValueError("remote skill unavailable")
+
+    monkeypatch.setattr(source_owner, "acquire", unavailable)
+    state = prepare_agent_state(layout)
+    assert "check" in state.runnables
+    assert "main" not in state.runnables
+    layer = document(layout, state)
+    agent = next(item for item in layer["modules"] if item["ref"] == "agent")
+    assert agent["source"] is None
+    assert "resolution" not in agent
+    assert layer["source"]["agent.too"]["error"]
+    validate_agent_revision(layout, state.revision)
+
+
+def test_configured_aliases_keep_their_own_declared_refs(tmp_path, monkeypatch):
+    layout = layout_at(tmp_path)
+    refs = {
+        "alpha": "gh:owner/repo/style.md@main",
+        "beta": "github:owner/repo/style.md@main",
+    }
+    layout.config.write_text(
+        "[prompts]\n"
+        + "".join(f'{name} = {{ref="{ref}"}}\n' for name, ref in refs.items())
+    )
+    monkeypatch.setattr(source_owner, "_resolve_github_commit", lambda ref: "c" * 40)
+    monkeypatch.setattr(source_owner, "_fetch_github_file", lambda ref: b"Shared.")
+    first = prepare_agent_state(layout)
+    caps = document(layout, first)["caps"]
+    assert {
+        item["ref"].split("/")[1]: item["resolution"]["declared_ref"] for item in caps
+    } == refs
+    assert len(document(layout, first)["materialized"]) == 1
+
+    def no_fetch(*args, **kwargs):
+        pytest.fail("unchanged aliases must retain their own reusable acquisitions")
+
+    monkeypatch.setattr(source_owner, "_fetch_github_file", no_fetch)
+    layout.program.write_text(layout.program.read_text() + "\n# Local edit\n")
+    second = prepare_agent_state(layout)
+    assert set(second.prompts) == {"alpha", "beta"}
+    validate_agent_revision(layout, second.revision)
+
+
+def test_repeated_with_declarations_keep_one_cap_and_the_first_location(
+    tmp_path, monkeypatch
+):
+    layout = layout_at(tmp_path)
+    declaration = "with prompt https://example.com/style.md\n"
+    layout.program.write_text(declaration * 2 + "flow work():\n  pass\n")
+    monkeypatch.setattr(source_owner, "_fetch_url_bytes", lambda url: b"Be concise.")
+    state = prepare_agent_state(layout)
+    assert len(document(layout, state)["caps"]) == 1
+    assert state.prompts["style"].source.line == 1
+    assert len(state.modules["agent"].withs) == 2
+    assert (
+        load_agent_state(layout, state.revision).prompts["style"].read_content()
+        == "Be concise."
+    )
+    validate_agent_revision(layout, state.revision)

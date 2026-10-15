@@ -420,6 +420,7 @@ def reusable(kind: EntryKind, declared_ref: str, resolved_ref: str) -> bool:
             isinstance(previous, GitHubRef)
             and requested.owner == previous.owner
             and requested.repo == previous.repo
+            and (not requested.is_pinned or requested.rev == previous.rev)
             and canonicalize_remote_ref(kind, declared_ref).rsplit("@", 1)[0]
             == canonicalize_remote_ref(kind, resolved_ref).rsplit("@", 1)[0]
         )

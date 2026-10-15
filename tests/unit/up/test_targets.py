@@ -533,3 +533,50 @@ def test_visiting_acquisition_pins_and_preserves_provenance(tmp_path, monkeypatc
     )
     assert load_agent_state(restored, state.revision).modules == state.modules
     validate_agent_revision(restored, state.revision)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("resolved_ref", "invalid:cached"),
+        ("resolved_ref", 42),
+        ("declared_ref", None),
+        ("declared_ref", "invalid:cached"),
+        ("entry", "other.too"),
+    ],
+)
+def test_invalid_visiting_receipt_is_refetched(tmp_path, monkeypatch, field, value):
+    import json
+    from toolang.state.prepare import prepare_agent_state
+
+    url = "https://example.com/dev.too"
+    content = "flow main():\n  pass\n"
+    cached = agent_sources.materialize_visiting_program(
+        agent_sources.HttpRef(url),
+        content,
+        toolang_root=tmp_path,
+    )
+    path = cached.home / "agent.source.json"
+    receipt = json.loads(path.read_bytes())
+    receipt[field] = value
+    path.write_text(json.dumps(receipt))
+    fetched = []
+    monkeypatch.setattr(
+        agent_sources,
+        "fetch_agent_ref",
+        lambda ref, **kwargs: fetched.append(ref) or content,
+    )
+    actual = agent_sources.resolve_visiting_layout(url, toolang_root=tmp_path)
+    assert len(fetched) == 1
+    assert actual.program_acquisition is not None
+    assert actual.program_acquisition.declared_ref == url
+    assert prepare_agent_state(actual).runnables["main"]
+
+
+def test_visiting_reuse_honors_an_explicit_commit():
+    requested = f"github://owner/repo/dev.too@{'b' * 40}"
+    target = agent_sources.parse_agent_target(requested)
+    assert not agent_sources.reusable_agent_source(
+        target, f"github://owner/repo/dev.too@{'a' * 40}"
+    )
+    assert agent_sources.reusable_agent_source(target, requested)
