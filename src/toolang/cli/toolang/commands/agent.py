@@ -190,6 +190,7 @@ def info_agent(
     else:
         resources = _local_resources(
             layout,
+            toolang_root=context_root(ctx),
             model_catalog=resolve_model_catalog_option(model_catalog),
             source=cli_context(ctx).source,
             selector=agent if layout.placement == "visiting" else None,
@@ -243,6 +244,7 @@ def _caps_summary(state: AgentState) -> str:
 def _local_resources(
     layout: AgentLayout,
     *,
+    toolang_root: Path,
     model_catalog: Path | None,
     source: Path | None = None,
     selector: str | None = None,
@@ -254,7 +256,10 @@ def _local_resources(
                 user_call(agents.materialize_roaming_program, source)
             elif selector is not None:
                 user_call(
-                    agents.resolve_visiting_layout, selector, progress=progress.sink
+                    agents.resolve_visiting_layout,
+                    selector,
+                    toolang_root=toolang_root,
+                    progress=progress.sink,
                 )
             state = cast(
                 AgentState,

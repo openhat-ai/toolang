@@ -725,29 +725,32 @@ Behavior:
 | `toolang clone` | Clones one local agent, or fetches one remote agent program into a new local managed agent |
 | `toolang start` | Starts one local managed agent only. Remote selectors must be cloned first |
 
-`toolang serve` and `toolang start` resolve the same `LaunchSpec` and call the
-same sandbox lifecycle. A hidden `toolang _serve` command is the only
-AgentServer process entrypoint. The sandbox implementation launches that
-entrypoint locally, in Docker, or in another environment; the execution core
-is shared across sandboxes.
+`too serve` and `too start` resolve concrete startup inputs at the control
+boundary. Host `serve` executes in the foreground command's process; host
+`start` launches a detached child. Docker runs one guest workload and its host
+controller. Detached and guest workloads use hidden `too _serve`, receiving
+explicit agent paths, input policy, sandbox, location, and launch ID without
+placement decisions. The execution core is shared across sandboxes.
 
 The CLI preserves the interpreter's process name and command-line arguments.
 Terminal conversation titles continue to use OSC independently of process names.
 
-Server discovery uses the sandbox reference under the Toolang root, independently
-of process titles. Host references validate PID and process creation time;
+Server discovery uses lightweight references under the Toolang root's
+`.runtime/instances/`, pointing to the agent's authoritative
+`agents/<agent>/.runtime/status.json`. Host references validate PID and creation time;
 container references use adapter-owned instance IDs. `info` shows the referenced
 PID or instance even during startup and ignores status reports from another
 workload. Missing or unverifiable control state produces a diagnostic instead of
 adopting a process by name. Stop unregistered legacy servers before upgrading.
 
-Both commands report the same ordered operational work on stderr: preparing the
-sandbox, creating the runtime, and connecting to the Agent API. Docker adds
+Control-side launches report ordered operational work on stderr: preparing the
+sandbox, creating the runtime, and connecting to the Agent API. Host foreground
+`serve` reports workload lifecycle through its normal logging. Docker adds
 Toolang installation and compatibility checks. A TTY uses one transient line
 without a spinner and shows elapsed time after one second. A non-TTY writes
 each action and outcome as an append-only plain-text line. The stable
-`Agent NAME running: ...` and `Agent NAME started: ...` result lines are written
-only after readiness succeeds.
+`Agent NAME running: ...` (guest foreground) and `Agent NAME started: ...`
+result lines are written only after readiness succeeds.
 
 Both commands accept repeatable `--allow RESOURCE=QUERY`,
 `--limit LIMIT=VALUE`, and `--default SETTING=VALUE` options. The CLI parses these
@@ -799,13 +802,17 @@ Config is re-read dynamically; environment and CLI mappings remain fixed for
 the process lifetime. Each `--default` or `--limit` field may occur once;
 repeated `--allow` values for the same domain accumulate within the CLI layer.
 
-When `--sandbox` is omitted, resident run/start commands use the effective
-root/home `[sandbox]` binding, falling back to `host` when no binding exists.
-An explicit selector, including `--sandbox host`, overrides that binding.
+Sandbox selection uses CLI > current `[sandbox]` binding > last successful
+selector > `host`. An unavailable selected sandbox fails without falling back.
+Persistent servers reuse their last successful available host-facing port when
+no current port input overrides it; a busy remembered port is reallocated, while
+an explicit/configured busy port fails. Successful settings are recorded only
+after readiness; failed attempts do not replace them. Stopped records retain
+these settings and database/log history. Temporary script ports remain temporary.
 Docker sandbox control is supported from Linux and macOS hosts. Windows users
 must run Toolang through WSL2; native Windows host control is not supported.
 
-Chat uses the same explicit/configured/host selection when no AgentServer is
+Chat uses the same selection when no AgentServer is
 active and starts a persistent server for either host or guest execution.
 If an AgentServer is already running, Chat attaches to it and rejects an explicit
 incompatible selector without executing or restarting the server.
@@ -898,8 +905,9 @@ mounted, and the original agent `.env` remains hidden behind the nested file
 mount. A small bootstrap reads this same generated dotenv into the guest process
 before package installation or plugin loading. Dotenv values are literal on
 both host and guest, so `${NAME}` is not expanded during either load.
-Toolang passes only `TOOLANG_HOST_GATEWAY`, `TOOLANG_ROOT`, and
-`TOOLANG_SANDBOX` through Docker's environment arguments; Docker also maps
+Toolang passes gateway, Toolang-root, sandbox, and workspace control values
+through Docker's environment arguments; `TOOLANG_ROOT` retains the selected
+Toolang root, and `_serve` receives the mapped agent root explicitly. Docker maps
 `host.docker.internal` through the engine's `host-gateway`. The complete staging
 mount is read-only in the guest. Staged files are removed on release and after a
 failed Docker launch whose workload was removed successfully. If Docker cleanup
@@ -922,8 +930,8 @@ Agent entrypoints also share one logging policy resolver:
 | embedded host `.too` script run | `run_log` under the agent `.runtime` directory when `PY_LOG` is set, otherwise `none` |
 | attached or temporary `.too` script run | AgentServer output remains in its `agent_log`; Script progress and result output retain their stderr/stdout split |
 
-The lifecycle persists a versioned recovery reference immediately after the
-workload is created, then attaches process-local output observers and performs
+The lifecycle saves intent before creation and binds recoverable references as
+soon as they are available, then attaches output observers and performs
 the readiness check. The Docker sandbox follows container output locally from
 container creation for foreground `serve`. Background `start` instead creates the
 host `agent_log` with mode `0600` and writes Docker launch diagnostics,
@@ -933,12 +941,15 @@ the final 2000 Docker log lines and streamed without buffering them in memory.
 Diagnostic write failures do not prevent container cleanup. Foreground
 interruption, ready-reporting errors, and wait failures stop and release the
 workload; cleanup failures preserve `SandboxState` for a later forced stop.
-`SandboxState` is host-control data under `.sandbox/<agent>/state.json`, outside
-all guest mounts; only per-launch staging children are exposed to Docker.
-An older guest-writable `agents/<agent>/.runtime/sandbox.json` is never trusted
-or migrated automatically. Its presence blocks launch, stop, and agent removal
-with instructions to stop the workload using the previous Toolang version or
-clean it up manually.
+`SandboxState` reads the `control` section of version 2 `status.json`; host and
+guest update that shared file with generation checks and owned-field merges.
+Docker mounts the agent home read-write, including status, database sidecars,
+and logs; required inputs/workspaces and read-only bootstrap materials are added
+separately. Entire roots and discovery references are not mounted. Guest field
+ownership is cooperative, not filesystem isolation. Independent sandbox state
+is removed. Legacy `.sandbox/<agent>/state.json` and `.runtime/sandbox.json`
+block launch, stop, and removal: stop old workloads with the previous version
+before upgrading. Stopped legacy status reports migrate; history is preserved.
 Likewise, per-launch staging without a matching control reference is preserved
 and blocks relaunch or removal until any associated workload is removed and the
 staging directory is cleaned manually.
@@ -1027,7 +1038,7 @@ In tmux, foreground commands also publish pane-local string options:
 | Option | Value |
 | --- | --- |
 | `@toolang_kind` | `chat`, `talk`, `top`, `serve`, `run`, `retry`, or `rerun` |
-| `@toolang_root` | Absolute resolved root |
+| `@toolang_root` | Agent root for agent commands; Toolang root for commands without an agent |
 | `@toolang_agent` | Bare agent name; empty for Talk, team Top, and Hub Serve |
 | `@toolang_thread` | Chat thread ID, once created |
 | `@toolang_run` | Actual executing run ID, once allocated or accepted |

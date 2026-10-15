@@ -69,6 +69,8 @@ def test_local_script_saves_only_to_an_explicit_destination(
     expected_status: int,
     expected_stdout: str,
 ) -> None:
+    toolang_root = tmp_path / "global"
+    monkeypatch.setenv("TOOLANG_ROOT", str(toolang_root))
     source_text = _SOURCE if entry == "echo" else "agic():\n  Say hello.\n"
     source = tmp_path / "echo.too"
     source.write_text(source_text, encoding="utf-8")
@@ -157,6 +159,16 @@ def test_local_script_saves_only_to_an_explicit_destination(
 
     assert result == expected_status
     assert output.out == expected_stdout
+    from toolang.up.records import read_document
+
+    runtime = read_document(layout.runtime_status)
+    assert runtime is not None
+    assert all(
+        record["control"]["toolang_root"] == str(toolang_root)
+        for record in runtime["instances"].values()
+    )
+    assert not tuple((toolang_root / ".runtime" / "instances").glob("*.json"))
+    assert not (layout.root / ".runtime" / "instances").exists()
     if save_mode == "missing-parent":
         assert "result destination parent does not exist" in output.err
         assert "▪︎ run_" in output.err

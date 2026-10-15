@@ -215,7 +215,12 @@ def test_roaming_uses_captured_project_layers_and_no_dotenv(tmp_path, terminal_i
 
     terminal_io = terminal_io()
     # A concrete projected roaming layout avoids creating any execution state.
-    layout = replace(AgentLayout.resident(tmp_path, "script"), placement="roaming")
+    layout = replace(
+        AgentLayout.resident(tmp_path, "script"),
+        placement="roaming",
+        project_inputs=True,
+        managed_membership=False,
+    )
     layout.home.mkdir(parents=True)
     layout.config.write_text(
         project_sources(

@@ -69,7 +69,7 @@ class HomeFiles:
         if (
             target.is_symlink()
             and file.key == "agent.too"
-            and self.layout.placement == "roaming"
+            and self.layout.project_inputs
         ):
             try:
                 source = target.resolve()

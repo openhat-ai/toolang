@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -178,18 +179,13 @@ def test_serve_argv_contains_only_server_inputs(tmp_path: Path) -> None:
         "tools": (),
         "skills": None,
     }
-    assert argv[:9] == (
-        "--root",
-        "/root/.toolang",
-        "_serve",
-        "alice",
-        "--host",
-        "0.0.0.0",
-        "--endpoint-host",
-        "localhost",
-        "--port",
-    )
-    assert "--sandbox" not in argv
+    assert argv[:4] == ("--root", str(tmp_path), "_serve", "alice")
+    assert _option_values(argv, "--agent-root") == ["/root/.toolang"]
+    assert _option_values(argv, "--host") == ["0.0.0.0"]
+    assert _option_values(argv, "--sandbox") == ["host"]
+    assert _option_values(argv, "--location") == ["host"]
+    assert _option_values(argv, "--source-policy") == ["root"]
+    assert "--placement" not in argv
     assert "--sandbox-child" not in argv
     assert _option_values(argv, "--compact-model") == ["test/compact effort=low"]
     assert _option_values(argv, "--allow") == [
@@ -221,3 +217,124 @@ def test_serve_argv_contains_only_server_inputs(tmp_path: Path) -> None:
 
 def _option_values(argv: tuple[str, ...], name: str) -> list[str]:
     return [argv[index + 1] for index, item in enumerate(argv) if item == name]
+
+
+@pytest.mark.parametrize("location", ["host", "guest"])
+@pytest.mark.parametrize("stage", ["construct", "refresh"])
+def test_workload_startup_failure_records_error_and_retains_control_reference(
+    tmp_path, monkeypatch, location, stage
+):
+    from unittest.mock import AsyncMock
+    from toolang.base.types.sandbox import SandboxRef
+    from toolang.up.records import SandboxState, read_record, update_record
+
+    layout = AgentLayout.resident(tmp_path, "alice")
+    spec = resolve_serve(layout=layout, port=8123, launch_id="launch")
+    update_record(layout.runtime_status, lambda entry: entry.update(launch_id="launch"))
+    reference = SandboxState(
+        "host" if location == "host" else "docker:image",
+        SandboxRef("resource", spec.endpoint, runtime_kind="container"),
+        "launch",
+    )
+    reference.save(layout.runtime_status)
+    core = SimpleNamespace(close=AsyncMock())
+
+    def construct(*args, **kwargs):
+        if stage == "construct":
+            raise ValueError("invalid startup inputs")
+        return core
+
+    async def register(*args, **kwargs):
+        return reference.ref
+
+    monkeypatch.setattr("toolang.up.sandbox.register_host_server", register)
+    monkeypatch.setattr(server, "AgentCore", construct)
+    monkeypatch.setattr(
+        server,
+        "_refresh_core",
+        AsyncMock(side_effect=ValueError("invalid startup inputs")),
+    )
+    monkeypatch.setattr(server, "configure_logging", lambda **kwargs: None)
+    with pytest.raises(ValueError, match="invalid startup inputs"):
+        server.serve(
+            spec,
+            environ={},
+            sandbox=reference.sandbox,
+            launch_id="launch",
+            location=location,
+        )
+    entry = read_record(layout.runtime_status)
+    assert entry is not None
+    assert entry["workload"]["status"] == "failed"
+    assert entry["workload"]["pid"] is None
+    assert entry["workload"]["message"] == "invalid startup inputs"
+    assert SandboxState.load(layout.runtime_status) == reference
+    assert "last_successful" not in entry["control"]
+    if stage == "refresh":
+        core.close.assert_awaited_once()
+
+
+@pytest.mark.parametrize("owns_control", [True, False])
+def test_cleanup_failure_retains_reference_and_reports_error(
+    tmp_path, monkeypatch, owns_control
+):
+    from unittest.mock import AsyncMock
+    from toolang.plugin.sandboxes.host import process_ref
+    from toolang.up.records import SandboxState, read_record
+
+    layout = AgentLayout.resident(tmp_path, "alice")
+    reference = SandboxState(
+        "host",
+        process_ref(os.getpid(), "http://localhost:8123", launch_id="launch"),
+        "launch",
+    )
+    reference.save(layout.runtime_status)
+    core = SimpleNamespace(close=AsyncMock(side_effect=RuntimeError("cleanup failed")))
+
+    async def register(*args, **kwargs):
+        return reference.ref
+
+    monkeypatch.setattr("toolang.up.sandbox.register_host_server", register)
+    monkeypatch.setattr(server, "AgentCore", lambda *args, **kwargs: core)
+    monkeypatch.setattr(
+        server, "_refresh_core", AsyncMock(side_effect=ValueError("startup failed"))
+    )
+    monkeypatch.setattr(server, "configure_logging", lambda **kwargs: None)
+    with pytest.raises(RuntimeError, match="cleanup failed"):
+        server.serve(
+            resolve_serve(layout=layout, port=8123),
+            environ={},
+            sandbox="host",
+            launch_id=None if owns_control else "launch",
+        )
+    entry = read_record(layout.runtime_status)
+    assert entry is not None and entry["workload"]["status"] == "failed"
+    assert "cleanup failed" in entry["workload"]["message"]
+    assert SandboxState.load(layout.runtime_status) == reference
+
+
+def test_guest_without_explicit_launch_identity_does_not_adopt_status(
+    tmp_path, monkeypatch
+):
+    from toolang.up.records import SandboxState
+    from toolang.plugin.sandboxes.host import process_ref
+
+    layout = AgentLayout.resident(tmp_path, "alice")
+    reference = SandboxState(
+        "host", process_ref(os.getpid(), "http://localhost:8123"), "previous"
+    )
+    reference.save(layout.runtime_status)
+    before = layout.runtime_status.read_bytes()
+    monkeypatch.setattr(
+        server,
+        "AgentCore",
+        lambda *args, **kwargs: pytest.fail("guest must not execute"),
+    )
+    with pytest.raises(ValueError, match="launch identity"):
+        server.serve(
+            resolve_serve(layout=layout, port=8123),
+            environ={},
+            sandbox="docker:image",
+            location="guest",
+        )
+    assert layout.runtime_status.read_bytes() == before

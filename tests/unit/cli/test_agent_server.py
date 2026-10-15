@@ -304,7 +304,7 @@ def test_agent_server_opens_embedded_host_and_releases_stopped_state(
 
 def test_agent_server_wraps_management_lock_failure(tmp_path: Path) -> None:
     layout = AgentLayout.resident(tmp_path, "alice")
-    lock_path = layout.sandbox_state.with_name("state.json.lock")
+    lock_path = layout.runtime_status.with_name("status.json.lock")
     lock_path.mkdir(parents=True)
 
     with pytest.raises(agent_server.AgentServerAcquisitionError) as captured:
@@ -375,6 +375,7 @@ def test_agent_server_launches_with_the_requested_lifecycle(
     state = SandboxState(
         sandbox="docker:python:3.13-slim",
         ref=SandboxRef("container-1", "http://127.0.0.1:8123"),
+        launch_id="fixture",
     )
     handle = agent_server.sandbox_runtime.SandboxHandle(implementation, state)
     calls: list[object] = []
@@ -455,6 +456,7 @@ def test_agent_server_warns_when_a_development_cli_uses_the_package_index(
         SandboxState(
             sandbox="docker:python:3.13-slim",
             ref=SandboxRef("container-1", "http://127.0.0.1:8123"),
+            launch_id="fixture",
         ),
     )
 
@@ -584,6 +586,7 @@ def test_agent_server_cleanup_does_not_hide_a_body_failure(
     state = SandboxState(
         sandbox="docker:python:3.13-slim",
         ref=SandboxRef("container-1", "http://127.0.0.1:8123"),
+        launch_id="fixture",
     )
     handle = agent_server.sandbox_runtime.SandboxHandle(
         cast(Any, SimpleNamespace()), state
@@ -764,12 +767,12 @@ def test_inactive_launch_uses_fresh_environment_and_file_logging(
             "TOOLANG_LIMIT_TOKENS": "12000",
             "TOOLANG_COMPACT_MODEL": "test/compact effort=low",
             "TOOLANG_ROOT": str(layout.root),
-            "TOOLANG_OBSERVATION_ROOT": str(agent_server.resolve_root(None)),
             "TOOLANG_MODEL_CATALOG": str(catalog),
         },
         "agent_log_path": layout.runtime_log,
     }
     assert captured["launch"] == {
+        "toolang_root": layout.root,
         "drivers": None,
         "workspace_additions": None,
         "layout": layout,
@@ -898,7 +901,9 @@ def test_persistent_host_survives_command_completion_and_failure(
     handle = agent_server.sandbox_runtime.SandboxHandle(
         cast(Any, None),
         SandboxState(
-            sandbox="host", ref=SandboxRef("process-1", "http://localhost:7001")
+            sandbox="host",
+            ref=SandboxRef("process-1", "http://localhost:7001"),
+            launch_id="fixture",
         ),
     )
 
@@ -939,7 +944,7 @@ def test_persistent_acquisition_waits_for_http_after_running_report(
     layout = AgentLayout.resident(tmp_path, "alice")
     layout.home.mkdir(parents=True)
     ref = process_ref(os.getpid(), "http://localhost:8123")
-    SandboxState("host", ref).save(layout.sandbox_state)
+    SandboxState("host", ref, launch_id="fixture").save(layout.runtime_status)
     agent_server.agents.write_runtime_state(
         layout,
         endpoint=ref.endpoint,
@@ -975,7 +980,9 @@ def test_persistent_acquisition_waits_for_http_after_running_report(
             with agent_server.acquire_agent_server(layout, sandbox="host"):
                 pytest.fail("unready runtime acquired")
         assert probes == [f"{ref.endpoint}/healthz"]
-    assert SandboxState.load(layout.sandbox_state) == SandboxState("host", ref)
+    assert SandboxState.load(layout.runtime_status) == SandboxState(
+        "host", ref, launch_id="fixture"
+    )
 
 
 def test_startup_warning_suspends_the_lock_wait_presenter(tmp_path, monkeypatch):
@@ -1031,7 +1038,11 @@ def test_startup_warning_suspends_the_lock_wait_presenter(tmp_path, monkeypatch)
     monkeypatch.setattr(agent_server, "warn_development_package_source", warn)
     handle = agent_server.sandbox_runtime.SandboxHandle(
         cast(Any, None),
-        SandboxState("docker", SandboxRef("container", "http://localhost:7001")),
+        SandboxState(
+            "docker",
+            SandboxRef("container", "http://localhost:7001"),
+            launch_id="fixture",
+        ),
     )
 
     async def start(*_args, **_kwargs):

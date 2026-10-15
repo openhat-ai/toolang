@@ -217,8 +217,11 @@ def test_hosted_startup_transports_captured_grants_without_resolving_again(
     argv = build_serve_argv(spec, root=Path("/guest"))
     assert json.loads(argv[argv.index("--workspace-bindings") + 1]) == bindings
     assert argv[argv.index("--initial-workdir") + 1] == "repo://src"
-    if layout.placement != "resident":
-        assert argv[argv.index("--placement") + 1] == layout.placement
+    assert "--placement" not in argv
+    assert argv[argv.index("--source-policy") + 1] == (
+        "project" if layout.project_inputs else "root"
+    )
+    assert argv[argv.index("--agent-root") + 1] == "/guest"
 
 
 def test_explicit_grants_can_repeat_running_bindings_when_selecting_uri(

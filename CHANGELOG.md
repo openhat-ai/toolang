@@ -9,6 +9,58 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Changed
 
+- A temporary execution's runtime metadata is retired once its workload has
+  stopped and its resources are released, so a finished temporary run leaves no
+  leftover entry in its agent's runtime record while its execution history stays
+  in the run store and logs; a persistent agent keeps its record across stop,
+  and an interrupted instance or unreleased resource reference stays for
+  recovery.
+
+- Host foreground `serve` now executes the agent in one process: the command
+  initializes the control record and then runs the workload itself instead of
+  launching a separate child agent process, so the running agent is the
+  foreground process rather than a child of it.
+
+- **Breaking:** an agent's runtime record is consolidated into one
+  `agents/<agent>/.runtime/status.json` of version 2, holding an `instances`
+  map whose entries have a `control` section (launch intent, recovery
+  references, startup bindings, and the last successful endpoint and sandbox)
+  and a `workload` section (PID, process creation time, lifecycle state, and
+  errors). The authoritative `.sandbox/<agent>/state.json` and the per-instance
+  status files are gone; every writer merges only its owned section after
+  checking the launch ID, under one transient `status.json.lock` claim
+  published by an atomic hard link because kernel locks alone did not
+  coordinate a host and a Docker Desktop guest on a shared mount, so an
+  old workload or its cleanup cannot change a newer launch. A leftover
+  `.sandbox/<agent>/state.json` or
+  `.runtime/sandbox.json` blocks start, stop, and removal with a migration
+  error, and a legacy `status.json` that still reports a running, starting, or
+  preparing workload is not adopted, so stop the workload with the previous
+  Toolang version before upgrading; a stopped legacy report migrates with its
+  remembered endpoint and sandbox.
+
+- **Breaking:** the observation root is removed: `TOOLANG_OBSERVATION_ROOT` is
+  no longer read, `TOOLANG_ROOT` names the Toolang root rather than an agent's
+  own root, and the agent root travels with the workload through a hidden
+  `--agent-root` argument. Instance discovery records under
+  `<root>/.runtime/instances/` are now named `gus.json` for residents,
+  `lex@v<hash>.json` for visitors, and `aid@r<hash>.json` for roaming servers,
+  where `<hash>` is the first 16 hex characters of SHA-256 over the canonical
+  Toolang root, a NUL, and the source selector for visiting, and over the
+  canonical host absolute source path for roaming; each record carries
+  `version`, the absolute status path, and the launch ID, all references share
+  one `instances/update.lock`, and are read through that record, and legacy
+  registrations are never adopted; a visiting agent is identified per Toolang
+  root as well as source, so the same remote source materializes once per root.
+  Stop all old host and guest processes sharing the root before upgrading, and
+  do not delete a live guard.
+
+- A stopped agent remembers its last successful launch: `--sandbox` now defaults
+  to the agent's configured binding, then its last successful selection, then
+  `host`, while an available remembered API port is reused, so a restarted agent
+  usually keeps its sandbox and endpoint. These settings are recorded only after
+  a launch reaches readiness, so a failed attempt no longer replaces them.
+
 - `too init DIR` now creates `aid.too` instead of `aide.too`, and the
   repository's own root helper is renamed from `aide.too` to `aid.too`; its
   success message, the `too run` help example, and the documented examples
@@ -41,6 +93,52 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   with agents through the hub`, and `hub` reads `Control the teaming service`.
 
 ### Fixed
+
+- Runtime inspection skips invalid discovery references, status instance maps,
+  and entry shapes while keeping valid peers visible. Non-object references
+  also no longer break reference cleanup.
+
+- Root `too top --once` now reports local runtime activity when no Hub is
+  running instead of failing, so team status can be inspected without the
+  teaming service.
+
+- A temporary guest left behind by a caller that is confirmed dead is stopped
+  and released by the next `start`, `serve`, `stop`, or removal action, while a
+  caller that is still alive or cannot be verified, and a detached persistent
+  server, are left untouched.
+
+- A workload that fails during startup or cleanup records a diagnostic even
+  when the failure happens before the API starts, so a failed start reports its
+  reason instead of leaving a stale or missing state; a cleanup failure is
+  appended to the recorded startup error rather than replacing it.
+
+- Removing a stopped temporary run resolves its discovery reference from the
+  bindings saved when it registered rather than its current execution settings,
+  so cleanup uses the original root and paths.
+
+- Runtime inspection reads each agent's runtime record once and derives both
+  the resource reference and the workload report from that one snapshot, so a
+  concurrent update cannot mix before and after views.
+
+- Repeated short-lived script executions no longer leave one `.json.lock`
+  beside every instance discovery reference: references share one
+  `instances/update.lock`, so a directory keeps a single lock instead of one
+  per instance. Orphan locks left by earlier versions are not removed
+  automatically, so stop those processes before deleting them.
+
+- A launch killed before its sandbox reference was bound no longer blocks later
+  commands: the next `start`, `serve`, `stop`, or removal action recovers the
+  workload by its launch ID, adopting a host child that is still running or
+  retiring an intent whose workload never started, while a still-pending Docker
+  creation helper keeps its missing container from being read as dead, so a
+  container that is still being created is never stopped.
+
+- Runtime inspection no longer reports an unverifiable workload as stopped:
+  `too list` shows `unknown` when a process or container identity cannot be
+  confirmed, a definitively dead workload is corrected once without clearing
+  its recovery references, and live or unknown workloads are left untouched.
+  Docker container states are read in one bounded batch with a two-second
+  timeout, and `too list` inspects agent layouts concurrently.
 
 - Concurrent chore mutations no longer interleave: the API patch holds the
   agent's edit guard across its whole read/modify/write, so two patches to

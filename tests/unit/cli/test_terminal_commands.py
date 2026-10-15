@@ -189,6 +189,26 @@ def test_top_publication_uses_scope_and_no_refresh_hooks(
     assert events == ["start", "close"]
 
 
+def test_top_without_hub_keeps_local_observation(tmp_path, monkeypatch, publication):
+    entries, events = publication(top)
+    observed = []
+
+    async def watch(endpoint, **kwargs):
+        assert endpoint is None and kwargs["backend"] is None
+        assert isinstance(kwargs["source"], top.RuntimeObservation)
+        observed.append(kwargs["source"])
+
+    monkeypatch.setattr(top, "watch", watch)
+    context = typer.Context(typer.main.get_command(cli.app), obj=CliContext(tmp_path))
+
+    top.top_command(context, once=True, title_prefix="")
+
+    assert len(observed) == 1
+    assert entries[0][1]["context"] == ""
+    assert events == ["start", "close"]
+    assert not (tmp_path / "hub").exists()
+
+
 def test_hub_serve_has_one_outer_lifecycle(tmp_path, monkeypatch, publication):
     entries, events = publication(hub)
     monkeypatch.setattr(hub, "_settings", lambda *_: (object(), 7000))
@@ -216,7 +236,9 @@ def test_agent_serve_publishes_once_at_outer_cli(tmp_path, monkeypatch, publicat
     monkeypatch.setattr(
         runtime,
         "resolve_startup",
-        lambda *a, **kw: SimpleNamespace(startup=object(), target=layout),
+        lambda *a, **kw: SimpleNamespace(
+            startup=SimpleNamespace(sandbox="fake"), target=layout
+        ),
     )
     monkeypatch.setattr(runtime, "warn_development_package_source", lambda _: None)
 

@@ -2,6 +2,10 @@
 
 Status: Approved for implementation on 2026-08-25.
 
+Persistence paths and the host-only control-file trust boundary below are
+superseded by [unified runtime status](unified-runtime-status.md). Startup
+presentation decisions remain applicable.
+
 ## Work Type
 
 Feature definition for observable agent startup, concise Docker bootstrap

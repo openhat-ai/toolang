@@ -5,14 +5,18 @@ This document defines the current local filesystem layout.
 
 ## Toolang Root
 
-Toolang stores all local state under one root directory.
+`TOOLANG_ROOT` selects the Toolang root for resident agents, Hub data, and
+runtime discovery. Each agent also has an internally resolved agent root for
+its own authored, prepared, and execution data. The two roots coincide for a
+resident agent.
 
 Default root:
 
 - `~/.toolang`
 
-CLI override:
+Overrides:
 
+- `too --root PATH`
 - `TOOLANG_ROOT`
 
 Current root layout:
@@ -26,8 +30,14 @@ ${TOOLANG_ROOT}/
   prompts/
   .state/
   .runtime/
+    instances/
+      gus.json                       # Resident
+      lex@v<source-hash>.json         # Visiting
+      aid@r<source-hash>.json         # Roaming server
+      update.lock
   hub/
   .sandbox/
+    <agent>/launches/<launch-id>/  # Docker bootstrap materials only
   agents/
     <agent>/
       agent.too
@@ -61,18 +71,17 @@ Each resident agent lives under:
 
 - `${TOOLANG_ROOT}/agents/<agent>/`
 
-Visiting agents fetched by `toolang serve <remote>` are materialized under a
-stable system temporary root derived from the canonical remote ref:
+Visiting agents fetched by `too serve <remote>` use a stable temporary agent
+root derived from the resolved Toolang root and source selector:
 
 - `/tmp/toolang-<agent>-<hash:8>/`
 
-The hash is derived from `<agent-source>`. The stable visiting root lets Agent
-State and the last runtime port be reused across repeated foreground
-runs of the same remote agent ref, independent of the local `TOOLANG_ROOT`,
-while remaining disposable across machine restarts or normal
-temporary-directory cleanup. The cached remote `agent.too` is refetched after
-one hour. Roaming `.too` file invocation uses the source file's sibling
-`.toolang` directory and does not start a long-lived HTTP runtime.
+Repeated launches of the same source under the same Toolang root reuse this
+agent root; a different Toolang root gets a different visiting root. Temporary
+directory cleanup can remove its state and remembered settings. The cached
+remote `agent.too` is refetched after one hour. Roaming agents use the source
+file's sibling `.toolang` directory. `too file.too serve` hosts the workload;
+ordinary host script invocation executes directly without a persistent server.
 
 Key paths:
 
@@ -96,7 +105,7 @@ state, and runtime path from that identity.
 | Placement | Root calculation |
 | --- | --- |
 | `resident` | The explicit Toolang root |
-| `visiting` | `/tmp/toolang-<agent>-<source-hash:8>/` |
+| `visiting` | `/tmp/toolang-<agent>-<toolang-root-and-source-hash:8>/` |
 | `roaming` | `<source-directory>/.toolang/` |
 
 All three placements use the same layout below their calculated root:
@@ -108,40 +117,79 @@ directory. Existing legacy `.setup/models` data is ignored.
 
 ## Setup Data
 
-Setup configuration and catalog sources remain under the Toolang root and agent
-home. `SetupWatcher` captures source revisions and builds `AgentSetup` views in
+Setup configuration and catalog sources remain under the agent root and home,
+with placement deciding which sources participate. `SetupWatcher` captures
+source revisions and builds `AgentSetup` views in
 memory when their lazy accessors are first used. Model/catalog data is not stored
 or shared through a `.setup/` cache directory.
 
 
 ## Runtime Room
 
-Runtime data shared by every local agent process lives under:
+Discovery references live under `${TOOLANG_ROOT}/.runtime/instances/`:
 
-- `${TOOLANG_ROOT}/.runtime/`
+| Placement | Reference name |
+| --- | --- |
+| Resident | `gus.json` |
+| Visiting | `lex@v<hash>.json` |
+| Roaming server | `aid@r<hash>.json` |
+
+The hash is the first 16 hex characters of SHA-256. Visiting uses the same key
+as its agent root: the canonical Toolang root, a NUL separator, and the source
+selector. Its temporary root retains the first eight characters of that hash.
+Roaming uses the canonical host absolute `.too` source path. The host saves
+`source_id` with its control bindings so guest mounts cannot change identity.
+Changing ports, sandbox, launch IDs, or source contents does not change this hash.
+Agent names are percent-encoded to keep literal `@` names distinct from markers.
+
+Until scripts switch to a shared server, an isolated temporary execution appends
+`@<execution-id>` before `.json`; its source hash remains stable and parallel
+executions remain independently visible. This change does not introduce shared
+script servers.
+
+Each reference contains only its version, absolute authoritative status path,
+and launch ID. `RuntimeRegistration` publishes into one Toolang root and uses
+one shared `instances/update.lock` for publication and conditional removal.
+The guard is released before starting or waiting for a workload. Pure reads
+neither acquire nor create it. For example:
+
+```json
+{"version": 1, "status": "/project/.toolang/agents/aid/.runtime/status.json", "launch_id": "<fresh-launch-id>"}
+```
 
 Each agent runtime stores operational state under:
 
-- `${TOOLANG_ROOT}/agents/<agent>/.runtime/`
+- `<agent-root>/agents/<agent>/.runtime/`
 
 Key paths:
 
 | Path           | Purpose                                                      |
 | -------------- | ------------------------------------------------------------ |
-| `status.json` | Runtime status, endpoint, sandbox summary, and selected models |
+| `status.json` | Version 2 authoritative control and workload entries, keyed by execution instance |
 | `agent.log`    | Runtime log                                                  |
 | `logs/<agic>/<run_id>.log` | Per-run script logs when `PY_LOG` is set |
 | `runs.db` | Threads, controls, runs, steps, model inputs, chore checkpoints, and ID sequences |
 | `chat-history.jsonl` | Chat input recall history                               |
 | `tools/`       | Per-toolset plugin working directories                       |
 
-Server ownership lives separately in
-`${TOOLANG_ROOT}/.sandbox/<agent>/state.json`, the authoritative sandbox
-reference. Host references contain PID, process creation time, and signal scope;
-guest references retain the sandbox adapter's instance identity. `status.json`
-is a descriptive report and does not establish ownership. The adjacent
-`state.json.lock` serializes management operations and remains outside the agent home
-so removal cannot replace a lock held by another operation.
+`status.json` owns both lifecycle sections. `control` contains intent, recovery
+references, resolved startup bindings, and last successful settings; `workload`
+contains namespace-local PID/creation time, readiness, timestamps, and errors.
+Host and guest merge their owned fields through one short shared-file claim,
+validating the launch ID before atomic replacement. Management ownership lives
+in the record; no lock is held across startup, execution, or shutdown.
+
+Successful stop retains the persistent record, remembered endpoint/sandbox,
+and database/log history. Successfully finalized temporary entries are removed.
+Existing isolated script databases/logs remain under `.runtime/instances/<id>/`;
+all their lifecycle entries share the agent's `status.json`. Interrupted entries
+and unreleased resource references remain recoverable. See the
+[runtime plan](plans/unified-runtime-status.md) for restart and recovery rules.
+
+Docker mounts the target agent home read-write, necessary inputs/workspaces,
+and bootstrap materials read-only. Discovery references and entire roots are
+not mounted. Shared control/workload field ownership is a cooperative contract;
+it does not isolate control fields from arbitrary guest file writes.
 
 Human Talk stores input history and drafts under the root's
 `.runtime/talk-history/<conversation-id>.jsonl` and
@@ -193,8 +241,8 @@ Other locks remain beside their protected objects:
 | --- | --- |
 | `<database-name>.init.lock` | SQLite initialization |
 | `<thread-id>.compact.lock` | Thread compaction across model calls |
-| `status.json.lock` | Runtime status updates |
-| `state.json.lock` | Sandbox lifecycle |
+| `status.json.lock` | Transient shared host/guest writer claim for the authoritative record |
+| `.runtime/instances/update.lock` | Discovery publication/removal within one Toolang root |
 | `hub/hub.lock` | One Hub process per root for its lifetime |
 
 Thread fork/rewind use SQLite transactions, without `runs.db.threads.lock`.
@@ -206,9 +254,10 @@ transaction; there is no separate allocator file or lock.
 
 Stop all host/guest processes and writers sharing the affected root, upgrade
 together, then restart. Mixed versions cannot coordinate across the new paths.
-Released sidecars remain empty files; existence does not mean a lock is held.
-Do not delete them while processes may use them. Legacy lock files remain in
-place and may be removed only while the entire affected scope is offline.
+Native lock guards remain stable after release; existence does not mean a lock
+is held. The shared `status.json.lock` claim instead contains writer identity
+and is removed only by its owner or confirmed-dead recovery. Do not delete live
+guards. Legacy lock files may be removed only while the affected scope is offline.
 
 
 ## Agent State
@@ -219,9 +268,9 @@ State directories:
 
 | Value | Directory |
 | --- | --- |
-| Root layer | `${TOOLANG_ROOT}/.state/root/` |
-| Home layer | `${TOOLANG_ROOT}/agents/<agent>/.state/home/` |
-| Agent composition | `${TOOLANG_ROOT}/agents/<agent>/.state/agent/` |
+| Root layer | `<agent-root>/.state/root/` |
+| Home layer | `<agent-root>/agents/<agent>/.state/home/` |
+| Agent composition | `<agent-root>/agents/<agent>/.state/agent/` |
 
 Each directory stores a current-revision pointer, a build or publish lock, and
 immutable revision directories. Layer source identities contain only logical paths,

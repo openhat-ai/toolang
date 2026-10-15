@@ -1100,7 +1100,9 @@ def test_cli_routes_visiting_chat_through_materialization(
     )
     captured: dict[str, object] = {}
 
-    def resolve(source: str, *, progress: object) -> AgentLayout:
+    def resolve(
+        source: str, *, progress: object, toolang_root: Path | None = None
+    ) -> AgentLayout:
         captured.update(source=source, progress=progress)
         return layout
 
@@ -1125,7 +1127,9 @@ def test_cli_visiting_failure_uses_the_operational_failure_block(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def fail(_source: str, *, progress: Any) -> AgentLayout:
+    def fail(
+        _source: str, *, progress: Any, toolang_root: Path | None = None
+    ) -> AgentLayout:
         progress(
             ProgressEvent(
                 id="agent:missing",
@@ -1200,7 +1204,7 @@ def test_cli_routes_visiting_inspect_without_materialization(
     )
     captured: dict[str, object] = {}
 
-    monkeypatch.setattr(agents, "visiting_layout", lambda source: layout)
+    monkeypatch.setattr(agents, "visiting_layout", lambda source, **kwargs: layout)
     monkeypatch.setattr(
         agents,
         "resolve_visiting_layout",
@@ -1251,7 +1255,7 @@ def test_cli_routes_command_before_visiting_info_without_materialization(
     monkeypatch.setattr(
         agents,
         "visiting_layout",
-        lambda source: (
+        lambda source, **kwargs: (
             captured.update(
                 source=source,
             )

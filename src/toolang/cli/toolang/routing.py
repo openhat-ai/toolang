@@ -10,7 +10,7 @@ from typing import Literal
 from toolang.common.layout import AgentLayout, AgentPlacement
 from toolang.catalog.types import CAP_KINDS
 from ..common.output import echo_error
-from ..common.routing import explicit_agent, extract_root_args
+from ..common.routing import explicit_agent, extract_root_args, explicit_root
 
 TargetPosition = Literal["none", "before", "after"]
 Preparation = Literal["layout", "program"]
@@ -280,6 +280,9 @@ def dispatch_visiting(
     from toolang.up import process as agents
     from ..common.progress import make_cli_progress
 
+    from ..common.context import resolve_root
+
+    toolang_root = resolve_root(explicit_root(global_args))
     selector, command, position = selected
     spec = command_spec(command)
     if not spec.accepts(position, "visiting"):
@@ -291,10 +294,11 @@ def dispatch_visiting(
             layout = (
                 agents.resolve_visiting_layout(
                     selector,
+                    toolang_root=toolang_root,
                     progress=progress.sink,
                 )
                 if prepare == "program"
-                else agents.visiting_layout(selector)
+                else agents.visiting_layout(selector, toolang_root=toolang_root)
             )
     except KeyboardInterrupt:
         return 130

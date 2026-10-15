@@ -51,7 +51,7 @@ def load_setup_config(layout: AgentLayout) -> dict[str, object]:
 
     return (
         {}
-        if layout.placement == "roaming"
+        if layout.project_inputs
         else read_config(layout.root_config, include_workspaces=False)
     )
 
@@ -81,7 +81,7 @@ def load_root_setup_envs(layout: AgentLayout) -> dict[str, str]:
 def load_setup_dotenvs(layout: AgentLayout) -> dict[str, str]:
     """Load the merged root and agent dotenv values without process values."""
 
-    if layout.placement == "roaming":
+    if layout.project_inputs:
         return {}
     envs = _load_dotenv(layout.root_env)
     envs.update(_load_dotenv(layout.env))

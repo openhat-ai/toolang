@@ -341,6 +341,8 @@ Core selection remains separate from plugin-owned configuration. For example,
 `[plugin.sandbox.<driver>]` configures the selected implementation. Sandbox
 lifecycle recovery re-reads the current root and agent plugin tables instead
 of persisting plugin configuration or secrets in runtime state.
+Docker's `root` maps the agent root inside the guest; it does not change the
+selected `TOOLANG_ROOT` or mount its discovery directory.
 
 Authored plugin configuration is intended for non-sensitive values and secret
 references such as environment-variable names, never secret values. Concrete

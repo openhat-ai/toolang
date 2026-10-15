@@ -71,6 +71,14 @@ def pytest_collection_modifyitems(
 
 
 @pytest.fixture(autouse=True)
+def isolated_toolang_root(tmp_path):
+    """Discovery and default CLI writes must never reach the user's real root."""
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setenv("TOOLANG_ROOT", str(tmp_path / "toolang"))
+        yield
+
+
+@pytest.fixture(autouse=True)
 def offline_token_encoding(request):
     """Keep protocol/execution tests independent of downloaded tokenizer data."""
     if request.node.get_closest_marker("live_provider") is not None:

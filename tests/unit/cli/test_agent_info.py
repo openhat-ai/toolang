@@ -96,7 +96,7 @@ def test_running_info_uses_runtime_resources_without_loading_local_sources(
         layout = AgentLayout(
             root=tmp_path / "visiting", name="alice", placement="visiting"
         )
-        monkeypatch.setattr(process, "visiting_layout", lambda _: layout)
+        monkeypatch.setattr(process, "visiting_layout", lambda _, **kwargs: layout)
         monkeypatch.setattr(
             process,
             "resolve_visiting_layout",
@@ -180,9 +180,9 @@ def test_offline_info_prepares_a_fresh_nonresident_target(
         layout = AgentLayout(
             root=tmp_path / "visiting", name="alice", placement="visiting"
         )
-        monkeypatch.setattr(process, "visiting_layout", lambda _: layout)
+        monkeypatch.setattr(process, "visiting_layout", lambda _, **kwargs: layout)
 
-        def fetch(selected, *, progress):
+        def fetch(selected, *, progress, toolang_root=None):
             assert selected == selector
             assert progress is not None
             assert not layout.program.exists()

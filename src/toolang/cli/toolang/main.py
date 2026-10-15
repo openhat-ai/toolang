@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from contextvars import ContextVar
 from copy import copy
+from dataclasses import replace
 from pathlib import Path
 import os
 import sys
@@ -271,10 +272,12 @@ def callback(
         configure_logging(spec=None, environ=os.environ)
     except ValueError as exc:
         raise ClickException(str(exc)) from exc
+    root = resolve_root(toolang_root)
+    selected = _SELECTED_LAYOUT.get()
     ctx.obj = CliContext(
-        root=resolve_root(toolang_root),
+        root=root,
         agent=_PREFIX_AGENT.get(),
-        layout=_SELECTED_LAYOUT.get(),
+        layout=replace(selected, toolang_root=root) if selected is not None else None,
         source=_SELECTED_SOURCE.get(),
     )
 
