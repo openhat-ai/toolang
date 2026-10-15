@@ -11,6 +11,7 @@ import time
 import sqlite3
 from typing import TextIO, cast
 
+from anyio import CancelScope, move_on_after
 import httpx
 from prompt_toolkit.input import create_input
 from prompt_toolkit.key_binding.key_processor import KeyPress
@@ -102,26 +103,25 @@ async def watch(
             )
             return
 
-        async def receive() -> None:
+        async def receive(scope: CancelScope) -> None:
             nonlocal needs_render
-            delay = 0.5
-            while not stop.is_set():
-                state.attach()
-                try:
-                    async with aclosing(
-                        observer.updates(state.attached_query)
-                    ) as updates:
-                        async for event, data in updates:
-                            needs_render |= state.feed(event, data)
-                            delay = 0.5
-                except httpx.HTTPError:
-                    state.reconnecting = True
-                    needs_render = True
-                try:
-                    await asyncio.wait_for(stop.wait(), delay)
-                except TimeoutError:
-                    pass
-                delay = min(5, delay * 2)
+            with scope:
+                delay = 0.5
+                while not stop.is_set():
+                    state.attach()
+                    try:
+                        async with aclosing(
+                            observer.updates(state.attached_query)
+                        ) as updates:
+                            async for event, data in updates:
+                                needs_render |= state.feed(event, data)
+                                delay = 0.5
+                    except httpx.HTTPError:
+                        state.reconnecting = True
+                        needs_render = True
+                    with move_on_after(delay):
+                        await stop.wait()
+                    delay = min(5, delay * 2)
 
         with closing(create_input(stdin=sys.stdin)) as terminal:
             loop = asyncio.get_running_loop()
@@ -153,7 +153,8 @@ async def watch(
             async def observe() -> None:
                 while not stop.is_set():
                     changed.clear()
-                    receiver = asyncio.create_task(receive())
+                    subscription = CancelScope()
+                    receiver = asyncio.create_task(receive(subscription))
                     update = asyncio.create_task(changed.wait())
                     ending = asyncio.create_task(stop.wait())
                     try:
@@ -164,7 +165,8 @@ async def watch(
                         if receiver in done:
                             await receiver
                     finally:
-                        for task in (receiver, update, ending):
+                        subscription.cancel()
+                        for task in (update, ending):
                             task.cancel()
                         await asyncio.gather(
                             receiver, update, ending, return_exceptions=True
@@ -280,6 +282,6 @@ async def watch(
                     if result_task:
                         result_task.cancel()
                         await asyncio.gather(result_task, return_exceptions=True)
-                    task.cancel()
+                    # stop wakes observe; do not cancel subscription cleanup twice.
                     with suppress(asyncio.CancelledError):
                         await task
