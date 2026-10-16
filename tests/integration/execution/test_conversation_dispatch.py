@@ -361,14 +361,6 @@ agic controller() -> Text:
                     and isinstance(step.output.value, ToolResultPart)
                     and step.output.value.output == reply.output
                 )
-                with pytest.raises(ValueError, match="origin.*use rerun"):
-                    harness.executor.retry(
-                        parent.id,
-                        setup=harness.setup,
-                        state=harness.state,
-                        anchor=step.ref,
-                    )
-                assert harness.store.get_step(ref=step.ref) == step
             if operation == "steer" and not stale:
                 harness.adapter._responses.append(
                     ModelCallResult(message=Message.assistant("revised work"))

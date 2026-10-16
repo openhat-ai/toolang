@@ -184,7 +184,7 @@ control.
 
 `run()` requires an existing thread. Thread creation belongs to
 `ThreadManager` or to the package that owns a deterministic external thread id.
-All independent root starts and root retry/rerun share one transactional idle
+All independent root starts and root rerun share one transactional idle
 check, regardless of prefix. A pending/running root makes that thread busy;
 HTTP root admission returns 409. Processing children keep their existing lifecycle.
 

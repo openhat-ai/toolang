@@ -316,7 +316,7 @@ handler-error notices do not trigger another handler. Agent origin records conta
 context-derived thread/run IDs.
 
 Source MEMBERS.md is checked before admission and each Model Call, including
-processing children and explicit retry/rerun. Spawned independent work gains no
+processing children and explicit rerun. Spawned independent work gains no
 implicit source scope; delegated requirements belong in input. In any thread,
 peek/write/set_rules check the actual destination's current rules. Changed or
 compacted-away guidance is recalled as runtime-owned `convo-rules`; an intercepted

@@ -454,9 +454,8 @@ def test_source_rules_are_recalled_before_the_first_model_call_after_compaction(
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("action", ["retry", "rerun"])
-def test_explicit_reexecution_preserves_source_scope_without_another_batch_receipt(
-    tmp_path, server, action
+def test_explicit_rerun_preserves_source_scope_without_another_batch_receipt(
+    tmp_path, server
 ):
     harness = harness_with_msg(
         tmp_path,
@@ -488,7 +487,7 @@ def test_explicit_reexecution_preserves_source_scope_without_another_batch_recei
             current = await human.set_rules(
                 document.conversation, "Current policy.", revision=document.revision
             )
-            handle = getattr(harness.executor, action)(
+            handle = harness.executor.rerun(
                 failed.id, setup=harness.setup, state=harness.state
             )
             record = await handle

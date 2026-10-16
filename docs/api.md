@@ -1433,10 +1433,10 @@ Thread `rewind` and `fork` request bodies take an optional `run_id` anchor and
 `request_id` and `client_id`. An omitted run ID selects the last visible run.
 Only chat threads can be rewound or forked.
 
-Non-streaming `steer`, `cancel`, `retry`, and `rerun` return
-`{run: RunDetail, command: ControlInfo}`. Steer/retry/rerun use HTTP 202; cancel
+Non-streaming `steer`, `cancel`, and `rerun` return
+`{run: RunDetail, command: ControlInfo}`. Steer/rerun use HTTP 202; cancel
 uses HTTP 200. The receipt confirms acceptance; inspect `command.status` for
-application. Independent root start/retry/rerun requires an idle target thread;
+application. Independent root start/rerun requires an idle target thread;
 a pending/running root causes HTTP 409 without admitting replacement work.
 
 An accepted manual chore request returns 202 without a run result; inspect the
