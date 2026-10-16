@@ -69,7 +69,7 @@ _AGENT_PANEL_COMMAND_ORDER = (
     "workspace",
 )
 _RUNTIME_PANEL_COMMAND_ORDER = ("serve", "start", "stop", "hub")
-_WORK_PANEL_COMMAND_ORDER = ("chat", "talk", "convo", "chore")
+_WORK_PANEL_COMMAND_ORDER = ("chat", "talk", "chore", "convo")
 _CAPS_PANEL_COMMAND_ORDER = ("psyche", "skill", "service", "prompt")
 _RUN_PANEL_COMMAND_ORDER = ("steer", "cancel", "rerun")
 _THREAD_PANEL_COMMAND_ORDER = ("fork", "rewind")
@@ -441,7 +441,7 @@ _registered_command(
 _registered_group(
     "toolang.cli.toolang.commands.convo:convo_app",
     name="convo",
-    help="Manage conversations and shared MEMBERS.md",
+    help="Manage conversations and rules",
     no_args_is_help=False,
     invoke_without_command=True,
     rich_help_panel=WORK_COMMAND_PANEL,

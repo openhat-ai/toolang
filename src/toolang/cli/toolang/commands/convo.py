@@ -34,7 +34,7 @@ ConversationArgument = Annotated[
 def convo_app() -> typer.Typer:
     app = typer.Typer(
         cls=CliGroup,
-        help="Manage conversations and shared MEMBERS.md",
+        help="Manage conversations and rules",
         add_completion=False,
         no_args_is_help=False,
         invoke_without_command=True,
@@ -77,12 +77,12 @@ def _membership(ctx: typer.Context, operation: str, conversation: str) -> None:
 
 
 def join(ctx: typer.Context, conversation: ConversationArgument) -> None:
-    """Join an ordinary group; DM and system membership is fixed"""
+    """Join a conversation"""
     _membership(ctx, "join", conversation)
 
 
 def leave(ctx: typer.Context, conversation: ConversationArgument) -> None:
-    """Leave an ordinary group; preserve rules and history"""
+    """Leave a conversation"""
     _membership(ctx, "leave", conversation)
 
 
@@ -92,7 +92,7 @@ def create(
         str | None, typer.Argument(help="Optional group name (1–128 characters)")
     ] = None,
 ) -> None:
-    """Create a group containing the configured human; print its conversation ID"""
+    """Create a conversation"""
     try:
         config, _ = settings(context_root(ctx))
 
@@ -132,7 +132,7 @@ def rules(
         ),
     ] = None,
 ) -> None:
-    """Download shared MEMBERS.md, or upload a replacement with --update
+    """Retrieve or update rules
 
     Downloads go to stdout by default; status and revision go to stderr.
     Missing rules have revision 0. An empty upload clears rules.
