@@ -1,8 +1,9 @@
 # Hub instance snapshot
 
-Status: Definition-only PR requested on 2026-10-16. Merge and implement after
+Status: Approved for implementation on 2026-10-16 after the user explicitly
+requested the revised output and state styling. Implement after
 [#823](https://github.com/openhat-ai/toolang/pull/823), which replaces
-`too hub status` with bare `too hub`. No implementation is included here.
+`too hub status` with bare `too hub`.
 
 ## Goal and scope
 
@@ -16,60 +17,62 @@ interaction, new flags, presence queries, protocol changes, and startup are outs
 
 ## Layout
 
-Illustrative output after #823; the final two agent rows have dim text:
+Illustrative output (the Hub line is one of the two alternatives):
 
 ```text
-$ too hub
-hub running · 6 agents · 4 running · 3 talk enabled
+hub v0.3.4
+├── gus                    running       enabled
+├── merkle                 running       disabled
+├── hak                    not running   -
+├── alice                  not running   -
+└── bob                    not running   -
 
-HUB                        AGENT     STATUS        TALK
-                        ┌─ alice     running       enabled
-                        ├─ carol     running       enabled
-Hub                     ├─ dorion    running       enabled
-running · v0.4.0a8      ├╌ bob       running       disabled
-                        ├╌ dave      not running   -
-                        └╌ erin      not running   -
+5 agents, 2 running, 1 talk enabled
 ```
 
-- Summary: one plain line, then one blank line. Counts are listed instances,
-  confirmed running instances (including idle ones), and running instances with
-  Talk enabled. Distinct instances count separately.
-- Dim headings: `HUB`, `AGENT`, `STATUS`, `TALK`. Left-align the Hub block; its
-  name is always normal and state/version always dim. Omit endpoint, legend,
-  background bar, and horizontal feed from Hub to the agent spine.
-- All lines are thin and normal intensity. Spine solid; branches solid for
-  `enabled`, dashed otherwise. They do not indicate connectivity or delivery.
-  Running agent text is normal; other rows/continuations are dim.
-- Sort running rows by Talk enabled, disabled, then unknown; unresolved lifecycle
-  rows next; nonrunning rows last. Break ties by name and stable instance ID.
-  No status groups or historical Talk selection.
-- Center the complete Hub block for at most 10 rows fitting the terminal height;
-  otherwise top-align it. Clamp offsets to zero; pipes/unknown height use the same
-  row cutoff. Empty lists top-align Hub, show dim `No agents`, and have zero counts.
-- List every instance once. Preserve distinguishing instance/placement labels.
-  Ordinary rows fit 80 columns; narrow layouts keep Hub left and agents right,
-  wrapping within columns without truncation. Large lists use scrollback or caller
-  pagination. Respect `NO_COLOR`, `TERM=dumb`, pipes, and encoding; plain/ASCII
-  output retains readable values and branch styles without ANSI/cursor controls.
+When the Hub is not online, show `hub not running` instead of the version line.
+Do not repeat the Hub line after the summary. The three agent columns have no
+header row: a wider agent/tree column, status, and Talk. Keep the agent names
+left-aligned after the tree branch; right-align the final Talk column. Size
+columns to their content and wrap only when the terminal is narrower than the
+required layout.
+
+- Print the Hub line first, then every agent once, then a blank line and a plain
+  summary with total listed agents, confirmed running agents, and running agents
+  with Talk enabled. Incomplete discovery adds `partial` and concise diagnostics
+  after the summary. An empty roster shows normal `no agents` without a summary;
+  diagnostics remain visible if discovery fails.
+- Keep the entire Hub line normal, whether it displays a version or `not running`.
+  Agent names, tree branches, summary, and unclassified values are normal.
+  `running` and `enabled` are normal positive states; `disabled`, `not running`,
+  and `-` are dim negative states. Do not dim an entire row because one field is
+  negative.
+- Use `├──` for non-final branches and `└──` for the final branch. The tree is
+  visual grouping only and does not indicate connectivity or delivery.
+- Preserve distinguishing instance/placement labels and complete values. Large
+  lists use scrollback or caller pagination. Respect `NO_COLOR`, `TERM=dumb`,
+  pipes, and encoding; plain/ASCII output retains readable values and has no
+  ANSI/cursor controls.
 
 ## State rules
 
-| Observation | Agent `STATUS` | Agent `TALK` |
-| --- | --- | --- |
-| Confirmed running launch | `running` | `enabled` / `disabled` from that launch's recorded drivers. |
-| Confirmed stopped/failed workload, or resident never started | `not running` | `-`, regardless of saved drivers. |
-| Preparing/starting, unknown liveness, or inspection failure | `-` | `-`; report the observed state/reason separately. |
+| Observation | Agent `STATUS` | Agent `TALK` | Style |
+| --- | --- | --- | --- |
+| Confirmed running launch with Talk | `running` | `enabled` from that launch's recorded drivers. | Both normal. |
+| Confirmed running launch without Talk | `running` | `disabled` from that launch's recorded drivers. | `running` normal; `disabled` dim. |
+| Confirmed stopped/failed workload, or resident never started | `not running` | `-`, regardless of saved drivers. | Both dim. |
+| Preparing/starting, unknown liveness, or inspection failure | `-` | `-`; report the observed state/reason separately. | Negative markers dim; other text normal. |
 
 Missing/invalid drivers yield `-`, never `disabled`; do not read edited config or
 guess defaults. Enabled describes driver selection, not Hub/polling health.
 Unknowns never count as running/enabled. Incomplete discovery/lifecycle/driver
-inspection adds `· partial` and concise diagnostics below the list.
+inspection adds `, partial` and concise diagnostics below the list.
 
-Retain [Hub state/version discovery](hub-status-version.md): `running`, `starting`,
-and `unavailable` keep their meanings; display `stopped` as `not running`. Summary
-and Hub block use the same state. Live records show state/version; absent/stale
-processes omit version. Inspection failure shows `hub -` plus a diagnostic without
-hiding local agents. Supersede that plan's layout/endpoint display only.
+Retain [Hub state/version discovery](hub-status-version.md) and its readiness
+classification. A ready Hub displays `hub <version>` (or `hub running` if version
+is unknown); any non-ready/stopped/inspection-failure state displays `hub not
+running` in normal style. Keep concise diagnostics without hiding local
+agents. Supersede that plan's layout/endpoint display only.
 
 ## Implementation touchpoints
 
@@ -93,14 +96,15 @@ hiding local agents. Supersede that plan's layout/endpoint display only.
 | Scenario | Pass condition |
 | --- | --- |
 | Dependency/routing | After #823, snapshot/help/lifecycle routes work; the removed status subcommand stays removed. |
-| Layout | Cases with 0/1/6/10/11 rows, wrapped rows, and taller Hub blocks satisfy placement/spacing rules without overlap or negative offsets. |
-| State matrix | All table cases, including missing drivers and inspection failures, produce correct words, counts, sorting, and styles. |
+| Layout | The version/Hub line precedes a headerless three-column tree; the summary follows one blank line after nonempty rows, with no duplicate Hub footer. An empty roster has no count summary. Narrow terminals wrap all three columns without dropping values. |
+| State matrix | All table cases, including missing drivers and inspection failures, produce correct words, counts, and field-level positive/negative styling. |
 | Hub independence | Stopped/starting/unavailable/replaced/malformed Hubs retain correct readiness/version semantics and never hide or disable agents. |
 | Identity | Duplicate references count once; same-name instances remain distinct; stale launches cannot supply current drivers/status. |
 | Terminal/scale | At 120/80/40/20 columns and 100/300/1,000 instances, labels stay complete, rows/counts/order are deterministic, plain output has no controls, and Hub request count stays constant. |
 
 Implementation tests use fake probes/offline transports and pass the repository's
-default verification. This definition changes no code, public guide, or changelog.
+default verification. Generate the user-facing Unreleased entry through the
+specified changelog runnable; no machine-readable output format is added.
 
 ## Risks and open questions
 

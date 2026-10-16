@@ -302,7 +302,10 @@ module.serve(root, TeamingRootConfig("human:owner", BackendConfig("redis://local
             with pytest.raises(TeamingError, match="Hub is starting"):
                 hub.connection()
             assert cli.main(["--root", str(tmp_path), "hub"]) == 0
-            assert "hub starting" in capsys.readouterr().out
+            output = capsys.readouterr().out
+            assert output.startswith("hub not running\n")
+            assert "no agents" in output
+            assert "0 agents, 0 running, 0 talk enabled" not in output
             assert cli.main(["--root", str(tmp_path), "hub", "stop", "--force"]) == 0
             assert process.poll() is not None
             assert hub.current() is None
