@@ -36,7 +36,8 @@ perform the final pure record-to-schema conversion.
 - one `ControlRecord` model for run- and thread-scoped controls;
 - complete typed step outputs;
 - content-addressed model instructions, messages, and toolsets;
-- per-family ID high-water marks in `seqs`.
+- per-family ID high-water marks in `seqs`;
+- conversation bindings and admitted batch receipts in `talk_bindings`/`talk_batches`.
 
 Run events are transient facts emitted during execution. They are never stored
 as `EventRecord` rows. A reconnecting caller reconstructs current state from

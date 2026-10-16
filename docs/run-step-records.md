@@ -136,9 +136,11 @@ and a newly prepared state.
 
 ### Spawn admission and handles
 
-Spawn atomically records a new thread/create control, an independent root/run
-control, and the originating Step output. Both controls have `triggered_by` set
-to that physical Step; the root's `parent` is null. Entry `launch_context` stores
+Spawn atomically records an independent root/run control and the originating
+Step output. A fresh target also creates the thread/create control; both new
+controls have `triggered_by` set to that physical Step. Model-tool spawn may reuse
+an idle local thread, preserving its metadata/history/compaction and creating no
+thread control. The root's `parent` is null. Entry `launch_context` stores
 inherited settings, workspace bindings, iteration data, and the accepted output
 contract; ordinary entries omit it from storage. Resources, limits, model request,
 State, and cwd use existing entry fields.
@@ -171,10 +173,10 @@ reconstructed model history retains it even after the root finishes. This view
 is ordinary data and does not become a native handle. The eventual result belongs
 to the spawned Run's output and remains inspectable by its ID.
 
-Admission atomically commits the thread, pending root, applied create/run controls,
-and succeeded source Step with its output and finish time. Accepted spawn Steps
-remain succeeded through interrupted delivery or caller cancellation;
-StepEnd carries the persisted status, output, and finish time. Before acceptance, errors or
+Admission atomically commits the pending root, applied run control, and succeeded
+source Step with its output and finish time, plus thread/create when needed.
+Accepted spawn Steps remain succeeded through interrupted delivery or caller
+cancellation; StepEnd carries the persisted status, output, and finish time. Before acceptance, errors or
 cancellation create no root. A dispatch failure marks the admitted root failed while
 preserving its handle and applied controls. Reprocessing one physical Step returns its original
 admission; conflicting requests fail. Recovery does not relaunch a root.
@@ -304,6 +306,6 @@ scope, target, and index. Record selection still uses the canonical ID.
 All other reference-bearing columns store the complete canonical Ref string.
 `BEGIN IMMEDIATE` serializes local index allocation and related mutations.
 
-The current RunStore schema is version 36. Every older or newer version is
-rejected before reading or writing. There is no migration or legacy reference
-parser at this boundary, and incompatible stores remain unchanged.
+See [Durable Truth](execution.md#durable-truth) for the current schema and supported
+read-only versions. Writable opens reject incompatible stores without migration
+or reset. Reference syntax remains strict; older spellings have no alias.

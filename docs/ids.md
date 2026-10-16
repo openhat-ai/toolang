@@ -5,9 +5,9 @@ Generated suffixes use eight lowercase Base32 characters:
 
 | Identity | Rule |
 | --- | --- |
-| `chat_`, `work_`, `script_`, current `talk_` | Agent-keyed `local` allocation: hourly tick(20) + sequence(20). |
+| `chat_`, `work_`, `script_` | Agent-keyed `local` allocation: hourly tick(20) + sequence(20). |
 | `run_` | Agent-keyed `run` allocation with the same bit budget. |
-| Future per-conversation `talk_` | Permute the conversation suffix with an agent-specific key. |
+| `talk_` | Permute the conversation suffix with an agent-specific key. |
 | `chore_` | Hash the exact name to 40 bits, then permute with an agent-specific key. |
 | `dm_` | Schema 3: permute `0 + pair_hash(39)`. |
 | `gc_` | Schema 3: permute `1 + hourly_tick(20) + sequence(19)`. |
@@ -35,7 +35,9 @@ Generated suffixes use eight lowercase Base32 characters:
   collision. DM/GC suffix domains are disjoint. GC reservations use atomic backend
   time and sequence state. Agent-keyed IDs reduce cross-agent collisions, without
   a global uniqueness guarantee; references must still identify the agent.
-- `talk_thread_id` is pure preparation; Talk still allocates per batch.
+- Talk uses `talk_thread_id` and persists one binding per backend/conversation
+  in the agent's `runs.db`. Reuse it across batches/restarts; reject an occupied
+  ID with another or no binding. The codec itself creates no thread.
   Hub/clients use conversation schema 3. Add no compatibility codec or migration.
 
 Shared primitives live in `common/id_codec.py`; allocation in `common/ids.py`;

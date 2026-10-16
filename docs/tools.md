@@ -303,9 +303,9 @@ the active Run.
 Tools do not own the model loop.
 
 For tool-capable agic calls, the executor supplies callable `runtime` operations:
-`runnables`, `run`, `spawn`, `await`, `exec`, `pick`, and `chdir`. `honor` and
-`compact` are automatic runtime-only preflights. Flow evaluators, output repair,
-and tool-disabled models do not receive runtime tools.
+`runnables`, `run`, `spawn`, `await`, `exec`, `pick`, `chdir`, `steer`, and `cancel`.
+`honor` and `compact` are automatic runtime-only preflights. Flow evaluators,
+output repair, and tool-disabled models do not receive runtime tools.
 
 Run, spawn, and exec accept `runnable` and optional `input`. A named invocation
 without further requested work uses exec; use run when its result is needed
@@ -476,6 +476,8 @@ handoff; spawned roots remain independent. Waiting itself never adopts ownership
 The selectable `convo` toolset provides `team`, `list`, `peek`, `write`, `create`,
 `rename`, `join`, `leave`, `get_rules`, and `set_rules`. Conversation guidance
 uses the same internal honor/recall mechanism, scoped by backend and conversation.
+Its recall target is `{kind: "convo-rules", backend, conversation}`; revision `"0"`
+retracts cleared guidance. Honor remains runtime-only.
 See [messaging](messaging.md#agent-messaging)
 for parameters, compact results, target resolution, and read/write semantics.
 

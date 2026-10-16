@@ -1,9 +1,9 @@
 # Conversation dispatch and MEMBERS.md
 
-Status: proposed for human review; definition only, no runtime changes.
+Status: approved in #829; implemented in #834.
 The [ID preparation](conversation-id-upgrade.md) is implemented.
 
-## Goal, baseline, and scope
+## Goal and scope
 
 Give each agent one durable talk thread per conversation. Every batch enters
 the user or packaged `talk` handler, which may reply, do nothing, steer/cancel
@@ -11,10 +11,9 @@ an existing Run, or start a new Run in a new or existing local thread.
 Success means continuous conversation context, explicit execution targets,
 current scoped rules, and recovery without duplicating admitted work.
 
-Current [Talk](../../src/toolang/driver/talk.py) creates a thread per batch;
-[spawn](../../src/toolang/execution/executor/spawn.py) always creates a new
-`work_` thread. Steer/cancel exist in HTTP but not as model tools. Extend these
-owners; add no Task entity, scheduler, result DSL, semantic rule enforcement,
+The [Talk driver](../../src/toolang/driver/talk.py) and
+[spawn admission](../../src/toolang/execution/executor/spawn.py) own execution.
+Add no Task entity, scheduler, result DSL, semantic rule enforcement,
 authorization tokens, embedded editor, local sync, or conversation deletion.
 
 ## Shared document and authority

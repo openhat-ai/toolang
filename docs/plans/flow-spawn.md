@@ -1,6 +1,9 @@
 # Root spawning from flow and agic
 
 Status: Approved in #687; implemented in [#692](https://github.com/openhat-ai/toolang/pull/692).
+This records the original scope. Current tool names/parameters, native handles,
+and thread reuse follow [runtime tools](../tools.md#spawn-independent-work) and
+[execution records](../run-step-records.md#spawn-admission-and-handles).
 
 ## Goal and Scope
 

@@ -14,7 +14,6 @@ The CLI entry points are:
 
 - `toolang`
 - `too`
-- `caps`
 
 Top-level commands are:
 
@@ -22,8 +21,9 @@ Top-level commands are:
 - `clone`
 - `remove`
 - `list`
+- `home`
+- `workspace`
 - `hub`
-- `text`
 - `info`
 - `serve`
 - `start`
@@ -34,6 +34,8 @@ Top-level commands are:
 - `service`
 - `prompt`
 - `chat`
+- `talk`
+- `convo`
 - `steer`
 - `cancel`
 - `rerun`
@@ -50,21 +52,31 @@ Top-level commands are:
 - `sandboxes`
 - `init`
 - `run`
+- `parse`
+- `highlight`
+- `fmt`
+- `more`
 
 Global options:
 
 - `--root`
 - `--version`
 
+`too talk [TARGET] [MESSAGE...]` opens a conversation, sends a message, or lists
+the directory when no target is supplied.
+`too convo` provides `list`, `create`, `join`, `leave`, and explicit rules file
+transfers. See [conversation commands and MEMBERS.md](messaging.md#shared-conversation-rules)
+for arguments, stdout/stderr, revisions, and Hub endpoints.
+
 Cap commands:
 
-- `caps [AGENT] list [--query QUERY]`
-- `caps [AGENT] <kind> list [--query QUERY]`
-- `caps [AGENT] <kind> new <name>`
-- `caps [AGENT] <kind> edit <name>`
-- `caps [AGENT] <kind> delete <name>`
-- `caps [AGENT] <kind> add <source-ref>`
-- `caps [AGENT] <kind> remove <name>`
+- `too [AGENT] caps [--query QUERY]`
+- `too [AGENT] <kind> list [--query QUERY]`
+- `too [AGENT] <kind> new <name>`
+- `too [AGENT] <kind> edit <name>`
+- `too [AGENT] <kind> delete <name>`
+- `too [AGENT] <kind> add <source-ref>`
+- `too [AGENT] <kind> remove <name>`
 
 `<kind>` is one of `psyche`, `skill`, `service`, or `prompt`. Without `AGENT`,
 cap mutations target root caps. With `AGENT`, they target the selected agent home's caps.
@@ -1406,21 +1418,31 @@ and this invocation before writing; mismatch returns HTTP 409. Resident/visiting
 CLI controls always pin the invocation, preventing a delayed command from
 reaching another invocation. Existing callers may omit the field.
 `rerun` accepts a terminal root run and starts a new root from its source
-invocation, replacing the source in the visible thread projection. It accepts
-optional `request_id`, partial `limits`, and either an exact `model` replacement
-or a sparse `model_override` with `identity` and `effort`. The two model fields
-are mutually exclusive; a sparse override applies to the complete persisted
-source request. Rerun returns `202 Accepted` and executes on the server's owner
-event loop.
+invocation, replacing the source in the visible thread projection. The
+non-streaming endpoint accepts optional `request_id`, `client_id`, partial
+`limits`, and an exact `model` replacement; it executes on the owner's event loop.
+
+The `/rerun/stream` variant accepts an authored restart request: required
+`request_id`, optional `client_id`, and a `commands` array of policy overrides
+(default `[]`). It accepts either `model` or a sparse `model_override` with
+`identity`, `effort`, and `max_output`. These fields are mutually exclusive;
+a sparse override applies to the source's complete model request. This variant
+returns HTTP 200 SSE, rather than a control receipt.
 
 Thread `rewind` and `fork` request bodies take an optional `run_id` anchor and
 `request_id` and `client_id`. An omitted run ID selects the last visible run.
 Only chat threads can be rewound or forked.
 
-`steer` and `cancel` return the accepted `RunControlInfo`. An accepted manual
-chore request returns 202 without a run result; inspect the chore for progress. Thread create and fork return the created
-thread; rewind returns the updated existing thread representation. None of
-these thread operations starts a follow-up run.
+Non-streaming `steer`, `cancel`, `retry`, and `rerun` return
+`{run: RunDetail, command: ControlInfo}`. Steer/retry/rerun use HTTP 202; cancel
+uses HTTP 200. The receipt confirms acceptance; inspect `command.status` for
+application. Independent root start/retry/rerun requires an idle target thread;
+a pending/running root causes HTTP 409 without admitting replacement work.
+
+An accepted manual chore request returns 202 without a run result; inspect the
+chore for progress. Thread create and fork return the created thread; rewind
+returns the updated existing thread representation. None of these thread
+operations starts a follow-up run.
 
 `POST /api/v1/runs/stream` accepts:
 
@@ -1579,9 +1601,9 @@ the Part; signatures can also occur on normal text and tool-call Parts. Signatur
 fragments are not separate events. Deltas are live only; completed Parts are
 durable and available through existing output/inspection endpoints.
 
-Execution-store schema **57** persists structural cursors. Older supported
-schemas remain read-only; records without cursors initialize from structure.
-See the [model adapter contract](plugins.md#model-adapter) for the required indexed
+Structural cursors are persisted in the execution store; supported schemas and
+write restrictions follow [Durable Truth](execution.md#durable-truth). See the
+[model adapter contract](plugins.md#model-adapter) for the required indexed
 stream interface. Human output continues to omit reasoning and native fields.
 
 Run control acceptance and status are durable `ControlRecord` truth. A thread

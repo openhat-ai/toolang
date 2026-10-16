@@ -262,9 +262,10 @@ Other locks remain beside their protected objects:
 | `hub/hub.lock` | One Hub process per root for its lifetime |
 
 Thread fork/rewind use SQLite transactions, without `runs.db.threads.lock`.
-Incoming message batches create separate `talk` threads. Each agent's per-conversation
-talk cursor lives in the teaming backend; agents generate no `.runtime/channels/`
-files and retain no previous-message batch context.
+Each agent reuses one `talk_` thread per backend/conversation. Its `runs.db` stores
+`talk_bindings` and admitted `talk_batches`, including exact input, cursor range,
+and Run receipt. The thread retains execution history; the per-conversation
+cursor lives in the teaming backend. Agents generate no `.runtime/channels/` files.
 ID allocation updates the `seqs` table in `runs.db` under a short SQLite write
 transaction; there is no separate allocator file or lock.
 

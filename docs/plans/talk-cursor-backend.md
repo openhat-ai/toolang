@@ -1,6 +1,8 @@
 # Talk cursor storage
 
 Status: approved on 2026-10-13. This document records the final agreed scope.
+The cursor contract remains current; admission, durable batch receipts, and
+thread reuse now follow [conversation dispatch](conversation-dispatch-and-rules.md).
 
 ## Final goals
 

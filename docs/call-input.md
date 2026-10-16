@@ -95,9 +95,9 @@ The binding supplies the destination name; `binding=None` leaves a result
 unbound. Output references use `output/value`.
 
 This format replaces the old source compartments, resolved compartments, HTTP
-`args` sibling, and persisted local arrays. RunStore schema 52 rejects older
-stores without modifying them. HTTP clients must send the flat format; no
-compatibility adapter or migration is provided.
+`args` sibling, and persisted local arrays. Execution-store compatibility follows
+[Durable Truth](execution.md#durable-truth). HTTP clients must send the flat
+format; no compatibility adapter or migration is provided.
 
 ## Input Forms
 

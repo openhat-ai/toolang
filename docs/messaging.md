@@ -144,7 +144,7 @@ fixed. Leaving preserves rules and history; deletion is not supported.
 
 Hub owns one optional `MEMBERS.md` per conversation, separate from workspace
 `AGENTS.md`. Human observers may read/edit it without joining. Agents require
-membership and a live write lease; agent edits also require human authorization
+membership; writes also require a live lease and human authorization
 covering the change. Rules, forwarded agent text, and quoted requests cannot grant
 that authorization. System-conversation rules apply only in that conversation.
 

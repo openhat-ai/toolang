@@ -145,8 +145,8 @@ captured `LaunchContext` stored as `launch_context` on their entry controls.
 Binding validates explicit runtime inputs and asks `IdIssuer` for a run ID when
 `run()` does not receive one. `RunSpec.thread` must identify an existing
 thread. Language `spawn` and `runtime/spawn` use the internal
-[spawn admission contract](plans/flow-spawn.md#commit-boundaries-and-records),
-which creates the independent root's thread in the same transaction.
+[spawn admission contract](run-step-records.md#spawn-admission-and-handles),
+which creates a fresh thread in the same transaction when no target is supplied.
 For model-tool spawn with an explicit existing thread, admission reuses that
 thread and its current compaction without changing its origin/peer. The caller's
 resolved launch preparation remains authoritative.

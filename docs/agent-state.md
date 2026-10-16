@@ -326,6 +326,5 @@ without changing accepted code or caps. Ordinary rerun uses current State;
 recorded references preserve the source revision for inspection.
 
 Model/provider continuation is a different value and is named `cont` in model
-calls, model results, model step records, and runtime agic state. See the
-[record contract](run-step-records.md#controlrecord) for execution-store
-compatibility.
+calls, model results, model step records, and runtime agic state. Execution-store
+compatibility follows [Durable Truth](execution.md#durable-truth).

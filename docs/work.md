@@ -7,7 +7,7 @@ with a captured State/Setup snapshot.
 | Driver | Trigger | Thread |
 | --- | --- | --- |
 | `chat` | Interactive FastAPI requests from TUI/WebUI | `chat_` per conversation |
-| `talk` | Incoming Hub message batches | `talk_` per handled batch |
+| `talk` | Incoming Hub message batches | One bound `talk_` per agent/backend/conversation |
 | `chore` | One-off, scheduled, or manual work | `chore_<8-character ID>` |
 
 Fresh resident start/serve enable all three by default; visiting start/serve
@@ -69,10 +69,12 @@ runnable. The handler may be an agic or flow. No Task or Job entity is involved.
 
 ## Threads and observation
 
-Talk reuses one thread across batches and restarts, with a fresh workdir resolved
-for each batch. Disabling talk consumption leaves transport, presence, outbound
-tools, and observation available. `spawn` creates an independent `work_`
-thread with recorded ancestry; ordinary nested calls remain in their thread.
+Talk reuses its bound conversation thread across batches and restarts, with a
+fresh workdir resolved for each batch. Disabling talk consumption leaves transport,
+presence, outbound tools, and observation available. Flow `spawn` creates a new
+`work_` thread; [`runtime.spawn`](tools.md#spawn-independent-work) may instead
+reuse an inspected idle local thread. Both record ancestry and an independent
+root; ordinary nested calls remain in their thread.
 Scripts retain the `script_` prefix, and every execution has a `run_` ID.
 
 Independent standalone invocations of the same `.too` source use separate
