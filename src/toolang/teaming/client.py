@@ -132,7 +132,7 @@ class HubClient:
                     f"Send unconfirmed for {message_id}; inspect history before retrying"
                 ) from exc
             raise BackendUnavailable(
-                "Hub is unavailable; check 'too hub status' or run 'too hub start'"
+                "Hub is unavailable; check 'too hub' or run 'too hub start'"
             ) from exc
         try:
             data = response.json()

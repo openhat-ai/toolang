@@ -1,4 +1,4 @@
-"""Lifecycle commands for the root-scoped teaming Hub."""
+"""Status and lifecycle commands for the root-scoped teaming Hub."""
 
 import os
 import sys
@@ -23,17 +23,18 @@ PortOption = Annotated[
 def hub_app() -> typer.Typer:
     app = typer.Typer(
         cls=CliGroup,
-        help="Manage the teaming service",
+        help="Show or control the teaming service",
         add_completion=False,
-        no_args_is_help=True,
+        invoke_without_command=True,
+        no_args_is_help=False,
         pretty_exceptions_enable=False,
         pretty_exceptions_show_locals=False,
     )
+    app.callback()(status)
     for name, command in (
         ("start", start),
         ("serve", serve),
         ("stop", stop),
-        ("status", status),
     ):
         app.command(name, cls=CliCommand)(command)
     return app
@@ -99,6 +100,8 @@ def stop(
 
 def status(ctx: typer.Context) -> None:
     """Show the hub endpoint, version, and readiness"""
+    if ctx.invoked_subcommand is not None:
+        return
     hub = HubProcess(context_root(ctx))
     record = user_call(hub.current)
     if record is None:

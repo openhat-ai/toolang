@@ -7,6 +7,14 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking:** `too hub` now prints the Hub endpoint, version, and readiness when
+  run without a command, and the `too hub status` command is removed. Use
+  `too hub` instead of `too hub status`; `too hub start`, `too hub serve`, and
+  `too hub stop` are unchanged, and messages that pointed to `too hub status`
+  now point to `too hub`.
+
 ### Fixed
 
 - A tool call intercepted by workspace rules stays in the same history unit as
