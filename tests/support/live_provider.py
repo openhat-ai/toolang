@@ -54,6 +54,6 @@ async def create_live_agent(
     )
     setup = await SetupWatcher(
         AgentLayout.resident(root, "alice"),
-        default_overrides={"model": model, "runnable": "agic:smoke"},
+        default_overrides={"model": model},
     ).refresh()
     return setup, state

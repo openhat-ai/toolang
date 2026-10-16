@@ -96,7 +96,6 @@ def _startup_event(
             ["chat", "alice", "--help"],
             ("--sandbox", "--allow", "--limit", "--default", "--compact-model"),
         ),
-        (["retry", "alice", "--help"], ("--allow", "--limit")),
         (["rerun", "alice", "--help"], ("--allow", "--limit", "--model")),
     ],
 )
@@ -121,15 +120,11 @@ def test_policy_options_follow_cli_display_order(
 
 def test_session_and_restart_commands_expose_only_valid_runtime_options() -> None:
     chat = strip_ansi(runner.invoke(cli.app, ["chat", "alice", "--help"]).stdout)
-    retry = strip_ansi(runner.invoke(cli.app, ["retry", "alice", "--help"]).stdout)
     rerun = strip_ansi(runner.invoke(cli.app, ["rerun", "alice", "--help"]).stdout)
 
     assert "--default" in chat
     assert re.search(r"--model(?![a-z-])", chat) is None
     assert "--runnable" not in chat
-    assert "--dev" in retry
-    assert "--sandbox" not in retry
-    assert "--default" not in retry
     assert "--dev" in rerun
     assert "--sandbox" in rerun
     assert "--default" not in rerun
@@ -168,7 +163,6 @@ def test_chat_default_options_reach_session_orchestration(
     (
         (["alice", "chat", "--model", "test/model"], "--model"),
         (["alice", "chat", "--runnable", "demo"], "--runnable"),
-        (["alice", "retry", "run_test", "--default", "model=test/model"], "--default"),
         (["alice", "rerun", "run_test", "--default", "model=test/model"], "--default"),
     ),
 )
@@ -437,7 +431,6 @@ def test_runtime_dev_help_describes_wheel_selection() -> None:
         ["serve", "--help"],
         ["start", "--help"],
         ["chat", "alice", "--help"],
-        ["retry", "alice", "--help"],
         ["rerun", "alice", "--help"],
     )
     for command in commands:

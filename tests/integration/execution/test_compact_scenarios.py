@@ -1281,11 +1281,6 @@ def test_one_large_root_compacts_in_step_batches_and_keeps_latest_step(
             if step_horizon:
                 final = model_steps[-1].ref
                 harness.store.publish_compaction(final, roots=(RunRef(original.id),))
-                with pytest.raises(ValueError, match="referenced horizon"):
-                    with harness.store.write_transaction():
-                        harness.store._delete_retry_suffix(
-                            tree_runs=(producer.id,), steps=(final,)
-                        )
                 assert harness.store.get_step(ref=final) is not None
                 thread_record = harness.store.get_thread(thread_id=thread)
                 assert thread_record is not None and thread_record.horizon == final

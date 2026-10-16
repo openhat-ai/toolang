@@ -47,7 +47,7 @@ from toolang.base.types.message import (
     TextPart,
     ToolResultPart,
 )
-from toolang.base.types.run import ModelCall, ModelCallResult, ModelUsage, ToolCall
+from toolang.base.types.run import ModelCall, ModelCallResult, ToolCall
 from toolang.base.types.tool import ToolContext, ToolDefinition, ToolResult
 from toolang.catalog import templates
 from toolang.catalog.agent import LocalAgents
@@ -59,10 +59,9 @@ from toolang.execution.executor import RunExecutor
 from toolang.execution.inspection.history import RunHistory
 from toolang.execution.records import (
     RunControlPayload,
-    RetryControlPayload,
     ThreadRecord,
 )
-from toolang.execution.schemas import RerunRequest, RetryRequest, ThreadInfo
+from toolang.execution.schemas import RerunRequest, ThreadInfo
 from toolang.execution.store import RunStore
 from toolang.execution.types import (
     Output,
@@ -239,16 +238,6 @@ def test_local_agent_clone_copies_workspace_config_unchanged(tmp_path: Path) -> 
     assert (
         AgentLayout.resident(root, "bob").config.read_text(encoding="utf-8") == config
     )
-
-
-@pytest.mark.parametrize("value", ("2.3", "run_root.2.3"))
-def test_retry_anchor_accepts_only_dot_separated_step_paths(value: str) -> None:
-    assert thread_commands._retry_anchor("run_root", value) == StepRef.from_local(
-        "run_root", (2, 3)
-    )
-
-    with pytest.raises(ValueError, match="invalid step path"):
-        thread_commands._retry_anchor("run_root", "run_root/2/3")
 
 
 @pytest.mark.parametrize(
@@ -2570,7 +2559,7 @@ def test_run_controls_reject_stale_history_without_live_ownership(
 
 
 @pytest.mark.parametrize("tty", (False, True), ids=("non-tty", "tty"))
-def test_retry_and_rerun_preserve_limit_overrides(
+def test_rerun_preserves_limit_overrides(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     tty: bool,
@@ -2588,10 +2577,6 @@ agic reply(_: Part[]) -> Part[]:
 """,
         responses=[
             RuntimeError("temporary failure"),
-            ModelCallResult(
-                message=Message.assistant("recovered"),
-                usage=ModelUsage(input_tokens=1, output_tokens=1),
-            ),
             ModelCallResult(message=Message.assistant("reran")),
         ],
     )
@@ -2602,11 +2587,6 @@ agic reply(_: Part[]) -> Part[]:
 
     def current_state():
         state_reads.append(None)
-        return harness.state
-
-    def load_state(revision: str):
-        if harness.state.revision != revision:
-            raise ValueError(f"snapshot revision not found: {revision}")
         return harness.state
 
     @contextmanager
@@ -2628,7 +2608,6 @@ agic reply(_: Part[]) -> Part[]:
             harness.ids,
             setup=lambda: harness.setup,
             state=current_state,
-            load_state=load_state,
             include=lambda _setup: lambda _reference: TextPart("unused"),
         )
         client = LocalRunClient(executor)
@@ -2658,25 +2637,6 @@ agic reply(_: Part[]) -> Part[]:
         source = asyncio.run(run_source())
         assert source.status == "failed"
 
-        retry = _invoke(
-            harness.setup.layout.root,
-            "alice",
-            "retry",
-            source.id,
-            "--limit",
-            "tokens=10",
-            tty=tty,
-        )
-        retried = harness.store.get_run(run_id=source.id)
-        assert retry.exit_code == 0, (
-            retry.stdout,
-            retry.stderr,
-            repr(retry.exception),
-            retried.status if retried is not None else None,
-            retried.error if retried is not None else None,
-            harness.adapter.pending_responses,
-        )
-        assert state_reads == [None, None]
         rerun = _invoke(
             harness.setup.layout.root,
             "alice",
@@ -2688,8 +2648,8 @@ agic reply(_: Part[]) -> Part[]:
         )
 
         assert rerun.exit_code == 0, rerun.stderr
-        assert state_reads == [None] * 5
-        assert runtime_selections == ["host", None]
+        assert state_reads == [None] * 3
+        assert runtime_selections == [None]
         rerun_records = [
             run
             for run in harness.store.list_runs(thread_id=source.thread)
@@ -2698,17 +2658,6 @@ agic reply(_: Part[]) -> Part[]:
         assert len(rerun_records) == 1
         rerun_id = rerun_records[0].id
         if tty:
-            assert retry.stdout == ""
-            retry_output = strip_ansi(retry.stderr)
-            assert "• recovered" in retry_output
-            retry_footer = next(
-                line
-                for line in retry_output.splitlines()
-                if f"{source.id}: retry succeeded" in line
-            )
-            assert retry_footer.startswith(f"▪︎ {source.id}: retry succeeded  ")
-            assert "succeeded ·" not in retry_footer
-
             assert rerun.stdout == ""
             rerun_output = strip_ansi(rerun.stderr)
             assert "• reran" in rerun_output
@@ -2720,18 +2669,12 @@ agic reply(_: Part[]) -> Part[]:
             assert rerun_footer.startswith(f"▪︎ {rerun_id}: rerun succeeded  ")
             assert "succeeded ·" not in rerun_footer
         else:
-            assert retry.stdout.strip() == f"retried {source.id}: succeeded"
             assert rerun.stdout.strip() == (
                 f"reran {source.id} as {rerun_id}: succeeded"
             )
-            assert retry.stderr == ""
             assert rerun.stderr == ""
 
-        retry_control = harness.store.list_run_controls(run_id=source.id)[-1]
         rerun_control = harness.store.get_run_control(run_id=rerun_id, index=0)
-        assert retry_control.kind == "retry"
-        assert isinstance(retry_control.payload, RetryControlPayload)
-        assert retry_control.payload.limits.tokens == 10
         assert rerun_control is not None
         assert rerun_control.kind == "run"
         assert isinstance(rerun_control.payload, RunControlPayload)
@@ -2741,7 +2684,7 @@ agic reply(_: Part[]) -> Part[]:
         harness.store.close()
 
 
-def test_retry_and_rerun_use_the_remote_run_client_for_an_active_runtime(
+def test_rerun_uses_the_remote_run_client_for_an_active_runtime(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2757,7 +2700,7 @@ agic reply(_: Part[]) -> Part[]:
         responses=[ModelCallResult(message=Message.assistant("source"))],
     )
     _create_agent(harness.setup.layout.root)
-    observed_requests: list[RetryRequest | RerunRequest] = []
+    observed_requests: list[RerunRequest] = []
     runtime_selections: list[tuple[str | None, Path | None]] = []
 
     async def run_source():
@@ -2790,11 +2733,6 @@ agic reply(_: Part[]) -> Part[]:
             return self.detail
 
     class _Client:
-        async def retry(self, request, *, tracer=None):
-            del tracer
-            observed_requests.append(request)
-            return _Handle(source_detail)
-
         async def rerun(self, request, *, tracer=None):
             del tracer
             observed_requests.append(request)
@@ -2824,16 +2762,6 @@ agic reply(_: Part[]) -> Part[]:
     dev.mkdir()
 
     try:
-        retry = _invoke(
-            harness.setup.layout.root,
-            "alice",
-            "retry",
-            source.id,
-            "--dev",
-            str(dev),
-            "--limit",
-            "time=10",
-        )
         rerun = _invoke(
             harness.setup.layout.root,
             "alice",
@@ -2847,19 +2775,12 @@ agic reply(_: Part[]) -> Part[]:
             "time=20",
         )
 
-        assert retry.exit_code == rerun.exit_code == 0
-        assert runtime_selections == [
-            ("host", dev),
-            ("docker:python:3.13-slim", dev),
-        ]
-        assert len(observed_requests) == 2
-        assert isinstance(observed_requests[0], RetryRequest)
+        assert rerun.exit_code == 0
+        assert runtime_selections == [("docker:python:3.13-slim", dev)]
+        assert len(observed_requests) == 1
+        assert isinstance(observed_requests[0], RerunRequest)
         assert observed_requests[0].source == source.id
-        assert observed_requests[0].commands[-1].value == 10
-        assert isinstance(observed_requests[1], RerunRequest)
-        assert observed_requests[1].source == source.id
-        assert observed_requests[1].commands[-1].value == 20
-        assert retry.stdout.strip() == f"retried {source.id}: succeeded"
+        assert observed_requests[0].commands[-1].value == 20
         assert rerun.stdout.strip() == (
             f"reran {source.id} as {rerun_detail.id}: succeeded"
         )

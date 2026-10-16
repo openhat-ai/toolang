@@ -11,7 +11,6 @@ import httpx
 
 from .client import HubClient
 from .errors import MessagingError
-from toolang.execution.schemas import ActivitySnapshot
 from .discovery import host_token, hub_connection
 from .schemas import HubConnection, Message, TalkCursor, conversation_id, target
 
@@ -92,11 +91,6 @@ class AgentClient(HubClient):
         )
         if TalkCursor.model_validate(data) != body:
             raise MessagingError("Mismatched Hub talk cursor")
-
-    async def publish_activity(self, pages: list[ActivitySnapshot]) -> None:
-        await self._request(
-            "PUT", "/activity", json=[page.model_dump() for page in pages]
-        )
 
     async def send(
         self,

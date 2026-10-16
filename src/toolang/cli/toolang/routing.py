@@ -113,7 +113,6 @@ COMMAND_SPECS: Mapping[str, CommandSpec] = {
         _command("chore", "before", placements=_RESIDENT, prepare="program"),
         _command("talk", "none"),
         _command("hub", "none"),
-        _command("top", "none", "before", placements=_ALL_PLACEMENTS, prepare="layout"),
         _command(
             "chat",
             "before",
@@ -124,13 +123,6 @@ COMMAND_SPECS: Mapping[str, CommandSpec] = {
         _command("inspect", "before", placements=_ALL_PLACEMENTS, prepare="layout"),
         _command("steer", "before", placements=_ALL_PLACEMENTS, prepare="layout"),
         _command("cancel", "before", placements=_ALL_PLACEMENTS, prepare="layout"),
-        _command(
-            "retry",
-            "before",
-            placements=_ALL_PLACEMENTS,
-            prepare="program",
-            preparation_owner="command",
-        ),
         _command(
             "rerun",
             "before",

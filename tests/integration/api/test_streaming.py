@@ -57,7 +57,6 @@ from toolang.execution.events import (
 )
 from toolang.execution.records import (
     RunControlPayload,
-    RetryControlPayload,
     ThreadPeer,
 )
 from toolang.execution.schemas import RunDetail, ThreadDetail
@@ -467,7 +466,7 @@ def test_stream_validation_fails_before_sse_headers(tmp_path: Path) -> None:
         asyncio.run(core.close())
 
 
-def test_retry_and_rerun_api_accept_partial_limit_overrides(tmp_path: Path) -> None:
+def test_rerun_api_accepts_partial_limit_overrides(tmp_path: Path) -> None:
     harness = ExecutionHarness.create(
         tmp_path,
         source="""
@@ -479,10 +478,6 @@ agic answer(_: Part[]) -> Part[]:
 """,
         responses=[
             RuntimeError("temporary failure"),
-            ModelCallResult(
-                message=Message.assistant("recovered"),
-                usage=ModelUsage(input_tokens=1, output_tokens=1),
-            ),
             ModelCallResult(
                 message=Message.assistant("reran"),
                 usage=ModelUsage(input_tokens=1, output_tokens=1),
@@ -528,14 +523,6 @@ agic answer(_: Part[]) -> Part[]:
             )
             source_id = str(_sse_events(started.text)[0][1]["run"])
 
-            retry = client.post(
-                f"/api/v1/runs/{source_id}/retry",
-                json={
-                    "request_id": "retry-request",
-                    "limits": {"tokens": 10, "cost": None},
-                },
-            )
-            _wait_for_terminal(core, source_id)
             selector_rerun = client.post(
                 f"/api/v1/runs/{source_id}/rerun",
                 json={
@@ -557,10 +544,6 @@ agic answer(_: Part[]) -> Part[]:
 
         assert started.status_code == 200
         assert short_name.status_code == 422
-        assert retry.status_code == 202
-        assert retry.json()["command"]["kind"] == "retry"
-        assert retry.json()["command"]["request_id"] == "retry-request"
-        assert "sandbox" not in retry.json()["command"]["payload"]
         assert selector_rerun.status_code == 422
         assert "model request ref must be exact" in str(selector_rerun.json()["detail"])
         assert rerun.status_code == 202
@@ -568,11 +551,7 @@ agic answer(_: Part[]) -> Part[]:
         assert "rerun_from" not in rerun.json()["command"]["payload"]
         assert rerun.json()["command"]["payload"]["sandbox"] == "host"
 
-        retry_control = core.store.list_run_controls(run_id=source_id)[-1]
         rerun_control = core.store.get_run_control(run_id=rerun_id, index=0)
-        assert isinstance(retry_control.payload, RetryControlPayload)
-        assert retry_control.payload.limits == RunLimits(tokens=10)
-        assert not hasattr(retry_control.payload, "sandbox")
         assert rerun_control is not None
         assert isinstance(rerun_control.payload, RunControlPayload)
         assert rerun_control.payload.limits == RunLimits(tokens=100, time=30)

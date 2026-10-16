@@ -3,7 +3,7 @@
 Run these tests explicitly, for example:
 
     uv run pytest -m live_provider --live-model \
-      'deepseek/deepseek-chat'
+      'deepseek/deepseek-v4-flash'
 """
 
 from __future__ import annotations
@@ -63,10 +63,6 @@ class _LiveExecution:
         store = RunStore(runtime / "runs.db")
         ids = IdIssuer(runtime / "runs.db", agent_name=setup.layout.name)
 
-        def load_state(revision: str) -> AgentState:
-            assert revision == state.revision
-            return state
-
         return cls(
             setup=setup,
             state=state,
@@ -76,7 +72,6 @@ class _LiveExecution:
                 ids,
                 setup=lambda: setup,
                 state=lambda: state,
-                load_state=load_state,
             ),
             threads=ThreadManager(store, ids),
         )

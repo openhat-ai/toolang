@@ -1,7 +1,7 @@
 """Driver-independent storage interfaces used by teaming services.
 
-The backend owns one connection lifecycle. Its activity and execution-event stores
-share that lifecycle; they are not independently opened or closed. Implementations
+The backend owns one connection lifecycle, including execution-event storage.
+Implementations
 normalize driver replies and enforce atomic lease/membership checks on writes.
 No keys, commands, scripts, or concrete driver types belong in these interfaces.
 """
@@ -13,25 +13,8 @@ from typing import TYPE_CHECKING, Any, Protocol
 from ..types import EventPublisher
 
 if TYPE_CHECKING:
-    from toolang.execution.activity import ActivityQuery
-    from toolang.execution.schemas import ActivitySnapshot
     from ..events import HubCursor
     from ..schemas import Conversation, TeamMember
-
-
-class ActivityBackend(Protocol):
-    """Absolute activity snapshots, fenced by the current agent lease."""
-
-    async def lease(self, agent: str) -> dict[str, str]:
-        """Read the current live lease, or an empty mapping when offline."""
-        ...
-
-    async def save(
-        self, agent: str, token: str, pages: list[ActivitySnapshot]
-    ) -> bool: ...
-    async def cached(
-        self, agent: str, query: ActivityQuery
-    ) -> list[ActivitySnapshot]: ...
 
 
 class EventBackend(EventPublisher, Protocol):
@@ -59,9 +42,6 @@ class Backend(Protocol):
 
     @property
     def events(self) -> EventBackend: ...
-
-    @property
-    def activity(self) -> ActivityBackend: ...
 
     # Lifetime
 

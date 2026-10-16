@@ -334,7 +334,6 @@ With `P = too:teaming:v1`, the messaging key spaces are:
 | `P:convo:stats` | Hash | DM count, GC count, accepted message count |
 | `P:convo:system` | Hash | `all` → system GC ID |
 | `P:agent:N:talk` | Hash | Conversation ID → talk handler cursor; `N` is the agent name |
-| `P:activity:agent:N` | Hash | `default` / `query` → `{query: query hash, pages: ActivitySnapshot[]}` |
 | `P:events:meta` | Hash | Version, epoch, tail, retention floor, byte count, catalog revision; `pending` fences interrupted publication |
 | `P:events:stream` | Stream | `kind`, `agent`, `data` fields for execution events and recovery transitions |
 | `P:events:agents` | Hash | Agent ID → publication/recovery state, generation pointers, source cursor, last operation receipt |
@@ -349,8 +348,8 @@ successful absent scans. Root claims cannot be adopted by another root.
 
 Discovery creates roster/team entries atomically. Cleanup after two absent scans
 and no live lease removes both entries and GC memberships, preserving DM
-membership and history. Expiry alone only changes presence. `P:activity:*` and
-execution `P:events:*` keep their separate roles.
+membership and history. Expiry alone only changes presence. Execution
+`P:events:*` metadata retains its separate publication role.
 Raw leases stay private; team responses expose only public metadata and deadlines.
 
 Conversation names are nonunique secondary indexes; member pairs resolve DMs
@@ -358,8 +357,8 @@ directly by ID. Membership sets and presence deadlines each have one authority.
 Global conversation/message counters change in the same transaction as their
 records; per-conversation message counts come from the Stream itself. Execution
 event metadata remains separate because its feed needs byte accounting and
-generation recovery. Activity retains two query slots per agent; active event
-generations persist, while staging generations expire after 60 seconds.
+generation recovery. Active event generations persist, while staging generations
+expire after 60 seconds.
 
 `GET /team/events` returns an initial checkpoint before snapshots are loaded, then
 changes and checkpoints. Resume using `?after=t1.<epoch>.<stream-id>`. A trimmed,
@@ -394,14 +393,12 @@ persisted creation time or revision.
 
 Storage interfaces live in `teaming/backend/protocol.py`; the factory selects
 `backend/valkey/`, which owns all keys, commands, Lua, and driver errors. Services
-use the `Backend` contract and its `events` and `activity` capabilities, sharing
-one connection lifetime owned by Hub. Activity federation and subscription logic
-remain outside the driver. `activity_cache.py` owns publication boundaries, query
-identity, and offline selection. Within Valkey, `keys.py` owns storage addresses;
-`scripts.py`, `event_scripts.py`, and `activity_scripts.py` own atomic operations,
-sharing lease guards and exact Stream-ID ordering through `lua.py`. Team record
-validation is shared across messaging, activity, and execution publication in
-Python; Lua rechecks the validated bytes and the current lease before mutation.
+use the `Backend` contract and its execution `events` capability, sharing one
+connection lifetime owned by Hub. Within Valkey, `keys.py` owns storage addresses;
+`scripts.py` and `event_scripts.py` own atomic operations, sharing lease guards
+and exact Stream-ID ordering through `lua.py`. Team record validation is shared
+across messaging and execution publication in Python; Lua rechecks the validated
+bytes and the current lease before mutation.
 The interface exposes explicit lease renewal/release
 and normalized message field maps, without raw driver commands.
 
@@ -415,29 +412,5 @@ The [conversation contract](plans/conversation-ids.md) specifies record JSON,
 atomic writes, and event payloads. The [ID upgrade](plans/conversation-id-upgrade.md)
 defines schema `3` codecs, capacity, and fresh-dataset rollout.
 
-## Activity views
-
-`too top` requires Hub and observes the team; `too AGENT top` reads local agent
-history without requiring Hub or a running executor. Header shows scope totals,
-local time and window settings; Table has Agent/Thread/Run levels, and optional
-Details sits above a fixed Status bar. `--refresh SECONDS` defaults to `0.1`;
-keys repaint immediately. Source updates carry committed activity and elapsed
-time independently for each agent. `--once` prints one snapshot.
-
-Period defaults to the current/latest executor session. `--since DURATION` is a
-rolling window; a timezone-aware timestamp selects a fixed start, and `all`
-includes available history. MODEL, TOOL, IN, CACHED, OUT, SPEND and TIME+ share
-that range; CACHED is cache-read input already included in IN. Recent
-(`--recent DURATION|all`, default `30m`) independently controls visibility.
-F5 displays the next view's name (Agents/Threads/Runs/Tree); F7 Recent and F8 Period
-cycle the corresponding Header ranges. Both modes show the AGENT column;
-the agent Header shows live session uptime independently of TIME+. The status bar
-shows only function keys; F10 exits, and existing letter/Enter shortcuts remain
-available through F1 Help. `--sort spend` accepts `cost` as an alias.
-Enter opens full IDs, exact usage and Markdown results; Ctrl-P/N selects rows,
-and PgUp/PgDn pages Details. Unavailable historical usage remains unknown.
-
 The [Talk presentation plan](plans/talk-status-bar.md) records the original layout;
 the [conversation contract](plans/conversation-ids.md) supersedes its IDs and targets.
-[Team observation](plans/team-observation.md) and [activity views](plans/top-activity.md)
-define Hub event subscriptions and `too top`.

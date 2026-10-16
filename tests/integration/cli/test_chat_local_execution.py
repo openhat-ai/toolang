@@ -44,7 +44,7 @@ from toolang.state.types import StateSyncResult
 from toolang.state.watcher import StateRefresh, StateWatcher
 
 
-def test_latest_chat_output_keeps_one_snapshot_during_retry(
+def test_latest_chat_output_keeps_one_snapshot_during_concurrent_write(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     store = RunStore(tmp_path / "runs.db")
@@ -64,23 +64,16 @@ def test_latest_chat_output_keeps_one_snapshot_during_retry(
         project_run_end(writer, run_id="run_a", output=Output("original answer", None))
         control = writer.get_run_control(run_id="run_a", index=0)
         assert control is not None and isinstance(control.payload, RunControlPayload)
-        payload = control.payload
         get_output = session.history.get_output
 
-        def retry_before_output(run: RunRef | str) -> Output | None:
-            writer.accept_retry(
-                run_id="run_a",
-                anchor=None,
-                resources=payload.resources,
-                limits=payload.limits,
-                state=payload.state,
-                sandbox="host",
-                request_id=None,
-                created_at="2026-09-01T00:00:00Z",
+        def change_before_output(run: RunRef | str) -> Output | None:
+            writer._conn.executescript(
+                "DELETE FROM steps WHERE run IN ('run_a', 'run_b'); "
+                "DELETE FROM runs WHERE id='run_b'; UPDATE runs SET output=NULL WHERE id='run_a';"
             )
             return get_output(run)
 
-        monkeypatch.setattr(session.history, "get_output", retry_before_output)
+        monkeypatch.setattr(session.history, "get_output", change_before_output)
         result = session.get_result(None, thread_id="term_a")
         assert result.run_id == "run_a"
         assert result.output == (TextPart("original answer"),)

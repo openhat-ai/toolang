@@ -1,13 +1,10 @@
 """Structural upserts and checkpoint atomicity independent of HTTP framing."""
 
-from dataclasses import replace
-
 import pytest
 
 from toolang.execution.events import (
     RunBegin,
     RunEnd,
-    RunRetried,
     RunSnapshot,
     StepBegin,
     StepEnd,
@@ -30,29 +27,6 @@ def test_context_begin_never_clears_an_already_applied_end():
     assert state.feed(StreamFrame.source(begin, cursor(1), context=True)) == ()
     assert state.complete("run_one")
     assert state.cursor == cursor(2)
-
-
-def test_old_retry_control_cannot_clear_a_newer_incarnation():
-    state = StreamClientState()
-    begin = RunBegin("run_one", ControlRef.for_run("run_one", 2))
-    state.feed(StreamFrame.source(begin, cursor(10)))
-    state.feed(StreamFrame.source(RunEnd("run_one", "succeeded"), cursor(11)))
-    mutation = RunRetried(
-        "run_one", "term_one", ControlRef.for_run("run_one", 1), (), ()
-    )
-    assert state.feed(StreamFrame.source(mutation, cursor(12))) == ()
-    assert state.complete("run_one")
-    assert (
-        state.feed(
-            StreamFrame.source(
-                replace(begin, control=ControlRef.for_run("run_one", 0)),
-                cursor(1),
-                context=True,
-            )
-        )
-        == ()
-    )
-    assert state.complete("run_one")
 
 
 def test_grouped_prefix_commits_once_despite_out_of_order_original_cursors():

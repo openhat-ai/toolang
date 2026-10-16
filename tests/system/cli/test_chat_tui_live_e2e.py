@@ -4,7 +4,7 @@ Run the DeepSeek cases explicitly with:
 
     uv run pytest -q tests/system/cli/test_chat_tui_live_e2e.py \
       -m live_provider \
-      --live-model 'deepseek/deepseek-chat'
+      --live-model 'deepseek/deepseek-v4-flash'
 """
 
 from __future__ import annotations

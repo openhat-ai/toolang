@@ -46,9 +46,5 @@ def generation_key(agent: str, generation: str) -> str:
     return f"{PREFIX}:events:agent:{target(agent, kind='agent').name}:{generation}"
 
 
-def activity_key(agent: str) -> str:
-    return f"{PREFIX}:activity:{target(agent, kind='agent').id}"
-
-
 def talk_key(agent: str) -> str:
     return f"{PREFIX}:agent:{target(agent, kind='agent').name}:talk"

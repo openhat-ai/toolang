@@ -19,10 +19,8 @@ from tests.support.execution_fixtures import (
 from tests.support.execution_harness import ExecutionHarness, RecordingRunTracer
 from toolang.base.types.message import Message, TextPart, ToolCallPart, ToolResultPart
 from toolang.base.types.run import ModelCall, ModelCallResult, ToolCall
-from toolang.execution.errors import HistoryChangedError
 from toolang.execution.executor.tool_history import _ToolHistory
 from toolang.execution.inspection.history import RunHistory
-from toolang.execution.records import RunControlPayload
 from toolang.execution.schemas import record_to_data
 from toolang.execution.store import RunStore
 from toolang.execution.types import (
@@ -477,31 +475,6 @@ def test_run_page_continuation_does_not_capture_unreturned_children(store):
     assert [r["id"] for r in second["runs"]] == ["run_b"]
 
 
-@pytest.mark.parametrize(
-    "tool,query", [("read_runs", {}), ("read_steps", {"run": "run_a"})]
-)
-def test_retry_invalidates_captured_facts(store, tool, query):
-    for name in ("run_a", "run_b"):
-        start(store, name)
-        step(store, name)
-        project_run_end(store, run_id=name)
-    cursor = read(store, tool, limit=1, **query)["cursor"]
-    payload = store.get_run_control(run_id="run_a", index=0).payload
-    assert isinstance(payload, RunControlPayload)
-    store.accept_retry(
-        run_id="run_a",
-        anchor=None,
-        resources=payload.resources,
-        limits=payload.limits,
-        state=payload.state,
-        sandbox="host",
-        request_id=None,
-        created_at="2026-02-01T00:00:00Z",
-    )
-    with pytest.raises(HistoryChangedError):
-        read(store, tool, cursor=cursor)
-
-
 @pytest.mark.parametrize("status", ["succeeded", "failed", "canceled"])
 def test_output_preserves_status_and_partial_value_without_model_rebuild(
     store, monkeypatch, status
@@ -643,22 +616,15 @@ def test_value_resolution_uses_the_same_snapshot_as_page_selection(store, monkey
     )
     project_run_end(store, run_id="run_a")
     expected = read(store, "read_steps", run="run_a")
-    payload = store.get_run_control(run_id="run_a", index=0).payload
     original = RunStore.resolve_output
     changed = []
     with closing(RunStore(store.db_path)) as writer:
 
         def resolve(reader, local):
             if not changed:
-                writer.accept_retry(
-                    run_id="run_a",
-                    anchor=None,
-                    resources=payload.resources,
-                    limits=payload.limits,
-                    state=payload.state,
-                    sandbox="host",
-                    request_id=None,
-                    created_at="2026-02-01T00:00:00Z",
+                writer._conn.executescript(
+                    "DELETE FROM steps WHERE run IN ('run_a', 'run_b'); "
+                    "DELETE FROM runs WHERE id='run_b'; UPDATE runs SET output=NULL WHERE id='run_a';"
                 )
                 changed.append(True)
             return original(reader, local)

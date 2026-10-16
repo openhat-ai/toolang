@@ -7,9 +7,7 @@ import os
 import pytest
 
 from toolang.common.layout import AgentLayout
-from toolang.execution.activity import ActivityQuery
 from toolang.execution.store import RunStore
-from toolang.up.activity import RuntimeObservation
 from toolang.up.observation import (
     RuntimeRegistration,
     instance_filename,
@@ -162,38 +160,6 @@ def test_discovery_reads_do_not_wait_for_reference_updates(tmp_path):
                 assert (
                     len(pool.submit(running_instances, tmp_path).result(timeout=1)) == 1
                 )
-
-
-def test_all_placements_are_visible_without_talk_or_hub(tmp_path) -> None:
-    scope = tmp_path / "scope"
-    layouts = [
-        AgentLayout(tmp_path / placement, "alice", placement)
-        for placement in ("resident", "visiting", "roaming")
-    ]
-    registrations = []
-    try:
-        for index, layout in enumerate(layouts):
-            store = RunStore(layout.run_store)
-            store.create_thread(thread_id=f"script_{index}", origin="script")
-            store.close()
-            registration = RuntimeRegistration(
-                layout, toolang_root=scope, drivers=frozenset()
-            )
-            registration.__enter__()
-            registrations.append(registration)
-        pages = asyncio.run(RuntimeObservation(scope).read(ActivityQuery()))
-        assert {page.placement for page in pages} == {"resident", "visiting", "roaming"}
-        assert len({page.agent for page in pages}) == 3
-        assert all(page.presence == "online" and page.drivers == () for page in pages)
-        assert {thread.id for page in pages for thread in page.threads} == {
-            "script_0",
-            "script_1",
-            "script_2",
-        }
-    finally:
-        for registration in registrations:
-            registration.close()
-    assert running_instances(scope) == ()
 
 
 def test_independent_script_instances_share_status_and_keep_separate_execution_stores(

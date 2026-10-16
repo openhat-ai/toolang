@@ -24,7 +24,6 @@ from toolang.execution.calls import (
 )
 from toolang.execution.schemas import (
     RerunRequest,
-    RetryRequest,
     RunRequest,
     RunnableRequest,
 )
@@ -189,12 +188,6 @@ def test_restart_resolution_preserves_model_unless_rerun_replaces_it(
         assert effective_default.model == ModelRequest("test/scripted")
         assert parameter_only.model is None
         assert parameter_only.model_override == ModelOverride(effort="high")
-        with pytest.raises(ValueError, match="retry request cannot replace"):
-            RetryRequest(
-                "run_source",
-                (RunCommand("default", "model", "test/scripted"),),
-                "retry_replacement",
-            )
     finally:
         harness.store.close()
 

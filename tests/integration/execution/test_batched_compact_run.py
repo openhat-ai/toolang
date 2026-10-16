@@ -477,69 +477,6 @@ def test_cancel_at_internal_event_boundaries_closes_lifecycle(
     asyncio.run(scenario())
 
 
-def test_retry_cannot_delete_an_adopted_compaction_child(tmp_path, monkeypatch):
-    h = harness_at(tmp_path)
-
-    async def scenario():
-        async with h:
-            thread, _ = await seed(h, monkeypatch)
-            h.adapter._responses.extend([reply()] * 4)
-            owner = await current(h, thread)
-            assert owner.status == "succeeded"
-            (child,) = producers(h, thread)
-            monkeypatch.setattr(model_step, "_boundary", lambda *args: None)
-            h.adapter._responses.append(reply("later"))
-            later = await current(h, thread)
-            assert later.status == "succeeded"
-            before = h.store.list_run_tree(root_run_id=owner.id)
-            steps = h.store.list_steps(run_id=owner.id)
-            controls = h.store.list_run_controls(run_id=owner.id)
-            with pytest.raises(ValueError, match="referenced horizon.*use rerun"):
-                await h.executor.retry(
-                    owner.id, setup=h.setup, state=h.state, anchor=child.parent
-                )
-            assert h.store.list_run_tree(root_run_id=owner.id) == before
-            assert h.store.list_steps(run_id=owner.id) == steps
-            assert h.store.list_run_controls(run_id=owner.id) == controls
-            assert h.store.get_run(run_id=child.id) == child
-            for action in (h.executor.retry, h.executor.rerun):
-                h.adapter._responses.append(reply("later again"))
-                result = await action(later.id, setup=h.setup, state=h.state)
-                assert result.status == "succeeded", result.error
-            # The rejected owner's supported alternative retains the producer.
-            h.adapter._responses.append(reply("owner again"))
-            result = await h.executor.rerun(owner.id, setup=h.setup, state=h.state)
-            assert result.status == "succeeded", result.error
-            assert h.store.get_run(run_id=child.id) == child
-
-    asyncio.run(scenario())
-
-
-def test_retry_can_replace_an_unpublished_compaction_child(tmp_path, monkeypatch):
-    h = harness_at(tmp_path)
-
-    def fail_publication(*args):
-        raise RuntimeError("publication interrupted")
-
-    async def scenario():
-        async with h:
-            thread, _ = await seed(h, monkeypatch)
-            h.adapter._responses.extend([reply()] * 3)
-            with monkeypatch.context() as patch:
-                patch.setattr(_Execution, "compact", fail_publication)
-                owner = await current(h, thread)
-            assert owner.status == "failed"
-            (child,) = producers(h, thread)
-            assert child.status == "succeeded"
-            monkeypatch.setattr(model_step, "_boundary", lambda *args: None)
-            h.adapter._responses.append(reply("retried"))
-            retried = await h.executor.retry(owner.id, setup=h.setup, state=h.state)
-            assert retried.status == "succeeded", retried.error
-            assert h.store.get_run(run_id=child.id) is None
-
-    asyncio.run(scenario())
-
-
 def test_context_rejection_records_attempt_then_shrinks_only_whole_roots(
     tmp_path, monkeypatch
 ):
@@ -620,38 +557,6 @@ def test_model_cannot_invoke_compaction_tool(tmp_path):
             assert failed.status == "failed"
             assert "preflight" in str(failed.output)
             assert not producers(h, thread)
-
-    asyncio.run(scenario())
-
-
-@pytest.mark.parametrize("covered", [False, True])
-def test_retry_only_invalidates_summarized_root_versions(
-    tmp_path, monkeypatch, covered
-):
-    h = harness_at(tmp_path)
-
-    async def scenario():
-        async with h:
-            thread, roots = await seed(h, monkeypatch)
-            h.adapter._responses.extend([reply()] * 4)
-            parent = await current(h, thread)
-            assert parent.status == "succeeded", parent.error
-            history = RunHistory(h.store)
-            before = history.get_compaction(thread)
-            assert before is not None
-            monkeypatch.setattr(model_step, "_boundary", lambda *args: None)
-            h.adapter._responses.append(reply("retried root"))
-            retried = await h.executor.retry(
-                str(roots[0] if covered else roots[-1]), setup=h.setup, state=h.state
-            )
-            assert retried.status == "succeeded", retried.error
-            if covered:
-                assert history.get_compaction(thread) is None
-            else:
-                assert history.get_compaction(thread) == before
-            h.adapter._responses.append(reply("next answer"))
-            next_run = await current(h, thread)
-            assert next_run.status == "succeeded", next_run.error
 
     asyncio.run(scenario())
 

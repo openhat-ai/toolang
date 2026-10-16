@@ -8,7 +8,11 @@ ahead of external observation.
 
 ```python
 class RunExecutor:
-    def __init__(self, store: RunStore, ids: IdIssuer) -> None: ...
+    def __init__(
+        self, store: RunStore, ids: IdIssuer, *,
+        setup: Callable[[], AgentSetup] | None = None,
+        state: Callable[[], AgentState] | None = None,
+    ) -> None: ...
 
     def start(self) -> None: ...
 
@@ -31,19 +35,6 @@ class RunExecutor:
         model: str | None = None,
         limits: RunLimits | None = None,
         run_id: str | None = None,
-        request_id: str | None = None,
-        tracer: RunTracer | None = None,
-    ) -> LocalRunHandle: ...
-
-    def retry(
-        self,
-        run_id: str,
-        *,
-        setup: AgentSetup,
-        state: AgentState,
-        anchor: StepRef | str | None = None,
-        ceiling: AgentCeiling = AgentCeiling(),
-        limits: RunLimits | None = None,
         request_id: str | None = None,
         tracer: RunTracer | None = None,
     ) -> LocalRunHandle: ...
@@ -82,12 +73,10 @@ owned by the executor and stops its control monitor. The process composition
 root owns and closes the shared `RunStore`; `RunExecutor` and `ThreadManager`
 receive the same store and `IdIssuer` instances.
 
-Process entry points also supply `setup`, `state`, and `load_state` snapshot
-callbacks to the constructor. Retry retains the recorded State but checks its
-workspace names and paths against the current State before changing records.
-Removed or remapped grants reject retry; callers may use rerun with current
-State instead. Retrying a Run with workspace grants requires the `state`
-callback even when setup and recorded State are passed explicitly.
+Process entry points supply paired `setup` and `state` callbacks for request
+resolution. There is no historical State loader in the executor constructor;
+callers must remove the former `load_state` argument. Rerun uses current Setup
+and State, while its source invocation remains immutable.
 
 Control polling currently uses an internal default and can move into executor
 options when runtime tuning becomes public.
@@ -111,7 +100,7 @@ class RunSpec:
 in the captured state's runnable catalog. Resolution also fixes the owner
 program module. `bindings.model` is the effective singular model choice and
 `model_request` retains its typed call parameters for validation, persistence,
-accounting, retry, and rerun.
+accounting and rerun.
 The spec does not carry an origin, run identity, request identity, or arbitrary
 transport context. Each item in `ceilings` is one independently applied
 collection-query restriction over the effective resources already published by
@@ -129,15 +118,10 @@ Language-owned coercion supplies `_` with the runnable's declared input type.
 produces the effective `RunSpec.limits` before `run()`. Config, CLI, chat, and
 HTTP parsing remain caller concerns and are not part of the executor contract.
 
-The public `run()`, `rerun()`, and `retry()` methods create an owner task and return
-an awaitable `LocalRunHandle`.
-`rerun()` loads the source invocation from durable truth and starts a new root
-against the supplied current setup and state. `retry()` keeps the root ID,
-reopens a terminal run, and resumes after its effective committed prefix. An
-omitted retry anchor uses the latest visible failed, canceled, or running Step.
-For a failed or canceled Run with no incomplete Step, it uses the latest visible
-Step. For a succeeded Run, it prefers the latest non-value Step and falls back
-to the latest value Step. The handle exposes its run ID, executor, and task, and
+The public `run()` and `rerun()` methods create an owner task and return an
+awaitable `LocalRunHandle`. Rerun loads a source invocation from durable truth
+and starts a new root against current setup and state. The handle exposes its
+run ID, executor and task, and
 delegates same-process `cancel()`, `steer()`, and
 `cancel_control()` operations.
 Its await path shields the owner task so
@@ -151,10 +135,7 @@ Admission commits the target and launch receipt together; execution registration
 precedes successful delivery. The immediate parent owns cleanup on return, failure,
 cancellation, or exec. Await shields target work from observer cancellation and
 reads terminal records or a live local owner. Ownerless nonterminal targets fail
-explicitly; retry restores committed receipts without launching them again.
-Background Steps are excluded from the caller's retry anchor and suffix; retained
-targets keep their records and outcomes. Cuts through a committed launch or its
-captured inputs are rejected with guidance to use rerun.
+explicitly. Accepted asynchronous targets retain their records and outcomes.
 Spawn continues to create independent roots. Both operations use `_Awaitable`, with
 captured `LaunchContext` stored as `launch_context` on their entry controls.
 
@@ -193,19 +174,9 @@ Rerun acceptance atomically inserts the new root and its index-zero `run`
 control with the current canonical sandbox. It does not modify the terminal
 source root or its history membership.
 
-Retry acceptance atomically appends an applied `retry` control to the existing
-root, resolves and records its anchor, physically deletes the invalid structural
-step suffix and its child Runs, fails stale pending controls, and reopens the
-root as pending. New steps reuse the trimmed indexes. Before mutation, retry
-rejects any root tree captured by a durable fork prefix, as well as applied
-exec-control history because it cannot replay those prior execution timelines. It also requires the
-source preparation to have sandbox
-provenance and requires it to equal the current canonical sandbox. Accepted
-retry controls repeat that value. A flow retry restores typed locals from the
-succeeded top-level prefix and begins at the first invalid statement. When a nested failed
-step is selected, its unfinished containing step is also invalidated because
-only a succeeded container is a reusable commit. Agic retry invalidates the
-agic step sequence and starts a fresh model-tool cycle under the same root.
+Historical retry controls are decoded only for inspection and ordinary rerun.
+No acceptance, truncation, retained-prefix resume or retry mode remains in the
+executor or Store. See the [record contract](run-step-records.md#controlrecord).
 
 
 ## Active Ownership
@@ -450,10 +421,6 @@ durable round trips do not lose precision.
 frozen process overrides. A request may overlay individual fields for one root
 run without changing the setup snapshot.
 
-A retry restores global token and cost accounting from retained succeeded model
-steps. Deleted attempts do not consume the retried execution's effective totals.
-Per-agic call counters restart only for agics that execute again.
-
 The `_Execution` object emits `RunBegin` and `RunEnd` and dispatches each
 accepted runnable to the appropriate run body. Input coercion initializes the
 primary local before the body starts, and output coercion validates its final
@@ -496,8 +463,7 @@ over a child-only cancellation. Admission controls remain applied.
 The one tool reply is durable even without another Model Call. It carries the
 child's output type and JSON value; returned Parts remain nested data with reasoning
 and provider signatures removed. Caller history contains the paired tool reply;
-child internals remain in the child Run. Explicit retry replaces the caller agic's
-Step history and children. Restart/resume remains outside this contract.
+child internals remain in the child Run.
 
 A successful `runtime__exec` atomically records an applied exec control and
 its succeeded Tool Step, including output and finish time, before transferring
@@ -590,20 +556,19 @@ its own entry revision before execution. Accepted and queued Runs never rebind.
 
 ## Event Ordering
 
-Runtime emits only canonical `RunEvent` values. `RunExecutor` handles each one
-in this order:
+Runtime produces typed canonical events. The executor serializes structural
+projection under the owned tree's event lock and canonical publication boundary:
 
-1. in one transaction, project the event into the `RunStore` and update
-   referenced control statuses;
-2. update the in-memory control cache;
-3. maintain the local active-run index;
-4. await the optional `RunTracer.on_event()`.
+1. commit execution facts, referenced control changes and structural cursors in
+   one Store transaction;
+2. publish the committed typed event to the in-memory canonical stream;
+3. update the local control cache and active-run index.
 
-Tracer exceptions are logged and ignored. Persistence or control-transition
-errors remain execution failures because they compromise durable truth.
-An `asyncio.Lock` serializes the complete handler sequence across parallel
-child runs, preserving one ordered tracer stream without requiring a
-thread-safe tracer.
+Part deltas publish directly from memory and are not persisted. Tracers consume
+bounded canonical subscriptions independently of execution. A failed core commit
+publishes no event; observer failures do not change execution truth. Parallel
+children share the tree event lock, and the stream boundary orders publication
+across roots.
 
 
 ## Terminal Behavior

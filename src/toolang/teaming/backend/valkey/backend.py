@@ -51,7 +51,6 @@ from ...schemas import (
 )
 from . import scripts
 from .lua import TEAM_GUARD
-from .activity import ValkeyActivity
 from .events import ValkeyEvents
 from ...types import SNAPSHOT_RETRIES, STORAGE_BATCH_SIZE
 
@@ -75,7 +74,6 @@ class ValkeyBackend:
     def __init__(self, config: BackendConfig, *, client: Valkey | None = None):
         self._initialized = False
         self.events = ValkeyEvents(self)
-        self.activity = ValkeyActivity(self)
         try:
             self._client = (
                 client

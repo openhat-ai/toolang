@@ -562,7 +562,7 @@ ref, setup revision, and normalized call, including effective reasoning. The
 revision is provenance only: no historical setup table or model replay feature
 is provided.
 
-Run and retry model requests use flat `ref`, `reasoning`, and `max_output` fields.
+Run and rerun model requests use flat `ref`, `reasoning`, and `max_output` fields.
 Model step results contain only `accounting` and `cont`. Accounting retains usage,
 applied pricing plan/conditions and rate lines, provider-reported cost, estimated
 cost, and coverage. It does not duplicate catalog source/revision or reasoning

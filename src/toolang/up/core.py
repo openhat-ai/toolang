@@ -10,7 +10,6 @@ from toolang.common.layout import AgentLayout
 from toolang.execution.executor import RunExecutor
 from toolang.execution.inspection.history import RunHistory
 from toolang.execution.store import RunStore
-from toolang.execution.activity import ActivityReader
 from toolang.execution.threads import ThreadManager
 from toolang.setup import SetupWatcher
 from toolang.state.watcher import StateWatcher
@@ -22,7 +21,6 @@ class AgentCore:
     """Own the core services shared by agent callers in one process."""
 
     __slots__ = (
-        "activity",
         "drivers",
         "executor",
         "history",
@@ -56,7 +54,6 @@ class AgentCore:
         self.lifecycle = lifecycle
         self.drivers = drivers
         self.store = RunStore(layout.run_store)
-        self.activity = ActivityReader(self.store.db_path, f"agent:{layout.name}")
         self.ids = IdIssuer(layout.run_store, agent_name=layout.name)
         self.history = RunHistory(self.store)
         allow_overrides = dict(ceiling_overrides or {})
@@ -87,7 +84,6 @@ class AgentCore:
             setup=lambda: self.setup.current(),
             state=lambda: self.state.current(),
             sync_state=self.state.sync,
-            load_state=lambda revision: self.state.load(revision),
             default_workdir=workdir,
             admission=lifecycle.admit if lifecycle is not None else None,
         )

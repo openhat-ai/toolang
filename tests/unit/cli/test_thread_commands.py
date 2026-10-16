@@ -23,7 +23,7 @@ def test_rerun_model_option_rejects_model_removal() -> None:
         thread._rerun_model_override(model_body="none")
 
 
-@pytest.mark.parametrize("kind", ["retry", "rerun"])
+@pytest.mark.parametrize("kind", ["rerun"])
 @pytest.mark.parametrize("show_progress", [False, True])
 def test_restart_uses_shared_terminal_surfaces(
     tmp_path, monkeypatch, kind, show_progress
@@ -54,15 +54,13 @@ def test_restart_uses_shared_terminal_surfaces(
     monkeypatch.setattr(thread, "resolve_terminal_surfaces", resolve)
 
     class Client:
-        async def retry(self, request, *, tracer):
+        async def rerun(self, request, *, tracer):
             assert len(resolutions) == int(show_progress)
             if show_progress:
                 assert tracer.console.surfaces == LIGHT_TERMINAL_SURFACES
             else:
                 assert tracer is None
             raise ReachedRun
-
-        rerun = retry
 
     @asynccontextmanager
     async def acquire(*args, **kwargs):
@@ -71,14 +69,12 @@ def test_restart_uses_shared_terminal_surfaces(
     monkeypatch.setattr(thread, "acquire_run_client", acquire)
     with pytest.raises(ReachedRun):
         asyncio.run(
-            thread._execute_retry_or_rerun(
+            thread._execute_rerun(
                 layout=AgentLayout.resident(tmp_path, "alice"),
                 server=AgentServerRef(
                     sandbox="host", endpoint="http://runtime.test:7001"
                 ),
-                kind=kind,
                 source="run_source",
-                anchor=None,
                 commands=(),
                 model_override=None,
                 show_progress=show_progress,
@@ -86,7 +82,7 @@ def test_restart_uses_shared_terminal_surfaces(
         )
 
 
-@pytest.mark.parametrize("kind", ["retry", "rerun"])
+@pytest.mark.parametrize("kind", ["rerun"])
 @pytest.mark.parametrize("failure", ["stream", "detail"])
 def test_restart_observation_failure_does_not_cancel_accepted_work(
     tmp_path, monkeypatch, kind, failure
@@ -103,7 +99,7 @@ def test_restart_observation_failure_does_not_cancel_accepted_work(
     from toolang.execution.types import ControlRef
     from toolang.up.types import AgentServerRef
 
-    run_id = "run_source" if kind == "retry" else "run_new"
+    run_id = "run_new"
     events: list[RunEvent] = [
         RunBegin(
             run=run_id,
@@ -153,12 +149,10 @@ def test_restart_observation_failure_does_not_cancel_accepted_work(
     monkeypatch.setattr(thread, "load_runtime_environ", lambda *_a, **_kw: {})
     with pytest.raises(RemoteRunClientError) as error:
         asyncio.run(
-            thread._execute_retry_or_rerun(
+            thread._execute_rerun(
                 layout=AgentLayout.resident(tmp_path, "alice"),
                 server=AgentServerRef(sandbox="host", endpoint="http://runtime.test"),
-                kind=kind,
                 source="run_source",
-                anchor=None,
                 commands=(),
                 model_override=None,
                 show_progress=False,
@@ -175,7 +169,7 @@ def test_restart_observation_failure_does_not_cancel_accepted_work(
     assert run_id in str(error.value)
 
 
-@pytest.mark.parametrize("kind", ["retry", "rerun"])
+@pytest.mark.parametrize("kind", ["rerun"])
 def test_explicit_restart_interruption_still_cancels_accepted_work(
     tmp_path, monkeypatch, kind
 ):
@@ -196,10 +190,8 @@ def test_explicit_restart_interruption_still_cancels_accepted_work(
             return None
 
     class Client:
-        async def retry(self, request, *, tracer):
+        async def rerun(self, request, *, tracer):
             return Handle()
-
-        rerun = retry
 
         async def cancel(self, run_id, **kwargs):
             canceled.append(run_id)
@@ -212,12 +204,10 @@ def test_explicit_restart_interruption_still_cancels_accepted_work(
     monkeypatch.setattr(thread, "load_runtime_environ", lambda *_a, **_kw: {})
     with pytest.raises(asyncio.CancelledError):
         asyncio.run(
-            thread._execute_retry_or_rerun(
+            thread._execute_rerun(
                 layout=AgentLayout.resident(tmp_path, "alice"),
                 server=AgentServerRef(sandbox="host", endpoint="http://runtime.test"),
-                kind=kind,
                 source="run_source",
-                anchor=None,
                 commands=(),
                 model_override=None,
                 show_progress=False,

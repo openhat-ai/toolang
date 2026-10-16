@@ -8,7 +8,7 @@ import pytest
 from tests.support.execution_harness import ExecutionHarness
 from toolang.base.types.message import Message, TextPart
 from toolang.base.types.run import ModelCall, ModelCallResult
-from toolang.execution.events import RunBegin, RunSnapshot
+from toolang.execution.events import RunSnapshot
 from toolang.execution.stream import StreamLimits
 from toolang.execution.stream_client import StreamClientState
 from toolang.execution.subscriptions import StreamScope, Subscriptions
@@ -269,83 +269,6 @@ def test_concurrent_roots_keep_scopes_and_client_lifetimes_independent(
     asyncio.run(scenario())
 
 
-def test_post_retry_reservation_starts_with_mutation_not_old_end(tmp_path):
-    harness = ExecutionHarness.create(
-        tmp_path,
-        source="agic example:\n  Work\n",
-        responses=[
-            RuntimeError("fail"),
-            ModelCallResult(message=Message.assistant("ok")),
-        ],
-    )
-
-    async def scenario():
-        async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
-            first = await harness.executor.run(
-                harness.run_spec(
-                    thread=thread, runnable="example", primary=(TextPart("input"),)
-                )
-            )
-            service = Subscriptions(harness.executor.stream, harness.store.db_path)
-            reservation = await service.reserve()
-            handle = harness.executor.retry(
-                first.id, setup=harness.setup, state=harness.state
-            )
-            sub = reservation.attach(StreamScope(root=first.id), start="retry")
-            frames = await drain(sub)
-            assert frames[0].event == "run_retried"
-            assert frames[-1].event == "run_end"
-            assert frames[-1].data["status"] == "succeeded"
-            assert (await handle).status == "succeeded"
-            reservation.close()
-
-    asyncio.run(scenario())
-
-
-@pytest.mark.parametrize("attach_pending", [False, True])
-def test_root_stream_drains_queued_retry_past_terminal_boundary(
-    tmp_path, attach_pending
-):
-    harness = ExecutionHarness.create(
-        tmp_path,
-        source="agic example:\n  Work\n",
-        responses=[
-            RuntimeError("fail"),
-            ModelCallResult(message=Message.assistant("ok")),
-        ],
-    )
-
-    async def scenario():
-        async with harness:
-            source = harness.executor.stream
-            source.limits = StreamLimits(batch_events=1)
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
-            service = Subscriptions(source, harness.store.db_path)
-            reservation = await service.reserve()
-            handle = harness.executor.run(
-                harness.run_spec(
-                    thread=thread, runnable="example", primary=(TextPart("input"),)
-                )
-            )
-            if attach_pending:
-                sub = reservation.attach(StreamScope(root=handle.run_id), start="new")
-            first = await handle
-            if not attach_pending:
-                sub = reservation.attach(StreamScope(root=first.id))
-            retried = await harness.executor.retry(
-                first.id, setup=harness.setup, state=harness.state
-            )
-            assert retried.status == "succeeded"
-            frames = await drain(sub)
-            assert any(frame.event == "run_retried" for frame in frames)
-            assert frames[-1].event == "run_end"
-            assert frames[-1].data["status"] == "succeeded"
-            reservation.close()
-
-    asyncio.run(scenario())
-
-
 def test_snapshot_does_not_hold_main_store_or_publication_gate(tmp_path):
     harness = ExecutionHarness.create(
         tmp_path, source="flow example:\n  let result = Done\n", responses=[]
@@ -516,63 +439,6 @@ def test_agent_initialization_omits_history_but_epoch_reset_replaces_it(tmp_path
                 if after is not None:
                     assert frames[0].data["roots"] is None
                 attachment.close()
-
-    asyncio.run(scenario())
-
-
-def test_retry_resume_replaces_deleted_child_and_reused_step_incarnations(tmp_path):
-    harness = ExecutionHarness.create(
-        tmp_path,
-        source="""
-flow example:
-  let prefix = Retained
-  run child
-agic child:
-  Work
-""",
-        responses=[
-            RuntimeError("failed"),
-            ModelCallResult(message=Message.assistant("done")),
-        ],
-    )
-
-    async def scenario():
-        async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
-            run = await harness.executor.run(
-                harness.run_spec(
-                    thread=thread, runnable="example", primary=(TextPart("input"),)
-                )
-            )
-            source = harness.executor.stream
-            service = Subscriptions(source, harness.store.db_path)
-            client = StreamClientState()
-            first = await service.reserve()
-            for frame in await drain(first.attach(StreamScope(root=run.id))):
-                client.feed(frame)
-            first.close()
-            old_children = {
-                event.run
-                for event in client.snapshot().events
-                if isinstance(event, RunBegin) and event.parent is not None
-            }
-            reservation = await service.reserve(client.cursor)
-            handle = harness.executor.retry(
-                run.id, setup=harness.setup, state=harness.state
-            )
-            sub = reservation.attach(StreamScope(root=run.id), start="retry")
-            frames = await drain(sub)
-            assert frames[0].event == "stream_prefill"
-            for frame in frames:
-                client.feed(frame)
-            current = client.snapshot().events
-            assert not any(
-                isinstance(event, RunBegin) and event.run in old_children
-                for event in current
-            )
-            assert client.complete(run.id)
-            assert (await handle).status == "succeeded"
-            reservation.close()
 
     asyncio.run(scenario())
 

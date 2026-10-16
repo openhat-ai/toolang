@@ -18,10 +18,8 @@ from tests.integration.messaging.test_valkey import (
     running_hub as running_hub,
 )
 from tests.support.execution_harness import ExecutionHarness
-from tests.support.chat_tui_pty import ChatTuiPtySession
 from toolang.base.types.message import TextPart
 from toolang.execution.schemas import StreamFrame
-from toolang.execution.activity import ActivityQuery, ActivityReader
 from toolang.execution.types import ThreadPrefix
 from toolang.teaming.backend.valkey import ValkeyBackend
 from toolang.teaming.agent_client import AgentClient, AgentEventClient
@@ -246,26 +244,6 @@ def test_agents_reconnect_through_hub_without_direct_backend_access(valkey, tmp_
                 # or publishes directly; both still execute and stream over HTTP.
                 runs = {name: await local_run(name) for name in agents}
                 assert await driver._call("DBSIZE") == 0
-                # All local views work through the resident API without a Hub.
-                for options, labels in [
-                    ((), ("Agent uptime", "alice", "THREAD")),
-                    (
-                        ("--view", "agent"),
-                        ("Agent uptime", "alice", "Models:", "Tools:"),
-                    ),
-                    (
-                        ("--view", "execution", "--tree", "--since", "all"),
-                        ("RUN", "STEP", "TIME+", runs["alice"]),
-                    ),
-                    (("--active",), ("No matching activity",)),
-                ]:
-                    observed = await asyncio.to_thread(
-                        cli, "alice", "top", "--once", *options
-                    )
-                    assert all(label in observed.stdout for label in labels), (
-                        observed.stdout
-                    )
-                    assert "AGENT" in observed.stdout
                 async with AgentClient(tmp_path, actor="agent:alice") as remote:
                     with pytest.raises(BackendUnavailable):
                         await remote.targets()
@@ -312,9 +290,7 @@ def test_agents_reconnect_through_hub_without_direct_backend_access(valkey, tmp_
         hub.stop(force=True)
 
 
-def test_hub_event_fanout_recovery_and_top_once(
-    valkey, running_hub, tmp_path, monkeypatch
-):
+def test_hub_event_fanout_and_recovery(valkey, running_hub, tmp_path, monkeypatch):
     async def scenario():
         connection = running_hub.connection()
         harness = ExecutionHarness.create(
@@ -449,56 +425,6 @@ def test_hub_event_fanout_recovery_and_top_once(
                 recovered, frames = await snapshot(initial.cursor)
                 assert frames[0].event == "stream_prefill"
                 assert recovered.agents["agent:alice"].complete(record.id)
-                pages = ActivityReader(harness.store.db_path, "agent:alice").pages(
-                    ActivityQuery()
-                )
-                published = await http.put(
-                    "/agents/agent:alice/activity",
-                    headers={"X-Toolang-Agent-Lease": "lease"},
-                    json=[page.model_dump() for page in pages],
-                )
-                published.raise_for_status()
-                result = await asyncio.to_thread(
-                    subprocess.run,
-                    [
-                        sys.executable,
-                        "-m",
-                        "toolang.cli.toolang.main",
-                        "--root",
-                        str(tmp_path),
-                        "top",
-                        "--once",
-                    ],
-                    capture_output=True,
-                    text=True,
-                    timeout=15,
-                    env={**os.environ, "TOOLANG_TMUX": "0"},
-                )
-                assert result.returncode == 0, result.stderr
-                assert isinstance(result.stdout, str)
-                assert "alice" in result.stdout and "online" in result.stdout
-
-                def terminal():
-                    session = ChatTuiPtySession.start(
-                        "toolang.cli.toolang.main", "--root", tmp_path, "top"
-                    )
-                    try:
-                        output = session.wait_for("alice", "online", "F10Quit")
-                        session.send(b"e")
-                        session.wait_for("RUN", record.id)
-                        session.send(b"\x1b[15~")
-                        session.wait_for("STEP")
-                        session.send(b"t")
-                        session.wait_for("THREAD")
-                        session.send(b"a")
-                        session.wait_for("AGENT")
-                        assert "Traceback" not in output
-                        session.send(b"q")
-                        assert session.wait_for_exit() == 0, session.output
-                    finally:
-                        session.close()
-
-                await asyncio.to_thread(terminal)
             finally:
                 exporter.close()
                 await driver.close()

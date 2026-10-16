@@ -4,13 +4,64 @@ import asyncio
 import json
 
 from fakeredis import FakeServer
+import httpx
 import pytest
 
+from tests.support.sse import Events
 from tests.unit.messaging.test_protocol import client, snapshot
 from toolang.teaming.client import HubClient
 from toolang.teaming.errors import BackendUnavailable, LeaseLost, StorageIntegrityError
 from toolang.teaming.backend.valkey.keys import TEAM_EVENTS, PRESENCE
 from toolang.teaming.team_events import TeamEvents
+from toolang.teaming.schemas import HubConnection
+
+
+@pytest.mark.parametrize("include_presence", [False, True])
+def test_talk_member_subscription_filters_unrelated_changes_and_preserves_headers(
+    include_presence,
+):
+    async def scenario():
+        stream = Events("checkpoint")
+        requests = []
+
+        async def request(request):
+            requests.append(request)
+            return httpx.Response(
+                200, headers={"content-type": "text/event-stream"}, stream=stream
+            )
+
+        connection = HubConnection("http://hub", "human:owner", "backend")
+        async with HubClient(connection, transport=httpx.MockTransport(request)) as hub:
+            async with hub.team_changes(
+                "gc_00000001", include_presence=include_presence
+            ) as changes:
+                async with asyncio.timeout(2):
+                    await changes.wait()
+                assert changes.connected
+                await stream.send(
+                    "change",
+                    {"type": "conversation.member_added", "conversation": "other"},
+                )
+                assert not changes.changed.is_set()
+                await stream.send(
+                    "change", {"type": "presence.offline", "conversation": None}
+                )
+                assert changes.changed.is_set() == include_presence
+                changes.changed.clear()
+                await stream.send(
+                    "change",
+                    {
+                        "type": "conversation.member_removed",
+                        "conversation": "gc_00000001",
+                    },
+                )
+                assert changes.changed.is_set()
+        assert stream.closed
+        assert [r.url.path for r in requests] == ["/team/events"]
+        assert requests[0].headers["X-Toolang-Backend"] == "backend"
+        assert requests[0].headers["X-Toolang-Human"] == "human%3Aowner"
+
+    asyncio.run(scenario())
 
 
 def test_subscribers_checkpoint_before_snapshot_and_replay_independently():

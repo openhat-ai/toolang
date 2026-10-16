@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import replace
 from typing import Literal, cast
 
 import pytest
@@ -26,7 +25,6 @@ from toolang.execution.records import (
     ChdirControlPayload,
     ControlRecord,
     ExecControlPayload,
-    RetryControlPayload,
     RunControlPayload,
     SteerControlPayload,
     control_payload_from_data,
@@ -526,31 +524,6 @@ def test_preparation_payload_rejects_instead_of_dropping_invalid_input() -> None
 
     with pytest.raises(ValueError, match=r"requires a text \? tag"):
         control_payload_from_data("run", data)
-
-
-def test_retry_payload_stores_attempt_settings_anchor_and_invalidation() -> None:
-    payload = RetryControlPayload(
-        resources=AgentResources(models=("test/model",)),
-        limits=RunLimits(),
-        model_request=ModelRequest("test/model"),
-        retry_from=StepRef.from_local("run_1", (2,)),
-    )
-    data = control_payload_to_data(payload)
-    assert set(data) == {
-        "resources",
-        "limits",
-        "model_request",
-        "retry_from",
-        "invalidated_steps",
-        "removed_runs",
-    }
-    assert data["retry_from"] == "run_1.2"
-    assert control_payload_from_data("retry", data) == payload
-    unanchored = replace(payload, retry_from=None)
-    assert (
-        control_payload_from_data("retry", control_payload_to_data(unanchored))
-        == unanchored
-    )
 
 
 def test_inherited_preparation_payload_round_trips_without_revision_duplication() -> (

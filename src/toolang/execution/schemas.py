@@ -19,7 +19,7 @@ from typing import (
     get_type_hints,
 )
 
-from pydantic import BaseModel, Field, TypeAdapter
+from pydantic import BaseModel, TypeAdapter
 
 from toolang.base.types.compaction import CompactionResult
 from toolang.base.types.message import Part, message_summary
@@ -475,34 +475,6 @@ class RunRequest:
 
 
 @dataclass(frozen=True, slots=True)
-class RetryRequest:
-    """One unresolved caller request to reopen a root run."""
-
-    source: str
-    commands: tuple[RunCommand, ...]
-    request_id: str
-    anchor: StepRef | None = None
-
-    client_id: str | None = None
-
-    def __post_init__(self) -> None:
-        _validate_restart_request(
-            source=self.source,
-            commands=self.commands,
-            request_id=self.request_id,
-        )
-        if any(
-            command.group == "default" and command.field == "model"
-            for command in self.commands
-        ):
-            raise ValueError("retry request cannot replace the persisted model")
-        if self.anchor is not None and not isinstance(self.anchor, StepRef):
-            raise TypeError("retry request anchor must be a StepRef or none")
-        if self.anchor is not None and str(self.anchor.run) != self.source:
-            raise ValueError("retry request anchor must belong to its source run")
-
-
-@dataclass(frozen=True, slots=True)
 class RerunRequest:
     """One unresolved caller request to start a new root from a source run."""
 
@@ -939,80 +911,3 @@ class StreamFrame:
     @classmethod
     def checkpoint(cls, cursor: EventCursor) -> StreamFrame:
         return cls("stream_checkpoint", {"cursor": str(cursor)}, str(cursor))
-
-
-class ActivityMetrics(BaseModel):
-    """Inclusive consumption and the object's own duration for one Stats range."""
-
-    model: int | None = 0
-    tool: int | None = 0
-    cost: float | None = 0
-    input_tokens: int | None = None
-    cached_tokens: int | None = None
-    output_tokens: int | None = None
-    tokens_complete: bool = False
-    time: float | None = 0
-    estimated: bool = False
-    partial: bool = False
-    complete: bool = True
-    time_rate: int = Field(default=0, exclude=True)
-
-
-class ActivityNode(BaseModel):
-    id: str
-    kind: Literal["thread", "run", "step"]
-    thread: str
-    root: str
-    parent: str | None = None
-    title: str
-    summary: str = ""
-    status: str
-    changed: float
-    created: float
-    position: list[int] = []
-    stale: bool = False
-    stats: ActivityMetrics = ActivityMetrics()
-    total: ActivityMetrics = ActivityMetrics()
-    active: int = 0
-    failed: int = 0
-    pending: int = 0
-    completed: int = 0
-    children: int = 0
-    matches: list[str] = []
-
-
-class ActivitySnapshot(BaseModel):
-    """One atomic, bounded absolute projection; token deltas are never included."""
-
-    agent: str
-    instance: str | None = None
-    placement: str | None = None
-    drivers: tuple[str, ...] | None = None
-    revision: int
-    session: str | None = None
-    session_start: float | None = None
-    observed: float | None
-    home_missing: bool = False
-    since: str
-    recent: float | None
-    filter: str = ""
-    active_only: bool = False
-    presence: Literal["online", "offline", "unknown"] = "online"
-    stale: bool = False
-    complete: bool = True
-    coverage: str = ""
-    stats: ActivityMetrics = ActivityMetrics()
-    total: ActivityMetrics = ActivityMetrics()
-    threads: list[ActivityNode] = []
-    roots: list[ActivityNode] = []
-    paths: list[ActivityNode] = []
-    active: int = 0
-    failed: int = 0
-    thread_count: int = 0
-    thread_eligible: int = 0
-    thread_matched: int = 0
-    eligible: int = 0
-    matched: int = 0
-    available: int = 0
-    offset: int = 0
-    next_offset: int | None = None

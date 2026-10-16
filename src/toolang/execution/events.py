@@ -225,19 +225,7 @@ ThreadEvent = Annotated[
 ]
 
 
-@dataclass(frozen=True, slots=True)
-class RunRetried:
-    """A committed retry invalidated one recorded suffix before re-execution."""
-
-    run: str
-    thread_id: str
-    control: ControlRef
-    invalidated_steps: tuple[StepRef, ...]
-    removed_runs: tuple[str, ...]
-    type: Literal["run_retried"] = field(default="run_retried", init=False)
-
-
-ExecutionEvent = RunEvent | ThreadEvent | RunRetried
+ExecutionEvent = RunEvent | ThreadEvent
 
 _RUN_EVENT_ADAPTER = TypeAdapter(RunEvent)
 _EXECUTION_EVENT_ADAPTER = TypeAdapter(ExecutionEvent)
@@ -312,12 +300,11 @@ def run_event_from_data(data: object) -> RunEvent:
 
 
 def event_from_data(data: object) -> ExecutionEvent:
-    """Parse run events and committed thread/retry mutations."""
+    """Parse run events and committed thread mutations."""
     if isinstance(data, dict) and cast(dict[str, Any], data).get("type") in {
         "thread_created",
         "thread_forked",
         "thread_rewound",
-        "run_retried",
     }:
         return _EXECUTION_EVENT_ADAPTER.validate_python(data)
     return run_event_from_data(data)

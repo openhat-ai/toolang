@@ -24,7 +24,6 @@ Top-level commands are:
 - `list`
 - `hub`
 - `text`
-- `top`
 - `info`
 - `serve`
 - `start`
@@ -37,7 +36,6 @@ Top-level commands are:
 - `chat`
 - `steer`
 - `cancel`
-- `retry`
 - `rerun`
 - `rewind`
 - `fork`
@@ -122,7 +120,7 @@ toolang alice inspect term_3nprht9x runs
 toolang alice inspect run_ppkp9e94 steps
 toolang alice inspect run_ppkp9e94.0/output/value
 toolang alice inspect run_ppkp9e94.0 call
-toolang alice retry run_ppkp9e94 --limit tokens=200000 --limit time=900
+toolang alice rerun run_ppkp9e94 --limit tokens=200000 --limit time=900
 toolang alice rerun run_ppkp9e94 --model 'openai/gpt-5 effort=high'
 toolang alice steer run_ppkp9e94 "Use the smaller patch"
 toolang alice cancel term_3nprht9x
@@ -146,7 +144,7 @@ Top-level routing uses these command shapes:
   `remove AGENT`
 - agent-self commands accept either order: `info`, `serve`, `start`, and `stop`
 - commands for an agent's execution history, caps or chores require
-  the target first, such as `toolang alice retry RUN` or
+  the target first, such as `toolang alice rerun RUN` or
   `toolang alice skill list`
 
 A command name wins whenever an unassigned token could be either a command or
@@ -164,13 +162,12 @@ remote target help does not resolve or fetch the agent. An incomplete selected
 command shows its own help before target existence or other runtime validation.
 
 Thread and run inspection reads the selected agent's durable execution store
-without starting a server. Retry/rerun and fork/rewind ensure a shared server
+without starting a server. Rerun and fork/rewind ensure a shared server
 and mutate through its API. Resident/visiting steer/cancel attach to a live
 owner without starting a replacement. A run id selects its owning thread; a
 thread id selects its active run for steering or cancellation and its latest
-terminal run for retry, rerun, rewind, or fork. Retry reopens the same root run
-and optionally starts at `--anchor`; rerun starts a new root run from the source
-invocation. Fork retains the anchor run, while rewind removes it and the
+terminal run for rerun, rewind, or fork. Rerun starts a new root run from the
+source invocation. Fork retains the anchor run, while rewind removes it and the
 following visible suffix.
 
 
@@ -192,111 +189,14 @@ the oversized call. See [model configuration](models.md#automatic-compaction-con
 settings.
 
 
-## Team activity
-
-`too top` observes the running Hub; `too AGENT top` reads the agent's local
-history. Neither starts execution. `--once` (also implied for redirected
-output) prints a snapshot. The terminal has a scope summary, an aligned table and
-a fixed bottom key bar. SSE updates data asynchronously; `--refresh SECONDS`
-(default `0.1`) schedules rendering, and local interactions repaint immediately.
-
-```sh
-too top --view agent
-too alice top --view execution --tree
-too top --since 1d --recent 1h --sort spend
-too top --filter fs.read --active --once
-```
-
-The full-screen dashboard has Header, Table, optional Details and a fixed Status
-bar. `Team` identifies Hub scope; `Agent NAME` identifies one agent. Header shows
-scope totals, the current local clock and the selected Stats/Activity settings.
-`too top` requires Hub; `too AGENT top` reads local history without Hub or a running
-executor. Observation never creates a store or starts services.
-
-Use `a/t/e` for Agent/Thread/Run, F5 for List/Tree, F4 for filters, F6 for sort,
-F7 to cycle Activity windows and F8 to cycle Stats windows. Custom windows remain
-available through CLI options. The filter editor accepts Enter/Esc, Ctrl-U to
-clear and Ctrl-A to toggle Active. Up/Down or Ctrl-P/N selects; Left/Right folds;
-`<`/`>` scrolls wide rows. Enter toggles Details; PgUp/PgDn pages Details when open,
-otherwise the Table. Exit with `q` or Ctrl-C.
-
-RUN identifies the owning top-level run. Tree adds STEP with the complete selected
-run/step reference; only running paths and required ancestors expand. Agent/Thread
-rows show active/failed counts. S is presence (`+` online, `-` offline, `?` unknown);
-offline ACTIVITY is `-`. Rows never wrap and clip without ellipses. Details contains
-full IDs, exact usage, inspect commands and results rendered as Markdown.
-
-Stats defaults to the owning executor session (latest recorded session when
-stopped). `--since` accepts `session`, `all`, a rolling duration such as `1h`/`1d`,
-or a fixed timestamp with timezone. Use a timestamp to retain the former
-fixed-start behavior of duration values. All consumption metrics share this range:
-`MODEL TOOL IN CACHED OUT SPEND TIME+`. CACHED is cache-read input already in IN;
-calls/tokens/spend include descendants. TIME+ measures the row's own duration or
-sums top-level durations for Agent/Thread. Retries retain consumption.
-
-Activity independently retains unfinished work and recently changed objects,
-default `30m`. Windows age even without execution events. SPEND shows plain amounts;
-unknown is `-`. Incomplete coverage appears in Status bar/Details. Sort direction
-appears on its column; `--sort cost` remains an alias for `spend`.
-
-| Compact activity endpoint | Response |
-| --- | --- |
-| Agent `GET /api/v1/activity?offset=0` | One page of up to 200 root summaries and their running paths. |
-| Agent `GET /api/v1/activity/batch` | Pages from one database snapshot. |
-| Hub `GET /activity` | Agent pages, with presence and cached coverage. |
-| Hub `GET /activity?agent=agent:alice` | Current pages for one agent in this Hub's roster, bypassing the aggregate snapshot cache. An absent or foreign-root agent returns an empty list. |
-| Hub `GET /activity/roster` | Root-scoped agent IDs mapped to `online` or `offline`, without reading activity stores. |
-| Agent `GET /api/v1/activity/stream`, Hub `GET /activity/stream` | Absolute `activity_page` frames, committed together by `activity_checkpoint`. |
-| Agent `GET /api/v1/activity/result?ref=RUN_OR_STEP` | Full result as `{text}` from the execution records. |
-| Hub `GET /activity/result?agent=agent:alice&ref=RUN_OR_STEP` | Read local records when available, otherwise fetch from the online source; unavailable offline sources return `503`. |
-
-Queries accept `since`, `recent` (seconds), `all_recent=true`, `filter`, and
-`active`. Pages include session/revision, observation time, Stats/Total,
-coverage, root/thread counts and `next_offset`; only the first page carries the
-thread rows. Individual page requests must agree on session/revision; otherwise
-restart pagination. SSE stages pages until their checkpoint:
-
-| Frame | Client action |
-| --- | --- |
-| `activity_page` | Stage a page under its agent; do not expose an incomplete batch. |
-| `activity_checkpoint {agents}` | Atomically replace the complete view with these agents' staged pages. Each connection starts with this baseline. |
-| `activity_checkpoint {agents: [agent], replace: false}` | Replace only that agent's complete pages; other agents remain unchanged. |
-| `activity_roster {agents}` | Remove agents absent from this explicit roster; additions receive their pages and checkpoint. |
-
-Agent streams publish complete snapshots; Hub streams follow the baseline with
-independent per-agent updates and roster changes. Slow readers receive the latest
-complete state. Reconnect starts a new baseline; activity checkpoint IDs are not
-canonical execution cursors. Compact streams exclude token deltas and full outputs.
-
-Interactive team Top subscribes to `/events/stream` and `/team/events` as refresh
-notifications, then reads current per-agent activity and roster snapshots. Pending
-notifications coalesce; reconnects load new snapshots without replaying missed UI
-events. Independent agent reads keep slow history from blocking presence or other
-agents. One-second activity ticks preserve rolling windows, and five-second roster
-refreshes cover discovery metadata. The compact activity streams remain available
-to other consumers. Talk subscribes only to relevant conversation-member changes
-on `/team/events`, waking its existing message/metadata read loop; message cursors
-and rename polling retain their existing behavior.
-
-The shared agent reader checks committed revisions every 0.1 seconds and emits
-one-second clock updates from persisted aggregates and open duration anchors.
-Enabled agents publish the default query even without observers. Hub prefers
-available managed local stores and otherwise subscribes to agent HTTP; its backend
-retains the default and last-requested query. The same execution reader serves
-local and HTTP observation through the teaming observation service. Offline local
-history still supports rolling queries; cache-only sources retain their observed
-boundary and coverage. Execution time never accrues downtime. Layout/sort changes
-stay local; query changes immediately show requested settings and mark old values
-as updating until a matching complete replacement arrives.
-
-The existing canonical event subscription API remains separate:
+## Canonical execution subscriptions
 
 An enabled agent exports its canonical stream independently of execution and
 messaging. The Hub endpoint is `GET /events/stream`, with optional
 `agent=agent:alice`, and either `thread=ID` or `run=ID` when an agent is selected.
 No filter observes the team. `after` accepts only a Hub cursor
 (`h1.<epoch>.<stream-id>`); local agent cursors are separate. Root subscriptions
-close after the complete tree and queued retries; other scopes stay open.
+close after the complete tree and queued events; other scopes stay open.
 
 Execution frames preserve their event name/data and add `agent`, `source_cursor`,
 and Hub `cursor`. SSE IDs acknowledge Hub positions. Structural context has
@@ -479,7 +379,6 @@ toolang SCRIPT info
 toolang SCRIPT run
 toolang SCRIPT chat [--thread [THREAD]]
 toolang SCRIPT inspect SUBJECT... [PROJECTOR] [--human | --json]
-toolang SCRIPT retry RUN [--anchor STEP]
 toolang SCRIPT rerun RUN
 ```
 
@@ -495,11 +394,11 @@ Visiting Targets support the same agent-self and execution-history commands:
 too gh:brice/alice info
 too gh:brice/alice chat [--thread [THREAD]]
 too gh:brice/alice inspect SUBJECT... [PROJECTOR] [--human | --json]
-too gh:brice/alice retry RUN
+too gh:brice/alice rerun RUN
 ```
 
 Commands that execute or inspect current program state (`info`, `serve`, `chat`,
-`retry`, and `rerun`) resolve and materialize the remote program. History-only
+and `rerun`) resolve and materialize the remote program. History-only
 commands, including `inspect`, derive the stable visiting layout and read its
 existing `runs.db` without fetching the source.
 
@@ -534,8 +433,8 @@ bare array of canonical record objects; every object is identical to inspecting
 its printed Pointer individually. A missing `runs.db` is an error, while an
 existing store with no matching records returns an empty collection.
 `controls` combines all Thread Controls with Controls belonging to existing Runs,
-including rewound Runs. It excludes a Run Control when retry deleted its owning
-Run and orders records by creation time descending, target ascending, then
+including rewound Runs. Controls without an existing owning Run are excluded.
+The collection orders records by creation time descending, target ascending, then
 Control index descending.
 
 A Pointer still selects one durable Thread, Control, Run, or Step record, or a
@@ -824,7 +723,7 @@ starting a runtime. Stop the existing agent before changing those startup
 settings; an attached command rejects them rather than ignoring them.
 
 Commands that start a new guest accept `--dev [PATH]`. This includes `serve`,
-`start`, `chat`, Script `run`, `retry`, and `rerun`. Omitting `--dev` keeps the
+`start`, `chat`, Script `run`, and `rerun`. Omitting `--dev` keeps the
 existing package selection. Bare `--dev` uses `.` (the process working directory,
 not the script directory or agent home). An explicit `PATH` selects that path.
 `PATH` is either one Toolang `.whl` file or a directory to search recursively
@@ -1003,18 +902,17 @@ untouched; Chat and Talk always run in the invoking terminal.
 | --- | --- |
 | Chat | `alice: thread title`, initially `alice` |
 | Talk | `@alice`, `@alice,bob`, or `#dev` |
-| Top | `top alice` or `top team` |
 | Serve | `serve alice` or `serve hub` |
 | Script Run | `run file.too` or `run file.too runnable` (basename only) |
-| Retry / Rerun | `retry run_id` / `rerun run_id` (source ID) |
+| Rerun | `rerun run_id` (source ID) |
 
 Each type's prefix defaults to an empty string. Configure
-`chat`, `talk`, `top`, `serve`, `run`, `retry`, and `rerun` independently:
+`chat`, `talk`, `serve`, `run`, and `rerun` independently:
 
 ```toml
 [terminal.title.prefix]
 chat = "💬 "
-top = "[too] "
+talk = "[too] "
 ```
 
 Precedence is `TOOLANG_TITLE_PREFIX_<TYPE>` > agent-home config > root
@@ -1041,7 +939,7 @@ In tmux, foreground commands also publish pane-local string options:
 
 | Option | Value |
 | --- | --- |
-| `@toolang_kind` | `chat`, `talk`, `top`, `serve`, `run`, `retry`, or `rerun` |
+| `@toolang_kind` | `chat`, `talk`, `serve`, `run`, or `rerun` |
 | `@toolang_root` | Agent root for agent commands; Toolang root for commands without an agent |
 | `@toolang_agent` | Bare agent name; empty for Talk, team Top, and Hub Serve |
 | `@toolang_thread` | Chat thread ID, once created |
@@ -1203,14 +1101,6 @@ filesystem paths do not determine remote availability.
     otherwise `null`
 
 - environment summary
-- overview metrics:
-
-| Metric Group | Contents |
-| --- | --- |
-| `threads` | Thread totals grouped by chat, talk, chore, script, and work |
-| `steps` | Step totals grouped by `model_call`, `tool_call`, and `runtime` |
-| `tokens` | Aggregated input, output, and total token usage |
-
 `sandbox.description` is optional presentation metadata. Its absence or a `null`
 value does not block Chat: host execution falls back to the local host sandbox
 plugin description, while Docker continues to use `sandbox.instance`. Runtime
@@ -1441,7 +1331,7 @@ selection bare. Positional thread IDs are no longer accepted.
 A resident, roaming, or visiting agent uses its recorded endpoint through
 `RemoteRunClient`. Chat starts the agent when needed; concurrent starters share
 one runtime, and an existing startup must become ready before Chat connects.
-Readiness failures are reported. Retry/rerun and fork/rewind also ensure a server
+Readiness failures are reported. Rerun and fork/rewind also ensure a server
 and mutate through its API. Resident/visiting steer/cancel attach only to a live
 owner; fork/rewind with `--chat` keeps one acquisition across both phases.
 Explicit Chat policy options become remotely validated session
@@ -1472,7 +1362,7 @@ derived ID, and optional schedule. Progress is stored in the `chores` table of
 
 ## Run And Thread Endpoints
 
-Interactive clients submit, retry/rerun, and steer under `/api/v1/chat/runs`;
+Interactive clients submit, rerun, and steer under `/api/v1/chat/runs`;
 these write routes require the chat driver. Noninteractive scripts use the
 `/api/v1/runs` routes below and create script threads at `POST /api/v1/runs/threads`.
 Interactive thread creation at `POST /api/v1/threads` creates `chat_` contexts.
@@ -1487,9 +1377,7 @@ when chat is disabled. See [driver selection](work.md).
 - `GET /api/v1/runs`
 - `GET /api/v1/runs/{run_id}`
 - `GET /api/v1/runs/{run_id}/stream`
-- `POST /api/v1/runs/{run_id}/retry/stream`
 - `POST /api/v1/runs/{run_id}/rerun/stream`
-- `POST /api/v1/runs/{run_id}/retry`
 - `POST /api/v1/runs/{run_id}/rerun`
 - `POST /api/v1/runs/{run_id}/steer`
 - `POST /api/v1/runs/{run_id}/cancel`
@@ -1516,17 +1404,14 @@ accepts a user message whose parts may be empty. Both accept optional
 `expected_control` (`<run_id>@<control_index>`). The server checks live ownership
 and this invocation before writing; mismatch returns HTTP 409. Resident/visiting
 CLI controls always pin the invocation, preventing a delayed command from
-reaching a retry of the same run ID. Existing callers may omit the field.
-`retry` and `rerun` accept a
-terminal root run. Retry reopens that run from an optional canonical step-path
-`anchor`; omitting it selects the latest retryable step. Rerun starts a new root
-run from the source invocation and replaces the source in the visible thread
-projection. Both accept optional `request_id` and partial `limits`; only rerun
-accepts either an optional exact `model` replacement or a sparse
-`model_override` with `identity` and `effort`, while retry preserves the
-persisted model request. The two rerun fields are mutually exclusive, and a
-sparse override is applied to the source run's complete persisted request.
-Both return `202 Accepted` and execute on the server's owner event loop.
+reaching another invocation. Existing callers may omit the field.
+`rerun` accepts a terminal root run and starts a new root from its source
+invocation, replacing the source in the visible thread projection. It accepts
+optional `request_id`, partial `limits`, and either an exact `model` replacement
+or a sparse `model_override` with `identity` and `effort`. The two model fields
+are mutually exclusive; a sparse override applies to the complete persisted
+source request. Rerun returns `202 Accepted` and executes on the server's owner
+event loop.
 
 Thread `rewind` and `fork` request bodies take an optional `run_id` anchor and
 `request_id` and `client_id`. An omitted run ID selects the last visible run.
@@ -1626,11 +1511,10 @@ thread without a result return distinct `404` details.
 
 An accepted response exposes `X-Toolang-Run-ID` for compatibility; CORS exposes
 it to allowed origins. New-run POST streams begin with root `run_begin`, which
-also supplies the ID. Retry starts with `run_retried` and initializes its retained
-prefix. Observation is installed before admission. Disconnecting never cancels
-execution; reconnect with GET once the run ID is known, never repeat POST.
+also supplies the ID. Observation is installed before admission. Disconnecting
+never cancels execution; reconnect with GET once the run ID is known, never repeat POST.
 An older `after` cursor cannot prepend recovery to a newly admitted root: its
-subscription starts at admission. Retry and GET recover the existing scope from `after`.
+subscription starts at admission. GET recovers the existing scope from `after`.
 
 Clients create a thread explicitly with `POST /api/v1/threads` before the first
 run. The thread request accepts `web`, `term`, `tui`, `chat`, or `script` as its
@@ -1674,7 +1558,6 @@ has a five-second deadline. Idle event waits do not consume that deadline.
 
 Canonical run progress event names are:
 
-- `run_retried` (retry invalidation)
 - `run_begin`
 - `step_begin`
 - `part_begin`
@@ -1696,12 +1579,11 @@ the Part; signatures can also occur on normal text and tool-call Parts. Signatur
 fragments are not separate events. Deltas are live only; completed Parts are
 durable and available through existing output/inspection endpoints.
 
-Execution-store schema **53** persists structural cursors. Writable schema-52
-stores upgrade in place; legacy records without cursors initialize from structure. See the
-[model adapter contract](plugins.md#model-adapter) for the required indexed
+Execution-store schema **57** persists structural cursors. Older supported
+schemas remain read-only; records without cursors initialize from structure.
+See the [model adapter contract](plugins.md#model-adapter) for the required indexed
 stream interface. Human output continues to omit reasoning and native fields.
 
-Run control acceptance and status are durable `ControlRecord` truth. Retry also
-publishes `run_retried` with its control, invalidated steps, and removed runs. A thread stream may additionally carry
-`thread_created`, `thread_forked`, and `thread_rewound`, and aggregates live run
+Run control acceptance and status are durable `ControlRecord` truth. A thread
+stream may additionally carry `thread_created`, `thread_forked`, and `thread_rewound`, and aggregates live run
 events belonging to that thread.

@@ -36,7 +36,7 @@ from toolang.execution.events import (
 from toolang.execution.inspection.history import RunHistory
 from toolang.execution.store import RunStore
 from toolang.execution.inspection.trees import build_execution_tree
-from toolang.execution.types import FieldRef, StepRef, ThreadPrefix, ToolStepGiven
+from toolang.execution.types import FieldRef, ThreadPrefix, ToolStepGiven
 from toolang.execution.values import parts_from_value
 
 SOURCE = """
@@ -430,57 +430,6 @@ def test_interrupting_runtime_child_cancels_its_tool_step(
             assert not projector._broken, [row.text for row in rows]
             assert projector._root_ended
             assert not projector._steps
-
-    asyncio.run(scenario())
-
-
-def test_retry_replaces_runtime_results_and_owned_child(tmp_path: Path) -> None:
-    harness = ExecutionHarness.create(
-        tmp_path,
-        source=SOURCE,
-        responses=[
-            ModelCallResult(tool_calls=(call("runtime__run", id="old"),)),
-            ModelCallResult(message=Message.assistant("old output")),
-            RuntimeError("retry me"),
-            ModelCallResult(tool_calls=(call("runtime__run", id="new"),)),
-            ModelCallResult(message=Message.assistant("new output")),
-            ModelCallResult(message=Message.assistant("done")),
-        ],
-    )
-
-    async def scenario() -> None:
-        async with harness:
-            root = await harness.executor.run(
-                harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
-                    runnable="parent",
-                )
-            )
-            assert root.status == "failed"
-            old_child = next(
-                run
-                for run in harness.store.list_run_tree(root_run_id=root.id)
-                if run.parent is not None
-            )
-            retried = await harness.executor.retry(
-                root.id, setup=harness.setup, state=harness.state
-            )
-            assert retried.status == "succeeded", retried.error
-            assert harness.store.get_run(run_id=old_child.id) is None
-            view = RunHistory(harness.store).run_view(root.id)
-            assert [step.ref for step in view.steps()] == [
-                StepRef.from_local(root.id, (index,)) for index in range(3)
-            ]
-            result = view.steps()[1].output
-            assert result is not None
-            (part,) = parts_from_value(result.value)
-            assert isinstance(part, ToolResultPart) and part.tool_call_id == "new"
-            assert part.output == {"type": "Text", "value": "new output"}
-            messages = harness.adapter.invocations[-1].call.messages
-            assert [
-                p for m in messages for p in m.parts if isinstance(p, ToolResultPart)
-            ] == [part]
-            assert not any(m.tag == "run-result" for m in messages)
 
     asyncio.run(scenario())
 

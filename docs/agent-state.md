@@ -318,13 +318,14 @@ current-agent `state` tools.
 
 Every Run entry stores its accepted Agent State revision, including named and
 inline children. Run and Step records carry a `ControlRef` named `state` pointing
-to that entry or an explicit execute transfer. Retry retains its existing
-entry reference.
+to that entry or an explicit execute transfer.
 
-The executor retains immutable State for active bindings and loads historical
-revisions from durable snapshots. Watcher publication affects future named
-acceptance and model catalogs, without changing accepted code or caps.
+The executor retains the immutable State supplied at acceptance for active
+bindings. Watcher publication affects future named acceptance and model catalogs,
+without changing accepted code or caps. Ordinary rerun uses current State;
+recorded references preserve the source revision for inspection.
 
 Model/provider continuation is a different value and is named `cont` in model
-calls, model results, model step records, and runtime agic state. The runs
-database accepts schema version 52 and rejects unsupported versions at open.
+calls, model results, model step records, and runtime agic state. See the
+[record contract](run-step-records.md#controlrecord) for execution-store
+compatibility.

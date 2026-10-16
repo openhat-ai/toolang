@@ -80,7 +80,7 @@ for queries.
 Current kinds are:
 
 ```text
-run | retry | exec | chdir | recall | compact | steer | cancel
+run | exec | chdir | recall | compact | steer | cancel
 create | fork | rewind
 ```
 
@@ -95,12 +95,17 @@ Step adoption and subsequent Run failure never change that control's outcome.
 
 Run, Exec, Steer, and Cancel payloads store flat `input` objects, keyed by
 `_` and argument names. Run entries may also store flat `authored_input` source
-text. Retry inherits entry input; rerun creates a new Run entry. Each persisted
+text. Rerun creates a new Run entry. Each persisted
 value retains its self-describing codec, without a Local/name/dim wrapper.
 References address `payload/input/_` or `payload/input/argumentName`.
 
-RunStore schema 52 rejects older SQL schemas before mutation and leaves them
-intact for their matching runtime. There is no migration for older SQL schemas.
+Writable RunStore opening requires schema 57; schemas 52–56 remain readable
+without mutation. Writable opening removes the obsolete Activity tables and
+triggers, preserving core facts, content objects, ID counters and cursors. Stop
+old writers before this cleanup; derived Activity totals are discarded.
+Historical `retry` controls remain readable, including their effective settings
+and raw payloads, but cannot be written or resumed. Use ordinary rerun to start
+a new Run from a surviving historical invocation.
 Control kinds `execute` and `cwd` are renamed to `exec` and `chdir`, with no
 old-name aliases. The working-directory payload field remains `cwd`. Update
 control filters and consumers to the new kinds; use a fresh store for new runs.
@@ -173,9 +178,7 @@ StepEnd carries the persisted status, output, and finish time. Before acceptance
 cancellation create no root. A dispatch failure marks the admitted root failed while
 preserving its handle and applied controls. Reprocessing one physical Step returns its original
 admission; conflicting requests fail. Recovery does not relaunch a root.
-Retry rejects cuts through a surviving root's origin or retained input references;
-use rerun instead. Retry after the origin restores handle locals, and rewind can
-hide source history without deleting its records or stopping the root.
+Rewind can hide source history without deleting its records or stopping the root.
 
 ### RunRecord
 
@@ -266,8 +269,7 @@ explicit `null` remain distinct outcomes.
 `toolang AGENT inspect POINTER` opens the store read-only. Human output shows
 one structural level; `--json` returns canonical JSON without following stored
 Refs. Physical Runs and Steps remain inspectable after Thread rewind; only
-Thread-selected collections apply logical history membership. Retry physically
-deletes its invalid Steps and child Runs.
+Thread-selected collections apply logical history membership.
 
 Ownership can be inspected without constructing an execution tree:
 

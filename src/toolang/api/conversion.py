@@ -9,12 +9,11 @@ from pydantic import TypeAdapter
 
 from toolang.base.money import normalize_cost
 from toolang.base.types.message import Message, Part
-from toolang.execution.schemas import RerunRequest, RetryRequest, RunRequest
+from toolang.execution.schemas import RerunRequest, RunRequest
 from toolang.execution.types import RunCommand
 
 from .schemas import (
     AuthoredRerunRequest,
-    AuthoredRetryRequest,
     AuthoredRunRequest,
     InputMessagePayload,
     InputPart,
@@ -42,24 +41,6 @@ def parse_authored_run(payload: AuthoredRunRequest) -> RunRequest:
             attachments=payload.attachments,
             source_revision=payload.source_revision,
             driver=payload.driver,
-        )
-    except (TypeError, ValueError) as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-
-def parse_authored_retry(
-    source: str,
-    payload: AuthoredRetryRequest,
-) -> RetryRequest:
-    """Reconstruct one transport-neutral retry request from strict HTTP data."""
-
-    try:
-        return RetryRequest(
-            source=source,
-            commands=tuple(_parse_run_command(item) for item in payload.commands),
-            request_id=payload.request_id,
-            client_id=payload.client_id,
-            anchor=payload.anchor,
         )
     except (TypeError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

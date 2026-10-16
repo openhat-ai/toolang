@@ -15,9 +15,7 @@ import httpx
 import psutil
 import uvicorn
 
-from toolang.common.layout import AgentLayout
 from toolang.common.version import toolang_version
-from toolang.execution.activity import ActivityReader
 from toolang.teaming.api import create_app
 from toolang.teaming.config import TeamingRootConfig
 from toolang.teaming.errors import TeamingError
@@ -185,19 +183,6 @@ def serve(root: Path, config: TeamingRootConfig, *, port: int) -> int:
                 ready_record.save(hub.path)
                 record = ready_record
 
-            readers: dict[str, ActivityReader] = {}
-
-            def local_activity(agent: str) -> ActivityReader | None:
-                path = AgentLayout.resident(
-                    root, agent.removeprefix("agent:")
-                ).run_store
-                if not path.is_file():
-                    readers.pop(agent, None)
-                    return None
-                if agent not in readers:
-                    readers[agent] = ActivityReader(path, agent)
-                return readers[agent]
-
             try:
                 record.save(hub.path)
                 client = MessagingClient(config.backend, actor=config.human)
@@ -205,7 +190,6 @@ def serve(root: Path, config: TeamingRootConfig, *, port: int) -> int:
                     client,
                     version=toolang_version(),
                     on_ready=publish_ready,
-                    local_activity=local_activity,
                     roster=Roster(
                         client.backend,
                         root=str(root.resolve()),

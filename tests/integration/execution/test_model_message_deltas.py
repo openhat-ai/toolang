@@ -623,47 +623,6 @@ agic parent() -> Boolean:
     assert_replayed(harness, tracer.events)
 
 
-def test_retry_deletes_its_deltas_and_can_reuse_step_ids(tmp_path: Path) -> None:
-    tool = RecordingTool("lookup__item", output={"result": 1})
-    harness = ExecutionHarness.create(
-        tmp_path,
-        source=SOURCE,
-        tools={tool.name: tool},
-        responses=[
-            ModelCallResult(tool_calls=(ToolCall("old", "old", tool.name, {}),)),
-            RuntimeError("model failed"),
-            ModelCallResult(message=Message.assistant("new execution")),
-        ],
-    )
-    tracer = RecordingRunTracer()
-
-    async def scenario() -> None:
-        async with harness:
-            root = await harness.executor.run(
-                harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
-                    runnable="chat",
-                    primary=(TextPart("start"),),
-                )
-            )
-            assert root.status == "failed"
-            old = harness.store.list_steps(run_id=root.id)
-            retried = await harness.executor.retry(
-                root.id, setup=harness.setup, state=harness.state, tracer=tracer
-            )
-            assert retried.status == "succeeded", retried.error
-            saved = harness.store.list_steps(run_id=root.id)
-            assert len(saved) == 1
-            assert saved[0].ref == old[0].ref
-            assert harness.store.get_step(ref=old[-1].ref) is None
-            assert without_runtime_snapshots(
-                harness.adapter.invocations[-1].call.messages
-            ) == [Message.user("start")]
-
-    asyncio.run(scenario())
-    assert_replayed(harness, tracer.events)
-
-
 def test_long_delta_sequences_are_linear_and_batch_expansion_is_shared(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

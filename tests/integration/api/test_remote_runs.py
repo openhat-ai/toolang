@@ -22,11 +22,10 @@ from toolang.api.schemas import (
 from toolang.base.types.message import ImagePart, Message, TextPart
 from toolang.base.types.model import ModelRequest
 from toolang.base.types.policy import RunPolicy
-from toolang.base.types.run import ModelCallResult, ModelUsage
+from toolang.base.types.run import ModelCallResult
 from toolang.catalog import CapsManager, ChoresManager
 from toolang.execution.calls import resolve_run_request
 from toolang.execution.records import (
-    RetryControlPayload,
     RunControlPayload,
 )
 from toolang.execution.schemas import RunDetail, RunRequest, RunnableRequest
@@ -635,7 +634,7 @@ agic selected(_: Part[], tone: Text) -> Part[]:
         asyncio.run(core.close())
 
 
-def test_authored_retry_and_rerun_streams_subscribe_at_acceptance(
+def test_authored_rerun_stream_subscribes_at_acceptance(
     tmp_path: Path,
 ) -> None:
     harness = ExecutionHarness.create(
@@ -649,10 +648,6 @@ agic chat(_: Part[]) -> Part[]:
 """,
         responses=[
             RuntimeError("temporary failure"),
-            ModelCallResult(
-                message=Message.assistant("recovered"),
-                usage=ModelUsage(input_tokens=1, output_tokens=1),
-            ),
             ModelCallResult(message=Message.assistant("reran")),
         ],
     )
@@ -679,24 +674,6 @@ agic chat(_: Part[]) -> Part[]:
             )
             source_id = source.headers["X-Toolang-Run-ID"]
 
-            retry = client.post(
-                f"/api/v1/runs/{source_id}/retry/stream",
-                json={
-                    "request_id": "retry_request",
-                    "commands": [{"group": "limit", "field": "tokens", "value": 10}],
-                },
-            )
-            duplicate = client.post(
-                f"/api/v1/runs/{source_id}/retry/stream",
-                json={"request_id": "retry_request"},
-            )
-            invalid_anchor = client.post(
-                f"/api/v1/runs/{source_id}/retry/stream",
-                json={
-                    "request_id": "invalid_anchor_request",
-                    "anchor": "run_other.0",
-                },
-            )
             rerun = client.post(
                 f"/api/v1/runs/{source_id}/rerun/stream",
                 json={
@@ -706,34 +683,20 @@ agic chat(_: Part[]) -> Part[]:
             )
 
         source_events = _sse_events(source.text)
-        retry_events = _sse_events(retry.text)
         rerun_events = _sse_events(rerun.text)
         rerun_id = rerun.headers["X-Toolang-Run-ID"]
-        retry_detail = core.history.get_run(source_id)
+        source_detail = core.history.get_run(source_id)
         rerun_detail = core.history.get_run(rerun_id)
 
         assert source_events[0][0] == "run_begin"
-        assert retry_events[0][0] == "run_retried"
-        assert retry_events[1][0] == "stream_prefill"
-        assert retry_events[-1][0] == rerun_events[-1][0] == "run_end"
-        assert retry.headers["X-Toolang-Run-ID"] == source_id
+        assert rerun_events[0][0] == "run_begin"
+        assert rerun_events[-1][0] == "run_end"
         assert rerun_id != source_id
-        assert retry_detail is not None and retry_detail.status == "succeeded"
+        assert source_detail is not None and source_detail.status == "failed"
         assert rerun_detail is not None and rerun_detail.status == "succeeded"
-        assert retry_detail.controls[-1].request_id == "retry_request"
-        assert isinstance(retry_detail.controls[-1].payload, RetryControlPayload)
-        assert retry_detail.controls[-1].payload.limits.tokens == 10
         assert rerun_detail.controls[0].request_id == "rerun_request"
         assert isinstance(rerun_detail.controls[0].payload, RunControlPayload)
         assert rerun_detail.controls[0].payload.limits.time == 30
-        assert duplicate.status_code == 409
-        assert duplicate.json()["detail"] == (
-            "run control request already exists: retry_request"
-        )
-        assert invalid_anchor.status_code == 422
-        assert invalid_anchor.json()["detail"] == (
-            "retry request anchor must belong to its source run"
-        )
     finally:
         asyncio.run(core.close())
 

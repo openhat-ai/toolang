@@ -40,7 +40,6 @@ async def execute(
     flow: FlowDecl,
     locals: dict[str, Local],
     *,
-    statement_start: int = 0,
     step_start: int = 0,
 ) -> Local:
     """Execute one complete flow body."""
@@ -48,7 +47,7 @@ async def execute(
     await execute_statements(
         execution,
         binding,
-        flow.stmts[statement_start:],
+        flow.stmts,
         locals,
         parent=None,
         start=step_start,

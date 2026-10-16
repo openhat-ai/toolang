@@ -20,6 +20,7 @@ import sys
 import threading
 import time
 from typing import Any, cast
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 import pytest
@@ -251,7 +252,7 @@ def test_docker_foreground_nonresident_uses_selected_root_and_cleans_reference(
                 layout.runtime_status
             )
             observed = subprocess.run(
-                (*base, "top", "--once"),
+                (*base, "hub"),
                 env=env,
                 capture_output=True,
                 text=True,
@@ -341,7 +342,7 @@ def test_docker_restart_reuses_settings_after_queries_reconcile_killed_guest(
         assert entry["workload"]["pid"] is None
         unchanged = layout.runtime_status.stat().st_mtime_ns
         command("info", "restart")
-        command("top", "--once")
+        command("list")
         assert layout.runtime_status.stat().st_mtime_ns == unchanged
         assert SandboxState.load(layout.runtime_status) == first
         assert (
@@ -669,19 +670,26 @@ def test_docker_agent_server_reruns_on_the_existing_container(
     _assert_running_container_unchanged(running_docker_agent)
 
 
-def test_docker_agent_server_retries_on_the_existing_container(
+def test_docker_agent_server_rejects_removed_interfaces_without_mutation(
     running_docker_agent: _RunningDockerAgent,
     completed_docker_run: str,
 ) -> None:
+    url = f"{running_docker_agent.endpoint}/api/v1/runs/{completed_docker_run}"
+    before = _get_json(url)
+    with pytest.raises(HTTPError) as retry:
+        _post_json(f"{url}/retry", {})
+    assert retry.value.code == 404
+    with pytest.raises(HTTPError) as activity:
+        _get_json(f"{running_docker_agent.endpoint}/api/v1/activity")
+    assert activity.value.code == 404
     result = _run_agent_command(
         running_docker_agent,
         "retry",
         completed_docker_run,
     )
 
-    assert result.returncode == 0, result.stderr
-    assert "retried run_" in result.stdout
-    assert result.stdout.rstrip().endswith(": succeeded")
+    assert result.returncode != 0
+    assert _get_json(url) == before
     _assert_running_container_unchanged(running_docker_agent)
 
 

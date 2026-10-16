@@ -350,7 +350,7 @@ def test_foreground_serve_is_one_process_and_kill_preserves_restart_settings(
                 "launch_id",
             }
             monitored = subprocess.run(
-                (*base, "top", "--once"), capture_output=True, text=True, timeout=10
+                (*base, "list"), capture_output=True, text=True, timeout=10
             )
             assert monitored.returncode == 0, monitored.stderr
             assert "alice" in monitored.stdout

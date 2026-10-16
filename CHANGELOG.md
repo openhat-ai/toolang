@@ -86,6 +86,27 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Removed
 
+- **Breaking:** the execution Activity and statistics surfaces are removed:
+  `too top` and `too AGENT top` are gone, the Activity HTTP endpoints of the
+  agent API (`/api/v1/activity`) and the Hub are removed, the agent profile no
+  longer reports `metrics`, and the Hub neither collects nor publishes agent
+  Activity. Use `too inspect` and execution history instead. Opening a writable
+  execution store drops the derived Activity indexes and discards the
+  historical derived totals, so stop old writers sharing that execution store
+  before upgrading; unrelated read-only processes and other execution stores
+  are unaffected. Records, content, IDs, and cursors are preserved.
+
+- **Breaking:** manual Run retry is removed: the `too retry` command, the
+  `POST /api/v1/runs/{run_id}/retry` and `/retry/stream` endpoints, the
+  `RunClient`, `LocalRunClient`, `RemoteRunClient`, and `RunExecutor` `retry()`
+  methods, `RunStore.accept_retry`, and the `RunRetried` (`run_retried`) stream
+  event are gone. Use `too rerun` (or `POST /api/v1/runs/{run_id}/rerun`) to
+  execute a new root Run from a source Run; recorded retry controls stay
+  readable for historical Runs and usable as rerun sources, but retry can no
+  longer be applied. Integrations constructing `RunExecutor` must remove the
+  former `load_state` argument and supply paired `setup` and `state` callbacks
+  for request resolution.
+
 - **Breaking:** the standalone `caps` command is removed: the `caps` console
   script, `python -m toolang.cli.caps`, and agent-prefixed shortcuts such as
   `caps alice list` no longer exist. Use the `too` equivalents, such as

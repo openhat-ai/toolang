@@ -505,68 +505,6 @@ def test_hub_filters_and_cursor_errors_have_flat_http_contract(tmp_path):
     asyncio.run(scenario())
 
 
-def test_retry_admission_clears_old_result_and_source_begin(tmp_path):
-    from toolang.execution.events import RunRetried
-    from toolang.execution.stream import CanonicalEvent
-    from toolang.execution.types import ControlRef, EventCursor
-    from toolang.teaming.records import field
-
-    harness = ExecutionHarness.create(
-        tmp_path, source="flow example:\n  let result = Done\n", responses=[]
-    )
-
-    async def scenario():
-        driver = backend(FakeServer(server_type="valkey"))
-        async with harness:
-            await driver.initialize()
-            await driver.register("human:owner", agent="agent:alice", token="lease")
-            service = driver.events
-            exporter = EventExporter(
-                harness.executor.stream,
-                harness.store.db_path,
-                service,
-                agent="agent:alice",
-                token="lease",
-            )
-            record = await run(harness)
-            await exporter.recover("initial")
-            old = str(exporter.highwater)
-            mutation = RunRetried(
-                record.id, str(record.thread), ControlRef.for_run(record.id, 1), (), ()
-            )
-            event = CanonicalEvent(
-                EventCursor(exporter.highwater.epoch, exporter.highwater.seq + 1),
-                mutation,
-                str(record.thread),
-                record.id,
-                0,
-            )
-            try:
-                await exporter.publish(event)
-                entity = exporter.projection.entities[field("run", record.id)]
-                assert entity["end"] is None and entity["end_source"] is None
-                assert (
-                    entity["begin_source"] is None
-                    and entity["begin"]["started_at"] == ""
-                )
-                assert entity["begin"]["control"] == str(mutation.control)
-                scope = HubScope("agent:alice", run=record.id)
-                sub = HubSubscription(service, scope)
-                await sub.prepare()
-                state = HubStreamState(scope)
-                for frame in await prefix(sub):
-                    state.feed(frame)
-                assert not state.agents["agent:alice"].complete(record.id)
-                assert not sub._terminal()
-                sub.close()
-                assert old != str(exporter.highwater)
-            finally:
-                exporter.close()
-                await driver.close()
-
-    asyncio.run(scenario())
-
-
 def test_multi_origin_cached_replay_preserves_global_order_and_identity(tmp_path):
     from toolang.execution.events import RunBegin, RunEnd
     from toolang.execution.stream import CanonicalEvent
@@ -1231,7 +1169,9 @@ def test_hub_recovery_ignores_inherited_sse_ids(replacement):
         assert not state.agents  # The prefix has not committed yet.
     event = events[-1]
     state.feed(StreamFrame(event.event, json.loads(event.data), event.id or None))
-    assert state.agents["agent:alice"].has_run("run_one")
+    assert state.agents["agent:alice"].snapshot().events == (
+        RunBegin("run_one", ControlRef.for_run("run_one", 0)),
+    )
     assert state.cursor == boundary
 
 

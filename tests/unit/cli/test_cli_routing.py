@@ -192,7 +192,6 @@ def test_thread_option_registration_keeps_chat_runtime_imports_lazy() -> None:
         ("remove", {"after"}, {"resident"}),
         ("info", {"before", "after"}, {"resident", "roaming", "visiting"}),
         ("home", {"none", "before"}, {"resident", "visiting", "roaming"}),
-        ("retry", {"before"}, {"resident", "roaming", "visiting"}),
         ("workspace", {"before"}, {"resident", "roaming", "visiting"}),
         ("skill", {"none", "before"}, {"resident", "roaming", "visiting"}),
         ("models", {"none", "before"}, {"resident", "roaming", "visiting"}),
@@ -218,19 +217,19 @@ def test_cli_command_registry_declares_target_grammar(
 
 def test_cli_normalize_routes_resident_target_before_command() -> None:
     args, agent = normalize(
-        ["-r", "/tmp/root", "alice", "retry", "run_1"],
+        ["-r", "/tmp/root", "alice", "rerun", "run_1"],
     )
 
-    assert args == ["-r", "/tmp/root", "retry", "run_1"]
+    assert args == ["-r", "/tmp/root", "rerun", "run_1"]
     assert agent == "alice"
 
 
 def test_cli_normalize_preserves_a_command_models_catalog_override() -> None:
     args, agent = normalize(
-        ["alice", "retry", "run_1", "--catalog", "/tmp/models.json"],
+        ["alice", "rerun", "run_1", "--catalog", "/tmp/models.json"],
     )
 
-    assert args == ["retry", "run_1", "--catalog", "/tmp/models.json"]
+    assert args == ["rerun", "run_1", "--catalog", "/tmp/models.json"]
     assert agent == "alice"
 
 
@@ -277,8 +276,8 @@ def test_cli_normalize_allows_both_orders_for_agent_self_commands() -> None:
 
 
 def test_cli_normalize_defers_missing_target_to_command_help() -> None:
-    assert normalize(["retry", "alice", "run_1"]) == (
-        ["retry", "alice", "run_1"],
+    assert normalize(["rerun", "alice", "run_1"]) == (
+        ["rerun", "alice", "run_1"],
         None,
     )
 
@@ -322,7 +321,6 @@ def test_cli_control_commands_have_consistent_order_and_descriptions() -> None:
         "chat": "Chat directly with an agent",
         "steer": "Steer an active run",
         "cancel": "Cancel an active run",
-        "retry": "Retry a run from a failed step",
         "rerun": "Rerun an earlier run as a new one",
         "fork": "Fork a thread from an earlier run",
         "rewind": "Rewind a thread to an earlier run",
@@ -358,7 +356,6 @@ def test_cli_visible_commands_follow_the_public_panel_order(arguments, capsys) -
             "models",
             "providers",
             "inspect",
-            "top",
         ),
         "Script commands": ("init", "run"),
     }
@@ -506,7 +503,7 @@ def test_cli_argument_panels_show_only_metavars_without_type_or_usage_syntax(
     assert syntax_metavar not in row
 
 
-@pytest.mark.parametrize("name", ["retry", "more"])
+@pytest.mark.parametrize("name", ["rerun", "more"])
 def test_cli_explicit_agent_prefix_resolves_command_name_collision(name: str) -> None:
     args, agent = normalize([f"agent:{name}", "info"])
 
@@ -517,7 +514,7 @@ def test_cli_explicit_agent_prefix_resolves_command_name_collision(name: str) ->
 @pytest.mark.parametrize(
     ("arguments", "expected"),
     [
-        (["retry", "info"], (["retry", "info"], None)),
+        (["rerun", "info"], (["rerun", "info"], None)),
         (["more"], (["more"], None)),
     ],
 )
@@ -576,7 +573,7 @@ def test_cli_command_name_wins_without_explicit_agent_prefix(
                 placement="visiting",
             ),
         ),
-        (["retry"], {"retry"}, None),
+        (["rerun"], {"rerun"}, None),
         (
             ["threads"],
             {"threads"},
@@ -658,7 +655,7 @@ def test_cli_bare_resident_target_shows_its_command_help(
 
     assert result == 0
     assert stdout.startswith("Run and manage agent alice.\n")
-    for control in ("steer", "cancel", "retry", "rerun", "fork", "rewind"):
+    for control in ("steer", "cancel", "rerun", "fork", "rewind"):
         assert control in stdout
     assert "models" in stdout
     assert "Teaming commands" not in stdout
@@ -669,7 +666,7 @@ def test_cli_bare_resident_target_shows_its_command_help(
     assert "workspace" in sections["Agent commands"]
     for command in ("serve", "start", "stop"):
         assert command in sections["Runtime commands"]
-    assert "top" in sections["Inspection commands"]
+    assert "top" not in sections["Inspection commands"]
     assert "talk" not in stdout
     assert "hub" not in stdout
     assert tuple(stdout.index(panel) for panel in panels) == tuple(
@@ -940,7 +937,6 @@ def test_cli_script_rejects_inbox_option(
         ["chat", "-t", "term_1"],
         ["inspect", "run_1"],
         ["steer", "run_1", "change direction"],
-        ["retry", "run_1"],
         ["rerun", "run_1"],
     ),
 )
@@ -1349,7 +1345,6 @@ def test_cli_typed_runnable_prefix_escapes_a_roaming_command_name(
         ("serve", "runtime", "run", []),
         ("start", "runtime", "start", []),
         ("chat", "chat", "chat_command", []),
-        ("retry", "thread", "retry_command", ["run_example"]),
         ("rerun", "thread", "rerun_command", ["run_example"]),
     ],
 )
@@ -1393,7 +1388,7 @@ def test_cli_dev_states_reach_each_lazy_command(
         assert isinstance(captured["dev"], Path)
 
 
-@pytest.mark.parametrize("command", ["serve", "start", "chat", "retry", "rerun"])
+@pytest.mark.parametrize("command", ["serve", "start", "chat", "rerun", "rerun"])
 def test_cli_bare_dev_keeps_unknown_option_errors(command, tmp_path, capsys):
     assert (
         cli.main(["--root", str(tmp_path), "alice", command, "--dev", "--unknown"]) == 2

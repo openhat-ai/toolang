@@ -22,7 +22,6 @@ from toolang.base.types.model import ModelOverride, ModelRequest
 from toolang.execution.client import RunHandle
 from toolang.execution.events import (
     RunBegin,
-    RunRetried,
     RunSnapshot,
     RunTracer,
     ThreadCreated,
@@ -34,7 +33,6 @@ from toolang.execution.schemas import StreamFrame
 from toolang.execution.schemas import (
     ControlInfo,
     RerunRequest,
-    RetryRequest,
     RunDetail,
     RunRequest,
     ThreadInfo,
@@ -168,23 +166,6 @@ class RemoteRunClient:
             ),
             request_id=request.request_id,
             source_run_id=None,
-            tracer=tracer,
-        )
-
-    async def retry(
-        self,
-        request: RetryRequest,
-        *,
-        tracer: RunTracer | None = None,
-    ) -> RunHandle:
-        return await self._submit_stream(
-            operation="retry",
-            path=f"/api/v1/runs/{request.source}/retry/stream",
-            payload=_restart_request_data(
-                replace(request, client_id=request.client_id or self.client_id)
-            ),
-            request_id=request.request_id,
-            source_run_id=request.source,
             tracer=tracer,
         )
 
@@ -417,7 +398,7 @@ class RemoteRunClient:
                         first_data = json.loads(first_event.data)
                         if (
                             not isinstance(first_data, dict)
-                            or first_event.event not in {"run_begin", "run_retried"}
+                            or first_event.event != "run_begin"
                             or first_data.get("type") != first_event.event
                             or first_data.get("parent") is not None
                         ):
@@ -428,10 +409,6 @@ class RemoteRunClient:
                             "remote run returned an invalid accepted run ID"
                         ) from exc
                     events = _prepend_event(first_event, events)
-                if operation == "retry" and run_id != source_run_id:
-                    raise RemoteRunClientError(
-                        "remote retry did not accept the source run ID"
-                    )
                 if operation == "rerun" and run_id == source_run_id:
                     raise RemoteRunClientError(
                         "remote rerun did not accept a new run ID"
@@ -586,12 +563,6 @@ class RemoteRunClient:
                     f"remote run stream returned invalid data: {exc}"
                 ) from exc
             for event in observations:
-                if isinstance(event, RunRetried):
-                    if event.run != run_id:
-                        raise RemoteRunClientError(
-                            "remote retry returned an unexpected root run"
-                        )
-                    continue
                 if isinstance(event, RunSnapshot):
                     roots = [
                         item
@@ -828,15 +799,13 @@ def _run_request_data(request: RunRequest) -> dict[str, object]:
     )
 
 
-def _restart_request_data(request: RetryRequest | RerunRequest) -> dict[str, object]:
+def _restart_request_data(request: RerunRequest) -> dict[str, object]:
     payload: dict[str, object] = {
         "request_id": request.request_id,
         "client_id": request.client_id,
         "commands": [_run_command_data(item) for item in request.commands],
     }
-    if isinstance(request, RetryRequest):
-        payload["anchor"] = str(request.anchor) if request.anchor is not None else None
-    elif request.model is not None:
+    if request.model is not None:
         payload["model"] = _MODEL_REQUEST_ADAPTER.dump_python(
             request.model,
             mode="json",

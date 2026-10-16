@@ -1,7 +1,6 @@
 """Durable control identities and Step boundary relations."""
 
 from pathlib import Path
-import sqlite3
 import asyncio
 
 import pytest
@@ -9,7 +8,6 @@ from pydantic import TypeAdapter
 
 from tests.support.execution_fixtures import (
     project_run_start,
-    project_run_end,
     project_step,
 )
 from tests.support.execution_harness import (
@@ -26,7 +24,6 @@ from toolang.base.types.message import Message, ToolResultPart
 from toolang.execution.records import (
     ControlRecord,
     RecallControlPayload,
-    RunControlPayload,
     control_payload_from_data,
     control_payload_to_data,
 )
@@ -41,7 +38,7 @@ from toolang.execution.types import (
     StepRef,
 )
 from toolang.base.types.run import ModelCall
-from toolang.lang.input import CallInput, resolve_input_parts
+from toolang.lang.input import resolve_input_parts
 
 
 @pytest.mark.parametrize("action", ["run", "exec"])
@@ -323,127 +320,3 @@ def test_recall_preserves_target_revision_and_raw_content(
         assert reopened.get_step(ref=step.ref) == step
     finally:
         reopened.close()
-
-
-@pytest.mark.parametrize("reject_cleanup", [False, True])
-def test_retry_removes_emitted_controls_without_reusing_indexes(
-    tmp_path: Path, reject_cleanup: bool
-) -> None:
-    store = RunStore(tmp_path / "runs.db")
-    try:
-        run = project_run_start(
-            store,
-            run_id="run_retry",
-            thread_id="term_retry",
-            origin="test",
-            input=Message.user("hello"),
-            runnable_kind="flow",
-        )
-        prefix = project_step(
-            store,
-            run_id=run.id,
-            step_index=0,
-            kind="value",
-            status="succeeded",
-            input=(),
-            output=(),
-            started_at="2026-01-01T00:00:01Z",
-            finished_at="2026-01-01T00:00:02Z",
-        )
-        trigger = project_step(
-            store,
-            run_id=run.id,
-            step_index=1,
-            kind="tool",
-            status="succeeded",
-            input=(),
-            output=(),
-            started_at="2026-01-01T00:00:03Z",
-            finished_at="2026-01-01T00:00:04Z",
-        )
-        pending = store.accept_run_control(
-            run_id=run.id,
-            kind="cancel",
-            timing="next_step",
-            input=CallInput({"_": "stop"}),
-            request_id="cancel-request",
-            created_at="2026-01-01T00:00:04Z",
-        )
-        recall = store.accept_recall_control(
-            run_id=run.id,
-            payload=RecallControlPayload(
-                SkillRecallTarget("testing"), "v1", "Use tests."
-            ),
-            triggered_by=trigger.ref,
-            created_at="2026-01-01T00:00:05Z",
-        )
-        project_run_end(store, run_id=run.id, status="failed")
-        entry = store.get_run_control(run_id=run.id, index=0)
-        assert entry is not None and isinstance(entry.payload, RunControlPayload)
-        revision = store.latest_run_control_revision()
-        if reject_cleanup:
-            with sqlite3.connect(store.db_path) as connection:
-                connection.execute("""CREATE TRIGGER reject_cleanup BEFORE DELETE ON controls
-                    WHEN OLD.kind = 'recall' BEGIN SELECT RAISE(ABORT, 'cleanup failure'); END""")
-            before_run = store.get_run(run_id=run.id)
-            before_controls = store.list_run_controls(run_id=run.id)
-            with pytest.raises(ValueError):
-                store.accept_retry(
-                    run_id=run.id,
-                    anchor=trigger.ref,
-                    resources=entry.payload.resources,
-                    limits=entry.payload.limits,
-                    state=entry.payload.state,
-                    model_request=entry.payload.model_request,
-                    sandbox="host",
-                    request_id="retry-request",
-                    created_at="2026-01-01T00:00:06Z",
-                )
-            assert store.list_steps(run_id=run.id) == [prefix, trigger]
-            assert store.list_run_controls(run_id=run.id) == before_controls
-            assert store.get_run(run_id=run.id) == before_run
-            assert store.latest_run_control_revision() == revision
-            with sqlite3.connect(store.db_path) as connection:
-                connection.execute("DROP TRIGGER reject_cleanup")
-        _, retry, _ = store.accept_retry(
-            run_id=run.id,
-            anchor=trigger.ref,
-            resources=entry.payload.resources,
-            limits=entry.payload.limits,
-            state=entry.payload.state,
-            model_request=entry.payload.model_request,
-            sandbox="host",
-            request_id="retry-request",
-            created_at="2026-01-01T00:00:06Z",
-        )
-        assert store.list_steps(run_id=run.id) == [prefix]
-        assert store.get_run_control(run_id=run.id, index=recall.index) is None
-        failed_pending = store.get_run_control(run_id=run.id, index=pending.index)
-        assert failed_pending is not None and failed_pending.status == "wontapply"
-        assert retry.index == recall.index + 1
-        _, changes = store.changed_run_controls(after_revision=revision)
-        assert {item.ref for item in changes} == {retry.ref, pending.ref}
-        replacement = project_step(
-            store,
-            run_id=run.id,
-            step_index=1,
-            kind="tool",
-            status="succeeded",
-            input=(),
-            output=(),
-            started_at="2026-01-01T00:00:07Z",
-            finished_at="2026-01-01T00:00:08Z",
-        )
-        assert isinstance(recall.payload, RecallControlPayload)
-        new_recall = store.accept_recall_control(
-            run_id=run.id,
-            payload=recall.payload,
-            triggered_by=replacement.ref,
-            created_at="2026-01-01T00:00:09Z",
-        )
-        assert new_recall.index == retry.index + 1
-        assert new_recall.triggered_by == trigger.ref
-        assert store.get_run_control(run_id=run.id, index=recall.index) is None
-        assert retry.ref == ControlRef.for_run(run.id, retry.index)
-    finally:
-        store.close()

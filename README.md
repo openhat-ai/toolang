@@ -117,7 +117,7 @@ See [examples](https://github.com/openhat-ai/toolang/tree/main/examples) for run
 
 Use these commands to run and manage agents. Add `--help` to any command for its usage and options.
 
-For resident and visiting agents, Chat, retry/rerun, and fork/rewind start a shared
+For resident and visiting agents, Chat, rerun, and fork/rewind start a shared
 server when needed, enabling only chat by default. Resident servers keep running;
 visiting servers exit after the last client leaves and all accepted work finishes.
 `start` keeps either placement running until `stop`; `serve` owns a foreground

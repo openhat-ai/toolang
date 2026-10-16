@@ -60,7 +60,7 @@ def _read_projection(
             run = (
                 event.run if isinstance(event, RunBegin | RunEnd) else event.step.run_id
             )
-            # Legacy and retry-admission records retain null Begin cursors.
+            # Historical records may retain null Begin cursors.
             cursor = (
                 EventCursor.parse(frame.data["cursor"])
                 if frame.data.get("cursor")

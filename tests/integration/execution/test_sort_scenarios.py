@@ -1,10 +1,8 @@
 """Directional sorting and its independent positional-selection boundary."""
 
 import asyncio
-from collections.abc import Mapping
 import json
 from pathlib import Path
-from typing import Any
 
 import pytest
 from pydantic import TypeAdapter
@@ -16,8 +14,6 @@ from tests.support.execution_harness import (
 )
 from toolang.base.types.message import Message
 from toolang.base.types.run import ModelCallResult
-from toolang.execution.executor.common import Local
-from toolang.execution.executor.stmts import filter as filter_stmt
 from toolang.execution.schemas import StepData
 from toolang.execution.store import RunStore
 from toolang.execution.types import ThreadPrefix, TypedRef
@@ -204,60 +200,6 @@ def test_sort_preserves_integer_score_precision(tmp_path: Path, order: str) -> N
             assert json.loads(harness.store.run_output_text(run_id=root.id)) == (
                 ["b", "a", "c"] if order == "ascending" else ["c", "a", "b"]
             )
-
-    asyncio.run(scenario())
-
-
-@pytest.mark.parametrize("canceled", [False, True])
-def test_retry_after_sort_preserves_committed_scores(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, canceled: bool
-) -> None:
-    require_list = filter_stmt.require_list
-    calls = 0
-
-    def interrupted_selection(
-        locals: Mapping[str, Local], *, operation: str
-    ) -> list[Any]:
-        nonlocal calls
-        calls += 1
-        if calls == 1:
-            if canceled:
-                raise asyncio.CancelledError()
-            raise RuntimeError("selection interrupted")
-        return require_list(locals, operation=operation)
-
-    monkeypatch.setattr(filter_stmt, "require_list", interrupted_selection)
-    harness = ExecutionHarness.create(
-        tmp_path,
-        source=DECLARATIONS + "  sort descending by score\n  keep first 2\n",
-        responses=[_response('["a","b","c"]'), *map(_response, ("2", "2", "-1"))],
-    )
-
-    async def scenario() -> None:
-        async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
-            root = await harness.executor.run(
-                harness.run_spec(
-                    thread=thread, runnable="work", primary=resolve_input_parts("items")
-                )
-            )
-            assert root.status == ("canceled" if canceled else "failed")
-            assert json.loads(harness.store.run_output_text(run_id=root.id)) == [
-                "a",
-                "b",
-                "c",
-            ]
-            committed = harness.store.list_steps(run_id=root.id)[1]
-            retried = await harness.executor.retry(
-                root.id, setup=harness.setup, state=harness.state
-            )
-            assert retried.status == "succeeded", retried.error
-            assert json.loads(harness.store.run_output_text(run_id=root.id)) == [
-                "a",
-                "b",
-            ]
-            assert harness.store.list_steps(run_id=root.id)[1] == committed
-            assert len(harness.adapter.invocations) == 4
 
     asyncio.run(scenario())
 

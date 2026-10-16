@@ -71,7 +71,7 @@ _AGENT_PANEL_COMMAND_ORDER = (
 _RUNTIME_PANEL_COMMAND_ORDER = ("serve", "start", "stop", "hub")
 _WORK_PANEL_COMMAND_ORDER = ("chat", "talk", "chore")
 _CAPS_PANEL_COMMAND_ORDER = ("psyche", "skill", "service", "prompt")
-_RUN_PANEL_COMMAND_ORDER = ("steer", "cancel", "retry", "rerun")
+_RUN_PANEL_COMMAND_ORDER = ("steer", "cancel", "rerun")
 _THREAD_PANEL_COMMAND_ORDER = ("fork", "rewind")
 _INSPECTION_PANEL_COMMAND_ORDER = (
     "caps",
@@ -79,7 +79,6 @@ _INSPECTION_PANEL_COMMAND_ORDER = (
     "models",
     "providers",
     "inspect",
-    "top",
 )
 _SCRIPT_PANEL_COMMAND_ORDER = ("init", "run")
 # Root-hidden run and thread commands stay discoverable in target help.
@@ -439,13 +438,6 @@ _registered_command(
     rich_help_panel=WORK_COMMAND_PANEL,
 )
 
-_registered_command(
-    "top",
-    "toolang.cli.toolang.commands.top:top_command",
-    help="Monitor runtime activity",
-    epilog="Observe runtime instances, threads, and runs. Local activity is available without the hub.",
-    rich_help_panel=INSPECTION_COMMAND_PANEL,
-)
 
 _registered_group(
     "toolang.cli.toolang.commands.hub:hub_app",
@@ -488,15 +480,7 @@ _registered_command(
     hidden=True,
     rich_help_panel=RUN_COMMAND_PANEL,
 )
-_registered_command(
-    "retry",
-    "toolang.cli.toolang.commands.thread:retry_command",
-    help="Retry a run from a failed step",
-    no_args_is_help=True,
-    cls=_ThreadRunCommand,
-    hidden=True,
-    rich_help_panel=RUN_COMMAND_PANEL,
-)
+
 _registered_command(
     "rerun",
     "toolang.cli.toolang.commands.thread:rerun_command",

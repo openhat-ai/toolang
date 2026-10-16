@@ -13,7 +13,6 @@ from tests.support.execution_harness import (
     AsyncGate,
     ExecutionHarness,
     RecordingRunTracer,
-    ScriptedModelTurn,
 )
 from toolang.base.types.message import (
     AudioPart,
@@ -30,7 +29,6 @@ from toolang.execution.events import (
     run_event_from_data,
     run_event_to_data,
 )
-from toolang.execution.executor import RunExecutor
 from toolang.execution.store import RunStore
 from toolang.execution.types import (
     AwaitableHandle,
@@ -38,109 +36,6 @@ from toolang.execution.types import (
     TypedRef,
     value_to_protocol_data,
 )
-
-
-@pytest.mark.parametrize("completed", [False, True])
-def test_retry_after_restart_observes_original_target_outcome(tmp_path, completed):
-    caller_gate, child_gate = AsyncGate(), AsyncGate()
-    harness = ExecutionHarness.create(
-        tmp_path,
-        source="""
-flow parent() -> Text:
-  let job = async run child
-  let run unstable
-  await job
-agic unstable() -> Text:
-  user: Transient failure
-agic child() -> Text:
-  user: Work once
-""",
-        responses=[
-            ScriptedModelTurn(
-                ModelCallResult(message=Message.assistant("unused")),
-                gate=caller_gate,
-                error=RuntimeError("transient failure"),
-            ),
-            ScriptedModelTurn(
-                ModelCallResult(message=Message.assistant("original result")),
-                gate=child_gate,
-            ),
-            ModelCallResult(message=Message.assistant("recovered")),
-        ],
-    )
-
-    async def scenario():
-        async with harness:
-            parent = harness.executor.run(
-                harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
-                    runnable="parent",
-                )
-            )
-            await asyncio.wait_for(
-                asyncio.gather(
-                    caller_gate.wait_until_entered(), child_gate.wait_until_entered()
-                ),
-                3,
-            )
-            source = harness.store.list_steps(run_id=parent.run_id)[0]
-            assert source.output is not None
-            handle = source.output.value
-            assert isinstance(handle, AwaitableHandle)
-            if completed:
-                execution = harness.executor._active[parent.run_id].execution
-                assert execution is not None
-                child_gate.release()
-                await asyncio.wait_for(execution._background_tasks[handle.id], 3)
-            caller_gate.release()
-            assert (await parent).status == "failed"
-            target = harness.store.get_run(run_id=handle.id)
-            assert target is not None
-            assert target.status == ("succeeded" if completed else "canceled")
-            target_steps = harness.store.list_steps(run_id=handle.id)
-            await harness.executor.stop()
-            path = harness.store.db_path
-            harness.store.close()
-            harness.store = RunStore(path)
-            harness.executor = RunExecutor(
-                harness.store,
-                harness.ids,
-                setup=lambda: harness.setup,
-                state=lambda: harness.state,
-                load_state=lambda revision: harness.state,
-            )
-            with pytest.raises(ValueError, match="async run origin.*rerun"):
-                harness.executor.retry(
-                    parent.run_id,
-                    setup=harness.setup,
-                    state=harness.state,
-                    anchor=source.ref,
-                )
-            assert harness.store.get_step(ref=source.ref) == source
-            assert harness.store.get_run(run_id=handle.id) == target
-            result = await asyncio.wait_for(
-                harness.executor.retry(
-                    parent.run_id, setup=harness.setup, state=harness.state
-                ),
-                3,
-            )
-            assert result.status == ("succeeded" if completed else "failed")
-            if completed:
-                assert (
-                    harness.store.run_output_text(run_id=result.id) == "original result"
-                )
-            else:
-                assert result.error is not None and target.error is not None
-                assert harness.store.resolve_error(
-                    result.error
-                ) == harness.store.resolve_error(target.error)
-            assert harness.store.get_step(ref=source.ref) == source
-            assert harness.store.get_run(run_id=handle.id) == target
-            assert harness.store.list_steps(run_id=handle.id) == target_steps
-            assert len(harness.adapter.invocations) == 3
-            assert not harness.adapter.pending_responses
-
-    asyncio.run(scenario())
 
 
 @pytest.mark.parametrize("order", list(permutations(("alpha", "beta", "gamma"))))

@@ -66,7 +66,6 @@ def test_driver_selection_roundtrips_host_guest_and_preserves_management(
             else:
                 for path in [
                     "authored/stream",
-                    "run_absent/retry/stream",
                     "run_absent/rerun/stream",
                     "run_absent/steer",
                 ]:

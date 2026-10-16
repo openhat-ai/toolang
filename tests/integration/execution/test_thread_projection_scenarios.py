@@ -15,7 +15,6 @@ from tests.support.execution_fixtures import (
 )
 from toolang.base.types.message import Message, TextPart
 from toolang.execution.inspection.history import RunHistory
-from toolang.execution.records import RunControlPayload
 from toolang.execution.store import RunStore
 from toolang.execution.types import Pointer, StepRef
 
@@ -92,22 +91,6 @@ def _rewind(store: RunStore, thread: str, anchor: str) -> None:
     assert removed == tuple(run.id for run in visible[start:])
 
 
-def _retry(store: RunStore, run: str) -> None:
-    control = store.get_run_control(run_id=run, index=0)
-    assert control is not None and isinstance(control.payload, RunControlPayload)
-    payload = control.payload
-    store.accept_retry(
-        run_id=run,
-        anchor=None,
-        resources=payload.resources,
-        limits=payload.limits,
-        state=payload.state,
-        sandbox="host",
-        request_id=None,
-        created_at="2026-01-01T00:00:05Z",
-    )
-
-
 def test_nested_forks_capture_source_views_and_closed_rewinds_survive_restart(
     store: RunStore,
 ) -> None:
@@ -173,32 +156,6 @@ def test_nested_forks_capture_source_views_and_closed_rewinds_survive_restart(
         reopened.close()
 
 
-def test_retry_cannot_mutate_a_forked_tree_even_after_both_threads_rewind(
-    store: RunStore,
-) -> None:
-    _append(store, "term_source", "run_root")
-    _append(
-        store, "term_source", "run_child", parent=StepRef.from_local("run_root", "0")
-    )
-    _fork(store, "term_source", "term_fork")
-    _rewind(store, "term_fork", "run_root")
-    _rewind(store, "term_source", "run_root")
-    before = _physical(store)
-    reopened = RunStore(store.db_path)
-    try:
-        for writer in (store, reopened):
-            with pytest.raises(ValueError, match="durable fork prefix"):
-                _retry(writer, "run_root")
-    finally:
-        reopened.close()
-    assert _physical(store) == before
-    assert len(store.list_run_controls(run_id="run_root")) == 1
-
-    _append(store, "term_source", "run_unshared")
-    _retry(store, "run_unshared")
-    assert store.list_steps(run_id="run_unshared") == []
-
-
 @pytest.mark.parametrize("active_child", (False, True))
 def test_fork_validates_every_run_in_the_prefix_tree(
     store: RunStore, active_child: bool
@@ -214,7 +171,10 @@ def test_fork_validates_every_run_in_the_prefix_tree(
             parent=StepRef.from_local("run_first", "0"),
         )
     else:
-        _retry(store, "run_first")
+        store._conn.execute(
+            "UPDATE runs SET status='running', finished_at=NULL WHERE id='run_first'"
+        )
+        store._conn.commit()
     _append(store, "term_source", "run_last")
     before = _physical(store)
     with pytest.raises(ValueError, match="nonterminal run"):

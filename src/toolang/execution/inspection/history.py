@@ -478,8 +478,7 @@ class RunHistory:
             refs = {str(target), str(record.control), str(record.state), *selected}
             for ref in step_ids:
                 refs.update(related[ref])
-            # A root retry can delete/recreate child facts. Freeze the ancestry,
-            # not just the reused child Step ID or its lifecycle timestamps.
+            # Capture ancestry in the same snapshot as the selected facts.
             if record.parent is not None:
                 refs.update(self._store.run_ancestry(run_id=record.parent.run_id))
             scope = HistoryCursor(

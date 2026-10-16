@@ -5,7 +5,6 @@ from typing import Annotated, Any, TypeVar
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import TypeAdapter, ValidationError
 
-from toolang.execution.schemas import ActivitySnapshot
 from .errors import EventRecoveryRequired
 from .messaging import MessagingClient
 from .messaging_api import messaging_router
@@ -93,15 +92,6 @@ def agent_router(human: MessagingClient, *, roster: Roster | None = None) -> API
     @router.delete("/lease")
     async def unregister(client: Client) -> dict[str, bool]:
         await client.unregister()
-        return {"ok": True}
-
-    @router.put("/activity")
-    async def activity(request: Request, client: ActiveClient) -> dict[str, bool]:
-        pages = await _body(request, TypeAdapter(list[ActivitySnapshot]))
-        if not pages or any(page.agent != client.actor for page in pages):
-            raise HTTPException(400, "Activity identity mismatch")
-        await client.backend.activity.save(client.actor, client.token, pages)
-        await client.renew()
         return {"ok": True}
 
     @router.get("/talk/cursors/{convo_id}")

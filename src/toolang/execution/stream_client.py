@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from dataclasses import replace
 import json
 from typing import Any
 
@@ -15,7 +14,6 @@ from .events import (
     RunBegin,
     RunEnd,
     RunEvent,
-    RunRetried,
     RunSnapshot,
     StepBegin,
     StepEnd,
@@ -51,9 +49,6 @@ class StreamClientState:
     def forget(self, roots: set[str]) -> None:
         """Release whole trees while retaining the last transport checkpoint."""
         self._remove_runs(self._descendants(roots))
-
-    def has_run(self, run: str) -> bool:
-        return ("run_begin", run) in self._records
 
     def attach(self) -> RunSnapshot:
         self._prefix = None
@@ -138,15 +133,6 @@ class StreamClientState:
                 if cursor.epoch == previous.epoch and cursor.seq <= previous.seq:
                     return ()
             self.cursor = str(cursor)
-        if isinstance(event, RunRetried):
-            begin = self._records.get(("run_begin", event.run))
-            if (
-                isinstance(begin, RunBegin)
-                and begin.control.index >= event.control.index
-            ):
-                return ()
-            self._invalidate(event)
-            return (event, self.snapshot())
         replacing = (
             isinstance(event, RunBegin | StepBegin)
             and (
@@ -235,20 +221,6 @@ class StreamClientState:
             if run in runs:
                 self._records.pop(key)
                 self._positions.pop(key, None)
-
-    def _invalidate(self, event: RunRetried) -> None:
-        key = ("run_begin", event.run)
-        begin = self._records.get(key)
-        if isinstance(begin, RunBegin):
-            self._records[key] = replace(begin, control=event.control, started_at="")
-            self._positions[key] = None
-        self._remove_runs(set(event.removed_runs))
-        for ref in event.invalidated_steps:
-            for kind in ("step_begin", "step_end"):
-                self._records.pop((kind, str(ref)), None)
-                self._positions.pop((kind, str(ref)), None)
-        self._records.pop(("run_end", event.run), None)
-        self._positions.pop(("run_end", event.run), None)
 
     def _apply(self, event: ExecutionEvent, cursor: str | None) -> bool:
         if not isinstance(event, RunBegin | RunEnd | StepBegin | StepEnd):
