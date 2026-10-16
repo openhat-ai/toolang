@@ -497,6 +497,11 @@ def history_units(
         for s in active
         if isinstance(s.given, ToolStepGiven)
     }
+    # Honor records its own runtime call, but replies to the intercepted model call.
+    # Keep that original call and its reply in the same compaction unit.
+    for step in active:
+        if (reply := workspace_reply_from_step(step, resolve)) is not None:
+            tool_steps[reply.tool_call_id] = step.ref
     groups: dict[StepRef | None, list[MessageTemplate]] = {}
     for fallback, message in entries:
         if (
