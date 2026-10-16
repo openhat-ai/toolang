@@ -10,15 +10,25 @@ from typer._click.exceptions import ClickException
 from toolang.cli.common.context import context_root
 from toolang.cli.common.help import CliCommand, CliGroup
 from toolang.cli.common.messaging import settings
-from toolang.common.typer.options import OptionalValueCommand
+from toolang.common.typer.options import OptionalValue, OptionalValueCommand
 from toolang.teaming.client import HubClient
 from toolang.teaming.errors import TeamingError
-from toolang.teaming.schemas import SetRulesRequest, conversation_id
+from toolang.teaming.schemas import (
+    MAX_RULES_BYTES,
+    SetRulesRequest,
+    conversation_id,
+    rules_revision,
+)
 from .talk.directory import directory_command
 
 
 class _RulesCommand(OptionalValueCommand, CliCommand):
-    optional_values = {"update": "-"}
+    optional_values = {"update": OptionalValue(bare_value="-", show_bare=False)}
+
+
+ConversationArgument = Annotated[
+    str, typer.Argument(help="Canonical dm_ or gc_ conversation ID")
+]
 
 
 def convo_app() -> typer.Typer:
@@ -66,20 +76,23 @@ def _membership(ctx: typer.Context, operation: str, conversation: str) -> None:
         raise ClickException(str(exc)) from exc
 
 
-def join(ctx: typer.Context, conversation: str) -> None:
-    """Join an ordinary group conversation"""
+def join(ctx: typer.Context, conversation: ConversationArgument) -> None:
+    """Join an ordinary group; DM and system membership is fixed"""
     _membership(ctx, "join", conversation)
 
 
-def leave(ctx: typer.Context, conversation: str) -> None:
+def leave(ctx: typer.Context, conversation: ConversationArgument) -> None:
     """Leave an ordinary group; preserve rules and history"""
     _membership(ctx, "leave", conversation)
 
 
 def create(
-    ctx: typer.Context, name: Annotated[str | None, typer.Argument()] = None
+    ctx: typer.Context,
+    name: Annotated[
+        str | None, typer.Argument(help="Optional group name (1–128 characters)")
+    ] = None,
 ) -> None:
-    """Create a group containing the configured human"""
+    """Create a group containing the configured human; print its conversation ID"""
     try:
         config, _ = settings(context_root(ctx))
 
@@ -94,7 +107,7 @@ def create(
 
 def rules(
     ctx: typer.Context,
-    conversation: str,
+    conversation: ConversationArgument,
     output: Annotated[
         str | None,
         typer.Option(
@@ -112,16 +125,30 @@ def rules(
     ] = None,
     revision: Annotated[
         str | None,
-        typer.Option("--revision", help="Expected rules revision from a prior read"),
+        typer.Option(
+            "--revision",
+            metavar="REVISION",
+            help="Rules revision from a prior read; required with --update",
+        ),
     ] = None,
 ) -> None:
-    """Read shared MEMBERS.md, or replace it with an explicit expected revision"""
+    """Download shared MEMBERS.md, or upload a replacement with --update
+
+    Downloads go to stdout by default; status and revision go to stderr.
+    Missing rules have revision 0. An empty upload clears rules.
+    Uploads must be UTF-8 and at most 64 KiB.
+    """
     if output is not None and update is not None:
         raise typer.BadParameter("--output and --update are mutually exclusive")
     if (update is not None) != (revision is not None):
         raise typer.BadParameter(
             "--update requires --revision; --revision is only valid with --update"
         )
+    if revision is not None:
+        try:
+            rules_revision(revision)
+        except ValueError as exc:
+            raise typer.BadParameter(str(exc), param_hint="--revision") from exc
     try:
         conversation_id(conversation)
         config, _ = settings(context_root(ctx))
@@ -133,10 +160,16 @@ def rules(
                 else Path(update).open("rb")
             )
             try:
-                content = source.read(64 * 1024 + 1).decode("utf-8")
+                data = source.read(MAX_RULES_BYTES + 1)
             finally:
                 if update != "-":
                     source.close()
+            if len(data) > MAX_RULES_BYTES:
+                raise ClickException("Conversation rules exceed 64 KiB")
+            try:
+                content = data.decode("utf-8")
+            except UnicodeDecodeError as exc:
+                raise ClickException("Rules input must be UTF-8") from exc
             assert revision is not None
             request = SetRulesRequest(content=content, revision=revision)
 

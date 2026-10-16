@@ -1,6 +1,7 @@
 """Atomic shared rules, observer access, and revision-guarded delivery."""
 
 import asyncio
+from hashlib import sha256
 import json
 
 from fakeredis import FakeServer
@@ -252,5 +253,71 @@ def test_hub_rules_api_and_validation():
             assert (
                 await hub.set_rules(conversation, "", revision=document.revision)
             ).revision == "0"
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("identity", ["human", "agent"])
+def test_rules_http_documents_validation_and_conflict_responses(identity):
+    async def scenario():
+        server = FakeServer(server_type="valkey")
+        app = create_app(client(server, "human:owner"), version="test")
+        async with (
+            app.router.lifespan_context(app),
+            client(server, "agent:alice") as alice,
+            httpx.AsyncClient(
+                transport=httpx.ASGITransport(app), base_url="http://hub"
+            ) as http,
+        ):
+            await alice.register("human:owner")
+            conversation = (await alice.create_conversation()).id
+            prefix = "/agents/agent:alice" if identity == "agent" else ""
+            headers = {"X-Toolang-Agent-Lease": alice.token} if prefix else {}
+            path = f"{prefix}/msg/conversations/{conversation}/rules"
+            empty = {
+                "conversation": conversation,
+                "filename": "MEMBERS.md",
+                "content": "",
+                "revision": "0",
+            }
+            response = await http.get(path, headers=headers)
+            assert response.status_code == 200 and response.json() == empty
+            content = "# Members\r\n\nKeep literal {{value}} and café.\n"
+            document = {
+                **empty,
+                "content": content,
+                "revision": sha256(content.encode()).hexdigest(),
+            }
+            response = await http.put(
+                path, headers=headers, json={"content": content, "revision": "0"}
+            )
+            assert response.status_code == 200 and response.json() == document
+            for invalid in (
+                {"content": "new", "revision": "latest"},
+                {"content": "new", "revision": 0},
+                {"content": None, "revision": document["revision"]},
+                {"content": "é" * 32769, "revision": document["revision"]},
+                {"content": "new", "revision": document["revision"], "extra": True},
+            ):
+                response = await http.put(path, headers=headers, json=invalid)
+                assert response.status_code == 400
+                assert response.json() == {
+                    "code": "messaging_error",
+                    "detail": "Invalid Hub request",
+                }
+                assert (await http.get(path, headers=headers)).json() == document
+            stale = await http.put(
+                path, headers=headers, json={"content": "stale", "revision": "0"}
+            )
+            assert stale.status_code == 409
+            assert stale.json()["code"] == "conversation_rules_conflict"
+            assert (await http.get(path, headers=headers)).json() == document
+            response = await http.put(
+                path,
+                headers=headers,
+                json={"content": "", "revision": document["revision"]},
+            )
+            assert response.status_code == 200 and response.json() == empty
+            assert (await http.get(path, headers=headers)).json() == empty
 
     asyncio.run(scenario())

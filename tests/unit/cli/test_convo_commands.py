@@ -90,6 +90,60 @@ def test_invalid_transfer_flags_are_usage_errors(conversations, flags):
     assert invoke(root, "rules", conversation, *flags).exit_code == 2
 
 
+@pytest.mark.parametrize("revision", ["latest", "00", "A" * 64])
+def test_invalid_revision_fails_before_hub_discovery_or_input(
+    conversations, monkeypatch, revision
+):
+    root, _, conversation = conversations
+
+    def unexpected(*args):
+        pytest.fail("Invalid revisions must not discover the Hub or read input")
+
+    monkeypatch.setattr(convo, "settings", unexpected)
+    monkeypatch.setattr(convo.typer, "get_binary_stream", unexpected)
+    result = invoke(root, "rules", conversation, "-u", "--revision", revision)
+    assert result.exit_code == 2, result.output
+    assert "--revision" in result.output and "SHA-256" in result.output
+
+
+@pytest.mark.parametrize(
+    "content", [b"x" * 65537, "é".encode() * 32769], ids=["ascii", "multibyte"]
+)
+def test_oversized_upload_reports_byte_limit_without_changing_rules(
+    conversations, content
+):
+    root, _, conversation = conversations
+    source = root / "oversized.md"
+    source.write_bytes(content)
+    result = invoke(root, "rules", conversation, "-u", str(source), "--revision", "0")
+    assert result.exit_code == 1, result.output
+    assert "Conversation rules exceed 64 KiB" in result.output
+    assert invoke(root, "rules", conversation).stdout == ""
+
+
+@pytest.mark.parametrize("source", ["file", "stdin"])
+def test_invalid_utf8_upload_has_a_concise_error_and_preserves_rules(
+    conversations, source
+):
+    root, _, conversation = conversations
+    path = root / "invalid.md"
+    path.write_bytes(b"\xff")
+    result = invoke(
+        root,
+        "rules",
+        conversation,
+        "-u",
+        str(path) if source == "file" else "-",
+        "--revision",
+        "0",
+        input=b"\xff" if source == "stdin" else None,
+    )
+    assert result.exit_code == 1, result.output
+    assert result.stdout == ""
+    assert "Rules input must be UTF-8" in result.stderr
+    assert invoke(root, "rules", conversation).stdout == ""
+
+
 def test_membership_create_and_shared_list(conversations):
     root, _, _ = conversations
     result = invoke(root, "create", "members")

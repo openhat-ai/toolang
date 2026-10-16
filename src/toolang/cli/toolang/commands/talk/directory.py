@@ -167,6 +167,7 @@ def _print_directory(
 
 
 def directory_command(ctx: typer.Context) -> None:
+    """List visible conversations and whether the human has joined"""
     try:
         config, human = settings(context_root(ctx))
 

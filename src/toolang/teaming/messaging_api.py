@@ -2,7 +2,7 @@
 
 from collections.abc import Callable
 from typing import Annotated, Any
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Path, Query
 from .messaging import MessagingClient
 from .schemas import (
     Conversation,
@@ -80,13 +80,31 @@ def messaging_router(
         )
 
     @router.get("/conversations/{conversation}/rules")
-    async def get_rules(conversation: str, client: Client) -> ConversationRules:
+    async def get_rules(
+        conversation: Annotated[
+            str, Path(description="Canonical dm_ or gc_ conversation ID")
+        ],
+        client: Client,
+    ) -> ConversationRules:
+        """Read MEMBERS.md; absent rules return empty content and revision '0'."""
         return await client.get_rules(conversation)
 
-    @router.put("/conversations/{conversation}/rules")
+    @router.put(
+        "/conversations/{conversation}/rules",
+        responses={
+            409: {
+                "description": "Stale rules revision (conversation_rules_conflict); no mutation."
+            }
+        },
+    )
     async def set_rules(
-        conversation: str, body: SetRulesRequest, client: Client
+        conversation: Annotated[
+            str, Path(description="Canonical dm_ or gc_ conversation ID")
+        ],
+        body: SetRulesRequest,
+        client: Client,
     ) -> ConversationRules:
+        """Replace or clear MEMBERS.md and return the resulting content and revision."""
         return await client.set_rules(
             conversation, body.content, revision=body.revision
         )

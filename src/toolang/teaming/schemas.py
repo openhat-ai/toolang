@@ -27,6 +27,7 @@ from .types import MAX_SAFE_INTEGER
 
 TargetKind = Literal["agent", "human"]
 _STREAM_ID = re.compile(r"[0-9]+-[0-9]+\Z")
+MAX_RULES_BYTES = 64 * 1024
 
 
 def identifier(value: str) -> str:
@@ -118,7 +119,7 @@ class ProtocolModel(BaseModel):
 
 def rules_content(value: str) -> str:
     """Validate authored Markdown without normalizing its UTF-8 bytes."""
-    if len(value.encode("utf-8")) > 64 * 1024:
+    if len(value.encode("utf-8")) > MAX_RULES_BYTES:
         raise ValueError("Conversation rules exceed 64 KiB")
     return value
 
@@ -129,8 +130,16 @@ def rules_revision(value: str) -> str:
     return value
 
 
-RulesContent = Annotated[str, AfterValidator(rules_content)]
-RulesRevision = Annotated[str, AfterValidator(rules_revision)]
+RulesContent = Annotated[
+    str,
+    Field(description="Exact UTF-8 Markdown, at most 64 KiB."),
+    AfterValidator(rules_content),
+]
+RulesRevision = Annotated[
+    str,
+    Field(description="Lowercase SHA-256 of the content, or '0' for absent rules."),
+    AfterValidator(rules_revision),
+]
 
 
 class ConversationRules(ProtocolModel):
@@ -558,8 +567,17 @@ class RenameConversationRequest(HubRequest):
 
 
 class SetRulesRequest(HubRequest):
-    content: RulesContent
-    revision: RulesRevision
+    """Replace or clear MEMBERS.md using the revision from a prior read."""
+
+    content: RulesContent = Field(
+        description="Replacement UTF-8 Markdown, at most 64 KiB; empty clears rules."
+    )
+    revision: RulesRevision = Field(
+        description=(
+            "Expected revision from a prior read, including '0' for absent rules. "
+            "A stale revision returns HTTP 409 without changing the document."
+        )
+    )
 
 
 class SendRequest(HubRequest):
@@ -574,7 +592,13 @@ class AgentSendRequest(SendRequest):
     thread: str | None = None
     run: str | None = None
     handler_error: bool = False
-    rules_revision: RulesRevision | None = None
+    rules_revision: RulesRevision | None = Field(
+        default=None,
+        description=(
+            "Optional expected target rules revision; checked atomically with delivery. "
+            "A mismatch returns HTTP 409 without sending."
+        ),
+    )
 
 
 class AgentRegistration(HubRequest):
