@@ -33,9 +33,8 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 - **Breaking:** chore identities are now eight lowercase Base32 characters
   derived from the exact name and the owning agent, so one name yields a
   different ID per agent and `chore_<id>` thread names are shorter.
-  `chore new` generates `auto_<8 chars>.md` names; that filename format is
-  reserved for automatic names, and two names deriving the same ID in one
-  domain are rejected during authoring and State acceptance. Renaming a chore
+  `chore new` generates `chore-<8 chars>.md` names, and two names deriving the
+  same ID are rejected during authoring and State acceptance. Renaming a chore
   or moving it to another agent creates a new identity, so checkpoints and
   earlier `chore_<id>` runs recorded under the old ID are not carried over;
   the `chore/name` ref is unchanged. Integrations constructing
