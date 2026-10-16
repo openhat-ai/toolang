@@ -13,7 +13,6 @@ from toolang.common.layout import AgentLayout
 from toolang.execution.store import RunStore
 
 from .chores import load_chores
-from .chore_ids import automatic_chore_name
 
 
 def allocate_authored_chore_name(
@@ -31,9 +30,9 @@ def allocate_authored_chore_name(
             layout.run_store,
             family=LOCAL_ID_FAMILY,
             agent_name=layout.name,
-            exists=lambda suffix: effective.contains_name(automatic_chore_name(suffix)),
+            exists=lambda suffix: effective.contains_name(f"chore-{suffix}"),
         ).value
-        return automatic_chore_name(allocated)
+        return f"chore-{allocated}"
 
 
 def new_chore_file(

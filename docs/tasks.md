@@ -21,13 +21,11 @@ chore cleanup:
   Clean temporary files and summarize the result.
 ```
 
-Names are case-sensitive declaration names or filename stems. The ref is
-`chore/cleanup`; its ID is eight lowercase Base32 characters derived from the
-exact name and agent. Its thread is `chore_<id>`. Renaming or changing agents
-creates a new identity; editing the body, title, schedule, or source location
-preserves identity. Inline declarations shadow home files; later inline
-declarations shadow earlier ones. Root chore files are ignored. Different names
-producing the same ID are rejected. See the [ID model](ids.md) for the codec.
+Names are case-sensitive declaration names or filename stems; refs use
+`chore/name`, and threads use `chore_<8-character ID>`. Every name derives its ID
+from the complete name and agent. Title/body/schedule/location edits preserve
+identity; different-name collisions are rejected. Inline definitions shadow home
+files, later inline definitions win, and root files are ignored. See [ID rules](ids.md).
 
 Definitions hold no execution state. The `chores` table in `.runtime/runs.db`
 records revisions, pending work, active runs, and schedule checkpoints. Removing
@@ -48,9 +46,8 @@ too alice chore cancel cleanup
 too alice chore delete cleanup
 ```
 
-Selectors accept the name, ref, or ID. `new` generates `auto_<8 chars>` when the
-name is omitted. That filename format is reserved for automatic names; all other
-names use the manual identity domain. Both domains produce eight-character IDs.
+Selectors accept the name, ref, or ID. `new` generates `chore-<8 chars>.md` when
+the name is omitted. Generated and manually named files use the same ID rule.
 To copy a definition, use `new` or copy a home file under a different name;
 the new name creates independent progress and context. Authoring commands edit
 home files; `list` also shows effective inline definitions. Edit inline
@@ -74,4 +71,4 @@ The `task` command/declaration, `/tasks`, `/jobs`, authored IDs, and stage comma
 are removed. Use named chores in the flat directory and explicit schedules for
 repeated work. No old directories, IDs, or `jobs.db` checkpoints are migrated or
 imported. Existing files and databases are left untouched; a definition added
-to the new model receives a checkpoint under its name-derived ID.
+to the new model receives a checkpoint under its chore ID.

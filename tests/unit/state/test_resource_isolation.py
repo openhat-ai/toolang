@@ -345,6 +345,20 @@ def test_cached_chore_terms_bind_to_the_loading_agent(tmp_path):
     assert ids[0] != ids[1]
 
 
+@pytest.mark.parametrize("name", ["chore-nqvndr4g", "auto_nqvndr4g"])
+def test_filename_shapes_have_no_special_identity_semantics(layout, name):
+    from toolang.catalog.chore_ids import chore_id
+
+    source = layout.home / "chores" / f"{name}.md"
+    source.parent.mkdir()
+    source.write_text("Manually authored.")
+    state = prepare_agent_state(layout)
+    (chore,) = state.chores
+    assert chore.id == chore_id(name, agent_name=layout.name)
+    assert chore.id != "nqvndr4g"
+    assert load_agent_state(layout, state.revision).chores == state.chores
+
+
 @pytest.mark.parametrize("tamper", ["body", "missing", "duplicate"])
 def test_chore_term_integrity_matches_accepted_source(layout, tamper):
     import json
