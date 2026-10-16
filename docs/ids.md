@@ -2,7 +2,10 @@
 
 This document defines the Toolang-owned id families and allocator model.
 
-This design is implemented in `toolang.common.ids` and is used for allocated thread/run IDs and name-derived chore IDs.
+Pure Base32, key derivation, and reversible permutation live in
+`toolang.common.id_codec`. Local/run allocation and name-derived chore IDs live
+in `toolang.common.ids`; conversation and derived talk-thread codecs live in
+`toolang.teaming.ids`.
 
 
 ## Goals
@@ -71,7 +74,7 @@ For the `run` family:
 The current full identities are:
 
 - chat context: `chat_<allocated-id>`
-- incoming-message context: `talk_<allocated-id>` (one per durable agent)
+- incoming-message context: `talk_<allocated-id>` (currently created per handled batch)
 - chore context: `chore_<name-derived-id>`
 - independent spawned context: `work_<allocated-id>`
 - standalone script context: `script_<allocated-id>`
@@ -233,22 +236,36 @@ Conversations use eight characters from the same base32 alphabet, prefixed by
 `dm_` or `gc_`. Execution/thread ID formats are unchanged; conversation allocation
 does not use `seqs`.
 
-DM IDs hash compact UTF-8 JSON `["toolang:dm:v1", a, b]`, where `a` and `b` are
-the exact typed participant names sorted by UTF-8 bytes. The first five SHA-256
-bytes form the 40-bit suffix. Reversed lookups agree; a stored pair mismatch fails
-as a collision. The hash is not reversible and membership cannot change.
+Schema `3` reserves one kind bit before the shared permutation: DM inputs are
+`0 | pair_hash(39)`; GC inputs are `1 | hourly_tick(20) | sequence(19)`. Both
+use a key derived by hashing compact UTF-8 JSON `["toolang:conversation:v3"]`
+with BLAKE2s. Their suffix domains are disjoint even when prefixes are removed.
 
-GC IDs encode `(hourly_tick << 20) | sequence` with the shared four-round Feistel
-permutation, using BLAKE2s of `toolang:conversation:gc:v1` as its fixed key. GC uses
-no local-family affine transform or agent name. The epoch is 2026-01-01 UTC. Atomic
-Valkey `TIME` reservations keep the tick monotonic through clock rollback; a new
-hour resets the sequence to zero. This allows 1,048,576 reservations per backend
-per hour (about 291.27 per second averaged over the hour), including abandoned
-reservations and candidate conflicts. This is an ID budget, not a throughput
-benchmark. Allocation fails at exhaustion instead of wrapping or resetting.
+DM IDs hash compact UTF-8 JSON `["toolang:dm:v3", a, b]`, where `a` and `b` are
+the exact typed participant names sorted by UTF-8 bytes. Take the first five
+SHA-256 bytes and mask to 39 bits before permutation. Reversed lookups agree;
+a stored pair mismatch fails as a collision. Membership cannot change.
+
+GC IDs permute `(1 << 39) | (hourly_tick << 19) | sequence`, with no local-family
+affine transform or agent name. The epoch is 2026-01-01 UTC. Atomic Valkey `TIME`
+reservations keep the tick monotonic through clock rollback; a new hour resets
+the sequence to zero. There are 524,288 reservations per backend per hour,
+including abandoned reservations and candidate conflicts. This is an ID budget,
+not a throughput benchmark. Exhaustion fails without wrapping or resetting.
 Retries of GC creation can create another GC if the earlier response was lost.
+Names and membership can change without changing the ID.
 
-GC names and membership can change without changing the ID. The fixed permutation
-is reversible and introduces no collisions between distinct reservations. The
-[conversation contract](plans/conversation-ids.md) defines storage, exact vectors,
-collision checks, and the fresh-dataset-only rollout.
+`toolang.teaming.ids.talk_thread_id(conversation, agent_name=...)` supplies a
+pure, deterministic `talk_<8 chars>` mapping for future conversation dispatch.
+It permutes the conversation suffix with the key derived from compact UTF-8 JSON
+`["toolang:talk-thread:v1", agent_name]`. Distinct generated conversations map to
+distinct talk IDs within an agent. Different agents share the 40-bit space;
+references remain agent-qualified. This helper does not allocate a thread and
+is not yet used by the Talk driver.
+
+The [ID upgrade definition](plans/conversation-id-upgrade.md) specifies the codec
+and acceptance checks. The earlier [conversation contract](plans/conversation-ids.md)
+retains the storage and access design; its schema `2` codec is superseded.
+Upgrade Hub and clients together, stop writers, preserve the old runtime/data,
+and select a fresh backend dataset for schema `3`. Old datasets are rejected
+without mutation; no IDs, memberships, messages, or cursors are migrated.

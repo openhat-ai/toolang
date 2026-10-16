@@ -446,7 +446,7 @@ def test_partial_datasets_are_never_initialized():
         await raw.delete(GC_ALLOCATOR)
         with pytest.raises(StorageIntegrityError):
             await backend.initialize()
-        assert await raw.get(SCHEMA) == "2" and not await raw.exists(GC_ALLOCATOR)
+        assert await raw.get(SCHEMA) == "3" and not await raw.exists(GC_ALLOCATOR)
         await backend.close()
 
     asyncio.run(scenario())
