@@ -15,6 +15,9 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   `too hub stop` are unchanged, and messages that pointed to `too hub status`
   now point to `too hub`.
 
+- `too -V` and `too --version` print only the version, such as `v0.4.0a8`,
+  without the preceding `toolang` CLI name. `caps -V` is unchanged.
+
 ### Fixed
 
 - A tool call intercepted by workspace rules stays in the same history unit as
