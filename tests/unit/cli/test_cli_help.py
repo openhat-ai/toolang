@@ -300,7 +300,6 @@ def test_lazy_command_exposes_short_help_without_loading():
         ("chat", "Chat directly with an agent"),
         ("chore", "Manage one-off and scheduled chores"),
         ("start", "Start an agent in the background"),
-        ("top", "Monitor runtime activity"),
         ("inspect", "Inspect run history and details"),
     ],
 )
@@ -340,13 +339,6 @@ def test_chore_and_hub_help_lists_supported_commands(group, commands, tmp_path, 
         )
         == commands
     )
-
-
-def test_top_help_explains_observation_scope(tmp_path, capsys):
-    assert too_main(["--root", str(tmp_path), "top", "--help"]) == 0
-    output = " ".join(strip_ansi(capsys.readouterr().out).split())
-    assert "Observe runtime instances, threads, and runs." in output
-    assert "Local activity is available without the hub." in output
 
 
 def test_declared_help_omits_final_period():

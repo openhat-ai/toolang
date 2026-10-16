@@ -7,10 +7,9 @@ import pytest
 import typer
 
 from toolang.cli.common.context import CliContext
-from toolang.cli.common.messaging import talk_context
 from toolang.cli.common.terminal_session import TerminalSession
 from toolang.cli.toolang import main as cli
-from toolang.cli.toolang.commands import hub, script, thread, top
+from toolang.cli.toolang.commands import hub, script, thread
 from toolang.common.layout import AgentLayout
 from toolang.execution.types import RunOverride
 from toolang.lang.input import CallInput
@@ -22,13 +21,11 @@ from toolang.up.types import AgentServerRef
     [
         ["chat"],
         ["talk"],
-        ["top"],
         ["serve"],
         ["hub", "serve"],
         ["retry"],
         ["rerun"],
         ["agent:sample", "chat"],
-        ["agent:sample", "top"],
         ["agent:sample", "serve"],
     ],
 )
@@ -176,61 +173,6 @@ def test_restart_keeps_source_title_and_marks_accepted_execution(
     assert entries[0][0] == kind
     assert entries[0][1]["label"] == f"{kind} run_source"
     assert events == ["start", ("run", "run_actual"), "close"]
-
-
-@pytest.mark.parametrize("agent", [None, "alice"])
-@pytest.mark.parametrize("once", [False, True])
-def test_top_publication_uses_scope_and_no_refresh_hooks(
-    tmp_path, monkeypatch, publication, agent, once
-):
-    entries, events = publication(top)
-    connection = SimpleNamespace(
-        endpoint="http://hub", identity="backend", human="human:owner"
-    )
-    monkeypatch.setattr(top.HubProcess, "connection", lambda _: connection)
-
-    async def watch(*args, **kwargs):
-        assert events == ["start"]
-
-    monkeypatch.setattr(top, "watch", watch)
-    context = typer.Context(
-        typer.main.get_command(cli.app),
-        obj=CliContext(
-            tmp_path, layout=AgentLayout.resident(tmp_path, agent) if agent else None
-        ),
-    )
-    top.top_command(context, once=once)
-    assert entries[0][1]["label"] == f"top {agent or 'team'}"
-    if once:
-        assert not entries[0][1]["eligible"]
-    assert entries[0][1]["context"] == (
-        ""
-        if agent
-        else talk_context(
-            tmp_path, connection.identity, connection.human, connection.endpoint
-        )
-    )
-    assert events == ["start", "close"]
-
-
-def test_top_without_hub_keeps_local_observation(tmp_path, monkeypatch, publication):
-    entries, events = publication(top)
-    observed = []
-
-    async def watch(endpoint, **kwargs):
-        assert endpoint is None and kwargs["backend"] is None
-        assert isinstance(kwargs["source"], top.RuntimeObservation)
-        observed.append(kwargs["source"])
-
-    monkeypatch.setattr(top, "watch", watch)
-    context = typer.Context(typer.main.get_command(cli.app), obj=CliContext(tmp_path))
-
-    top.top_command(context, once=True)
-
-    assert len(observed) == 1
-    assert entries[0][1]["context"] == ""
-    assert events == ["start", "close"]
-    assert not (tmp_path / "hub").exists()
 
 
 def test_hub_serve_has_one_outer_lifecycle(tmp_path, monkeypatch, publication):

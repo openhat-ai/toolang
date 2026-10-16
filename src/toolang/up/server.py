@@ -421,8 +421,6 @@ def serve(
                         endpoint=spec.endpoint,
                         executor=core.executor,
                         messaging=messaging,
-                        activity=core.activity,
-                        publish_activity=hub_client.publish_activity,
                     )
                     teaming.start()
                 if scheduler is not None:

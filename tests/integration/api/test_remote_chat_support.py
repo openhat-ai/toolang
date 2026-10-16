@@ -32,7 +32,6 @@ from toolang.execution.types import (
     FieldRef,
     RunRef,
     Output,
-    ThreadPrefix,
     value_for_type,
 )
 from toolang.execution.values import parts_from_value
@@ -445,21 +444,21 @@ agic chat(_: Part[]) -> Part[]:
         asyncio.run(core.close())
 
 
-def test_profile_counts_independent_work_threads(tmp_path: Path) -> None:
+def test_profile_does_not_scan_execution_history(tmp_path: Path, monkeypatch) -> None:
     core = AgentCore(AgentLayout.resident(tmp_path, "alice"))
     try:
-        thread_id = core.threads.create(prefix=ThreadPrefix.WORK)
-        thread = core.store.get_thread(thread_id=thread_id)
-        assert thread is not None and thread.origin == "work"
-        metrics = agent_router._profile_metrics(core)
-        assert metrics["threads"] == {
-            "total": 1,
-            "chat": 0,
-            "talk": 0,
-            "chore": 0,
-            "script": 0,
-            "work": 1,
-        }
+
+        def unavailable(*args, **kwargs):
+            raise AssertionError("profile must not read execution history")
+
+        monkeypatch.setattr(core.history, "list_threads", unavailable)
+        monkeypatch.setattr(core.store, "list_runs", unavailable)
+        monkeypatch.setattr(
+            agents.AgentProcess,
+            "state",
+            lambda self: {"sandbox": "host", "sandbox_description": "local"},
+        )
+        assert "metrics" not in profile(core)
     finally:
         asyncio.run(core.close())
 

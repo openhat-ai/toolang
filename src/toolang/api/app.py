@@ -125,7 +125,6 @@ def create_app(
         openapi_tags=OPENAPI_TAGS,
     )
     app.state.agent_core = core
-    app.state.activity = core.activity
     app.state.caps_manager = caps
     app.state.chores_manager = chores
     app.state.subscriptions = Subscriptions(core.executor.stream, core.store.db_path)

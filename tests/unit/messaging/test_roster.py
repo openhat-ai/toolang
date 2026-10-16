@@ -6,16 +6,13 @@ import json
 from fakeredis import FakeServer
 import pytest
 
-from toolang.teaming.activity import HubActivity
-from toolang.execution.activity import ActivityQuery
-from toolang.execution.schemas import ActivitySnapshot
-from toolang.teaming.backend.valkey.keys import PREFIX, PRESENCE, convo_key
+from toolang.teaming.backend.valkey.keys import PRESENCE, convo_key
 from toolang.teaming.ids import dm_id
 from toolang.teaming.roster import Roster
 from tests.unit.messaging.test_protocol import client
 
 
-def test_roster_tracks_discovery_without_inventing_online_or_observations():
+def test_roster_tracks_discovery_without_inventing_online():
     async def scenario():
         server = FakeServer(server_type="valkey")
         found = {"agent:alice"}
@@ -27,14 +24,8 @@ def test_roster_tracks_discovery_without_inventing_online_or_observations():
                 discover=lambda: set(found),
             )
             await roster.scan()
-            reader = HubActivity(human.backend, roster=roster)
-            snapshot = (await reader.read(ActivityQuery()))[0]
-            assert snapshot.agent == "agent:alice"
-            assert snapshot.presence == "offline"
-            assert (
-                snapshot.observed is None and "last_seen" not in snapshot.model_dump()
-            )
-            assert snapshot.stats.cost is None and snapshot.stats.input_tokens is None
+            assert "agent:alice" in await roster.agents()
+            assert not await human.backend.online("agent:alice")
             await roster.register("agent:alice", "lease", "", True)
             assert await human.backend.online("agent:alice")
             assert await human.backend._call("ZSCORE", PRESENCE, "agent:alice") > 0
@@ -43,10 +34,6 @@ def test_roster_tracks_discovery_without_inventing_online_or_observations():
             await roster.scan()
             await roster.scan()
             assert (await roster.agents())["agent:alice"]["missing"] == 2
-            snapshot = (
-                await HubActivity(human.backend, roster=roster).read(ActivityQuery())
-            )[0]
-            assert snapshot.presence == "online" and snapshot.home_missing
 
     asyncio.run(scenario())
 
@@ -68,19 +55,6 @@ def test_removal_clears_ordinary_membership_and_preserves_history_and_dms():
             await human.send("agent:alice", body="Old direct history")
             old_direct = dm_id(human.actor, "agent:alice")
             assert old_direct is not None
-            await backend.activity.save(
-                "agent:alice",
-                "lease-one",
-                [
-                    ActivitySnapshot(
-                        agent="agent:alice",
-                        revision=1,
-                        observed=10,
-                        since="session",
-                        recent=1800,
-                    )
-                ],
-            )
             await backend.release_lease("agent:alice", "lease-one")
             found.clear()
             await roster.scan()
@@ -95,7 +69,6 @@ def test_removal_clears_ordinary_membership_and_preserves_history_and_dms():
             assert (
                 await backend._call("XLEN", convo_key("gc_00000000", "messages")) == 1
             )
-            assert await backend._call("TTL", f"{PREFIX}:activity:agent:alice") == -1
             assert dm_id(human.actor, "agent:alice") == old_direct
             assert "agent:alice" in (await human.conversation(old_direct)).participants
             found.add("agent:alice")
@@ -105,8 +78,6 @@ def test_removal_clears_ordinary_membership_and_preserves_history_and_dms():
             assert dm_id(human.actor, "agent:alice") == old_direct
             assert await backend._call("XLEN", convo_key(old_direct, "messages")) == 2
             assert not await backend.renew_lease("agent:alice", "lease-one")
-            page = (await backend.activity.cached("agent:alice", ActivityQuery()))[0]
-            assert page.observed == 10
 
     asyncio.run(scenario())
 

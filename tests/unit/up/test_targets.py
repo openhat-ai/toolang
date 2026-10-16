@@ -444,7 +444,7 @@ def test_explicit_agent_prefix_cannot_normalize_or_select_a_remote_source(name):
 
 
 @pytest.mark.parametrize(
-    "command", [["info"], ["top"], ["inspect", "runs"], ["workspace", "list"]]
+    "command", [["info"], ["inspect", "runs"], ["workspace", "list"]]
 )
 def test_roaming_queries_reject_normalized_home_owned_by_another_source(
     tmp_path, capsys, command

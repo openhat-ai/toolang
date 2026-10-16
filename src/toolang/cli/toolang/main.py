@@ -79,7 +79,6 @@ _INSPECTION_PANEL_COMMAND_ORDER = (
     "models",
     "providers",
     "inspect",
-    "top",
 )
 _SCRIPT_PANEL_COMMAND_ORDER = ("init", "run")
 # Root-hidden run and thread commands stay discoverable in target help.
@@ -439,13 +438,6 @@ _registered_command(
     rich_help_panel=WORK_COMMAND_PANEL,
 )
 
-_registered_command(
-    "top",
-    "toolang.cli.toolang.commands.top:top_command",
-    help="Monitor runtime activity",
-    epilog="Observe runtime instances, threads, and runs. Local activity is available without the hub.",
-    rich_help_panel=INSPECTION_COMMAND_PANEL,
-)
 
 _registered_group(
     "toolang.cli.toolang.commands.hub:hub_app",

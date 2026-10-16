@@ -345,7 +345,7 @@ def test_member_notification_wakes_talk_without_polling_or_reloading_history(
 
     import httpx
 
-    from tests.unit.messaging.test_latest_observation import Events
+    from tests.support.sse import Events
     from toolang.teaming.notifications import Changes
     from toolang.teaming.schemas import HubConnection
 

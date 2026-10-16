@@ -127,7 +127,6 @@ from .types import (
 )
 from .schemas import Record, RecordSelection, select_record
 from .values import parts_from_value
-from . import statistics
 
 _SCHEMA_VERSION = 57
 _SUPPORTED_SCHEMA_VERSIONS = (52, 53, 54, 55, 56, _SCHEMA_VERSION)
@@ -173,7 +172,6 @@ class RunStore:
                     db_path.with_name(db_path.name + ".init.lock"), inherit_owner=True
                 ):
                     self._init_schema()
-                statistics.backfill(self)
         except BaseException:
             self._conn.close()
             raise
@@ -446,7 +444,6 @@ class RunStore:
             try:
                 yield
                 if owner:
-                    statistics.flush(self)
                     self._conn.commit()
             except BaseException:
                 if owner:
@@ -4254,9 +4251,29 @@ class RunStore:
                     self._conn.execute(
                         f"CREATE INDEX IF NOT EXISTS idx_{table}_{name} ON {table}({name})"
                     )
-            statistics.initialize(self._conn)
+            _drop_legacy_activity(self._conn)
             self._conn.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
             self._conn.commit()
+
+
+def _drop_legacy_activity(connection: sqlite3.Connection) -> None:
+    """Discard obsolete derived indexes without changing execution facts."""
+    for table in ("threads", "runs", "steps"):
+        for operation in ("insert", "update", "delete"):
+            connection.execute(f"DROP TRIGGER IF EXISTS activity_{table}_{operation}")
+    for table in (
+        "meta",
+        "sessions",
+        "dirty",
+        "nodes",
+        "search",
+        "attempts",
+        "owners",
+        "durations",
+        "open",
+        "buckets",
+    ):
+        connection.execute(f"DROP TABLE IF EXISTS activity_{table}")
 
 
 def _create_steps_table(connection: sqlite3.Connection) -> None:

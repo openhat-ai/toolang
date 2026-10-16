@@ -6,33 +6,19 @@ from uuid import uuid4
 
 import httpx
 
-from toolang.execution.schemas import ActivitySnapshot
 from toolang.teaming.api import create_app
-from toolang.teaming.backend import ActivityBackend, Backend, EventBackend
+from toolang.teaming.backend import Backend, EventBackend
 from toolang.teaming.config import BackendConfig
 from toolang.teaming.messaging import MessagingClient
 from toolang.teaming.schemas import Conversation, Message
 
 
-def test_hub_uses_injected_contracts_for_lifespan_messages_activity_and_events():
+def test_hub_uses_injected_contracts_for_lifespan_messages_and_events():
     async def scenario():
         backend = create_autospec(Backend, instance=True, spec_set=True)
-        backend.activity = create_autospec(
-            ActivityBackend, instance=True, spec_set=True
-        )
         backend.events = create_autospec(EventBackend, instance=True, spec_set=True)
         backend.due_presence.return_value = []
         backend.participants.return_value = {"agent:alice": {"owner": "human:owner"}}
-        backend.activity.lease.return_value = {}
-        backend.activity.cached.return_value = [
-            ActivitySnapshot(
-                agent="agent:alice",
-                revision=0,
-                observed=None,
-                since="session",
-                recent=1800,
-            )
-        ]
         backend.events.online_token.return_value = "lease"
         backend.events.initialize.return_value = {"epoch": "a" * 32}
         backend.events.capture.return_value = ({"epoch": "a" * 32}, {}, {})
@@ -59,13 +45,14 @@ def test_hub_uses_injected_contracts_for_lifespan_messages_activity_and_events()
             ) as http,
         ):
             assert (await http.get("/healthz")).status_code == 200
+            assert (await http.get("/activity")).status_code == 404
+            assert (
+                await http.put("/agents/agent:alice/activity", json=[])
+            ).status_code == 404
             assert (await client.contacts(include_preview=True))[0]["preview"] == {
                 "sender": "human:owner",
                 "body": "Hello",
             }
-            activity = await http.get("/activity")
-            assert activity.status_code == 200
-            assert activity.json()[0]["presence"] == "offline"
             response = await http.get(
                 "/agents/agent:alice/events/state",
                 headers={"X-Toolang-Agent-Lease": "lease"},
@@ -79,7 +66,6 @@ def test_hub_uses_injected_contracts_for_lifespan_messages_activity_and_events()
             args == call("human:owner") for args in backend.register.await_args_list
         )
         backend.events.capture.assert_awaited_once_with("agent:alice")
-        backend.activity.cached.assert_awaited_once()
         backend.close.assert_awaited_once()
 
     asyncio.run(scenario())

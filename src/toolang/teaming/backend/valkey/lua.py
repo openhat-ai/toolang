@@ -2,7 +2,7 @@
 
 from ...types import MAX_SAFE_INTEGER
 
-# Also used by execution/activity publication, with explicit team/presence keys.
+# Used by execution publication, with explicit team/presence keys.
 LEASE_CHECK = (
     f"local max_safe_integer={MAX_SAFE_INTEGER}\n"
     + """

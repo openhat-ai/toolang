@@ -7,17 +7,16 @@ from fakeredis import FakeServer
 import pytest
 
 from tests.unit.messaging.test_protocol import client, snapshot
-from toolang.execution.schemas import ActivitySnapshot
 from toolang.teaming.backend.valkey.keys import TEAM_MEMBERS
 from toolang.teaming.backend.valkey.lua import TEAM_GUARD
-from toolang.teaming.errors import EventProtocolError, StorageIntegrityError
+from toolang.teaming.errors import EventProtocolError
 
 
 @pytest.mark.parametrize(
     "operation,concurrent",
     [
         (operation, concurrent)
-        for operation in ("activity", "commit", "stage", "abandon")
+        for operation in ("commit", "stage", "abandon")
         for concurrent in (False, True)
     ]
     + [("capture", False)],
@@ -61,25 +60,8 @@ def test_publication_rejects_invalid_team_record_without_writes(
                     return await evaluate(script, keys, args)
 
                 monkeypatch.setattr(backend, "_eval", corrupt_after_validation)
-            error = (
-                StorageIntegrityError if operation == "activity" else EventProtocolError
-            )
-            with pytest.raises(error):
-                if operation == "activity":
-                    await backend.activity.save(
-                        agent,
-                        "lease",
-                        [
-                            ActivitySnapshot(
-                                agent=agent,
-                                revision=1,
-                                observed=1,
-                                since="session",
-                                recent=1800,
-                            )
-                        ],
-                    )
-                elif operation == "commit":
+            with pytest.raises(EventProtocolError):
+                if operation == "commit":
                     await backend.events.commit(
                         op | {"id": "changed", "reason": "changed"}
                     )

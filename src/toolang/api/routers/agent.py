@@ -27,8 +27,6 @@ from toolang.execution.runnables import (
     runnable_binding_defaults,
 )
 from toolang.execution.calls import prompt_definitions
-from toolang.execution.schemas import ThreadInfo
-from toolang.execution.types import ModelStepNoted
 from toolang.plugin.models.query import filter_models, first_model_ref
 from toolang.plugin.models.resolution import (
     model_reasoning_effort_applicable,
@@ -76,7 +74,6 @@ def profile(core: AgentCoreDep) -> dict[str, object]:
         "avatar": None,
         "runtime": runtime,
         "environment": _profile_environment(core, runtime_state=runtime_state),
-        "metrics": _profile_metrics(core),
     }
 
 
@@ -234,62 +231,6 @@ async def prompt_completions(
             if prompt.kind == "prompt" and prompt.name in available_prompts
         ]
     }
-
-
-def _profile_metrics(core: AgentCore) -> dict[str, object]:
-    threads = core.history.list_threads(limit=None)
-    runs = core.store.list_runs(limit=None)
-    steps_by_run = core.store.list_steps_for_runs(
-        run_ids=tuple(item.id for item in runs)
-    )
-    thread_counts = dict.fromkeys(("chat", "talk", "chore", "script", "work"), 0)
-    step_total = 0
-    model_total = 0
-    tool_total = 0
-    system_total = 0
-    input_tokens = 0
-    output_tokens = 0
-
-    for thread in threads:
-        thread_counts[_thread_metric_kind(thread)] += 1
-
-    for step_items in steps_by_run.values():
-        for step in step_items:
-            step_total += 1
-            if step.kind == "model":
-                model_total += 1
-                if isinstance(step.noted, ModelStepNoted):
-                    if step.noted.accounting is not None:
-                        input_tokens += step.noted.accounting.input_tokens
-                        output_tokens += step.noted.accounting.output_tokens
-            elif step.kind == "tool":
-                tool_total += 1
-            else:
-                system_total += 1
-
-    return {
-        "threads": {"total": len(threads), **thread_counts},
-        "steps": {
-            "total": step_total,
-            "model": model_total,
-            "tool": tool_total,
-            "system": system_total,
-        },
-        "tokens": {
-            "input": input_tokens,
-            "output": output_tokens,
-            "total": input_tokens + output_tokens,
-        },
-    }
-
-
-def _thread_metric_kind(thread: ThreadInfo) -> str:
-    prefix = thread.id.split("_", 1)[0]
-    if prefix == "task" or thread.origin == "task":
-        return "chore"
-    if prefix in {"chat", "talk", "chore", "script", "work"}:
-        return prefix
-    return "chat"
 
 
 def _profile_environment(
