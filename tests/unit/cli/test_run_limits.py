@@ -46,6 +46,24 @@ def test_policy_overrides_preserve_absent_empty_and_unrestricted() -> None:
     assert resolve_limit_overrides({}, ("time=none",)) == {"time": None}
 
 
+@pytest.mark.parametrize("session", [False, True])
+def test_global_runnable_environment_is_rejected_even_for_chat(session):
+    with pytest.raises(
+        ValueError, match="TOOLANG_DEFAULT_RUNNABLE.*no longer supported"
+    ):
+        resolve_default_overrides(
+            {"TOOLANG_DEFAULT_RUNNABLE": "agic:work"}, session=session
+        )
+
+
+def test_runnable_startup_default_is_session_only():
+    with pytest.raises(ValueError, match="only supported for a Chat session"):
+        resolve_default_overrides({}, ("runnable=agic:work",))
+    assert resolve_default_overrides({}, ("runnable=agic:work",), session=True) == {
+        "runnable": "agic:work"
+    }
+
+
 def test_compact_override_replaces_environment_without_inheriting_effort():
     environ = {"TOOLANG_COMPACT_MODEL": "test/old effort=high"}
     assert resolve_compact_override({}) is None

@@ -371,7 +371,9 @@ flow hello_flow(_: Text) -> Text:
                 )
             )
 
-            assert first.status == second.status == "succeeded"
+            assert first.status == second.status == "succeeded", (
+                harness.store.resolve_error(second.error) if second.error else ""
+            )
             assert without_runtime_snapshots(
                 harness.adapter.invocations[1].call.messages
             ) == [
@@ -572,7 +574,7 @@ def test_run_default_selects_the_named_runnable_over_session_binding(
         harness.store.close()
 
 
-def test_setup_bindings_are_below_surface_session_and_run_selections(
+def test_surface_session_and_run_selections_keep_model_defaults(
     tmp_path,
 ) -> None:
     harness = ExecutionHarness.create(tmp_path, source=_SOURCE, responses=[])
@@ -583,7 +585,6 @@ def test_setup_bindings_are_below_surface_session_and_run_selections(
                 "test/scripted",
                 reasoning=Reasoning(),
             ),
-            runnable="agic:bound",
         ),
     )
 
@@ -630,7 +631,7 @@ def test_setup_bindings_are_below_surface_session_and_run_selections(
 
         assert bound.bindings == RunBindings(
             model="test/scripted",
-            runnable="agic:bound",
+            runnable="agic:default",
         )
         assert (
             session.bindings.runnable,

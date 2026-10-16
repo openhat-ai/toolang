@@ -325,7 +325,6 @@ agic chat(_: Part[]) -> Part[]:
                 TEST_MODEL_REF,
                 reasoning=Reasoning(effort="high"),
             ),
-            runnable="chat",
         ),
     )
     harness.store.close()

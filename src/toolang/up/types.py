@@ -6,7 +6,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Literal
 
-DriverName = Literal["chat", "talk", "chore"]
+from toolang.execution.types import DriverName
+
 ExecutionDrivers = frozenset[DriverName]
 ALL_DRIVERS: ExecutionDrivers = frozenset(("chat", "talk", "chore"))
 ServerLifetime = Literal["persistent", "foreground", "automatic"]

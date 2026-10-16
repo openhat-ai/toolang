@@ -8,7 +8,7 @@ import pytest
 
 from toolang.execution.assembly import prompts
 from toolang.plugin.toolsets.loading import load_tools
-from toolang.driver.talk import _INSTRUCTIONS
+from toolang.state.builtin import talk_handler_source
 
 
 @pytest.mark.parametrize(
@@ -31,7 +31,9 @@ def test_bundled_prompt_loading_does_not_depend_on_package_metadata(
 
 
 @pytest.mark.parametrize(
-    "text", [prompts.load("protocol.md"), _INSTRUCTIONS], ids=["protocol", "talk"]
+    "text",
+    [prompts.load("protocol.md"), talk_handler_source()],
+    ids=["protocol", "talk"],
 )
 def test_prompt_tool_calls_reference_registered_model_callable_tools(text: str) -> None:
     names = set(re.findall(r"\b[A-Za-z_][A-Za-z_]*__[A-Za-z][A-Za-z_]*\b", text))

@@ -19,6 +19,7 @@ from toolang.execution.schemas import (
     ThreadInfo,
 )
 from toolang.execution.types import StepRef, ControlRef
+from toolang.execution.types import DriverName
 from toolang.lang.types import parse_public_runnable_ref
 
 NonNegativeInt = Annotated[int, Field(strict=True, ge=0)]
@@ -54,6 +55,7 @@ def _reject_materialized_run_unknowns(value: object) -> None:
             "workdir_base",
             "attachments",
             "source_revision",
+            "driver",
         },
         "run request",
     )
@@ -65,6 +67,8 @@ def _reject_materialized_run_unknowns(value: object) -> None:
     )
     if isinstance(runnable, Mapping):
         runnable_ref = cast(Mapping[str, object], runnable).get("ref")
+        if runnable_ref is None and data.get("driver") is None:
+            raise ValueError("run request requires a runnable ref or driver")
         if isinstance(runnable_ref, str):
             _name, kind = parse_public_runnable_ref(runnable_ref)
             if kind is None:
@@ -321,6 +325,7 @@ class AuthoredRunRequest(ApiRequest):
 
     attachments: dict[str, Part] | None = None
     source_revision: StrictText | None = None
+    driver: DriverName | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -435,7 +440,8 @@ class RunCommandResult(BaseModel):
 class InputReferencesRequest(ApiRequest):
     """Discover includes in source Content without reading server files."""
 
-    runnable: StrictText
+    runnable: StrictText | None = None
+    driver: DriverName | None = None
     input: dict[StrictText, StrictText]
 
 

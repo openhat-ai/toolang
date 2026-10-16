@@ -161,7 +161,7 @@ def test_remote_chat_default_runnable_tracks_the_latest_state(tmp_path: Path) ->
     original.store.close()
     configured_setup = replace(
         original.setup,
-        defaults=replace(original.setup.defaults, runnable="agic:chat"),
+        defaults=replace(original.setup.defaults),
     )
     state_snapshot = _Snapshot(original.state)
     core = AgentCore(original.setup.layout)
@@ -187,19 +187,28 @@ def test_remote_chat_default_runnable_tracks_the_latest_state(tmp_path: Path) ->
     )
 
     try:
-        assert session.initial_setting().runnable == "agic:chat"
+        setting = session.initial_setting()
+        assert setting.runnable == "agic:chat"
+        thread_id = session.create_thread()
+        request = session.build_request(
+            thread_id,
+            RunOverride(),
+            CallInput({"_": "hello"}),
+            setting,
+        )
+        assert request.runnable.ref is None
+        assert request.driver == "chat"
         (original.setup.layout.home / "agent.too").write_text(
-            "agic assistant:\n  hello\n",
+            "flow chat(_: Text) -> Text:\n  pass\n",
             encoding="utf-8",
         )
         state_snapshot.value = prepare_agent_state(original.setup.layout)
-        request = session.build_request(
-            session.create_thread(),
-            RunOverride(),
-            CallInput({"_": "hello"}),
-            session.initial_setting(),
+        errors = []
+        session.run(request, lambda _event: None, errors.append)
+        assert errors == []
+        assert session.get_result(None, thread_id=thread_id).output == (
+            TextPart("hello"),
         )
-        assert request.runnable.ref == "agic:assistant"
     finally:
         session.close()
         asyncio.run(core.close())
@@ -318,7 +327,8 @@ agic xyz(_: Text) -> Text:
             request = session.build_request(
                 thread, RunOverride(), CallInput({"_": prompt}), setting
             )
-            assert request.runnable.ref == "agic:chat"
+            assert request.runnable.ref is None
+            assert request.driver == "chat"
             session.run(request, lambda _event: None, errors.append)
             assert session.get_result(None, thread_id=thread).output == (
                 TextPart(expected),

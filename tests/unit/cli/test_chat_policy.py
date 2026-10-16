@@ -62,6 +62,7 @@ def test_build_run_request_materializes_a_session_snapshot_without_mutation() ->
 
     assert request == RunRequest(
         thread_id="term_test",
+        driver="chat",
         request_id="term_request",
         runnable=RunnableRequest(
             "flow:review", CallInput({"_": "hello", "tone": "brief"})
@@ -299,7 +300,8 @@ def test_session_runnable_follows_the_current_default_until_explicitly_selected(
         resolve_runnable_ref=lambda value: value,
     )
 
-    assert request.runnable.ref == "agic:assistant"
+    assert request.runnable.ref is None
+    assert request.driver == "chat"
 
     explicitly_selected = update_session_setting(
         surface=_surface(),

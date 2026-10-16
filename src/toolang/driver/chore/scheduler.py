@@ -14,10 +14,8 @@ import threading
 from typing import Literal, TypeAlias
 
 from toolang.base.errors import ToolangError
-from toolang.base.types.policy import RunBindings
 from toolang.common.ids import IdIssuer
 from toolang.common.layout import AgentLayout
-from toolang.execution.runnables import runnable_fallback
 from toolang.execution.input import parse_call
 from toolang.execution.calls import resolve_spec
 from toolang.execution.executor import RunExecutor, RunSpec
@@ -453,10 +451,6 @@ class ChoreDriver:
         setup = self.get_agent_setup() if setup is None else setup
         state = self.get_agent_state() if state is None else state
         override, input = parse_call(chore.body)
-        runnable = override.runnable
-        if runnable is None and "chore" not in state.runnables:
-            runnable = setup.defaults.runnable
-        runnable = runnable or runnable_fallback(state, preferred="chore")
         base = chore.path.parent
         spec = resolve_spec(
             override,
@@ -464,8 +458,7 @@ class ChoreDriver:
             setup=setup,
             state=state,
             thread=chore.thread_id,
-            default_runnable=runnable,
-            surface=RunBindings(runnable=runnable),
+            driver="chore",
             include=lambda reference: resolve_file_include(reference, base=base),
         )
         return spec

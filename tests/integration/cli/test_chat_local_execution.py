@@ -31,6 +31,7 @@ from toolang.execution.records import RunControlPayload, SteerControlPayload
 from toolang.execution.schemas import ControlInfo, RunRequest, RunnableRequest
 from toolang.execution.store import RunStore
 from toolang.execution.types import (
+    ThreadPrefix,
     Output,
     AllowOverride,
     ModelOverride,
@@ -218,7 +219,7 @@ agic chat(_: Part[]) -> Part[]:
     )
     setup = replace(
         harness.setup,
-        defaults=RunDefaults(model=ModelRequest(TEST_MODEL_REF), runnable="chat"),
+        defaults=RunDefaults(model=ModelRequest(TEST_MODEL_REF)),
     )
     try:
         defaults = local.LocalChatSession._current_session_setting(
@@ -724,7 +725,7 @@ def test_local_chat_default_runnable_tracks_the_latest_state(tmp_path: Path) -> 
     )
     configured_setup = replace(
         original.setup,
-        defaults=replace(original.setup.defaults, runnable="agic:chat"),
+        defaults=replace(original.setup.defaults),
     )
     session: Any = object.__new__(local.LocalChatSession)
     session.setup_watcher = type(
@@ -736,17 +737,29 @@ def test_local_chat_default_runnable_tracks_the_latest_state(tmp_path: Path) -> 
     )
 
     try:
-        (original.setup.layout.home / "agent.too").write_text(
-            "agic assistant:\n  hello\n",
-            encoding="utf-8",
-        )
-        asyncio.run(watcher.refresh())
+        thread_id = original.threads.create(prefix=ThreadPrefix.CHAT)
         request = session.build_request(
-            "term_test",
+            thread_id,
             RunOverride(),
             CallInput({"_": "hello"}),
             session.initial_setting(),
         )
-        assert request.runnable.ref == "agic:assistant"
+        assert request.runnable.ref is None
+        assert request.driver == "chat"
+        (original.setup.layout.home / "agent.too").write_text(
+            "flow chat(_: Text) -> Text:\n  pass\n",
+            encoding="utf-8",
+        )
+        original.state = asyncio.run(watcher.refresh())
+
+        async def execute():
+            async with original:
+                result = await original.executor.run(request)
+                assert result.status == "succeeded", result.error
+                assert result.output is not None
+                output = original.store.resolve_value(result.output.value)
+                assert output == "hello"
+
+        asyncio.run(execute())
     finally:
         original.store.close()

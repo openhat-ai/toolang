@@ -36,10 +36,12 @@ from .policy import (
     resolve_commands,
 )
 from .runnables import (
+    resolve_driver_handler,
     resolve_runnable_reference,
+    runnable_ref as canonical_runnable_ref,
 )
 from .schemas import RerunRequest, RetryRequest, RunRequest
-from .types import RunCommand, RunOverride, SessionSetting
+from .types import DriverName, RunCommand, RunOverride, SessionSetting
 
 if TYPE_CHECKING:
     from .executor.executor import RunSpec
@@ -101,18 +103,28 @@ def resolve_run_request(
                 raise ValueError(f"client attachment is missing: {reference}") from exc
 
         include = captured_include
-    model_request = require_exact_model_request(
-        request.model,
-        setup=setup,
-    )
-    resolved_runnable = resolve_runnable_reference(state, request.runnable.ref)
-    if resolved_runnable.ref != request.runnable.ref and not _is_alias_ref(
-        request.runnable.ref, resolved_runnable
+    reference = request.runnable.ref
+    if request.driver is not None:
+        state, resolved_runnable = resolve_driver_handler(
+            state, request.driver, reference
+        )
+    elif reference is not None:
+        resolved_runnable = resolve_runnable_reference(state, reference)
+    else:
+        raise ValueError("run request requires a runnable ref or driver")
+    if (
+        reference is not None
+        and resolved_runnable.ref != reference
+        and not _is_alias_ref(reference, resolved_runnable)
     ):
         raise ValueError(
             f"run runnable ref must be exact: {request.runnable.ref!r} resolves to "
             f"{resolved_runnable.ref!r}"
         )
+    model_request = require_exact_model_request(
+        request.model,
+        setup=setup,
+    )
 
     return _resolve_concrete_spec(
         request.runnable.input,
@@ -120,7 +132,7 @@ def resolve_run_request(
         state=state,
         thread=request.thread_id,
         bindings=RunBindings(
-            runnable=request.runnable.ref,
+            runnable=canonical_runnable_ref(state, resolved_runnable),
             model=model_request.ref if model_request is not None else None,
         ),
         model_request=model_request,
@@ -202,7 +214,8 @@ def resolve_spec(
     setup: AgentSetup,
     state: AgentState,
     thread: str,
-    default_runnable: str,
+    default_runnable: str | None = None,
+    driver: DriverName | None = None,
     surface: RunBindings = RunBindings(),
     session_commands: Sequence[RunCommand] = (),
     session_override: RunOverride = RunOverride(),
@@ -223,11 +236,7 @@ def resolve_spec(
             if surface.model is not None
             else setup.defaults.model
         ),
-        runnable=(
-            surface.runnable
-            if surface.runnable is not None
-            else setup.defaults.runnable
-        ),
+        runnable=surface.runnable,
         limits=setup.limits,
     )
     model_command = next(
@@ -260,6 +269,11 @@ def resolve_spec(
         override,
     )
     runnable_ref = effective.runnable or default_runnable
+    if driver is not None:
+        state, target = resolve_driver_handler(state, driver, runnable_ref)
+        runnable_ref = canonical_runnable_ref(state, target)
+    if runnable_ref is None:
+        raise ValueError("run request requires a runnable ref or driver")
     model_request = (
         materialize_model_request(effective.model, setup=setup)
         if effective.model is not None
@@ -381,7 +395,10 @@ def _resolve_concrete_spec(
         setup=setup,
         state=state,
         thread=thread,
-        bindings=RunBindings(model=bindings.model, runnable=resolved_runnable.ref),
+        bindings=RunBindings(
+            model=bindings.model,
+            runnable=canonical_runnable_ref(state, resolved_runnable),
+        ),
         model_request=model_request,
         workdir=workdir,
         workdir_base=workdir_base,
@@ -530,12 +547,21 @@ def _select_runnable_fallback(
 
 
 def input_file_references(
-    state: AgentState, runnable_ref: str, input: Mapping[str, str]
+    state: AgentState,
+    runnable_ref: str | None,
+    input: Mapping[str, str],
+    *,
+    driver: DriverName | None = None,
 ) -> tuple[str, ...]:
     """Expand authored prompts and enumerate includes without opening any files."""
     from toolang.base.types.message import TextPart
 
-    resolved = resolve_runnable_reference(state, runnable_ref)
+    if driver is not None:
+        state, resolved = resolve_driver_handler(state, driver, runnable_ref)
+    elif runnable_ref is not None:
+        resolved = resolve_runnable_reference(state, runnable_ref)
+    else:
+        raise ValueError("input references require a runnable ref or driver")
     program = state.modules[resolved.module]
     definitions = prompt_definitions(state, module=resolved.module, program=program)
     references: dict[str, None] = {}

@@ -638,43 +638,12 @@ class RemoteChatSession:
     async def _current_runnable_default(self) -> str | None:
         """Read the runnable default from the executor's current State."""
 
-        previous_default = self._session_defaults().runnable
-        try:
-            payload = await self._request_json(
-                "GET",
-                "/api/v1/runs/defaults",
-                operation="run defaults",
-            )
-        except RemoteChatError as exc:
-            if (
-                previous_default is None
-                or exc.status_code != 422
-                or not isinstance(exc.detail, str)
-                or not exc.detail.startswith("Runnable not found:")
-            ):
-                raise
-            runnable = None
-        else:
-            runnable = _session_setting(payload).runnable
-        if runnable is not None or previous_default is None:
-            return runnable
-        agics, flows = await asyncio.gather(
-            self._request_json("GET", "/api/v1/agics", operation="agics"),
-            self._request_json("GET", "/api/v1/flows", operation="flows"),
+        payload = await self._request_json(
+            "GET",
+            "/api/v1/runs/defaults",
+            operation="run defaults",
         )
-        items = (
-            _catalog_payload(agics, operation="agics", item_kind="runnable")["items"],
-            _catalog_payload(flows, operation="flows", item_kind="runnable")["items"],
-        )
-        available = [
-            (kind, item["name"])
-            for kind, entries in zip(("agic", "flow"), items, strict=True)
-            for item in cast(list[dict[str, object]], entries)
-        ]
-        if len(available) != 1:
-            return None
-        kind, name = available[0]
-        return f"{kind}:{name}"
+        return _session_setting(payload).runnable
 
     def _session_defaults(self) -> SessionSetting:
         if self._surface is None:
@@ -769,6 +738,7 @@ class RemoteChatSession:
         surface = self._session_defaults()
         if setting.runnable_follows_default or override.runnable == "default":
             surface = replace(surface, runnable=await self._current_runnable_default())
+            self._surface = surface
         request = build_run_request(
             thread_id=thread_id,
             request_id=f"request_{uuid4().hex}",
@@ -788,8 +758,11 @@ class RemoteChatSession:
                     ref=materialize_model_selection(models, request.model.ref),
                 ),
             )
-        _runnable_name, runnable_kind = parse_runnable_ref(request.runnable.ref)
-        if runnable_kind is None:
+        reference = request.runnable.ref
+        runnable_kind = (
+            parse_runnable_ref(reference)[1] if reference is not None else None
+        )
+        if reference is not None and runnable_kind is None:
             runnables = await self._list_runnables("runnable")
             request = replace(
                 request,
@@ -797,7 +770,7 @@ class RemoteChatSession:
                     request.runnable,
                     ref=materialize_runnable_list_ref(
                         runnables,
-                        request.runnable.ref,
+                        reference,
                     ),
                 ),
             )

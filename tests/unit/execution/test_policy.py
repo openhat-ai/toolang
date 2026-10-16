@@ -35,7 +35,7 @@ def _setup() -> AgentSetup:
         models=(),
         tools=ToolCollection(),
         envs={},
-        defaults=RunDefaults(model=ModelRequest("root/model"), runnable="agic:chat"),
+        defaults=RunDefaults(model=ModelRequest("root/model")),
         limits=RunLimits(tokens=100, cost=5.0, time=60),
     )
 

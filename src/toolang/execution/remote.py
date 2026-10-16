@@ -821,7 +821,7 @@ def _run_request_data(request: RunRequest) -> dict[str, object]:
             mode="json",
             exclude={
                 name
-                for name in ("attachments", "source_revision")
+                for name in ("attachments", "source_revision", "driver")
                 if getattr(request, name) is None
             },
         ),

@@ -605,7 +605,7 @@ agic selected(_: Part[], tone: Text) -> Part[]:
             [Message.user("brief security @note.txt")],
             [Message.user("direct hello")],
         ]
-        assert setup.reads == 7
+        assert setup.reads == 6
         assert state.reads == 11
         assert duplicate.status_code == 422
         assert duplicate.json()["detail"] == (

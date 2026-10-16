@@ -192,7 +192,6 @@ agic answer(_: Part[]) -> Part[]:
         harness.setup,
         defaults=RunDefaults(
             model=ModelRequest("test/scripted"),
-            runnable="agic:answer",
         ),
     )
     harness.store.close()
@@ -236,7 +235,7 @@ agic answer(_: Part[]) -> Part[]:
 
         assert created.status_code == 201
         assert models.json()["default"] == ("test/scripted")
-        assert agics.json()["default"] == "answer"
+        assert agics.json()["default"] is None
         assert flows.json()["default"] is None
         assert thread_id.startswith("script_")
         assert response.status_code == 200

@@ -585,10 +585,10 @@ def test_chore_without_handler_or_entry_fails(tmp_path) -> None:
 
 @pytest.mark.parametrize("specialized", [False, True])
 @pytest.mark.parametrize("explicit", [False, True])
-def test_chore_handler_falls_back_to_configured_runnable(
+def test_chore_handler_selects_invocation_named_or_unnamed_entry(
     tmp_path, specialized, explicit
 ):
-    source = "agic review:\n  {{_}}\nagic other:\n  {{_}}\n"
+    source = "agic:\n  {{_}}\nagic other:\n  {{_}}\n"
     if specialized:
         source += "agic chore:\n  {{_}}\n"
     harness = ExecutionHarness.create(
@@ -596,7 +596,7 @@ def test_chore_handler_falls_back_to_configured_runnable(
     )
     setup = replace(
         harness.setup,
-        defaults=replace(harness.setup.defaults, runnable="agic:review"),
+        defaults=replace(harness.setup.defaults),
     )
     _create_chore(
         AuthoredChores(setup.layout.home, lock_path=setup.layout.home_edit_lock),
@@ -606,7 +606,15 @@ def test_chore_handler_falls_back_to_configured_runnable(
     try:
         (chore,) = load_chores(setup.layout)
         spec = _scheduler(harness)._build_spec(chore, setup=setup)
-        expected = "other" if explicit else "chore" if specialized else "review"
+        expected = (
+            "other"
+            if explicit
+            else "chore"
+            if specialized
+            else next(
+                name for name in harness.state.runnables if name.startswith("<entry:")
+            )
+        )
         assert spec.bindings.runnable == f"agic:{expected}"
     finally:
         harness.store.close()

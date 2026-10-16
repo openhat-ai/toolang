@@ -20,7 +20,11 @@ async def capture_attachments(
         return replace(request, attachments={})
     response = await http.post(
         f"{endpoint.rstrip('/')}/api/v1/runs/input-references",
-        json={"runnable": request.runnable.ref, "input": dict(request.runnable.input)},
+        json={
+            "runnable": request.runnable.ref,
+            "input": dict(request.runnable.input),
+            **({"driver": request.driver} if request.driver is not None else {}),
+        },
     )
     if response.is_error:
         try:

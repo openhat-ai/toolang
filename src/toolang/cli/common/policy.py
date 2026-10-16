@@ -57,17 +57,31 @@ def resolve_ceiling_overrides(
 def resolve_default_overrides(
     environ: Mapping[str, str],
     options: Sequence[str] | None = None,
+    *,
+    session: bool = False,
 ) -> dict[str, ModelOverride | str | None]:
     """Resolve frozen environment and CLI run-default overrides."""
 
+    if "TOOLANG_DEFAULT_RUNNABLE" in environ:
+        raise ValueError(
+            "TOOLANG_DEFAULT_RUNNABLE is no longer supported; declare a named "
+            "driver handler or select a Chat session runnable"
+        )
     environment_values: dict[str, str | None] = {}
     for name in _DEFAULT_FIELDS:
+        if name == "runnable":
+            continue
         raw = environ.get(f"TOOLANG_DEFAULT_{name.upper()}")
         if raw is not None:
             environment_values[name] = _parse_default_value(
                 name, raw, source="environment"
             )
     option_values = _parse_default_options(options or ())
+    if "runnable" in option_values and not session:
+        raise ValueError(
+            "--default runnable is only supported for a Chat session; "
+            "declare a named driver handler for runtime startup"
+        )
     resolved: dict[str, ModelOverride | str | None] = {
         name: value
         for name, value in {**environment_values, **option_values}.items()

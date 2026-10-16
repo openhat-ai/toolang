@@ -345,8 +345,21 @@ class RunControlPayload:
         LaunchContext | None,
         PlainSerializer(lambda value: value.to_data() if value is not None else None),
     ] = None
+    runtime_sources: Annotated[
+        Mapping[str, str], PlainSerializer(lambda value: dict(value))
+    ] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        if not isinstance(self.runtime_sources, Mapping) or not all(
+            isinstance(key, str) and isinstance(value, str)
+            for key, value in self.runtime_sources.items()
+        ):
+            raise ValueError(
+                "runtime handler sources must map module names to source text"
+            )
+        object.__setattr__(
+            self, "runtime_sources", freeze_mapping(self.runtime_sources)
+        )
         parse_cwd(self.cwd)
         object.__setattr__(self, "input", _snapshot_control_input(self.input))
         _validate_run_payload(
@@ -1022,6 +1035,7 @@ def control_payload_from_data(kind: ControlKind, data: object) -> ControlPayload
         )
         return RunControlPayload(
             resources=resources,
+            runtime_sources=cast(Mapping[str, str], payload.get("runtime_sources", {})),
             limits=limits,
             state=state,
             runnable=runnable,
@@ -1889,6 +1903,8 @@ def _run_payload_data(
     }
     if payload.state is not None:
         data["state"] = payload.state
+    if payload.runtime_sources:
+        data["runtime_sources"] = dict(payload.runtime_sources)
     if payload.launch_context is not None:
         data["launch_context"] = payload.launch_context.to_data()
     if payload.horizon is not None:

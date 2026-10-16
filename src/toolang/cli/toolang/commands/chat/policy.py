@@ -86,8 +86,6 @@ def build_run_request(
     """Materialize one session snapshot and input-local override."""
 
     ceilings, effective = materialize_run_setting(surface, setting, override)
-    if effective.runnable is None:
-        raise ValueError("chat session has no runnable")
     model = effective.model
     if model is not None:
         model = replace(model, ref=resolve_model_ref(model.ref))
@@ -95,10 +93,13 @@ def build_run_request(
         thread_id=thread_id,
         request_id=request_id,
         runnable=RunnableRequest(
-            resolve_runnable_ref(effective.runnable),
+            resolve_runnable_ref(effective.runnable)
+            if effective.runnable is not None and not effective.runnable_follows_default
+            else None,
             input,
         ),
         model=model,
+        driver="chat",
         policy=RunPolicy(allow=ceilings, limits=effective.limits),
         workdir=effective.workdir,
         workdir_base=effective.workdir_base,

@@ -121,7 +121,7 @@ def test_setup_policy_overlays_root_agent_and_frozen_overrides() -> None:
             "models": ["gateway/*"],
             "skills": ["reviewer"],
         },
-        "default": {"model": "gateway/chat", "runnable": "agic:chat"},
+        "default": {"model": "gateway/chat"},
         "limit": {
             "agic_model_calls": 50,
             "tokens": 1000,
@@ -142,8 +142,7 @@ def test_setup_policy_overlays_root_agent_and_frozen_overrides() -> None:
     )
     assert resolve_run_defaults(
         (root, agent),
-        overrides={"runnable": None},
-    ) == RunDefaults(model=None, runnable=None)
+    ) == RunDefaults(model=None)
     assert resolve_run_limits(
         (root, agent),
         overrides={"time": None},
@@ -199,6 +198,15 @@ def test_default_model_body_layers_identity_and_typed_parameters() -> None:
     )
 
 
+@pytest.mark.parametrize("scope", ["root", "agent"])
+def test_runnable_configuration_is_rejected_at_both_scopes(scope):
+    root = {"default": {"runnable": "agic:work"}} if scope == "root" else {}
+    agent = {"default": {"runnable": "agic:work"}} if scope == "agent" else {}
+    with pytest.raises(ValueError, match=r"\[default\].runnable.*no longer supported"):
+        resolve_run_defaults((root, agent))
+    assert not hasattr(RunDefaults(), "runnable")
+
+
 def test_setup_policy_rejects_unknown_and_invalid_fields() -> None:
     with pytest.raises(ValueError, match="unknown allow field: channels"):
         resolve_setup_allow(({"allow": {"channels": ["web"]}},))
@@ -226,7 +234,7 @@ def test_setup_policy_validates_owned_collection_queries() -> None:
     assert resolve_setup_allow(
         ({"allow": {"models": ["*[missing=value]"]}},)
     ).models == ("*[missing=value]",)
-    with pytest.raises(ValueError, match="invalid default runnable ref"):
+    with pytest.raises(ValueError, match="no longer supported"):
         resolve_run_defaults(({"default": {"runnable": "*[missing=value]"}},))
 
 

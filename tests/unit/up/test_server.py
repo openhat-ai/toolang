@@ -189,7 +189,6 @@ def test_serve_argv_contains_only_server_inputs(tmp_path: Path) -> None:
         },
         default_overrides={
             "model": ModelOverride(identity="openai/gpt-5"),
-            "runnable": None,
         },
         compact_override=ModelOverride(identity="test/compact", effort="low"),
         limit_overrides={
@@ -228,7 +227,6 @@ def test_serve_argv_contains_only_server_inputs(tmp_path: Path) -> None:
     ]
     assert _option_values(argv, "--default") == [
         "model=openai/gpt-5",
-        "runnable=none",
     ]
     assert _option_values(argv, "--limit") == [
         "agic_model_calls=25",

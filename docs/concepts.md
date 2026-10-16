@@ -241,7 +241,8 @@ from root `[limit]`, agent `[limit]`, and frozen environment/CLI fields before
 the per-session and per-run layers.
 
 `RunBindings` provides optional `model` and `runnable` values. `AgentSetup`
-captures `RunDefaults` through `[default]`; policy resolution then
+captures model `RunDefaults` through `[default]`; runnable selection belongs to
+the driver or the invocation, including a Chat session entry. Policy resolution
 produces the effective bindings stored in `RunSpec`. Surface selections,
 session policy, and run policy overlay in that order.
 

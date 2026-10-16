@@ -239,7 +239,10 @@ retrying. Create, join, leave, membership checks, and uncertain-delivery behavio
 continue to use the existing Hub operations.
 
 Agents with the talk driver enabled poll joined conversations in serial batches
-of up to 20 entries through the `talk` runnable, or their default runnable.
+of up to 20 entries through a user-provided `talk` handler, or the packaged
+runtime Talk handler. The runtime handler takes precedence over an unnamed user
+entry and runs even when the user declares no runnable. It uses the receiving
+agent's normal resources and limits.
 Each batch creates a separate `talk_` thread, resolving workdir afresh.
 Disabling talk leaves presence, transport, outbound tools, and observation active.
 Batches contain only current messages and conversation metadata; use `convo.peek`
@@ -255,6 +258,11 @@ environment. A public `talk` in `agent.too` conflicts with this export. Executio
 records retain handling diagnostics and tool results; batches do not carry previous
 messages, handling results, or reply receipts. Custom handlers using `previous`
 must switch to explicit history lookup.
+
+The default handling instructions belong to the runtime handler's `.too` Program;
+the driver supplies only the JSON batch. Run records capture the runtime source
+under a distinct qualified identity for inspection and restart. No global
+runnable configuration selects a different messaging entry.
 
 An independent heartbeat runs every 5 seconds. Agent presence is a ZSet deadline
 in backend Unix milliseconds, renewed to at least 15 seconds ahead. Expired

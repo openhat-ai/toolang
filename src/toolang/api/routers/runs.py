@@ -115,6 +115,8 @@ async def _run_stream(
     setup = core.setup.current()
     try:
         state = core.state.current()
+        if payload.runnable.ref is None:
+            raise ValueError("run request requires a concrete runnable ref")
         resolved_runnable = resolve_runnable_reference(state, payload.runnable.ref)
         module = resolved_runnable.module
         runnable = resolved_runnable.executable
@@ -364,7 +366,7 @@ async def run_defaults(
     if model is None:
         fallback = first_model_ref(setup.models_effective())
         model = ModelRequest(fallback) if fallback is not None else None
-    runnable = setup.defaults.runnable
+    runnable = None
     if runnable is None:
         default_agic, default_flow = available_runnable_defaults(
             state,
@@ -430,7 +432,9 @@ def input_references(
 
     state = core.state.current()
     try:
-        references = input_file_references(state, payload.runnable, payload.input)
+        references = input_file_references(
+            state, payload.runnable, payload.input, driver=payload.driver
+        )
     except (ToolangError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return InputReferencesResponse(state=state.revision, references=references)

@@ -708,25 +708,35 @@ catalog-owned frontmatter format.
 
 ## Surface Rules
 
-Surfaces resolve a default runnable by name:
+Driver entries resolve in this order: invocation selection, user handler named
+after the driver, runtime handler named after the driver, then the user's unnamed
+entry. Missing all candidates fails before run acceptance. Only absence permits
+fallback; an invalid selection or a selected handler's failure is reported.
 
 ```text
 script  explicit name, else unnamed entry, else file help
 chat    chat, else unnamed entry, else reported failure
-task    task, else unnamed entry, else reported failure
+talk    user talk, else runtime talk
 chore   chore, else unnamed entry, else reported failure
 ```
 
-Explicit selections take precedence over these fallbacks. The chosen entry may
-be an agic or a flow. The runtime never generates a runnable, so a surface with
-no `chat`/`task`/`chore` entry and no unnamed entry reports a failure instead of
-inventing one. Script exposes authored declarations only.
+The chosen user entry may be an agic or a flow. Runtime ships a packaged `talk`
+agic and no Chat or Chore handler. A file export such as `runnables/talk.too`
+acts as a named public handler even if its declaration is unnamed. Existing
+public-name conflicts with `agent.too` remain errors. Script exposes authored
+declarations only and keeps its existing selection rules.
+
+There is no global `[default].runnable`, `TOOLANG_DEFAULT_RUNNABLE`, or runtime
+startup runnable default. Use a driver-named handler. Chat may select its own
+session entry; that selection is passed as the invocation choice and affects
+only that session. An explicit `_` can select the unnamed entry ahead of any
+driver handler.
 
 Every run surface must resolve one `RunnableInput`, including all required named
 inputs, before execution. Text surfaces first parse `CallInput[str]`; `RunnableInput` is an alias for
 `CallInput[Value]`. Both use `_` and argument names as sibling keys. Script
 derives its CLI from the selected
-signature; chat, task, and chore input may begin with `RunOverride` lines,
+signature; Chat and Chore input may begin with `RunOverride` lines,
 and runnable shortcuts may carry `name=value` named sources.
 
 Content evaluation turns interactive or authored `Content` into a
