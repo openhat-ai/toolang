@@ -7,7 +7,43 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ## [Unreleased]
 
+### Added
+
+- Chat, Talk, and Chore resolve their handler automatically: an explicit
+  invocation selection, then a user runnable named after the driver, then a
+  runtime handler named after the driver, then the user's unnamed entry. A
+  driver with none of these fails before the run is accepted, and only an absent
+  candidate falls through, so an invalid or failing selection is reported
+  instead of running a different runnable.
+
+- Runtime ships a packaged `talk` agic that handles messaging batches by
+  default: it takes precedence over an unnamed user entry and runs even when the
+  agent declares no runnable, uses the receiving agent's normal resources and
+  limits, carries its handling instructions in its own Program, and is recorded
+  under a distinct qualified identity so inspection and restart keep the
+  original source.
+
+- Authored run requests may supply `driver` (`chat`, `talk`, or `chore`) with a
+  null `runnable.ref` to select the handler automatically, and
+  `POST /api/v1/runs/input-references` accepts the same `driver`; a request still
+  requires a ref or a driver.
+
 ### Changed
+
+- **Breaking:** the Talk driver no longer prepends its default handling
+  instructions to a selected handler, which now receives only the JSON message
+  batch. A user runnable that relied on the injected instructions must author
+  them in the selected runnable; the packaged runtime handler carries them in
+  its Program.
+
+- **Breaking:** there is no global runnable default. `[default].runnable` in root
+  or agent configuration, `TOOLANG_DEFAULT_RUNNABLE`, and the runtime startup
+  `--default runnable=REF` option are rejected with replacement guidance; declare
+  a handler named after its driver (`chat`, `talk`, or `chore`) instead, or, for
+  an interactive Chat-only choice, set the Chat session entry. `--default
+  runnable=REF` and `:runnable REF` now select only the current Chat session's
+  entry, with reset restoring automatic Chat handler resolution; other sessions,
+  Talk, and Chore are unaffected.
 
 - **Breaking:** `too hub` now prints the Hub endpoint, version, and readiness when
   run without a command, and the `too hub status` command is removed. Use
