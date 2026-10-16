@@ -6,7 +6,7 @@ from dataclasses import replace
 from fakeredis import FakeServer
 import pytest
 
-from tests.support.execution_assertions import last_tool_result
+from tests.support.execution_assertions import assert_replayed, last_tool_result
 from tests.support.execution_harness import (
     AsyncGate,
     ScriptedModelTurn,
@@ -46,6 +46,71 @@ def server(monkeypatch):
         conversations, "AgentClient", lambda root, actor: make_client(server, actor)
     )
     return server
+
+
+@pytest.mark.parametrize("control", ["cancel", "steer"])
+def test_interrupted_target_preflight_closes_the_original_tool_call(
+    tmp_path, server, monkeypatch, control
+):
+    entered = asyncio.Event()
+    tracer = RecordingRunTracer()
+    harness = harness_with_msg(
+        tmp_path,
+        server,
+        [
+            action(
+                "pending-write", "write", target="gc_00000001", message="Must not send"
+            ),
+            ModelCallResult(message=Message.assistant("New direction handled.")),
+        ],
+        source="agic operator() -> Text:\n  user: Handle the authorized request.\n",
+    )
+
+    async def blocked_preflight(*args, **kwargs):
+        entered.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(conversations, "load_target", blocked_preflight)
+
+    async def scenario():
+        async with (
+            harness,
+            make_client(server) as alice,
+            make_client(server, "human:owner") as human,
+        ):
+            await prepare(alice, human)
+            thread = harness.threads.create(prefix=ThreadPrefix.WORK)
+            handle = harness.executor.run(
+                harness.run_spec(thread=thread, runnable="agic:operator"),
+                tracer=tracer,
+            )
+            await asyncio.wait_for(entered.wait(), 2)
+            if control == "cancel":
+                handle.cancel()
+            else:
+                handle.steer(Message.user("Use the new direction"), timing="immediate")
+            result = await asyncio.wait_for(handle, 2)
+            assert result.status == ("canceled" if control == "cancel" else "succeeded")
+            assert await alice.history("gc_00000001") == []
+            tools = [
+                step
+                for step in harness.store.list_steps(run_id=result.id)
+                if step.kind == "tool"
+            ]
+            assert len(tools) == 1 and tools[0].status == "canceled"
+            assert tools[0].given.call.name == "convo__write"
+            if control == "steer":
+                replies = [
+                    part
+                    for message in harness.adapter.invocations[-1].call.messages
+                    for part in message.parts
+                    if isinstance(part, ToolResultPart)
+                    and part.tool_call_id == "pending-write"
+                ]
+                assert len(replies) == 1 and replies[0].error is not None
+            assert_replayed(harness, tracer.events)
+
+    asyncio.run(scenario())
 
 
 @pytest.mark.parametrize("operation", ["peek", "write", "set_rules"])

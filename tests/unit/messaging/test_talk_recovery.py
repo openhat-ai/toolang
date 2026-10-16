@@ -17,6 +17,8 @@ from toolang.base.types.message import Message as ModelMessage
 from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.execution.executor import conversations
 from toolang.execution.types import ConversationScope
+from toolang.lang.input import CallInput
+from toolang.lang.types import Array
 from toolang.teaming.errors import BackendUnavailable
 from toolang.teaming.ids import talk_thread_id
 from toolang.teaming.schemas import Message
@@ -160,8 +162,9 @@ def test_existing_unbound_talk_id_is_not_adopted(tmp_path, server):
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("control", ["steer", "cancel"])
 def test_restart_closes_admitted_orphan_without_rebuilding_its_range(
-    tmp_path, server, monkeypatch
+    tmp_path, server, monkeypatch, control
 ):
     first = harness_with_msg(tmp_path, server, [])
 
@@ -183,6 +186,22 @@ def test_restart_closes_admitted_orphan_without_rebuilding_its_range(
                 (orphan,) = first.store.list_runs()
                 assert orphan.status == "pending"
                 assert await alice.talk_cursor("gc_00000001") == "0-0"
+                pending = first.store.accept_run_control(
+                    run_id=orphan.id,
+                    kind=control,
+                    timing="next_call",
+                    input=CallInput(
+                        {
+                            "_": Array(
+                                "Part[]", ModelMessage.user("Pending direction").parts
+                            )
+                        }
+                    )
+                    if control == "steer"
+                    else CallInput(),
+                    request_id="waiting-control",
+                    created_at=orphan.created_at,
+                )
             await human.send("gc_00000001", body="Newer request.")
             restarted = harness_with_msg(
                 tmp_path,
@@ -198,6 +217,14 @@ def test_restart_closes_admitted_orphan_without_rebuilding_its_range(
                 await loop.poll()
                 recovered = restarted.store.get_run(run_id=orphan.id)
                 assert recovered is not None and recovered.status == "failed"
+                final_control = restarted.store.get_run_control(
+                    run_id=orphan.id, index=pending.index
+                )
+                assert final_control is not None and final_control.status == "wontapply"
+                assert (
+                    final_control.error
+                    == "run ended before the control could be applied"
+                )
                 assert await alice.talk_cursor("gc_00000001") == source["stream_id"]
                 assert not restarted.adapter.invocations
                 await loop.poll()

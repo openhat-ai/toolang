@@ -236,6 +236,10 @@ async def _execute(
             access = await preflight(state, call.name, values["target"])
         except _HonorRequired:
             raise
+        except asyncio.CancelledError:
+            # No Step exists yet, but the model has already issued this call.
+            await skip(state, (call,), canceled=not state.immediate_steer())
+            raise
         except Exception as exc:
             access_error = exc
     run = state.prepared.run

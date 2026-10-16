@@ -1001,17 +1001,16 @@ class RunExecutor:
                             thread_id=str(record.thread),
                             root_run_id=run_id,
                         )
-                        event = self._persist.on_event(
+                        self._project_event(
+                            publication,
                             RunEnd(
                                 run=run.id,
                                 status="failed",
                                 error=error,
                                 finished_at=utc_now(),
                             ),
-                            cursor=publication.cursor,
-                        )
-                        publication.append(
-                            event, thread_id=str(record.thread), root_run_id=run_id
+                            thread_id=str(record.thread),
+                            root_run_id=run_id,
                         )
             record = self.store.get_run(run_id=run_id)
             assert record is not None
