@@ -96,6 +96,13 @@ Session runnable commands select defaults: `:runnable REF`, `:agic NAME`, and
 `:flow NAME`. Only `:runnable default` resets to the surface default; kind-specific
 commands treat `default` as a name. They accept no runnable arguments.
 
+These runnable defaults belong to the current Chat session. Chat startup
+`--default runnable=REF` initializes only that session's entry. Input-local
+overrides affect one submission; resetting the session entry restores automatic
+Chat handler resolution. Other sessions, Talk, and Chore are unaffected.
+Root/agent `[default].runnable`, `TOOLANG_DEFAULT_RUNNABLE`, and runtime startup
+runnable defaults are unsupported; use a named driver handler instead.
+
 A root call selects a public runnable for this submission:
 
 ```text

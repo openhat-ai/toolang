@@ -32,7 +32,7 @@ _CAP_KIND_BY_FIELD = {
 }
 _SETUP_ALLOW_FIELDS = frozenset({"models", "tools"})
 _KNOWN_ALLOW_FIELDS = frozenset({*_SETUP_ALLOW_FIELDS, *_CAP_KIND_BY_FIELD})
-_DEFAULT_FIELDS = frozenset({"model", "runnable"})
+_DEFAULT_FIELDS = frozenset({"model"})
 _LIMIT_FIELDS = frozenset(
     {
         "agic_model_calls",
@@ -42,7 +42,6 @@ _LIMIT_FIELDS = frozenset(
         "time",
     }
 )
-_RUNNABLE_REF_RE = re.compile(r"(?:(?:agic|flow):)?[A-Za-z_][A-Za-z0-9_-]*")
 _SETUP_PLUGIN_FAMILIES = frozenset({"model_catalog", "model_adapter", "toolset"})
 
 
@@ -260,19 +259,21 @@ def resolve_run_defaults(
     """Resolve layered ``[default]`` configuration and frozen overrides."""
 
     model: ModelRequest | None = None
-    runnable: str | None = None
     for config in configs:
         raw_default = _table(config, "default")
         if raw_default is None:
             continue
+        if "runnable" in raw_default:
+            raise ValueError(
+                "[default].runnable is no longer supported; declare a named "
+                "chat, talk, or chore handler, or select a Chat session runnable"
+            )
         _reject_unknown(raw_default, _DEFAULT_FIELDS, "default field")
         if "model" in raw_default:
             body = _default_text("model", raw_default["model"])
             if body.lower() == "none":
                 body = "unset"
             model = apply_model_override(model, model, parse_model_body(body))
-        if "runnable" in raw_default:
-            runnable = _default_value("runnable", raw_default["runnable"])
     resolved_overrides = overrides or {}
     _reject_unknown(resolved_overrides, _DEFAULT_FIELDS, "default field")
     if "model" in resolved_overrides:
@@ -283,14 +284,7 @@ def resolve_run_defaults(
             else parse_model_body("unset" if raw_model is None else raw_model)
         )
         model = apply_model_override(model, model, override)
-    if "runnable" in resolved_overrides:
-        raw_runnable = resolved_overrides["runnable"]
-        if isinstance(raw_runnable, ModelOverride):
-            raise TypeError("default runnable override must be a string or none")
-        runnable = raw_runnable
-    if runnable is not None and not _RUNNABLE_REF_RE.fullmatch(runnable):
-        raise ValueError(f"invalid default runnable ref: {runnable!r}")
-    return RunDefaults(model=model, runnable=runnable)
+    return RunDefaults(model=model)
 
 
 def resolve_run_limits(
@@ -352,11 +346,6 @@ def _query_values(name: str, value: object) -> tuple[str, ...] | None:
         )
     except ToolangError as error:
         raise ValueError(str(error)) from error
-
-
-def _default_value(name: str, value: object) -> str | None:
-    normalized = _default_text(name, value)
-    return None if normalized.lower() == "none" else normalized
 
 
 def _default_text(name: str, value: object) -> str:

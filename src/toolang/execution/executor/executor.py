@@ -54,6 +54,7 @@ from toolang.lang.input import (
     decode_runnable_input,
     validate_runnable_arguments,
     validate_value,
+    resolve_runnable_input,
 )
 from toolang.lang.includes import resolve_file_include
 from toolang.lang.types import Array, Value, is_unnamed_ref, is_generated_ref
@@ -62,6 +63,7 @@ from toolang.plugin.models.resolution import (
     resolve_model_reasoning,
 )
 from toolang.state.state import AgentState, state_program
+from toolang.state.builtin import with_runtime_handlers
 from toolang.state.types import StateSync
 from toolang.setup import AgentSetup
 
@@ -135,7 +137,8 @@ from ..runnables import (
     runnable_signature,
     resolve_bound_runnable,
     resolve_call_target,
-    resolve_state_runnable,
+    resolve_runnable_reference,
+    runnable_ref,
 )
 from .steps import loop as loop_step
 from .common import (
@@ -246,6 +249,7 @@ class RunSpec:
     all_tools: bool = False
     launch_context: LaunchContext | None = None
     resource_ceiling: AgentResources | None = None
+    driver: Literal["chat", "talk", "chore"] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -490,6 +494,8 @@ class RunExecutor:
                 state=state,
                 include=self._include_resolver(setup),
             )
+        if spec.driver is not None:
+            spec = _resolve_driver_spec(spec)
         loop = asyncio.get_running_loop()
         if spec.horizon is None:
             spec = replace(
@@ -535,6 +541,7 @@ class RunExecutor:
                 authored_session_commands=spec.authored_session_commands,
                 prompt_invocations=spec.prompt_invocations,
                 launch_context=spec.launch_context,
+                runtime_sources=spec.state.runtime_sources,
                 horizon=bound.horizon,
             )
         return self._launch(bound, runnable, loop=loop, tracer=tracer)
@@ -604,8 +611,8 @@ class RunExecutor:
             limits=limits if limits is not None else setup.limits,
         )
         assert spec.bindings.runnable is not None
-        name, kind = parse_runnable_ref(spec.bindings.runnable)
-        module, target = resolve_state_runnable(spec.state, name, kind=kind)
+        resolved = resolve_runnable_reference(spec.state, spec.bindings.runnable)
+        module, target = resolved.module, resolved.executable
         spec = replace(
             spec,
             input=bind_runnable_input(
@@ -662,6 +669,7 @@ class RunExecutor:
                 authored_session_commands=spec.authored_session_commands,
                 prompt_invocations=spec.prompt_invocations,
                 launch_context=spec.launch_context,
+                runtime_sources=spec.state.runtime_sources,
                 horizon=bound.horizon,
             )
         return self._launch(bound, runnable, loop=loop, tracer=tracer)
@@ -831,15 +839,15 @@ class RunExecutor:
             if isinstance(entry_payload, RunControlPayload)
             else None
         )
+        if isinstance(entry_payload, RunControlPayload):
+            state = with_runtime_handlers(state, entry_payload.runtime_sources)
         module, _, ref = (
             preparation.runnable.rpartition("::")
             if "::" in preparation.runnable
             else ("", "", preparation.runnable)
         )
-        runnable, kind = parse_runnable_ref(ref)
-        resolved_module, declaration = resolve_state_runnable(
-            state, runnable, kind=kind
-        )
+        target = resolve_runnable_reference(state, preparation.runnable)
+        resolved_module = target.module
         if module and resolved_module != module:
             raise ValueError(f"run runnable module changed: {preparation.runnable}")
         persisted_model_request = preparation.model_request
@@ -867,7 +875,7 @@ class RunExecutor:
             state=state,
             thread=str(run.thread),
             bindings=RunBindings(
-                runnable=f"{declaration.kind}:{runnable}",
+                runnable=runnable_ref(state, target),
                 model=(
                     selected_model_request.ref
                     if selected_model_request is not None
@@ -3552,11 +3560,11 @@ def _bind_run(
         raise ValueError("run spec requires a canonical thread id")
     if spec.bindings.runnable is None:
         raise ValueError("run spec requires a runnable binding")
-    runnable_name, runnable_kind = parse_runnable_ref(spec.bindings.runnable)
-    module, resolved_runnable = resolve_state_runnable(
-        spec.state,
-        runnable_name,
-        kind=runnable_kind,
+    target = resolve_runnable_reference(spec.state, spec.bindings.runnable)
+    runnable_name, module, resolved_runnable = (
+        target.name,
+        target.module,
+        target.executable,
     )
     control_input = _snapshot_input(input, runnable)
     return BoundRun(
@@ -3611,17 +3619,56 @@ def _step_local(step: StepRecord, store: RunStore) -> Local:
     )
 
 
+def _resolve_driver_spec(spec: RunSpec) -> RunSpec:
+    """Resolve a driver's optional invocation before coercion and acceptance."""
+
+    from ..runnables import resolve_driver_handler
+
+    if spec.driver is None:
+        return spec
+    state, target = resolve_driver_handler(
+        spec.state, spec.driver, spec.bindings.runnable
+    )
+    model = spec.model_request
+    if spec.driver == "talk" and model is None and spec.bindings.model is None:
+        model = spec.setup.defaults.model
+        if model is None:
+            resources = resolve_runnable_resources(
+                spec.setup.models_effective(),
+                runnable=target.executable,
+                base=resolve_agent_resources(
+                    spec.setup, state, AgentCeiling(), module=target.module
+                ),
+                setup=spec.setup,
+                state=state,
+                module=target.module,
+            )
+            model = ModelRequest(resources.models[0]) if resources.models else None
+    return replace(
+        spec,
+        state=state,
+        driver=None,
+        bindings=replace(
+            spec.bindings,
+            runnable=runnable_ref(state, target),
+            model=model.ref if model is not None else spec.bindings.model,
+        ),
+        model_request=model,
+        input=resolve_runnable_input(
+            target.executable,
+            spec.input,
+            structs={item.name: item for item in state.modules[target.module].structs},
+        ),
+    )
+
+
 def _prepare_run_spec(
     spec: RunSpec,
 ) -> tuple[AgicDecl | FlowDecl, RunnableInput, AgentResources, AgentResources]:
     if spec.bindings.runnable is None:
         raise ValueError("run spec requires a runnable binding")
-    runnable_name, runnable_kind = parse_runnable_ref(spec.bindings.runnable)
-    module, runnable = resolve_state_runnable(
-        spec.state,
-        runnable_name,
-        kind=runnable_kind,
-    )
+    target = resolve_runnable_reference(spec.state, spec.bindings.runnable)
+    module, runnable = target.module, target.executable
     input = spec.input
     _validate_inputs(
         program=state_program(spec.state, module),

@@ -43,6 +43,7 @@ from .records import (
     step_message_role,
 )
 from .types import (
+    DriverName,
     EventCursor,
     ControlRef,
     ControlTiming,
@@ -411,15 +412,15 @@ T = TypeVar("T")
 
 @dataclass(frozen=True, slots=True)
 class RunnableRequest(Generic[T]):
-    """One concrete runnable ref and its complete input."""
+    """One optional entry selection and its complete input."""
 
-    ref: str
+    ref: str | None
     input: CallInput[T] = field(default_factory=CallInput)
 
     def __post_init__(self) -> None:
-        if not isinstance(self.ref, str):
+        if self.ref is not None and not isinstance(self.ref, str):
             raise TypeError("runnable request ref must be a string")
-        if not self.ref or self.ref != self.ref.strip():
+        if self.ref is not None and (not self.ref or self.ref != self.ref.strip()):
             raise ValueError("runnable request requires a canonical ref")
         if not isinstance(self.input, CallInput):
             raise TypeError("runnable request input must be CallInput")
@@ -442,6 +443,7 @@ class RunRequest:
     source_revision: str | None = None
 
     client_id: str | None = None
+    driver: DriverName | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.thread_id, str):
@@ -454,6 +456,10 @@ class RunRequest:
             raise ValueError("run request requires a canonical request ID")
         if not isinstance(self.runnable, RunnableRequest):
             raise TypeError("run request runnable must be RunnableRequest")
+        if self.driver not in {None, "chat", "talk", "chore"}:
+            raise ValueError(f"unknown execution driver: {self.driver}")
+        if self.runnable.ref is None and self.driver is None:
+            raise ValueError("run request requires a runnable ref or driver")
         if self.model is not None and not isinstance(self.model, ModelRequest):
             raise TypeError("run request model must be ModelRequest or none")
         if not isinstance(self.policy, RunPolicy):

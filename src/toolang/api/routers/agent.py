@@ -182,9 +182,8 @@ def tools(
 
 @router.get("/agics", summary="List Agent Agics")
 async def agics(core: AgentCoreDep) -> dict[str, object]:
-    setup = core.setup.current()
     state = core.state.current()
-    default, _flow = _runnable_defaults(state, setup.defaults.runnable)
+    default, _flow = _runnable_defaults(state, None)
     return {
         "default": default,
         "items": [{"name": name} for name in state.agics],
@@ -193,9 +192,8 @@ async def agics(core: AgentCoreDep) -> dict[str, object]:
 
 @router.get("/flows", summary="List Agent Flows")
 async def flows(core: AgentCoreDep) -> dict[str, object]:
-    setup = core.setup.current()
     state = core.state.current()
-    _agic, default = _runnable_defaults(state, setup.defaults.runnable)
+    _agic, default = _runnable_defaults(state, None)
     return {
         "default": default,
         "items": [{"name": name} for name in state.flows],
@@ -207,9 +205,8 @@ async def prompt_completions(
     core: AgentCoreDep,
     runnable: str | None = Query(default=None),
 ) -> dict[str, object]:
-    setup = core.setup.current()
     state = core.state.current()
-    selected = runnable or setup.defaults.runnable
+    selected = runnable
     if selected is None:
         default_agic, default_flow = _runnable_defaults(state, None)
         if default_agic is not None:

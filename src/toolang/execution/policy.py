@@ -161,11 +161,7 @@ def resolve_commands(
             if setup.defaults.model is not None
             else None
         ),
-        runnable=(
-            surface.runnable
-            if surface.runnable is not None
-            else setup.defaults.runnable
-        ),
+        runnable=surface.runnable,
     )
     return materialize_policy(base, setup.limits, session=session, run=run)
 

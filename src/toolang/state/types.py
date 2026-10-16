@@ -7,6 +7,9 @@ from dataclasses import dataclass
 from typing import Literal, Mapping, cast
 
 
+RUNTIME_TALK_MODULE = "runtime::talk"
+RUNTIME_TALK_SOURCE = "runtime/talk.too"
+
 CapScope = Literal["root", "home", "here"]
 EntryKind = Literal["psyche", "skill", "service", "prompt"]
 EntryShape = Literal["file", "dir"]

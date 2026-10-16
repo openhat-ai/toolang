@@ -559,6 +559,40 @@ def test_runnable_argument_updates_setting_and_refreshes_status() -> None:
     assert app.status_refreshes == 1
 
 
+@pytest.mark.parametrize(
+    ("kind", "command", "selector"),
+    [
+        ("agic", "runnable", "_"),
+        ("agic", "agic", "_"),
+        ("agic", "runnable", "agic:_"),
+        ("flow", "runnable", "_"),
+        ("flow", "flow", "_"),
+    ],
+)
+def test_runnable_session_commands_select_the_unnamed_entry(
+    kind: str, command: str, selector: str
+) -> None:
+    app = _App()
+    app.client.runnables["runnable"] = {
+        "default": "agic:chat",
+        "items": [
+            {"kind": "agic", "name": "chat"},
+            {"kind": kind, "name": "<entry:5>"},
+        ],
+    }
+    app.client.runnables[kind] = {
+        "default": "chat" if kind == "agic" else None,
+        "items": [{"name": "<entry:5>"}],
+    }
+
+    result = _outcome(commands.handle(app, ChatCommand(command, selector, prefix=":")))
+
+    assert result.kind == "success"
+    assert app.setting.runnable == f"{kind}:<entry:5>"
+    assert not app.setting.runnable_follows_default
+    assert app.status_refreshes == 1
+
+
 def test_allow_and_limit_report_effective_updates_and_refresh_status() -> None:
     app = _App()
 

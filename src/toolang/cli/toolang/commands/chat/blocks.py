@@ -275,7 +275,7 @@ class RunControlBlock(MutableBlock):
         return cls(
             message=message,
             input_background=input_background,
-            runnable=request.runnable.ref if request else "",
+            runnable=(request.runnable.ref or "chat") if request else "",
             model=(request.model.ref if request.model else "model unspecified")
             if request
             else "",

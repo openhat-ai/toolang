@@ -765,7 +765,6 @@ skills = ["skill/reviewer"]
 
 [default]
 model = "gateway/chat effort=high"
-runnable = "agic:chat"
 
 [limit]
 agic_model_calls = 200
@@ -1381,7 +1380,9 @@ client creates a thread when needed, converts the interaction to the shared
 
 1. `POST /api/v1/threads` with `client_id`, `request_id`, and an optional peer descriptor.
 2. `POST /api/v1/chat/runs/authored/stream` with the returned thread ID, client ID, request ID,
-   authored input, run/session overrides, and ordered runnable fallbacks.
+   authored input, materialized model/policy, `driver: "chat"`, and a nullable
+   `runnable.ref`. A null ref leaves handler selection to execution admission;
+   a session choice or input override supplies an explicit ref.
 
 An existing chat thread can be passed directly to the authored endpoint; the
 client does not create another thread for every turn. The server resolves the
@@ -1552,6 +1553,11 @@ an explicit JSON `null` disables that field for the run.
 
 `POST /api/v1/runs/authored/stream` accepts the authored `RunRequest` wire
 shape:
+
+Authored requests may supply `driver` (`chat`, `talk`, or `chore`) with
+`runnable.ref: null` for automatic handler selection. Explicit refs keep their
+normal validation and take precedence. A displayed default does not pin an
+automatic request to that handler; input source-revision checks still apply.
 
 ```json
 {

@@ -63,8 +63,9 @@ transitions. It submits to the executor's loop, where run lifecycle and controls
 remain owned. Chore and run writes use the same database but separate
 transactions; durable claims bridge acceptance and scheduler completion.
 Chore selects an explicit runnable call first, then a named `chore` handler,
-the configured default runnable, or the unnamed entry. The handler may be an
-agic or flow. No Task or Job entity is involved.
+or the unnamed entry. Runtime provides no Chore handler. Missing all candidates
+rejects activation; invalid inputs and handler failures do not select a different
+runnable. The handler may be an agic or flow. No Task or Job entity is involved.
 
 ## Threads and observation
 

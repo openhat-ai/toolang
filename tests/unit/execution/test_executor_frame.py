@@ -311,6 +311,7 @@ def test_build_agic_frame_builds_one_complete_model_input(
         SimpleNamespace(
             program=program,
             program_source="agents/alice/agent.too",
+            runtime_sources={},
             caps=(),
             workspaces={},
             revision="0" * 64,
@@ -435,6 +436,7 @@ def test_build_agic_frame_keeps_declared_output_contract_out_of_instructions(
         SimpleNamespace(
             program=program,
             program_source="agents/alice/agent.too",
+            runtime_sources={},
             caps=(),
             workspaces={},
             revision="0" * 64,
@@ -522,6 +524,7 @@ def test_build_agic_frame_preserves_typed_multimodal_splices(tmp_path: Path) -> 
         SimpleNamespace(
             program=program,
             program_source="agents/alice/agent.too",
+            runtime_sources={},
             caps=(),
             workspaces={},
             revision="0" * 64,
@@ -625,6 +628,7 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
         SimpleNamespace(
             program=Program(agics=(agic,), span=Span(1)),
             program_source="agents/alice/agent.too",
+            runtime_sources={},
             caps=(),
             workspaces={},
             root_config={},

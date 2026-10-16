@@ -323,7 +323,7 @@ def public_runnable_index(
     for name, declaration in program_runnable_index(agent).items():
         add(name, "agent", declaration)
     for module, program in modules.items():
-        if module == "agent":
+        if module == "agent" or module == "runtime::talk":
             continue
         public_name, local_name = runnable_export(module_sources[module], program)
         declaration = program_runnable_index(program)[local_name]
@@ -433,6 +433,7 @@ class AgentState:
     workspace_additions: Mapping[str, str] = field(default_factory=dict)
     created_at: str | None = None
     source_requests: tuple[tuple[EntryKind, str, str], ...] = ()
+    runtime_sources: Mapping[str, str] = field(default_factory=dict)
     workspaces: Mapping[str, str] = field(init=False)
     caps_by_module: Mapping[str, tuple[StateCap, ...]] = field(init=False, repr=False)
     skills: Mapping[str, StateCap] = field(init=False, repr=False)
@@ -446,6 +447,9 @@ class AgentState:
     module_runnables: Mapping[str, AgicDecl | FlowDecl] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "runtime_sources", freeze_mapping(self.runtime_sources)
+        )
         _require_revision(self.revision, name="Agent State revision")
         files = tuple(sorted(self.files, key=lambda item: (item.scope, item.key)))
         if len({(item.scope, item.key) for item in files}) != len(files):
@@ -614,6 +618,8 @@ class AgentState:
     def caps_for(self, module: str) -> tuple[StateCap, ...]:
         """Return the precomputed effective caps for one executing module."""
 
+        if module == "runtime::talk":
+            module = "agent"
         if module in self.caps_by_module:
             return self.caps_by_module[module]
         # Accepted code may outlive its module. Only current external caps remain.
@@ -772,6 +778,9 @@ def validate_program_term(
     if name == "agent":
         if source != "agent.too":
             raise ValueError("agent Program must use agent.too")
+    elif name == "runtime::talk":
+        if source != "runtime/talk.too":
+            raise ValueError("runtime Talk Program must use runtime/talk.too")
     elif name != runnable_module_name(source):
         raise ValueError("runnable Program name must match its source path")
     _require_revision(digest, name="State Program digest")

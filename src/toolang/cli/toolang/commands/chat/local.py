@@ -11,7 +11,6 @@ import threading
 from typing import Any, cast
 from uuid import uuid4
 
-from toolang.base.errors import ToolangError
 from toolang.base.types.message import Message
 from toolang.base.types.model import Model, ModelOverride, ModelRequest
 from toolang.base.types.policy import AgentCeiling
@@ -25,7 +24,7 @@ from toolang.execution.executor import RunExecutor
 from toolang.execution.inspection.history import RunHistory
 from toolang.execution.runnables import (
     parse_runnable_ref,
-    runnable_binding_defaults,
+    available_runnable_defaults,
     resolve_runnable_reference,
 )
 from toolang.execution.executor.resources import (
@@ -573,22 +572,9 @@ class LocalChatSession:
             return initial
         setup = self.setup_watcher.current()
         state = watcher.current()
-        try:
-            runnable = self._current_session_setting(setup=setup, state=state).runnable
-        except ToolangError:
-            if initial.runnable is None:
-                raise
-            runnable = None
-        if (
-            runnable is None
-            and initial.runnable is not None
-            and len(state.runnables) == 1
-        ):
-            name, declaration = next(iter(state.runnables.items()))
-            runnable = resolve_runnable_reference(
-                state, f"{declaration.kind}:{name}"
-            ).ref
-        return replace(initial, runnable=runnable)
+        runnable = self._current_session_setting(setup=setup, state=state).runnable
+        self._surface = replace(initial, runnable=runnable)
+        return self._surface
 
     def _materialize_model_ref(self, ref: str) -> str:
         return materialize_model_request(
@@ -608,11 +594,10 @@ class LocalChatSession:
         if model is None:
             fallback = first_model_ref(setup.models_effective())
             model = ModelRequest(fallback) if fallback is not None else None
-        runnable = setup.defaults.runnable
+        runnable = None
         if runnable is None:
-            default_agic, default_flow = runnable_binding_defaults(
+            default_agic, default_flow = available_runnable_defaults(
                 state,
-                None,
                 fallback_agic="chat",
             )
             if default_agic is not None:

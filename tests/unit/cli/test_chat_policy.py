@@ -12,6 +12,7 @@ from toolang.base.types.model import (
 from toolang.base.types.policy import AgentCeiling, RunLimits, RunPolicy
 from toolang.cli.toolang.commands.chat.policy import (
     build_run_request,
+    materialize_runnable_list_ref,
     reconcile_session_model,
     update_session_setting,
 )
@@ -62,6 +63,7 @@ def test_build_run_request_materializes_a_session_snapshot_without_mutation() ->
 
     assert request == RunRequest(
         thread_id="term_test",
+        driver="chat",
         request_id="term_request",
         runnable=RunnableRequest(
             "flow:review", CallInput({"_": "hello", "tone": "brief"})
@@ -241,6 +243,31 @@ def test_build_run_request_materializes_unqualified_runnable_to_exact_ref() -> N
     assert request.runnable.ref == "flow:review"
 
 
+@pytest.mark.parametrize("module", ["agent", "missing"])
+def test_runnable_materialization_preserves_the_selected_module(module: str) -> None:
+    assert (
+        materialize_runnable_list_ref(
+            {"items": [{"kind": "flow", "name": "review"}]},
+            f"{module}::review",
+        )
+        == f"{module}::flow:review"
+    )
+
+
+@pytest.mark.parametrize("selector", ["<entry>", "agic:<entry>", "flow:_"])
+def test_entry_selection_rejects_invalid_aliases_and_kind_mismatches(selector) -> None:
+    with pytest.raises(ValueError, match="did not match"):
+        materialize_runnable_list_ref(
+            {
+                "items": [
+                    {"kind": "agic", "name": "chat"},
+                    {"kind": "agic", "name": "<entry:5>"},
+                ]
+            },
+            selector,
+        )
+
+
 @pytest.mark.parametrize(
     "metadata",
     [{}, {"effort": [], "applicable": True}, {"effort": ["low"], "exhaustive": False}],
@@ -299,7 +326,8 @@ def test_session_runnable_follows_the_current_default_until_explicitly_selected(
         resolve_runnable_ref=lambda value: value,
     )
 
-    assert request.runnable.ref == "agic:assistant"
+    assert request.runnable.ref is None
+    assert request.driver == "chat"
 
     explicitly_selected = update_session_setting(
         surface=_surface(),

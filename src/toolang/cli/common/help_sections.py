@@ -53,10 +53,12 @@ def write_field_sections(ctx: Context, formatter: HelpFormatter) -> None:
     if "--default" in options:
         with formatter.section("Default fields"):
             formatter.write_dl(
-                [
-                    ("model", "Default model and parameters"),
-                    ("runnable", "Default runnable ref"),
-                ]
+                [("model", "Default model and parameters")]
+                + (
+                    [("runnable", "Chat session entry ref")]
+                    if ctx.command.name == "chat"
+                    else []
+                )
             )
             formatter.write_paragraph()
             formatter.write_text(

@@ -129,6 +129,7 @@ def test_run_request_contains_only_materialized_caller_values() -> None:
         "workdir_base",
         "attachments",
         "source_revision",
+        "driver",
     }
 
 

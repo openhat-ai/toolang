@@ -611,6 +611,7 @@ class RunStore:
         cwd: str = "",
         triggered_by: StepRef | None = None,
         launch_context: LaunchContext | None = None,
+        runtime_sources: Mapping[str, str] | None = None,
     ) -> tuple[RunRecord, ControlRecord]:
         """Atomically insert a pending run and its applied admission control."""
 
@@ -717,6 +718,7 @@ class RunStore:
                     input=input,
                     horizon=horizon,
                     launch_context=launch_context,
+                    runtime_sources=runtime_sources or {},
                     sandbox=sandbox,
                     cwd=cwd,
                     authored_input=authored_input,

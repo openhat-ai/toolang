@@ -18,6 +18,9 @@ from toolang.state.state import (
     program_runnable_index,
     state_program,
 )
+from toolang.state.builtin import talk_handler_source, with_runtime_handlers
+from toolang.state.types import RUNTIME_TALK_MODULE
+from .types import DriverName
 
 Runnable: TypeAlias = AgicDecl | FlowDecl
 RUNNABLE_DOCUMENTATION_MAX_CHARS = 512
@@ -182,7 +185,7 @@ def resolve_agic_routes(
 def visible_runnables(state: AgentState, module: str) -> tuple[ResolvedRunnable, ...]:
     """Enumerate the caller's namespace without route or active-path filtering."""
 
-    if module == "agent":
+    if module in {"agent", RUNTIME_TALK_MODULE}:
         index = getattr(state, "runnables", None)
         if index is None:
             index = program_runnable_index(state_program(state))
@@ -274,6 +277,11 @@ def resolve_runnable_reference(
 ) -> ResolvedRunnable:
     """Resolve an exact name, kind, module, or line-qualified reference."""
     parsed = parse_runnable_ref_parts(reference)
+    if not isinstance(state, Program) and parsed.module == RUNTIME_TALK_MODULE:
+        name, entry = resolve_module_runnable(
+            state, parsed.module, parsed.name, kind=parsed.kind
+        )
+        return ResolvedRunnable(name, parsed.module, entry)
     index = (
         program_runnable_index(state)
         if isinstance(state, Program)
@@ -408,7 +416,7 @@ def resolve_call_target(
             if not str(exc).startswith("Runnable not found:"):
                 raise
     target = resolve_public_runnable(state, reference)
-    if target.module == module or module == "agent":
+    if target.module == module or module in {"agent", RUNTIME_TALK_MODULE}:
         return target
     raise ToolangError(f"Runnable not found in module {module}: {reference}")
 
@@ -482,6 +490,31 @@ def runnable_fallback(program: Program | AgentState, *, preferred: str) -> str:
         return matches[0]
     raise ToolangError(
         f"agent has no {preferred} entry or unnamed entry; add one to agent.too"
+    )
+
+
+def resolve_driver_handler(
+    state: AgentState,
+    driver: DriverName,
+    invocation: str | None = None,
+) -> tuple[AgentState, ResolvedRunnable]:
+    """Select an invocation, user handler, runtime handler, or unnamed entry."""
+
+    if driver not in {"chat", "talk", "chore"}:
+        raise ValueError(f"unknown execution driver: {driver}")
+    if invocation is not None:
+        return state, resolve_runnable_reference(state, invocation)
+    if driver in state.runnables:
+        return state, resolve_runnable_reference(state, driver)
+    if driver == "talk":
+        state = with_runtime_handlers(
+            state, {RUNTIME_TALK_MODULE: talk_handler_source()}
+        )
+        return state, resolve_runnable_reference(
+            state, f"{RUNTIME_TALK_MODULE}::agic:talk"
+        )
+    return state, resolve_runnable_reference(
+        state, runnable_fallback(state, preferred=driver)
     )
 
 

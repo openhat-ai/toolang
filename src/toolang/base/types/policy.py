@@ -60,23 +60,13 @@ class RunBindings:
 
 @dataclass(frozen=True, slots=True)
 class RunDefaults:
-    """Configured starting values for one accepted run."""
+    """Configured model starting value for one accepted run."""
 
     model: ModelRequest | None = None
-    runnable: str | None = None
 
     def __post_init__(self) -> None:
         if self.model is not None and not isinstance(self.model, ModelRequest):
             raise TypeError("run default model must be a ModelRequest or none")
-        object.__setattr__(
-            self,
-            "runnable",
-            _normalize_optional(
-                self.runnable,
-                "runnable",
-                subject="run default",
-            ),
-        )
 
 
 @dataclass(frozen=True, slots=True)

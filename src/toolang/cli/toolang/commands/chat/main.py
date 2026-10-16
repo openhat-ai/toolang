@@ -263,7 +263,7 @@ def _chat_session_override(
     limit_options: list[str] | None,
 ) -> tuple[RunOverride, bool]:
     ceilings = user_call(resolve_ceiling_overrides, {}, allow_options)
-    defaults = user_call(resolve_default_overrides, {}, default_options)
+    defaults = user_call(resolve_default_overrides, {}, default_options, session=True)
     limits = user_call(resolve_limit_overrides, {}, limit_options)
     updates: list[RunOverride] = []
     if ceilings:

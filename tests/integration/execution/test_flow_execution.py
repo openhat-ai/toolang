@@ -126,6 +126,7 @@ def _state(*flows: FlowDecl) -> Any:
         SimpleNamespace(
             program=Program(span=Span(line=1), flows=flows),
             program_source="agents/alice/agent.too",
+            runtime_sources={},
             root_config={},
             home_config={},
             caps=(),
@@ -432,6 +433,7 @@ def test_top_level_agic_has_no_containing_step_events(
         SimpleNamespace(
             program=Program(span=Span(line=1), agics=(agic,)),
             program_source="agents/alice/agent.too",
+            runtime_sources={},
             root_config={},
             home_config={},
             caps=(),
@@ -466,6 +468,7 @@ def test_runtime_failure_is_recorded_directly_on_the_run(
         SimpleNamespace(
             program=Program(span=Span(line=1), agics=(agic,)),
             program_source="agents/alice/agent.too",
+            runtime_sources={},
             root_config={},
             home_config={},
             caps=(),
@@ -527,6 +530,7 @@ def test_run_rejects_ambiguous_runnable_name(tmp_path: Path) -> None:
                 flows=(FlowDecl(name=runnable, span=Span(line=2)),),
             ),
             program_source="agents/alice/agent.too",
+            runtime_sources={},
             root_config={},
             home_config={},
             caps=(),
@@ -726,6 +730,7 @@ def test_nested_flow_inherits_resources_and_restores_parent_scope(
                 flows=(outer, inner),
             ),
             program_source="agents/alice/agent.too",
+            runtime_sources={},
             root_config={},
             home_config={},
             caps=(),

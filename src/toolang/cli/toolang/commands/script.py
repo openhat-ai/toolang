@@ -962,7 +962,7 @@ async def _execute_remote(
                 assert surfaces is not None
                 tracer = ScriptRunPresenter(
                     run_id=None,
-                    context=RunContext(request.runnable.ref, request.model),
+                    context=RunContext(request.runnable.ref or "", request.model),
                     max_width=progress_width,
                     surfaces=surfaces,
                 )

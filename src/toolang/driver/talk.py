@@ -10,18 +10,12 @@ import logging
 from typing import Any
 
 from toolang.base.types.message import TextPart
-from toolang.base.types.model import ModelRequest
-from toolang.base.types.policy import AgentCeiling, RunBindings
+from toolang.base.types.policy import RunBindings
 from toolang.common.layout import AgentLayout
 from toolang.execution.executor import RunExecutor, RunSpec
-from toolang.execution.executor.resources import (
-    resolve_agent_resources,
-    resolve_runnable_resources,
-)
-from toolang.execution.runnables import resolve_runnable_reference, runnable_fallback
 from toolang.execution.threads import ThreadManager
 from toolang.execution.types import ThreadPrefix
-from toolang.lang.input import resolve_runnable_input
+from toolang.lang.input import CallInput
 from toolang.teaming.types import MessageReceiver
 from toolang.teaming.errors import (
     BackendUnavailable,
@@ -35,23 +29,6 @@ from toolang.state.state import AgentState
 logger = logging.getLogger(__name__)
 _CONTEXT = 20
 _CURSOR_SAVE_SECONDS = 2
-_INSTRUCTIONS = """Handle this message batch as the receiving agent.
-Use convo__team and convo__list to find agents and conversations; never inspect other agents'
-threads, files, configuration, or shell sessions to discover how to communicate.
-Unless explicitly asked to contact someone elsewhere, reply using convo__write
-with target set to the source conversation ID from this batch, message set to
-your reply text, and reply_to set to the source message's id. Never use stream_id
-as reply_to. convo__peek inspects history without consuming messages. The tool
-owns the envelope and delivery. Never resend a confirmed write or retry uncertain
-delivery. Your final output is a brief handling summary, not a chat message or a
-replies JSON object.
-Use convo__peek when you need earlier discussion. Do not re-handle your own messages,
-acknowledgements, completed discussions, or requests addressed only to others.
-If no action is needed, simply note that. Do not send acknowledgements of acknowledgements.
-Delegate substantial work to an available spawn target, preserving source context;
-tell the worker to send its result via convo__write. Do not await it in this handler.
-Batch:
-"""
 
 
 class MessagingLoop:
@@ -238,31 +215,6 @@ class MessagingLoop:
 
     async def handle(self, batch: dict[str, Any]) -> None:
         setup, state = self.get_setup(), self.get_state()
-        preferred = "talk"
-        custom = preferred in state.agics or preferred in state.flows
-        runnable = (
-            runnable_fallback(state, preferred=preferred)
-            if custom
-            else setup.defaults.runnable or runnable_fallback(state, preferred="talk")
-        )
-        resolved = resolve_runnable_reference(state, runnable)
-        model_request = setup.defaults.model
-        if model_request is None:
-            # Respect the handler's authored model selection, including flows
-            # that deliberately run without models.
-            resources = resolve_runnable_resources(
-                setup.models_effective(),
-                runnable=resolved.executable,
-                base=resolve_agent_resources(
-                    setup, state, AgentCeiling(), module=resolved.module
-                ),
-                setup=setup,
-                state=state,
-                module=resolved.module,
-            )
-            fallback = resources.models[0] if resources.models else None
-            model_request = ModelRequest(fallback) if fallback is not None else None
-        text = ("" if custom else _INSTRUCTIONS) + json.dumps(batch, ensure_ascii=False)
         spec = RunSpec(
             setup=setup,
             state=state,
@@ -270,17 +222,10 @@ class MessagingLoop:
             workdir=self.executor.resolve_workdir(
                 setup, state, workdir=None, inherit_thread_workdir=False
             ),
-            bindings=RunBindings(
-                runnable=runnable,
-                model=model_request.ref if model_request is not None else None,
-            ),
-            model_request=model_request,
+            bindings=RunBindings(),
+            driver="talk",
             limits=setup.limits,
-            input=resolve_runnable_input(
-                resolved.executable,
-                {"_": (TextPart(text),)},
-                structs={s.name: s for s in state.modules[resolved.module].structs},
-            ),
+            input=CallInput({"_": (TextPart(json.dumps(batch, ensure_ascii=False)),)}),
         )
         handle = self.executor.run(spec)
         try:

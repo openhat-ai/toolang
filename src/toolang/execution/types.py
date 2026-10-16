@@ -54,6 +54,8 @@ from toolang.lang.ast import (
 )
 from toolang.lang.types import Array, Struct, Value, validate_type, value_type
 
+DriverName = Literal["chat", "talk", "chore"]
+
 _EXECUTION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
 _LOCAL_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 ALLOW_FIELDS = frozenset(

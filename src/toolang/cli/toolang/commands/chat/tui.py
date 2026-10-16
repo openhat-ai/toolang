@@ -1038,7 +1038,11 @@ class ChatTuiApp:
                     self.client.list_models(), request.model
                 )
             if self.setting.runnable_follows_default and override.runnable is None:
-                self.setting = replace(self.setting, runnable=request.runnable.ref)
+                self.setting = replace(
+                    self.setting,
+                    runnable=request.runnable.ref
+                    or self.client.initial_setting().runnable,
+                )
         except ClickException as exc:
             self.status_bar.set_error(friendly_error(exc.message))
             return False

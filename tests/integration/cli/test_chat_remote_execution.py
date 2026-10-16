@@ -40,17 +40,27 @@ class _Snapshot:
 
 
 @pytest.mark.parametrize(
-    ("entry", "module"),
+    ("entry", "module", "selection"),
     [
-        ("agic:chat", False),
-        ("agic:_", False),
-        ("flow:_", False),
-        pytest.param("flow:chat", True, id="flow-module"),
-        pytest.param("agic:chat", True, id="agic-module"),
+        ("agic:chat", False, "agic:chat"),
+        ("agic:_", False, "agic:_"),
+        ("flow:_", False, "flow:_"),
+        pytest.param("flow:chat", True, "flow:chat", id="flow-module"),
+        pytest.param("agic:chat", True, "agic:chat", id="agic-module"),
+        pytest.param("agic:_", False, "_", id="agic-entry-alias"),
+        pytest.param("flow:_", False, "_", id="flow-entry-alias"),
+        pytest.param("agic:chat", False, "agent::chat", id="module-selector"),
+        pytest.param("agic:chat", False, "agent::agic:chat", id="module-ref"),
+        pytest.param(
+            "flow:chat", True, "runnables::chat::chat", id="file-module-selector"
+        ),
+        pytest.param(
+            "agic:chat", True, "runnables::chat::agic:chat", id="file-module-ref"
+        ),
     ],
 )
 def test_remote_chat_session_executes_against_the_agent_api(
-    tmp_path: Path, entry: str, module: bool
+    tmp_path: Path, entry: str, module: bool, selection: str
 ) -> None:
     source = """
 agic chat(_: Part[]) -> Part[]:
@@ -122,10 +132,19 @@ agic chat(_: Part[]) -> Part[]:
         )
         request = session.build_request(
             thread_id,
-            RunOverride(runnable=entry),
+            RunOverride(runnable=selection),
             CallInput({"_": "hello"}),
             session.initial_setting(),
         )
+        if "::" in selection:
+            assert request.runnable.ref == f"{selection.rsplit('::', 1)[0]}::{entry}"
+        selected = session.apply_setting(
+            session.initial_setting(), RunOverride(runnable=selection)
+        )
+        session_request = session.build_request(
+            thread_id, RunOverride(), CallInput({"_": "hello"}), selected
+        )
+        assert session_request.runnable.ref == request.runnable.ref
         session.run(
             request,
             events.append,
@@ -161,7 +180,7 @@ def test_remote_chat_default_runnable_tracks_the_latest_state(tmp_path: Path) ->
     original.store.close()
     configured_setup = replace(
         original.setup,
-        defaults=replace(original.setup.defaults, runnable="agic:chat"),
+        defaults=replace(original.setup.defaults),
     )
     state_snapshot = _Snapshot(original.state)
     core = AgentCore(original.setup.layout)
@@ -187,19 +206,28 @@ def test_remote_chat_default_runnable_tracks_the_latest_state(tmp_path: Path) ->
     )
 
     try:
-        assert session.initial_setting().runnable == "agic:chat"
+        setting = session.initial_setting()
+        assert setting.runnable == "agic:chat"
+        thread_id = session.create_thread()
+        request = session.build_request(
+            thread_id,
+            RunOverride(),
+            CallInput({"_": "hello"}),
+            setting,
+        )
+        assert request.runnable.ref is None
+        assert request.driver == "chat"
         (original.setup.layout.home / "agent.too").write_text(
-            "agic assistant:\n  hello\n",
+            "flow chat(_: Text) -> Text:\n  pass\n",
             encoding="utf-8",
         )
         state_snapshot.value = prepare_agent_state(original.setup.layout)
-        request = session.build_request(
-            session.create_thread(),
-            RunOverride(),
-            CallInput({"_": "hello"}),
-            session.initial_setting(),
+        errors = []
+        session.run(request, lambda _event: None, errors.append)
+        assert errors == []
+        assert session.get_result(None, thread_id=thread_id).output == (
+            TextPart("hello"),
         )
-        assert request.runnable.ref == "agic:assistant"
     finally:
         session.close()
         asyncio.run(core.close())
@@ -318,7 +346,8 @@ agic xyz(_: Text) -> Text:
             request = session.build_request(
                 thread, RunOverride(), CallInput({"_": prompt}), setting
             )
-            assert request.runnable.ref == "agic:chat"
+            assert request.runnable.ref is None
+            assert request.driver == "chat"
             session.run(request, lambda _event: None, errors.append)
             assert session.get_result(None, thread_id=thread).output == (
                 TextPart(expected),

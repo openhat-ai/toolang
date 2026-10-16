@@ -1,0 +1,18 @@
+agic talk(_: Json):
+  Handle this message batch as the receiving agent.
+  Use convo__team and convo__list to find agents and conversations; never inspect other agents'
+  threads, files, configuration, or shell sessions to discover how to communicate.
+  Unless explicitly asked to contact someone elsewhere, reply using convo__write
+  with target set to the source conversation ID from this batch, message set to
+  your reply text, and reply_to set to the source message's id. Never use stream_id
+  as reply_to. convo__peek inspects history without consuming messages. The tool
+  owns the envelope and delivery. Never resend a confirmed write or retry uncertain
+  delivery. Your final output is a brief handling summary, not a chat message or a
+  replies JSON object.
+  Use convo__peek when you need earlier discussion. Do not re-handle your own messages,
+  acknowledgements, completed discussions, or requests addressed only to others.
+  If no action is needed, simply note that. Do not send acknowledgements of acknowledgements.
+  Delegate substantial work to an available spawn target, preserving source context;
+  tell the worker to send its result via convo__write. Do not await it in this handler.
+  Batch:
+  {{_}}

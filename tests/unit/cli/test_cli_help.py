@@ -141,7 +141,10 @@ def test_field_tables_cover_parser_fields_and_repetition_rules(
     for section, fields in (
         ("Allow fields", _ALLOW_FIELDS),
         ("Limit fields", _LIMIT_FIELDS),
-        ("Default fields", _DEFAULT_FIELDS),
+        (
+            "Default fields",
+            tuple(name for name in _DEFAULT_FIELDS if name != "runnable"),
+        ),
     ):
         rows = output.split(f"\n{section}:\n", 1)[1].split("\n\n", 1)[0]
         assert tuple(line.split()[0] for line in rows.splitlines()) == fields

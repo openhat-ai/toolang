@@ -13,10 +13,10 @@ from toolang.execution.policy import (
     apply_session_setting,
     materialize_run_setting,
 )
-from toolang.execution.runnables import parse_runnable_ref
 from toolang.execution.schemas import RunRequest, RunnableRequest
 from toolang.execution.types import RunOverride, SessionSetting
 from toolang.lang.input import CallInput
+from toolang.lang.types import parse_runnable_ref_parts
 
 
 def validate_model_reasoning_request(
@@ -86,8 +86,6 @@ def build_run_request(
     """Materialize one session snapshot and input-local override."""
 
     ceilings, effective = materialize_run_setting(surface, setting, override)
-    if effective.runnable is None:
-        raise ValueError("chat session has no runnable")
     model = effective.model
     if model is not None:
         model = replace(model, ref=resolve_model_ref(model.ref))
@@ -95,10 +93,13 @@ def build_run_request(
         thread_id=thread_id,
         request_id=request_id,
         runnable=RunnableRequest(
-            resolve_runnable_ref(effective.runnable),
+            resolve_runnable_ref(effective.runnable)
+            if effective.runnable is not None and not effective.runnable_follows_default
+            else None,
             input,
         ),
         model=model,
+        driver="chat",
         policy=RunPolicy(allow=ceilings, limits=effective.limits),
         workdir=effective.workdir,
         workdir_base=effective.workdir_base,
@@ -174,7 +175,9 @@ def materialize_runnable_list_ref(
 ) -> str:
     """Resolve one user-facing value to a kind-qualified runnable ref."""
 
-    requested_name, requested_kind = parse_runnable_ref(selection)
+    requested = parse_runnable_ref_parts(selection)
+    requested_name, requested_kind = requested.name, requested.kind
+    entry_selector = requested_name == "_"
     if kind in {"agic", "flow"}:
         if requested_kind not in {None, kind}:
             raise ValueError(f"runnable selection has the wrong kind: {selection}")
@@ -188,11 +191,18 @@ def materialize_runnable_list_ref(
         item = cast(Mapping[str, object], raw)
         name = _text(item.get("name"))
         item_kind = _text(item.get("kind")) or requested_kind
-        if name != requested_name or item_kind not in {"agic", "flow"}:
+        if item_kind not in {"agic", "flow"}:
+            continue
+        if name != requested_name and not (
+            entry_selector and name is not None and name.startswith("<entry:")
+        ):
             continue
         if requested_kind is not None and requested_kind != item_kind:
             continue
-        matches.append(f"{item_kind}:{name}")
+        reference = f"{item_kind}:{name}"
+        matches.append(
+            f"{requested.module}::{reference}" if requested.module else reference
+        )
     if len(matches) == 1:
         return matches[0]
     if not matches:
