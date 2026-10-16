@@ -16,8 +16,10 @@ a different runnable.
 This definition supersedes only the handler selection order in
 [Execution drivers and chores](serve-execution-drivers.md). User module
 composition continues to follow [Unified Runnable Modules](flat-runnable-modules.md).
-Driver admission, triggers, thread lifecycle, messaging transport, standalone
-script selection, and nested runnable calls are outside this change.
+Driver enablement and admission gates, triggers, thread lifecycle, messaging
+transport, standalone script selection, and nested runnable calls are outside
+this change. Caller configuration and session/input precedence are also outside
+this definition.
 
 ## Resolution Contract
 
@@ -37,6 +39,13 @@ User handlers may be agics or flows. A valid export from
 unnamed; it does not participate in priority 4. The unnamed fallback is the
 agent entry, retaining the existing [unnamed identity contract](unnamed-runnable-identity.md).
 
+An invocation may select any runnable allowed by the existing reference rules,
+including an unnamed entry through `_`. Only priorities 2 and 3 require the
+driver's name. An explicitly selected unnamed entry therefore wins over the
+runtime Talk handler. Only an omitted selection enters automatic lookup; an
+empty or malformed ref is an error. Exhausting the candidates reports the driver
+and missing handler before accepting a run.
+
 Keep existing user-source composition unchanged: a public handler declared in
 `agent.too` conflicts with the same public export from `runnables/`, including
 across runnable kinds. Do not introduce `agent.too` precedence or silent
@@ -46,27 +55,33 @@ user-source composition conflicts.
 Fallback applies only when a candidate is absent. An invocation-selected ref
 that is missing or invalid fails immediately. Once a handler is selected,
 kind mismatch, invalid inputs, unavailable resources, execution failure, or
-cancellation cannot select a lower-priority handler. Invalid authored sources
-continue through existing State acceptance and diagnostics; this resolver does
-not suppress preparation errors or reinterpret them as successful overrides.
+cancellation cannot select a lower-priority handler. User candidate presence is
+determined from the captured accepted State. Invalid authored sources continue
+through existing State acceptance and diagnostics; selection neither reparses
+excluded sources nor suppresses their diagnostics. A rejected source is not a
+candidate.
 
 ## Caller and Executor Boundary
 
 Session selection and input overrides are caller behavior. Callers merge their
 existing selection inputs into one optional invocation-selected ref; the
 executor does not distinguish their origins or add session/input priority tiers.
-Callers also materialize configured `[default].runnable` as that invocation
-selection; session choices and input overrides retain their existing precedence
-over the configured value. The executor does not read configuration to insert
-another fallback tier. A configured runnable therefore occupies priority 1 for
-every driver.
+This contract does not redefine when a caller uses `[default].runnable`, require
+every driver to forward it, or change its precedence against session/input
+choices. If a caller supplies a configured value as its invocation selection,
+priority 1 applies to that supplied value. With no invocation selection, the
+executor starts at priority 2 even if Setup contains a configured default; it
+does not read configuration to insert another tier.
 
 Automatic handler selection belongs to execution admission, before handler
 input coercion, resource validation, or run acceptance. Callers must not resolve
 an automatic default early and then present it as an explicit invocation choice.
 Local and remote execution, default displays, and request construction must use
 the same execution-owned resolution contract and preserve whether selection was
-explicit or automatic. Do not infer the driver from thread prefixes or client IDs.
+explicit or automatic. A displayed default is a preview, not an invocation
+selection: automatic admission resolves against the captured acceptance State
+even if the preview used an older State. Existing input source-revision checks
+still apply. Do not infer the driver from thread prefixes or client IDs.
 
 Selection uses the captured user State and runtime handler sources. It does not
 refresh watchers, parse session commands, inspect the environment, or read user
@@ -84,7 +99,7 @@ Move the current default message-handling instructions from
 conversation tools, history lookup, duplicate avoidance, and the final handling
 summary. The primary input remains the existing JSON batch, accepted as
 `Json`; the driver supplies batch data without prepending behavioral instructions
-for any selected handler. User handlers receive the same batch contract as today.
+for any selected handler. Named user handlers retain their existing batch contract.
 
 The runtime handler executes as the receiving agent with its captured Setup,
 workspace, resource limits, and effective agent capabilities. Package ownership
@@ -109,11 +124,13 @@ Use deterministic offline providers and the existing fake messaging backend.
    both user runnable kinds; absent Chat/Chore handlers and absent unnamed entry
    fail.
 2. Explicit selection: invocation refs win over all automatic candidates;
-   missing refs and kind mismatches fail without trying another candidate.
-   Equivalent refs from session and input selection behave identically.
-   A configured default is supplied as an invocation selection for every driver.
+   `_` bypasses runtime Talk. Missing, empty, malformed, or kind-mismatched refs
+   fail without another candidate. Equivalent refs from session and input
+   selection behave identically. A configured Setup value alone does not become
+   an executor invocation selection.
 3. User sources: valid named and unnamed file exports act as public handlers;
    `agent.too`/file public-name conflicts retain current diagnostics and rejection.
+   Excluded sources retain their diagnostics and do not reenter selection.
 4. Runtime Talk: a batch with no user runnable executes the packaged handler;
    an unnamed user entry does not replace it, while a user named `talk` does.
 5. Failure boundaries: invalid inputs, unavailable resources, failed runs, and
@@ -121,9 +138,10 @@ Use deterministic offline providers and the existing fake messaging backend.
 6. Input and resources: every Talk handler receives only the batch as input;
    runtime instructions come from its Program, agent ceilings remain effective,
    and custom agic/flow handlers retain their model behavior.
-7. Execution integration: local/remote defaults and actual admission agree;
-   automatic selection is resolved against the accepted snapshot. Recorded
-   runtime source survives reload/restart without replacing the user's State.
+7. Execution integration: local/remote selection agrees for the same driver,
+   invocation, and State. Stale previews neither pin automatic selection nor
+   bypass input source-revision checks. Recorded runtime source survives
+   reload/restart without replacing the user's State.
 
 ## Implementation Touchpoints and Verification
 
@@ -150,13 +168,12 @@ relative links, and `git diff --check`.
 
 Talk will use its runtime handler instead of implicitly running the user's
 unnamed entry. To retain custom message handling, declare a named `talk` handler
-or provide an invocation-selected runnable. Existing custom handlers and
-user-source collisions keep their behavior; no authored-file migration is needed.
-
-A configured `[default].runnable` will also take precedence over named Talk and
-Chore handlers, matching invocation selection for Chat. Remove that configured
-value to use automatic driver handlers, or select the intended handler at the
-call site.
+or provide an invocation-selected runnable. Named user handlers retain their
+batch input contract, and user-source collisions keep their current behavior.
+For user runnables previously used with the injected default instructions, those
+instructions must now be authored in the selected runnable.
+No authored-file migration is performed, and caller configuration policy is not
+changed by this definition.
 
 Main risks are callers accidentally turning automatic defaults into invocation
 selections, runtime source ownership changing user resources, and restart losing
