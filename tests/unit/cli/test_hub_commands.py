@@ -12,6 +12,7 @@ from toolang.cli.toolang.commands import hub
 from toolang.cli.common.ports import agent_port
 from toolang.common.layout import AgentLayout
 from toolang.up.config import resolve_port_override
+from toolang.up.observation import RuntimeRegistration
 from toolang.up.records import HubRecord
 
 
@@ -52,10 +53,20 @@ def test_hub_status_shows_server_version_inline(
         "Client",
         lambda **kwargs: client_type(**kwargs, transport=httpx.MockTransport(respond)),
     )
-    assert cli.main(["--root", str(tmp_path), "hub"]) == 0
-    state = "running" if healthy else "unavailable"
-    assert capsys.readouterr().out == (f"Hub {state}: http://127.0.0.1:7123, {label}\n")
-    assert requests == ["/healthz", "/info"]
+    layout = AgentLayout.resident(tmp_path, "alice")
+    layout.home.mkdir(parents=True)
+    with RuntimeRegistration(
+        layout, toolang_root=tmp_path, drivers=frozenset({"chat", "talk"})
+    ):
+        assert cli.main(["--root", str(tmp_path), "hub"]) == 0
+        state = "running" if healthy else "unavailable"
+        output = capsys.readouterr().out
+        assert output.startswith(
+            f"hub {state} · 1 agents · 1 running · 1 talk enabled\n\n"
+        )
+        assert label in output and state in output and "alice" in output
+        assert "http://127.0.0.1:7123" not in output
+        assert requests == ["/healthz", "/info"]
 
 
 @pytest.mark.parametrize("healthy", [True, False])
@@ -86,7 +97,9 @@ def test_hub_status_missing_metadata_keeps_readiness(
     )
     assert cli.main(["--root", str(tmp_path), "hub"]) == 0
     state = "running" if healthy else "unavailable"
-    assert capsys.readouterr().out == (f"Hub {state}: http://127.0.0.1:7123, unknown\n")
+    output = capsys.readouterr().out
+    assert output.startswith(f"hub {state} · 0 agents · 0 running · 0 talk enabled\n\n")
+    assert f"{state} · unknown" in output
 
 
 @pytest.mark.parametrize("state", ["starting", "stopped", "stale"])
@@ -111,12 +124,26 @@ def test_hub_status_without_ready_process_skips_http(
 
     monkeypatch.setattr(module.httpx, "Client", fail)
     assert cli.main(["--root", str(tmp_path), "hub"]) == 0
-    expected = (
-        "Hub starting: http://127.0.0.1:7123, unknown\n"
-        if state == "starting"
-        else "Hub stopped\n"
+    output = capsys.readouterr().out
+    expected = "starting · unknown" if state == "starting" else "not running"
+    assert output.startswith(
+        f"hub {expected.split(' · ')[0]} · 0 agents · 0 running · 0 talk enabled\n\n"
     )
-    assert capsys.readouterr().out == expected
+    assert expected in output
+    assert "http://127.0.0.1:7123" not in output
+
+
+def test_hub_inspection_failure_keeps_local_agents_visible(tmp_path, capsys):
+    (tmp_path / "agents" / "alice").mkdir(parents=True)
+    hub_dir = tmp_path / "hub"
+    hub_dir.mkdir()
+    (hub_dir / "hub.json").write_text("invalid")
+
+    assert cli.main(["--root", str(tmp_path), "hub"]) == 0
+    output = capsys.readouterr().out
+    assert "hub - · 1 agents · 0 running · 0 talk enabled · partial" in output
+    assert "Hub" in output and "alice" in output
+    assert "partial: Hub: record inspection failed" in output
 
 
 def test_hub_status_command_is_removed(tmp_path, capsys):
@@ -204,4 +231,7 @@ def test_root_api_settings_rejected_and_talk_requires_running_hub(tmp_path, caps
     assert cli.main(["--root", str(tmp_path), "talk"]) != 0
     assert "too hub start" in capsys.readouterr().err
     assert cli.main(["--root", str(tmp_path), "hub"]) == 0
-    assert "Hub stopped" in capsys.readouterr().out
+    assert (
+        "hub not running · 0 agents · 0 running · 0 talk enabled"
+        in capsys.readouterr().out
+    )

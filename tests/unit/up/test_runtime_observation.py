@@ -14,6 +14,7 @@ from toolang.up.observation import (
     RuntimeRegistration,
     instance_filename,
     running_instances,
+    runtime_snapshot,
 )
 
 
@@ -229,6 +230,7 @@ def test_stale_registration_and_replaced_owner_are_safe(tmp_path) -> None:
     current.__enter__()
     old.close()
     assert running_instances(tmp_path)[0]["drivers"] == ["chat"]
+    assert runtime_snapshot(tmp_path).instances[0].drivers == ("chat",)
     from toolang.up.records import patch_workload
 
     patch_workload(layout.runtime_status, current.token, {"process_created": 0})
@@ -465,3 +467,280 @@ def test_agent_removal_retains_home_used_by_an_independent_script(tmp_path):
         with pytest.raises(ValueError, match="execution instance"):
             asyncio.run(remove_agent(layout))
         assert layout.home.exists()
+
+
+def test_runtime_snapshot_lists_residents_and_registered_placements_once(tmp_path):
+    root = tmp_path / "toolang"
+    resident = AgentLayout.resident(root, "alice")
+    resident.home.mkdir(parents=True)
+    never_started = AgentLayout.resident(root, "bob")
+    never_started.home.mkdir(parents=True)
+    visiting = AgentLayout.visiting(
+        "https://example.com/alice.too", "alice", toolang_root=root
+    )
+    roaming = AgentLayout.roaming(tmp_path / "alice.too")
+
+    with (
+        RuntimeRegistration(
+            resident, toolang_root=root, drivers=frozenset({"chat", "talk"})
+        ),
+        RuntimeRegistration(visiting, toolang_root=root, drivers=frozenset({"chat"})),
+        RuntimeRegistration(roaming, toolang_root=root, drivers=frozenset()),
+    ):
+        snapshot = runtime_snapshot(root)
+
+    assert not snapshot.partial
+    assert len(snapshot.instances) == 4
+    running = [item for item in snapshot.instances if item.state == "running"]
+    assert len(running) == 3
+    assert (
+        sum(item.drivers is not None and "talk" in item.drivers for item in running)
+        == 1
+    )
+    assert {item.placement for item in running} == {"resident", "visiting", "roaming"}
+    assert running[0].drivers is not None and "talk" in running[0].drivers
+    assert all(
+        item.drivers is None or "talk" not in item.drivers for item in running[1:]
+    )
+    assert len({item.label for item in running}) == 3
+    assert len({item.identity for item in running}) == 3
+    stopped = next(item for item in snapshot.instances if item.name == "bob")
+    assert stopped.state == "not running" and stopped.drivers is None
+
+
+def test_runtime_snapshot_reports_starting_and_invalid_drivers_as_partial(tmp_path):
+    from toolang.up.records import update_record
+
+    root = tmp_path / "toolang"
+    layout = AgentLayout.resident(root, "alice")
+    layout.home.mkdir(parents=True)
+    with RuntimeRegistration(
+        layout, toolang_root=root, drivers=frozenset({"chat", "talk"})
+    ) as registration:
+        update_record(
+            layout.runtime_status,
+            lambda entry: entry["workload"].update(status="starting"),
+            launch_id=registration.token,
+        )
+        starting = runtime_snapshot(root)
+        row = starting.instances[0]
+        assert row.state == "unknown"
+        assert row.observed_state == "starting"
+        assert row.drivers is None and row.diagnostic is not None
+        assert starting.partial
+
+        update_record(
+            layout.runtime_status,
+            lambda entry: (
+                entry["workload"].update(status="running"),
+                entry["control"].pop("drivers", None),
+            ),
+            launch_id=registration.token,
+        )
+        invalid = runtime_snapshot(root)
+        row = invalid.instances[0]
+        assert row.state == "running"
+        assert (
+            row.drivers is None
+            and row.diagnostic == "effective launch drivers are missing or invalid"
+        )
+        assert invalid.partial
+
+
+def test_runtime_snapshot_reads_a_shared_status_document_once(tmp_path, monkeypatch):
+    import toolang.up.observation as observation
+
+    root = tmp_path / "toolang"
+    layout = AgentLayout.resident(root, "alice")
+    layout.home.mkdir(parents=True)
+    with RuntimeRegistration(layout, toolang_root=root, drivers=frozenset({"talk"})):
+        original = observation.read_document
+        reads = []
+
+        def counted(path, *, location="host"):
+            reads.append(path)
+            return original(path, location=location)
+
+        monkeypatch.setattr(observation, "read_document", counted)
+        snapshot = runtime_snapshot(root)
+        assert len(snapshot.instances) == 1
+        assert reads.count(layout.runtime_status.resolve()) == 1
+
+
+def test_runtime_snapshot_keeps_valid_residents_beside_malformed_peer(tmp_path):
+    valid = AgentLayout.resident(tmp_path, "alice")
+    valid.home.mkdir(parents=True)
+    malformed = AgentLayout.resident(tmp_path, "bob")
+    malformed.home.mkdir(parents=True)
+    malformed.runtime_status.parent.mkdir(parents=True, exist_ok=True)
+    malformed.runtime_status.write_text("not json")
+
+    snapshot = runtime_snapshot(tmp_path)
+
+    alice = next(item for item in snapshot.instances if item.name == "alice")
+    bob = next(item for item in snapshot.instances if item.name == "bob")
+    assert alice.state == "not running"
+    assert bob.state == "unknown" and bob.diagnostic is not None
+    assert snapshot.partial
+
+
+def test_runtime_snapshot_caps_independent_liveness_probes_at_eight(
+    tmp_path, monkeypatch
+):
+    from threading import Lock
+    import time
+
+    from toolang.up.process import AgentProcess, AgentStatus
+
+    root = tmp_path / "toolang"
+    registrations = []
+    for index in range(20):
+        layout = AgentLayout.resident(root, f"agent{index}")
+        layout.home.mkdir(parents=True)
+        registration = RuntimeRegistration(
+            layout, toolang_root=root, drivers=frozenset({"talk"})
+        )
+        registration.__enter__()
+        registrations.append(registration)
+
+    active = 0
+    maximum = 0
+    lock = Lock()
+
+    def inspect(self, **kwargs):
+        nonlocal active, maximum
+        with lock:
+            active += 1
+            maximum = max(maximum, active)
+        time.sleep(0.02)
+        with lock:
+            active -= 1
+        return AgentStatus(self.layout.name, "running", None, None, None, None)
+
+    monkeypatch.setattr(AgentProcess, "status", inspect)
+    try:
+        snapshot = runtime_snapshot(root)
+    finally:
+        for registration in registrations:
+            registration.close()
+
+    assert len(snapshot.instances) == 20
+    assert all(item.state == "running" for item in snapshot.instances)
+    assert maximum == 8
+
+
+def test_runtime_snapshot_batches_docker_liveness_references(tmp_path, monkeypatch):
+    import time
+
+    from toolang.base.types.sandbox import SandboxRef
+    from toolang.up.process import AgentProcess, AgentStatus
+    from toolang.up.records import SandboxState
+
+    root = tmp_path / "toolang"
+    registrations = []
+    for index in range(3):
+        layout = AgentLayout.resident(root, f"agent{index}")
+        layout.home.mkdir(parents=True)
+        registration = RuntimeRegistration(
+            layout, toolang_root=root, drivers=frozenset({"talk"})
+        )
+        registration.__enter__()
+        registrations.append(registration)
+        SandboxState(
+            "docker:image",
+            SandboxRef(
+                f"container-{index}",
+                f"http://127.0.0.1:{7000 + index}",
+                runtime_kind="container",
+            ),
+            registration.token,
+        ).save(layout.runtime_status)
+
+    batches = []
+    active = 0
+    maximum = 0
+
+    def batch(cls, owners):
+        batches.append(tuple(reference.ref.runtime_id for _, reference, _ in owners))
+
+    def inspect(self, **kwargs):
+        nonlocal active, maximum
+        active += 1
+        maximum = max(maximum, active)
+        time.sleep(0.01)
+        active -= 1
+        return AgentStatus(
+            self.layout.name, "running", None, None, None, "docker:image"
+        )
+
+    monkeypatch.setattr(AgentProcess, "cache_docker_states", classmethod(batch))
+    monkeypatch.setattr(AgentProcess, "status", inspect)
+    try:
+        snapshot = runtime_snapshot(root)
+    finally:
+        for registration in registrations:
+            registration.close()
+
+    assert len(batches) == 1
+    assert batches[0] == ("container-0", "container-1", "container-2")
+    assert len(snapshot.instances) == 3
+    assert maximum <= 3
+
+
+def test_runtime_snapshot_preserves_distinct_temporary_instance_labels(tmp_path):
+    from dataclasses import replace
+
+    root = tmp_path / "toolang"
+    base = AgentLayout.visiting(
+        "https://example.com/alice.too", "alice", toolang_root=root
+    )
+    one = replace(base, instance="one")
+    two = replace(base, instance="two")
+    with (
+        RuntimeRegistration(one, toolang_root=root, drivers=frozenset({"talk"})),
+        RuntimeRegistration(two, toolang_root=root, drivers=frozenset({"talk"})),
+    ):
+        snapshot = runtime_snapshot(root)
+
+    assert len(snapshot.instances) == 2
+    assert {item.runtime_instance for item in snapshot.instances} == {"one", "two"}
+    assert len({item.label for item in snapshot.instances}) == 2
+    assert all("@v" in item.label and "#" in item.label for item in snapshot.instances)
+
+
+@pytest.mark.parametrize("terminal_state", ["stopped", "failed"])
+def test_runtime_snapshot_keeps_failed_residents_and_excludes_finished_visitors(
+    tmp_path, terminal_state
+):
+    from toolang.up.records import update_record
+
+    root = tmp_path / "toolang"
+    resident = AgentLayout.resident(root, "alice")
+    resident.home.mkdir(parents=True)
+    visiting = AgentLayout.visiting(
+        "https://example.com/visitor.too", "visitor", toolang_root=root
+    )
+    with (
+        RuntimeRegistration(
+            resident, toolang_root=root, drivers=frozenset({"talk"})
+        ) as resident_run,
+        RuntimeRegistration(
+            visiting, toolang_root=root, drivers=frozenset({"talk"})
+        ) as visiting_run,
+    ):
+        for layout, registration in (
+            (resident, resident_run),
+            (visiting, visiting_run),
+        ):
+            update_record(
+                layout.runtime_status,
+                lambda entry: entry["workload"].update(status=terminal_state, pid=None),
+                instance=layout.instance,
+                launch_id=registration.token,
+            )
+        snapshot = runtime_snapshot(root)
+
+    assert len(snapshot.instances) == 1
+    assert snapshot.instances[0].name == "alice"
+    assert snapshot.instances[0].state == "not running"
+    assert snapshot.instances[0].drivers is None

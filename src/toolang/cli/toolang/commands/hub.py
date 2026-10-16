@@ -5,6 +5,7 @@ import sys
 from typing import Annotated
 
 import typer
+from rich.console import Console
 from typer._click.exceptions import ClickException
 
 from toolang.cli.common.context import context_root, user_call
@@ -14,6 +15,8 @@ from toolang.cli.common.help import CliCommand, CliGroup
 from toolang.setup.teaming import load_teaming_root
 from toolang.up.config import resolve_port_override
 from toolang.up.hub import HubProcess, serve as serve_hub
+from toolang.up.observation import RuntimeInstanceSnapshot, runtime_snapshot
+from .hub_status import HubSnapshot, render_hub_snapshot
 
 PortOption = Annotated[
     int | None, typer.Option("--port", min=1, max=65535, help="Hub API port")
@@ -99,20 +102,47 @@ def stop(
 
 
 def status(ctx: typer.Context) -> None:
-    """Show the hub endpoint, version, and readiness"""
+    """Show Hub readiness and agent instance states"""
     if ctx.invoked_subcommand is not None:
         return
-    hub = HubProcess(context_root(ctx))
-    record = user_call(hub.current)
-    if record is None:
-        typer.echo("Hub stopped")
-        return
-    state = (
-        "starting"
-        if record.status == "starting"
-        else "running"
-        if hub.ready(record)
-        else "unavailable"
-    )
-    version = version_label(hub.version(record))
-    typer.echo(f"Hub {state}: {record.connection.endpoint}, {version}")
+    root = context_root(ctx)
+    try:
+        agents = runtime_snapshot(root)
+    except Exception as exc:
+        agents = RuntimeInstanceSnapshot(
+            (), (f"agent discovery: {str(exc).strip() or type(exc).__name__}",)
+        )
+
+    hub = HubProcess(root)
+    hub_diagnostic = None
+    try:
+        record = hub.current()
+    except Exception as exc:
+        record = None
+        state = "-"
+        version = None
+        hub_diagnostic = (
+            f"record inspection failed: {str(exc).strip() or type(exc).__name__}"
+        )
+    else:
+        if record is None:
+            state = "not running"
+            version = None
+        else:
+            try:
+                state = (
+                    "starting"
+                    if record.status == "starting"
+                    else "running"
+                    if hub.ready(record)
+                    else "unavailable"
+                )
+                version = version_label(hub.version(record))
+            except Exception as exc:
+                state = "-"
+                version = None
+                hub_diagnostic = (
+                    f"state inspection failed: {str(exc).strip() or type(exc).__name__}"
+                )
+
+    render_hub_snapshot(HubSnapshot(state, version, agents, hub_diagnostic), Console())

@@ -2,16 +2,21 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 from uuid import uuid4
+from typing import Any, TypeGuard, cast
 
 import psutil
 
 from toolang.common.files import atomic_write_text, file_write_lock
-from toolang.common.layout import AgentLayout
+from toolang.common.layout import AgentLayout, AgentPlacement
+from toolang.up.discovery import agent_layouts
 from toolang.up.records import (
     read_document,
     read_record,
@@ -19,7 +24,7 @@ from toolang.up.records import (
     remove_finished_instance,
     control_owner,
 )
-from toolang.up.types import ExecutionDrivers
+from toolang.up.types import ALL_DRIVERS, ExecutionDrivers
 
 
 def _registered_layout(control: dict) -> AgentLayout:
@@ -254,3 +259,636 @@ def running_instances(root: Path) -> tuple[dict, ...]:
         except (OSError, ValueError, KeyError, TypeError):
             continue
     return tuple(instances)
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeInstance:
+    """One installed or registered runtime visible to the Hub snapshot."""
+
+    name: str
+    placement: AgentPlacement
+    runtime_instance: str | None
+    identity: str
+    state: str
+    drivers: tuple[str, ...] | None
+    observed_state: str | None = None
+    diagnostic: str | None = None
+
+    @property
+    def label(self) -> str:
+        """Return a stable display name that distinguishes placements and instances."""
+        if self.placement == "resident":
+            return (
+                self.name
+                if self.runtime_instance is None
+                else f"{self.name}#{self.runtime_instance}"
+            )
+        marker = "v" if self.placement == "visiting" else "r"
+        value = f"{self.name}@{marker}{self.identity[:8]}"
+        if self.runtime_instance is not None:
+            value += f"#{self.runtime_instance}"
+        return value
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeInstanceSnapshot:
+    """A point-in-time roster and discovery diagnostics for one Toolang root."""
+
+    instances: tuple[RuntimeInstance, ...]
+    diagnostics: tuple[str, ...] = ()
+
+    @property
+    def partial(self) -> bool:
+        return bool(self.diagnostics) or any(
+            item.diagnostic is not None for item in self.instances
+        )
+
+
+@dataclass(slots=True)
+class _SnapshotCandidate:
+    status_path: Path
+    instance_key: str
+    launch_id: str | None
+    layout: AgentLayout | None
+    entry: dict[str, Any] | None
+    diagnostic: str | None = None
+
+
+_REFERENCE_NAME = re.compile(
+    r"(?P<name>[a-z][a-z0-9_]{0,63})"
+    r"(?:@(?P<placement>[vr])(?P<source>[0-9a-f]{16}))?"
+    r"(?:@(?P<instance>[A-Za-z0-9]+))?\.json\Z"
+)
+
+
+def _resolved(path: Path) -> Path:
+    path = path.expanduser()
+    try:
+        return path.resolve(strict=False)
+    except (OSError, RuntimeError):
+        return path.absolute()
+
+
+def _fallback_layout(
+    reference_path: Path, status_path: Path, toolang_root: Path
+) -> AgentLayout | None:
+    """Recover display identity from our stable registration filename."""
+    match = _REFERENCE_NAME.fullmatch(reference_path.name)
+    if match is None or len(status_path.parents) < 4:
+        return None
+    name = match.group("name")
+    placement = match.group("placement")
+    source_id = match.group("source")
+    instance = match.group("instance")
+    root = status_path.parents[3]
+    try:
+        if placement == "v":
+            layout = AgentLayout(
+                root,
+                name,
+                "visiting",
+                instance=instance,
+                toolang_root=toolang_root,
+                source_id=source_id,
+            )
+        elif placement == "r":
+            layout = AgentLayout(
+                root,
+                name,
+                "roaming",
+                instance=instance,
+                source_id=source_id,
+            )
+        else:
+            layout = AgentLayout(root, name, "resident", instance=instance)
+        if _resolved(layout.runtime_status) != _resolved(status_path):
+            return None
+        if placement is None and _resolved(layout.root) != _resolved(toolang_root):
+            return None
+        if placement == "v" and (
+            _resolved(layout.root.parent) != _resolved(Path("/tmp"))
+            or layout.root.name != f"toolang-{name}-{source_id}"
+        ):
+            return None
+        if placement == "r" and layout.root.name != ".toolang":
+            return None
+        return layout
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return None
+
+
+def _snapshot_entry(value: object) -> TypeGuard[dict[str, Any]]:
+    if not isinstance(value, dict):
+        return False
+    entry = cast(dict[str, Any], value)
+    return (
+        isinstance(entry.get("launch_id"), str)
+        and isinstance(entry.get("control"), dict)
+        and isinstance(entry.get("workload"), dict)
+    )
+
+
+def _runtime_layout(
+    control: dict, status_path: Path, toolang_root: Path
+) -> AgentLayout:
+    """Validate persisted identity before probing its runtime."""
+    layout = _registered_layout(control)
+    recorded_toolang_root = control.get("toolang_root")
+    if not isinstance(recorded_toolang_root, str):
+        raise ValueError("runtime identity has no Toolang root")
+    recorded_root = Path(recorded_toolang_root).expanduser()
+    if (
+        recorded_root.is_absolute()
+        and _resolved(recorded_root) != _resolved(toolang_root)
+    ) or _resolved(layout.runtime_status) != _resolved(status_path):
+        raise ValueError("runtime identity does not match its registration")
+    if layout.placement == "resident" and _resolved(layout.root) != _resolved(
+        toolang_root
+    ):
+        raise ValueError("resident runtime is outside the selected Toolang root")
+    if layout.placement == "visiting" and (
+        _resolved(layout.root.parent) != _resolved(Path("/tmp"))
+        or layout.root.name != f"toolang-{layout.name}-{layout.source_id}"
+    ):
+        raise ValueError("visiting runtime path does not match its source identity")
+    if layout.placement == "roaming" and layout.root.name != ".toolang":
+        raise ValueError("roaming runtime path is invalid")
+    return layout
+
+
+def runtime_snapshot(root: Path) -> RuntimeInstanceSnapshot:
+    """Discover installed residents and registered runtime instances safely.
+
+    Status documents are cached by path and read once for discovery. Liveness is
+    inspected from those snapshots; Docker ownership is batched before at most
+    eight independent agent probes run concurrently. Existing running_instances()
+    semantics remain unchanged for activity and status callers.
+    """
+    from toolang.up.process import AgentProcess, AgentStatus
+
+    root = _resolved(root)
+    diagnostics: list[str] = []
+    candidates: dict[tuple[Path, str, str | None], _SnapshotCandidate] = {}
+    documents: dict[Path, tuple[dict | None, str | None]] = {}
+
+    def read_once(path: Path) -> tuple[dict[str, Any] | None, str | None]:
+        resolved = _resolved(path)
+        if resolved not in documents:
+            try:
+                documents[resolved] = (read_document(resolved), None)
+            except (OSError, ValueError, TypeError) as exc:
+                detail = str(exc).strip() or type(exc).__name__
+                documents[resolved] = (None, detail[:180])
+        return documents[resolved]
+
+    def add(candidate: _SnapshotCandidate) -> None:
+        status_path = _resolved(candidate.status_path)
+        if candidate.launch_id is not None:
+            placeholder_key = (status_path, candidate.instance_key, None)
+            placeholder = candidates.pop(placeholder_key, None)
+            if placeholder is not None and placeholder.entry is None:
+                if candidate.layout is None:
+                    candidate.layout = placeholder.layout
+                if candidate.entry is None:
+                    candidate.entry = placeholder.entry
+                if candidate.diagnostic is None:
+                    candidate.diagnostic = placeholder.diagnostic
+        key = (status_path, candidate.instance_key, candidate.launch_id)
+        previous = candidates.get(key)
+        if previous is None:
+            candidates[key] = candidate
+            return
+        if previous.layout is None and candidate.layout is not None:
+            previous.layout = candidate.layout
+        if previous.entry is None and candidate.entry is not None:
+            previous.entry = candidate.entry
+        if previous.diagnostic is None:
+            previous.diagnostic = candidate.diagnostic
+
+    def add_resident(
+        layout: AgentLayout, entry: object, error: str | None = None
+    ) -> None:
+        entry_dict = cast(dict[str, Any], entry) if isinstance(entry, dict) else {}
+        launch_id = entry_dict.get("launch_id")
+        if not isinstance(launch_id, str):
+            launch_id = None
+        add(
+            _SnapshotCandidate(
+                layout.runtime_status,
+                layout.instance or "default",
+                launch_id if isinstance(launch_id, str) else None,
+                layout,
+                entry if _snapshot_entry(entry) else None,
+                error,
+            )
+        )
+
+    try:
+        residents = agent_layouts(root)
+    except OSError as exc:
+        residents = ()
+        diagnostics.append(
+            f"resident discovery: {str(exc).strip() or type(exc).__name__}"
+        )
+
+    for layout in residents:
+        document, error = read_once(layout.runtime_status)
+        if error is not None:
+            add_resident(layout, None, f"runtime status could not be read: {error}")
+            continue
+        if document is None:
+            add_resident(layout, None)
+            continue
+        entries = document.get("instances")
+        if document.get("version") != 2 or not isinstance(entries, dict):
+            add_resident(layout, None, "runtime status document is invalid")
+            continue
+        default_entry = entries.get("default")
+        if default_entry is None:
+            add_resident(layout, None)
+        elif _snapshot_entry(default_entry):
+            add_resident(layout, default_entry)
+        else:
+            add_resident(layout, None, "default runtime entry is invalid")
+        for key, value in entries.items():
+            if key == "default":
+                continue
+            if not isinstance(key, str) or not _snapshot_entry(value):
+                diagnostics.append(f"{layout.name}: runtime instance entry is invalid")
+                continue
+            control = value["control"]
+            workload = value["workload"]
+            state = workload.get("status")
+            if (
+                not isinstance(state, str)
+                or state not in {"preparing", "starting", "running"}
+            ) and not control.get("operation"):
+                continue
+            try:
+                instance_layout = _runtime_layout(control, layout.runtime_status, root)
+                if instance_layout.instance != key:
+                    raise ValueError("runtime instance key does not match its identity")
+                add(
+                    _SnapshotCandidate(
+                        layout.runtime_status,
+                        key,
+                        value["launch_id"],
+                        instance_layout,
+                        value,
+                    )
+                )
+            except (KeyError, OSError, RuntimeError, TypeError, ValueError) as exc:
+                diagnostics.append(f"{layout.name}: {str(exc)[:180]}")
+
+    instance_dir = root / ".runtime" / "instances"
+    try:
+        reference_paths = sorted(
+            (
+                path
+                for path in instance_dir.iterdir()
+                if path.is_file() and path.suffix == ".json"
+            ),
+            key=lambda path: path.name,
+        )
+    except FileNotFoundError:
+        reference_paths = []
+    except OSError as exc:
+        reference_paths = []
+        diagnostics.append(
+            f"runtime registry: {str(exc).strip() or type(exc).__name__}"
+        )
+
+    for reference_path in reference_paths:
+        fallback: AgentLayout | None = None
+        try:
+            reference = json.loads(reference_path.read_text(encoding="utf-8"))
+            if not isinstance(reference, dict) or reference.get("version") != 1:
+                diagnostics.append(
+                    f"runtime registry {reference_path.name}: invalid reference"
+                )
+                continue
+            raw_status_path = reference.get("status")
+            launch_id = reference.get("launch_id")
+            if not isinstance(raw_status_path, str) or not isinstance(launch_id, str):
+                diagnostics.append(
+                    f"runtime registry {reference_path.name}: incomplete reference"
+                )
+                continue
+            status_path = Path(raw_status_path).expanduser()
+            if not status_path.is_absolute():
+                status_path = root / status_path
+            fallback = _fallback_layout(reference_path, status_path, root)
+            document, error = read_once(status_path)
+            if error is not None:
+                add(
+                    _SnapshotCandidate(
+                        status_path,
+                        fallback.instance
+                        if fallback and fallback.instance
+                        else "default",
+                        launch_id,
+                        fallback,
+                        None,
+                        f"runtime status could not be read: {error}",
+                    )
+                )
+                continue
+            if document is None or document.get("version") != 2:
+                add(
+                    _SnapshotCandidate(
+                        status_path,
+                        fallback.instance
+                        if fallback and fallback.instance
+                        else "default",
+                        launch_id,
+                        fallback,
+                        None,
+                        "runtime status record is missing or invalid",
+                    )
+                )
+                continue
+            entries = document.get("instances")
+            if not isinstance(entries, dict):
+                add(
+                    _SnapshotCandidate(
+                        status_path,
+                        fallback.instance
+                        if fallback and fallback.instance
+                        else "default",
+                        launch_id,
+                        fallback,
+                        None,
+                        "runtime instances are invalid",
+                    )
+                )
+                continue
+            matches = [
+                (key, value)
+                for key, value in entries.items()
+                if _snapshot_entry(value) and value["launch_id"] == launch_id
+            ]
+            if len(matches) != 1:
+                add(
+                    _SnapshotCandidate(
+                        status_path,
+                        fallback.instance
+                        if fallback and fallback.instance
+                        else "default",
+                        launch_id,
+                        fallback,
+                        None,
+                        "runtime launch could not be matched",
+                    )
+                )
+                continue
+            instance_key, entry = matches[0]
+            try:
+                layout = _runtime_layout(entry["control"], status_path, root)
+                if (
+                    not isinstance(instance_key, str)
+                    or layout.instance
+                    != (None if instance_key == "default" else instance_key)
+                    or instance_filename(layout) != reference_path.name
+                ):
+                    raise ValueError("runtime identity does not match its registration")
+            except (KeyError, OSError, RuntimeError, TypeError, ValueError) as exc:
+                add(
+                    _SnapshotCandidate(
+                        status_path,
+                        instance_key if isinstance(instance_key, str) else "default",
+                        launch_id,
+                        fallback,
+                        None,
+                        str(exc)[:180],
+                    )
+                )
+                continue
+            add(
+                _SnapshotCandidate(
+                    status_path,
+                    instance_key,
+                    launch_id,
+                    layout,
+                    entry,
+                )
+            )
+        except (OSError, ValueError, TypeError) as exc:
+            diagnostics.append(
+                f"runtime registry {reference_path.name}: {str(exc).strip() or type(exc).__name__}"
+            )
+            if fallback is not None:
+                add(
+                    _SnapshotCandidate(
+                        fallback.runtime_status,
+                        fallback.instance or "default",
+                        None,
+                        fallback,
+                        None,
+                        "runtime registration could not be read",
+                    )
+                )
+
+    candidates_list = list(candidates.values())
+    probes: list[tuple[_SnapshotCandidate, AgentLayout, dict[str, Any]]] = []
+    result: list[RuntimeInstance] = []
+    for candidate in candidates_list:
+        if candidate.layout is None:
+            diagnostics.append(
+                candidate.diagnostic or "runtime identity is unavailable"
+            )
+            continue
+        if candidate.diagnostic is not None:
+            result.append(
+                RuntimeInstance(
+                    candidate.layout.name,
+                    candidate.layout.placement,
+                    candidate.layout.instance,
+                    instance_identity(candidate.layout),
+                    "unknown",
+                    None,
+                    None,
+                    candidate.diagnostic,
+                )
+            )
+            continue
+        entry = candidate.entry
+        if entry is None:
+            if candidate.layout.placement == "resident":
+                result.append(
+                    RuntimeInstance(
+                        candidate.layout.name,
+                        candidate.layout.placement,
+                        candidate.layout.instance,
+                        instance_identity(candidate.layout),
+                        "not running",
+                        None,
+                    )
+                )
+            else:
+                result.append(
+                    RuntimeInstance(
+                        candidate.layout.name,
+                        candidate.layout.placement,
+                        candidate.layout.instance,
+                        instance_identity(candidate.layout),
+                        "unknown",
+                        None,
+                        "unresolved",
+                        "registered instance has no matching runtime record",
+                    )
+                )
+            continue
+        workload = entry["workload"]
+        state = workload.get("status")
+        if (
+            candidate.layout.placement != "resident"
+            and isinstance(state, str)
+            and state in {"stopped", "failed"}
+            and workload.get("pid") is None
+            and entry["control"].get("operation") is None
+        ):
+            continue
+        if (
+            isinstance(state, str)
+            and state in {"stopped", "failed"}
+            and workload.get("pid") is None
+            and entry["control"].get("operation") is None
+        ):
+            result.append(
+                RuntimeInstance(
+                    candidate.layout.name,
+                    candidate.layout.placement,
+                    candidate.layout.instance,
+                    instance_identity(candidate.layout),
+                    "not running",
+                    None,
+                    str(state),
+                )
+            )
+            continue
+        probes.append((candidate, candidate.layout, entry))
+
+    docker_owners = []
+    from toolang.up.records import SandboxState
+
+    for candidate, layout, entry in probes:
+        sandbox_name = entry["control"].get("sandbox")
+        if (
+            entry["control"].get("ref") is not None
+            and isinstance(sandbox_name, str)
+            and sandbox_name.partition(":")[0] == "docker"
+        ):
+            try:
+                reference = SandboxState.from_record(entry)
+            except (TypeError, ValueError):
+                reference = None
+            if reference is not None:
+                docker_owners.append((AgentProcess(layout), reference, entry))
+    try:
+        AgentProcess.cache_docker_states(docker_owners)
+    except Exception as exc:
+        diagnostics.append(
+            f"Docker inspection: {str(exc).strip() or type(exc).__name__}"
+        )
+
+    def inspect(
+        item: tuple[_SnapshotCandidate, AgentLayout, dict[str, Any]],
+    ) -> tuple[
+        _SnapshotCandidate, AgentLayout, dict[str, Any], AgentStatus | None, str | None
+    ]:
+        candidate, layout, entry = item
+        try:
+            status = AgentProcess(layout).status(
+                ui_base_url="", check_health=False, cache=True, snapshot=entry
+            )
+            return candidate, layout, entry, status, None
+        except Exception as exc:
+            return (
+                candidate,
+                layout,
+                entry,
+                None,
+                str(exc).strip() or type(exc).__name__,
+            )
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        inspected = tuple(executor.map(inspect, probes))
+
+    for candidate, layout, entry, status, error in inspected:
+        if error is not None or status is None:
+            result.append(
+                RuntimeInstance(
+                    layout.name,
+                    layout.placement,
+                    layout.instance,
+                    instance_identity(layout),
+                    "unknown",
+                    None,
+                    str(entry["workload"].get("status") or "unknown"),
+                    f"inspection failed: {(error or 'agent is unavailable')[:180]}",
+                )
+            )
+            continue
+        workload_state = entry["workload"].get("status")
+        reported_state = status.status
+        diagnostic = None
+        drivers: tuple[str, ...] | None = None
+        if reported_state == "running":
+            raw_drivers = entry["control"].get("drivers")
+            if (
+                isinstance(raw_drivers, list)
+                and all(
+                    isinstance(driver, str) and driver in ALL_DRIVERS
+                    for driver in raw_drivers
+                )
+                and len(raw_drivers) == len(set(raw_drivers))
+            ):
+                drivers = tuple(raw_drivers)
+                normalized_state = "running"
+            else:
+                normalized_state = "running"
+                diagnostic = "effective launch drivers are missing or invalid"
+        elif reported_state == "stopped" or (
+            reported_state == "failed" and workload_state == "failed"
+        ):
+            normalized_state = "not running"
+        else:
+            normalized_state = "unknown"
+            observed = str(workload_state or reported_state)
+            detail = status.message or f"observed {observed}"
+            diagnostic = f"{detail[:180]}"
+        if diagnostic is not None:
+            observed_state = str(workload_state or reported_state)
+        else:
+            observed_state = None
+        result.append(
+            RuntimeInstance(
+                layout.name,
+                layout.placement,
+                layout.instance,
+                instance_identity(layout),
+                normalized_state,
+                drivers,
+                observed_state,
+                diagnostic,
+            )
+        )
+
+    def sort_key(item: RuntimeInstance) -> tuple[int, str, str]:
+        if item.state == "running":
+            priority = (
+                0
+                if item.drivers is not None and "talk" in item.drivers
+                else 1
+                if item.drivers is not None
+                else 2
+            )
+        elif item.state == "unknown":
+            priority = 3
+        else:
+            priority = 4
+        return priority, item.label.casefold(), item.identity
+
+    result.sort(key=sort_key)
+    diagnostics = sorted(set(diagnostics), key=str.casefold)
+    return RuntimeInstanceSnapshot(tuple(result), tuple(diagnostics))

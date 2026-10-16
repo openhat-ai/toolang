@@ -302,7 +302,7 @@ module.serve(root, TeamingRootConfig("human:owner", BackendConfig("redis://local
             with pytest.raises(TeamingError, match="Hub is starting"):
                 hub.connection()
             assert cli.main(["--root", str(tmp_path), "hub"]) == 0
-            assert "Hub starting" in capsys.readouterr().out
+            assert "hub starting" in capsys.readouterr().out
             assert cli.main(["--root", str(tmp_path), "hub", "stop", "--force"]) == 0
             assert process.poll() is not None
             assert hub.current() is None
