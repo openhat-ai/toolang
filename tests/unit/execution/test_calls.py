@@ -243,6 +243,36 @@ def test_materialized_request_rejects_an_unqualified_runnable(tmp_path) -> None:
         harness.store.close()
 
 
+@pytest.mark.parametrize("driver", [None, "chat"])
+@pytest.mark.parametrize("kind", ["agic", "flow"])
+@pytest.mark.parametrize("module", ["agent", "missing"])
+def test_materialized_request_validates_the_selected_module(
+    tmp_path, driver, kind, module
+) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path, source=f"{kind} chat(_: Text):\n  pass\n", responses=[]
+    )
+    request = RunRequest(
+        thread_id="term_test",
+        request_id="module_selection",
+        driver=driver,
+        runnable=RunnableRequest(f"{module}::{kind}:chat", CallInput({"_": "hello"})),
+        model=ModelRequest("test/scripted"),
+        policy=RunPolicy(),
+    )
+    try:
+        if module == "missing":
+            with pytest.raises(ToolangError, match="Runnable not found"):
+                resolve_run_request(request, setup=harness.setup, state=harness.state)
+        else:
+            spec = resolve_run_request(
+                request, setup=harness.setup, state=harness.state
+            )
+            assert spec.bindings.runnable == f"{kind}:chat"
+    finally:
+        harness.store.close()
+
+
 @pytest.mark.parametrize("kind", ["agic", "flow"])
 @pytest.mark.parametrize("selector", ["_", "{kind}:_"])
 def test_entry_selector_resolves_to_a_lined_run_identity(tmp_path, kind, selector):

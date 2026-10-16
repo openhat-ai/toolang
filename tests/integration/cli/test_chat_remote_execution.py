@@ -40,17 +40,27 @@ class _Snapshot:
 
 
 @pytest.mark.parametrize(
-    ("entry", "module"),
+    ("entry", "module", "selection"),
     [
-        ("agic:chat", False),
-        ("agic:_", False),
-        ("flow:_", False),
-        pytest.param("flow:chat", True, id="flow-module"),
-        pytest.param("agic:chat", True, id="agic-module"),
+        ("agic:chat", False, "agic:chat"),
+        ("agic:_", False, "agic:_"),
+        ("flow:_", False, "flow:_"),
+        pytest.param("flow:chat", True, "flow:chat", id="flow-module"),
+        pytest.param("agic:chat", True, "agic:chat", id="agic-module"),
+        pytest.param("agic:_", False, "_", id="agic-entry-alias"),
+        pytest.param("flow:_", False, "_", id="flow-entry-alias"),
+        pytest.param("agic:chat", False, "agent::chat", id="module-selector"),
+        pytest.param("agic:chat", False, "agent::agic:chat", id="module-ref"),
+        pytest.param(
+            "flow:chat", True, "runnables::chat::chat", id="file-module-selector"
+        ),
+        pytest.param(
+            "agic:chat", True, "runnables::chat::agic:chat", id="file-module-ref"
+        ),
     ],
 )
 def test_remote_chat_session_executes_against_the_agent_api(
-    tmp_path: Path, entry: str, module: bool
+    tmp_path: Path, entry: str, module: bool, selection: str
 ) -> None:
     source = """
 agic chat(_: Part[]) -> Part[]:
@@ -122,10 +132,19 @@ agic chat(_: Part[]) -> Part[]:
         )
         request = session.build_request(
             thread_id,
-            RunOverride(runnable=entry),
+            RunOverride(runnable=selection),
             CallInput({"_": "hello"}),
             session.initial_setting(),
         )
+        if "::" in selection:
+            assert request.runnable.ref == f"{selection.rsplit('::', 1)[0]}::{entry}"
+        selected = session.apply_setting(
+            session.initial_setting(), RunOverride(runnable=selection)
+        )
+        session_request = session.build_request(
+            thread_id, RunOverride(), CallInput({"_": "hello"}), selected
+        )
+        assert session_request.runnable.ref == request.runnable.ref
         session.run(
             request,
             events.append,

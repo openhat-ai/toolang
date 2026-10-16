@@ -114,7 +114,7 @@ def resolve_run_request(
         raise ValueError("run request requires a runnable ref or driver")
     if (
         reference is not None
-        and resolved_runnable.ref != reference
+        and reference not in {resolved_runnable.ref, resolved_runnable.qualified}
         and not _is_alias_ref(reference, resolved_runnable)
     ):
         raise ValueError(
