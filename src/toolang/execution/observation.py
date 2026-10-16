@@ -15,7 +15,6 @@ from .events import (
     PartEnd,
     RunBegin,
     RunEnd,
-    RunRetried,
     StepBegin,
     StepEnd,
     ThreadForked,
@@ -162,16 +161,6 @@ class StreamNormalizer:
             self._active.add(event.run)
         elif isinstance(event, RunEnd):
             self._active.discard(event.run)
-        elif isinstance(event, RunRetried):
-            self._active.difference_update(event.removed_runs)
-            self._active.add(event.run)
-            self._suppressed.difference_update(event.invalidated_steps)
-            self._open_steps.difference_update(event.invalidated_steps)
-            self._open_steps = {
-                step
-                for step in self._open_steps
-                if step.run_id not in event.removed_runs
-            }
         elif isinstance(event, StepBegin | StepEnd):
             self._suppressed.discard(event.step)
             if isinstance(event, StepBegin):

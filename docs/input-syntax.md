@@ -342,5 +342,5 @@ output may also be one Markdown code block labeled `json`.
 Run preparation persists both authored and effective facts. The authored
 policy and `CallInput[str]` sources retain `$prompt` syntax for transcript and
 history views. Ordered prompt provenance records canonical arguments, cap ref,
-and definition hash. Resolved locals drive conversation recall and retry/rerun,
+and definition hash. Resolved locals drive conversation recall and rerun,
 while model steps retain the exact normalized `ModelCall` sent to the adapter.

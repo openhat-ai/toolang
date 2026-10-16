@@ -23,16 +23,12 @@ from toolang.up.lifecycle import LAUNCH_HEADER, ServerLifecycle
 
 def test_lost_clients_retain_pending_execution_and_stale_controls_fail(tmp_path):
     gate = AsyncGate()
-    retry_gate = AsyncGate()
     harness = ExecutionHarness.create(
         tmp_path,
         source="agic chat(_: Text):\n  {{_}}\n",
         responses=[
             ScriptedModelTurn(
                 ModelCallResult(message=Message.assistant("done")), gate=gate
-            ),
-            ScriptedModelTurn(
-                ModelCallResult(message=Message.assistant("retry")), gate=retry_gate
             ),
         ],
     )
@@ -90,26 +86,6 @@ def test_lost_clients_retain_pending_execution_and_stale_controls_fail(tmp_path)
             finally:
                 await guarded.disconnect()
         assert (await asyncio.wait_for(handle, 2)).status == "canceled"
-        retried = core.executor.retry(
-            handle.run_id, setup=harness.setup, state=harness.state
-        )
-        await asyncio.wait_for(retry_gate.wait_until_entered(), 2)
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url="http://server"
-        ) as client:
-            stale = await client.post(
-                f"/api/v1/runs/{handle.run_id}/cancel",
-                json={"expected_control": str(record.control)},
-            )
-            assert stale.status_code == 409
-            current = core.store.get_run(run_id=handle.run_id)
-            assert current is not None and current.control != record.control
-            response = await client.post(
-                f"/api/v1/runs/{handle.run_id}/cancel",
-                json={"expected_control": str(current.control)},
-            )
-            assert response.status_code == 200
-        assert (await asyncio.wait_for(retried, 2)).status == "canceled"
         await asyncio.sleep(0)
         assert lifecycle.elect_exit(core.executor.has_owned_work)
         async with httpx.AsyncClient(

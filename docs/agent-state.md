@@ -318,8 +318,7 @@ current-agent `state` tools.
 
 Every Run entry stores its accepted Agent State revision, including named and
 inline children. Run and Step records carry a `ControlRef` named `state` pointing
-to that entry or an explicit execute transfer. Retry retains its existing
-entry reference.
+to that entry or an explicit execute transfer.
 
 The executor retains immutable State for active bindings and loads historical
 revisions from durable snapshots. Watcher publication affects future named

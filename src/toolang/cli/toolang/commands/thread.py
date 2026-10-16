@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 import sys
 from collections.abc import Awaitable, Callable
-from typing import Annotated, Literal, TypeVar
+from typing import Annotated, TypeVar
 from uuid import uuid4
 
 import typer
@@ -33,18 +33,13 @@ from toolang.common.layout import AgentLayout
 from toolang.execution.client import RunClient, RunHandle
 from toolang.execution.remote import RemoteRunClient, RemoteRunClientError
 from toolang.execution.inspection.history import RunHistory
-from toolang.execution.records import (
-    RunControlPayload,
-)
 from toolang.execution.schemas import (
     RerunRequest,
-    RetryRequest,
     RunDetail,
     ThreadInfo,
 )
 from toolang.execution.types import (
     RunCommand,
-    StepRef,
 )
 from toolang.up.types import AgentServerRef
 
@@ -55,7 +50,7 @@ from ...common.context import (
     resolve_model_catalog_option,
     user_call,
 )
-from ...common.execution import ExecutionResources, open_execution
+from ...common.execution import open_execution
 from ...common.agent_server import (
     AgentServerAcquisitionError,
     DEVELOPMENT_WHEEL_HELP,
@@ -145,64 +140,6 @@ def cancel_command(
     typer.echo(f"canceled {run_id}")
 
 
-def retry_command(
-    ctx: typer.Context,
-    run: Annotated[
-        str,
-        typer.Argument(
-            metavar="RUN",
-            click_type=TextType(),
-            help="Run ID or thread ID; a thread selects its latest visible root run",
-        ),
-    ],
-    model_catalog: ModelCatalogOption = None,
-    anchor: Annotated[
-        str | None,
-        typer.Option(
-            "--anchor",
-            metavar="STEP_PATH",
-            help="Retry from this canonical or run-local step path",
-        ),
-    ] = None,
-    allows: AllowOptions = None,
-    limit: LimitOptions = None,
-    dev: Annotated[
-        Path | None,
-        typer.Option("--dev", metavar="[PATH]", help=DEVELOPMENT_WHEEL_HELP),
-    ] = None,
-) -> None:
-    """Retry one terminal root run from a durable step boundary."""
-
-    layout = context_layout(ctx)
-    with open_execution(ctx, required=True) as resources:
-        if resources is None:  # pragma: no cover
-            raise RuntimeError("execution resources were not opened")
-        _thread_id, run_id = _anchor(RunHistory(resources.store), run)
-        sandbox = user_call(_retry_sandbox, resources, run_id)
-    show_progress = sys.stderr.isatty()
-    result = _run_retry_or_rerun(
-        layout=layout,
-        kind="retry",
-        source=run_id,
-        anchor=user_call(_retry_anchor, run_id, anchor),
-        sandbox=sandbox,
-        dev=dev,
-        commands=user_call(
-            _restart_commands,
-            allow_options=allows,
-            limit_options=limit,
-        ),
-        model_override=None,
-        show_progress=show_progress,
-        model_catalog=resolve_model_catalog_option(model_catalog),
-    )
-    status = _display_status(result.status)
-    if not show_progress:
-        typer.echo(f"retried {result.id}: {status}")
-    if result.status != "succeeded":
-        raise typer.Exit(1)
-
-
 def rerun_command(
     ctx: typer.Context,
     run: Annotated[
@@ -249,11 +186,9 @@ def rerun_command(
         _rerun_model_override,
         model_body=model,
     )
-    result = _run_retry_or_rerun(
+    result = _run_rerun(
         layout=layout,
-        kind="rerun",
         source=source,
-        anchor=None,
         sandbox=sandbox,
         dev=dev,
         commands=user_call(
@@ -424,12 +359,10 @@ def _open_chat(
         continue_chat(ctx, thread=thread_id, server=server)
 
 
-def _run_retry_or_rerun(
+def _run_rerun(
     *,
     layout: AgentLayout,
-    kind: Literal["retry", "rerun"],
     source: str,
-    anchor: StepRef | None,
     sandbox: str | None,
     dev: Path | None,
     commands: tuple[RunCommand, ...],
@@ -440,9 +373,9 @@ def _run_retry_or_rerun(
     try:
         with (
             prepare_terminal(
-                kind,
+                "rerun",
                 layout=layout,
-                label=f"{kind} {source}",
+                label=f"rerun {source}",
                 eligible=show_progress,
                 stream=sys.stderr,
             ) as terminal,
@@ -457,12 +390,10 @@ def _run_retry_or_rerun(
             if server is None:
                 raise AgentServerAcquisitionError("agent acquisition requires a server")
             return asyncio.run(
-                _execute_retry_or_rerun(
+                _execute_rerun(
                     layout=layout,
                     server=server,
-                    kind=kind,
                     source=source,
-                    anchor=anchor,
                     commands=commands,
                     model_override=model_override,
                     show_progress=show_progress,
@@ -498,24 +429,21 @@ def _rerun_model_override(
     return resolved
 
 
-async def _execute_retry_or_rerun(
+async def _execute_rerun(
     *,
     layout: AgentLayout,
     server: AgentServerRef,
-    kind: Literal["retry", "rerun"],
     source: str,
-    anchor: StepRef | None,
     commands: tuple[RunCommand, ...],
     model_override: ModelOverride | None,
     show_progress: bool,
     on_accept: Callable[[str], None] | None = None,
 ) -> RunDetail:
     environ = load_runtime_environ(layout, base_environ=os.environ)
-    run_id = source if kind == "retry" else None
     tracer = (
         ScriptRunPresenter(
-            run_id=run_id,
-            operation=kind,
+            run_id=None,
+            operation="rerun",
             max_width=resolve_progress_max_width(environ),
             surfaces=resolve_terminal_surfaces(
                 environment=environ, output_stream=sys.stderr
@@ -527,26 +455,14 @@ async def _execute_retry_or_rerun(
     try:
         async with acquire_run_client(server) as client:
             request_id = f"term_{uuid4().hex}"
-            handle = (
-                await client.retry(
-                    RetryRequest(
-                        source=source,
-                        commands=commands,
-                        request_id=request_id,
-                        anchor=anchor,
-                    ),
-                    tracer=tracer,
-                )
-                if kind == "retry"
-                else await client.rerun(
-                    RerunRequest(
-                        source=source,
-                        commands=commands,
-                        request_id=request_id,
-                        model_override=model_override,
-                    ),
-                    tracer=tracer,
-                )
+            handle = await client.rerun(
+                RerunRequest(
+                    source=source,
+                    commands=commands,
+                    request_id=request_id,
+                    model_override=model_override,
+                ),
+                tracer=tracer,
             )
             if on_accept is not None:
                 on_accept(handle.run_id)
@@ -560,7 +476,7 @@ async def _execute_retry_or_rerun(
                         raise ServerLeaseLostError(
                             f"{exc}; inspect accepted run {handle.run_id}"
                         ) from exc
-                await _cancel_restart(client, handle, operation=kind)
+                await _cancel_restart(client, handle, operation="rerun")
                 raise
             except RemoteRunClientError as exc:
                 raise RemoteRunClientError(
@@ -571,24 +487,6 @@ async def _execute_retry_or_rerun(
     finally:
         if tracer is not None:
             tracer.close()
-
-
-def _retry_sandbox(
-    resources: ExecutionResources,
-    run_id: str,
-) -> str:
-    run = resources.store.get_run(run_id=run_id)
-    if run is None or run.parent is not None:
-        raise ValueError(f"root run not found: {run_id}")
-    control = resources.store.get_run_control(
-        run_id=str(run.control.target),
-        index=0,
-    )
-    if control is None or not isinstance(control.payload, RunControlPayload):
-        raise ValueError(f"run preparation not found: {run_id}")
-    if control.payload.sandbox is None:
-        raise ValueError(f"retry sandbox is unknown for run {run_id}; use rerun")
-    return control.payload.sandbox
 
 
 async def _cancel_restart(
@@ -609,20 +507,6 @@ async def _cancel_restart(
         await asyncio.wait_for(asyncio.shield(handle.wait()), timeout=5)
     except (TimeoutError, OSError, ValueError, RuntimeError):
         pass
-
-
-def _retry_anchor(run_id: str, value: str | None) -> StepRef | None:
-    if value is None:
-        return None
-    text = value.strip()
-    if not text:
-        raise ClickException("--anchor requires a step path")
-    try:
-        if text.startswith("run_"):
-            return StepRef.parse(text)
-        return StepRef.from_local(run_id, text)
-    except ValueError as exc:
-        raise ValueError(f"invalid step path: {text!r}") from exc
 
 
 def _display_status(value: object) -> str:

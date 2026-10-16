@@ -90,7 +90,6 @@ def test_model_catalog_override_is_scoped_to_consuming_commands() -> None:
         ["serve", "--help"],
         ["start", "--help"],
         ["chat", "alice", "--help"],
-        ["retry", "alice", "--help"],
         ["rerun", "alice", "--help"],
         ["models", "--help"],
         ["providers", "--help"],

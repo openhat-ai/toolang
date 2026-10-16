@@ -13,7 +13,7 @@ from toolang.execution.errors import (
     StreamOverflowError,
     SnapshotLimitError,
 )
-from toolang.execution.events import RunRetried, event_from_data
+from toolang.execution.events import event_from_data
 from toolang.execution.observation import (
     OPEN_ENTITIES,
     SNAPSHOT_SECONDS,
@@ -301,8 +301,6 @@ class HubSubscription:
             if scope.matches(frame):
                 grouped[row["agent"]].append(frame)
                 deliveries[(row["agent"], str(frame.cursor))] = sid
-                if isinstance(frame.event, RunRetried):
-                    replacement = True
         prefix = SnapshotFrames(deadline)
         normalizers = {}
         ordered = []

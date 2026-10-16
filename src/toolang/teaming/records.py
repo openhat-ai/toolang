@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
 import json
 from pathlib import Path
 from typing import Any, Literal
@@ -16,7 +15,6 @@ from toolang.execution.errors import SnapshotLimitError
 from toolang.execution.events import (
     RunBegin,
     RunEnd,
-    RunRetried,
     StepBegin,
     StepEnd,
     event_from_data,
@@ -88,32 +86,7 @@ class EventProjection:
         event, cursor = frame.event, str(frame.cursor)
         if isinstance(event, PARTS):
             return False
-        if isinstance(event, RunRetried):
-            root_key = field("run", event.run)
-            current = self.entities.get(root_key)
-            if current is None:
-                raise EventRecoveryRequired("Retry root is missing")
-            begin = event_from_data(current["begin"])
-            if not isinstance(begin, RunBegin):
-                raise EventProtocolError("Invalid run entity")
-            self.entities[root_key] = {
-                **current,
-                "begin": event_to_data(
-                    replace(begin, control=event.control, started_at="")
-                ),
-                "begin_source": None,
-                "end": None,
-                "end_source": None,
-                "delivery": None,
-            }
-            for run in event.removed_runs:
-                self.entities.pop(field("run", run), None)
-                for key, value in tuple(self.entities.items()):
-                    if value.get("run") == run:
-                        self.entities.pop(key)
-            for ref in event.invalidated_steps:
-                self.entities.pop(field("step", str(ref)), None)
-        elif isinstance(event, RunBegin | RunEnd | StepBegin | StepEnd):
+        if isinstance(event, RunBegin | RunEnd | StepBegin | StepEnd):
             is_run = isinstance(event, RunBegin | RunEnd)
             is_begin = isinstance(event, RunBegin | StepBegin)
             identity = (

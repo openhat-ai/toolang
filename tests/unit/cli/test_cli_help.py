@@ -110,7 +110,6 @@ def test_examples_share_section_styles_and_wrap_descriptions(
             "chat",
             {"Allow fields", "Limit fields", "Default fields", "Model parameters"},
         ),
-        ("retry", {"Allow fields", "Limit fields"}),
         ("rerun", {"Allow fields", "Limit fields", "Model parameters"}),
         ("caps", set()),
         ("models", set()),
@@ -400,7 +399,7 @@ def test_unknown_option_during_command_resolution_keeps_usage(capsys, monkeypatc
     assert "Try '" not in output
 
 
-@pytest.mark.parametrize("command", ["retry", "inspect", "chat"])
+@pytest.mark.parametrize("command", ["rerun", "inspect", "chat"])
 def test_unknown_option_is_not_hidden_by_a_missing_agent(
     command, tmp_path, capsys, monkeypatch
 ):
@@ -456,7 +455,6 @@ def test_additional_commands_keep_theme_and_root_invocation_hint(capsys, monkeyp
         "Run commands": {
             "steer": "Steer an active run",
             "cancel": "Cancel an active run",
-            "retry": "Retry a run from a failed step",
             "rerun": "Rerun an earlier run as a new one",
         },
         "Thread commands": {
@@ -705,7 +703,7 @@ def test_real_and_virtual_agent_arguments_share_usage(
         "inspect",
         "steer",
         "cancel",
-        "retry",
+        "rerun",
         "rerun",
         "fork",
         "rewind",
@@ -817,7 +815,6 @@ def test_prompt_help_uses_conventional_metavars(tmp_path, capsys, monkeypatch):
             ["a", "chat"],
             ("--sandbox", "--allow", "--limit", "--default", "--compact-model"),
         ),
-        (["a", "retry"], ("--allow", "--limit")),
         (["a", "rerun"], ("--sandbox", "--allow", "--limit", "--model")),
         (
             ["_serve", "a"],

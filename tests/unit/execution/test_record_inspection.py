@@ -21,7 +21,6 @@ from toolang.execution.records import (
     CreateControlPayload,
     ExecControlPayload,
     ForkControlPayload,
-    RetryControlPayload,
     RewindControlPayload,
     RunControlPayload,
     SteerControlPayload,
@@ -626,22 +625,6 @@ def test_every_control_payload_variant_has_one_canonical_record_shape() -> None:
                 "prompt_invocations",
                 "launch_context",
                 "runtime_sources",
-            },
-        ),
-        (
-            "retry",
-            RetryControlPayload(
-                resources,
-                limits,
-                StepRef.from_local("run_control", (0,)),
-            ),
-            {
-                "resources",
-                "limits",
-                "model_request",
-                "retry_from",
-                "invalidated_steps",
-                "removed_runs",
             },
         ),
         (

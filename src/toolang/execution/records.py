@@ -39,6 +39,9 @@ from toolang.lang.types import Array, Struct, Value, validate_type, value_type
 from toolang.lang.contracts import OutputContract
 from toolang.common.immutable import freeze_mapping, mutable_data
 
+from .legacy import LegacyRetryPayload as _LegacyRetryPayload
+from .legacy import LegacyRetryPayloadField
+
 from .types import (
     AgentResources,
     CollectionStepNoted,
@@ -391,22 +394,6 @@ class ChdirControlPayload:
 
 
 @dataclass(frozen=True, slots=True)
-class RetryControlPayload:
-    """Effective settings and restart boundary for one retry."""
-
-    resources: AgentResources
-    limits: RunLimits
-    retry_from: StepRef | None
-    model_request: ModelRequest | None = None
-    invalidated_steps: tuple[StepRef, ...] = ()
-    removed_runs: tuple[str, ...] = ()
-
-    def __post_init__(self) -> None:
-        if self.retry_from is not None and not isinstance(self.retry_from, StepRef):
-            raise TypeError("retry payload requires a StepRef or None")
-
-
-@dataclass(frozen=True, slots=True)
 class CompactControlPayload:
     """One published compaction made available for adoption."""
 
@@ -513,9 +500,9 @@ class RewindControlPayload:
             raise TypeError("rewind payload requires a Thread-scoped ControlRef")
 
 
-PreparationControlPayload = RunControlPayload | RetryControlPayload
 RunScopedControlPayload = (
-    PreparationControlPayload
+    RunControlPayload
+    | LegacyRetryPayloadField
     | ChdirControlPayload
     | CompactControlPayload
     | ExecControlPayload
@@ -528,7 +515,7 @@ ControlPayload = RunScopedControlPayload | ThreadControlPayload
 _CONTROL_PAYLOAD_TYPES = {
     "run": RunControlPayload,
     "chdir": ChdirControlPayload,
-    "retry": RetryControlPayload,
+    "retry": _LegacyRetryPayload,
     "compact": CompactControlPayload,
     "exec": ExecControlPayload,
     "steer": SteerControlPayload,
@@ -563,7 +550,7 @@ ControlPayloadField = Annotated[
 def run_preparation(
     run: RunRecord, controls: Sequence[ControlRecord]
 ) -> RunControlPayload:
-    """Combine initial Run facts with the current attempt's effective settings."""
+    """Read initial Run facts, retaining effective settings from legacy history."""
 
     initial = next(
         (
@@ -575,10 +562,10 @@ def run_preparation(
     )
     current = next((item.payload for item in controls if item.ref == run.control), None)
     if not isinstance(initial, RunControlPayload) or not isinstance(
-        current, PreparationControlPayload
+        current, (RunControlPayload, _LegacyRetryPayload)
     ):
         raise ValueError(f"run preparation control not found: {run.control}")
-    if isinstance(current, RetryControlPayload):
+    if isinstance(current, _LegacyRetryPayload):
         return replace(
             initial,
             resources=current.resources,
@@ -982,33 +969,17 @@ def control_payload_from_data(kind: ControlKind, data: object) -> ControlPayload
             revision=_required_payload_text(payload, "revision"),
             content=content,
         )
-    if kind in {"run", "retry"}:
+    if kind == "retry":
+        return _LegacyRetryPayload.from_data(payload)
+    if kind == "run":
         resources_raw = payload.get("resources")
         limits_raw = payload.get("limits")
         if not isinstance(resources_raw, Mapping) or not isinstance(
             limits_raw, Mapping
         ):
-            raise ValueError(f"{kind} payload requires resources and limits")
+            raise ValueError("run payload requires resources and limits")
         resources = AgentResources.from_data(cast(Mapping[str, object], resources_raw))
         limits = run_limits_from_data(limits_raw)
-        if kind == "retry":
-            return RetryControlPayload(
-                invalidated_steps=tuple(
-                    StepRef.parse(item)
-                    for item in cast(list[str], payload.get("invalidated_steps", []))
-                ),
-                removed_runs=tuple(cast(list[str], payload.get("removed_runs", []))),
-                resources=resources,
-                limits=limits,
-                retry_from=StepRef.parse(cast(str, payload["retry_from"]))
-                if payload.get("retry_from") is not None
-                else None,
-                model_request=_MODEL_REQUEST_ADAPTER.validate_python(
-                    payload["model_request"]
-                )
-                if payload.get("model_request") is not None
-                else None,
-            )
         state = _optional_payload_text(payload, "state")
         runnable = _required_payload_text(payload, "runnable")
         if "model" in payload or "model_request" not in payload:
@@ -1109,21 +1080,8 @@ def control_payload_to_data(payload: ControlPayload) -> dict[str, object]:
 
     if isinstance(payload, RunControlPayload):
         return _run_payload_data(payload)
-    if isinstance(payload, RetryControlPayload):
-        return {
-            "invalidated_steps": [str(step) for step in payload.invalidated_steps],
-            "removed_runs": list(payload.removed_runs),
-            "resources": payload.resources.to_data(),
-            "limits": run_limits_to_data(payload.limits),
-            "model_request": _MODEL_REQUEST_ADAPTER.dump_python(
-                payload.model_request, mode="json"
-            )
-            if payload.model_request is not None
-            else None,
-            "retry_from": (
-                str(payload.retry_from) if payload.retry_from is not None else None
-            ),
-        }
+    if isinstance(payload, _LegacyRetryPayload):
+        return payload.to_data()
     if isinstance(payload, RecallControlPayload):
         return {
             "target": _RECALL_TARGET_ADAPTER.dump_python(payload.target, mode="json"),

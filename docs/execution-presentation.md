@@ -707,7 +707,7 @@ color for non-TTY output.
 
 Interactive Chat resolves one concrete palette before prompt_toolkit begins
 reading keyboard input. Script resolves the same palette before starting run
-output, including remote execution and retry/rerun. The public backgrounds are
+output, including remote execution and rerun. The public backgrounds are
 Input, Queue, and Code, in that order. Input fills the input box and the non-
 accent cells of Run, Steer, and Command bars. Queue fills the adjacent
 queue area; a focused queue selection uses Input. Code fills fenced-code

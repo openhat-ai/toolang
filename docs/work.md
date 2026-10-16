@@ -11,7 +11,7 @@ with a captured State/Setup snapshot.
 | `chore` | One-off, scheduled, or manual work | `chore_<8-character ID>` |
 
 Fresh resident start/serve enable all three by default; visiting start/serve
-enable chat/talk. Implicit resident/visiting Chat, retry/rerun, and fork/rewind
+enable chat/talk. Implicit resident/visiting Chat, rerun, and fork/rewind
 servers enable chat only. Roaming and standalone script defaults remain none.
 `--enable chat,talk,chore` replaces the defaults; `--enable none` disables all
 drivers. Only `serve`, `start`, and
@@ -31,7 +31,7 @@ The management HTTP API, health, inspection, cancellation, and script execution
 remain available with chat disabled. Interactive clients create threads at
 `POST /api/v1/threads` and submit/control execution under `/api/v1/chat/runs`.
 Scripts create contexts at `POST /api/v1/runs/threads` and use `/api/v1/runs`.
-Interactive creation, submission, retry/rerun, and steer are gated before writes;
+Interactive creation, submission, rerun, and steer are gated before writes;
 client IDs and thread prefixes do not decide admission.
 
 Requests carry `client_id` and `request_id`; controls retain both. Client IDs

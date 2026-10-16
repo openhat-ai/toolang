@@ -392,42 +392,6 @@ flow main() -> Improvement:
     assert "true/true/true\nCopy exactly./Copy exactly./Copy exactly." in texts[-1]
 
 
-def test_retry_restores_typed_locals_for_inline_capture(tmp_path: Path) -> None:
-    harness = ExecutionHarness.create(
-        tmp_path,
-        source="""
-struct Result:
-  count: Number
-agic make() -> Result:
-  Make.
-flow main():
-  let result = run make
-  run: Count={{result.count}}.
-""",
-        responses=[
-            ModelCallResult(message=Message.assistant('{"count":0}')),
-            RuntimeError("temporary failure"),
-            ModelCallResult(message=Message.assistant("done")),
-        ],
-    )
-
-    async def scenario() -> None:
-        async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
-            run = await harness.executor.run(
-                harness.run_spec(thread=thread, runnable="flow:main")
-            )
-            assert run.status == "failed"
-            retried = await harness.executor.retry(
-                run.id, setup=harness.setup, state=harness.state
-            )
-            assert retried.status == "succeeded", retried.error
-            assert len(harness.adapter.invocations) == 3
-            assert all("Count=0." in text for text in _texts(harness)[1:])
-
-    asyncio.run(scenario())
-
-
 def test_inline_mapper_preserves_structured_primary_input(tmp_path: Path) -> None:
     harness = _create(
         tmp_path,
@@ -972,44 +936,3 @@ flow research() -> Result:
     assert run.status == "succeeded", error
     assert output == "done"
     assert "Count=7." in _texts(harness)[-1]
-
-
-@pytest.mark.parametrize("value", ["hello", "false", ""])
-def test_retry_restores_json_string_collection_captures(
-    tmp_path: Path, value: str
-) -> None:
-    harness = ExecutionHarness.create(
-        tmp_path,
-        source="""
-agic seed() -> Json[]:
-  Seed.
-flow main() -> Text[]:
-  run seed
-  map in 1 lane: {{#_}}nonempty{{/_}}{{^_}}empty{{/_}}|{{_}}
-""",
-        responses=[
-            ModelCallResult(message=Message.assistant(json.dumps([value]))),
-            RuntimeError("temporary failure"),
-            ModelCallResult(message=Message.assistant("done")),
-        ],
-    )
-
-    async def scenario() -> None:
-        async with harness:
-            run = await harness.executor.run(
-                harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
-                    runnable="flow:main",
-                )
-            )
-            assert run.status == "failed"
-            retried = await harness.executor.retry(
-                run.id, setup=harness.setup, state=harness.state
-            )
-            assert retried.status == "succeeded", retried.error
-            assert len(harness.adapter.invocations) == 3
-            expected = ("nonempty" if value else "empty") + "|" + json.dumps(value)
-            assert all(expected in text for text in _texts(harness)[1:])
-            assert harness.store.run_output_text(run_id=retried.id) == '["done"]'
-
-    asyncio.run(scenario())

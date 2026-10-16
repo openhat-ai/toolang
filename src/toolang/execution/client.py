@@ -13,7 +13,6 @@ from toolang.execution.records import ControlRecord
 from toolang.execution.schemas import (
     ControlInfo,
     RerunRequest,
-    RetryRequest,
     RunDetail,
     RunRequest,
 )
@@ -39,13 +38,6 @@ class RunClient(Protocol):
     async def run(
         self,
         request: RunRequest,
-        *,
-        tracer: RunTracer | None = None,
-    ) -> RunHandle: ...
-
-    async def retry(
-        self,
-        request: RetryRequest,
         *,
         tracer: RunTracer | None = None,
     ) -> RunHandle: ...
@@ -111,19 +103,6 @@ class LocalRunClient:
     ) -> RunHandle:
         self._require_connected()
         handle = self._executor.run(
-            request,
-            tracer=tracer,
-        )
-        return self._handle(handle)
-
-    async def retry(
-        self,
-        request: RetryRequest,
-        *,
-        tracer: RunTracer | None = None,
-    ) -> RunHandle:
-        self._require_connected()
-        handle = self._executor.retry(
             request,
             tracer=tracer,
         )

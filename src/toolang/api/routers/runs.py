@@ -14,7 +14,6 @@ from toolang.execution.subscriptions import EventSubscription, StreamScope
 from toolang.api.conversion import (
     parse_authored_rerun,
     parse_authored_run,
-    parse_authored_retry,
     parse_input_part,
     parse_user_message,
 )
@@ -23,12 +22,10 @@ from toolang.api.schemas import (
     InputReferencesResponse,
     AuthoredRerunRequest,
     AuthoredRunRequest,
-    AuthoredRetryRequest,
     RunCancelRequest,
     RunCommandResult,
     RunCreateRequest,
     RunRerunRequest,
-    RunRetryRequest,
     RunSteerRequest,
     WorkdirResolveRequest,
     ThreadCreateRequest,
@@ -53,7 +50,6 @@ from toolang.execution.runnables import (
     available_runnable_defaults,
     resolve_runnable_reference,
 )
-from toolang.state.state import AgentState
 from toolang.up import AgentCore
 
 router = APIRouter(prefix="/runs", tags=["runs"])
@@ -180,27 +176,6 @@ async def _run_authored_stream(
         subscription.close()
 
 
-async def _retry_authored_stream(
-    core: AgentCoreDep,
-    attachment: StreamAttachmentDep,
-    response: Response,
-    run_id: str,
-    payload: AuthoredRetryRequest,
-) -> AsyncIterator[_AcceptedRunStream]:
-    source = _terminal_root_or_409(core, run_id)
-    request = parse_authored_retry(source.id, payload)
-    try:
-        handle = core.executor.retry(request)
-    except (ToolangError, TypeError, ValueError) as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    subscription = attachment.attach(StreamScope(root=handle.run_id), start="retry")
-    response.headers[RUN_ID_HEADER] = handle.run_id
-    try:
-        yield handle, subscription
-    finally:
-        subscription.close()
-
-
 async def _rerun_authored_stream(
     core: AgentCoreDep,
     attachment: StreamAttachmentDep,
@@ -298,29 +273,6 @@ async def execute_authored_run_stream(
     core: AgentCoreDep,
     request: Request,
     accepted: Annotated[_AcceptedRunStream, Depends(_run_authored_stream)],
-) -> AsyncIterator[ServerSentEvent]:
-    _handle, subscription = accepted
-    async for event in sse_stream(
-        request,
-        subscription,
-    ):
-        yield event
-
-
-@chat_router.post(
-    "/{run_id}/retry/stream",
-    summary="Retry Authored Run Stream",
-    response_class=EventSourceResponse,
-)
-@router.post(
-    "/{run_id}/retry/stream",
-    summary="Retry Authored Run Stream",
-    response_class=EventSourceResponse,
-)
-async def retry_authored_run_stream(
-    core: AgentCoreDep,
-    request: Request,
-    accepted: Annotated[_AcceptedRunStream, Depends(_retry_authored_stream)],
 ) -> AsyncIterator[ServerSentEvent]:
     _handle, subscription = accepted
     async for event in sse_stream(
@@ -525,46 +477,6 @@ def steer_run(
 
 
 @chat_router.post(
-    "/{run_id}/retry",
-    summary="Retry Run",
-    status_code=202,
-    response_model=RunCommandResult,
-)
-@router.post(
-    "/{run_id}/retry",
-    summary="Retry Run",
-    status_code=202,
-    response_model=RunCommandResult,
-)
-async def retry_run(
-    core: AgentCoreDep,
-    run_id: str,
-    payload: RunRetryRequest | None = None,
-) -> RunCommandResult:
-    source = _terminal_root_or_409(core, run_id)
-    request = payload or RunRetryRequest()
-    setup = core.setup.current()
-    try:
-        handle = core.executor.retry(
-            source.id,
-            setup=setup,
-            state=_recorded_state(core, source),
-            anchor=request.anchor,
-            limits=(
-                request.limits.to_limits(setup.limits)
-                if request.limits is not None
-                else None
-            ),
-            request_id=request.request_id,
-            client_id=request.client_id,
-        )
-    except (ToolangError, TypeError, ValueError) as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    control = core.store.list_run_controls(run_id=handle.run_id)[-1]
-    return _control_result(core, handle.run_id, control)
-
-
-@chat_router.post(
     "/{run_id}/rerun",
     summary="Rerun Run",
     status_code=202,
@@ -616,10 +528,6 @@ def _run_or_404(core: AgentCore, run_id: str) -> RunRecord:
     if run is None:
         raise HTTPException(status_code=404, detail=f"run not found: {run_id}")
     return run
-
-
-def _recorded_state(core: AgentCore, run: RunRecord) -> AgentState:
-    return core.state.load(core.store.resolve_state_revision(run.state))
 
 
 def _active_run_or_409(core: AgentCore, run_id: str) -> RunRecord:

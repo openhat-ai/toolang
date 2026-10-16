@@ -21,7 +21,6 @@ from .events import (
     PartBegin,
     PartDelta,
     PartEnd,
-    RunRetried,
     RunTracer,
     StepEnd,
     ThreadCreated,
@@ -417,7 +416,7 @@ class TraceObserver:
                     self.reader.check()
                     if isinstance(
                         frame.event,
-                        ThreadCreated | ThreadForked | ThreadRewound | RunRetried,
+                        ThreadCreated | ThreadForked | ThreadRewound,
                     ):
                         continue
                     try:

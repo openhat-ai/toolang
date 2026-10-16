@@ -258,8 +258,7 @@ def build_agic_frame(
         else ("NONE", "NONE", "NONE"),
         instruct=run.settings.instruct,
         context=run.settings.context,
-        # State provenance points to the entry control (0) or committed exec,
-        # unlike control_index, which also advances for retry.
+        # State provenance points to the entry control (0) or committed exec.
         entered_by="exec" if run.state_ref.index > 0 else "run",
     )
     if (

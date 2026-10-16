@@ -245,66 +245,6 @@ def test_named_calls_capture_one_publication_each_and_allow_rollback(tmp_path):
     asyncio.run(scenario())
 
 
-def test_retry_retains_succeeded_prefix_and_rebinds_failed_suffix(tmp_path):
-    source = SOURCE.replace("  run: Old inline.\n", "")
-    gate = AsyncGate()
-    harness = ExecutionHarness.create(
-        tmp_path,
-        source=source,
-        prepare_state=True,
-        responses=[
-            ScriptedModelTurn(answer("first"), gate=gate),
-            RuntimeError("failed attempt"),
-        ],
-    )
-
-    async def scenario():
-        async with harness:
-            handle = harness.executor.run(
-                harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
-                    runnable="parent",
-                )
-            )
-            await asyncio.wait_for(gate.wait_until_entered(), 2)
-            second = publish(harness, source.replace("Old child", "Second child"))
-            gate.release()
-            failed = await handle
-            assert failed.status == "failed"
-            children = [
-                r
-                for r in harness.store.list_run_tree(root_run_id=failed.id)
-                if r.parent
-            ]
-            succeeded = next(r for r in children if r.status == "succeeded")
-            rejected = next(r for r in children if r.status == "failed")
-            assert (
-                harness.store.resolve_state_revision(rejected.state) == second.revision
-            )
-            third = publish(harness, source.replace("Old child", "Third child"))
-            harness.adapter._responses.append(answer("recovered"))
-            root = await harness.executor.retry(
-                failed.id,
-                setup=harness.setup,
-                state=harness.state,
-                anchor=harness.store.list_steps(run_id=failed.id)[1].ref,
-            )
-            assert root.status == "succeeded", root.error
-            assert harness.store.get_run(run_id=succeeded.id) == succeeded
-            children = [
-                r for r in harness.store.list_run_tree(root_run_id=root.id) if r.parent
-            ]
-            replacement = next(r for r in children if r.id != succeeded.id)
-            assert replacement.id != rejected.id
-            assert (
-                harness.store.resolve_state_revision(replacement.state)
-                == third.revision
-            )
-            assert len(harness.adapter.invocations) == 3
-
-    asyncio.run(scenario())
-
-
 def test_main_calls_unnamed_export_and_flow_calls_private_helper(tmp_path):
     source = "flow parent():\n  run research\n  run research\n"
     gate = AsyncGate()

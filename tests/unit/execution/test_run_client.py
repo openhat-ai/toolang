@@ -21,18 +21,17 @@ from toolang.base.errors import ToolangError
 from toolang.base.types.message import Message, TextPart
 from toolang.base.types.model import ModelOverride, ModelRequest
 from toolang.base.types.policy import RunBindings, RunLimits, RunPolicy
-from toolang.base.types.run import ModelCallResult, ModelUsage
+from toolang.base.types.run import ModelCallResult
 from toolang.execution.client import LocalRunClient, RunClient, RunHandle
 from toolang.execution.executor import LocalRunHandle, RunExecutor
 from toolang.execution.policy import materialize_policy
 from toolang.execution.records import SteerControlPayload, CancelControlPayload
 from toolang.execution.schemas import (
     RerunRequest,
-    RetryRequest,
     RunRequest,
     RunnableRequest,
 )
-from toolang.execution.types import ErrorMessage, RunCommand, StepRef, ThreadPrefix
+from toolang.execution.types import ErrorMessage, RunCommand, ThreadPrefix
 from toolang.lang.types import Array
 from toolang.lang.input import CallInput
 from toolang.setup import AgentSetup
@@ -159,26 +158,13 @@ def test_run_request_rejects_invalid_field_shapes(
         RunRequest(**{**values, **changes})  # type: ignore[arg-type]
 
 
-def test_restart_requests_keep_retry_and_rerun_inputs_unambiguous() -> None:
-    retry = RetryRequest(
-        source="run_source",
-        commands=(RunCommand("limit", "tokens", 10),),
-        request_id="retry_request",
-        anchor=StepRef.from_local("run_source", (1,)),
-    )
+def test_rerun_request_rejects_ambiguous_inputs() -> None:
     rerun = RerunRequest(
         source="run_source",
         commands=(RunCommand("default", "model", "test/scripted"),),
         request_id="rerun_request",
     )
 
-    assert {item.name for item in fields(RetryRequest)} == {
-        "source",
-        "commands",
-        "request_id",
-        "client_id",
-        "anchor",
-    }
     assert {item.name for item in fields(RerunRequest)} == {
         "source",
         "commands",
@@ -187,11 +173,6 @@ def test_restart_requests_keep_retry_and_rerun_inputs_unambiguous() -> None:
         "model",
         "model_override",
     }
-    assert retry.anchor == StepRef.from_local("run_source", (1,))
-    assert rerun.source == retry.source
-
-    with pytest.raises(ValueError, match="anchor must belong"):
-        replace(retry, anchor=StepRef.from_local("run_other", (1,)))
     with pytest.raises(ValueError, match="cannot replace the persisted runnable"):
         replace(
             rerun,
@@ -247,7 +228,6 @@ def test_local_client_resolves_fallback_input_and_policy_precedence(
         harness.ids,
         setup=setup,
         state=state,
-        load_state=lambda _revision: harness.state,
         include=include,
     )
     client: RunClient = LocalRunClient(executor)
@@ -351,7 +331,7 @@ def test_local_client_rejects_preparation_without_persisting_a_run(
         harness.store.close()
 
 
-def test_executor_retries_recorded_state_and_reruns_current_state(
+def test_executor_reruns_current_state_with_captured_prompt_input(
     tmp_path: Path,
 ) -> None:
     source_with_prompt = (
@@ -371,10 +351,6 @@ prompt rewrite:
         source=source_with_prompt,
         responses=[
             RuntimeError("temporary failure"),
-            ModelCallResult(
-                message=Message.assistant("recovered"),
-                usage=ModelUsage(input_tokens=1, output_tokens=1),
-            ),
             ModelCallResult(message=Message.assistant("reran")),
             ModelCallResult(message=Message.assistant("resubmitted")),
         ],
@@ -385,7 +361,6 @@ prompt rewrite:
     changed_state = prepare_agent_state(harness.setup.layout)
     setup_reads = 0
     current_state_reads = 0
-    loaded_revisions: list[str] = []
 
     def setup() -> AgentSetup:
         nonlocal setup_reads
@@ -397,21 +372,14 @@ prompt rewrite:
         current_state_reads += 1
         return harness.state if current_state_reads == 1 else changed_state
 
-    def load_state(revision: str):
-        loaded_revisions.append(revision)
-        assert revision == harness.state.revision
-        return harness.state
-
     executor = RunExecutor(
         harness.store,
         harness.ids,
         setup=setup,
         state=current_state,
-        load_state=load_state,
         include=lambda _setup: lambda _reference: TextPart("unused"),
     )
     client: RunClient = LocalRunClient(executor)
-    retry_tracer = RecordingRunTracer()
     rerun_tracer = RecordingRunTracer()
 
     async def scenario() -> None:
@@ -427,17 +395,6 @@ prompt rewrite:
             )
         ).wait()
         assert source.status == "failed"
-
-        retry_handle = await client.retry(
-            RetryRequest(
-                source=source.id,
-                commands=(RunCommand("limit", "tokens", 10),),
-                request_id="retry_request",
-            ),
-            tracer=retry_tracer,
-        )
-        retried = await retry_handle.wait()
-        assert await retry_handle.wait() == retried
 
         rerun_handle = await client.rerun(
             RerunRequest(
@@ -459,36 +416,26 @@ prompt rewrite:
             )
         ).wait()
 
-        assert retry_handle.run_id == source.id == retried.id
         assert rerun_handle.run_id != source.id
         assert rerun.id == rerun_handle.run_id
-        assert retried.status == rerun.status == resubmitted.status == "succeeded"
-        assert setup_reads == 4
-        assert current_state_reads == 11
-        assert loaded_revisions == [harness.state.revision]
+        assert rerun.status == resubmitted.status == "succeeded"
+        assert setup_reads == 3
+        assert current_state_reads >= 3
         assert [
             without_runtime_snapshots(invocation.call.messages)
             for invocation in harness.adapter.invocations
         ] == [
             [Message.user("Old brief hello")],
             [Message.user("Old brief hello")],
-            [Message.user("Old brief hello")],
             [Message.user("New brief hello")],
-        ]
-        assert [event.type for event in retry_tracer.events][::5] == [
-            "run_begin",
-            "run_end",
         ]
         assert [event.type for event in rerun_tracer.events][::5] == [
             "run_begin",
             "run_end",
         ]
-        retry_control = harness.store.list_run_controls(run_id=source.id)[-1]
         source_control = harness.store.get_run_control(run_id=source.id, index=0)
         rerun_control = harness.store.get_run_control(run_id=rerun.id, index=0)
         assert source_control is not None
-        assert retry_control.request == "retry_request"
-        assert retry_control.payload.limits.tokens == 10
         assert rerun_control is not None
         assert rerun_control.request == "rerun_request"
         assert rerun_control.payload.limits.time == 30
@@ -504,125 +451,9 @@ prompt rewrite:
 
         await client.disconnect()
         with pytest.raises(RuntimeError, match="run client is disconnected"):
-            await client.retry(
-                RetryRequest(source=source.id, commands=(), request_id="disconnected")
-            )
-        with pytest.raises(RuntimeError, match="run client is disconnected"):
             await client.rerun(
                 RerunRequest(source=source.id, commands=(), request_id="disconnected")
             )
-
-    try:
-        asyncio.run(scenario())
-    finally:
-        harness.store.close()
-
-
-def test_executor_rejects_retry_when_recorded_state_is_unavailable_without_mutation(
-    tmp_path: Path,
-) -> None:
-    harness = ExecutionHarness.create(
-        tmp_path,
-        source=_CHAT_SOURCE,
-        responses=[RuntimeError("temporary failure")],
-    )
-
-    def missing_state(revision: str):
-        raise FileNotFoundError(revision)
-
-    executor = RunExecutor(
-        harness.store,
-        harness.ids,
-        setup=lambda: harness.setup,
-        state=lambda: harness.state,
-        load_state=missing_state,
-        include=lambda _setup: lambda _reference: TextPart("unused"),
-    )
-    client = LocalRunClient(executor)
-
-    async def scenario() -> None:
-        await client.connect()
-        thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
-        source = await (
-            await client.run(_request(thread, request_id="source_request"))
-        ).wait()
-        assert source.status == "failed"
-        before_run = harness.store.get_run(run_id=source.id)
-        before_controls = harness.store.list_run_controls(run_id=source.id)
-        before_steps = harness.store.list_steps(run_id=source.id)
-
-        with pytest.raises(
-            ValueError,
-            match="retry state snapshot is not available",
-        ):
-            await client.retry(
-                RetryRequest(
-                    source=source.id,
-                    commands=(),
-                    request_id="retry_request",
-                )
-            )
-
-        assert harness.store.get_run(run_id=source.id) == before_run
-        assert harness.store.list_run_controls(run_id=source.id) == before_controls
-        assert harness.store.list_steps(run_id=source.id) == before_steps
-        await client.disconnect()
-
-    try:
-        asyncio.run(scenario())
-    finally:
-        harness.store.close()
-
-
-def test_local_client_rejects_retry_on_a_different_sandbox_without_mutation(
-    tmp_path: Path,
-) -> None:
-    harness = ExecutionHarness.create(
-        tmp_path,
-        source=_CHAT_SOURCE,
-        responses=[RuntimeError("temporary failure")],
-    )
-    current_setup = [harness.setup]
-    executor = RunExecutor(
-        harness.store,
-        harness.ids,
-        setup=lambda: current_setup[0],
-        state=lambda: harness.state,
-        load_state=lambda _revision: harness.state,
-        include=lambda _setup: lambda _reference: TextPart("unused"),
-    )
-    client = LocalRunClient(executor)
-
-    async def scenario() -> None:
-        await client.connect()
-        thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
-        source = await (
-            await client.run(_request(thread, request_id="source_request"))
-        ).wait()
-        environment = harness.setup.environment
-        assert environment is not None
-        current_setup[0] = replace(
-            harness.setup,
-            environment=replace(
-                environment,
-                sandbox="docker:python:3.13-slim",
-                container=True,
-            ),
-        )
-
-        with pytest.raises(ValueError, match="does not match original sandbox"):
-            await client.retry(
-                RetryRequest(
-                    source=source.id,
-                    commands=(),
-                    request_id="retry_request",
-                )
-            )
-
-        stored = harness.store.get_run(run_id=source.id)
-        assert stored is not None and stored.status == "failed"
-        assert len(harness.store.list_run_controls(run_id=source.id)) == 1
-        await client.disconnect()
 
     try:
         asyncio.run(scenario())

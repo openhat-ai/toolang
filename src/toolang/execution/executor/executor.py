@@ -33,10 +33,8 @@ from toolang.lang.ast import (
     FlowDecl,
     ExecStmt,
     FlowStmt,
-    AwaitStmt,
     Parameter,
     Program,
-    RepeatStmt,
     StructDecl,
 )
 from toolang.lang.contracts import (
@@ -82,7 +80,6 @@ from ..events import (
     RunBegin,
     RunEnd,
     RunEvent,
-    RunRetried,
     RunTracer,
     StepBegin,
     StepEnd,
@@ -90,18 +87,16 @@ from ..events import (
 from ..records import (
     CompactControlPayload,
     RecallControlPayload,
-    RetryControlPayload,
     RunControlPayload,
     LaunchContext,
     run_preparation,
     ControlRecord,
     RunRecord,
-    StepRecord,
     StoredModelStepGiven,
 )
 from ..store import RunStore
 from ..stream import CanonicalStream, Publication, TraceObserver, OBSERVER_DRAIN_SEC
-from ..schemas import RerunRequest, RetryRequest, RunRequest
+from ..schemas import RerunRequest, RunRequest
 from ..types import (
     ModelAccounting,
     value_for_type,
@@ -182,7 +177,6 @@ _CONTROL_POLL_INTERVAL = 0.05
 
 SetupSource = Callable[[], AgentSetup]
 StateSource = Callable[[], AgentState]
-StateLoad = Callable[[str], AgentState]
 IncludeSource = Callable[[AgentSetup], IncludeResolver]
 
 
@@ -328,25 +322,19 @@ class RunExecutor:
         *,
         setup: SetupSource | None = None,
         state: StateSource | None = None,
-        load_state: StateLoad | None = None,
         sync_state: StateSync | None = None,
         include: IncludeSource | None = None,
         default_workdir: str | None = None,
         stream: CanonicalStream | None = None,
         admission: Callable[[], AbstractContextManager[None]] | None = None,
     ) -> None:
-        if (setup is None) != (state is None) or (setup is None) != (
-            load_state is None
-        ):
-            raise TypeError(
-                "run request execution requires setup, state, and load_state together"
-            )
+        if (setup is None) != (state is None):
+            raise TypeError("run request execution requires setup and state together")
         self._admission = admission or nullcontext
         self.store = store
         self.ids = ids
         self._setup = setup
         self._state = state
-        self._load_state = load_state
         self._sync_state = sync_state
         self._include = include
         self._default_workdir_override = default_workdir
@@ -670,108 +658,6 @@ class RunExecutor:
             )
         return self._launch(bound, runnable, loop=loop, tracer=tracer)
 
-    @_admitted
-    def retry(
-        self,
-        run_id: str | RetryRequest,
-        *,
-        setup: AgentSetup | None = None,
-        state: AgentState | None = None,
-        anchor: StepRef | str | None = None,
-        ceiling: AgentCeiling = AgentCeiling(),
-        limits: RunLimits | None = None,
-        request_id: str | None = None,
-        client_id: str | None = None,
-        tracer: RunTracer | None = None,
-    ) -> LocalRunHandle:
-        """Reopen one terminal root run from a durable step boundary."""
-
-        self._require_available()
-        model_request: ModelRequest | None = None
-        if isinstance(run_id, RetryRequest):
-            if (
-                setup is not None
-                or state is not None
-                or request_id is not None
-                or client_id is not None
-            ):
-                raise ValueError(
-                    "resolved retry inputs cannot override a caller retry request"
-                )
-            request = run_id
-            setup = self._current_setup()
-            state = self._recorded_state(request.source)
-            resolved = resolve_restart_request(request, setup=setup, state=state)
-            run_id = request.source
-            setup = resolved.setup
-            state = resolved.state
-            anchor = request.anchor
-            ceiling = resolved.ceiling
-            model_request = resolved.model
-            limits = resolved.limits
-            request_id = request.request_id
-            client_id = request.client_id
-        if setup is None or state is None:
-            raise TypeError("retry requires resolved setup and state")
-        loop = asyncio.get_running_loop()
-        sandbox = _setup_sandbox(setup)
-        self._require_retry_compatible(run_id, state, sandbox=sandbox)
-        spec = self._source_spec(
-            run_id,
-            setup=setup,
-            state=state,
-            ceiling=ceiling,
-            model=None,
-            model_request=model_request,
-            limits=limits if limits is not None else setup.limits,
-        )
-        runnable, input, agent_resources, resources = _prepare_run_spec(spec)
-        bound = _bind_run(
-            spec,
-            runnable=runnable,
-            run_id=run_id,
-            input=input,
-            agent_resources=agent_resources,
-            resources=resources,
-        )
-
-        with self.stream.publication() as publication:
-            with self.store.write_transaction():
-                _reopened, control, _trimmed = self.store.accept_retry(
-                    run_id=run_id,
-                    anchor=StepRef.parse(anchor) if anchor is not None else None,
-                    resources=resources,
-                    limits=bound.limits,
-                    state=bound.state.revision,
-                    model_request=bound.model_request,
-                    sandbox=sandbox,
-                    request_id=request_id,
-                    client_id=client_id,
-                    created_at=bound.created_at,
-                )
-                self.store.record_event_cursor(control.ref, publication.cursor)
-                payload = control.payload
-                if not isinstance(payload, RetryControlPayload):
-                    raise RuntimeError("retry acceptance omitted its payload")
-                event = RunRetried(
-                    run=run_id,
-                    thread_id=bound.thread,
-                    control=control.ref,
-                    invalidated_steps=payload.invalidated_steps,
-                    removed_runs=payload.removed_runs,
-                )
-                publication.append(event, thread_id=bound.thread, root_run_id=run_id)
-        bound = replace(
-            bound, control_index=control.index, horizon=self.store.run_horizon(run_id)
-        )
-        return self._launch(
-            bound,
-            runnable,
-            loop=loop,
-            tracer=tracer,
-            retry=control,
-        )
-
     def _current_setup(self) -> AgentSetup:
         source = self._setup
         if source is None:
@@ -793,24 +679,6 @@ class RunExecutor:
             else setup.layout.home
         )
         return lambda reference: resolve_file_include(reference, base=base)
-
-    def _recorded_state(self, run_id: str) -> AgentState:
-        load = self._load_state
-        if load is None:
-            raise RuntimeError("run executor has no request snapshot sources")
-        run = self.store.get_run(run_id=run_id)
-        if run is None or run.parent is not None:
-            raise ValueError(f"root run not found: {run_id}")
-        revision = self.store.resolve_state_revision(run.state)
-        try:
-            state = load(revision)
-        except (KeyError, OSError, RuntimeError, TypeError, ValueError) as exc:
-            raise ValueError(
-                f"retry state snapshot is not available: {revision}"
-            ) from exc
-        if not isinstance(state, AgentState) or state.revision != revision:
-            raise ValueError(f"retry state snapshot is not available: {revision}")
-        return state
 
     def _source_spec(
         self,
@@ -910,42 +778,6 @@ class RunExecutor:
             workdir=preparation.cwd if captured is not None else None,
         )
 
-    def _require_retry_compatible(
-        self, run_id: str, state: AgentState, *, sandbox: str
-    ) -> None:
-        """Reject retry before mutation when its execution snapshot changed."""
-
-        run = self.store.get_run(run_id=run_id)
-        if run is None or run.parent is not None:
-            raise ValueError(f"root run not found: {run_id}")
-        control = self.store.get_run_control(
-            run_id=str(run.control.target),
-            index=0,
-        )
-        if control is None or not isinstance(control.payload, RunControlPayload):
-            raise ValueError(f"run preparation not found: {run_id}")
-        if self.store.resolve_state_revision(run.state) != state.revision:
-            raise ValueError(
-                f"retry state no longer matches original run: {run_id}; use rerun"
-            )
-        if control.payload.sandbox is None:
-            raise ValueError(f"retry sandbox is unknown for run {run_id}; use rerun")
-        if control.payload.sandbox != sandbox:
-            raise ValueError(
-                f"retry sandbox {sandbox} does not match original sandbox "
-                f"{control.payload.sandbox} for run {run_id}; use rerun"
-            )
-        if state.workspaces:
-            if self._state is None:
-                raise ValueError("retry requires current workspace authorization")
-            workspaces = self._state().workspaces
-            for name, path in state.workspaces.items():
-                if workspaces.get(name) != path:
-                    raise ValueError(
-                        f"retry workspace {name!r} is no longer authorized "
-                        "at its recorded path; use rerun"
-                    )
-
     def _launch(
         self,
         bound: BoundRun,
@@ -953,7 +785,6 @@ class RunExecutor:
         *,
         loop: asyncio.AbstractEventLoop,
         tracer: RunTracer | None,
-        retry: ControlRecord | None = None,
         independent: bool = False,
     ) -> LocalRunHandle:
         observer = (
@@ -967,7 +798,7 @@ class RunExecutor:
                 lambda _task: self._observers.discard(observer)
             )
         task = asyncio.create_task(
-            self._execute_owned(bound, runnable, retry=retry),
+            self._execute_owned(bound, runnable),
             name=f"toolang-run-{bound.run_id}",
             context=Context() if independent else None,
         )
@@ -1003,8 +834,6 @@ class RunExecutor:
         self,
         bound: BoundRun,
         runnable: AgicDecl | FlowDecl,
-        *,
-        retry: ControlRecord | None = None,
     ) -> RunRecord:
         task = asyncio.current_task()
         if task is None:
@@ -1019,7 +848,6 @@ class RunExecutor:
             self,
             root=bound,
             active=active,
-            retry=retry,
         )
         with self._active_lock:
             active.execution = execution
@@ -1606,7 +1434,6 @@ class _Execution:
         root: BoundRun,
         active: _ActiveRun | None = None,
         emit: EventEmitter | None = None,
-        retry: ControlRecord | None = None,
     ) -> None:
         if (active is None) == (emit is None):
             raise TypeError(
@@ -1625,9 +1452,6 @@ class _Execution:
         self._step_states: dict[StepRef, tuple[AgentState, ControlRef]] = {}
         self._preceding_controls: list[ControlRef] = []
         self._limits = _RunLimitState(root.limits)
-        self._retry = retry
-        if retry is not None:
-            self._restore_model_limits(root.run_id)
         self._run_outputs: dict[str, Output] = {}
         self._background_tasks: dict[str, asyncio.Task[None]] = {}
         self._background_owners: dict[str, str] = {}
@@ -2366,7 +2190,6 @@ class _Execution:
             if isinstance(runnable, CompactSpec)
             else initial_locals(binding)
         )
-        statement_start = 0
         step_start = self.next_step(binding.run_id)
         self._preceding_controls.append(
             ControlRef.for_run(binding.run_id, binding.control_index)
@@ -2383,18 +2206,6 @@ class _Execution:
                 )
             )
         try:
-            if (
-                self._retry is not None
-                and binding.run_id == str(self._retry.target)
-                and isinstance(runnable, FlowDecl)
-            ):
-                current, statement_start = self._resume_flow(
-                    binding,
-                    runnable,
-                    current,
-                )
-            if self._retry is not None and binding.run_id == str(self._retry.target):
-                self._limits.check_restored()
             while True:
                 try:
                     try:
@@ -2416,7 +2227,6 @@ class _Execution:
                                 binding,
                                 runnable,
                                 current,
-                                statement_start=statement_start,
                                 step_start=step_start,
                             )
                         break
@@ -2428,7 +2238,6 @@ class _Execution:
                     binding = transfer.binding
                     runnable = transfer.runnable
                     current = transfer.locals
-                    statement_start = 0
                     # A committed handoff is the last Step of the outgoing body.
                     step_start = transfer.triggered_by.indices[0] + 1
                     transferred = True
@@ -2517,74 +2326,6 @@ class _Execution:
             )
         )
         return result
-
-    def _resume_flow(
-        self,
-        binding: BoundRun,
-        flow: FlowDecl,
-        current: dict[str, Local],
-    ) -> tuple[dict[str, Local], int]:
-        committed = [
-            step
-            for step in self.store.list_steps(run_id=binding.run_id)
-            if step.parent is None
-        ]
-        if len(committed) > len(flow.stmts):
-            raise ValueError(f"retry prefix exceeds flow body: {binding.run_id}")
-        for index, step in enumerate(committed):
-            statement = flow.stmts[index]
-            if step.given != statement:
-                raise ValueError(
-                    f"retry prefix no longer matches flow statement: {step.ref}"
-                )
-            if step.status != "succeeded":
-                raise ValueError(f"retry prefix step is not committed: {step.ref}")
-            if isinstance(statement, RepeatStmt):
-                for descendant in self.store.list_steps(run_id=binding.run_id):
-                    if (
-                        len(descendant.ref.indices) <= len(step.ref.indices)
-                        or descendant.ref.indices[: len(step.ref.indices)]
-                        != step.ref.indices
-                    ):
-                        continue
-                    if descendant.status != "succeeded":
-                        raise ValueError(
-                            f"retry prefix step is not committed: {descendant.ref}"
-                        )
-                    self._restore_step_local(binding.run_id, descendant, current)
-                continue
-            if (
-                statement.binding is None
-                or isinstance(statement, AwaitStmt)
-                and step.output is None
-            ):
-                continue
-            local = _step_local(step, self.store)
-            current[statement.binding] = local
-            if statement.binding == "_":
-                self.record_output(
-                    binding.run_id,
-                    local.ref or FieldRef.from_path(step.ref, "output", "value"),
-                )
-        return current, len(committed)
-
-    def _restore_step_local(
-        self,
-        run_id: str,
-        step: StepRecord,
-        current: dict[str, Local],
-    ) -> None:
-        """Restore one named local produced inside a committed structural step."""
-
-        if step.output is None or step.output.binding is None:
-            return
-        local = _step_local(step, self.store)
-        current[step.output.binding] = local
-        if step.output.binding == "_":
-            self.record_output(
-                run_id,
-                local.ref or FieldRef.from_path(step.ref, "output", "value"),
-            )
 
     async def execute_child(
         self,
@@ -3586,23 +3327,6 @@ def _bind_run(
         created_at=utc_now(),
         horizon=spec.horizon,
         cwd=spec.workdir or "",
-    )
-
-
-def _step_local(step: StepRecord, store: RunStore) -> Local:
-    if step.output is None:
-        return Local()
-    return Local(
-        value=store.resolve_value(step.output.value),
-        ref=(
-            store.resolve_value_pointer(step.output.value)
-            if isinstance(step.output.value, TypedRef)
-            else FieldRef.from_path(step.ref, "output", "value")
-        ),
-        type_name=None
-        if isinstance(step.output.value, AwaitableHandle)
-        else step.output.type,
-        stored=step.output.value,
     )
 
 

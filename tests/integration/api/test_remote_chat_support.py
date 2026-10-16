@@ -72,7 +72,7 @@ _HOST_DESCRIPTION = "macOS 27.0 arm64"
 @pytest.mark.parametrize(
     "endpoint", ["runs/run_a", "threads/term_a", "threads/term_a/result"]
 )
-def test_history_response_keeps_one_snapshot_during_retry(
+def test_history_response_keeps_one_snapshot_during_concurrent_write(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, endpoint: str
 ) -> None:
     harness = ExecutionHarness.create(
@@ -121,27 +121,20 @@ def test_history_response_keeps_one_snapshot_during_retry(
         )
         control = writer.get_run_control(run_id="run_a", index=0)
         assert control is not None and isinstance(control.payload, RunControlPayload)
-        payload = control.payload
         get_output = core.history.get_output
-        retried = False
+        changed = False
 
-        def retry_before_output(run: RunRef | str) -> Output | None:
-            nonlocal retried
-            if not retried:
-                writer.accept_retry(
-                    run_id="run_a",
-                    anchor=None,
-                    resources=payload.resources,
-                    limits=payload.limits,
-                    state=payload.state,
-                    sandbox="host",
-                    request_id=None,
-                    created_at="2026-09-01T00:00:00Z",
+        def change_before_output(run: RunRef | str) -> Output | None:
+            nonlocal changed
+            if not changed:
+                writer._conn.executescript(
+                    "DELETE FROM steps WHERE run IN ('run_a', 'run_b'); "
+                    "DELETE FROM runs WHERE id='run_b'; UPDATE runs SET output=NULL WHERE id='run_a';"
                 )
-                retried = True
+                changed = True
             return get_output(run)
 
-        monkeypatch.setattr(core.history, "get_output", retry_before_output)
+        monkeypatch.setattr(core.history, "get_output", change_before_output)
         app = create_app(
             core,
             CapsManager(core.layout),
@@ -150,7 +143,7 @@ def test_history_response_keeps_one_snapshot_during_retry(
         )
         with TestClient(app) as client:
             response = client.get(f"/api/v1/{endpoint}")
-        assert retried
+        assert changed
         assert response.status_code == 200
         data = response.json()
         detail = TypeAdapter(RunDetail).validate_python(

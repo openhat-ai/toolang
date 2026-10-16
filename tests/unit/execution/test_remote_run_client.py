@@ -32,7 +32,6 @@ from toolang.execution.remote import RemoteRunClient, RemoteRunClientError
 from toolang.execution.schemas import (
     ControlInfo,
     RerunRequest,
-    RetryRequest,
     RunControlRefData,
     RunDetail,
     RunRequest,
@@ -270,11 +269,11 @@ def test_remote_client_runs_traces_and_waits_for_detail() -> None:
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("operation", ("retry", "rerun"))
+@pytest.mark.parametrize("operation", ("rerun",))
 def test_remote_client_reuses_the_run_stream_protocol_for_restarts(
     operation: str,
 ) -> None:
-    accepted_id = "run_source" if operation == "retry" else "run_rerun"
+    accepted_id = "run_rerun"
     detail_reads = 0
 
     async def handler(request: httpx.Request) -> httpx.Response:
@@ -298,31 +297,18 @@ def test_remote_client_reuses_the_run_stream_protocol_for_restarts(
             "http://runtime.test", client=http, client_id="client_test"
         )
         tracer = _Tracer()
-        request = (
-            RetryRequest(
-                source="run_source",
-                commands=(RunCommand("limit", "cost", 2.5),),
-                request_id="retry_request",
-                anchor=StepRef.from_local("run_source", (1, 2)),
-            )
-            if operation == "retry"
-            else RerunRequest(
-                source="run_source",
-                commands=(RunCommand("limit", "time", 30),),
-                request_id="rerun_request",
-                model=ModelRequest(
-                    "openai/gpt-5",
-                    reasoning=Reasoning("high"),
-                ),
-            )
+        request = RerunRequest(
+            source="run_source",
+            commands=(RunCommand("limit", "time", 30),),
+            request_id="rerun_request",
+            model=ModelRequest(
+                "openai/gpt-5",
+                reasoning=Reasoning("high"),
+            ),
         )
 
         await client.connect()
-        handle = (
-            await client.retry(request, tracer=tracer)
-            if isinstance(request, RetryRequest)
-            else await client.rerun(request, tracer=tracer)
-        )
+        handle = await client.rerun(request, tracer=tracer)
         assert tracer.events == []
         detail = await handle.wait()
         assert await handle.wait() == detail
@@ -333,19 +319,16 @@ def test_remote_client_reuses_the_run_stream_protocol_for_restarts(
             "commands": [
                 {
                     "group": "limit",
-                    "field": "cost" if operation == "retry" else "time",
-                    "value": "2.5" if operation == "retry" else 30,
+                    "field": "time",
+                    "value": 30,
                 }
             ],
         }
-        if operation == "retry":
-            expected_payload["anchor"] = "run_source.1.2"
-        else:
-            expected_payload["model"] = {
-                "ref": "openai/gpt-5",
-                "reasoning": {"effort": "high"},
-                "max_output": None,
-            }
+        expected_payload["model"] = {
+            "ref": "openai/gpt-5",
+            "reasoning": {"effort": "high"},
+            "max_output": None,
+        }
         assert handle.run_id == detail.id == accepted_id
         assert [event.type for event in tracer.events] == ["run_begin", "run_end"]
         assert detail_reads == 2
@@ -384,7 +367,6 @@ def test_remote_rerun_serializes_a_sparse_model_override() -> None:
 @pytest.mark.parametrize(
     ("operation", "accepted_id", "error"),
     [
-        ("retry", "run_other", "did not accept the source run ID"),
         ("rerun", "run_source", "did not accept a new run ID"),
     ],
 )
@@ -404,22 +386,13 @@ def test_remote_client_rejects_invalid_restart_identity(
         await client.connect()
 
         with pytest.raises(RemoteRunClientError, match=error):
-            if operation == "retry":
-                await client.retry(
-                    RetryRequest(
-                        source="run_source",
-                        commands=(),
-                        request_id="retry_request",
-                    )
+            await client.rerun(
+                RerunRequest(
+                    source="run_source",
+                    commands=(),
+                    request_id="rerun_request",
                 )
-            else:
-                await client.rerun(
-                    RerunRequest(
-                        source="run_source",
-                        commands=(),
-                        request_id="rerun_request",
-                    )
-                )
+            )
 
         await client.disconnect()
         await http.aclose()

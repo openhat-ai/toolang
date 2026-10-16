@@ -6,12 +6,10 @@ from pydantic import ValidationError
 
 from toolang.api.conversion import (
     parse_authored_rerun,
-    parse_authored_retry,
     parse_authored_run,
 )
 from toolang.api.schemas import (
     AuthoredRerunRequest,
-    AuthoredRetryRequest,
     AuthoredRunRequest,
 )
 from toolang.base.types.model import (
@@ -22,11 +20,10 @@ from toolang.base.types.model import (
 from toolang.base.types.policy import AgentCeiling, RunLimits, RunPolicy
 from toolang.execution.schemas import (
     RerunRequest,
-    RetryRequest,
     RunRequest,
     RunnableRequest,
 )
-from toolang.execution.types import RunCommand, StepRef
+from toolang.execution.types import RunCommand
 from toolang.lang.input import CallInput
 
 
@@ -142,13 +139,6 @@ def test_authored_run_rejects_a_non_integer_reasoning_budget() -> None:
 
 
 def test_parse_authored_restart_round_trips_strict_wire_values() -> None:
-    retry_payload = AuthoredRetryRequest.model_validate(
-        {
-            "request_id": "retry_request",
-            "commands": [{"group": "limit", "field": "cost", "value": "2.50"}],
-            "anchor": "run_source.1.2",
-        }
-    )
     rerun_payload = AuthoredRerunRequest.model_validate(
         {
             "request_id": "rerun_request",
@@ -158,12 +148,6 @@ def test_parse_authored_restart_round_trips_strict_wire_values() -> None:
         }
     )
 
-    assert parse_authored_retry("run_source", retry_payload) == RetryRequest(
-        source="run_source",
-        commands=(RunCommand("limit", "cost", 2.5),),
-        request_id="retry_request",
-        anchor=StepRef.from_local("run_source", (1, 2)),
-    )
     assert parse_authored_rerun("run_source", rerun_payload) == RerunRequest(
         source="run_source",
         commands=(RunCommand("default", "model", "openai/test"),),
@@ -182,17 +166,6 @@ def test_parse_authored_restart_round_trips_strict_wire_values() -> None:
         model_override=ModelOverride(effort="high"),
     )
 
-    with pytest.raises(ValidationError):
-        AuthoredRetryRequest.model_validate(
-            {"request_id": "retry_request", "unexpected": True}
-        )
-    with pytest.raises(ValidationError):
-        AuthoredRetryRequest.model_validate(
-            {
-                "request_id": "retry_request",
-                "model": {"ref": "openai/test"},
-            }
-        )
     with pytest.raises(HTTPException, match="cannot replace the persisted runnable"):
         parse_authored_rerun(
             "run_source",

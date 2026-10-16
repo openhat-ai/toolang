@@ -124,13 +124,6 @@ COMMAND_SPECS: Mapping[str, CommandSpec] = {
         _command("steer", "before", placements=_ALL_PLACEMENTS, prepare="layout"),
         _command("cancel", "before", placements=_ALL_PLACEMENTS, prepare="layout"),
         _command(
-            "retry",
-            "before",
-            placements=_ALL_PLACEMENTS,
-            prepare="program",
-            preparation_owner="command",
-        ),
-        _command(
             "rerun",
             "before",
             placements=_ALL_PLACEMENTS,

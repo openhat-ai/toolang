@@ -23,7 +23,7 @@ from toolang.up.types import AgentServerRef
         ["talk"],
         ["serve"],
         ["hub", "serve"],
-        ["retry"],
+        ["rerun"],
         ["rerun"],
         ["agent:sample", "chat"],
         ["agent:sample", "serve"],
@@ -124,7 +124,7 @@ def test_script_publishes_basename_and_actual_allocated_run(
     assert events == ["start", ("run", allocated[0]), "close"]
 
 
-@pytest.mark.parametrize("kind", ["retry", "rerun"])
+@pytest.mark.parametrize("kind", ["rerun"])
 def test_restart_keeps_source_title_and_marks_accepted_execution(
     tmp_path, monkeypatch, publication, kind
 ):
@@ -140,11 +140,9 @@ def test_restart_keeps_source_title_and_marks_accepted_execution(
             return result
 
     class Client:
-        async def retry(self, request, **kwargs):
+        async def rerun(self, request, **kwargs):
             assert request.source == "run_source"
             return Handle()
-
-        rerun = retry
 
     @contextmanager
     def acquire(*_args, **_kwargs):
@@ -157,11 +155,9 @@ def test_restart_keeps_source_title_and_marks_accepted_execution(
     monkeypatch.setattr(thread, "acquire_agent_server", acquire)
     monkeypatch.setattr(thread, "acquire_run_client", client)
     assert (
-        thread._run_retry_or_rerun(
+        thread._run_rerun(
             layout=layout,
-            kind=kind,
             source="run_source",
-            anchor=None,
             sandbox=None,
             dev=None,
             commands=(),

@@ -408,62 +408,6 @@ def test_nested_condition_exits_only_its_own_repeat(tmp_path):
     assert len(harness.adapter.invocations) == 4
 
 
-def test_retry_restores_only_executed_prefix_effects_and_replays_records(tmp_path):
-    source = """agic before(_: Text):
-  Prefix.
-agic ready() -> Boolean:
-  Ready?
-flow main(_: Text):
-  let skipped = Original.
-  repeat:
-    let kept = run before
-    until ready
-    let skipped = Overwritten.
-  run: kept={{kept}} skipped={{skipped}} primary={{_}}
-"""
-    harness = ExecutionHarness.create(
-        tmp_path,
-        source=source,
-        responses=[
-            _answer("Committed."),
-            _answer("true"),
-            RuntimeError("retry final statement"),
-            _answer("done"),
-        ],
-    )
-    tracer = RecordingRunTracer()
-    retry_tracer = RecordingRunTracer()
-
-    async def scenario():
-        async with harness:
-            root = await harness.executor.run(
-                harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
-                    runnable="main",
-                    primary=(TextPart("seed"),),
-                ),
-                tracer=tracer,
-            )
-            assert root.status == "failed"
-            assert_replayed(harness, tracer.events)
-            retried = await harness.executor.retry(
-                root.id, setup=harness.setup, state=harness.state, tracer=retry_tracer
-            )
-            assert retried.status == "succeeded", retried.error
-            steps = harness.store.list_steps(run_id=root.id)
-            assert steps[1].noted == LoopStepNoted(0, "satisfied", None)
-            assert len([step for step in steps if step.parent == steps[1].ref]) == 1
-            assert harness.store.run_output_text(run_id=root.id) == "done"
-
-    asyncio.run(scenario())
-    assert len(harness.adapter.invocations) == 4
-    for call in harness.adapter.invocations[-2:]:
-        assert "kept=Committed. skipped=Original. primary=seed" in str(
-            call.call.messages
-        )
-    assert_replayed(harness, retry_tracer.events)
-
-
 def test_named_condition_rejects_active_runnable(tmp_path):
     harness = ExecutionHarness.create(
         tmp_path,

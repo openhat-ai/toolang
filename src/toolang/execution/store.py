@@ -56,7 +56,6 @@ from .records import (
     ExecControlPayload,
     ForkControlPayload,
     RecallControlPayload,
-    RetryControlPayload,
     RewindControlPayload,
     RunControlPayload,
     LaunchContext,
@@ -108,7 +107,6 @@ from .types import (
     RunRef,
     AwaitableHandle,
     RunLink,
-    StepPath,
     StepRef,
     ThreadRef,
     Output,
@@ -553,6 +551,8 @@ class RunStore:
         triggered_by: StepRef | None = None,
         revision: int | None = None,
     ) -> None:
+        if kind == "retry":
+            raise ValueError("legacy retry controls are read-only")
         _validate_request_id(client_id)
         scope = "run" if isinstance(ref.target, RunRef) else "thread"
         self._conn.execute(
@@ -1029,10 +1029,7 @@ class RunStore:
             rows = self._conn.execute(
                 f'''SELECT controls.* FROM controls
                    WHERE target = ? AND kind IN ('recall', 'compact') AND status = 'applied'
-                   AND "index" > ? AND "index" > (
-                       SELECT COALESCE(MAX("index"), -1) FROM controls AS attempts
-                       WHERE attempts.target = controls.target AND attempts.kind = 'retry'
-                   ) {adoption} ORDER BY "index"''',
+                   AND "index" > ? {adoption} ORDER BY "index"''',
                 (run_id, after if after is not None else -1),
             ).fetchall()
         return cursor, tuple(_control_from_row(row) for row in rows)
@@ -1250,201 +1247,6 @@ class RunStore:
         if inserted is None:
             raise RuntimeError(f"run control acceptance failed: {run_id}")
         return _control_from_row(inserted)
-
-    def accept_retry(
-        self,
-        *,
-        run_id: str,
-        anchor: StepRef | None,
-        resources: AgentResources,
-        limits: RunLimits,
-        state: str | None,
-        model_request: ModelRequest | None = None,
-        sandbox: str,
-        request_id: str | None,
-        client_id: str | None = None,
-        created_at: str,
-    ) -> tuple[RunRecord, ControlRecord, tuple[StepRef, ...]]:
-        """Atomically cut one root run at a step and reopen it for execution."""
-
-        if not valid_run_id(run_id):
-            raise ValueError(f"invalid run id: {run_id!r}")
-        if state is None:
-            raise ValueError("retry requires an Agent State revision")
-        _validate_canonical_sandbox(sandbox)
-        _validate_request_id(request_id)
-        with self.write_transaction():
-            try:
-                if request_id is not None and (
-                    self._conn.execute(
-                        "SELECT 1 FROM controls WHERE request = ?",
-                        (request_id,),
-                    ).fetchone()
-                    is not None
-                ):
-                    raise ValueError(
-                        f"run control request already exists: {request_id}"
-                    )
-                run_row = self._conn.execute(
-                    "SELECT * FROM runs WHERE id = ? AND parent IS NULL",
-                    (run_id,),
-                ).fetchone()
-                if run_row is None:
-                    raise ValueError(f"root run not found: {run_id}")
-                run = _run_from_row(run_row)
-                if run.status not in {"succeeded", "failed", "canceled"}:
-                    raise ValueError(f"run is not terminal: {run_id}")
-                if self._thread_projection().is_forked(run_id):
-                    raise ValueError(
-                        f"run belongs to a durable fork prefix: {run_id}; use rerun"
-                    )
-                tree_runs = self._root_tree_runs(run_id)
-                placeholders = ", ".join("?" for _ in tree_runs)
-                applied_exec = self._conn.execute(
-                    f"""
-                    SELECT 1 FROM controls
-                    WHERE scope = 'run' AND target IN ({placeholders})
-                      AND kind = 'exec' AND status = 'applied'
-                    LIMIT 1
-                    """,
-                    tree_runs,
-                ).fetchone()
-                if applied_exec is not None:
-                    raise ValueError(
-                        f"run has applied exec controls: {run_id}; use rerun"
-                    )
-                preparation_row = self._conn.execute(
-                    "SELECT * FROM controls WHERE id = ?",
-                    (str(ControlRef.for_run(run_id, 0)),),
-                ).fetchone()
-                preparation = (
-                    _control_from_row(preparation_row)
-                    if preparation_row is not None
-                    else None
-                )
-                preparation_payload = (
-                    preparation.payload if preparation is not None else None
-                )
-                if not isinstance(
-                    preparation_payload,
-                    RunControlPayload,
-                ):
-                    raise ValueError(f"run preparation not found: {run_id}")
-                recorded_state = self._state_revision_for_ref_locked(run.state)
-                if model_request is not None and (
-                    preparation_payload.model_request is None
-                    or model_request.ref != preparation_payload.model_request.ref
-                ):
-                    raise ValueError(
-                        "retry cannot replace the original model; use rerun"
-                    )
-                if recorded_state != state:
-                    raise ValueError(
-                        f"retry state no longer matches original run: {run_id}; use rerun"
-                    )
-                if preparation_payload.sandbox is None:
-                    raise ValueError(
-                        f"retry sandbox is unknown for run {run_id}; use rerun"
-                    )
-                if preparation_payload.sandbox != sandbox:
-                    raise ValueError(
-                        f"retry sandbox {sandbox} does not match original sandbox "
-                        f"{preparation_payload.sandbox} for run {run_id}; use rerun"
-                    )
-                # Background Steps do not belong to the caller's linear retry
-                # sequence, even when they were persisted after its failed Step.
-                retry_runs = self._root_tree_runs(run_id, include_async=False)
-                resolved_anchor = self._resolve_retry_anchor(
-                    run_id=run_id,
-                    tree_runs=retry_runs,
-                    anchor=anchor,
-                    run_status=run.status,
-                )
-                index_row = self._conn.execute(
-                    'SELECT COALESCE(MAX("index"), -1) + 1 AS next_index '
-                    "FROM controls WHERE target = ?",
-                    (run_id,),
-                ).fetchone()
-                index = int(index_row["next_index"]) if index_row is not None else 1
-                trimmed = (
-                    self._retry_step_suffix(
-                        tree_runs=retry_runs,
-                        anchor=resolved_anchor,
-                    )
-                    if resolved_anchor is not None
-                    else ()
-                )
-                control_ref = ControlRef(RunRef(run_id), index)
-                revision = self._next_run_control_revision()
-                removed_steps, removed_runs = self._delete_retry_suffix(
-                    tree_runs=tree_runs,
-                    steps=trimmed,
-                )
-                self._insert_control(
-                    ref=control_ref,
-                    kind="retry",
-                    timing="immediate",
-                    payload=RetryControlPayload(
-                        resources=resources,
-                        limits=limits,
-                        model_request=model_request,
-                        retry_from=resolved_anchor,
-                        invalidated_steps=removed_steps,
-                        removed_runs=removed_runs,
-                    ),
-                    request=request_id,
-                    client_id=client_id,
-                    status="applied",
-                    error=None,
-                    created_at=created_at,
-                    finished_at=created_at,
-                    claimed=True,
-                    revision=revision,
-                )
-                self._conn.execute(
-                    """
-                    UPDATE controls
-                    SET status = 'wontapply',
-                        error = 'run retried before the control could be applied',
-                        finished_at = ?,
-                        _revision = ?
-                    WHERE scope = 'run' AND target IN ({}) AND status = 'pending'
-                      AND kind IN ('steer', 'cancel')
-                    """.format(", ".join("?" for _ in tree_runs)),
-                    (
-                        created_at,
-                        self._next_run_control_revision(),
-                        *tree_runs,
-                    ),
-                )
-                self._conn.execute(
-                    """
-                    UPDATE runs
-                    SET control = ?,
-                        status = 'pending', output = NULL, error = NULL,
-                        started_at = NULL, finished_at = NULL,
-                        begin_cursor = NULL, end_cursor = NULL
-                    WHERE id = ?
-                    """,
-                    (str(control_ref), run_id),
-                )
-                updated_run_row = self._conn.execute(
-                    "SELECT * FROM runs WHERE id = ?", (run_id,)
-                ).fetchone()
-                control_row = self._conn.execute(
-                    "SELECT * FROM controls WHERE id = ?",
-                    (str(control_ref),),
-                ).fetchone()
-            except sqlite3.IntegrityError as exc:
-                identity = request_id or run_id
-                raise ValueError(f"run retry already exists: {identity}") from exc
-        if updated_run_row is None or control_row is None:
-            raise RuntimeError(f"run retry acceptance failed: {run_id}")
-        return (
-            _run_from_row(updated_run_row),
-            _control_from_row(control_row),
-            trimmed,
-        )
 
     def begin_run(
         self,
@@ -2844,26 +2646,11 @@ class RunStore:
             raise ValueError(f"anchor run is not terminal: {anchor.id}")
         return anchor
 
-    def _root_tree_runs(
-        self, root_run_id: str, *, include_async: bool = True
-    ) -> tuple[str, ...]:
-        """Return owned Runs, optionally stopping at async admission boundaries."""
+    def _root_tree_runs(self, root_run_id: str) -> tuple[str, ...]:
+        """Return the complete owned Run tree."""
 
         rows = self._conn.execute("SELECT * FROM runs ORDER BY rowid ASC").fetchall()
         records = [_run_from_row(row) for row in rows]
-        background = (
-            {
-                str(row["id"])
-                for row in self._conn.execute(
-                    "SELECT runs.id FROM runs JOIN controls ON controls.target = runs.id "
-                    "WHERE controls.kind = 'run' AND runs.parent IS NOT NULL "
-                    "AND controls.triggered_by = runs.parent "
-                    "AND json_extract(controls.payload, '$.launch_context') IS NOT NULL"
-                )
-            }
-            if not include_async
-            else set()
-        )
         selected = {root_run_id}
         changed = True
         while changed:
@@ -2871,349 +2658,12 @@ class RunStore:
             for run in records:
                 if (
                     run.id not in selected
-                    and run.id not in background
                     and run.parent is not None
                     and run.parent.run_id in selected
                 ):
                     selected.add(run.id)
                     changed = True
         return tuple(run.id for run in records if run.id in selected)
-
-    def _resolve_retry_anchor(
-        self,
-        *,
-        run_id: str,
-        tree_runs: Sequence[str],
-        anchor: StepRef | None,
-        run_status: RunStatus,
-    ) -> StepRef | None:
-        placeholders = ", ".join("?" for _ in tree_runs)
-        rows = self._conn.execute(
-            f"""
-            SELECT rowid, * FROM steps
-            WHERE run IN ({placeholders})
-            ORDER BY rowid ASC
-            """,
-            tuple(tree_runs),
-        ).fetchall()
-        if anchor is not None:
-            match = next(
-                (row for row in rows if str(row["id"]) == str(anchor)),
-                None,
-            )
-            if match is None:
-                raise ValueError(f"retry anchor not found in run {run_id}: {anchor}")
-            candidate = match
-        else:
-            incomplete = tuple(
-                row
-                for row in rows
-                if str(row["status"]) in {"running", "failed", "canceled"}
-            )
-            candidate = incomplete[-1] if incomplete else None
-            if candidate is None and run_status == "succeeded":
-                candidate = next(
-                    (row for row in reversed(rows) if str(row["kind"]) != "value"),
-                    rows[-1] if rows else None,
-                )
-            elif candidate is None:
-                candidate = rows[-1] if rows else None
-        if candidate is None:
-            return None
-        selected = StepRef.parse(str(candidate["id"]))
-        resolved = self._root_retry_step(
-            run_id=run_id,
-            tree_runs=tree_runs,
-            selected=selected,
-        )
-        paths = {StepRef.parse(str(row["id"])) for row in rows}
-        if resolved not in paths:
-            raise ValueError(f"retry resume step not found: {resolved}")
-        return resolved
-
-    def _root_retry_step(
-        self,
-        *,
-        run_id: str,
-        tree_runs: Sequence[str],
-        selected: StepRef,
-    ) -> StepRef:
-        """Map one tree Step to its owning top-level root Step."""
-
-        placeholders = ", ".join("?" for _ in tree_runs)
-        run_rows = self._conn.execute(
-            f"SELECT * FROM runs WHERE id IN ({placeholders})",
-            tuple(tree_runs),
-        ).fetchall()
-        parents = {
-            run.id: run.parent
-            for run in (_run_from_row(row) for row in run_rows)
-            if run.parent is not None
-        }
-        current = selected
-        visited: set[str] = set()
-        while current.run_id != run_id:
-            if current.run_id in visited:
-                raise ValueError(f"cyclic retry run ancestry: {selected}")
-            visited.add(current.run_id)
-            parent = parents.get(current.run_id)
-            if parent is None:
-                raise ValueError(
-                    f"retry step is not owned by root run {run_id}: {selected}"
-                )
-            current = parent
-        return StepRef.from_local(run_id, StepPath(current.indices[:1]))
-
-    def _retry_step_suffix(
-        self,
-        *,
-        tree_runs: Sequence[str],
-        anchor: StepRef,
-    ) -> tuple[StepRef, ...]:
-        """Return the effective step suffix invalidated by one retry."""
-
-        placeholders = ", ".join("?" for _ in tree_runs)
-        rows = self._conn.execute(
-            f"""
-            SELECT rowid, * FROM steps
-            WHERE run IN ({placeholders})
-            ORDER BY rowid ASC
-            """,
-            tuple(tree_runs),
-        ).fetchall()
-        keyed = {StepRef.parse(str(row["id"])): row for row in rows}
-        anchor_row = keyed.get(anchor)
-        if anchor_row is None:
-            raise ValueError(f"retry anchor step not found: {anchor}")
-        cutoff = int(anchor_row["rowid"])
-        run_rows = self._conn.execute(
-            f"SELECT * FROM runs WHERE id IN ({placeholders})",
-            tuple(tree_runs),
-        ).fetchall()
-        parents = {
-            run.id: run.parent
-            for run in (_run_from_row(row) for row in run_rows)
-            if run.parent is not None
-        }
-        run_records = tuple(_run_from_row(row) for row in run_rows)
-        root = next((run for run in run_records if run.parent is None), None)
-        if root is not None and rows:
-            control_row = self._conn.execute(
-                "SELECT * FROM controls WHERE id = ?",
-                (str(ControlRef.for_run(root.id, 0)),),
-            ).fetchone()
-            control = (
-                _control_from_row(control_row) if control_row is not None else None
-            )
-            if (
-                control is not None
-                and isinstance(
-                    control.payload,
-                    RunControlPayload,
-                )
-                and is_agic_ref(control.payload.runnable)
-            ):
-                cutoff = int(rows[0]["rowid"])
-        current: StepRef | None = anchor
-        while current is not None:
-            for size in range(1, len(current.indices) + 1):
-                ancestor = StepRef(current.run, StepPath(current.indices[:size]))
-                row = keyed.get(ancestor)
-                if row is not None and str(row["status"]) != "succeeded":
-                    cutoff = min(cutoff, int(row["rowid"]))
-            current = parents.get(current.run_id)
-        return tuple(
-            StepRef.parse(str(row["id"])) for row in rows if int(row["rowid"]) >= cutoff
-        )
-
-    def _delete_retry_suffix(
-        self,
-        *,
-        tree_runs: Sequence[str],
-        steps: Sequence[StepRef],
-    ) -> tuple[tuple[StepRef, ...], tuple[str, ...]]:
-        """Delete a retry suffix and every child run it owns."""
-
-        if not steps:
-            return (), ()
-        step_keys = {str(step) for step in steps}
-        placeholders = ", ".join("?" for _ in tree_runs)
-        run_rows = self._conn.execute(
-            f"SELECT * FROM runs WHERE id IN ({placeholders}) ORDER BY rowid ASC",
-            tuple(tree_runs),
-        ).fetchall()
-        runs = tuple(_run_from_row(row) for row in run_rows)
-        removed_runs = {
-            run.id
-            for run in runs
-            if run.parent is not None and str(run.parent) in step_keys
-        }
-        changed = True
-        while changed:
-            changed = False
-            for run in runs:
-                if (
-                    run.id not in removed_runs
-                    and run.parent is not None
-                    and run.parent.run_id in removed_runs
-                ):
-                    removed_runs.add(run.id)
-                    changed = True
-        for row in self._conn.execute(
-            "SELECT controls.*, runs.parent AS launch_parent FROM controls "
-            "JOIN runs ON runs.id = controls.target "
-            "WHERE controls.kind = 'run' AND controls.triggered_by IS NOT NULL"
-        ):
-            control = _control_from_row(row)
-            payload = control.payload
-            if row["launch_parent"] is not None and (
-                not isinstance(payload, RunControlPayload)
-                or payload.launch_context is None
-            ):
-                continue
-            launch = "spawn" if row["launch_parent"] is None else "async run"
-            if control.triggered_by is not None and (
-                str(control.triggered_by) in step_keys
-                or control.triggered_by.run_id in removed_runs
-            ):
-                raise ValueError(
-                    f"retry would delete {launch} origin {control.triggered_by}; use rerun"
-                )
-            if (
-                not isinstance(payload, RunControlPayload)
-                or payload.launch_context is None
-            ):
-                continue
-            pending = list(_value_refs(payload.input))
-            seen: set[FieldRef] = set()
-            while pending:
-                ref = pending.pop()
-                if ref in seen:
-                    continue
-                seen.add(ref)
-                record = ref.record
-                owner = (
-                    record.run_id
-                    if isinstance(record, StepRef)
-                    else str(record.target)
-                    if isinstance(record, ControlRef)
-                    else str(record)
-                )
-                removed = owner in removed_runs or str(record) in step_keys
-                if isinstance(record, RunRef):
-                    removed |= any(step.run == record for step in steps)
-                elif isinstance(record, ControlRef):
-                    referenced = self.get_record(Pointer(record))
-                    removed |= (
-                        isinstance(referenced, ControlRecord)
-                        and str(referenced.triggered_by) in step_keys
-                    )
-                if removed:
-                    raise ValueError(
-                        f"retry would delete {launch} input {ref}; use rerun"
-                    )
-                pending.extend(_value_refs(self.select_pointer(Pointer(ref)).runtime))
-        # A published producer can outlive its owning Step: thread horizons
-        # and later Run controls retain its output. Reject the entire retry
-        # transaction rather than leave those durable references dangling.
-        horizons = {
-            str(row["horizon"])
-            for row in self._conn.execute(
-                "SELECT horizon FROM threads WHERE horizon IS NOT NULL"
-            )
-        }
-        for row in self._conn.execute(
-            "SELECT * FROM controls WHERE kind IN ('run', 'compact')"
-        ):
-            payload = _control_from_row(row).payload
-            if isinstance(payload, RunControlPayload | CompactControlPayload):
-                if payload.horizon is not None:
-                    horizons.add(str(payload.horizon))
-        changed_runs = {step.run_id for step in steps}
-        if referenced := sorted(
-            (removed_runs & {str(history_root(ref)) for ref in horizons})
-            | (step_keys & horizons)
-            | (
-                changed_runs
-                & {ref for ref in horizons if isinstance(history_ref(ref), RunRef)}
-            )
-        ):
-            raise ValueError(
-                f"retry would delete referenced horizon {referenced[0]}; use rerun"
-            )
-        invalidated: set[StepRef] = set(steps)
-        if removed_runs:
-            invalidated.update(
-                StepRef.parse(row["id"])
-                for row in self._conn.execute(
-                    "SELECT id FROM steps WHERE run IN ({})".format(
-                        ", ".join("?" for _ in removed_runs)
-                    ),
-                    tuple(removed_runs),
-                )
-            )
-        if removed_runs:
-            removed_placeholders = ", ".join("?" for _ in removed_runs)
-            removed_params = tuple(removed_runs)
-            self._conn.execute(
-                f"DELETE FROM steps WHERE run IN ({removed_placeholders})",
-                removed_params,
-            )
-            self._conn.execute(
-                f"DELETE FROM runs WHERE id IN ({removed_placeholders})",
-                removed_params,
-            )
-        self._conn.executemany(
-            "DELETE FROM steps WHERE id = ?",
-            ((str(step),) for step in steps),
-        )
-        self._delete_triggered_controls(step_keys, removed_runs)
-        return tuple(sorted(invalidated, key=lambda ref: str(ref))), tuple(
-            sorted(removed_runs)
-        )
-
-    def _delete_triggered_controls(
-        self, step_keys: set[str], removed_runs: set[str]
-    ) -> None:
-        """Remove emitted controls unless surviving records still reference them."""
-
-        controls = tuple(
-            _control_from_row(row)
-            for row in self._conn.execute("SELECT * FROM controls")
-        )
-        candidates = {
-            control.ref
-            for control in controls
-            if control.triggered_by is not None
-            and (
-                str(control.triggered_by) in step_keys
-                or control.triggered_by.run_id in removed_runs
-            )
-        }
-        if not candidates:
-            return
-        # Scan record values, not serialized substrings: payload inputs can hold
-        # FieldRefs as well as the explicit Step/control association fields.
-        protected: set[ControlRef] = set()
-        for table in ("runs", "steps"):
-            for row in self._conn.execute(f"SELECT * FROM {table}"):
-                record = _run_from_row(row) if table == "runs" else _step_from_row(row)
-                protected.update(_record_control_refs(record))
-        by_ref = {control.ref: control for control in controls}
-        pending = list(set(by_ref) - candidates | protected)
-        visited: set[ControlRef] = set()
-        while pending:
-            ref = pending.pop()
-            if ref in visited or ref not in by_ref:
-                continue
-            visited.add(ref)
-            dependencies = _record_control_refs(by_ref[ref])
-            protected.update(dependencies)
-            pending.extend(dependencies - visited)
-        self._conn.executemany(
-            "DELETE FROM controls WHERE id = ?",
-            ((str(ref),) for ref in candidates - protected),
-        )
 
     def begin_step(
         self,
@@ -3531,7 +2981,7 @@ class RunStore:
                 if call.tools
                 else None
             )
-            # Freeze the actual content now: later State changes, retry, or
+            # Freeze the actual content now: later State changes or
             # reused execution fields cannot alter a surviving recorded call.
             delta = tuple(
                 replace(

@@ -18,8 +18,7 @@ from toolang.execution.schemas import (
     RunDetail,
     ThreadInfo,
 )
-from toolang.execution.types import StepRef, ControlRef
-from toolang.execution.types import DriverName
+from toolang.execution.types import ControlRef, DriverName
 from toolang.lang.types import parse_public_runnable_ref
 
 NonNegativeInt = Annotated[int, Field(strict=True, ge=0)]
@@ -344,15 +343,6 @@ class AuthoredRerunRequest(ApiRequest):
     model_override: ModelOverride | None = None
 
 
-class AuthoredRetryRequest(ApiRequest):
-    """One unresolved retry request for server-owned resolution."""
-
-    request_id: StrictText
-    client_id: StrictText | None = Field(default=None, min_length=1)
-    commands: list[RunOverridePayload] = Field(default_factory=list)
-    anchor: StepRef | None = None
-
-
 class RuntimeSandboxPayload(ApiRequest):
     """Public identity of the sandbox hosting the current server process."""
 
@@ -390,15 +380,6 @@ class RunRerunRequest(ApiRequest):
     request_id: str | None = Field(default=None, min_length=1)
     client_id: StrictText | None = Field(default=None, min_length=1)
     model: ModelRequest | None = None
-    limits: RunLimitsPayload | None = None
-
-
-class RunRetryRequest(ApiRequest):
-    """Request retry from one durable step boundary."""
-
-    request_id: str | None = Field(default=None, min_length=1)
-    client_id: StrictText | None = Field(default=None, min_length=1)
-    anchor: StepRef | None = None
     limits: RunLimitsPayload | None = None
 
 

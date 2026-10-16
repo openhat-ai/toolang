@@ -13,7 +13,6 @@ import pytest
 from tests.support.execution_assertions import (
     assert_run_event_integrity,
     event_labels,
-    execution_snapshot,
     without_runtime_snapshots,
     route_scopes,
 )
@@ -59,7 +58,6 @@ from toolang.execution.events import (
 )
 from toolang.execution.executor import RunLimits
 from toolang.execution.records import (
-    RetryControlPayload,
     RunControlPayload,
 )
 from toolang.execution.schemas import RerunRequest
@@ -67,7 +65,6 @@ from toolang.execution.store import RunStore
 from toolang.execution.values import parts_from_value
 from toolang.execution.types import (
     ControlRef,
-    Pointer,
     ErrorMessage,
     ErrorRef,
     FieldRef,
@@ -222,76 +219,6 @@ agic helper(_: Text) -> Boolean:
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("retries", [1, 2])
-def test_retry_restarts_an_agic_cycle_with_a_fresh_step_index(
-    tmp_path: Path,
-    retries: int,
-) -> None:
-    harness = ExecutionHarness.create(
-        tmp_path,
-        source="""
-agic reply(_: Part[]) -> Part[]:
-  recall = none
-  context = none
-  instruct = none
-  user: {{_}}
-""",
-        responses=[
-            *[RuntimeError("temporary failure") for _ in range(retries)],
-            ModelCallResult(message=Message.assistant("recovered")),
-        ],
-    )
-
-    async def scenario() -> None:
-        async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
-            run = await harness.executor.run(
-                harness.run_spec(
-                    thread=thread,
-                    runnable="reply",
-                    primary=(TextPart("hello"),),
-                )
-            )
-            assert run.status == "failed"
-
-            for _attempt in range(retries):
-                run = await harness.executor.retry(
-                    run.id,
-                    setup=harness.setup,
-                    state=harness.state,
-                )
-
-            assert run.status == "succeeded"
-            active = harness.store.list_steps(run_id=run.id)
-            assert [(step.ref.index, step.status) for step in active] == [
-                (0, "succeeded")
-            ]
-            assert active[0].input == (
-                FieldRef.from_path(
-                    ControlRef.for_run(run.id, 0), "payload", "input", "_"
-                ),
-            )
-            assert [
-                without_runtime_snapshots(call.call.messages)
-                for call in harness.adapter.invocations
-            ] == [[Message.user("hello")]] * (retries + 1)
-            assert all(
-                execution_snapshot(call.call)
-                == {
-                    "runnable": "agent::agic:reply",
-                    "entered_by": "run",
-                }
-                for call in harness.adapter.invocations
-            )
-            assert active[0].preceded_by == (ControlRef.for_run(run.id, retries),)
-            assert (
-                harness.store.select_pointer(Pointer(active[0].input[0])).runtime
-                is not None
-            )
-
-    asyncio.run(scenario())
-
-
 def test_reasoning_effort_reaches_accounting_and_restart_persistence(
     tmp_path: Path,
 ) -> None:
@@ -302,7 +229,6 @@ def test_reasoning_effort_reaches_accounting_and_restart_persistence(
         )
         for label in (
             "source",
-            "retry",
             "rerun",
             "sparse",
             "replacement",
@@ -372,15 +298,6 @@ agic reply(_: Part[]) -> Part[]:
             assert isinstance(source_control.payload, RunControlPayload)
             assert source_control.payload.model_request == high
 
-            retried = await harness.executor.retry(
-                source.id,
-                setup=harness.setup,
-                state=harness.state,
-            )
-            retry_control = harness.store.list_run_controls(run_id=retried.id)[-1]
-            assert isinstance(retry_control.payload, RetryControlPayload)
-            assert retry_control.payload.model_request == high
-
             preserved = await harness.executor.rerun(
                 source.id,
                 setup=harness.setup,
@@ -432,7 +349,7 @@ agic reply(_: Part[]) -> Part[]:
             )
             automatic = await harness.executor.run(automatic_spec)
 
-            assert source.status == retried.status == "succeeded"
+            assert source.status == "succeeded"
             assert (
                 preserved.status
                 == sparse.status
@@ -443,7 +360,6 @@ agic reply(_: Part[]) -> Part[]:
             assert [
                 invocation.call.reasoning for invocation in harness.adapter.invocations
             ] == [
-                Reasoning("high"),
                 Reasoning("high"),
                 Reasoning("high"),
                 Reasoning("low"),

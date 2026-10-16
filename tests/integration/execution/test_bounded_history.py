@@ -17,7 +17,7 @@ from toolang.base.types.message import Message, TextPart, ToolCallPart, ToolResu
 from toolang.base.types.run import ModelCall
 from toolang.execution.errors import HistoryChangedError
 from toolang.execution.inspection.history import RunHistory
-from toolang.execution.records import RunControlPayload, RunRecord, StepRecord
+from toolang.execution.records import RunRecord, StepRecord
 from toolang.execution.inspection.views import RunView
 from toolang.execution.store import RunStore
 from toolang.execution.inspection.views import ThreadView
@@ -84,22 +84,6 @@ def step(
     )
 
 
-def retry(store: RunStore, run: str) -> None:
-    control = store.get_run_control(run_id=run, index=0)
-    assert control is not None and isinstance(control.payload, RunControlPayload)
-    payload = control.payload
-    store.accept_retry(
-        run_id=run,
-        anchor=None,
-        resources=payload.resources,
-        limits=payload.limits,
-        state=payload.state,
-        sandbox="host",
-        request_id=None,
-        created_at="2026-01-02T00:00:00Z",
-    )
-
-
 def pages(
     history: RunHistory, first: RunView | ThreadView
 ) -> list[RunView | ThreadView]:
@@ -110,15 +94,13 @@ def pages(
 
 
 @pytest.mark.parametrize("query", ["run", "child", "runs", "thread"])
-def test_inspection_read_keeps_one_snapshot_during_retry(
+def test_inspection_read_keeps_one_snapshot_during_completion(
     store: RunStore, monkeypatch: pytest.MonkeyPatch, query: str
 ) -> None:
     start(store)
     parent = step(store)
     start(store, "run_child", parent=parent.ref)
     step(store, "run_child")
-    project_run_end(store, run_id="run_child")
-    project_run_end(store, run_id="run_a")
     history = RunHistory(store)
     read = {
         "run": lambda: history.get_run("run_a"),
@@ -133,12 +115,14 @@ def test_inspection_read_keeps_one_snapshot_during_retry(
     try:
 
         def interleave(**kwargs: object) -> object:
-            retry(writer, "run_a")
+            project_run_end(writer, run_id="run_child")
+            project_run_end(writer, run_id="run_a")
             return original(**kwargs)
 
         monkeypatch.setattr(store, method, interleave)
         assert read() == expected
-        assert writer.get_run(run_id="run_child") is None
+        child = writer.get_run(run_id="run_child")
+        assert child is not None and child.status == "succeeded"
     finally:
         writer.close()
 
@@ -351,29 +335,6 @@ def test_empty_step_range_has_no_controls(store: RunStore) -> None:
     view = RunHistory(store).run_view("run_a", begin=boundary, end=boundary)
     assert view.entries == view.dependencies == ()
     assert view.cursor is None
-
-
-@pytest.mark.parametrize("thread_page", [False, True])
-def test_retry_invalidates_pages_even_when_step_ids_are_reused(
-    store: RunStore, thread_page: bool
-) -> None:
-    start(store)
-    step(store)
-    step(store, index=1)
-    project_run_end(store, run_id="run_a")
-    start(store, "run_b")
-    project_run_end(store, run_id="run_b")
-    history = RunHistory(store)
-    first = (
-        history.thread_view("term_a", limit=1)
-        if thread_page
-        else history.run_view("run_a", limit=1)
-    )
-    assert first.cursor is not None
-    retry(store, "run_a")
-    step(store, output="replacement")
-    with pytest.raises(HistoryChangedError, match="changed|missing"):
-        history.next_page(first.cursor)
 
 
 def test_run_page_is_restartable_and_invalidates_changed_control_dependencies(
@@ -719,21 +680,6 @@ def test_raw_controls_preserve_all_statuses_without_manufacturing_timeline_event
     ]
     assert statuses == ["applied", "wontapply", "revoked", "pending"]
     assert all(page.timeline() == () for page in captured if isinstance(page, RunView))
-
-
-def test_parent_retry_invalidates_a_child_cursor(store: RunStore) -> None:
-    start(store)
-    parent = step(store)
-    start(store, "run_child", parent=parent.ref)
-    step(store, "run_child")
-    project_run_end(store, run_id="run_child")
-    project_run_end(store, run_id="run_a")
-    history = RunHistory(store)
-    child = history.run_view("run_child", limit=1)
-    assert child.cursor is not None
-    retry(store, "run_a")
-    with pytest.raises(HistoryChangedError, match="missing|changed"):
-        history.next_page(child.cursor)
 
 
 def test_thread_view_keeps_physical_member_order_for_interleaved_child_records(

@@ -40,7 +40,7 @@ from .runnables import (
     resolve_runnable_reference,
     runnable_ref as canonical_runnable_ref,
 )
-from .schemas import RerunRequest, RetryRequest, RunRequest
+from .schemas import RerunRequest, RunRequest
 from .types import DriverName, RunCommand, RunOverride, SessionSetting
 
 if TYPE_CHECKING:
@@ -146,7 +146,7 @@ def resolve_run_request(
 
 
 def resolve_restart_request(
-    request: RetryRequest | RerunRequest,
+    request: RerunRequest,
     *,
     setup: AgentSetup,
     state: AgentState,
@@ -160,7 +160,7 @@ def resolve_restart_request(
     if model is not None:
         model = (
             require_exact_model_request(model, setup=setup)
-            if isinstance(request, RerunRequest) and request.model is not None
+            if request.model is not None
             else materialize_model_request(model, setup=setup)
         )
     return RestartSpec(
@@ -168,23 +168,19 @@ def resolve_restart_request(
         state=state,
         ceiling=ceilings[0] if ceilings else AgentCeiling(),
         model=model,
-        model_override=(
-            request.model_override if isinstance(request, RerunRequest) else None
-        ),
+        model_override=request.model_override,
         limits=limits,
     )
 
 
 def _rerun_model_request(
-    request: RetryRequest | RerunRequest,
+    request: RerunRequest,
     bindings: RunBindings,
     *,
     setup: AgentSetup,
 ) -> ModelRequest | None:
     """Return only an explicit rerun replacement, never a setup default."""
 
-    if not isinstance(request, RerunRequest):
-        return None
     if request.model is not None:
         return request.model
     model_command = next(

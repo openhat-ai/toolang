@@ -17,18 +17,16 @@ from toolang.base.types.run import ModelCallResult
 from toolang.execution.events import (
     RunBegin,
     RunEnd,
-    RunRetried,
     StepBegin,
     StepEnd,
     ThreadCreated,
     ThreadForked,
     ThreadRewound,
 )
-from toolang.execution.records import RetryControlPayload
 from toolang.execution.store import RunStore
 from toolang.execution.stream import CanonicalStream, Publication, StreamLimits
 from toolang.execution.threads import ThreadManager
-from toolang.execution.types import EventCursor, Pointer, ThreadPrefix
+from toolang.execution.types import Pointer, ThreadPrefix
 
 
 async def collect(reader):
@@ -126,84 +124,6 @@ flow child(_: Text) -> Text:
 
     asyncio.run(scenario())
     assert CanonicalStream().epoch != source.epoch
-
-
-def test_retry_persists_exact_invalidation_and_reuses_only_prefix_cursors(tmp_path):
-    harness = ExecutionHarness.create(
-        tmp_path,
-        source="""
-flow parent(_: Text) -> Text:
-  let prefix = Retained
-  run child
-agic child(_: Text) -> Text:
-  recall = none
-  user: Work
-""",
-        responses=[
-            RuntimeError("temporary failure"),
-            ModelCallResult(message=Message.assistant("done")),
-        ],
-    )
-
-    async def scenario():
-        async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
-            first = await harness.executor.run(
-                harness.run_spec(
-                    thread=thread, runnable="parent", primary=(TextPart("input"),)
-                )
-            )
-            assert first.status == "failed"
-            prefix, suffix = harness.store.list_steps(run_id=first.id)
-            child = next(r for r in harness.store.list_runs() if r.parent == suffix.ref)
-            removed_steps = harness.store.list_steps(run_id=child.id)
-            reader = harness.executor.stream.subscribe(root_run_id=first.id)
-            handle = harness.executor.retry(
-                first.id, setup=harness.setup, state=harness.state
-            )
-            # Admission itself is durable and ordered before the next task runs.
-            pending = harness.store.get_run(run_id=first.id)
-            assert pending is not None and pending.status == "pending"
-            assert pending.begin_cursor is None and pending.end_cursor is None
-            boundary = harness.executor.stream.tail
-            reader.finish()
-            admission = (await reader.receive()).events
-            assert len(admission) == 1
-            reader.close()
-            reader = harness.executor.stream.subscribe(
-                after=boundary, root_run_id=first.id
-            )
-            mutation = admission[0].event
-            assert isinstance(mutation, RunRetried)
-            assert set(mutation.invalidated_steps) == {
-                suffix.ref,
-                *(s.ref for s in removed_steps),
-            }
-            assert mutation.removed_runs == (child.id,)
-            control = harness.store.get_run_control(
-                run_id=first.id, index=mutation.control.index
-            )
-            assert control is not None and isinstance(
-                control.payload, RetryControlPayload
-            )
-            assert control.event_cursor == str(admission[0].cursor)
-            assert control.payload.invalidated_steps == mutation.invalidated_steps
-            assert control.payload.removed_runs == mutation.removed_runs
-            retried = await handle
-            assert retried.status == "succeeded"
-            assert harness.store.get_step(ref=prefix.ref) == prefix
-            replacement = harness.store.get_step(ref=suffix.ref)
-            assert replacement is not None
-            assert replacement.begin_cursor != suffix.begin_cursor
-            assert replacement.end_cursor != suffix.end_cursor
-            assert retried.begin_cursor != first.begin_cursor
-            later = await collect(reader)
-            assert isinstance(later[0].event, RunBegin)
-            assert all(f.cursor.seq > admission[0].cursor.seq for f in later)
-            assert retried.begin_cursor is not None
-            assert EventCursor.parse(retried.begin_cursor).seq == later[0].cursor.seq
-
-    asyncio.run(scenario())
 
 
 def test_failed_publication_rolls_back_thread_and_cursor(tmp_path, monkeypatch):

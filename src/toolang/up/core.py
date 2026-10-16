@@ -84,7 +84,6 @@ class AgentCore:
             setup=lambda: self.setup.current(),
             state=lambda: self.state.current(),
             sync_state=self.state.sync,
-            load_state=lambda revision: self.state.load(revision),
             default_workdir=workdir,
             admission=lifecycle.admit if lifecycle is not None else None,
         )

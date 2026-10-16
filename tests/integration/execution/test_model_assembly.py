@@ -301,7 +301,7 @@ flow job(_: Part[]) -> Part[]:
     assert_replayed(harness, tracer.events)
 
 
-@pytest.mark.parametrize("action", ["execute", "retry"])
+@pytest.mark.parametrize("action", ["execute"])
 def test_execution_reset_uses_the_surviving_horizon(
     tmp_path: Path, action: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -365,40 +365,14 @@ agic next() -> Part[]:
             second = await _run(harness, thread, "second", tracer)
             horizon = _summary(harness, thread, second.id)
             run = await _run(harness, thread, "current", hooked, runnable="chat")
-            if action == "retry":
-                assert run.status == "failed"
-                reads = []
-                original = harness.store.run_horizon
-
-                def read(run_id):
-                    reads.append(len(harness.store.list_steps(run_id=run_id)))
-                    return original(run_id)
-
-                with monkeypatch.context() as patch:
-                    patch.setattr(harness.store, "run_horizon", read)
-                    run = await harness.executor.retry(
-                        run.id, setup=harness.setup, state=harness.state, tracer=tracer
-                    )
-                assert reads == [0]
-                # The compact-adopting Step was physically removed by retry.
-                assert harness.store.run_horizon(run.id) is None
-                assert not harness.store.runtime_controls(run_id=run.id)[1]
-                expected = [
-                    Message.user("first"),
-                    Message.assistant("first reply"),
-                    Message.user("second"),
-                    Message.assistant("second reply"),
-                    Message.user("current"),
-                ]
-            else:
-                assert harness.store.run_horizon(run.id) == horizon
-                expected = [
-                    summary_message("Earlier facts."),
-                    Message.user("second"),
-                    Message.assistant("second reply"),
-                    Message.user("Next task."),
-                ]
-                tracer.events.extend(hooked.events)
+            assert harness.store.run_horizon(run.id) == horizon
+            expected = [
+                summary_message("Earlier facts."),
+                Message.user("second"),
+                Message.assistant("second reply"),
+                Message.user("Next task."),
+            ]
+            tracer.events.extend(hooked.events)
             assert run.status == "succeeded", run.error
             assert (
                 without_runtime_snapshots(harness.adapter.invocations[-1].call.messages)

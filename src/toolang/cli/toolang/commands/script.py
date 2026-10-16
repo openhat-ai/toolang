@@ -1252,7 +1252,6 @@ async def _execute(
         setup=setup_watcher.current,
         state=state_watcher.current,
         sync_state=state_watcher.sync,
-        load_state=state_watcher.load,
     )
     spec = resolve_spec(
         override,

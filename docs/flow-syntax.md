@@ -524,4 +524,4 @@ Local wrapper or `dim` field. Update output references to `output/value`.
 RunStore schema 52 rejects older stores without modifying them; retain the
 matching older runtime to inspect those stores, and use a fresh store for new
 runs. No compatibility reader or automatic migration is provided. Old executable
-snapshots require source migration and a newly prepared state before retry/rerun.
+snapshots require source migration and a newly prepared state before rerun.

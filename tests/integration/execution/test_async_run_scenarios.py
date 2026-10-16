@@ -456,49 +456,6 @@ agic child(_: Text) -> Text:
     asyncio.run(scenario())
 
 
-def test_retry_keeps_committed_launch_and_result(tmp_path):
-    harness = ExecutionHarness.create(
-        tmp_path,
-        source="""
-flow parent() -> Text:
-  let job = async run child
-  await job
-  let run unstable
-  await job
-agic child() -> Text:
-  user: Child
-agic unstable() -> Text:
-  user: Retry me
-""",
-        responses=[
-            ModelCallResult(message=Message.assistant("child")),
-            RuntimeError("temporary"),
-            ModelCallResult(message=Message.assistant("recovered")),
-        ],
-    )
-
-    async def scenario():
-        async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
-            parent = await harness.executor.run(
-                harness.run_spec(thread=thread, runnable="parent")
-            )
-            assert parent.status == "failed"
-            source = harness.store.list_steps(run_id=parent.id)[0]
-            retried = await harness.executor.retry(
-                parent.id, setup=harness.setup, state=harness.state
-            )
-            assert retried.status == "succeeded", (
-                harness.store.resolve_error(retried.error) if retried.error else None
-            )
-            assert retried.output is not None
-            assert harness.store.resolve_value(retried.output.value) == "child"
-            assert harness.store.list_steps(run_id=parent.id)[0] == source
-            assert len(harness.adapter.invocations) == 3
-
-    asyncio.run(scenario())
-
-
 @pytest.mark.parametrize("fault", ["admission", "dispatch", "delivery"])
 def test_async_fault_boundaries_keep_admission_and_result_consistent(
     tmp_path, monkeypatch, fault

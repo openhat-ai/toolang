@@ -20,7 +20,6 @@ from .events import (
     ExecutionEvent,
     RunBegin,
     RunEnd,
-    RunRetried,
     StepBegin,
     StepEnd,
     ThreadCreated,
@@ -110,7 +109,7 @@ class Attachment:
         self._closed = False
 
     def attach(
-        self, scope: StreamScope, *, start: Literal["new", "retry"] | None = None
+        self, scope: StreamScope, *, start: Literal["new"] | None = None
     ) -> EventSubscription:
         """Capture B and the first SQLite read before yielding the admission turn."""
         if self._closed:
@@ -119,10 +118,8 @@ class Attachment:
             raise RuntimeError("attachment already used")
         # A newly allocated root has no history before this admission. Preserve
         # its first source Begin even when the caller's cursor needs recovery in
-        # another scope or epoch. Retry still recovers the existing root from C.
+        # another scope or epoch.
         after = self.admitted_after if start == "new" else self.after
-        if after is None and start == "retry":
-            after = self.admitted_after
         try:
             with self.source.boundary() as (boundary, floor, cache):
                 self.store.pin_stream_snapshot(
@@ -145,7 +142,7 @@ class Attachment:
                 boundary,
                 floor,
                 cache,
-                started=start == "new" or (start == "retry" and self.after is None),
+                started=start == "new",
                 admission_overflowed=admission_overflowed,
             )
             return self.subscription
@@ -396,10 +393,7 @@ class EventSubscription(StreamNormalizer):
             self._check_state()
             if self.started and (not cached or self._admission_overflowed):
                 raise StreamOverflowError("admission outgrew the canonical cache")
-            retry_start = self.started and any(
-                isinstance(frame.event, RunRetried) for frame in frames
-            )
-            if self.started and not retry_start:
+            if self.started:
                 prefix = _Frames(self._deadline)
                 prefix.extend(
                     StreamFrame.source(frame.event, str(frame.cursor))
@@ -409,9 +403,7 @@ class EventSubscription(StreamNormalizer):
             else:
                 snapshot = RecordSnapshot(self.store, runs, steps)
                 try:
-                    if not cached or any(
-                        isinstance(frame.event, RunRetried) for frame in frames
-                    ):
+                    if not cached:
                         raise StreamGapError("records replacement required")
                     prefix = self.replay(snapshot, frames, deadline=self._deadline)
                 except StreamGapError:
@@ -419,12 +411,6 @@ class EventSubscription(StreamNormalizer):
                         step.ref for step in steps if step.status == "running"
                     }
                     prefix = _Frames(self._deadline)
-                    if retry_start:
-                        prefix.extend(
-                            StreamFrame.source(frame.event, str(frame.cursor))
-                            for frame in frames
-                            if isinstance(frame.event, RunRetried)
-                        )
                     prefix.append(
                         StreamFrame(
                             "stream_prefill",

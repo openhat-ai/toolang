@@ -134,7 +134,7 @@ remain on host mounts. Host staging cleanup may wait for a later management call
 
 Generation checks reject delayed requests to replacement servers. Steer/cancel
 attach only to a healthy live owner and pin the target invocation; stale history
-cannot start a replacement or redirect a control to a retry. Fork/rewind --chat
+cannot start a replacement or redirect a control to another invocation. Fork/rewind --chat
 retains one acquisition through both phases. Legacy servers stay unmanaged and
 retained; stop/restart them to use lifecycle promotion and guarded controls.
 
@@ -142,7 +142,7 @@ Chat checks health/profile before use. It retains session defaults locally and
 uses HTTP for runtime/model/runnable inspection, thread creation, and result
 reads. Failed cursor recovery falls back to durable detail without repeating
 execution. Lease-loss errors include the last accepted Chat run ID when known.
-Retry/rerun observation failures report accepted run IDs without
+Rerun observation failures report accepted run IDs without
 canceling; explicit interruption requests cancellation. Standalone scripts remain
 separate: inactive host execution is embedded and script-created guests stop on exit.
 
@@ -179,7 +179,7 @@ Callers resolve the captured `AgentSetup` defaults and any session or run
 policy into `RunSpec.limits` before `run()`. Per-agic model and tool call
 limits reset on each agic invocation, while token, cost, and time limits are
 shared by all recursive runs. Effective limits are stored on the root run
-control and on each retry control.
+control.
 
 `run()` requires an existing thread. Thread creation belongs to
 `ThreadManager` or to the package that owns a deterministic external thread id.
@@ -261,7 +261,7 @@ decoder continues to accept earlier events containing a complete call.
 
 ## Run Controls
 
-Preparation control kinds are `run` and `retry`; runtime control kinds are
+The preparation control kind is `run`; runtime control kinds are
 `exec`, `chdir`, `recall`, `compact`, `steer`, and `cancel`. Rerun creates a new
 Run with a `run` control. Control timing is:
 
@@ -288,8 +288,7 @@ Every Run entry control stores its concrete runnable and model bindings,
 limits, resources, and a flat `CallInput[Value | TypedRef]`. Optional
 `authored_input` records the corresponding `CallInput[str]` source snapshot.
 Steer stores a primary `Part[]` value under `_`; cancel stores optional primary
-Text under `_`. Exec stores input references keyed by parameter name. Retry
-inherits input from the entry control and records its effective settings.
+Text under `_`. Exec stores input references keyed by parameter name.
 
 Every Run entry stores its State revision. Root entries also store the accepted
 sandbox; child entries omit the redundant sandbox. A durable run is a root exactly when

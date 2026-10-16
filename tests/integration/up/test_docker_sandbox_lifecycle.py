@@ -251,7 +251,7 @@ def test_docker_foreground_nonresident_uses_selected_root_and_cleans_reference(
                 layout.runtime_status
             )
             observed = subprocess.run(
-                (*base, "top", "--once"),
+                (*base, "list"),
                 env=env,
                 capture_output=True,
                 text=True,
@@ -341,7 +341,7 @@ def test_docker_restart_reuses_settings_after_queries_reconcile_killed_guest(
         assert entry["workload"]["pid"] is None
         unchanged = layout.runtime_status.stat().st_mtime_ns
         command("info", "restart")
-        command("top", "--once")
+        command("list")
         assert layout.runtime_status.stat().st_mtime_ns == unchanged
         assert SandboxState.load(layout.runtime_status) == first
         assert (

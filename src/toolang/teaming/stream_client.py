@@ -4,10 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from toolang.execution.events import RunRetried, event_from_data
 from toolang.execution.schemas import STREAM_PREFILL_MAX_BYTES, StreamFrame
 from toolang.execution.stream_client import StreamClientState
-from .errors import ForgottenTree
 from .events import HubCursor, HubScope, encode
 
 
@@ -38,9 +36,6 @@ class HubStreamState:
         data.pop("cursor", None)
         if cursor is not None:
             data["cursor"] = cursor
-        event = event_from_data(data)
-        if isinstance(event, RunRetried) and not local.has_run(event.run):
-            raise ForgottenTree("Retry needs a forgotten tree")
         local.feed(
             StreamFrame(frame.event, data, None if data.get("context") else cursor)
         )

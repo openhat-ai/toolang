@@ -475,34 +475,6 @@ class RunRequest:
 
 
 @dataclass(frozen=True, slots=True)
-class RetryRequest:
-    """One unresolved caller request to reopen a root run."""
-
-    source: str
-    commands: tuple[RunCommand, ...]
-    request_id: str
-    anchor: StepRef | None = None
-
-    client_id: str | None = None
-
-    def __post_init__(self) -> None:
-        _validate_restart_request(
-            source=self.source,
-            commands=self.commands,
-            request_id=self.request_id,
-        )
-        if any(
-            command.group == "default" and command.field == "model"
-            for command in self.commands
-        ):
-            raise ValueError("retry request cannot replace the persisted model")
-        if self.anchor is not None and not isinstance(self.anchor, StepRef):
-            raise TypeError("retry request anchor must be a StepRef or none")
-        if self.anchor is not None and str(self.anchor.run) != self.source:
-            raise ValueError("retry request anchor must belong to its source run")
-
-
-@dataclass(frozen=True, slots=True)
 class RerunRequest:
     """One unresolved caller request to start a new root from a source run."""
 

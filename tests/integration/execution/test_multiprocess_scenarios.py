@@ -11,7 +11,6 @@ from tests.support.execution_fixtures import (
     accept_run,
     project_run_end,
     project_run_start,
-    project_step,
 )
 from tests.support.execution_harness import (
     AsyncGate,
@@ -23,7 +22,6 @@ from toolang.base.types.run import ModelCallResult
 from toolang.common.ids import IdIssuer
 from toolang.execution.executor import RunExecutor
 from toolang.execution.records import (
-    RunControlPayload,
     SteerControlPayload,
 )
 from toolang.execution.store import RunStore
@@ -210,38 +208,6 @@ def _race_claim_control(
         store.close()
 
 
-def _race_retry(
-    db_path: str,
-    request_id: str,
-    ready: Any,
-    start: Any,
-    results: Any,
-) -> None:
-    store = RunStore(Path(db_path))
-    try:
-        control = store.get_run_control(run_id="run_retry_race", index=0)
-        if control is None or not isinstance(control.payload, RunControlPayload):
-            raise RuntimeError("run preparation is missing")
-        payload = control.payload
-        ready.put(request_id)
-        start.wait()
-        store.accept_retry(
-            run_id="run_retry_race",
-            anchor=None,
-            resources=payload.resources,
-            limits=payload.limits,
-            state=payload.state,
-            sandbox="host",
-            request_id=request_id,
-            created_at="2026-01-01T00:00:03Z",
-        )
-        results.put(("accepted", request_id))
-    except ValueError as exc:
-        results.put(("rejected", request_id, str(exc)))
-    finally:
-        store.close()
-
-
 def _race_processes(
     *targets: tuple[Any, tuple[object, ...]],
 ) -> list[tuple[object, ...]]:
@@ -275,117 +241,6 @@ def _race_processes(
         for queue in (ready, results):
             queue.close()
             queue.join_thread()
-
-
-def _race_fork_retry_prefix(
-    db_path: str,
-    ready: Any,
-    start: Any,
-    results: Any,
-) -> None:
-    store = RunStore(Path(db_path))
-    try:
-        ready.put("fork")
-        start.wait()
-        store.fork_thread(
-            thread_id="term_fork_retry",
-            source="term_retry_race",
-            anchor="run_later_anchor",
-            request_id="fork-race",
-            created_at="2026-01-01T00:00:03Z",
-        )
-        results.put(("accepted", "fork-race"))
-    except ValueError as exc:
-        results.put(("rejected", "fork-race", str(exc)))
-    finally:
-        store.close()
-
-
-def test_fork_and_retry_of_an_earlier_root_are_linearizable(tmp_path: Path) -> None:
-    db_path = tmp_path / "runs.db"
-    store = RunStore(db_path)
-    try:
-        root = project_run_start(
-            store,
-            run_id="run_retry_race",
-            thread_id="term_retry_race",
-            origin="chat",
-            input=Message.user("root"),
-        )
-        parent = project_step(
-            store,
-            run_id=root.id,
-            step_index=0,
-            kind="run",
-            status="succeeded",
-            input=(),
-            output=(),
-            started_at="2026-01-01T00:00:01Z",
-            finished_at="2026-01-01T00:00:02Z",
-        )
-        child = project_run_start(
-            store,
-            run_id="run_child_retry_race",
-            thread_id="term_retry_race",
-            parent=parent.ref,
-            origin="chat",
-            input=Message.user("child"),
-        )
-        child_step = project_step(
-            store,
-            run_id=child.id,
-            step_index=0,
-            kind="value",
-            status="succeeded",
-            input=(),
-            output=(),
-            started_at="2026-01-01T00:00:01Z",
-            finished_at="2026-01-01T00:00:02Z",
-        )
-        project_run_end(store, run_id=child.id)
-        project_run_end(store, run_id=root.id)
-        project_run_start(
-            store,
-            run_id="run_later_anchor",
-            thread_id="term_retry_race",
-            origin="chat",
-            input=Message.user("anchor"),
-        )
-        project_run_end(store, run_id="run_later_anchor")
-    finally:
-        store.close()
-
-    outcomes = _race_processes(
-        (_race_retry, (str(db_path), "retry-race")),
-        (_race_fork_retry_prefix, (str(db_path),)),
-    )
-    accepted = [outcome for outcome in outcomes if outcome[0] == "accepted"]
-    rejected = [outcome for outcome in outcomes if outcome[0] == "rejected"]
-    assert len(accepted) == len(rejected) == 1
-    reopened = RunStore(db_path)
-    try:
-        if accepted[0][1] == "fork-race":
-            assert "durable fork prefix" in str(rejected[0][2])
-            assert reopened.list_steps(run_id=root.id) == [parent]
-            assert reopened.list_steps(run_id=child.id) == [child_step]
-            assert [
-                r.id
-                for r in reopened.list_thread_history_chronological(
-                    thread_id="term_fork_retry"
-                )
-            ] == [
-                root.id,
-                child.id,
-                "run_later_anchor",
-            ]
-        else:
-            assert "nonterminal run" in str(rejected[0][2])
-            assert reopened.get_thread(thread_id="term_fork_retry") is None
-            assert reopened.list_thread_controls(thread_id="term_fork_retry") == ()
-            assert reopened.list_steps(run_id=root.id) == []
-            assert reopened.get_run(run_id=child.id) is None
-    finally:
-        reopened.close()
 
 
 def test_remote_process_can_steer_an_owned_run(tmp_path: Path) -> None:
@@ -549,61 +404,6 @@ def test_duplicate_run_control_request_has_one_process_winner(
         ]
         assert len(controls) == 1
         assert controls[0].index == 1
-    finally:
-        reopened.close()
-
-
-def test_concurrent_retry_has_one_process_winner(tmp_path: Path) -> None:
-    db_path = tmp_path / "runs.db"
-    store = RunStore(db_path)
-    try:
-        run = project_run_start(
-            store,
-            run_id="run_retry_race",
-            thread_id="term_retry_race",
-            origin="chat",
-            input=Message.user("hello"),
-            runnable_kind="flow",
-        )
-        project_step(
-            store,
-            run_id=run.id,
-            step_index=0,
-            kind="value",
-            status="failed",
-            input=(),
-            output=(),
-            error="temporary failure",
-            started_at="2026-01-01T00:00:01Z",
-            finished_at="2026-01-01T00:00:02Z",
-        )
-        project_run_end(
-            store,
-            run_id=run.id,
-            status="failed",
-            error="temporary failure",
-        )
-    finally:
-        store.close()
-
-    outcomes = _race_processes(
-        (_race_retry, (str(db_path), "retry-race-a")),
-        (_race_retry, (str(db_path), "retry-race-b")),
-    )
-
-    assert [outcome[0] for outcome in outcomes].count("accepted") == 1
-    assert [outcome[0] for outcome in outcomes].count("rejected") == 1
-    reopened = RunStore(db_path)
-    try:
-        retried = reopened.get_run(run_id=run.id)
-        assert retried is not None and retried.status == "pending"
-        assert reopened.list_steps(run_id=run.id) == []
-        assert [
-            control.kind for control in reopened.list_run_controls(run_id=run.id)
-        ] == [
-            "run",
-            "retry",
-        ]
     finally:
         reopened.close()
 

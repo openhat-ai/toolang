@@ -39,9 +39,5 @@ class ScopeUnavailable(ValueError):
     """A requested origin or retained scope does not exist."""
 
 
-class ForgottenTree(ValueError):
-    """Reattach at the previous checkpoint before applying this retry."""
-
-
 class StorageIntegrityError(MessagingError):
     """The conversation dataset is incomplete or malformed; never reset it."""
