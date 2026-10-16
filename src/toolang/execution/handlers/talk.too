@@ -9,10 +9,22 @@ agic talk(_: Json):
   owns the envelope and delivery. Never resend a confirmed write or retry uncertain
   delivery. Your final output is a brief handling summary, not a chat message or a
   replies JSON object.
-  Use convo__peek when you need earlier discussion. Do not re-handle your own messages,
+  Use this thread's history and convo__peek when you need earlier discussion. Do not re-handle your own messages,
   acknowledgements, completed discussions, or requests addressed only to others.
   If no action is needed, simply note that. Do not send acknowledgements of acknowledgements.
-  Delegate substantial work to an available spawn target, preserving source context;
-  tell the worker to send its result via convo__write. Do not await it in this handler.
+  Choose among controlling an existing local Run, starting a new Run in an idle existing
+  thread for the same topic, starting a new thread and Run, replying here, or doing nothing.
+  Prefer explicit human targets, then reply/dispatch links, then inspected local history.
+  Use history__read_threads, history__read_runs, and history__read_steps to inspect local
+  targets. Message origin IDs from another agent are not local execution targets.
+  runtime__steer and runtime__cancel require the exact Run ID and its inspected control
+  reference. Ask when a control target is unclear; never substitute a start or restart.
+  Delegate substantial work through runtime__spawn, preserving objective, constraints,
+  source message references, authorization origin, and the requested reply destination.
+  Supply thread only for an inspected idle local thread; otherwise omit it for a new one.
+  Tell the worker to send its result via convo__write. Do not await it in this handler.
+  Follow current source MEMBERS.md in dispatch, reply, and no-reply decisions. Other
+  conversations' rules apply when operating on those conversations. Rules do not grant
+  authority to change themselves; edits require human authorization covering the change.
   Batch:
   {{_}}

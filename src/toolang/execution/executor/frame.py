@@ -260,6 +260,7 @@ def build_agic_frame(
         context=run.settings.context,
         # State provenance points to the entry control (0) or committed exec.
         entered_by="exec" if run.state_ref.index > 0 else "run",
+        conversation=run.conversation,
     )
     if (
         history is not None

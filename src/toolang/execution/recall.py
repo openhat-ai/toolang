@@ -13,6 +13,7 @@ from .records import RecallControlPayload
 from .types import MessageTemplate, RecallTarget
 from .types import (
     RulesRecallTarget,
+    ConvoRulesRecallTarget,
     SkillRecallTarget,
     ServiceRecallTarget,
     SkillTriggerRecallTarget,
@@ -53,6 +54,10 @@ def required_declarations(
     current = {item.target: item for item in declarations}
     result: list[RecallControlPayload] = []
     for target, revision in visible.items():
+        if isinstance(target, ConvoRulesRecallTarget):
+            # Applicability is checked against the bound source or actual tool
+            # destination. Other resource reconciliation cannot withdraw it.
+            continue
         if revision == "0" or isinstance(target, WorkspaceRecallTarget):
             continue
         if isinstance(target, SkillRecallTarget | ServiceRecallTarget):
@@ -124,7 +129,19 @@ def recall_revisions(
             for name, revision in bindings.items():
                 revisions[WorkspaceRecallTarget(name)] = revision
             continue
-        if message.tag == "workspace-rules":
+        if message.tag == "convo-rules":
+            try:
+                scope = json.loads(ref)
+            except (ValueError, TypeError) as exc:
+                raise ValueError("invalid conversation rules recall ref") from exc
+            if (
+                not isinstance(scope, list)
+                or len(scope) != 2
+                or any(not isinstance(value, str) or not value for value in scope)
+            ):
+                raise ValueError("invalid conversation rules recall ref")
+            target = ConvoRulesRecallTarget(*scope)
+        elif message.tag == "workspace-rules":
             workspace, separator, path = ref.partition("/")
             if not workspace or not separator:
                 raise ValueError(f"invalid rules recall ref: {ref}")

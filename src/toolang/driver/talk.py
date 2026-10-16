@@ -7,14 +7,16 @@ from collections.abc import Callable
 from contextlib import suppress
 import json
 import logging
-from typing import Any
+from typing import Any, cast
 
 from toolang.base.types.message import TextPart
 from toolang.base.types.policy import RunBindings
 from toolang.common.layout import AgentLayout
 from toolang.execution.executor import RunExecutor, RunSpec
 from toolang.execution.threads import ThreadManager
-from toolang.execution.types import ThreadPrefix
+from toolang.execution.types import ConversationScope
+from toolang.execution.talk import TalkBatch
+from toolang.teaming.ids import talk_thread_id
 from toolang.lang.input import CallInput
 from toolang.teaming.types import MessageReceiver
 from toolang.teaming.errors import (
@@ -45,6 +47,7 @@ class MessagingLoop:
         endpoint: str = "",
     ):
         self.agent, self.owner = f"agent:{layout.name}", owner
+        self.layout = layout
         self.client = client
         self.endpoint = endpoint
         self.executor, self.threads = executor, threads
@@ -99,7 +102,6 @@ class MessagingLoop:
 
     async def _poll(self) -> None:
         conversations = await self.client.contacts()
-        # Round-robin independently of membership changes.
         conversations.sort(
             key=lambda g: (
                 g["conversation"] <= self.last_conversation,
@@ -108,65 +110,88 @@ class MessagingLoop:
         )
         for info in conversations:
             conversation = info["conversation"]
+            batch: dict[str, Any]
+            scope = ConversationScope(self.identity, conversation)
             try:
                 cursor = await self.client.talk_cursor(conversation)
-                gap = await self.client.check_cursor(conversation, cursor)
-                entries = await self.client.read(
-                    conversation, after=cursor, count=_CONTEXT
-                )
+                receipt = self.executor.store.talk.get(scope, cursor)
+                if receipt is not None:
+                    batch = json.loads(receipt.batch.payload)
+                    through = receipt.batch.through
+                    if (
+                        batch.get("agent") != self.agent
+                        or batch["conversations"][0]["conversation"] != conversation
+                        or batch["cursor"] != {"after": cursor, "through": through}
+                    ):
+                        raise MessagingError(
+                            "Stored talk batch differs from its source binding"
+                        )
+                else:
+                    gap = await self.client.check_cursor(conversation, cursor)
+                    entries = await self.client.read(
+                        conversation, after=cursor, count=_CONTEXT
+                    )
+                    if gap and gap != self.gaps.get(conversation):
+                        logger.warning("%s: %s", conversation, gap)
+                    self.gaps[conversation] = gap
+                    if not entries:
+                        continue
+                    messages = []
+                    for sid, fields in entries:
+                        try:
+                            message = Message.decode(fields["data"])
+                        except (MessagingError, KeyError):
+                            logger.warning(
+                                "Skipping malformed message: %s %s", conversation, sid
+                            )
+                            continue
+                        messages.append({**message.data(), "stream_id": sid})
+                    through = entries[-1][0]
+                    batch = {
+                        "agent": self.agent,
+                        "available_conversations": conversations,
+                        "cursor": {"after": cursor, "through": through},
+                        "conversations": [
+                            {"conversation": conversation, "messages": messages}
+                        ],
+                    }
             except ConversationAccessDenied:
-                # Membership can change after the directory snapshot.
-                continue
-            if gap and gap != self.gaps.get(conversation):
-                logger.warning("%s: %s", conversation, gap)
-            self.gaps[conversation] = gap
-            if not entries:
                 continue
             self.last_conversation = conversation
-            messages = []
-            for sid, fields in entries:
-                try:
-                    message = Message.decode(fields["data"])
-                except (MessagingError, KeyError):
-                    logger.warning(
-                        "Skipping malformed message: %s %s", conversation, sid
-                    )
-                    continue
-                messages.append({**message.data(), "stream_id": sid})
-            # Failure notices remain visible, but do not start new handler runs.
+            batch_messages = cast(
+                list[dict[str, Any]], batch["conversations"][0]["messages"]
+            )
             incoming = [
-                message
-                for message in messages
-                if message["sender"] != self.agent
-                and not message.get("handler_error", False)
+                item
+                for item in batch_messages
+                if item["sender"] != self.agent and not item.get("handler_error", False)
             ]
             cancelled = False
             try:
                 if incoming:
-                    await self.handle(
-                        {
-                            "agent": self.agent,
-                            "available_conversations": conversations,
-                            "conversations": [
-                                {
-                                    "conversation": conversation,
-                                    "messages": messages,
-                                }
-                            ],
-                        }
-                    )
+                    await self.handle(batch)
             except asyncio.CancelledError:
                 cancelled = True
                 raise
             except Exception as exc:
-                logger.exception("Messaging batch failed; skipping %s", conversation)
-                try:
+                logger.exception("Messaging batch failed or deferred: %s", conversation)
+                admitted = self.executor.store.talk.get(scope, cursor)
+                if admitted is not None and self.executor.store.talk.attempt_notice(
+                    admitted.run
+                ):
                     await self._send_failure_reply(conversation, incoming, exc)
-                except asyncio.CancelledError:
-                    cancelled = True
-                    raise
             finally:
-                self.pending = conversation, entries[-1][0]
+                admitted = self.executor.store.talk.get(scope, cursor)
+                if not incoming or admitted is not None:
+                    run = (
+                        self.executor.store.get_run(run_id=admitted.run)
+                        if admitted is not None
+                        else None
+                    )
+                    if admitted is not None and run is None:
+                        raise MessagingError("Stored talk receipt has no Run")
+                    if run is None or run.status not in {"pending", "running"}:
+                        self.pending = conversation, through
                 try:
                     async with asyncio.timeout(_CURSOR_SAVE_SECONDS):
                         await self._save_cursor()
@@ -214,26 +239,42 @@ class MessagingLoop:
             )
 
     async def handle(self, batch: dict[str, Any]) -> None:
-        setup, state = self.get_setup(), self.get_state()
-        spec = RunSpec(
-            setup=setup,
-            state=state,
-            thread=self.threads.create(prefix=ThreadPrefix.TALK),
-            workdir=self.executor.resolve_workdir(
-                setup, state, workdir=None, inherit_thread_workdir=False
-            ),
-            bindings=RunBindings(),
-            driver="talk",
-            limits=setup.limits,
-            input=CallInput({"_": (TextPart(json.dumps(batch, ensure_ascii=False)),)}),
-        )
-        handle = self.executor.run(spec)
-        try:
-            record = await handle
-        except asyncio.CancelledError:
-            handle.cancel(reason="Messaging handler stopped")
-            await handle
-            raise
+        conversation = batch["conversations"][0]["conversation"]
+        scope = ConversationScope(self.identity, conversation)
+        after, through = batch["cursor"]["after"], batch["cursor"]["through"]
+        receipt = self.executor.store.talk.get(scope, after)
+        if receipt is not None:
+            record = await self.executor.reconcile_talk(receipt.run)
+        else:
+            await self.client.get_rules(conversation)
+            setup, state = self.get_setup(), self.get_state()
+            admitted = TalkBatch(
+                scope, after, through, json.dumps(batch, ensure_ascii=False)
+            )
+            spec = RunSpec(
+                setup=setup,
+                state=state,
+                thread=self.threads.ensure_talk(
+                    scope,
+                    thread_id=talk_thread_id(conversation, agent_name=self.layout.name),
+                ),
+                workdir=self.executor.resolve_workdir(
+                    setup, state, workdir=None, inherit_thread_workdir=False
+                ),
+                bindings=RunBindings(),
+                driver="talk",
+                limits=setup.limits,
+                conversation=scope,
+                talk_batch=admitted,
+                input=CallInput({"_": (TextPart(admitted.payload),)}),
+            )
+            handle = self.executor.run(spec, request_id=admitted.request_id)
+            try:
+                record = await handle
+            except asyncio.CancelledError:
+                handle.cancel(reason="Messaging handler stopped")
+                await handle
+                raise
         if record.status != "succeeded":
             detail = (
                 self.executor.store.resolve_error(record.error)

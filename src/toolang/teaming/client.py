@@ -14,6 +14,7 @@ from toolang.execution.errors import SnapshotLimitError
 from .errors import (
     BackendUnavailable,
     ConversationAccessDenied,
+    ConversationRulesConflict,
     StorageIntegrityError,
     MessagingError,
     SendUnconfirmed,
@@ -22,6 +23,8 @@ from .errors import (
 )
 from .schemas import (
     Conversation,
+    ConversationRules,
+    SetRulesRequest,
     ConversationSummary,
     ConversationStatistics,
     GlobalStatistics,
@@ -172,6 +175,8 @@ class HubClient:
             raise SendUnconfirmed(f"Send unconfirmed for {message_id}: {detail}")
         if code == "conversation_access_denied":
             raise ConversationAccessDenied(str(detail))
+        if code == "conversation_rules_conflict":
+            raise ConversationRulesConflict(str(detail))
         if code == "storage_integrity":
             raise StorageIntegrityError(str(detail))
         if code == "backend_unavailable":
@@ -269,6 +274,31 @@ class HubClient:
             json={"name": name, "revision": revision},
         )
         return self._decode_conversation(data)
+
+    @staticmethod
+    def _decode_rules(data: Any, conversation: str) -> ConversationRules:
+        try:
+            document = ConversationRules.model_validate(data)
+            if document.conversation != conversation:
+                raise ValueError("Mismatched rules conversation")
+            return document
+        except (ValueError, TypeError, MessagingError) as exc:
+            raise MessagingError("Invalid Hub rules response") from exc
+
+    async def get_rules(self, conversation: str) -> ConversationRules:
+        data = await self._request("GET", self._conversation(conversation) + "/rules")
+        return self._decode_rules(data, conversation)
+
+    async def set_rules(
+        self, conversation: str, content: str, *, revision: str
+    ) -> ConversationRules:
+        request = SetRulesRequest(content=content, revision=revision)
+        data = await self._request(
+            "PUT",
+            self._conversation(conversation) + "/rules",
+            json=request.model_dump(),
+        )
+        return self._decode_rules(data, conversation)
 
     async def join_conversation(self, conversation: str) -> dict[str, Any]:
         return await self._request(

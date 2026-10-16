@@ -96,6 +96,61 @@ def _accept_duplicate_request(
         store.close()
 
 
+def _accept_distinct_root(db_path, run_id, ready, start, results):
+    store = RunStore(Path(db_path))
+    try:
+        ready.put(run_id)
+        start.wait()
+        accept_run(
+            store,
+            run_id=run_id,
+            parent=None,
+            thread="work_shared",
+            input=Message.user(run_id),
+            context={},
+            request_id=run_id,
+            created_at="2026-01-01T00:00:00Z",
+        )
+        results.put(("accepted", run_id))
+    except ValueError as exc:
+        results.put(("rejected", run_id, str(exc)))
+    finally:
+        store.close()
+
+
+def test_concurrent_distinct_roots_have_one_thread_admission_winner(tmp_path):
+    path = tmp_path / "runs.db"
+    store = RunStore(path)
+    store.create_thread(thread_id="work_shared")
+    store.close()
+    outcomes = _race_processes(
+        (_accept_distinct_root, (str(path), "run_one")),
+        (_accept_distinct_root, (str(path), "run_two")),
+    )
+    assert sorted(outcome[0] for outcome in outcomes) == ["accepted", "rejected"]
+    rejected = next(outcome for outcome in outcomes if outcome[0] == "rejected")
+    assert "busy" in str(rejected[2])
+    store = RunStore(path)
+    try:
+        assert (
+            len(store.list_runs())
+            == len(
+                store.list_run_controls(
+                    run_id=str(
+                        next(
+                            outcome[1]
+                            for outcome in outcomes
+                            if outcome[0] == "accepted"
+                        )
+                    )
+                )
+            )
+            == 1
+        )
+    finally:
+        store.close()
+
+
 def _fork_thread(
     db_path: str,
     id_path: str,
@@ -372,13 +427,14 @@ def test_duplicate_run_control_request_has_one_process_winner(
     db_path = tmp_path / "runs.db"
     store = RunStore(db_path)
     try:
-        store.create_thread(thread_id="term_requests")
         for run_id in ("run_request_a", "run_request_b"):
+            thread = f"term_{run_id}"
+            store.create_thread(thread_id=thread)
             accept_run(
                 store,
                 run_id=run_id,
                 parent=None,
-                thread="term_requests",
+                thread=thread,
                 input=Message.user(run_id),
                 context={},
                 request_id=None,

@@ -6,6 +6,8 @@ from fastapi import APIRouter, Depends, Query
 from .messaging import MessagingClient
 from .schemas import (
     Conversation,
+    ConversationRules,
+    SetRulesRequest,
     ConversationSummary,
     Targets,
     GlobalStatistics,
@@ -77,6 +79,18 @@ def messaging_router(
             body.name, participants=body.participants
         )
 
+    @router.get("/conversations/{conversation}/rules")
+    async def get_rules(conversation: str, client: Client) -> ConversationRules:
+        return await client.get_rules(conversation)
+
+    @router.put("/conversations/{conversation}/rules")
+    async def set_rules(
+        conversation: str, body: SetRulesRequest, client: Client
+    ) -> ConversationRules:
+        return await client.set_rules(
+            conversation, body.content, revision=body.revision
+        )
+
     @router.put("/conversations/{conversation}/participants")
     async def join_conversation(conversation: str, client: Client) -> dict[str, Any]:
         return await client.join_conversation(conversation)
@@ -119,6 +133,9 @@ def messaging_router(
             handler_error=body.handler_error
             if isinstance(body, AgentSendRequest)
             else False,
+            rules_revision=body.rules_revision
+            if isinstance(body, AgentSendRequest)
+            else None,
         )
 
     if agent:

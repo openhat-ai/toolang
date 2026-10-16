@@ -46,7 +46,7 @@ from .utils import (
     strip_parts,
     text_block,
 )
-from ..types import PromptSetting
+from ..types import PromptSetting, ConversationScope
 from ..records import ControlRecord, RecallControlPayload
 from ..types import (
     ModelMessages,
@@ -270,14 +270,21 @@ class PromptInputs:
     instruct: PromptSetting | None = None
     context: PromptSetting | None = None
     entered_by: Literal["run", "exec"] = "run"
+    conversation: ConversationScope | None = None
 
     @cached_property
     def execution_message(self) -> str:
         """Identify the active invocation independently of authored context."""
         runnable = attribute(f"{self.module}::{self.agic.kind}:{self.runnable_name}")
-        return (
-            f'<toolang:execution runnable="{runnable}" entered_by="{self.entered_by}"/>'
-        )
+        source = ""
+        if self.conversation is not None:
+            source = " " + attributes(
+                {
+                    "source_backend": self.conversation.backend,
+                    "source_conversation": self.conversation.conversation,
+                }
+            )
+        return f'<toolang:execution runnable="{runnable}" entered_by="{self.entered_by}"{source}/>'
 
     @cached_property
     def program(self) -> Program:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
+from hashlib import sha256
 import json
 import re
 from typing import Annotated, Any, Literal, cast
@@ -100,8 +101,62 @@ def conversation_name(value: str | None) -> str | None:
     return value
 
 
+def convo_target(value: str, agent: str) -> str:
+    """Parse the common model-tool target grammar without resolving it."""
+    try:
+        return conversation_id(value)
+    except MessagingError:
+        name = identifier(value)
+    if name == agent:
+        raise MessagingError("Cannot access a DM with yourself")
+    return f"agent:{name}"
+
+
 class ProtocolModel(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
+
+
+def rules_content(value: str) -> str:
+    """Validate authored Markdown without normalizing its UTF-8 bytes."""
+    if len(value.encode("utf-8")) > 64 * 1024:
+        raise ValueError("Conversation rules exceed 64 KiB")
+    return value
+
+
+def rules_revision(value: str) -> str:
+    if value != "0" and not re.fullmatch(r"[0-9a-f]{64}", value):
+        raise ValueError("Expected revision 0 or a lowercase SHA-256 digest")
+    return value
+
+
+RulesContent = Annotated[str, AfterValidator(rules_content)]
+RulesRevision = Annotated[str, AfterValidator(rules_revision)]
+
+
+class ConversationRules(ProtocolModel):
+    """One atomic, independently versioned conversation document."""
+
+    conversation: Annotated[str, AfterValidator(conversation_id)]
+    filename: Literal["MEMBERS.md"] = "MEMBERS.md"
+    revision: RulesRevision
+    content: RulesContent
+
+    @model_validator(mode="after")
+    def valid_digest(self) -> ConversationRules:
+        expected = (
+            sha256(self.content.encode("utf-8")).hexdigest() if self.content else "0"
+        )
+        if self.revision != expected:
+            raise ValueError("Conversation rules revision differs from content")
+        return self
+
+    @classmethod
+    def create(cls, conversation: str, content: str = "") -> ConversationRules:
+        return cls(
+            conversation=conversation,
+            content=content,
+            revision=sha256(content.encode("utf-8")).hexdigest() if content else "0",
+        )
 
 
 class HubInfo(BaseModel):
@@ -502,6 +557,11 @@ class RenameConversationRequest(HubRequest):
     revision: int = Field(ge=1)
 
 
+class SetRulesRequest(HubRequest):
+    content: RulesContent
+    revision: RulesRevision
+
+
 class SendRequest(HubRequest):
     id: str
     target: str
@@ -514,6 +574,7 @@ class AgentSendRequest(SendRequest):
     thread: str | None = None
     run: str | None = None
     handler_error: bool = False
+    rules_revision: RulesRevision | None = None
 
 
 class AgentRegistration(HubRequest):

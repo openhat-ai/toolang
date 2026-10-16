@@ -112,6 +112,7 @@ COMMAND_SPECS: Mapping[str, CommandSpec] = {
         _command("workspace", "before", placements=_ALL_PLACEMENTS, prepare="program"),
         _command("chore", "before", placements=_RESIDENT, prepare="program"),
         _command("talk", "none"),
+        _command("convo", "none"),
         _command("hub", "none"),
         _command(
             "chat",

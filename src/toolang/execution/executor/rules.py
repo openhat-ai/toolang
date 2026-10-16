@@ -21,8 +21,14 @@ from .resources import workspace_declarations
 class _HonorRequired(Exception):
     """A path-aware call must wait for a separate honor Tool Step."""
 
-    def __init__(self, paths: tuple[tuple[str, str], ...]):
+    def __init__(
+        self,
+        paths: tuple[tuple[str, str], ...] = (),
+        *,
+        conversations: tuple[str, ...] = (),
+    ):
         self.paths = paths
+        self.conversations = conversations
         super().__init__("workspace rules require recall")
 
 

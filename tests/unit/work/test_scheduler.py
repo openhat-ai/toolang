@@ -117,6 +117,77 @@ async def _close_scheduler(
     await scheduler.stop()
 
 
+def test_busy_chore_thread_keeps_its_source_trigger_until_admission(
+    tmp_path, monkeypatch
+):
+    from toolang.execution.errors import ThreadBusy
+
+    gate = AsyncGate()
+    harness = ExecutionHarness.create(
+        tmp_path / "toolang",
+        prepare_state=True,
+        source=_SOURCE,
+        responses=[ScriptedModelTurn(_result("occupant"), gate=gate), _result("chore")],
+    )
+    catalog = AuthoredChores(
+        harness.setup.layout.home,
+        lock_path=harness.setup.layout.home_edit_lock,
+        agent_name=harness.setup.layout.name,
+    )
+    _create_chore(catalog, "review", "/agic:review focus=chore\n\nKeep queued.")
+    scheduler = _scheduler(harness)
+    thread = f"chore_{chore_id('review', agent_name=harness.setup.layout.name)}"
+    harness.store.create_thread(thread_id=thread, origin="chore")
+    rejected = threading.Event()
+    run = harness.executor.run
+
+    def observed_run(*args, **kwargs):
+        try:
+            return run(*args, **kwargs)
+        except ThreadBusy:
+            rejected.set()
+            raise
+
+    monkeypatch.setattr(harness.executor, "run", observed_run)
+
+    async def scenario():
+        try:
+            occupant = harness.executor.run(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="agic:review",
+                    primary=(TextPart("Independent work"),),
+                    named={"focus": "occupant"},
+                )
+            )
+            await asyncio.wait_for(gate.wait_until_entered(), 2)
+            await scheduler.start()
+            assert await asyncio.to_thread(rejected.wait, 2)
+            deferred = await _wait_record(
+                scheduler, "review", lambda item: item.active_run_id is not None
+            )
+            assert deferred.active_run_id != occupant.run_id
+            assert deferred.active_trigger == "source" and deferred.error is None
+            assert len(harness.store.list_runs()) == 1
+            gate.release()
+            assert (await occupant).status == "succeeded"
+            finished = await _wait_record(
+                scheduler, "review", lambda item: item.status == "done"
+            )
+            assert finished.error is None and finished.active_run_id is None
+            assert (
+                len(harness.store.list_runs()) == len(harness.adapter.invocations) == 2
+            )
+        finally:
+            gate.release()
+            await _close_scheduler(scheduler, harness)
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        harness.store.close()
+
+
 def test_scheduler_rejects_invalid_input_without_creating_a_run(
     tmp_path,
 ) -> None:

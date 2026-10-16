@@ -188,6 +188,8 @@ agic helper(_: Text) -> Boolean:
                 "runtime__pick",
                 "runtime__run",
                 "runtime__spawn",
+                "runtime__steer",
+                "runtime__cancel",
                 "runtime__await",
                 "lookup__value",
             }

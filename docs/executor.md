@@ -147,6 +147,9 @@ Binding validates explicit runtime inputs and asks `IdIssuer` for a run ID when
 thread. Language `spawn` and `runtime/spawn` use the internal
 [spawn admission contract](plans/flow-spawn.md#commit-boundaries-and-records),
 which creates the independent root's thread in the same transaction.
+For model-tool spawn with an explicit existing thread, admission reuses that
+thread and its current compaction without changing its origin/peer. The caller's
+resolved launch preparation remains authoritative.
 
 Supplying a run ID is intentionally limited to one-shot script invocation so
 logging can be configured at a path containing that ID before execution.
@@ -155,7 +158,7 @@ ID. The supplied or allocated ID must be globally unique in `RunStore`.
 
 `RunStore.accept_run()` uses `BEGIN IMMEDIATE` to:
 
-1. validate the thread;
+1. validate the thread and reject a busy independent root target;
 2. reject a conflicting run ID;
 3. insert the pending `RunRecord`;
 4. insert an applied `run` `ControlRecord(index=0)` with effective `bindings`,
@@ -324,7 +327,8 @@ effective-resource, invocation, or tool-snapshot layer.
 
 The frame holds selected tools and effective Agic routes. Ordinary tool-capable
 calls receive `runtime__runnables`, `runtime__run`, `runtime__await`,
-`runtime__spawn`, `runtime__exec`, `runtime__chdir`, and `runtime__pick`
+`runtime__spawn`, `runtime__exec`, `runtime__chdir`, `runtime__pick`,
+`runtime__steer`, and `runtime__cancel`
 independently of route lists, using the normal plugin and Tool Step lifecycle.
 Honor and compact remain automatic preflights.
 

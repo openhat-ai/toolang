@@ -15,6 +15,10 @@ class ConversationAccessDenied(MessagingError):
     """The agent is not a participant in the requested conversation."""
 
 
+class ConversationRulesConflict(MessagingError):
+    """The expected rules revision is stale; the operation did not execute."""
+
+
 class BackendUnavailable(MessagingError):
     """The backend connection failed; reads may reconnect."""
 

@@ -19,6 +19,7 @@ from toolang.common.layout import AgentLayout
 from toolang.execution.input import parse_call
 from toolang.execution.calls import resolve_spec
 from toolang.execution.executor import RunExecutor, RunSpec
+from toolang.execution.errors import ThreadBusy
 from toolang.execution.records import RunRecord
 from toolang.lang.includes import resolve_file_include
 from toolang.setup import AgentSetup
@@ -492,6 +493,10 @@ class ChoreDriver:
         assert self._store is not None
         try:
             run = await asyncio.wrap_future(future)
+        except ThreadBusy:
+            # Keep the claimed trigger while backing off; other chores continue.
+            await asyncio.sleep(DEFAULT_STATE_POLL_SECONDS)
+            record = self._store.release_claim(run_id=run_id)
         except Exception as exc:
             record = self._store.reject_claim(
                 run_id=run_id,

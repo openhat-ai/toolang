@@ -102,6 +102,7 @@ class AgentClient(HubClient):
         thread: str | None = None,
         participants: list[str] | None = None,
         handler_error: bool = False,
+        rules_revision: str | None = None,
     ) -> dict[str, Any]:
         message = Message.create(
             self.actor,
@@ -123,6 +124,11 @@ class AgentClient(HubClient):
                 "thread": thread,
                 "run": run,
                 **({"handler_error": True} if handler_error else {}),
+                **(
+                    {"rules_revision": rules_revision}
+                    if rules_revision is not None
+                    else {}
+                ),
             },
         )
 

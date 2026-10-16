@@ -108,6 +108,7 @@ from ..types import (
     ErrorRef,
     FieldRef,
     RecallTarget,
+    ConversationScope,
     Output,
     ControlKind,
     StepRef,
@@ -151,6 +152,7 @@ from .common import (
     value_text,
 )
 from ..inspection.history import RunHistory
+from ..talk import TalkBatch
 from ..compaction import CompactSpec, RUNNABLE as COMPACT_RUNNABLE
 from ..settings import resolve_settings
 from ..recall import history_variables
@@ -242,6 +244,8 @@ class RunSpec:
     launch_context: LaunchContext | None = None
     resource_ceiling: AgentResources | None = None
     driver: Literal["chat", "talk", "chore"] | None = None
+    conversation: ConversationScope | None = None
+    talk_batch: TalkBatch | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -525,6 +529,8 @@ class RunExecutor:
                 authored_session_commands=spec.authored_session_commands,
                 prompt_invocations=spec.prompt_invocations,
                 launch_context=spec.launch_context,
+                conversation=spec.conversation,
+                talk_batch=spec.talk_batch,
                 runtime_sources=spec.state.runtime_sources,
                 horizon=bound.horizon,
             )
@@ -653,6 +659,7 @@ class RunExecutor:
                 authored_session_commands=spec.authored_session_commands,
                 prompt_invocations=spec.prompt_invocations,
                 launch_context=spec.launch_context,
+                conversation=spec.conversation,
                 runtime_sources=spec.state.runtime_sources,
                 horizon=bound.horizon,
             )
@@ -772,6 +779,9 @@ class RunExecutor:
             authored_session_commands=preparation.authored_session_commands,
             prompt_invocations=preparation.prompt_invocations,
             launch_context=captured,
+            conversation=entry_payload.conversation
+            if isinstance(entry_payload, RunControlPayload)
+            else None,
             resource_ceiling=entry_payload.resources
             if captured is not None and isinstance(entry_payload, RunControlPayload)
             else None,
@@ -945,6 +955,67 @@ class RunExecutor:
             )
         self._observe_control(control)
         return control
+
+    async def reconcile_talk(self, run_id: str) -> RunRecord:
+        """Reconcile an admitted batch under the driver's exclusive agent lease.
+
+        Preserve accepted independent roots and receipts. An orphaned processing
+        tree is closed as failed; none of its Steps are invoked again.
+        """
+        record = self.store.get_run(run_id=run_id)
+        if record is None:
+            raise ValueError(f"Talk receipt has no Run: {run_id}")
+        with self._active_lock:
+            active = self._active.get(run_id)
+            task = active.task if active is not None else None
+        if task is not None:
+            await asyncio.shield(task)
+            record = self.store.get_run(run_id=run_id)
+            assert record is not None
+        if record.status in {"pending", "running"}:
+            error = ErrorMessage(
+                "Message handler was interrupted before completing; no effects were replayed"
+            )
+            with self.stream.publication() as publication:
+                with self.store.write_transaction():
+                    for run in reversed(self.store.list_run_tree(root_run_id=run_id)):
+                        if run.status not in {"pending", "running"}:
+                            continue
+                        unfinished = []
+                        for step in self.store.list_steps(run_id=run.id):
+                            if step.status not in {"pending", "running"}:
+                                continue
+                            self.store.finish_step(
+                                ref=step.ref,
+                                kind=step.kind,
+                                status="failed",
+                                output=step.output,
+                                noted=None,
+                                error=error,
+                                finished_at=utc_now(),
+                            )
+                            unfinished.append(step.ref)
+                        self._publish_step_ends(
+                            publication,
+                            unfinished,
+                            thread_id=str(record.thread),
+                            root_run_id=run_id,
+                        )
+                        event = self._persist.on_event(
+                            RunEnd(
+                                run=run.id,
+                                status="failed",
+                                error=error,
+                                finished_at=utc_now(),
+                            ),
+                            cursor=publication.cursor,
+                        )
+                        publication.append(
+                            event, thread_id=str(record.thread), root_run_id=run_id
+                        )
+            record = self.store.get_run(run_id=run_id)
+            assert record is not None
+        return record
 
     def _require_owned_control(self, run_id: str, expected: ControlRef) -> None:
         with self._active_lock:
@@ -2492,6 +2563,7 @@ class _Execution:
             ceilings=parent.ceilings,
             resource_ceiling=parent.resource_ceiling,
             captured_iterations=parent.captured_iterations,
+            conversation=parent.conversation,
             settings=resolve_settings(runnable, module, parent.settings),
             created_at=utc_now(),
             call="run",
@@ -3202,6 +3274,7 @@ def _child_binding(
         ceilings=parent.ceilings,
         resource_ceiling=parent.resource_ceiling,
         captured_iterations=parent.captured_iterations,
+        conversation=parent.conversation,
         settings=resolve_settings(runnable, module, parent.settings),
         created_at=utc_now(),
         call="run",
@@ -3327,6 +3400,7 @@ def _bind_run(
         created_at=utc_now(),
         horizon=spec.horizon,
         cwd=spec.workdir or "",
+        conversation=spec.conversation,
     )
 
 

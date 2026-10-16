@@ -1956,6 +1956,25 @@ def _validate_accounting_number(value: float, *, label: str) -> None:
 
 
 @dataclass(frozen=True, slots=True)
+class ConversationScope:
+    """A source conversation bound to one invocation, never to a prefix."""
+
+    backend: str
+    conversation: str
+
+
+@dataclass(frozen=True, slots=True)
+class ConvoRulesRecallTarget(ConversationScope):
+    kind: Literal["convo-rules"] = field(default="convo-rules", init=False)
+
+    @property
+    def ref(self) -> str:
+        import json
+
+        return json.dumps([self.backend, self.conversation], separators=(",", ":"))
+
+
+@dataclass(frozen=True, slots=True)
 class RulesRecallTarget:
     workspace: str
     path: str
@@ -1999,7 +2018,8 @@ class WorkspaceRecallTarget:
 
 
 RecallTarget = Annotated[
-    RulesRecallTarget
+    ConvoRulesRecallTarget
+    | RulesRecallTarget
     | SkillRecallTarget
     | ServiceRecallTarget
     | PsycheRecallTarget

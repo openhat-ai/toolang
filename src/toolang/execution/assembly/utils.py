@@ -21,6 +21,7 @@ from ..types import ContentRef, MessageTemplate, TypedRef, validate_runtime_valu
 from ..types import (
     RecallTarget,
     RulesRecallTarget,
+    ConvoRulesRecallTarget,
     WorkspaceRecallTarget,
     SkillTriggerRecallTarget,
     ServiceTriggerRecallTarget,
@@ -203,6 +204,12 @@ def resource_frame(
     attrs = (
         {"workspace": target.workspace, "path": target.path}
         if isinstance(target, RulesRecallTarget)
+        else {
+            "backend": target.backend,
+            "conversation": target.conversation,
+            "filename": "MEMBERS.md",
+        }
+        if isinstance(target, ConvoRulesRecallTarget)
         else {"ref": target.ref}
     )
     if revision == "0":

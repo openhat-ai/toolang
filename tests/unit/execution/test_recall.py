@@ -19,6 +19,7 @@ from toolang.execution.types import (
     RunRef,
     SkillRecallTarget,
     ServiceRecallTarget,
+    ConvoRulesRecallTarget,
 )
 
 
@@ -133,6 +134,20 @@ def test_discarded_preparation_does_not_change_live_recalls():
     staged.append_control(second)
     assert live.recalls == {first.payload.target: first.payload.revision}
     assert staged.recalls == {second.payload.target: second.payload.revision}
+
+
+@pytest.mark.parametrize(
+    "ref", ['"ab"', '{"a": 1, "b": 2}', '["backend"]', '["", "gc_00000001"]']
+)
+def test_conversation_recall_requires_a_complete_structured_scope(ref):
+    control = _control(0, ConvoRulesRecallTarget("backend", "gc_00000001"))
+    (message,) = _delta(control)
+    assert recall_revisions((message,)) == {
+        control.payload.target: control.payload.revision
+    }
+    assert message.recall is not None
+    with pytest.raises(ValueError, match="conversation rules recall ref"):
+        recall_revisions((replace(message, recall=replace(message.recall, ref=ref)),))
 
 
 def test_history_recalls_share_cached_selection_and_ignore_far():

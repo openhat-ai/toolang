@@ -26,6 +26,7 @@ from .records import (
 from .store import RunStore
 from .stream import CanonicalStream
 from .types import ThreadPrefix
+from .types import ConversationScope, ControlRef
 
 _LOGGER = logging.getLogger(__name__)
 _Result = TypeVar("_Result")
@@ -48,19 +49,25 @@ class ThreadManager:
         self.stream = stream
         self._mutation_lock = threading.RLock()
 
-    def _apply(self, operation: Callable[[], tuple[_Result, ThreadEvent]]) -> _Result:
+    def _apply(
+        self, operation: Callable[[], tuple[_Result, ThreadEvent | None]]
+    ) -> _Result:
         if self.stream is not None:
             with self.stream.publication() as publication:
                 with self.store.write_transaction():
                     result, event = operation()
-                    self.store.record_event_cursor(event.control, publication.cursor)
-                    publication.append(event)
+                    if event is not None:
+                        self.store.record_event_cursor(
+                            event.control, publication.cursor
+                        )
+                        publication.append(event)
             return result
         # Commit before callbacks, keeping one manager's listener delivery ordered.
         with self._mutation_lock:
             with self.store.write_transaction():
                 result, event = operation()
-            self._notify(event)
+            if event is not None:
+                self._notify(event)
         return result
 
     def create(
@@ -94,6 +101,24 @@ class ThreadManager:
                 created_at=created_at,
             )
             return thread.id, event
+
+        return self._apply(operation)
+
+    def ensure_talk(self, scope: ConversationScope, *, thread_id: str) -> str:
+        """Ensure one explicit conversation binding without adopting old threads."""
+
+        def operation() -> tuple[str, ThreadEvent | None]:
+            if not self.store.talk.bind(scope, thread_id):
+                return thread_id, None
+            thread = self.store.get_thread(thread_id=thread_id)
+            assert thread is not None
+            return thread_id, ThreadCreated(
+                thread=thread_id,
+                control=ControlRef.for_thread(thread_id, 0),
+                origin=thread.origin,
+                peer=thread.peer,
+                created_at=thread.created_at,
+            )
 
         return self._apply(operation)
 

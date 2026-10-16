@@ -57,6 +57,7 @@ from ...types import (
     TypedRef,
     RecallTarget,
     RulesRecallTarget,
+    ConvoRulesRecallTarget,
     WorkspaceRecallTarget,
 )
 from ..common import _StepFailed, control_input_pointer
@@ -146,6 +147,10 @@ def _candidate(
         if state.execution is not None and prepared.run.parent is None
         else None
     )
+    reset = (
+        prepared.run.horizon != state.prepared.run.horizon
+        or prepared.recall != state.prepared.recall
+    )
     if state.execution is not None:
         resident = (
             state.prepared.declarations
@@ -165,6 +170,20 @@ def _candidate(
             for control in preceding
             if isinstance(control.payload, RecallControlPayload)
         )
+        source_visible = visible
+        if reset or compacted is not None:
+            # Source rules must be visible in the new window before this call,
+            # even when the previous buffer remembered the same revision.
+            source_visible = {
+                item.target: item.revision for item in prepared.declarations
+            }
+            if history is not None and "near" in prepared.recall:
+                source_visible.update(history.recalls)
+            source_visible.update(
+                (control.payload.target, control.payload.revision)
+                for control in preceding
+                if isinstance(control.payload, RecallControlPayload)
+            )
         current_workspace_bindings = tuple(
             item
             for item in prepared.workspaces
@@ -187,12 +206,26 @@ def _candidate(
         additions = (
             *stale_rules,
             *required_declarations(
-                (*prepared.declarations, *prepared.workspaces),
+                (
+                    *prepared.declarations,
+                    *prepared.workspaces,
+                ),
                 visible,
+            ),
+            *(
+                payload
+                for payload in state.conversation_rules
+                if source_visible.get(payload.target) != payload.revision
             ),
         )
         for payload in additions:
-            state.execution.recall(RunRef(prepared.run.run_id), payload, visible)
+            state.execution.recall(
+                RunRef(prepared.run.run_id),
+                payload,
+                source_visible
+                if isinstance(payload.target, ConvoRulesRecallTarget)
+                else visible,
+            )
         preceding_refs = {item.ref for item in preceding}
         new_controls = tuple(
             control
@@ -213,10 +246,7 @@ def _candidate(
         controls=preceding,
         history=history,
         recall=prepared.recall,
-        reset=(
-            prepared.run.horizon != state.prepared.run.horizon
-            or prepared.recall != state.prepared.recall
-        ),
+        reset=reset,
         workspace=prompting.workspace_message(
             prepared.workspace_names, prepared.workspaces
         ),
@@ -430,6 +460,10 @@ async def execute(state: _AgicState) -> ModelCallResult:
 
     run = state.prepared.run
     state.check_model_call_limit()
+    if run.conversation is not None:
+        from ..conversations import load_source
+
+        state.conversation_rules = (await load_source(state.layout, run.conversation),)
     step_index = state.next_step
     stream = _ModelStream(step=step_index)
     prepared = state.prepared

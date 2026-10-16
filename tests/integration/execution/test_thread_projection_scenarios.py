@@ -170,12 +170,12 @@ def test_fork_validates_every_run_in_the_prefix_tree(
             input=Message.user("child"),
             parent=StepRef.from_local("run_first", "0"),
         )
-    else:
+    _append(store, "term_source", "run_last")
+    if not active_child:
         store._conn.execute(
             "UPDATE runs SET status='running', finished_at=NULL WHERE id='run_first'"
         )
         store._conn.commit()
-    _append(store, "term_source", "run_last")
     before = _physical(store)
     with pytest.raises(ValueError, match="nonterminal run"):
         _fork(store, "term_source", "term_fork", "run_last")

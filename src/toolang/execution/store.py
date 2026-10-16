@@ -120,11 +120,14 @@ from .types import (
     ToolStepNoted,
     RunCommand,
     validate_runtime_value,
+    ConversationScope,
     valid_run_id,
     valid_thread_id,
 )
 from .schemas import Record, RecordSelection, select_record
 from .values import parts_from_value
+from . import talk
+from .errors import ThreadBusy
 
 _SCHEMA_VERSION = 57
 _SUPPORTED_SCHEMA_VERSIONS = (52, 53, 54, 55, 56, _SCHEMA_VERSION)
@@ -142,6 +145,7 @@ class RunStore:
             )
         self.db_path = db_path
         self.read_only = read_only
+        self.talk = talk.TalkStore(self)
         self._stream_deadline: float | None = None
         if read_only:
             target = f"{db_path.expanduser().resolve().as_uri()}?mode=ro"
@@ -582,6 +586,15 @@ class RunStore:
             ),
         )
 
+    def require_idle_thread(self, thread: str) -> None:
+        """Check within the caller's write transaction before root mutation."""
+        active = self._conn.execute(
+            "SELECT id FROM runs WHERE thread = ? AND parent IS NULL AND status IN ('pending', 'running') LIMIT 1",
+            (thread,),
+        ).fetchone()
+        if active is not None:
+            raise ThreadBusy(f"Thread {thread} is busy with Run {active['id']}")
+
     def accept_run(
         self,
         *,
@@ -609,6 +622,9 @@ class RunStore:
         triggered_by: StepRef | None = None,
         launch_context: LaunchContext | None = None,
         runtime_sources: Mapping[str, str] | None = None,
+        conversation: ConversationScope | None = None,
+        spawn_thread: str | None = None,
+        talk_batch: talk.TalkBatch | None = None,
     ) -> tuple[RunRecord, ControlRecord]:
         """Atomically insert a pending run and its applied admission control."""
 
@@ -682,6 +698,8 @@ class RunStore:
                                 "inherited child State must belong to its ancestry"
                             )
                         self._state_revision_for_ref_locked(state_ref)
+                if parent is None:
+                    self.require_idle_thread(thread)
                 self._conn.execute(
                     """
                     INSERT INTO runs(
@@ -707,6 +725,8 @@ class RunStore:
                     ),
                 )
                 payload = RunControlPayload(
+                    spawn_thread=spawn_thread,
+                    conversation=conversation,
                     resources=resources,
                     limits=limits,
                     state=state,
@@ -737,6 +757,12 @@ class RunStore:
                     claimed=True,
                     triggered_by=triggered_by or parent,
                 )
+                if talk_batch is not None:
+                    if parent is not None or conversation != talk_batch.scope:
+                        raise ValueError(
+                            "Talk admission requires its source scope on a root"
+                        )
+                    self.talk.accept(talk_batch, run_id, thread)
                 run_row = self._conn.execute(
                     "SELECT * FROM runs WHERE id = ?", (run_id,)
                 ).fetchone()
@@ -768,6 +794,8 @@ class RunStore:
         created_at: str,
         context: LaunchContext,
         tool_noted: ToolStepNoted | None,
+        requested_thread: str | None = None,
+        horizon: RunRef | StepRef | None = None,
     ) -> tuple[AwaitableHandle, bool]:
         """Commit a new thread, independent root, and successful source Step."""
 
@@ -804,13 +832,22 @@ class RunStore:
                     or payload.model_request != model_request
                     or payload.sandbox != sandbox
                     or payload.cwd != cwd
+                    or payload.spawn_thread != requested_thread
+                    or payload.horizon != horizon
                 ):
                     raise ValueError(f"conflicting spawn admission: {source}")
                 run = self.get_run(run_id=str(control.target))
                 if run is None or run.parent is not None:
                     raise ValueError(f"invalid spawn admission: {source}")
                 thread = self.get_thread(thread_id=str(run.thread))
-                if thread is None or thread.peer != peer:
+                if (
+                    thread is None
+                    or (requested_thread is None and thread.peer != peer)
+                    or (
+                        requested_thread is not None
+                        and str(run.thread) != requested_thread
+                    )
+                ):
                     raise ValueError(f"conflicting spawn thread: {source}")
                 original = AwaitableHandle(run.id, str(run.thread), handle.result_type)
                 if (
@@ -822,13 +859,19 @@ class RunStore:
                 return original, False
             if step.status != "running" or step.output is not None:
                 raise ValueError("spawn requires an unacknowledged running Step")
-            self.create_thread(
-                thread_id=handle.thread,
-                origin="work",
-                peer=peer,
-                created_at=created_at,
-                triggered_by=source,
-            )
+            if requested_thread is None:
+                self.create_thread(
+                    thread_id=handle.thread,
+                    origin="work",
+                    peer=peer,
+                    created_at=created_at,
+                    triggered_by=source,
+                )
+            elif (
+                requested_thread != handle.thread
+                or self.get_thread(thread_id=requested_thread) is None
+            ):
+                raise ValueError(f"spawn thread not found: {requested_thread}")
             self.accept_run(
                 run_id=handle.id,
                 parent=None,
@@ -846,6 +889,8 @@ class RunStore:
                 created_at=created_at,
                 triggered_by=source,
                 launch_context=context,
+                spawn_thread=requested_thread,
+                horizon=horizon,
             )
             if isinstance(step.given, SpawnStmt):
                 output = Output(handle, step.given.binding)
@@ -1140,6 +1185,7 @@ class RunStore:
         client_id: str | None = None,
         expected_control: ControlRef | None = None,
         created_at: str,
+        triggered_by: StepRef | None = None,
     ) -> ControlRecord:
         """Atomically allocate and accept one steer or cancel control."""
 
@@ -1162,8 +1208,7 @@ class RunStore:
             raise ValueError("cancel control accepts only one primary Text input")
         _validate_request_id(request_id)
 
-        with self._lock:
-            self._conn.execute("BEGIN IMMEDIATE")
+        with self.write_transaction():
             try:
                 if request_id is not None and (
                     self._conn.execute(
@@ -1231,18 +1276,16 @@ class RunStore:
                     created_at=created_at,
                     finished_at=None,
                     claimed=False,
+                    triggered_by=triggered_by,
                 )
                 inserted = self._conn.execute(
                     "SELECT * FROM controls WHERE id = ?",
                     (str(control_ref),),
                 ).fetchone()
-                self._conn.commit()
             except sqlite3.IntegrityError as exc:
-                self._conn.rollback()
                 identity = request_id or f"{run_id}@{index}"
                 raise ValueError(f"run control already exists: {identity}") from exc
             except Exception:
-                self._conn.rollback()
                 raise
         if inserted is None:
             raise RuntimeError(f"run control acceptance failed: {run_id}")
@@ -2791,7 +2834,12 @@ class RunStore:
                 or (
                     isinstance(existing_step.given, ToolStepGiven)
                     and existing_step.given.call.name
-                    in {"runtime__spawn", "runtime__exec"}
+                    in {
+                        "runtime__spawn",
+                        "runtime__exec",
+                        "runtime__steer",
+                        "runtime__cancel",
+                    }
                     or isinstance(existing_step.given, ToolStepGiven)
                     and existing_step.given.call.name == "runtime__run"
                     and existing_step.given.call.input.get("async") is True
@@ -3702,6 +3750,7 @@ class RunStore:
                         f"CREATE INDEX IF NOT EXISTS idx_{table}_{name} ON {table}({name})"
                     )
             _drop_legacy_activity(self._conn)
+            talk.initialize(self._conn)
             self._conn.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
             self._conn.commit()
 

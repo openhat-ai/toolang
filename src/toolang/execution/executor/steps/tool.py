@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import json
 import logging
 from collections.abc import Callable, Mapping
@@ -145,7 +145,20 @@ async def execute(
             call_id=identity,
             name="runtime__honor",
             input={
-                "paths": [{"workspace": name, "path": path} for name, path in paths]
+                **(
+                    {
+                        "paths": [
+                            {"workspace": name, "path": path} for name, path in paths
+                        ]
+                    }
+                    if paths
+                    else {}
+                ),
+                **(
+                    {"conversations": list(required.conversations)}
+                    if required.conversations
+                    else {}
+                ),
             },
         )
         step = StepRef.from_local(state.prepared.run.run_id, (state.next_step,))
@@ -205,6 +218,26 @@ async def _execute(
     routes: AgicRoutes | None = None,
     input_ref: FieldRef | None = None,
 ) -> ToolCallResult:
+    access = None
+    access_error = None
+    candidate = state.prepared.tools.get(call.name)
+    if (
+        trigger == "model"
+        and state.execution is not None
+        and candidate is not None
+        and _plugin_name(candidate) == "convo"
+        and call.name
+        in {"convo__peek", "convo__write", "convo__get_rules", "convo__set_rules"}
+    ):
+        from ..conversations import preflight
+
+        try:
+            values = candidate.bind_arguments(call.input)
+            access = await preflight(state, call.name, values["target"])
+        except _HonorRequired:
+            raise
+        except Exception as exc:
+            access_error = exc
     run = state.prepared.run
     step_index = state.next_step
     state.next_step += 1
@@ -312,6 +345,17 @@ async def _execute(
                 if state.execution is not None
                 else run.cwd,
             )
+            if access_error is not None:
+                raise access_error
+            if isinstance(context, ConvoToolContext) and access is not None:
+                context = replace(
+                    context,
+                    conversation=access.scope.conversation,
+                    backend=access.scope.backend,
+                    participants=access.participants,
+                    rules_revision=access.document.revision,
+                    rules_content=access.document.content,
+                )
             tool_paths = tool.paths(arguments, context)
             paths = tuple(
                 (workspace, path)
@@ -413,6 +457,22 @@ async def _execute(
             elapsed_ms(step_started),
         )
         raise _StepFailed(StepRef.from_local(run.run_id, (step_index,)), exc) from exc
+    if (
+        state.execution is not None
+        and access is not None
+        and record.error is None
+        and call.name in {"convo__get_rules", "convo__set_rules"}
+    ):
+        from toolang.teaming.schemas import ConversationRules
+        from ...types import ConvoRulesRecallTarget
+
+        document = ConversationRules.model_validate(record.output)
+        payload = RecallControlPayload(
+            ConvoRulesRecallTarget(access.scope.backend, document.conversation),
+            document.revision,
+            document.content,
+        )
+        state.execution.recall(step, payload, state.visible_recalls)
     part = ToolResultPart(
         tool_call_id=record.tool_call_id,
         call_id=record.call_id,
@@ -528,7 +588,8 @@ async def _cancel(
             call, reason="canceled by steer" if state.immediate_steer() else "canceled"
         )
     if (
-        call.name in {"runtime__spawn", "runtime__exec"}
+        call.name
+        in {"runtime__spawn", "runtime__exec", "runtime__steer", "runtime__cancel"}
         or call.name == "runtime__run"
         and call.input.get("async") is True
     ) and state.execution is not None:

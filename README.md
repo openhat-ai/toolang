@@ -133,6 +133,8 @@ too talk <target> [message...]        # Open a conversation or send a message
 too talk all                         # Open the system group conversation
 too talk alice,bob                    # Observe an existing conversation between agents
 too talk                             # List conversations
+too convo create [name]               # Create a group containing the configured human
+too convo rules <id> -o MEMBERS.md    # Download shared conversation rules; revision on stderr
 too [agent] home                      # Open a shell in agent home
 too serve <ref>                       # Run an agent in the foreground
 too start <agent-or-ref>              # Start or retain a background agent

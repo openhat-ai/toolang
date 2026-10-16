@@ -70,6 +70,7 @@ from .types import (
     OccurrencePosition,
     Output,
     RecallTarget,
+    ConversationScope,
     RunCommand,
     RunRef,
     AwaitableHandle,
@@ -351,6 +352,8 @@ class RunControlPayload:
     runtime_sources: Annotated[
         Mapping[str, str], PlainSerializer(lambda value: dict(value))
     ] = field(default_factory=dict)
+    conversation: ConversationScope | None = None
+    spawn_thread: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.runtime_sources, Mapping) or not all(
@@ -1005,6 +1008,12 @@ def control_payload_from_data(kind: ControlKind, data: object) -> ControlPayload
             payload.get("prompt_invocations", ())
         )
         return RunControlPayload(
+            spawn_thread=cast(str | None, payload.get("spawn_thread")),
+            conversation=TypeAdapter(ConversationScope).validate_python(
+                payload["conversation"]
+            )
+            if payload.get("conversation") is not None
+            else None,
             resources=resources,
             runtime_sources=cast(Mapping[str, str], payload.get("runtime_sources", {})),
             limits=limits,
@@ -1863,6 +1872,13 @@ def _run_payload_data(
         data["state"] = payload.state
     if payload.runtime_sources:
         data["runtime_sources"] = dict(payload.runtime_sources)
+    if payload.conversation is not None:
+        data["conversation"] = {
+            "backend": payload.conversation.backend,
+            "conversation": payload.conversation.conversation,
+        }
+    if payload.spawn_thread is not None:
+        data["spawn_thread"] = payload.spawn_thread
     if payload.launch_context is not None:
         data["launch_context"] = payload.launch_context.to_data()
     if payload.horizon is not None:

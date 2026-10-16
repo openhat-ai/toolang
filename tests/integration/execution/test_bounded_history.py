@@ -565,8 +565,8 @@ def test_compaction_output_reader_uses_latest_success_and_keeps_range_metadata(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     start(store)
-    start(store, "run_b")
     project_run_end(store, run_id="run_a")
+    start(store, "run_b")
     project_run_end(store, run_id="run_b")
     history = RunHistory(store)
     assert history.get_compaction("term_a") is None
@@ -687,6 +687,7 @@ def test_thread_view_keeps_physical_member_order_for_interleaved_child_records(
 ) -> None:
     start(store)
     parent = step(store)
+    project_run_end(store, run_id="run_a")
     start(store, "run_b")
     start(store, "run_child", parent=parent.ref)
     view = RunHistory(store).thread_view("term_a")

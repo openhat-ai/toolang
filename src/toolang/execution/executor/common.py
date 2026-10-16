@@ -52,6 +52,7 @@ from ..events import RunEvent, StepBegin, StepEnd
 from ..records import ControlRecord, SteerControlPayload, CancelControlPayload
 from ..runnables import resolve_call_target
 from ..types import (
+    ConversationScope,
     value_for_type,
     value_type,
     AgentResources,
@@ -141,6 +142,7 @@ class BoundRun:
     cwd: str = ""
     resource_ceiling: AgentResources | None = None
     captured_iterations: Mapping[str, object] = field(default_factory=dict)
+    conversation: ConversationScope | None = None
 
 
 @dataclass(frozen=True, slots=True)

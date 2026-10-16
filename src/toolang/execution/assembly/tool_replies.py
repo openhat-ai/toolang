@@ -52,15 +52,16 @@ def workspace_reply(
         error = "canceled"
     elif status != "succeeded":
         error = error or "interrupted"
+    scope = "Conversation" if call.name.startswith("convo__") else "Workspace"
     return ToolResultPart(
         tool_call_id=call.tool_call_id,
         call_id=call.call_id,
         tool_name=call.name,
         tool_family=call.name,
         error=(
-            f"Workspace rules could not be loaded; operation not executed: {error}"
+            f"{scope} rules could not be loaded; operation not executed: {error}"
             if error
-            else "Workspace rules were just loaded. This operation was not executed; "
+            else f"{scope} rules were just loaded. This operation was not executed; "
             "please retry if it complies with them."
         ),
     )

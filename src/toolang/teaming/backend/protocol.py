@@ -14,7 +14,7 @@ from ..types import EventPublisher
 
 if TYPE_CHECKING:
     from ..events import HubCursor
-    from ..schemas import Conversation, TeamMember
+    from ..schemas import Conversation, ConversationRules, TeamMember
 
 
 class EventBackend(EventPublisher, Protocol):
@@ -138,6 +138,12 @@ class Backend(Protocol):
         revision: int,
     ) -> None: ...
 
+    async def get_rules(self, conversation: str, actor: str) -> ConversationRules: ...
+
+    async def set_rules(
+        self, conversation: str, actor: str, *, content: str, revision: str, token: str
+    ) -> ConversationRules: ...
+
     async def append(
         self,
         conversation: str,
@@ -146,6 +152,7 @@ class Backend(Protocol):
         *,
         token: str,
         pair: tuple[str, ...] = (),
+        rules_revision: str | None = None,
     ) -> str: ...
 
     async def messages(

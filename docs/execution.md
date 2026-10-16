@@ -183,12 +183,17 @@ control.
 
 `run()` requires an existing thread. Thread creation belongs to
 `ThreadManager` or to the package that owns a deterministic external thread id.
+All independent root starts and root retry/rerun share one transactional idle
+check, regardless of prefix. A pending/running root makes that thread busy;
+HTTP root admission returns 409. Processing children keep their existing lifecycle.
 
 The run operation atomically inserts the pending run and its index-zero run
 control. Run IDs are globally unique within `RunStore`; duplicates are
 rejected. A non-null request ID is unique within its control table and is never
 treated as a replay key. Clients either generate a globally unique request ID
 across run and thread controls or pass `None`.
+Talk batches and runtime dispatch use separate durable batch/Step receipts for
+reconciliation; callers do not turn arbitrary request IDs into replay commands.
 
 
 ## Mandatory Persistence And Tracing
@@ -209,14 +214,14 @@ The private projector never creates or updates run controls. Tracer failures
 are logged and isolated from execution. One tracer observes the complete run
 tree started by its `run()` call, including child runs, steps, parts, and
 terminal events. Each event already contains its complete durable references
-and output edge. For accepted spawn Steps, the projector preserves successful
+and output edge. For accepted spawn/control Steps, the projector preserves successful
 admission through canceled delivery and emits the persisted status/output. It
 does not reconstruct runtime locals. `RunTracer.on_event()` is asynchronous. The executor
 serializes tracer calls and awaits each one on the owner event loop, so tracers
 never need to infer which worker thread emitted an event.
 
 
-Spawned roots have their own thread and lifecycle. The host may configure
+Spawned roots have independent lifecycles and may reuse an idle local thread. The host may configure
 `RunExecutor.root_tracer` and `thread_listener`; the API uses these to route the
 existing thread/run events to the new IDs. Foreground tracers keep observing only
 the source run tree. Dispatch failure can emit a root RunEnd before any RunBegin.
