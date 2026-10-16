@@ -13,13 +13,13 @@ Success means every driver follows the same selection order, runtime Talk can
 execute without a user entry, and selection never hides an error by executing
 a different runnable.
 
-This definition supersedes only the handler selection order in
-[Execution drivers and chores](serve-execution-drivers.md). User module
+This definition supersedes the handler selection order in
+[Execution drivers and chores](serve-execution-drivers.md) and earlier global
+runnable-default rules. User module
 composition continues to follow [Unified Runnable Modules](flat-runnable-modules.md).
 Driver enablement and admission gates, triggers, thread lifecycle, messaging
 transport, standalone script selection, and nested runnable calls are outside
-this change. Caller configuration and session/input precedence are also outside
-this definition.
+this change. Model defaults and other resource configuration remain unchanged.
 
 ## Resolution Contract
 
@@ -66,12 +66,23 @@ candidate.
 Session selection and input overrides are caller behavior. Callers merge their
 existing selection inputs into one optional invocation-selected ref; the
 executor does not distinguish their origins or add session/input priority tiers.
-This contract does not redefine when a caller uses `[default].runnable`, require
-every driver to forward it, or change its precedence against session/input
-choices. If a caller supplies a configured value as its invocation selection,
-priority 1 applies to that supplied value. With no invocation selection, the
-executor starts at priority 2 even if Setup contains a configured default; it
-does not read configuration to insert another tier.
+
+There is no global default runnable. Remove `[default].runnable` from root and
+agent configuration and remove the Setup-owned `RunDefaults.runnable` field.
+Reject the removed config key, `TOOLANG_DEFAULT_RUNNABLE`, and runtime startup
+`--default runnable=...` with actionable guidance. Do not silently ignore them
+or reinterpret them as a Chat selection. Driver-specific entry names and the
+resolution contract above replace that configuration; no new driver config
+table is introduced.
+
+Chat TUI may retain a default runnable in its session setting. It selects the
+Chat entry for that session only; each submission forwards it as the invocation
+selection unless the current input overrides it. A one-run override does not
+change the session default. Unset or reset session selection returns to automatic
+`chat` handler resolution. Existing Chat `--default runnable=...` initializes
+this session setting only; it must not configure Setup, another Chat session,
+Talk, or Chore. Session state and invocation bindings retain their runnable
+fields independently of removing the global configuration field.
 
 Automatic handler selection belongs to execution admission, before handler
 input coercion, resource validation, or run acceptance. Callers must not resolve
@@ -126,8 +137,7 @@ Use deterministic offline providers and the existing fake messaging backend.
 2. Explicit selection: invocation refs win over all automatic candidates;
    `_` bypasses runtime Talk. Missing, empty, malformed, or kind-mismatched refs
    fail without another candidate. Equivalent refs from session and input
-   selection behave identically. A configured Setup value alone does not become
-   an executor invocation selection.
+   selection behave identically.
 3. User sources: valid named and unnamed file exports act as public handlers;
    `agent.too`/file public-name conflicts retain current diagnostics and rejection.
    Excluded sources retain their diagnostics and do not reenter selection.
@@ -142,6 +152,12 @@ Use deterministic offline providers and the existing fake messaging backend.
    invocation, and State. Stale previews neither pin automatic selection nor
    bypass input source-revision checks. Recorded runtime source survives
    reload/restart without replacing the user's State.
+8. Configuration removal: root/agent `[default].runnable`, the global environment
+   value, and runtime startup runnable defaults fail with replacement guidance;
+   model defaults remain supported and Setup exposes no runnable default.
+9. Chat session isolation: startup and session commands select the Chat entry
+   only for that session; input overrides affect one submission, reset restores
+   automatic Chat lookup, and other sessions, Talk, and Chore are unaffected.
 
 ## Implementation Touchpoints and Verification
 
@@ -149,6 +165,13 @@ Use deterministic offline providers and the existing fake messaging backend.
   shared selection, admission, concrete bindings, input validation, and source
   capture. Automatic requests carry driver context and an optional selection;
   direct runnable requests retain exact ref validation.
+- `src/toolang/base/types/policy.py`, `setup/{config,watcher}.py`,
+  `cli/common/policy.py`, and `execution/policy.py`: remove the global runnable
+  default, its config/environment/startup inputs, and implicit Setup reads while
+  retaining model defaults and session/invocation runnable selections.
+- `src/toolang/cli/toolang/commands/{runtime,script}.py` and
+  `cli/common/agent_server.py`: remove global runnable overrides from startup
+  and Setup construction; Chat startup selection stays local to its session.
 - `src/toolang/driver/talk.py`, `driver/chore/scheduler.py`,
   `cli/toolang/commands/chat/`, and `api/routers/{agent,runs}.py`: forward caller
   selections, remove duplicated automatic lookup, and keep defaults consistent.
@@ -156,8 +179,9 @@ Use deterministic offline providers and the existing fake messaging backend.
 - `src/toolang/state/{builtin,state,cache}.py` and packaged `.too` assets:
   runtime Program preparation and durable source identity without changing
   user export composition. Keep parsing with its existing language/State owners.
-- Existing execution, messaging, chore scheduler, State, and local/remote Chat
-  tests; `docs/{program,work,messaging}.md` for the implemented contract.
+- Existing execution, messaging, chore scheduler, State, Setup, CLI policy, and
+  local/remote Chat tests; `docs/{program,work,messaging,input-syntax}.md` for the
+  implemented contract.
 
 The implementation PR must run the default lint, format, type, and offline test
 checks and generate its user-facing changelog through
@@ -172,8 +196,11 @@ or provide an invocation-selected runnable. Named user handlers retain their
 batch input contract, and user-source collisions keep their current behavior.
 For user runnables previously used with the injected default instructions, those
 instructions must now be authored in the selected runnable.
-No authored-file migration is performed, and caller configuration policy is not
-changed by this definition.
+Removing the global runnable default is a breaking configuration change. Replace
+`[default].runnable` and its global overrides with the relevant named driver
+handler; for an interactive Chat-only choice, use a Chat session setting or
+session startup option. No authored-file migration is performed, and the old
+value is not rewritten into a persistent Chat default.
 
 Main risks are callers accidentally turning automatic defaults into invocation
 selections, runtime source ownership changing user resources, and restart losing
