@@ -1,7 +1,8 @@
 # Conversation dispatch and MEMBERS.md
 
 Status: proposed for PR review. This definition ships no runtime changes.
-The separate ID preparation upgrades codecs; this scope builds on that contract.
+The [ID preparation](conversation-id-upgrade.md) is implemented; this scope builds
+on that contract.
 
 ## Goal and scope
 
@@ -20,11 +21,11 @@ conversation hierarchies, or new CLI/Talk editor commands.
 ## Current behavior and prerequisites
 
 The [Talk driver](../../src/toolang/driver/talk.py) currently creates a fresh
-`talk_` thread per batch, selects a custom/default runnable, and handles batches
-serially using Hub-owned cursors. Its default instructions already allow direct
-replies, ignoring messages, and spawning substantial work. Current
-[spawn admission](../../src/toolang/execution/executor/spawn.py) always creates
-an independent root in a new `work_` thread. Existing API controls support steer
+`talk_` thread per batch, resolves a user or packaged `talk` handler, and handles
+batches serially using Hub-owned cursors. The packaged handler's instructions
+already allow direct replies, ignoring messages, and spawning substantial work.
+Current [spawn admission](../../src/toolang/execution/executor/spawn.py) always
+creates an independent root in a new `work_` thread. Existing API controls support steer
 and cancel; the model-facing runtime toolset does not yet expose them.
 
 Use the separate ID preparation: generated DM/GC suffixes occupy disjoint domains,
