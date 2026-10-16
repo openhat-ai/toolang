@@ -24,7 +24,12 @@ def _profile() -> dict[str, object]:
     }
 
 
-def _session(thread_payload: object, *, status: int = 200) -> remote.RemoteChatSession:
+def _session(
+    thread_payload: object,
+    *,
+    status: int = 200,
+    requests: list[httpx.Request] | None = None,
+) -> remote.RemoteChatSession:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/healthz":
             return httpx.Response(200, json={"ok": True})
@@ -44,6 +49,8 @@ def _session(thread_payload: object, *, status: int = 200) -> remote.RemoteChatS
                 },
             )
         if request.url.path.startswith("/api/v1/threads/"):
+            if requests is not None:
+                requests.append(request)
             return httpx.Response(status, json=thread_payload)
         raise AssertionError(f"unexpected request: {request.method} {request.url}")
 
@@ -58,6 +65,17 @@ def test_remote_thread_title_reads_a_thread_with_runs() -> None:
     session = _session({"title": "hello world", "run_count": 2})
     try:
         assert session.thread_title("term_x") == "hello world"
+    finally:
+        session.close()
+
+
+def test_remote_thread_title_requests_metadata_without_run_details() -> None:
+    requests = []
+    session = _session({"title": "hello world", "run_count": 2}, requests=requests)
+    try:
+        assert session.thread_title("term_x") == "hello world"
+        assert len(requests) == 1
+        assert requests[0].url.params["limit"] == "0"
     finally:
         session.close()
 

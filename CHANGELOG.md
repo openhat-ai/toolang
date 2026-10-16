@@ -163,6 +163,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Fixed
 
+- Large run and thread detail responses avoid expensive diagnostics from probing
+  unrelated `StepGiven` variants, while preserving existing public payloads and
+  stored facts; Chat title queries request existing thread metadata with
+  `limit=0`.
+
 - A tool call intercepted by workspace rules stays in the same history unit as
   its reply, so assembled history no longer leaves an assistant tool call
   without its result.

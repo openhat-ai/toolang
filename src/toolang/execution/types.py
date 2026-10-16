@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Annotated, Any, Literal, TypeAlias, cast
 
-from pydantic import BeforeValidator, Field, WrapSerializer
+from pydantic import BeforeValidator, Discriminator, Field, Tag, WrapSerializer
 from pydantic_core import core_schema
 
 from toolang.base.types.compaction import CompactionResult
@@ -1519,8 +1519,30 @@ def _parse_step_given(value: object) -> object:
     return value
 
 
+def _step_given_variant(value: object) -> str | None:
+    """Select the existing payload shape without probing unrelated branches."""
+    if isinstance(value, Node):
+        return "flow"
+    if isinstance(value, ModelStepGiven):
+        return "model"
+    if isinstance(value, ToolStepGiven):
+        return "tool"
+    if isinstance(value, Mapping):
+        payload = cast(Mapping[str, object], value)
+        if isinstance(payload.get("kind"), str):
+            return "flow"
+        if "model" in payload:
+            return "model"
+        if "plugin" in payload:
+            return "tool"
+    return None
+
+
 StepGiven: TypeAlias = Annotated[
-    FlowStmt | ModelStepGiven | ToolStepGiven,
+    Annotated[FlowStmt, Tag("flow")]
+    | Annotated[ModelStepGiven, Tag("model")]
+    | Annotated[ToolStepGiven, Tag("tool")],
+    Discriminator(_step_given_variant),
     BeforeValidator(_parse_step_given),
     WrapSerializer(_serialize_step_given),
 ]
