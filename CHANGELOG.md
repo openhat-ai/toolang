@@ -7,6 +7,12 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ## [Unreleased]
 
+### Fixed
+
+- A tool call intercepted by workspace rules stays in the same history unit as
+  its reply, so assembled history no longer leaves an assistant tool call
+  without its result.
+
 ## [0.4.0a8] - 2026-10-15
 
 ### Added

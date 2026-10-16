@@ -1,6 +1,7 @@
 """Workspace rules gate real tools through durable runtime Steps and recalls."""
 
 import asyncio
+from contextlib import closing
 from dataclasses import replace
 from hashlib import sha256
 
@@ -27,6 +28,7 @@ from toolang.base.types.message import (
 from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.common.layout import AgentLayout
 from toolang.execution.events import PartBegin, StepBegin, StepEnd
+from toolang.execution.compaction import history_units
 from toolang.execution.records import RecallControlPayload
 from toolang.execution.store import RunStore
 from toolang.execution.types import (
@@ -689,6 +691,76 @@ def test_selected_near_determines_whether_next_run_needs_honor(tmp_path, recall)
             assert len(_recalls(harness, first)) == 2
             assert len(_recalls(harness, second)) == (0 if recall == "default" else 2)
             assert (repo / "src/result").exists() == (recall == "default")
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("blocked_first", [False, True])
+@pytest.mark.parametrize("failed_rules", [False, True])
+def test_history_keeps_intercepted_calls_with_their_replies(
+    tmp_path, blocked_first, failed_rules
+):
+    tool = RecordingTool("lookup__read", output={"result": "found"})
+    blocked = replace(_call("blocked"), call_id="provider-blocked")
+    regular = _call("regular", tool.name)
+    calls = (blocked, regular) if blocked_first else (regular, blocked)
+    harness, repo, publication = _harness(
+        tmp_path,
+        [_calls(*calls), _answer(), _answer()],
+        tools={tool.name: tool},
+    )
+    if failed_rules:
+        (repo / "src/AGENTS.md").write_bytes(b"\xff")
+
+    def assert_closed(messages):
+        pending = set()
+        for message in messages:
+            if message.role == "tool":
+                for part in message.parts:
+                    assert isinstance(part, ToolResultPart)
+                    pending.remove(part.call_id or part.tool_call_id)
+            else:
+                assert not pending, (
+                    "tool calls must receive replies before the next message"
+                )
+                pending.update(
+                    part.call_id or part.tool_call_id
+                    for part in message.parts
+                    if isinstance(part, ToolCallPart)
+                )
+        assert not pending
+
+    async def scenario():
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            run = await harness.executor.run(_spec(harness, publication, thread))
+            assert run.status == "succeeded", run.error
+            with closing(RunStore(harness.store.db_path, read_only=True)) as store:
+                recorded = store.get_run(run_id=run.id)
+                assert recorded is not None
+                units = history_units(store, recorded)
+                for unit in units:
+                    assert_closed(unit.messages)
+                (intercepted,) = [
+                    unit
+                    for unit in units
+                    if any(p.tool_call_id == "blocked" for p in _results(unit.messages))
+                ]
+                honor = next(
+                    s for s in _tool_steps(harness, run) if s.given.trigger == "runtime"
+                )
+                assert intercepted.step_id == honor.ref
+                (reply,) = _results(intercepted.messages)
+                assert reply.call_id == "provider-blocked"
+                assert ("could not be loaded" in reply.error) == failed_rules
+            following = await harness.executor.run(_spec(harness, publication, thread))
+            assert following.status == "succeeded", following.error
+            messages = harness.adapter.invocations[-1].call.messages
+            assert_closed(messages)
+            assert {p.tool_call_id for p in _results(messages)} == {
+                "blocked",
+                "regular",
+            }
 
     asyncio.run(scenario())
 
