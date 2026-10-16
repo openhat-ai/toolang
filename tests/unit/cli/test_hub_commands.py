@@ -1,4 +1,4 @@
-"""Root Hub routing and concrete port resolution for both lifecycle commands."""
+"""Bare Hub status output and concrete port resolution for lifecycle commands."""
 
 from types import SimpleNamespace
 import os
@@ -52,7 +52,7 @@ def test_hub_status_shows_server_version_inline(
         "Client",
         lambda **kwargs: client_type(**kwargs, transport=httpx.MockTransport(respond)),
     )
-    assert cli.main(["--root", str(tmp_path), "hub", "status"]) == 0
+    assert cli.main(["--root", str(tmp_path), "hub"]) == 0
     state = "running" if healthy else "unavailable"
     assert capsys.readouterr().out == (f"Hub {state}: http://127.0.0.1:7123, {label}\n")
     assert requests == ["/healthz", "/info"]
@@ -84,7 +84,7 @@ def test_hub_status_missing_metadata_keeps_readiness(
         "Client",
         lambda **kwargs: client_type(**kwargs, transport=httpx.MockTransport(respond)),
     )
-    assert cli.main(["--root", str(tmp_path), "hub", "status"]) == 0
+    assert cli.main(["--root", str(tmp_path), "hub"]) == 0
     state = "running" if healthy else "unavailable"
     assert capsys.readouterr().out == (f"Hub {state}: http://127.0.0.1:7123, unknown\n")
 
@@ -110,13 +110,20 @@ def test_hub_status_without_ready_process_skips_http(
         pytest.fail("Status must not query a stopped, stale, or starting Hub")
 
     monkeypatch.setattr(module.httpx, "Client", fail)
-    assert cli.main(["--root", str(tmp_path), "hub", "status"]) == 0
+    assert cli.main(["--root", str(tmp_path), "hub"]) == 0
     expected = (
         "Hub starting: http://127.0.0.1:7123, unknown\n"
         if state == "starting"
         else "Hub stopped\n"
     )
     assert capsys.readouterr().out == expected
+
+
+def test_hub_status_command_is_removed(tmp_path, capsys):
+    assert cli.main(["--root", str(tmp_path), "hub", "status"]) == 2
+    captured = capsys.readouterr()
+    assert not captured.out
+    assert "No such command 'status'." in captured.err
 
 
 @pytest.mark.parametrize("command", ["start", "serve"])
@@ -196,5 +203,5 @@ def test_root_api_settings_rejected_and_talk_requires_running_hub(tmp_path, caps
         agent_port(layout, None, environ={})
     assert cli.main(["--root", str(tmp_path), "talk"]) != 0
     assert "too hub start" in capsys.readouterr().err
-    assert cli.main(["--root", str(tmp_path), "hub", "status"]) == 0
+    assert cli.main(["--root", str(tmp_path), "hub"]) == 0
     assert "Hub stopped" in capsys.readouterr().out

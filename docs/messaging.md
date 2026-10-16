@@ -31,7 +31,7 @@ Membership is stored only in the backend, never in configuration.
 
 ```sh
 too hub start                       # Background Hub; requires Redis/Valkey.
-too hub status                      # Endpoint and backend readiness.
+too hub                             # Endpoint and backend readiness.
 too talk                            # List agents and conversations, including IDs and names.
 too talk alice                      # Empty human-agent DM until the first send.
 too talk alice hello                 # Send and exit after acknowledgment.
@@ -51,7 +51,7 @@ Hub returns. Background communication resumes without an agent restart; uncertai
 message sends are never automatically repeated.
 Isolated guests without access to this local Hub report unavailability.
 
-`too hub status` reports `starting` while waiting for the backend;
+`too hub` reports `starting` while waiting for the backend;
 `too hub stop --force` can stop a stalled startup. Missing or corrupt initialized
 conversation data fails closed; Hub does not reset counters or rebuild it.
 Upgrade Hub and clients together and select a fresh Redis/Valkey dataset for this

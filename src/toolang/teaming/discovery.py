@@ -14,9 +14,7 @@ def hub_connection(root: Path) -> HubConnection:
     try:
         record = HubRecord.load(root / "hub" / "hub.json")
     except ValueError as exc:
-        raise BackendUnavailable(
-            "Hub discovery is invalid; check 'too hub status'"
-        ) from exc
+        raise BackendUnavailable("Hub discovery is invalid; check 'too hub'") from exc
     if record is None or record.status != "running":
         raise BackendUnavailable("Hub is unavailable; run 'too hub start'")
     return record.connection

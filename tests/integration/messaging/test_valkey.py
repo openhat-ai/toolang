@@ -202,7 +202,7 @@ def test_hub_cli_lifecycle_and_backend_independence(valkey, tmp_path):
         result = run("hub", "start", "--port", str(port))
         assert result.returncode == 0, result.stderr + hub.log.read_text()
         assert f"127.0.0.1:{port}" in result.stdout
-        result = run("hub", "status")
+        result = run("hub")
         assert result.returncode == 0 and "Hub running" in result.stdout
         assert run("hub", "start", "--port", str(port)).returncode != 0
 
@@ -217,7 +217,7 @@ def test_hub_cli_lifecycle_and_backend_independence(valkey, tmp_path):
         system = asyncio.run(system_id())
         assert run("talk", system, "via Hub").returncode == 0
         assert run("hub", "stop").returncode == 0
-        assert "Hub stopped" in run("hub", "status").stdout
+        assert "Hub stopped" in run("hub").stdout
         assert run("talk", system, "requires Hub").returncode != 0
 
         async def verify():

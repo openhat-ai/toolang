@@ -293,7 +293,7 @@ def test_lazy_command_exposes_short_help_without_loading():
     ("command", "description"),
     [
         ("workspace", "Configure agent workspaces"),
-        ("hub", "Control the teaming service"),
+        ("hub", "Show or control the teaming service"),
         ("talk", "Talk with agents through the hub"),
         ("chat", "Chat directly with an agent"),
         ("chore", "Manage one-off and scheduled chores"),
@@ -323,7 +323,7 @@ def test_command_descriptions_match_root_and_command_help(
     ("group", "commands"),
     [
         ("chore", ("list", "new", "edit", "delete", "run", "cancel")),
-        ("hub", ("start", "serve", "stop", "status")),
+        ("hub", ("start", "serve", "stop")),
     ],
 )
 def test_chore_and_hub_help_lists_supported_commands(group, commands, tmp_path, capsys):
