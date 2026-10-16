@@ -1169,7 +1169,9 @@ def test_hub_recovery_ignores_inherited_sse_ids(replacement):
         assert not state.agents  # The prefix has not committed yet.
     event = events[-1]
     state.feed(StreamFrame(event.event, json.loads(event.data), event.id or None))
-    assert state.agents["agent:alice"].has_run("run_one")
+    assert state.agents["agent:alice"].snapshot().events == (
+        RunBegin("run_one", ControlRef.for_run("run_one", 0)),
+    )
     assert state.cursor == boundary
 
 

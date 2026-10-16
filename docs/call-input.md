@@ -33,8 +33,7 @@ repaired; invoke the affected work again.
 fresh State before creating a new Run. Convertible values follow the new
 signature; newly required, removed, unknown, or incompatible arguments reject
 admission without modifying the source Run. It does not parse native Json strings
-again. `retry` retains its recorded State, input contract, and committed prefix;
-direct `RunSpec` inputs must already satisfy their contract.
+again. Direct `RunSpec` inputs must already satisfy their contract.
 
 ## Terminology
 

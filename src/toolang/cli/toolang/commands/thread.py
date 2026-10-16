@@ -476,7 +476,7 @@ async def _execute_rerun(
                         raise ServerLeaseLostError(
                             f"{exc}; inspect accepted run {handle.run_id}"
                         ) from exc
-                await _cancel_restart(client, handle, operation="rerun")
+                await _cancel_restart(client, handle)
                 raise
             except RemoteRunClientError as exc:
                 raise RemoteRunClientError(
@@ -492,14 +492,12 @@ async def _execute_rerun(
 async def _cancel_restart(
     client: RunClient,
     handle: RunHandle,
-    *,
-    operation: str,
 ) -> None:
     try:
         await client.cancel(
             handle.run_id,
             request_id=f"term_{uuid4().hex}",
-            reason=f"{operation} interrupted",
+            reason="rerun interrupted",
         )
     except (OSError, ValueError, RuntimeError):
         return

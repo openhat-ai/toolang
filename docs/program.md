@@ -846,7 +846,7 @@ grants service tools.
   `<toolang:workspace list="lab,repo1"/>` and its current workdir in
   `<toolang:workdir path="repo1://src"/>`. The list is refreshed on every call; host
   workspace roots are not exposed.
-- Lifecycle controls such as run, retry, execute, fork, and rewind do not
+- Lifecycle controls such as run, execute, fork, and rewind do not
   themselves add a model-facing lifecycle message. Published updates change
   future named calls and model-call resources; accepted code remains bound.
 

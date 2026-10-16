@@ -77,7 +77,5 @@ Scripts retain the `script_` prefix, and every execution has a `run_` ID.
 
 Independent standalone invocations of the same `.too` source use separate
 runtime and sandbox instance directories. Restarting a durable agent reuses its
-state. Host runtime registrations let `top` observe resident, visiting, roaming,
-and script instances in its scope without requiring talk or Hub. When Hub is
-available, remote agent activity is combined with local instances. Enabled
-idle drivers are shown separately from active thread/run counts.
+state. Host runtime registrations retain instance placement and enabled drivers
+for runtime discovery.

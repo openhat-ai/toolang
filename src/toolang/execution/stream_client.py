@@ -50,9 +50,6 @@ class StreamClientState:
         """Release whole trees while retaining the last transport checkpoint."""
         self._remove_runs(self._descendants(roots))
 
-    def has_run(self, run: str) -> bool:
-        return ("run_begin", run) in self._records
-
     def attach(self) -> RunSnapshot:
         self._prefix = None
         self._replacement = None
