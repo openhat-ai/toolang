@@ -30,6 +30,16 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Changed
 
+- **Breaking:** conversation IDs move to messaging schema `3`: generated DM and GC
+  suffixes now occupy disjoint bit domains under the shared 40-bit permutation,
+  so a DM suffix can never equal a GC suffix, and GC allocation permits 524,288
+  reservations per backend per hour instead of 1,048,576. The changed suffixes
+  mean an initialized backend written on an older schema is rejected without
+  mutation: stop writers, preserve the old runtime and dataset, and select a
+  fresh Redis/Valkey dataset for schema `3`. Conversation IDs, messages,
+  memberships, and talk cursors are neither migrated nor imported, while
+  execution, thread, and chore IDs keep their formats.
+
 - **Breaking:** the Talk driver no longer prepends its default handling
   instructions to a selected handler, which now receives only the JSON message
   batch. A user runnable that relied on the injected instructions must author
@@ -59,6 +69,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 - A tool call intercepted by workspace rules stays in the same history unit as
   its reply, so assembled history no longer leaves an assistant tool call
   without its result.
+
+### Security
+
+- The MCP dependency used by the service toolset is updated to 1.30.0 to address
+  CVE-2026-59951. ([#825](https://github.com/openhat-ai/toolang/pull/825))
 
 ## [0.4.0a8] - 2026-10-15
 
