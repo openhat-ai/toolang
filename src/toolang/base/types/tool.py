@@ -124,3 +124,8 @@ class ConvoToolContext(ToolContext):
 
     run_id: str | None = None
     thread_id: str | None = None
+    conversation: str | None = None
+    participants: tuple[str, ...] = ()
+    rules_revision: str | None = None
+    rules_content: str | None = None
+    backend: str | None = None

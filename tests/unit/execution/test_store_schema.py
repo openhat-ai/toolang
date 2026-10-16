@@ -250,6 +250,8 @@ def test_missing_allocator_table_is_recreated_without_overwriting_records(
         assert reopened.list_controls() == controls
         next_id = allocate_id(path, family=family, agent_name="alice", now=now)
         assert next_id.seq == 1
+        if family_name == "run":
+            reopened.finish_run(run_id=f"run_{first.value}", output=None)
         create_record(reopened, f"{prefix}_{next_id.value}")
     finally:
         reopened.close()

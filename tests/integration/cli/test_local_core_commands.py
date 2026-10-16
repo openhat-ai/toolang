@@ -497,7 +497,8 @@ def test_inspect_run_output_resolves_references(
     root = tmp_path / "toolang"
     _create_agent(root)
     with closing(RunStore(AgentLayout.resident(root, "alice").run_store)) as store:
-        for run_id in ("run_source", "run_chain", "run_result"):
+
+        def start(run_id):
             project_run_start(
                 store,
                 run_id=run_id,
@@ -505,6 +506,8 @@ def test_inspect_run_output_resolves_references(
                 origin="test",
                 input=Message.user("Test output"),
             )
+
+        start("run_source")
         source = (
             value_for_type("Number", 42)
             if failure == "type"
@@ -519,8 +522,10 @@ def test_inspect_run_output_resolves_references(
             else "run_source"
         )
         ref = TypedRef(FieldRef.parse(f"{target}/output/value"), "Text")
+        start("run_chain")
         store.finish_run(run_id="run_chain", output=Output(ref))
         chain = TypedRef(FieldRef.parse("run_chain/output/value"), "Text")
+        start("run_result")
         store.finish_run(
             run_id="run_result",
             output=Output(Array("Text[]", (chain, chain))),

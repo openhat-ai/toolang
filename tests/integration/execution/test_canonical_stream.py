@@ -101,13 +101,14 @@ flow child(_: Text) -> Text:
             reader = source.subscribe()
             thread = await asyncio.to_thread(threads.create, prefix=ThreadPrefix.CHAT)
             other = threads.create(prefix=ThreadPrefix.CHAT)
+            third = threads.create(prefix=ThreadPrefix.CHAT)
             handles = [
                 harness.executor.run(
                     harness.run_spec(
                         thread=scope, runnable="parent", primary=(TextPart("input"),)
                     )
                 )
-                for scope in (thread, thread, other)
+                for scope in (thread, other, third)
             ]
             roots = await asyncio.gather(*handles)
             assert all(root.status == "succeeded" for root in roots)
@@ -119,7 +120,7 @@ flow child(_: Text) -> Text:
             begins = [f for f in frames if isinstance(f.event, RunBegin)]
             assert len(begins) == 9
             assert {f.root_run_id for f in begins} == {root.id for root in roots}
-            assert len({f.thread_id for f in begins}) == 2
+            assert len({f.thread_id for f in begins}) == 3
             assert len({f.cursor.epoch for f in frames}) == 1
 
     asyncio.run(scenario())

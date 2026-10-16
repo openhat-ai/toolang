@@ -197,12 +197,12 @@ def test_concurrent_roots_keep_scopes_and_client_lifetimes_independent(
 
     async def scenario():
         async with harness:
-            one, two = [
-                harness.threads.create(prefix=ThreadPrefix.CHAT) for _ in range(2)
+            one, two, three = [
+                harness.threads.create(prefix=ThreadPrefix.CHAT) for _ in range(3)
             ]
             handles = []
             try:
-                for thread, gate in zip((one, one, two), gates):
+                for thread, gate in zip((one, two, three), gates):
                     handles.append(
                         harness.executor.run(
                             harness.run_spec(
@@ -216,7 +216,7 @@ def test_concurrent_roots_keep_scopes_and_client_lifetimes_independent(
                 expected = {
                     handle.run_id
                     for handle in handles[
-                        : {"run": 1, "thread": 2, "agent": 3}[scope_kind]
+                        : {"run": 1, "thread": 1, "agent": 3}[scope_kind]
                     ]
                 }
                 scope = (

@@ -154,6 +154,30 @@ CATALOG = [
         ("load", "Loading", "Loaded"),
         "rules for repo://src",
     ),
+    (
+        "runtime/steer",
+        {"target": "run_a"},
+        ("steer", "Steering", "Steered"),
+        "run: run_a",
+    ),
+    (
+        "runtime/cancel",
+        {"target": "run_a"},
+        ("cancel", "Canceling", "Canceled"),
+        "run: run_a",
+    ),
+    (
+        "convo/get_rules",
+        {"target": "alice"},
+        ("read", "Reading", "Read"),
+        "conversation rules: alice",
+    ),
+    (
+        "convo/set_rules",
+        {"target": "alice"},
+        ("update", "Updating", "Updated"),
+        "conversation rules: alice",
+    ),
     ("runtime/compact", {}, ("compact", "Compacting", "Compacted"), "thread history"),
     (
         "service/start_bridge",
@@ -279,7 +303,7 @@ def tools():
 
 
 def test_catalog_covers_every_registered_leaf_and_no_old_aliases(tools):
-    assert len(CATALOG) == len(tools) == 49
+    assert len(CATALOG) == len(tools) == 53
     assert {ref.replace("/", "__") for ref, *_ in CATALOG} == set(tools)
     assert not any(name.startswith(("me__", "msg__", "_toolang__")) for name in tools)
 

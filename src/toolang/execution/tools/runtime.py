@@ -35,6 +35,8 @@ class RuntimeTool(Tool):
         "compact",
         "chdir",
         "runnables",
+        "steer",
+        "cancel",
     ]
     description: str
     parameters: dict[str, object]
@@ -57,6 +59,8 @@ class RuntimeTool(Tool):
             "run": (("complete", "Running", "Completed"), "child run", "runnable"),
             "spawn": (("spawn", "Spawning", "Spawned"), "new run", "runnable"),
             "await": (("receive", "Waiting for", "Received"), "run result", "target"),
+            "steer": (("steer", "Steering", "Steered"), "run", "target"),
+            "cancel": (("cancel", "Canceling", "Canceled"), "run", "target"),
             "exec": (
                 ("switch to", "Switching to", "Switched to"),
                 "runnable",
@@ -118,6 +122,38 @@ class RuntimeTool(Tool):
         if not isinstance(context, RuntimeToolContext):
             raise ToolangError("runtime operations are unavailable for this tool call")
         runtime = context.runtime
+        if self.name in {"steer", "cancel"}:
+            allowed = {
+                "target",
+                "expected_control",
+                "input" if self.name == "steer" else "reason",
+            }
+            required = {"target", "expected_control"} | (
+                {"input"} if self.name == "steer" else set()
+            )
+            if (
+                set(arguments) - allowed
+                or not required <= set(arguments)
+                or any(
+                    not isinstance(arguments.get(key), str) or not arguments[key]
+                    for key in required
+                )
+            ):
+                raise ToolangError(
+                    f"runtime/{self.name} requires an exact Run target and inspected expected_control"
+                )
+            if self.name == "steer":
+                return await runtime.steer(
+                    arguments["target"],
+                    arguments["input"],
+                    arguments["expected_control"],
+                )
+            reason = arguments.get("reason")
+            if reason is not None and not isinstance(reason, str):
+                raise ToolangError("runtime/cancel reason must be text")
+            return await runtime.cancel(
+                arguments["target"], arguments["expected_control"], reason
+            )
         if self.name == "runnables":
             name = arguments.get("name")
             if set(arguments) - {"name"} or (
@@ -139,13 +175,14 @@ class RuntimeTool(Tool):
             return await runtime.compact()
         if self.name == "honor":
             if (
-                set(arguments) != {"paths"}
-                or not isinstance(arguments["paths"], list)
-                or not arguments["paths"]
+                set(arguments) - {"paths", "conversations"}
+                or not isinstance(arguments.get("paths", []), list)
+                or not isinstance(arguments.get("conversations", []), list)
+                or not (arguments.get("paths") or arguments.get("conversations"))
             ):
-                raise ToolangError("runtime/honor requires nonempty paths")
+                raise ToolangError("runtime/honor requires paths or conversations")
             paths = []
-            for item in arguments["paths"]:
+            for item in arguments.get("paths", []):
                 if not isinstance(item, Mapping) or set(item) != {"workspace", "path"}:
                     raise ToolangError("honor paths require workspace and path")
                 workspace, path = item["workspace"], item["path"]
@@ -162,6 +199,15 @@ class RuntimeTool(Tool):
                         "honor requires normalized workspace-relative paths"
                     )
                 paths.append((workspace, path))
+            conversations = arguments.get("conversations", [])
+            if any(
+                not isinstance(target, str) or not target for target in conversations
+            ):
+                raise ToolangError("honor requires nonempty conversation targets")
+            if conversations:
+                return await runtime.honor(
+                    tuple(paths), conversations=tuple(conversations)
+                )
             return await runtime.honor(tuple(paths))
         if self.name == "pick":
             if set(arguments) != {"kind", "ref"}:
@@ -187,6 +233,8 @@ class RuntimeTool(Tool):
             - (
                 {"runnable", "input", "async"}
                 if self.name == "run"
+                else {"runnable", "input", "thread"}
+                if self.name == "spawn"
                 else {"runnable", "input"}
             )
         )
@@ -208,6 +256,17 @@ class RuntimeTool(Tool):
                 return await runtime.run(runnable, input, asynchronous=True)
             return await runtime.run(runnable, input)
         if self.name == "spawn":
+            if "thread" in arguments:
+                thread = arguments["thread"]
+                if (
+                    not isinstance(thread, str)
+                    or not thread
+                    or thread != thread.strip()
+                ):
+                    raise ToolangError(
+                        "runtime/spawn thread must be an exact local Thread ID"
+                    )
+                return await runtime.spawn(runnable, input, thread=thread)
             return await runtime.spawn(runnable, input)
         return await runtime.exec(runnable, input)
 
@@ -291,7 +350,7 @@ _TOOLS = (
     ),
     RuntimeTool(
         "honor",
-        "Recall applicable workspace rules before a path-aware operation.",
+        "Recall applicable workspace or conversation rules before an operation.",
         {
             "type": "object",
             "properties": {
@@ -308,8 +367,13 @@ _TOOLS = (
                         "additionalProperties": False,
                     },
                 },
+                "conversations": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {"type": "string"},
+                },
             },
-            "required": ["paths"],
+            "required": [],
             "additionalProperties": False,
         },
     ),
@@ -374,13 +438,51 @@ _TOOLS = (
     ),
     RuntimeTool(
         "spawn",
-        "Start an authorized hand as an independent root in a new empty work_ thread. "
+        "Start an authorized hand as an independent root. Omit thread for a new work_ thread, "
+        "or supply an idle existing local thread of any prefix to reuse its history. "
         "Returns id, thread, and the admission-time status without waiting. "
         "Use runtime__await with its id for the result; no completion message is injected. "
         "Work continues after this Run ends, until completion or executor shutdown. "
         "Follow the current routes spawns restriction, query runtime__runnables "
         "when the target signature is missing, and supply explicit inputs.",
-        _RUN_PARAMETERS,
+        {
+            **_RUN_PARAMETERS,
+            "properties": {
+                **dict(_RUN_PARAMETERS["properties"]),
+                "thread": {
+                    "type": "string",
+                    "description": "Exact idle local Thread ID; omit for a new work_ thread.",
+                },
+            },
+        },
+    ),
+    RuntimeTool(
+        "steer",
+        "Steer an inspected local active agic Run using next_step timing. Supply its observed control reference; do not fetch a newer one to bypass a stale-target conflict. Admission is not application. Requires authorization for this operation.",
+        {
+            "type": "object",
+            "properties": {
+                "target": {"type": "string"},
+                "input": {"type": "string"},
+                "expected_control": {"type": "string"},
+            },
+            "required": ["target", "input", "expected_control"],
+            "additionalProperties": False,
+        },
+    ),
+    RuntimeTool(
+        "cancel",
+        "Request immediate cancellation of an inspected local Run using its observed control reference. Terminal/unavailable targets do not start replacement work. Admission is not application. Requires authorization for this operation.",
+        {
+            "type": "object",
+            "properties": {
+                "target": {"type": "string"},
+                "expected_control": {"type": "string"},
+                "reason": {"type": ["string", "null"]},
+            },
+            "required": ["target", "expected_control"],
+            "additionalProperties": False,
+        },
     ),
 )
 

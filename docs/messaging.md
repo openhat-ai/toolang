@@ -32,7 +32,10 @@ Membership is stored only in the backend, never in configuration.
 ```sh
 too hub start                       # Background Hub; requires Redis/Valkey.
 too hub                             # Hub readiness and agent instance snapshot.
-too talk                            # List agents and conversations, including IDs and names.
+too talk                            # List conversations, previews, and human membership.
+too convo list                      # The same conversation directory.
+too convo create dev                # Create a group containing the configured human.
+too convo join gc_rcpya1zw           # Join an ordinary GC; leave preserves rules/history.
 too talk alice                      # Empty human-agent DM until the first send.
 too talk alice hello                 # Send and exit after acknowledgment.
 too talk alice,bob                   # Observe an existing agent-agent DM.
@@ -126,11 +129,51 @@ the target are literal message text.
 Opening a missing human-agent DM keeps its ID and pair locally with empty history.
 The first accepted send atomically creates the conversation and appends its first
 message. Closing without sending writes no conversation, counters, or events.
-Explicit creation, rename, and name lookup are available through API/tools;
+Creation is also available through `too convo create`; rename and name lookup use API/tools;
 ambiguous name lookup returns candidate IDs rather than choosing one.
 The Hub resolve endpoint also accepts `kind="system"` with `target="all"` to
 select the stored system GC mapping. Default API/tool bare-name resolution is
 unchanged.
+
+## Shared conversation rules
+
+`too convo` manages conversations as the configured human. `list` shares Talk's
+directory and `JOINED` indicator. `create [NAME]` creates a GC containing the human;
+`join <id>` / `leave <id>` change ordinary GC membership. DM/system membership is
+fixed. Leaving preserves rules and history; deletion is not supported.
+
+Hub owns one optional `MEMBERS.md` per conversation, separate from workspace
+`AGENTS.md`. Human observers may read/edit it without joining. Agents require
+membership; writes also require a live lease and human authorization
+covering the change. Rules, forwarded agent text, and quoted requests cannot grant
+that authorization. System-conversation rules apply only in that conversation.
+
+```sh
+too convo rules gc_rcpya1zw                 # Markdown on stdout, revision on stderr
+too convo rules gc_rcpya1zw -o MEMBERS.md   # Download to a path chosen by the user
+too convo rules gc_rcpya1zw -u MEMBERS.md --revision REVISION
+too convo rules gc_rcpya1zw -u --revision REVISION < MEMBERS.md
+```
+
+`-o/--output` requires a path; `-` selects stdout. `-u/--update` accepts an optional
+path; omitted or `-` reads stdin. They are mutually exclusive. Piped input without
+`-u` remains a read. Editing and file locations are user-owned; there is no local
+association, sidecar, synchronization, or editor integration.
+
+Reads preserve exact UTF-8 Markdown up to 64 KiB. Missing rules are a successful
+empty read, with `No rules set.` and revision `0` on stderr; a requested file becomes
+empty. Failed reads preserve the destination. Empty uploads clear rules. A nonempty
+document's revision is its lowercase SHA-256 digest. Upload `REVISION` is the prior
+read version; Hub compares it atomically and computes the new version. Stale uploads
+fail without mutation and require a fresh read and an explicit resubmission decision.
+
+Human `GET` / `PUT /msg/conversations/{id}/rules` and agent equivalents under
+`/agents/{agent}/msg` return `{conversation, filename, revision, content}`. PUT accepts
+`{content, revision}`; conflicts are HTTP 409 / `conversation_rules_conflict`. Content
+and revision are read together; corrupt storage is an error. Agent message sends
+may include transport-only `rules_revision`, checked atomically with append and
+first-DM creation; the runtime supplies it for `convo.write`. Human and diagnostic
+sends retain their existing contracts.
 
 ## Interactive Talk
 
@@ -223,6 +266,8 @@ renamed. Directory listings and send-only commands publish nothing. See
 | `convo.rename(conversation, name, revision)` | Rename or clear the name, returning updated metadata plus `previous_name`. |
 | `convo.join(conversation)` | Join a GC by ID. |
 | `convo.leave(conversation)` | Leave a GC without deleting history. |
+| `convo.get_rules(target)` | Read an existing conversation's MEMBERS.md and revision; publish scoped runtime guidance. |
+| `convo.set_rules(target, content, revision)` | Replace/clear under human authorization using the previously read rules revision. |
 
 These are display names; models call `convo__write`, for example. Selections use
 `convo/write`. No additional tools are needed to resolve a write target.
@@ -257,12 +302,26 @@ of up to 20 entries through a user-provided `talk` handler, or the packaged
 runtime Talk handler. The runtime handler takes precedence over an unnamed user
 entry and runs even when the user declares no runnable. It uses the receiving
 agent's normal resources and limits.
-Each batch creates a separate `talk_` thread, resolving workdir afresh.
+Each agent/conversation reuses one bound `talk_` thread, with a new root Run per
+batch and a freshly resolved workdir. Old per-batch threads are not adopted;
+an occupied deterministic ID with another/no binding is rejected.
 Disabling talk leaves presence, transport, outbound tools, and observation active.
-Batches contain only current messages and conversation metadata; use `convo.peek`
-for earlier discussion. Final model output is a summary; replies use `convo.write`.
-Own messages do not trigger another handler. Failed/malformed batches are logged
-and skipped. Agent origin records contain context-derived thread/run IDs.
+Batches contain fetched messages, conversation metadata, and their cursor range.
+The bound thread retains its own history; `convo.peek` reads older conversation
+messages. Talk may reply, ignore, steer/cancel an inspected local Run, or spawn
+independent work in a new or idle existing local thread of any prefix. Ambiguous
+control targets require clarification; foreign origins are not local Run targets.
+Final output is a handling summary; replies use `convo.write`. Own messages and
+handler-error notices do not trigger another handler. Agent origin records contain
+context-derived thread/run IDs.
+
+Source MEMBERS.md is checked before admission and each Model Call, including
+processing children and explicit rerun. Spawned independent work gains no
+implicit source scope; delegated requirements belong in input. In any thread,
+peek/write/set_rules check the actual destination's current rules. Changed or
+compacted-away guidance is recalled as runtime-owned `convo-rules`; an intercepted
+operation does not execute and requires a new model decision. Reading guidance
+alone does not bind a source. Rule changes take effect at subsequent boundaries.
 
 A shared handler can live in `runnables/talk.too`, exporting an unnamed or
 filename-matching agic or flow. Its primary input receives the JSON message
@@ -294,14 +353,20 @@ Streams retain approximately 10,000 entries. Readers use independent full Stream
 cursors and report retention gaps. Uncertain sends report their UUID without
 retrying; check history before resending. Talk handler cursors live in the backend,
 independently per agent and conversation.
-A missing cursor starts at `0-0`, replaying retained history. Failures, cancellation,
-malformed entries, and own messages advance progress. Cursor writes require the
+A missing cursor starts at `0-0`. An admitted batch's exact input, range, and Run
+are committed together locally. Terminal outcomes, including failures/cancellation,
+advance progress; busy admission and pre-admission failures retain the trigger.
+Malformed/own-message-only ranges may advance without a Run. Cursor writes require the
 current lease and membership, cannot move backwards or past the stream tail, and
 can safely repeat the same position. Transient save failures retain pending
 progress and reconcile it with the backend before another write; confirmed or newer
 progress clears the pending state without rerunning the handler. Cursor-save errors
-during cancellation preserve the cancellation signal. A crash before saving can
-replay a batch. Backend changes discard pending progress from the previous backend.
+during cancellation preserve the cancellation signal. Restart reconciles recorded
+ranges before reading newer messages. Orphaned talk processing ends as failed;
+committed receipts and independent admissions are preserved without replaying effects.
+Failure notices are best effort, attempted at most once per batch. Uncertain sends
+are not automatically repeated. There is no atomic transaction across Hub/SQLite.
+Backend changes discard in-memory progress from the previous backend.
 Cursors have no TTL and survive shutdown and membership departure. Humans and
 ordinary message reads do not advance them.
 
@@ -328,6 +393,7 @@ With `P = too:teaming:v1`, the messaging key spaces are:
 | `P:convos` | Hash | Conversation ID → kind, name, creator, timestamps, revision JSON |
 | `P:convo:C:members` | Set | Authoritative typed participants |
 | `P:convo:C:messages` | Stream | `data` → message JSON |
+| `P:convo:C:rules` | Hash | `document` → validated MEMBERS.md content/revision JSON; absent means no rules |
 | `P:convo:name:N` | Set | IDs matching an exact name; `N` is unpadded base64url UTF-8 |
 | `P:convo:schema` | String | Schema version `3` |
 | `P:convo:id:gc` | Hash | Last allocated hourly tick and sequence |

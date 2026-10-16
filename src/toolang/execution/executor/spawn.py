@@ -53,6 +53,7 @@ async def accept(
     raw_input: Mapping[str, object] | None = None,
     authorize: Callable[[ResolvedRunnable], None] | None = None,
     state_snapshot: tuple[AgentState, ControlRef] | None = None,
+    thread: str | None = None,
 ) -> AwaitableHandle:
     from .executor import _bound_runnable, _child_binding, _setup_sandbox
 
@@ -116,15 +117,28 @@ async def accept(
                         )
             resources = bound.resources
             assert resources is not None
-            thread = executor.ids.issue_thread(ThreadPrefix.WORK.value)
+            target_thread = thread or executor.ids.issue_thread(ThreadPrefix.WORK.value)
+            if (
+                thread is not None
+                and executor.store.get_thread(thread_id=thread) is None
+            ):
+                raise ValueError(f"spawn thread not found: {thread}")
+            from ..inspection.history import RunHistory
+
+            compaction = (
+                RunHistory(executor.store).get_compaction(target_thread)
+                if thread is not None
+                else None
+            )
             bound = replace(
                 bound,
                 root_run_id=bound.run_id,
-                thread=thread,
+                thread=target_thread,
                 parent=None,
                 call="top",
                 occurrence=None,
-                horizon=None,
+                horizon=compaction.ref if compaction is not None else None,
+                conversation=None,
                 cwd=execution.cwd_for_run(parent.run_id),
                 state_ref=ControlRef(RunRef(bound.run_id), 0),
                 resource_ceiling=resources,
@@ -133,7 +147,7 @@ async def accept(
             output_type = runnable.output or (
                 "Part[]" if isinstance(runnable, AgicDecl) else None
             )
-            handle = AwaitableHandle(bound.run_id, thread, output_type)
+            handle = AwaitableHandle(bound.run_id, target_thread, output_type)
             result_contract = (
                 OutputContract.resolve(
                     output_type,
@@ -175,23 +189,26 @@ async def accept(
                         bound.captured_iterations,
                         result_contract,
                     ),
+                    requested_thread=thread,
+                    horizon=bound.horizon,
                 )
                 if created:
-                    event = ThreadCreated(
-                        thread=handle.thread,
-                        control=ControlRef.for_thread(handle.thread, 0),
-                        origin="work",
-                        peer=ThreadPeer(
-                            type="agent",
-                            name=parent.setup.layout.name,
-                            thread=parent.thread,
-                        ),
-                        created_at=bound.created_at,
-                    )
-                    executor.store.record_event_cursor(
-                        event.control, publication.cursor
-                    )
-                    publication.append(event)
+                    if thread is None:
+                        event = ThreadCreated(
+                            thread=handle.thread,
+                            control=ControlRef.for_thread(handle.thread, 0),
+                            origin="work",
+                            peer=ThreadPeer(
+                                type="agent",
+                                name=parent.setup.layout.name,
+                                thread=parent.thread,
+                            ),
+                            created_at=bound.created_at,
+                        )
+                        executor.store.record_event_cursor(
+                            event.control, publication.cursor
+                        )
+                        publication.append(event)
                     executor._publish_step_ends(
                         publication,
                         (step,),

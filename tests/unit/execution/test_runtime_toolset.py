@@ -37,6 +37,8 @@ def test_installed_runtime_toolset_has_no_old_aliases() -> None:
         "runtime__pick",
         "runtime__honor",
         "runtime__compact",
+        "runtime__steer",
+        "runtime__cancel",
     }
     assert set(tools.user).isdisjoint(tools.runtime)
     assert "state__get" in tools.user
@@ -94,11 +96,19 @@ class _Runtime:
     async def await_target(self, target):
         return ToolResult({"type": "Text", "value": target})
 
-    async def spawn(self, runnable, input):
+    async def spawn(self, runnable, input, *, thread=None):
         self.calls.append((runnable, dict(input)))
         return ToolResult(
             {"id": self.marker, "thread": "spawn_test", "status": "pending"}
         )
+
+    async def steer(self, target, input, expected_control):
+        self.calls.append((target, input, expected_control))
+        return ToolResult({"command": {"status": "pending"}})
+
+    async def cancel(self, target, expected_control, reason=None):
+        self.calls.append((target, expected_control, reason))
+        return ToolResult({"command": {"status": "pending"}})
 
     async def exec(self, runnable, input):
         self.calls.append((runnable, dict(input)))
@@ -116,7 +126,7 @@ class _Runtime:
         await asyncio.sleep(0)
         return ToolResult({"controls": [self.marker]})
 
-    async def honor(self, paths):
+    async def honor(self, paths, *, conversations=()):
         self.calls.append(paths)
         await asyncio.sleep(0)
         return ToolResult({"controls": [self.marker]})
@@ -180,7 +190,7 @@ def test_shared_plugin_keeps_per_call_authority_isolated(
         ("runnables", {"name": None}),
         ("runnables", {"name": []}),
         ("runnables", {"name": "review", "module": "agent"}),
-        ("spawn", {"runnable": "child", "thread": "term_source"}),
+        ("spawn", {"runnable": "child", "thread": " "}),
         ("spawn", {"runnable": "child", "input": []}),
         ("spawn", {"runnable": ""}),
         (

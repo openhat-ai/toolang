@@ -34,6 +34,7 @@ def _print_directory(
     conversations: list[ConversationSummary],
     *,
     now: datetime,
+    human: str | None = None,
 ) -> None:
     """Render a snapshot using the caller's console and local clock."""
     if not conversations:
@@ -78,15 +79,28 @@ def _print_directory(
                 participants,
                 updated,
                 message,
+                *(
+                    [Text("yes" if human in members else "no")]
+                    if human is not None
+                    else []
+                ),
             )
         )
 
-    headers = ("CONVERSATION", "NAME", "MEMBERS", "UPDATED", "MESSAGE")
+    headers = (
+        "CONVERSATION",
+        "NAME",
+        "MEMBERS",
+        "UPDATED",
+        "MESSAGE",
+        *(("JOINED",) if human is not None else ()),
+    )
     content_widths = [
         max(len(header), max((row[index].cell_len for row in rows), default=0))
         for index, header in enumerate(headers)
     ]
-    id_width, name_width, members_width, time_width, message_width = content_widths
+    id_width, name_width, members_width, time_width, message_width = content_widths[:5]
+    joined_width = content_widths[5] if human is not None else 0
     name_width = min(_NAME_MAX_WIDTH, name_width)
     members_min_width = max(len("MEMBERS"), max(map(len, member_suffixes)) + 1)
     # Protect timestamps and previews, then share the remaining space between
@@ -95,7 +109,12 @@ def _print_directory(
     preview_width = min(message_width, _PREVIEW_MIN_WIDTH)
     metadata_width = max(
         len("NAME") + members_min_width,
-        console.width - id_width - time_width - padding_width - preview_width,
+        console.width
+        - id_width
+        - time_width
+        - joined_width
+        - padding_width
+        - preview_width,
     )
     members_limit = min(
         members_width, max(members_min_width, metadata_width - len("NAME"))
@@ -108,7 +127,8 @@ def _print_directory(
         - name_limit
         - members_limit
         - time_width
-        - padding_width,
+        - padding_width
+        - joined_width,
     )
     table = Table(
         box=None,
@@ -132,6 +152,8 @@ def _print_directory(
     table.add_column(
         "MESSAGE", max_width=message_limit, no_wrap=True, overflow="ellipsis"
     )
+    if human is not None:
+        table.add_column("JOINED", width=joined_width, no_wrap=True)
     for row, suffix in zip(rows, member_suffixes):
         if suffix and row[2].cell_len > members_limit:
             names = Text(row[2].plain[: -len(suffix)])
@@ -145,8 +167,9 @@ def _print_directory(
 
 
 def directory_command(ctx: typer.Context) -> None:
+    """List visible conversations and whether the human has joined"""
     try:
-        config, _human = settings(context_root(ctx))
+        config, human = settings(context_root(ctx))
 
         async def listing():
             async with HubClient(config) as client:
@@ -154,7 +177,10 @@ def directory_command(ctx: typer.Context) -> None:
 
         conversations = asyncio.run(listing())
         _print_directory(
-            Console(markup=False), conversations, now=datetime.now().astimezone()
+            Console(markup=False),
+            conversations,
+            now=datetime.now().astimezone(),
+            human=human,
         )
     except (TeamingError, ValueError, OSError) as exc:
         raise ClickException(str(exc)) from exc

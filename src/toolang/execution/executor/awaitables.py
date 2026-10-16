@@ -81,6 +81,7 @@ def admission(
                 created_at=binding.created_at,
                 horizon=binding.horizon,
                 launch_context=context,
+                conversation=binding.conversation,
                 triggered_by=binding.parent if asynchronous else None,
             )
             if handle is None:

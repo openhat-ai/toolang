@@ -52,7 +52,17 @@ class ToolRuntime(Protocol):
 
     async def await_target(self, target: str) -> ToolResult: ...
 
-    async def spawn(self, runnable: str, input: Mapping[str, Any]) -> ToolResult: ...
+    async def spawn(
+        self, runnable: str, input: Mapping[str, Any], *, thread: str | None = None
+    ) -> ToolResult: ...
+
+    async def steer(
+        self, target: str, input: str, expected_control: str
+    ) -> ToolResult: ...
+
+    async def cancel(
+        self, target: str, expected_control: str, reason: str | None = None
+    ) -> ToolResult: ...
 
     async def exec(self, runnable: str, input: Mapping[str, Any]) -> ToolResult: ...
 
@@ -62,7 +72,9 @@ class ToolRuntime(Protocol):
 
     async def pick(self, kind: Literal["skill", "service"], ref: str) -> ToolResult: ...
 
-    async def honor(self, paths: tuple[tuple[str, str], ...]) -> ToolResult:
+    async def honor(
+        self, paths: tuple[tuple[str, str], ...], *, conversations: tuple[str, ...] = ()
+    ) -> ToolResult:
         """Recall rules for normalized (workspace, relative path) pairs."""
 
 

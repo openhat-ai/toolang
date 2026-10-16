@@ -18,6 +18,7 @@ from ...config import BackendConfig
 from ...errors import (
     BackendUnavailable,
     ConversationAccessDenied,
+    ConversationRulesConflict,
     LeaseLost,
     MessagingError,
     SendUnconfirmed,
@@ -38,6 +39,7 @@ from .keys import (
 from ...ids import dm_id, gc_id
 from ...schemas import (
     Conversation,
+    ConversationRules,
     TeamMember,
     ConversationRecord,
     RosterRecord,
@@ -48,6 +50,7 @@ from ...schemas import (
     participant,
     target,
     TalkCursor,
+    rules_revision,
 )
 from . import scripts
 from .lua import TEAM_GUARD
@@ -113,6 +116,10 @@ class ValkeyBackend:
                 raise StorageIntegrityError(str(exc)) from exc
             if "Agent lease lost" in str(exc):
                 raise LeaseLost(str(exc)) from exc
+            if "conversation_rules_conflict" in str(exc):
+                raise ConversationRulesConflict(
+                    "Conversation rules changed; read again before retrying"
+                ) from exc
             if "conversation_access_denied:" in str(exc):
                 raise ConversationAccessDenied(
                     "Agent is not a member of this conversation"
@@ -192,6 +199,7 @@ class ValkeyBackend:
         }
         request.update(
             prefix=PREFIX,
+            rules=op.get("inspect_rules", False),
             action=op.get("action")
             if op.get("action") in {"team", "roster", "contacts", "register"}
             else "inspect",
@@ -217,9 +225,14 @@ class ValkeyBackend:
                         "conversation": ConversationRecord,
                         "roster": RosterRecord,
                         "event": TeamEvent,
+                        "rules": ConversationRules,
                     }[kind].model_validate_json(raw)
                 )
                 records[kind, field] = model
+                if isinstance(
+                    model, ConversationRules
+                ) and model.conversation != op.get("id"):
+                    raise ValueError("Rules conversation differs from its storage key")
                 if isinstance(model, ConversationRecord):
                     if model.id != field:
                         raise ValueError("Conversation ID differs from its hash field")
@@ -452,6 +465,7 @@ class ValkeyBackend:
             convo_key(conversation, "members"),
             convo_key(conversation, "messages"),
             name_key(name),
+            convo_key(conversation, "rules"),
         ]
 
     async def conversation_ids(self) -> list[str]:
@@ -584,6 +598,39 @@ class ValkeyBackend:
             ],
         )
 
+    async def get_rules(self, conversation: str, actor: str) -> ConversationRules:
+        conversation_id(conversation)
+        raw = await self._operation(
+            scripts.RULES,
+            dict(action="read", id=conversation, actor=actor, inspect_rules=True),
+            self._conversation_keys(conversation),
+        )
+        return (
+            ConversationRules.model_validate_json(raw)
+            if raw
+            else ConversationRules.create(conversation)
+        )
+
+    async def set_rules(
+        self, conversation: str, actor: str, *, content: str, revision: str, token: str
+    ) -> ConversationRules:
+        document = ConversationRules.create(conversation, content)
+        rules_revision(revision)
+        await self._operation(
+            scripts.RULES,
+            dict(
+                action="write",
+                id=conversation,
+                actor=actor,
+                token=token,
+                revision=revision,
+                document=document.model_dump_json(),
+                inspect_rules=True,
+            ),
+            self._conversation_keys(conversation),
+        )
+        return document
+
     async def append(
         self,
         conversation: str,
@@ -592,6 +639,7 @@ class ValkeyBackend:
         *,
         token: str,
         pair: tuple[str, ...] = (),
+        rules_revision: str | None = None,
     ) -> str:
         if pair and (len(pair) != 2 or dm_id(pair[0], pair[1]) != conversation):
             raise MessagingError("DM pair does not match conversation ID")
@@ -606,6 +654,8 @@ class ValkeyBackend:
                     token=token,
                     data=data,
                     participants=pair,
+                    rules_revision=rules_revision,
+                    inspect_rules=rules_revision is not None,
                 ),
                 self._conversation_keys(conversation),
             )

@@ -421,6 +421,8 @@ agic child(_: Text) -> Text:
                 "runtime__pick",
                 "runtime__run",
                 "runtime__spawn",
+                "runtime__steer",
+                "runtime__cancel",
                 "runtime__await",
             }
             assert_run_event_integrity(tracer.events)
@@ -1545,6 +1547,8 @@ agic target(_: Text) -> Text:
                 "runtime__pick",
                 "runtime__run",
                 "runtime__spawn",
+                "runtime__steer",
+                "runtime__cancel",
                 "runtime__await",
                 "web__search",
             }
@@ -1555,6 +1559,8 @@ agic target(_: Text) -> Text:
                 "runtime__pick",
                 "runtime__run",
                 "runtime__spawn",
+                "runtime__steer",
+                "runtime__cancel",
                 "runtime__await",
                 "web__search",
             }
@@ -1567,6 +1573,8 @@ agic target(_: Text) -> Text:
                 "runtime__pick",
                 "runtime__run",
                 "runtime__spawn",
+                "runtime__steer",
+                "runtime__cancel",
                 "runtime__await",
                 "web__search",
             }
@@ -1749,6 +1757,8 @@ agic caller() -> Text:
                 "runtime__pick",
                 "runtime__run",
                 "runtime__spawn",
+                "runtime__steer",
+                "runtime__cancel",
                 "runtime__await",
             }
             assert route_scopes(first_call) == dict.fromkeys(
@@ -2236,6 +2246,8 @@ agic target(_: Text) -> Text:
                 "runtime__pick",
                 "runtime__run",
                 "runtime__spawn",
+                "runtime__steer",
+                "runtime__cancel",
                 "runtime__await",
                 "beta__use",
             }
@@ -2246,6 +2258,8 @@ agic target(_: Text) -> Text:
                 "runtime__pick",
                 "runtime__run",
                 "runtime__spawn",
+                "runtime__steer",
+                "runtime__cancel",
                 "runtime__await",
                 "beta__use",
             }

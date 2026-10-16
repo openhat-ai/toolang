@@ -69,6 +69,9 @@ capture('system',KEYS[8],'all')
 local system=redis.call('HGET',KEYS[8],'all')
 conversation(system,op.action=='register')
 conversation(op.id,true)
+if op.rules and op.id then
+  capture('rules',op.prefix..':convo:'..op.id..':rules','document')
+end
 member(op.actor); member(op.agent); member(op.owner)
 for _,value in ipairs(op.participants or {}) do member(value) end
 if op.agent then capture('roster',KEYS[9],op.agent) end
@@ -326,6 +329,12 @@ elseif op.action=='create' then
 end
 if op.action=='send' then
   if value and redis.call('SISMEMBER',KEYS[10],op.actor)~=1 then error('Conversation is read-only for nonparticipants') end
+  if op.rules_revision and op.rules_revision~=cjson.null then
+    expect(KEYS[13],'hash')
+    local raw=redis.call('HGET',KEYS[13],'document')
+    local revision=raw and decode(raw).revision or '0'
+    if revision~=op.rules_revision then error('conversation_rules_conflict') end
+  end
   capacity('messages_total')
   if redis.call('EXISTS',KEYS[11])==1 then stream_capacity(hash(redis.call('XINFO','STREAM',KEYS[11]))) end
 end
@@ -348,6 +357,29 @@ if op.action=='send' then
   return sid
 end
 return op.id
+"""
+)
+
+RULES = (
+    COMMON
+    + """
+valid()
+local op=cjson.decode(ARGV[1])
+readable(op.id,op.actor,KEYS[10])
+expect(KEYS[13],'hash')
+local raw=redis.call('HGET',KEYS[13],'document')
+if op.action=='read' then return raw or false end
+authorize(op.actor,op.token)
+local revision=raw and decode(raw).revision or '0'
+if revision~=op.revision then error('conversation_rules_conflict') end
+local document=decode(op.document)
+if revision==document.revision then return 0 end
+if document.content=='' then
+  redis.call('HDEL',KEYS[13],'document')
+else
+  redis.call('HSET',KEYS[13],'document',op.document)
+end
+return 1
 """
 )
 

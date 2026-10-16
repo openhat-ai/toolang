@@ -37,6 +37,7 @@ from toolang.common.errors import ToolangError
 from toolang.plugin.models.query import first_model_ref
 from toolang.execution.calls import require_exact_model_request
 from toolang.execution.executor import LocalRunHandle, RunSpec
+from toolang.execution.errors import ThreadBusy
 from toolang.execution.records import (
     ControlRecord,
     RunRecord,
@@ -144,6 +145,8 @@ async def _run_stream(
             request_id=payload.request_id,
             client_id=payload.client_id,
         )
+    except ThreadBusy as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except (ToolangError, TypeError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     subscription = attachment.attach(StreamScope(root=handle.run_id), start="new")
@@ -166,6 +169,8 @@ async def _run_authored_stream(
         run_request = replace(run_request, attachments={})
     try:
         handle = core.executor.run(run_request)
+    except ThreadBusy as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except (OSError, ToolangError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     subscription = attachment.attach(StreamScope(root=handle.run_id), start="new")

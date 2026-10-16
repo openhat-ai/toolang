@@ -489,6 +489,7 @@ def test_rerun_acceptance_preserves_the_source_and_allows_repeated_reruns(
             created_at="2026-01-01T00:00:02Z",
         )
 
+        project_run_end(store, run_id=rerun.id)
         second_rerun, second_control = accept_run(
             store,
             run_id="run_rerun_again",

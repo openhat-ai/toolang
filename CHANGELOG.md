@@ -9,6 +9,33 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Added
 
+- A conversation carries one optional Hub-owned `MEMBERS.md`, separate from
+  workspace `AGENTS.md`: `convo.get_rules` reads the document and its revision,
+  `convo.set_rules(target, content, revision)` replaces or clears it, and the
+  bound source conversation is declared in the execution message and recalled as
+  runtime-owned `convo-rules` before handling and before operating on another
+  conversation. Agent edits require membership, a live write lease, and human
+  authorization covering the change; forwarded or quoted text and the rules
+  themselves cannot grant it, and a stale revision fails without mutation.
+  Human `GET`/`PUT /msg/conversations/{id}/rules` and the agent equivalents
+  return `{conversation, filename, revision, content}`; conflicts are HTTP 409
+  `conversation_rules_conflict`, and agent sends may carry a transport-only
+  `rules_revision` checked atomically with the append.
+
+- `too convo` manages conversations as the configured human: `list` shares
+  Talk's directory and `JOINED` indicator, `create [NAME]` creates a group
+  containing the human, `join`/`leave` change ordinary group membership, and
+  `rules <id> [-o PATH] [-u [PATH] --revision REVISION]` downloads or uploads
+  the shared document. DMs and the system conversation keep fixed membership,
+  leaving preserves rules and history, absent rules read as empty content with
+  revision `0`, and unknown conversations and read failures exit nonzero.
+
+- Runtime exposes `runtime.steer(target, input, expected_control)` and
+  `runtime.cancel(target, expected_control, reason?)` to model calls, and
+  `runtime.spawn` accepts an inspected idle local `thread` of any prefix,
+  reusing its history and compaction while launch resources and workdir still
+  come from the caller; `runtime.honor` also accepts `conversations`.
+
 - Chat, Talk, and Chore resolve their handler automatically: an explicit
   invocation selection, then a user runnable named after the driver, then a
   runtime handler named after the driver, then the user's unnamed entry. A
@@ -29,6 +56,27 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   requires a ref or a driver.
 
 ### Changed
+
+- **Breaking:** the public `ToolRuntime` tool protocol adds
+  `steer(target, input, expected_control)` and
+  `cancel(target, expected_control, reason)`, and `spawn` and `honor` gain the
+  `thread` and `conversations` keyword arguments, so custom tool runtimes must
+  implement the new methods.
+
+- **Breaking:** only one pending or running independent root may occupy a thread.
+  Spawning into or admitting a root into a busy thread fails without creating
+  replacement work, and HTTP root admission reports it as 409; processing
+  children keep their existing lifecycle.
+
+- **Breaking:** Talk reuses one bound `talk_` thread per agent and conversation
+  instead of creating a thread per batch, and admits each batch by committing its
+  exact input, cursor range, and Run together before handling, so restart and
+  recovery resume recorded ranges without replaying effects or rebuilding a
+  changed message tail. A handler may reply, ignore, steer or cancel an inspected
+  local Run, or spawn independent work; old per-batch threads are not adopted, an
+  occupied deterministic thread ID with another or no binding is rejected rather
+  than remapped, and orphaned handling ends as failed with a best-effort notice
+  attempted at most once per batch.
 
 - **Breaking:** chore identities are now eight lowercase Base32 characters
   derived from the exact name and the owning agent, so one name yields a

@@ -3,7 +3,7 @@
 import asyncio
 from dataclasses import replace
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 from fakeredis import FakeServer
@@ -11,6 +11,7 @@ import httpx
 import pytest
 
 from tests.support.execution_harness import ExecutionHarness
+from tests.support.talk import admitted_handler
 from tests.unit.messaging.test_event_observation import run, publish, prefix
 from tests.unit.messaging.test_protocol import CONFIG, client
 from toolang.base.types.tool import ToolContext
@@ -245,8 +246,7 @@ def test_talk_cursors_are_separate_after_backend_switch(tmp_path, monkeypatch):
                 get_agent_setup=MagicMock(),
                 get_agent_state=MagicMock(),
             )
-            handler = AsyncMock()
-            monkeypatch.setattr(loop, "handle", handler)
+            handler = admitted_handler(loop)
             for current in range(2):
                 await alice.register(CONNECTION.human)
                 receipt = await humans[current].send(
@@ -461,7 +461,7 @@ def test_handler_errors_do_not_trigger_other_agents(tmp_path, monkeypatch):
                     get_agent_setup=MagicMock(),
                     get_agent_state=MagicMock(),
                 )
-                handler = AsyncMock(side_effect=RuntimeError("handler unavailable"))
+                handler = admitted_handler(loop, RuntimeError("handler unavailable"))
                 monkeypatch.setattr(loop, "handle", handler)
                 handlers.append(handler)
                 loops.append(loop)
@@ -529,21 +529,23 @@ def test_handler_error_send_failure_is_checkpointed_without_retry(
                 get_agent_setup=MagicMock(),
                 get_agent_state=MagicMock(),
             )
-            handler = AsyncMock(side_effect=RuntimeError("handler unavailable"))
+            handler = admitted_handler(loop, RuntimeError("handler unavailable"))
             monkeypatch.setattr(loop, "handle", handler)
             source = await human.send("gc_00000000", body="please handle")
             await loop.poll()
             assert await alice.talk_cursor("gc_00000000") == source["stream_id"]
             assert "handler unavailable" in caplog.text
+            executor = MagicMock()
             loop = MessagingLoop(
                 layout=AgentLayout.resident(tmp_path, "alice"),
                 owner=CONNECTION.human,
                 client=alice,
-                executor=MagicMock(),
+                executor=executor,
                 threads=MagicMock(),
                 get_agent_setup=MagicMock(),
                 get_agent_state=MagicMock(),
             )
+            executor.store.talk.get.return_value = None
             monkeypatch.setattr(loop, "handle", handler)
             await loop.poll()
             await loop.poll()

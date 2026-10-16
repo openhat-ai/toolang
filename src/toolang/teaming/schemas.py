@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
+from hashlib import sha256
 import json
 import re
 from typing import Annotated, Any, Literal, cast
@@ -26,6 +27,7 @@ from .types import MAX_SAFE_INTEGER
 
 TargetKind = Literal["agent", "human"]
 _STREAM_ID = re.compile(r"[0-9]+-[0-9]+\Z")
+MAX_RULES_BYTES = 64 * 1024
 
 
 def identifier(value: str) -> str:
@@ -100,8 +102,70 @@ def conversation_name(value: str | None) -> str | None:
     return value
 
 
+def convo_target(value: str, agent: str) -> str:
+    """Parse the common model-tool target grammar without resolving it."""
+    try:
+        return conversation_id(value)
+    except MessagingError:
+        name = identifier(value)
+    if name == agent:
+        raise MessagingError("Cannot access a DM with yourself")
+    return f"agent:{name}"
+
+
 class ProtocolModel(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
+
+
+def rules_content(value: str) -> str:
+    """Validate authored Markdown without normalizing its UTF-8 bytes."""
+    if len(value.encode("utf-8")) > MAX_RULES_BYTES:
+        raise ValueError("Conversation rules exceed 64 KiB")
+    return value
+
+
+def rules_revision(value: str) -> str:
+    if value != "0" and not re.fullmatch(r"[0-9a-f]{64}", value):
+        raise ValueError("Expected revision 0 or a lowercase SHA-256 digest")
+    return value
+
+
+RulesContent = Annotated[
+    str,
+    Field(description="Exact UTF-8 Markdown, at most 64 KiB."),
+    AfterValidator(rules_content),
+]
+RulesRevision = Annotated[
+    str,
+    Field(description="Lowercase SHA-256 of the content, or '0' for absent rules."),
+    AfterValidator(rules_revision),
+]
+
+
+class ConversationRules(ProtocolModel):
+    """One atomic, independently versioned conversation document."""
+
+    conversation: Annotated[str, AfterValidator(conversation_id)]
+    filename: Literal["MEMBERS.md"] = "MEMBERS.md"
+    revision: RulesRevision
+    content: RulesContent
+
+    @model_validator(mode="after")
+    def valid_digest(self) -> ConversationRules:
+        expected = (
+            sha256(self.content.encode("utf-8")).hexdigest() if self.content else "0"
+        )
+        if self.revision != expected:
+            raise ValueError("Conversation rules revision differs from content")
+        return self
+
+    @classmethod
+    def create(cls, conversation: str, content: str = "") -> ConversationRules:
+        return cls(
+            conversation=conversation,
+            content=content,
+            revision=sha256(content.encode("utf-8")).hexdigest() if content else "0",
+        )
 
 
 class HubInfo(BaseModel):
@@ -502,6 +566,20 @@ class RenameConversationRequest(HubRequest):
     revision: int = Field(ge=1)
 
 
+class SetRulesRequest(HubRequest):
+    """Replace or clear MEMBERS.md using the revision from a prior read."""
+
+    content: RulesContent = Field(
+        description="Replacement UTF-8 Markdown, at most 64 KiB; empty clears rules."
+    )
+    revision: RulesRevision = Field(
+        description=(
+            "Expected revision from a prior read, including '0' for absent rules. "
+            "A stale revision returns HTTP 409 without changing the document."
+        )
+    )
+
+
 class SendRequest(HubRequest):
     id: str
     target: str
@@ -514,6 +592,13 @@ class AgentSendRequest(SendRequest):
     thread: str | None = None
     run: str | None = None
     handler_error: bool = False
+    rules_revision: RulesRevision | None = Field(
+        default=None,
+        description=(
+            "Optional expected target rules revision; checked atomically with delivery. "
+            "A mismatch returns HTTP 409 without sending."
+        ),
+    )
 
 
 class AgentRegistration(HubRequest):

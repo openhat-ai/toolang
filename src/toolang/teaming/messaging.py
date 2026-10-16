@@ -17,6 +17,8 @@ from .config import BackendConfig
 from .errors import ConversationAccessDenied, LeaseLost, MessagingError
 from .schemas import (
     Conversation,
+    ConversationRules,
+    SetRulesRequest,
     TeamMember,
     Targets,
     TalkCursor,
@@ -204,6 +206,22 @@ class MessagingClient:
         )
         return await self.conversation(conversation)
 
+    async def get_rules(self, conversation: str) -> ConversationRules:
+        conversation_id(conversation)
+        return await self.backend.get_rules(conversation, self.actor)
+
+    async def set_rules(
+        self, conversation: str, content: str, *, revision: str
+    ) -> ConversationRules:
+        request = SetRulesRequest(content=content, revision=revision)
+        return await self.backend.set_rules(
+            conversation_id(conversation),
+            self.actor,
+            content=request.content,
+            revision=request.revision,
+            token=self._lease,
+        )
+
     async def join_conversation(self, conversation: str) -> dict[str, Any]:
         await self.backend.member(
             conversation, self.actor, token=self._lease, join=True
@@ -268,6 +286,7 @@ class MessagingClient:
         message_id: str | None = None,
         participants: list[str] | None = None,
         handler_error: bool = False,
+        rules_revision: str | None = None,
     ) -> dict[str, Any]:
         message = Message(
             message_id if message_id is not None else str(uuid4()),
@@ -292,7 +311,14 @@ class MessagingClient:
                 else (),
             )
         sid = await self.backend.append(
-            ref, self.actor, message.encode(), token=self._lease, pair=pair
+            ref,
+            self.actor,
+            message.encode(),
+            token=self._lease,
+            pair=pair,
+            **(
+                {"rules_revision": rules_revision} if rules_revision is not None else {}
+            ),
         )
         return {"conversation": ref, "stream_id": sid, "message": message.data()}
 

@@ -11,11 +11,18 @@ from toolang.base.errors import ToolangError
 from toolang.base.protocols.tool import ToolRuntime
 from toolang.base.types.tool import ToolContext, ToolResult
 from toolang.base.types.message import ToolResultPart
+from toolang.base.types.message import Message
+from toolang.common.time import utc_now
+from toolang.lang.input import CallInput
+from toolang.lang.types import Array
+from pydantic import TypeAdapter
 from toolang.base.utils.workspace_paths import resolve_input_path, workspace_uri
 
 from toolang.state.state import AgentState
 
 from ..records import RecallControlPayload
+from ..schemas import ControlInfo, RunDetail, record_to_data
+from ..inspection.history import RunHistory
 from ..assembly.tool_replies import control_summary
 from ..assembly.run_results import run_result
 
@@ -38,6 +45,9 @@ from ..types import (
     ServiceRecallTarget,
     StepRef,
     WorkspaceRecallTarget,
+    Output,
+    ToolStepGiven,
+    ToolStepNoted,
 )
 from .common import BoundRun, _ExecuteCommitted, _RunRejected
 from ..recall import required_declarations
@@ -163,7 +173,9 @@ class _ToolRuntime(ToolRuntime):
             {"controls": [control_summary(ref, payload) for ref in controls]}
         )
 
-    async def honor(self, paths: tuple[tuple[str, str], ...]) -> ToolResult:
+    async def honor(
+        self, paths: tuple[tuple[str, str], ...], *, conversations: tuple[str, ...] = ()
+    ) -> ToolResult:
         execution = self.state.execution
         if execution is None:
             raise RuntimeError("Agic runtime execution is unavailable")
@@ -214,6 +226,17 @@ class _ToolRuntime(ToolRuntime):
             for payload in load_rules(context, paths, set(visible))
             for ref in execution.recall(self.step, payload, self.state.visible_recalls)
         }
+        if conversations:
+            from .conversations import load_target
+
+            for target in dict.fromkeys(conversations):
+                payload = (
+                    await load_target(self.state.layout, target, pending=True)
+                ).recall
+                for ref in execution.recall(
+                    self.step, payload, self.state.visible_recalls
+                ):
+                    summaries[ref] = control_summary(ref, payload)
         return ToolResult(
             {
                 "controls": [
@@ -368,12 +391,152 @@ class _ToolRuntime(ToolRuntime):
             }
         )
 
-    async def spawn(self, runnable: str, input: Mapping[str, Any]) -> ToolResult:
+    async def steer(self, target: str, input: str, expected_control: str) -> ToolResult:
+        return self._control("steer", target, expected_control, input)
+
+    async def cancel(
+        self, target: str, expected_control: str, reason: str | None = None
+    ) -> ToolResult:
+        return self._control("cancel", target, expected_control, reason)
+
+    def _control(
+        self,
+        kind: Literal["steer", "cancel"],
+        target: str,
+        expected_control: str,
+        text: str | None,
+    ) -> ToolResult:
+        execution = self.state.execution
+        if execution is None:
+            raise RuntimeError("Agic runtime execution is unavailable")
+        executor, store = execution.executor, execution.store
+        try:
+            run_id = str(RunRef.parse(target))
+            expected = ControlRef.parse(expected_control)
+            if expected.target != RunRef(run_id):
+                raise ValueError("expected_control must identify the target Run")
+            with executor.stream.publication() as publication:
+                with store.write_transaction():
+                    step = store.get_step(ref=self.step)
+                    if (
+                        step is None
+                        or not isinstance(step.given, ToolStepGiven)
+                        or step.given.trigger != "model"
+                    ):
+                        raise ValueError("control requires a model Tool Step")
+                    arguments = step.given.call.input
+                    if (
+                        arguments.get("target") != target
+                        or arguments.get("expected_control") != expected_control
+                        or arguments.get("input" if kind == "steer" else "reason")
+                        != text
+                        or step.given.call.name != f"runtime__{kind}"
+                    ):
+                        raise ValueError("conflicting control admission")
+                    if step.output is not None and isinstance(
+                        step.output.value, ToolResultPart
+                    ):
+                        return ToolResult(
+                            dict(step.output.value.output), step.output.value.error
+                        )
+                    if step.status != "running":
+                        raise ValueError(
+                            "control requires an unacknowledged running Step"
+                        )
+                    run = store.get_run(run_id=run_id)
+                    if run is None:
+                        raise ValueError(f"Run not found: {run_id}")
+                    if run.status not in {"pending", "running"}:
+                        return ToolResult(
+                            {"run": record_to_data(run)},
+                            error=f"Run {run_id} is {run.status}",
+                        )
+                    executor._require_available()
+                    executor._require_owned_control(run_id, expected)
+                    values = (
+                        CallInput(
+                            {
+                                "_": Array(
+                                    "Part[]", tuple(Message.user(text or "").parts)
+                                )
+                            }
+                        )
+                        if kind == "steer"
+                        else CallInput({"_": text} if text is not None else {})
+                    )
+                    control = store.accept_run_control(
+                        run_id=run_id,
+                        kind=kind,
+                        timing="next_step" if kind == "steer" else "immediate",
+                        input=values,
+                        expected_control=expected,
+                        request_id=f"tool:{self.step}",
+                        triggered_by=self.step,
+                        created_at=utc_now(),
+                    )
+                    detail = RunHistory(store).get_run(run_id)
+                    assert detail is not None
+                    receipt = {
+                        "run": TypeAdapter(RunDetail).dump_python(detail, mode="json"),
+                        "command": TypeAdapter(ControlInfo).dump_python(
+                            ControlInfo.from_record(run, control), mode="json"
+                        ),
+                    }
+                    store.finish_step(
+                        ref=self.step,
+                        kind="tool",
+                        status="succeeded",
+                        output=Output(
+                            ToolResultPart(
+                                tool_call_id=step.given.call.tool_call_id,
+                                call_id=step.given.call.call_id,
+                                tool_name=step.given.call.name,
+                                tool_family=step.given.call.name,
+                                output=receipt,
+                            )
+                        ),
+                        noted=ToolStepNoted(summary=f"Accepted {kind}: {run_id}"),
+                        error=None,
+                        finished_at=utc_now(),
+                    )
+                    executor._publish_step_ends(
+                        publication,
+                        (self.step,),
+                        thread_id=self.state.prepared.run.thread,
+                        root_run_id=self.state.prepared.run.root_run_id,
+                    )
+            if execution._active is not None:
+                execution._active.early_ends.add(self.step)
+            executor._observe_control(control)
+            return ToolResult(receipt)
+        except (ToolangError, TypeError, ValueError) as exc:
+            return ToolResult(error=str(exc))
+
+    async def spawn(
+        self, runnable: str, input: Mapping[str, Any], *, thread: str | None = None
+    ) -> ToolResult:
         from .spawn import accept
 
         execution = self.state.execution
         if execution is None:
             raise RuntimeError("Agic runtime execution is unavailable")
+        previous = execution.store.get_step(ref=self.step)
+        if (
+            previous is not None
+            and previous.output is not None
+            and isinstance(previous.output.value, ToolResultPart)
+        ):
+            if (
+                not isinstance(previous.given, ToolStepGiven)
+                or previous.given.call.name != "runtime__spawn"
+                or previous.given.call.input.get("runnable") != runnable
+                or previous.given.call.input.get("input", {}) != input
+                or previous.given.call.input.get("thread") != thread
+            ):
+                return ToolResult(error="conflicting spawn admission")
+            return ToolResult(
+                dict(previous.output.value.output), previous.output.value.error
+            )
         try:
             await accept(
                 execution,
@@ -388,9 +551,12 @@ class _ToolRuntime(ToolRuntime):
                     self.state.prepared.state,
                     self.state.prepared.run.state_ref,
                 ),
+                thread=thread,
             )
         except _RunRejected as exc:
             return ToolResult(error=str(exc), output=exc.details)
+        except (ToolangError, TypeError, ValueError) as exc:
+            return ToolResult(error=str(exc))
         except Exception as exc:
             self.failure = exc
             raise

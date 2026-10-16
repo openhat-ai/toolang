@@ -1,9 +1,9 @@
 # Conversation dispatch and MEMBERS.md
 
-Status: proposed for human review; definition only, no runtime changes.
+Status: approved in #829; implemented in #834.
 The [ID preparation](conversation-id-upgrade.md) is implemented.
 
-## Goal, baseline, and scope
+## Goal and scope
 
 Give each agent one durable talk thread per conversation. Every batch enters
 the user or packaged `talk` handler, which may reply, do nothing, steer/cancel
@@ -11,10 +11,9 @@ an existing Run, or start a new Run in a new or existing local thread.
 Success means continuous conversation context, explicit execution targets,
 current scoped rules, and recovery without duplicating admitted work.
 
-Current [Talk](../../src/toolang/driver/talk.py) creates a thread per batch;
-[spawn](../../src/toolang/execution/executor/spawn.py) always creates a new
-`work_` thread. Steer/cancel exist in HTTP but not as model tools. Extend these
-owners; add no Task entity, scheduler, result DSL, semantic rule enforcement,
+The [Talk driver](../../src/toolang/driver/talk.py) and
+[spawn admission](../../src/toolang/execution/executor/spawn.py) own execution.
+Add no Task entity, scheduler, result DSL, semantic rule enforcement,
 authorization tokens, embedded editor, local sync, or conversation deletion.
 
 ## Shared document and authority
@@ -46,7 +45,7 @@ equivalents start at `/agents/{agent}/msg`.
 | New `PUT /msg/conversations/{id}/rules` | Accept `{content, revision}`; atomically compare and replace/clear. Return the same document shape. Add HTTP 409 / `conversation_rules_conflict` with no mutation. |
 | Agent `POST /msg/messages` | Add optional transport field `rules_revision`; runtime supplies it for `convo.write`. Check it atomically with append/first-DM creation. A conflict changes no messages, counters, or conversation state. Human and diagnostic sends retain their contracts. |
 | Existing conversation list/create/join/leave APIs | Reuse for CLI; no new routes or membership semantics. Derive the CLI's joined indicator from participants. |
-| Existing run start/retry/rerun APIs | Use the shared root-admission gate described below; report a busy thread as HTTP 409. Keep request shapes and driver gates. |
+| Existing run start/rerun APIs | Use the shared root-admission gate described below; report a busy thread as HTTP 409. Keep request shapes and driver gates. |
 | Existing `/api/v1/runs/{id}/steer` and `/cancel` | Reuse schemas/defaults and `expected_control`; add no duplicate control or HTTP spawn endpoint. |
 | Existing inspection/events APIs | Extend recall target schemas for `convo-rules` identified by backend/conversation; persist/replay through existing controls and history routes. |
 
@@ -103,8 +102,7 @@ Add four model-callable tools and extend one through existing factories:
 
 Spawn keeps the `{id, thread, status}` receipt shape for both admission modes.
 Control targets are Run IDs; `expected_control` is required and comes from the
-inspected Run's `control`, never a runtime fetch of the latest value. A retry or
-replaced owner must not receive stale controls. Return the existing run/control
+inspected Run's `control`, never a runtime fetch of the latest value. A replaced owner must not receive stale controls. Return the existing run/control
 receipt shape; acceptance does not mean the control has applied. Reuse `convo`
 list/create/join/leave/rename/write and `history.read_threads/read_runs/read_steps`
 for discovery and inspection. File transfers need no agent download/upload tools.
@@ -120,7 +118,7 @@ Rule recall is runtime-owned, not another model-callable honor tool.
 2. **Root admission:** check source rules before admitting a new talk root.
    Each batch starts that root in the bound thread.
    Keep one pending/running root per thread through a shared store transaction
-   for independent starts and root retry/rerun admission, across all prefixes.
+   for independent starts and root rerun admission, across all prefixes.
    Spawn may reuse `chat_`, `chore_`, `talk_`, `work_`, or other valid local threads;
    prefixes neither grant nor deny authority. Busy driver admission defers without
    consuming its trigger. Reuse preserves thread metadata and history; create a
@@ -172,8 +170,8 @@ Rule loading has two boundaries, independent of thread prefix:
 | Handling a batch | Bind its source conversation to the Run. Before each Model Call, ensure current rules are visible, including user talk flows and processing children. Apply them to dispatch, direct replies, and no-reply decisions. |
 | Operating on a conversation | Preflight `convo.peek` (including metadata-only), `convo.write`, and `convo.set_rules` against the actual target in any thread. Publish read/edited rules through trusted runtime recall separately from tool output. |
 
-Persist source scope on Run admission; retain it on explicit retry/rerun and
-propagate it to processing children. Retry/rerun does not create another driver
+Persist source scope on Run admission; retain it on explicit rerun and
+propagate it to processing children. Rerun does not create another driver
 batch receipt or rewind the Hub cursor. Never infer scope from a thread prefix
 or old history. Spawned Runs gain no implicit source-conversation scope.
 Reusing a thread or controlling a Run does not activate rules from former
@@ -209,7 +207,7 @@ trigger/CLI orchestration at their boundaries.
    conflicting bindings reject without mutation; user and packaged handlers work.
 2. **Dispatch/controls:** all five outcomes and mixed batches; arbitrary-prefix
    thread reuse; concurrent admission has one winner and busy drivers retain
-   triggers; completion/retry races, permissions, and immediate receipts have no
+   triggers; completion/rerun races, permissions, and immediate receipts have no
    silent action substitution.
 3. **Recovery:** reply/dispatch links choose local targets; ambiguity/foreign
    origins cannot mutate guessed Runs. Crash between admission/launch, committed
@@ -221,7 +219,7 @@ trigger/CLI orchestration at their boundaries.
    pending-DM and append races have no unwanted effects; new targets replay
    offline and forged guidance stays untrusted.
 5. **Boundaries:** source rules govern dispatch/reply/ignore and survive explicit
-   retry/rerun and processing children; spawned work checks actual destinations
+   rerun and processing children; spawned work checks actual destinations
    only. Changed/compacted rules reload; workspace rules, human sends, and
    metadata/membership contracts stay valid.
 6. **CLI/tools:** configured-human identity, shared Talk/list rendering, byte-exact

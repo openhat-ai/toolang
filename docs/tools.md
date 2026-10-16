@@ -303,9 +303,9 @@ the active Run.
 Tools do not own the model loop.
 
 For tool-capable agic calls, the executor supplies callable `runtime` operations:
-`runnables`, `run`, `spawn`, `await`, `exec`, `pick`, and `chdir`. `honor` and
-`compact` are automatic runtime-only preflights. Flow evaluators, output repair,
-and tool-disabled models do not receive runtime tools.
+`runnables`, `run`, `spawn`, `await`, `exec`, `pick`, `chdir`, `steer`, and `cancel`.
+`honor` and `compact` are automatic runtime-only preflights. Flow evaluators,
+output repair, and tool-disabled models do not receive runtime tools.
 
 Run, spawn, and exec accept `runnable` and optional `input`. A named invocation
 without further requested work uses exec; use run when its result is needed
@@ -371,10 +371,12 @@ its elapsed timer. Flow descriptions are unchanged.
 
 ### Spawn independent work
 
-`runtime/spawn({runnable, input?})` starts an independent root in a new empty
-`work_` thread under the same agent/executor. It shares run's input decoder and
-follows the current spawns route. It accepts no thread,
-identity, source-code, or execution-configuration arguments. Multiple spawn calls
+`runtime/spawn({runnable, input?, thread?})` starts an independent root under the
+same agent/executor. Omit `thread` for a new empty `work_` thread, or supply an
+inspected idle local thread of any prefix. Reuse preserves its metadata, history,
+and compaction; launch resources/workdir still come from the caller. It shares
+run's input decoder and follows the current spawns route. It accepts no identity,
+source-code, or execution-configuration arguments. Multiple spawn calls
 may share a tool batch; each commits independently.
 
 The response is the admission snapshot `{id, thread, status: "pending"}` stored
@@ -384,6 +386,24 @@ injects no completion message. Work survives the source Run, but executor shutdo
 cancels it. In a short-lived script host, returning from the script stops unfinished
 roots. See [spawn syntax](flow-syntax.md#spawn) and
 [record semantics](run-step-records.md#spawn-admission-and-handles).
+
+Only one pending/running independent root may occupy a thread. Busy admission
+returns an error without creating replacement work. Spawn admission and its source
+Step receipt commit together; repeated matching requests reuse the receipt.
+
+### Control an inspected Run
+
+`runtime/steer({target, input, expected_control})` appends plain text to an active
+local agic Run at `next_step`; `runtime/cancel({target, expected_control, reason?})`
+requests immediate cancellation. `target` is an exact Run ID. The required
+`expected_control` comes from inspecting that invocation with history tools;
+runtime never fetches a newer token to bypass a stale-target conflict.
+
+The `{run, command}` receipt uses existing control schemas and distinguishes
+acceptance from application. Control admission and the source Tool Step receipt
+commit atomically. Terminal, unavailable, or replaced targets return their actual
+outcome and start no replacement work. Tool availability does not grant human
+authorization for an operation.
 
 ### Pick guidance
 
@@ -454,7 +474,11 @@ handoff; spawned roots remain independent. Waiting itself never adopts ownership
 ## Conversations
 
 The selectable `convo` toolset provides `team`, `list`, `peek`, `write`, `create`,
-`rename`, `join`, and `leave`. See [messaging](messaging.md#agent-messaging)
+`rename`, `join`, `leave`, `get_rules`, and `set_rules`. Conversation guidance
+uses the same internal honor/recall mechanism, scoped by backend and conversation.
+Its recall target is `{kind: "convo-rules", backend, conversation}`; revision `"0"`
+retracts cleared guidance. Honor remains runtime-only.
+See [messaging](messaging.md#agent-messaging)
 for parameters, compact results, target resolution, and read/write semantics.
 
 ## Migration

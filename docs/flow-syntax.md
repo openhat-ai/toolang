@@ -521,7 +521,7 @@ inline generate/map/reduce bodies; retain it before named targets. Keep bindings
 Output protocol and stored objects contain `type`, `value`, and `binding`;
 ordinary stored values use the self-describing value codec. There is no
 Local wrapper or `dim` field. Update output references to `output/value`.
-RunStore schema 52 rejects older stores without modifying them; retain the
-matching older runtime to inspect those stores, and use a fresh store for new
-runs. No compatibility reader or automatic migration is provided. Old executable
+Execution-store versions and read/write compatibility follow
+[Durable Truth](execution.md#durable-truth); incompatible writable stores require
+a fresh runtime, without automatic migration. Old executable
 snapshots require source migration and a newly prepared state before rerun.

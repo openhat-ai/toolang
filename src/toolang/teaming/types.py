@@ -6,7 +6,7 @@ from contextlib import AbstractContextManager
 from typing import Any, Protocol, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .schemas import ConversationSummary
+    from .schemas import ConversationSummary, ConversationRules
 
 RENEW_SECONDS = 5
 LEASE_SECONDS = 15
@@ -29,6 +29,7 @@ class AgentTransport(Protocol):
 
 class MessageReceiver(AgentTransport, Protocol):
     def session(self) -> AbstractContextManager[str]: ...
+    async def get_rules(self, conversation: str) -> ConversationRules: ...
     async def contacts(
         self, *, include_preview: bool = False
     ) -> list[ConversationSummary]: ...

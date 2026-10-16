@@ -55,15 +55,21 @@ async def prepare(agent, human):
 
 
 def make_loop(path, client, harness=None):
-    return MessagingLoop(
+    if harness is None:
+        executor = MagicMock()
+        executor.store.talk.get.return_value = None
+    else:
+        executor = harness.executor
+    loop = MessagingLoop(
         layout=AgentLayout.resident(path, "alice"),
         owner="human:owner",
         client=client,
-        executor=harness.executor if harness else MagicMock(),
+        executor=executor,
         threads=harness.threads if harness else MagicMock(),
         get_agent_setup=lambda: harness.setup if harness else MagicMock(),
         get_agent_state=lambda: harness.state if harness else MagicMock(),
     )
+    return loop
 
 
 def harness_with_msg(path, server, responses, source="agic:\n  {{_}}\n", state=None):
@@ -75,6 +81,21 @@ def harness_with_msg(path, server, responses, source="agic:\n  {{_}}\n", state=N
     return ExecutionHarness.create(
         path, source=source, responses=responses, tools=tools, state=state
     )
+
+
+@pytest.fixture(autouse=True)
+def offline_rule_transport(monkeypatch):
+    from toolang.execution.executor import conversations
+
+    original = harness_with_msg
+
+    def configured(path, server, *args, **kwargs):
+        monkeypatch.setattr(
+            conversations, "AgentClient", lambda root, actor: make_client(server, actor)
+        )
+        return original(path, server, *args, **kwargs)
+
+    monkeypatch.setitem(globals(), "harness_with_msg", configured)
 
 
 @pytest.mark.parametrize(
@@ -183,21 +204,18 @@ def test_tool_reply_origin_and_backend_cursor_restart(tmp_path, custom):
             restarted = make_loop(tmp_path, client, harness)
             await restarted.poll()
             threads = harness.store.list_threads()
-            assert len(threads) == 2
+            assert len(threads) == 1
             assert all(thread.origin == "talk" for thread in threads)
-            assert len({thread.id for thread in threads}) == 2
+            assert len({thread.id for thread in threads}) == 1
             latest = next(
                 run for run in harness.store.list_runs() if run.parent is None
             )
-            assert latest.thread.id != handled.thread.id
+            assert latest.thread.id == handled.thread.id
             assert not harness.store.db_path.with_name("runs.db.threads.lock").exists()
             prompt = repr(harness.adapter.invocations[-1].call.messages)
-            assert (
-                "Handled." not in prompt
-                and "literal $prompt" not in prompt
-                and "previous" not in prompt
-                and "next" in prompt
-            )
+            assert "next" in prompt
+            if custom not in {"flow-module-run", "flow-module-async"}:
+                assert "Handled." in prompt and "literal $prompt" in prompt
             assert len(await client.history("gc_00000001")) == 3
             assert not (harness.setup.layout.runtime / "channels").exists()
 
@@ -371,14 +389,13 @@ def test_failed_message_handler_sends_visible_error_reply(tmp_path, model_availa
         server,
         [RuntimeError("scripted provider failure")],
     )
+    available_models = harness.setup.models_effective()
     harness.setup = replace_materialized_setup(
         harness.setup,
         defaults=RunDefaults(),
         **({} if model_available else {"models": ()}),
     )
-    expected_error = (
-        "scripted provider failure" if model_available else "run requires a model"
-    )
+    expected_error = "scripted provider failure"
 
     async def scenario():
         async with (
@@ -391,6 +408,14 @@ def test_failed_message_handler_sends_visible_error_reply(tmp_path, model_availa
             loop = make_loop(tmp_path, client, harness)
             await loop.poll()
 
+            if not model_available:
+                assert await client.talk_cursor("gc_00000001") == "0-0"
+                assert len(await human.history("gc_00000001")) == 1
+                assert not harness.store.list_runs()
+                harness.setup = replace_materialized_setup(
+                    harness.setup, models=available_models
+                )
+                await loop.poll()
             assert await client.talk_cursor("gc_00000001") == source["stream_id"]
             history = await human.history("gc_00000001")
             reply = Message.decode(history[-1][1]["data"])
@@ -399,16 +424,16 @@ def test_failed_message_handler_sends_visible_error_reply(tmp_path, model_availa
             assert expected_error in reply.body
             assert reply.handler_error
             assert len(history) == 2
-            assert len(harness.adapter.invocations) == int(model_available)
+            assert len(harness.adapter.invocations) == 1
 
             await loop.poll()  # The agent's error reply must not trigger another run.
             assert len(await human.history("gc_00000001")) == 2
-            assert len(harness.adapter.invocations) == int(model_available)
+            assert len(harness.adapter.invocations) == 1
 
     asyncio.run(scenario())
 
 
-def test_failed_batches_skip_bad_entries_and_rotate_groups(tmp_path):
+def test_unadmitted_batches_retain_entries_and_rotate_groups(tmp_path):
     async def scenario():
         server = FakeServer(server_type="valkey")
         async with (
@@ -439,10 +464,9 @@ def test_failed_batches_skip_bad_entries_and_rotate_groups(tmp_path):
                 message["body"]
                 for message in batch["messages"]
                 if not message.get("handler_error", False)
-            ] == [str(i) for i in range(19, 25)]
-            assert batch["messages"][-1]["handler_error"] is True
+            ] == [str(i) for i in range(19)]
             assert "previous" not in batch
-            assert await client.talk_cursor("gc_00000001") != first_cursor
+            assert await client.talk_cursor("gc_00000001") == first_cursor == "0-0"
             assert not (
                 AgentLayout.resident(tmp_path, "alice").runtime / "channels"
             ).exists()
@@ -751,6 +775,8 @@ def test_convo_is_unavailable_without_configuration_and_fences_offline_sends(tmp
             "join",
             "leave",
             "rename",
+            "get_rules",
+            "set_rules",
         }
         with pytest.raises(MessagingError, match="lease lost"):
             await msg.tools()["write"].invoke(

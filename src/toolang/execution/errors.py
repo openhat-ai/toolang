@@ -11,6 +11,10 @@ class EmptyModelOutput(ToolangError):
     """Raised when a terminal model step produced no visible output."""
 
 
+class ThreadBusy(ValueError):
+    """An independent root already owns the requested thread."""
+
+
 class HistoryChangedError(RuntimeError):
     """A captured history read can no longer be reconstructed from current facts."""
 

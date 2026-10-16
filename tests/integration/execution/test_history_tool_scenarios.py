@@ -198,6 +198,7 @@ def test_invalid_and_foreign_bounds_fail(store, tool, query):
         start(store, name)
         step(store, name)
         step(store, name, 1)
+        project_run_end(store, run_id=name)
     with pytest.raises((ValueError, TypeError)):
         read(store, tool, **query)
 

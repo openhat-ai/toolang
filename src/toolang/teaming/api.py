@@ -19,6 +19,7 @@ from .subscriptions import HubSubscription
 from .errors import (
     BackendUnavailable,
     ConversationAccessDenied,
+    ConversationRulesConflict,
     StorageIntegrityError,
     LeaseLost,
     MessagingError,
@@ -82,6 +83,8 @@ def create_app(
     async def messaging_error(request: Request, exc: MessagingError) -> JSONResponse:
         if isinstance(exc, LeaseLost):
             status, code = 409, "recovery_required"
+        elif isinstance(exc, ConversationRulesConflict):
+            status, code = 409, "conversation_rules_conflict"
         elif isinstance(exc, ConversationAccessDenied):
             status, code = 403, "conversation_access_denied"
         elif isinstance(exc, SendUnconfirmed):

@@ -2,6 +2,8 @@
 
 import asyncio
 from unittest.mock import AsyncMock
+
+from tests.support.talk import admitted_handler
 from urllib.parse import quote
 
 from fakeredis import FakeServer
@@ -146,8 +148,7 @@ def test_pending_cursor_retries_only_write_and_ignores_old_files(tmp_path, monke
             old.write_text("corrupt old JSON")
             sent = await human.send(convo, body="process once")
             loop = make_loop(tmp_path, alice)
-            handler = AsyncMock()
-            monkeypatch.setattr(loop, "handle", handler)
+            handler = admitted_handler(loop)
             advance = alice.advance_talk_cursor
             attempts = 0
 
@@ -276,7 +277,7 @@ def test_cancelled_batch_has_bounded_cursor_save(tmp_path, monkeypatch):
             convo = (await human.resolve("dev", kind="name")).conversation
             sent = await human.send(convo, body="cancel")
             loop = make_loop(tmp_path, alice)
-            loop.handle = AsyncMock(side_effect=asyncio.CancelledError)
+            admitted_handler(loop, asyncio.CancelledError)
             monkeypatch.setattr(messaging, "_CURSOR_SAVE_SECONDS", 0.01)
 
             async def stalled_save(*args):
@@ -335,7 +336,7 @@ def test_pending_cursor_is_discarded_after_backend_switch(tmp_path, monkeypatch)
                 nonlocal current
                 current = 1
 
-            loop.handle = AsyncMock(side_effect=switch_while_handling)
+            admitted_handler(loop, switch_while_handling)
             await loop.poll()
             assert loop.pending == (old_convo, old["stream_id"])
             await alice.register("human:owner")
@@ -344,7 +345,7 @@ def test_pending_cursor_is_discarded_after_backend_switch(tmp_path, monkeypatch)
             await loop.poll()
             assert loop.pending is None
             assert not await humans[1].backend._client.exists(talk_key(alice.actor))
-            loop.handle = AsyncMock()
+            admitted_handler(loop)
             await humans[1].send(new_convo, body="new backend")
             await loop.poll()
             loop.handle.assert_awaited_once()
@@ -366,7 +367,7 @@ def test_pending_cursor_recovers_after_another_lease_advances_progress(
             convo = (await human.resolve("dev", kind="name")).conversation
             first = await human.send(convo, body="handled by original")
             loop = make_loop(tmp_path, alice)
-            loop.handle = AsyncMock()
+            admitted_handler(loop)
             advance = alice.advance_talk_cursor
             attempts = 0
 
@@ -416,7 +417,7 @@ def test_cursor_authority_loss_does_not_replace_handler_cancellation(tmp_path):
                 await alice.unregister()
                 raise asyncio.CancelledError
 
-            loop.handle = lose_lease_and_cancel
+            admitted_handler(loop, lose_lease_and_cancel)
             task = asyncio.create_task(loop.poll())
             with pytest.raises(asyncio.CancelledError):
                 await task

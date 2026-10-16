@@ -3,6 +3,8 @@
 Implementation authorized on 2026-10-16. Goal: disjoint conversation suffixes and
 uniform eight-character thread suffixes. Talk dispatch and conversation rules
 remain outside this preparation.
+Preparation is implemented in #830; Talk integration follows
+[conversation dispatch](conversation-dispatch-and-rules.md).
 
 ## Rules
 
@@ -10,8 +12,8 @@ remain outside this preparation.
    codecs unchanged. Add no compatibility codec or data migration.
 2. Conversation schema 3 permutes disjoint inputs: DM `0 | pair_hash(39)`;
    GC `1 | hourly_tick(20) | seq(19)`. Reject mismatched backend schemas.
-3. Derive future talk IDs from the conversation suffix and agent. The helper
-   creates no thread; the driver continues to allocate per batch.
+3. Derive talk IDs from the conversation suffix and agent. The pure helper
+   creates no thread; binding and reuse belong to conversation dispatch.
 4. Every chore ID uses the exact name and agent: take the first 40 SHA-256 bits
    of the UTF-8 name and permute with the agent key. No filename special cases,
    manual/automatic partitions, or creation-provenance metadata.

@@ -25,7 +25,7 @@ from toolang.state.state import AgentState
 from ...errors import EmptyModelOutput
 from ...events import StepBegin, StepEnd
 from ...assembly import prompting
-from ...records import ControlRecord
+from ...records import ControlRecord, RecallControlPayload
 from ...types import (
     ModelAccounting,
     ControlRef,
@@ -101,6 +101,7 @@ class _AgicState:
     tool_calls: int = 0
     tool_call_sources: dict[str, tuple[int, int]] = field(default_factory=dict)
     visible_recalls: dict[RecallTarget, str] = field(default_factory=dict)
+    conversation_rules: tuple[RecallControlPayload, ...] = ()
     initial_inputs: tuple[FieldRef, ...] = ()
     claimed_inputs: tuple[ControlRecord, ...] = ()
     repairing_output: bool = False
