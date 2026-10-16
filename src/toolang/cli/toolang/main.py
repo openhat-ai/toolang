@@ -242,7 +242,7 @@ class _ToolangGroup(CliGroup):
 def _version_callback(value: bool) -> None:
     if not value:
         return
-    typer.echo(f"toolang {_version.displayed_toolang_version()}")
+    typer.echo(_version.displayed_toolang_version())
     raise typer.Exit()
 
 

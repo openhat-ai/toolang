@@ -68,5 +68,5 @@ def test_guest_harness_installs_and_runs_current_wheel(
     assert completed.returncode == 0, completed.stderr
     assert uv_line in completed.stderr
     assert python_line in completed.stderr
-    assert "Installed Toolang · " in completed.stderr
-    assert "toolang " in completed.stdout
+    assert "Installed Toolang · v" in completed.stderr
+    assert completed.stdout.startswith("v")

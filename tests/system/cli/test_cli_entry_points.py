@@ -18,6 +18,7 @@ from typer.testing import CliRunner
 from toolang.cli.caps.main import app as caps_app
 from toolang.cli.common.lazy import LazyCommand
 from toolang.cli.toolang.main import app as toolang_app
+from toolang.common.version import displayed_toolang_version
 from tests import PROJECT_ROOT
 
 
@@ -82,7 +83,8 @@ def test_installed_console_scripts_match_project() -> None:
 
 @pytest.mark.parametrize(
     ("script", "prefix"),
-    [("toolang", "toolang "), ("too", "toolang "), ("caps", "caps ")],
+    # `toolang` and `too` print only the version; `caps` names its CLI.
+    [("toolang", ""), ("too", ""), ("caps", "caps ")],
 )
 def test_installed_console_scripts_execute(script: str, prefix: str) -> None:
     executable = Path(sys.executable).with_name(script)
@@ -96,7 +98,7 @@ def test_installed_console_scripts_execute(script: str, prefix: str) -> None:
     )
 
     assert completed.returncode == 0, completed.stderr
-    assert completed.stdout.startswith(prefix)
+    assert completed.stdout == f"{prefix}{displayed_toolang_version()}\n"
 
 
 def test_toolang_version_does_not_load_runtime_command_modules() -> None:
@@ -129,7 +131,7 @@ raise SystemExit(status)
     )
 
     assert completed.returncode == 0, completed.stderr
-    assert completed.stdout.startswith("toolang ")
+    assert completed.stdout == f"{displayed_toolang_version()}\n"
     assert json.loads(completed.stderr) == []
 
 
@@ -206,7 +208,7 @@ raise SystemExit(status)
 @pytest.mark.parametrize(
     ("module", "prefix"),
     [
-        ("toolang.cli.toolang", "toolang "),
+        ("toolang.cli.toolang", ""),
         ("toolang.cli.caps", "caps "),
     ],
 )
@@ -220,13 +222,16 @@ def test_cli_package_is_executable_as_a_module(module: str, prefix: str) -> None
     )
 
     assert completed.returncode == 0, completed.stderr
-    assert completed.stdout.startswith(prefix)
+    assert completed.stdout == f"{prefix}{displayed_toolang_version()}\n"
 
 
 @pytest.mark.parametrize(
-    ("name", "app"), (("toolang", toolang_app), ("caps", caps_app))
+    ("name", "app", "prefix"),
+    (("toolang", toolang_app, ""), ("caps", caps_app, "caps ")),
 )
-def test_version_option_has_uppercase_short_alias(name: str, app: typer.Typer) -> None:
+def test_version_option_has_uppercase_short_alias(
+    name: str, app: typer.Typer, prefix: str
+) -> None:
     runner = CliRunner()
     help_result = runner.invoke(app, ["--help"], prog_name=name)
     short_result = runner.invoke(app, ["-V"], prog_name=name)
@@ -236,7 +241,7 @@ def test_version_option_has_uppercase_short_alias(name: str, app: typer.Typer) -
     assert help_result.exit_code == 0, help_result.output
     assert "-V, --version" in help_output
     assert short_result.exit_code == 0, short_result.output
-    assert short_output.startswith(f"{name} ")
+    assert short_output == f"{prefix}{displayed_toolang_version()}\n"
 
 
 def test_inspect_help_is_concise_and_consistent() -> None:
