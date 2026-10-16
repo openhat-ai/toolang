@@ -16,7 +16,7 @@ current scoped rules, and durable dispatch without duplicate work on recovery.
 Keep the design to thread reuse, three execution operations, and two rule-loading
 boundaries. Do not introduce a Task entity, a second scheduler, a result DSL,
 semantic rule enforcement, human-authorization tokens, local rule-file syncing,
-conversation hierarchies, or new CLI/Talk editor commands.
+conversation hierarchies, conversation deletion, or embedded editors.
 
 ## Current behavior and prerequisites
 
@@ -136,6 +136,27 @@ Use the existing human/agent messaging routers:
   neither creates a missing DM. Reading rules has no prior-rules prerequisite.
   Editing requires the current rules to be visible first; clearing uses empty text.
 
+Human management uses `too convo list`, `create [NAME]` (new GC), and
+`join/leave <id>` as the configured human. Existing Hub access and membership
+rules apply. Transfer rules with:
+
+```text
+too convo rules <id> [-o PATH]
+too convo rules <id> -u [PATH] --revision REVISION
+```
+
+- Default to reading: write exact Markdown to stdout, or to the explicit
+  `-o/--output` path; `-o -` selects stdout. Missing rules succeed with empty
+  content (an empty file when requested), revision `0`, and an unset notice on
+  stderr. Unknown conversations and read failures are errors; failed reads leave
+  destination files unchanged.
+- `-u/--update` selects upload; an omitted path or `-` reads stdin. Require the
+  expected revision explicitly; do not fetch a newer one to bypass a conflict.
+  Empty input clears rules. `-u` and `-o` are mutually exclusive.
+- Status and revision receipts use stderr; stdout contains only downloaded
+  Markdown. Hub remains authoritative. Users choose local paths and editing;
+  create no file associations, sidecars, or synchronization state.
+
 ## Two rule-loading boundaries
 
 | Boundary | Rule scope and behavior |
@@ -170,7 +191,8 @@ their behavior. Pure assembly receives resolved snapshots; it performs no Hub I/
 
 ## Touchpoints and acceptance
 
-Likely owners: `driver/talk.py`; teaming schemas/backend/router/clients;
+Likely owners: `driver/talk.py`; CLI command factories and registration;
+teaming schemas/backend/router/clients;
 `plugin/toolsets/convo.py`; base tool contracts; execution admission, controls,
 thread records, preflight, recall, assembly, and runtime factories. Keep source
 parsing/resolution in teaming, durable execution in execution, and orchestration
@@ -193,6 +215,9 @@ the user-facing changelog through the prescribed runnable.
    workers load destination rules only for convo operations. Send/edit races have
    no side effects; existing human sends, metadata/membership tools, workspace
    honor, child execution, and local non-teaming execution retain their contracts.
+6. **Human CLI:** configured-human management, byte-exact file/stdio transfers,
+   empty rules, invalid flag combinations, preserved destinations on failed reads,
+   and stale uploads rejected without local tracking or Hub mutation.
 
 Implementation requires the default offline checks. This definition needs source
 and link verification plus `git diff --check`; it ships no behavior or changelog.
