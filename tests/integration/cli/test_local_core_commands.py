@@ -3383,19 +3383,16 @@ def test_cap_lists_apply_scope_allow_and_display_status(
         assert tuple(row) == ("cap", "description", "location", "tags")
 
 
-@pytest.mark.parametrize("command", [("caps",), ("prompt", "list"), ("standalone",)])
+@pytest.mark.parametrize("command", [("caps",), ("prompt", "list")])
 @pytest.mark.parametrize("prepared", [False, True])
 @pytest.mark.parametrize("all_", [False, True])
 def test_root_cap_inspection_uses_resolved_metadata_and_shared_cache(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
     command: tuple[str, ...],
     prepared: bool,
     all_: bool,
 ) -> None:
-    from toolang.cli.caps import main as caps_cli
-
     (tmp_path / "config.toml").write_text(
         "[prompts]\n"
         'rewrite = { ref = "github://acme/caps/prompts/rewrite.md@main" }\n'
@@ -3417,13 +3414,8 @@ def test_root_cap_inspection_uses_resolved_metadata_and_shared_cache(
         assert "prompt/rewrite" in agent.stdout
 
     flags = ("--all",) if all_ else ()
-    if command == ("standalone",):
-        exit_code = caps_cli.main(["--root", str(tmp_path), "list", *flags])
-        output = capsys.readouterr()
-        stdout, stderr = output.out, output.err
-    else:
-        result = _invoke(tmp_path, *command, *flags)
-        exit_code, stdout, stderr = result.exit_code, result.stdout, result.stderr
+    result = _invoke(tmp_path, *command, *flags)
+    exit_code, stdout, stderr = result.exit_code, result.stdout, result.stderr
 
     assert exit_code == 0, stderr
     rewrite = next(line for line in stdout.splitlines() if "prompt/rewrite" in line)
@@ -3444,7 +3436,7 @@ def test_root_cap_inspection_uses_resolved_metadata_and_shared_cache(
     agent = _invoke(
         tmp_path,
         "alice",
-        *(command if command != ("standalone",) else ("caps",)),
+        *command,
         *flags,
     )
     assert agent.exit_code == 0, agent.stderr
@@ -4015,11 +4007,8 @@ class _FakeTool(Tool):
 
 
 @pytest.mark.parametrize("all_", [False, True])
-def test_standalone_caps_all_preserves_scope_and_query(
-    tmp_path: Path, capsys, all_: bool
-) -> None:
+def test_too_caps_all_preserves_scope_and_query(tmp_path: Path, all_: bool) -> None:
     from toolang.catalog.cap import AuthoredCaps, CapFile
-    from toolang.cli.caps import main as caps_cli
 
     _create_agent(tmp_path)
     layout = AgentLayout.resident(tmp_path, "alice")
@@ -4028,28 +4017,24 @@ def test_standalone_caps_all_preserves_scope_and_query(
             CapFile.parse("Be helpful.\n", kind="psyche", name="shared_cap")
         )
     layout.config.write_text("[allow]\npsyches = []\n")
-    result = caps_cli.main(
-        [
-            "--root",
-            str(tmp_path),
-            "alice",
-            "list",
-            "--query",
-            "psyche/shared_cap",
-            *(("--all",) if all_ else ()),
-        ]
+    result = _invoke(
+        tmp_path,
+        "alice",
+        "caps",
+        "--query",
+        "psyche/shared_cap",
+        *(("--all",) if all_ else ()),
     )
-    output = capsys.readouterr()
 
-    assert result == 0, output.err
+    assert result.exit_code == 0, result.stderr
     if all_:
-        assert "TAGS" in output.out
-        row = next(line for line in output.out.splitlines() if "shared_cap" in line)
+        assert "TAGS" in result.stdout
+        row = next(line for line in result.stdout.splitlines() if "shared_cap" in line)
         assert "home" in row
         assert "not_allowed" in row
-        assert output.out.count("psyche/shared_cap") == 1
+        assert result.stdout.count("psyche/shared_cap") == 1
     else:
-        assert output.out.strip() == "0 caps"
+        assert result.stdout.strip() == "0 caps"
 
 
 def test_tools_help_and_missing_agent_need_no_setup(

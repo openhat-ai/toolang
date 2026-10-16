@@ -334,9 +334,7 @@ toolang/cli/
 │       ├── job.py
 │       ├── plugin.py
 │       └── program.py
-├── caps/                   # reusable cap commands and standalone caps CLI
-│   ├── main.py
-│   ├── __main__.py         # thin python -m adapter
+├── caps/                   # reusable cap command groups
 │   └── commands.py
 ├── impl/                   # interactive implementations, never CLI entry points
 │   └── chat/               # prompt-toolkit TUI
@@ -358,8 +356,7 @@ Responsibilities are:
   coercion, generated Typer help, and direct `RunExecutor.run()` orchestration
 - `toolang.commands.chat`: process-local chat orchestration, interactive TUI
   state, mutable blocks, widgets, and commands
-- `caps`: one cap command implementation reused by `too` and the standalone
-  `caps` entry point
+- `caps`: reusable cap command groups registered by `too`
 - `common`: only code used by at least two first-level CLI areas
 
 `RunClient` owns transport-neutral `connect()`, `run()`, `cancel()`, `steer()`,
@@ -376,7 +373,6 @@ The entry points become:
 ```toml
 toolang = "toolang.cli.toolang.main:main"
 too = "toolang.cli.toolang.main:main"
-caps = "toolang.cli.caps.main:main"
 ```
 
 The CLI dependency direction is:
@@ -467,9 +463,9 @@ concepts:
   maintained directly by `JobScheduler`
 - `toolang.lang` becomes the canonical language package and the
   `toolang.program` facade is removed
-- `toolang.cli.toolang` and `toolang.cli.caps` are the two executable CLI
-  packages; interactive chat lives under
-  `toolang.cli.toolang.commands.chat`
+- `toolang.cli.toolang` is the executable CLI package;
+  `toolang.cli.caps` contains reusable cap command groups. Interactive chat
+  lives under `toolang.cli.toolang.commands.chat`
 - duplicate cap command registration and forwarding modules are removed
 
 No compatibility wrappers should remain once all in-repository callers use the

@@ -16,7 +16,6 @@ import typer
 from typer._click.utils import strip_ansi
 from typer.core import TyperGroup
 
-import toolang.cli.caps.main as caps_cli
 import toolang.cli.toolang.main as cli
 from toolang.up import source as agent_sources
 
@@ -594,31 +593,6 @@ def test_cli_selects_only_unambiguous_targets_without_a_command(
     assert select_target_help(arguments, residents=residents) == expected
 
 
-def test_caps_cli_uses_command_priority_and_explicit_agent_prefix() -> None:
-    global_args, global_agent = caps_cli._rewrite_agent_shortcuts(
-        ["skill", "list"],
-    )
-    agent_args, agent = caps_cli._rewrite_agent_shortcuts(
-        ["agent:skill", "skill", "list"],
-    )
-
-    assert (global_args, global_agent) == (["skill", "list"], None)
-    assert (agent_args, agent) == (["skill", "list"], "skill")
-
-
-def test_caps_cli_formats_a_pre_dispatch_error_without_a_panel(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    result = caps_cli.main(["agent:", "skill"])
-    output = capsys.readouterr()
-    stderr = strip_ansi(output.err)
-
-    assert result == 2
-    assert stderr.startswith("Error: ")
-    assert "╭" not in stderr
-    assert "invalid agent name ''" in stderr
-
-
 @pytest.mark.parametrize(
     "arguments",
     (
@@ -1180,11 +1154,11 @@ def test_caps_add_failure_uses_the_operational_failure_block(
         )
         raise ValueError("resolve failed")
 
-    monkeypatch.setattr(caps_cli.commands.cap_source, "resolve_remote_ref", fail)
+    from toolang.cli.caps import commands
 
-    result = caps_cli.main(
-        ["--root", str(tmp_path / "toolang"), "skill", "add", "missing"]
-    )
+    monkeypatch.setattr(commands.cap_source, "resolve_remote_ref", fail)
+
+    result = cli.main(["--root", str(tmp_path / "toolang"), "skill", "add", "missing"])
 
     assert result == 1
     error = capsys.readouterr().err

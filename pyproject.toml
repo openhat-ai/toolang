@@ -70,7 +70,6 @@ Issues = "https://github.com/openhat-ai/toolang/issues"
 [project.scripts]
 toolang = "toolang.cli.toolang.main:main"
 too = "toolang.cli.toolang.main:main"
-caps = "toolang.cli.caps.main:main"
 
 [project.entry-points."toolang.toolset"]
 runtime = "toolang.execution.tools.runtime:create_toolset"

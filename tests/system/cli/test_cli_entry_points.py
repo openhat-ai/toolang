@@ -15,7 +15,6 @@ from typer._click.utils import strip_ansi
 from typer.core import TyperGroup
 from typer.testing import CliRunner
 
-from toolang.cli.caps.main import app as caps_app
 from toolang.cli.common.lazy import LazyCommand
 from toolang.cli.toolang.main import app as toolang_app
 from toolang.common.version import displayed_toolang_version
@@ -41,10 +40,7 @@ def _command_paths(app: typer.Typer) -> tuple[tuple[str, ...], ...]:
 
 CLI_COMMANDS = tuple(
     (name, app, path)
-    for name, app in (
-        ("toolang", toolang_app),
-        ("caps", caps_app),
-    )
+    for name, app in (("toolang", toolang_app),)
     for path in _command_paths(app)
 )
 
@@ -66,7 +62,7 @@ def _load_target(value: str) -> Any:
 def test_project_console_script_targets_are_importable() -> None:
     scripts = _project_scripts()
 
-    assert scripts.keys() == {"toolang", "too", "caps"}
+    assert scripts.keys() == {"toolang", "too"}
     for name, value in scripts.items():
         assert callable(_load_target(value)), f"console script is not callable: {name}"
 
@@ -83,8 +79,8 @@ def test_installed_console_scripts_match_project() -> None:
 
 @pytest.mark.parametrize(
     ("script", "prefix"),
-    # `toolang` and `too` print only the version; `caps` names its CLI.
-    [("toolang", ""), ("too", ""), ("caps", "caps ")],
+    # `toolang` and `too` print only the version.
+    [("toolang", ""), ("too", "")],
 )
 def test_installed_console_scripts_execute(script: str, prefix: str) -> None:
     executable = Path(sys.executable).with_name(script)
@@ -209,7 +205,6 @@ raise SystemExit(status)
     ("module", "prefix"),
     [
         ("toolang.cli.toolang", ""),
-        ("toolang.cli.caps", "caps "),
     ],
 )
 def test_cli_package_is_executable_as_a_module(module: str, prefix: str) -> None:
@@ -227,7 +222,7 @@ def test_cli_package_is_executable_as_a_module(module: str, prefix: str) -> None
 
 @pytest.mark.parametrize(
     ("name", "app", "prefix"),
-    (("toolang", toolang_app, ""), ("caps", caps_app, "caps ")),
+    (("toolang", toolang_app, ""),),
 )
 def test_version_option_has_uppercase_short_alias(
     name: str, app: typer.Typer, prefix: str

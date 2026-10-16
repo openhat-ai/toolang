@@ -73,7 +73,15 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   now point to `too hub`.
 
 - `too -V` and `too --version` print only the version, such as `v0.4.0a8`,
-  without the preceding `toolang` CLI name. `caps -V` is unchanged.
+  without the preceding `toolang` CLI name.
+
+### Removed
+
+- **Breaking:** the standalone `caps` command is removed: the `caps` console
+  script, `python -m toolang.cli.caps`, and agent-prefixed shortcuts such as
+  `caps alice list` no longer exist. Use the `too` equivalents, such as
+  `too caps` for the root list and `too AGENT caps` for one agent; kind-specific
+  lists (`too skill list`) and cap mutation commands are unchanged.
 
 ### Fixed
 
