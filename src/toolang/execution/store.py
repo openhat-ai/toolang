@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
-from dataclasses import fields, is_dataclass, replace
+from dataclasses import replace
 import hashlib
 import json
 from pathlib import Path
@@ -3773,39 +3773,6 @@ def _dump_json(value: Any) -> str:
         separators=(",", ":"),
         sort_keys=True,
     )
-
-
-def _value_refs(value: object) -> set[FieldRef]:
-    """Collect input dependencies without interpreting lookalike strings."""
-    if isinstance(value, TypedRef):
-        return {value.ref}
-    if isinstance(value, Mapping):
-        children = value.values()
-    elif isinstance(value, Array | tuple | list):
-        children = value
-    else:
-        return set()
-    return set().union(*(_value_refs(child) for child in children))
-
-
-def _record_control_refs(value: object) -> set[ControlRef]:
-    """Find typed control dependencies without interpreting ordinary strings."""
-
-    if isinstance(value, ControlRef):
-        return {value}
-    if isinstance(value, FieldRef):
-        return _record_control_refs(value.record)
-    if isinstance(value, TypedRef):
-        return _record_control_refs(value.ref)
-    if is_dataclass(value) and not isinstance(value, type):
-        children = (getattr(value, item.name) for item in fields(value))
-    elif isinstance(value, Mapping):
-        children = iter(value.values())
-    elif isinstance(value, (tuple, list)):
-        children = iter(value)
-    else:
-        return set()
-    return set().union(*(_record_control_refs(child) for child in children))
 
 
 def _verify_content(ref: ContentRef, value: bytes) -> None:

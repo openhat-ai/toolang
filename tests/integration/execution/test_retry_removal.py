@@ -54,7 +54,7 @@ def test_legacy_retry_history_is_inspectable_and_an_ordinary_rerun_source(
             assert isinstance(initial.payload, RunControlPayload)
             legacy: dict[str, object] = {
                 "resources": initial.payload.resources.to_data(),
-                "limits": {"tokens": 321},
+                "limits": {"tokens": 321, "cost": "0.000010"},
                 "model_request": {"ref": TEST_MODEL_REF},
                 "retry_from": f"{source.id}.0",
             }
@@ -81,12 +81,22 @@ def test_legacy_retry_history_is_inspectable_and_an_ordinary_rerun_source(
             steps = harness.store.list_steps(run_id=source.id)
             prepared = run_preparation(original, controls)
             assert prepared.limits.tokens == 321
+            assert prepared.limits.cost == 0.00001
             assert prepared.model_request is not None
             assert prepared.model_request.ref == TEST_MODEL_REF
             detail = RunHistory(harness.store).get_run(source.id)
             assert detail is not None
-            encoded = TypeAdapter(RunDetail).dump_python(detail, mode="json")
+            adapter = TypeAdapter(RunDetail)
+            encoded = adapter.dump_python(detail, mode="json")
             assert encoded["controls"][-1]["payload"] == legacy
+            # Remote callers decode the public representation, rather than
+            # reading the Store's already parsed historical controls.
+            decoded = adapter.validate_json(adapter.dump_json(detail))
+            assert decoded == detail
+            assert (
+                adapter.dump_python(decoded, mode="json")["controls"][-1]["payload"]
+                == legacy
+            )
             assert (
                 control_payload_to_data(control_payload_from_data("retry", legacy))
                 == legacy
