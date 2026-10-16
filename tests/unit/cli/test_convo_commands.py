@@ -31,6 +31,22 @@ def invoke(root, *args, input=None):
     )
 
 
+def test_convo_help_uses_consistent_short_descriptions():
+    result = CliRunner().invoke(cli.app, ["convo", "--help"])
+    output = strip_ansi(result.output)
+
+    assert result.exit_code == 0, output
+    assert output.startswith("Manage conversations and rules.\n")
+    for command, description in (
+        ("list", "List conversations"),
+        ("create", "Create a conversation"),
+        ("join", "Join a conversation"),
+        ("leave", "Leave a conversation"),
+        ("rules", "Retrieve or update rules"),
+    ):
+        assert f"  {command:<7} {description}\n" in output
+
+
 def test_missing_rules_and_byte_exact_upload_download(conversations):
     root, _, conversation = conversations
     result = invoke(root, "rules", conversation)
