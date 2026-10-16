@@ -1,1 +1,1 @@
-"""Caps CLI command package."""
+"""Reusable cap command groups."""

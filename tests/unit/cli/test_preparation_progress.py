@@ -26,13 +26,11 @@ def _agent(root, *, scope="home"):
     return layout
 
 
-@pytest.mark.parametrize("entrypoint", ["too", "caps"])
 @pytest.mark.parametrize("scope", ["root", "home"])
 @pytest.mark.parametrize("kind", [None, "prompt", "skill", "psyche", "service"])
 def test_cap_inspection_uses_ref_progress_and_completes_before_records(
-    tmp_path, monkeypatch, capsys, entrypoint, scope, kind
+    tmp_path, monkeypatch, capsys, scope, kind
 ):
-    from toolang.cli.caps.main import main as caps_main
     from toolang.cli.toolang.main import main as too_main
 
     layout = _agent(tmp_path, scope=scope)
@@ -49,10 +47,9 @@ def test_cap_inspection_uses_ref_progress_and_completes_before_records(
         return b"Review carefully.\n"
 
     monkeypatch.setattr(cap_source, "_fetch_github_file", fetch)
-    command = [kind, "list"] if kind else ["caps" if entrypoint == "too" else "list"]
+    command = [kind, "list"] if kind else ["caps"]
     target = ["dev"] if scope == "home" else []
-    main = too_main if entrypoint == "too" else caps_main
-    assert main(["--root", str(tmp_path), *target, *command, "--json"]) == 0
+    assert too_main(["--root", str(tmp_path), *target, *command, "--json"]) == 0
     output = capsys.readouterr()
     assert isinstance(json.loads(output.out), list)
     assert observed

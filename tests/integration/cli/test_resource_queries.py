@@ -7,7 +7,6 @@ import pytest
 from typer._click.utils import strip_ansi
 from typer.testing import CliRunner
 
-from toolang.cli.caps.main import app as caps_app
 from toolang.cli.toolang.main import app as toolang_app
 
 
@@ -28,8 +27,8 @@ def test_query_command_is_removed() -> None:
     [
         (toolang_app, ["models"]),
         (toolang_app, ["tools"]),
-        (caps_app, ["list"]),
-        (caps_app, ["skill", "list"]),
+        (toolang_app, ["caps"]),
+        (toolang_app, ["skill", "list"]),
     ],
 )
 @pytest.mark.parametrize("removed_option", ["--query-help", "--query-schema"])
@@ -70,8 +69,8 @@ def test_diagnostic_and_plugin_lists_expose_no_query(command: list[str]) -> None
         (toolang_app, ["models"], "--filter"),
         (toolang_app, ["tools"], "--filter"),
         (toolang_app, ["tools"], "--select"),
-        (caps_app, ["list"], "--filter"),
-        (caps_app, ["skill", "list"], "--filter"),
+        (toolang_app, ["caps"], "--filter"),
+        (toolang_app, ["skill", "list"], "--filter"),
     ],
 )
 def test_query_enabled_commands_reject_legacy_query_options(
@@ -108,8 +107,8 @@ def test_tools_accepts_dynamic_fields_and_returns_empty_json(tmp_path: Path) -> 
         (toolang_app, ["models"]),
         (toolang_app, ["tools"]),
         (toolang_app, ["providers"]),
-        (caps_app, ["list"]),
-        (caps_app, ["skill", "list"]),
+        (toolang_app, ["caps"]),
+        (toolang_app, ["skill", "list"]),
     ],
 )
 def test_resource_lists_offer_json_and_human_output(app, command) -> None:
@@ -147,8 +146,7 @@ def test_plugin_inventories_only_support_default_tables(command, option):
     ("app", "command"),
     [
         (toolang_app, ["caps"]),
-        (caps_app, ["list"]),
-        (caps_app, ["skill", "list"]),
+        (toolang_app, ["skill", "list"]),
     ],
 )
 @pytest.mark.parametrize("relative_root", [False, True])

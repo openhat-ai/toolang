@@ -47,8 +47,8 @@ State preparation.
 show `CAP`, `DESCRIPTION`, `LOCATION`, and `TAGS`; availability is `ready` or
 `not_allowed`, alongside origin, scope, and form tags. The full view does not restore
 shadowed definitions or grant runtime access. This applies to aggregate and
-kind-specific lists through both CLIs, for example `too alice caps --all`,
-`too alice skill list --all`, and `caps alice list --all`. Queries filter the
+kind-specific lists through `too`, for example `too alice caps --all`,
+`too alice skill list --all`, and `too psyche list --all`. Queries filter the
 chosen default/full view. Caps have no separate readiness protocol; an invalid
 or unresolvable definition remains an error, not an invented unavailable row.
 `-a` aliases `--all`. Aggregate summaries use `N caps, M kinds`; omit the kind
@@ -110,8 +110,8 @@ exposed separately as `definition_file`. When known, APIs may also include
 
 ## CLI List Projection
 
-The `too caps`, `caps list`, and kind-specific list commands share these columns
-in this order:
+The `too caps` and kind-specific list commands share these columns in this
+order:
 
 | Column | Meaning |
 | --- | --- |

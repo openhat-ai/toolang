@@ -67,9 +67,9 @@ but field names and types stay identical. Catalog and runtime model datasets,
 for example, share one public query schema.
 
 Query-enabled lists are `too models`, `too tools`, the four kind-specific cap
-lists, and the combined `too caps` / `caps list` view. `providers` is a
-diagnostic list. `catalogs`, `adapters`, `toolsets`, `sandboxes`, and `channels`
-are plugin inventories. They expose no query; users use `grep` or JSON tools.
+lists, and the combined `too caps` view. `providers` is a diagnostic list.
+`catalogs`, `adapters`, `toolsets`, `sandboxes`, and `channels` are plugin
+inventories. They expose no query; users use `grep` or JSON tools.
 
 ## List Output
 
