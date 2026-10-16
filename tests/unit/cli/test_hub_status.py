@@ -1,18 +1,14 @@
-"""Hub instance snapshot layout, colors, wrapping, and terminal fitting."""
+"""Hub availability and three-column agent tree rendering."""
 
 import io
 import re
 
 import pytest
+from rich.cells import cell_len
 from rich.console import Console
 
 from toolang.common.layout import AgentPlacement
-from toolang.cli.toolang.commands.hub_status import (
-    HubSnapshot,
-    _columns,
-    _wrap,
-    render_hub_snapshot,
-)
+from toolang.cli.toolang.commands.hub_status import HubSnapshot, render_hub_snapshot
 from toolang.up.observation import RuntimeInstance, RuntimeInstanceSnapshot
 
 
@@ -52,139 +48,177 @@ def render(snapshot, *, width=120, height=40, terminal=False):
     return stream.getvalue()
 
 
-def test_snapshot_matches_compact_tree_and_counts():
-    agents = RuntimeInstanceSnapshot(
+def plain(output: str) -> str:
+    return re.sub(r"\x1b\[[0-9;]*m", "", output)
+
+
+def test_snapshot_shows_hub_then_three_agent_columns_and_bottom_summary():
+    roster = RuntimeInstanceSnapshot(
         (
-            instance("alice"),
-            instance("bob", drivers=("chat",)),
-            instance("carol", state="not running", drivers=None),
-            instance(
-                "dave",
-                state="unknown",
-                drivers=None,
-                observed_state="starting",
-                diagnostic="observed starting",
-            ),
+            instance("gus"),
+            instance("merkle", drivers=("chat",)),
+            instance("hak", state="not running", drivers=None),
+            instance("alice", state="not running", drivers=None),
+            instance("bob", state="not running", drivers=None),
         )
     )
-    output = render(HubSnapshot("running", "v0.4.0a8", agents))
-    assert output.startswith(
-        "hub running · 4 agents · 2 running · 1 talk enabled · partial\n\n"
-    )
-    assert (
-        "HUB" in output
-        and "AGENT" in output
-        and "STATUS" in output
-        and "TALK" in output
-    )
-    assert "Hub" in output and "running · v0.4.0a8" in output
-    assert "├─alice" in output
-    assert "├╌bob" in output
-    assert "not running" in output
-    assert "-" in output
-    assert "partial: dave: starting: observed starting" in output
-
-
-def test_empty_snapshot_shows_no_agents_and_zero_counts():
-    output = render(HubSnapshot("not running", None, RuntimeInstanceSnapshot(())))
-    assert output.startswith(
-        "hub not running · 0 agents · 0 running · 0 talk enabled\n\n"
-    )
-    assert "No agents" in output
-    assert "Hub" in output and "not running" in output
-
-
-@pytest.mark.parametrize("width", [120, 80, 40, 20])
-def test_narrow_layout_wraps_without_losing_names_or_values(width):
-    agents = RuntimeInstanceSnapshot(
-        (
-            instance(
-                "alice" * 10,
-                placement="visiting",
-                identity="0123456789abcdef",
-                state="running",
-                drivers=("talk",),
-            ),
-            instance(
-                "bob" * 8,
-                placement="roaming",
-                identity="fedcba9876543210",
-                runtime_instance="temporary123",
-                state="not running",
-                drivers=None,
-            ),
-        )
-    )
-    output = render(HubSnapshot("unavailable", "v0.4.0a8", agents), width=width)
-    if width >= 32:
-        hub_width, agent_width, status_width, _ = _columns(width, 2)
-        agent_start = hub_width + 2
-        data_lines = output.splitlines()[3:]
-        agent_columns = "".join(
-            line[agent_start : agent_start + agent_width]
-            for line in data_lines
-            if len(line) >= agent_start
-        ).replace(" ", "")
-        status_start = agent_start + agent_width + 1
-        status_columns = "".join(
-            line[status_start : status_start + status_width]
-            for line in data_lines
-            if len(line) >= status_start
-        ).replace(" ", "")
-        assert (
-            "alicealicealicealicealicealicealicealicealicealice@v01234567"
-            in agent_columns
-        )
-        assert "bobbobbobbobbobbobbob@rfedcba98#temporary123" in agent_columns
-    else:
-        console = Console(width=width)
-        for label in (agents.instances[0].label, agents.instances[1].label):
-            for chunk in _wrap(console, label, width - 8):
-                assert chunk in output
-    assert "unavailable" in output
-    if width >= 32:
-        assert "notrunning" in status_columns
-    else:
-        assert "not running" in output
-    assert "\x1b[" not in output
-
-
-def test_running_row_is_normal_and_wrapped_continuation_is_dim():
-    agents = RuntimeInstanceSnapshot(
-        (
-            instance(
-                "alice",
-                placement="visiting",
-                identity="0123456789abcdef",
-                drivers=("talk",),
-            ),
-        )
-    )
-    output = render(
-        HubSnapshot("running", "v0.4.0a8", agents),
-        width=40,
-        height=30,
-        terminal=True,
-    )
+    output = render(HubSnapshot("running", "v0.3.4", roster))
     lines = output.splitlines()
-    header = next(
-        index
-        for index, line in enumerate(lines)
-        if re.sub(r"\x1b\[[0-9;]*m", "", line).startswith("HUB")
+
+    assert lines[0] == "hub v0.3.4"
+    assert [line.split()[0] for line in lines[1:6]] == [
+        "├──",
+        "├──",
+        "├──",
+        "├──",
+        "└──",
+    ]
+    assert lines[1].startswith("├── gus")
+    assert lines[2].startswith("├── merkle")
+    assert lines[5].startswith("└── bob")
+    assert len({line.index("running") for line in lines[1:3]}) == 1
+    assert lines[6] == ""
+    assert lines[7] == "5 agents, 2 running, 1 talk enabled"
+    assert "STATUS" not in output and "TALK" not in output
+
+
+def test_first_column_is_roomy_and_last_column_is_right_aligned():
+    roster = RuntimeInstanceSnapshot(
+        (instance("gus"), instance("merkle", drivers=("chat",)))
     )
-    first_row, continuation = lines[header + 1 : header + 3]
-    assert "└─" in first_row and "\x1b[2m" not in first_row
-    assert "\x1b[2m" in continuation
+    output = render(HubSnapshot("running", "v0.3.4", roster), width=160)
+    first, last = output.splitlines()[1:3]
+
+    assert first.index("running") >= 26
+    assert first.endswith("enabled")
+    assert last.endswith("disabled")
+    assert first.index("enabled") == last.index("disabled") + 1
+    assert len(first) == len(last) < 160
+
+
+@pytest.mark.parametrize(
+    ("state", "version", "expected"),
+    [
+        ("running", "v0.3.4", "hub v0.3.4"),
+        ("running", None, "hub running"),
+        ("not running", None, "hub not running"),
+        ("unavailable", "v0.3.4", "hub not running"),
+        ("starting", None, "hub not running"),
+    ],
+)
+def test_hub_line_uses_version_online_and_not_running_offline(state, version, expected):
+    output = render(HubSnapshot(state, version, RuntimeInstanceSnapshot(())))
+
+    assert output.startswith(expected + "\n")
+    assert output.count("hub not running") == (1 if state != "running" else 0)
+    assert (
+        "\x1b[2m"
+        not in render(
+            HubSnapshot(state, version, RuntimeInstanceSnapshot(())), terminal=True
+        ).splitlines()[0]
+    )
+
+
+def test_negative_states_are_dim_without_dimming_agent_names_or_positive_states():
+    roster = RuntimeInstanceSnapshot(
+        (
+            instance("gus", drivers=("talk",)),
+            instance("merkle", drivers=("chat",)),
+            instance("hak", state="not running", drivers=None),
+        )
+    )
+    output = render(HubSnapshot("running", "v0.3.4", roster), terminal=True)
+    lines = output.splitlines()
+    gus = next(line for line in lines if "gus" in plain(line))
+    merkle = next(line for line in lines if "merkle" in plain(line))
+    hak = next(line for line in lines if "hak" in plain(line))
+
+    assert "\x1b[2m" not in lines[0]
+    assert "\x1b[2mrunning\x1b[0m" not in gus
+    assert "\x1b[2menabled\x1b[0m" not in gus
+    assert "\x1b[2mrunning\x1b[0m" not in merkle
+    assert "\x1b[2mdisabled\x1b[0m" in merkle
+    assert "\x1b[2mnot running\x1b[0m" in hak
+    assert "\x1b[2m-\x1b[0m" in hak
+    assert "\x1b[2m└── hak" not in hak
+
+
+def test_empty_roster_omits_summary_and_keeps_partial_diagnostics():
+    snapshot = HubSnapshot(
+        "not running",
+        None,
+        RuntimeInstanceSnapshot((), ("agent discovery failed",)),
+        "record inspection failed",
+    )
+    output = render(snapshot)
+    lines = output.splitlines()
+
+    assert lines[0] == "hub not running"
+    assert lines[1] == "no agents"
+    assert "0 agents, 0 running, 0 talk enabled" not in output
+    assert lines[2] == "partial: agent discovery failed"
+    assert "partial: agent discovery failed" in output
+    assert "partial: Hub: record inspection failed" in output
+
+
+def test_width_is_content_sized_and_narrow_terminals_wrap_all_three_fields():
+    label = "alice" * 8
+    roster = RuntimeInstanceSnapshot(
+        (instance(label, state="not running", drivers=None),)
+    )
+    wide = render(HubSnapshot("running", "v0.3.4", roster), width=160)
+    wide_rows = wide.splitlines()[1:]
+    assert max(map(len, wide_rows)) < 160
+
+    narrow = render(HubSnapshot("running", "v0.3.4", roster), width=20)
+    narrow_lines = plain(narrow).splitlines()
+    agent_rows = [
+        line
+        for line in narrow_lines
+        if line.startswith(("├── ", "└── ", "│   ", "    "))
+    ]
+    assert "".join(line[4:9] for line in agent_rows) == label
+    assert "".join(line[11:15] for line in agent_rows).replace(" ", "") == "notrunning"
+    assert "-" in plain(narrow)
+    assert "\x1b[" not in narrow
+
+
+@pytest.mark.parametrize("width", [20, 32, 40, 80, 160])
+def test_wide_character_names_keep_columns_within_terminal(width):
+    roster = RuntimeInstanceSnapshot(
+        (
+            instance("中文😀" * 8, drivers=("chat",)),
+            instance("bob", state="not running", drivers=None),
+        )
+    )
+    lines = render(HubSnapshot("running", "v0.3.4", roster), width=width).splitlines()
+    tree = lines[1 : lines.index("")]
+
+    assert tree[0].startswith("├── 中文")
+    assert any(line.startswith("└── bob") for line in tree)
+    assert all(cell_len(line) <= width for line in tree)
+
+
+@pytest.mark.parametrize("count", [100, 300, 1000])
+def test_large_roster_is_complete_and_deterministically_counted(count):
+    roster = RuntimeInstanceSnapshot(
+        tuple(instance(f"agent{i:04}") for i in range(count))
+    )
+    output = render(HubSnapshot("running", "v0.3.4", roster), width=80)
+
+    assert output.startswith("hub v0.3.4\n")
+    assert f"{count} agents, {count} running, {count} talk enabled" in output
+    assert "agent0000" in output and f"agent{count - 1:04}" in output
+    assert output.count("├──") + output.count("└──") == count
 
 
 def test_dumb_terminal_uses_ascii_branches_without_controls(monkeypatch):
     monkeypatch.setenv("TERM", "dumb")
-    agents = RuntimeInstanceSnapshot(
-        (instance("enabled"), instance("disabled", drivers=("chat",)))
-    )
-    output = render(HubSnapshot("running", "unknown", agents))
-    assert "+-enabled" in output
-    assert "\\.disabled" in output
+    roster = RuntimeInstanceSnapshot((instance("gus"), instance("bob")))
+    output = render(HubSnapshot("running", "v0.3.4", roster))
+
+    assert "+-- gus" in output
+    assert r"\-- bob" in output
     assert "\x1b[" not in output
 
 
@@ -196,52 +230,10 @@ def test_ascii_encoding_escapes_unrepresentable_text_and_uses_ascii_tree():
 
     stream = ASCIIStream()
     console = Console(file=stream, width=80, color_system=None)
-    snapshot = HubSnapshot(
-        "running",
-        "v0.4.0-é",
-        RuntimeInstanceSnapshot(
-            (
-                instance(
-                    "alice", state="unknown", drivers=None, diagnostic="probe — failed"
-                ),
-            )
-        ),
-    )
-    render_hub_snapshot(snapshot, console)
+    roster = RuntimeInstanceSnapshot((instance("alice-é"),))
+    render_hub_snapshot(HubSnapshot("running", "v0.3.4-é", roster), console)
     output = stream.getvalue()
+
     output.encode("ascii")
-    assert "+.alice" in output or "\\.alice" in output
-    assert r"\xe9" in output and r"\u2014" in output
-
-
-def test_terminal_centering_is_limited_to_ten_rows_that_fit():
-    for count in (0, 1, 6, 10):
-        roster = RuntimeInstanceSnapshot(tuple(instance(f"a{i}") for i in range(count)))
-        centered = render(
-            HubSnapshot("running", None, roster), height=40, terminal=True
-        )
-        assert centered.splitlines()[2] == ""
-
-    many = RuntimeInstanceSnapshot(tuple(instance(f"a{i}") for i in range(11)))
-    top_aligned = render(HubSnapshot("running", None, many), height=40, terminal=True)
-    clean_header = re.sub(r"\x1b\[[0-9;]*m", "", top_aligned.splitlines()[2])
-    assert clean_header.startswith("HUB")
-
-    small = RuntimeInstanceSnapshot(tuple(instance(f"a{i}") for i in range(2)))
-    piped = render(HubSnapshot("running", None, small), height=24, terminal=False)
-    assert piped.splitlines()[2].startswith("HUB")
-    too_tall = render(HubSnapshot("running", None, small), height=3, terminal=True)
-    assert re.sub(r"\x1b\[[0-9;]*m", "", too_tall.splitlines()[2]).startswith("HUB")
-
-
-@pytest.mark.parametrize("count", [100, 300, 1000])
-def test_large_roster_is_complete_and_deterministically_counted(count):
-    agents = RuntimeInstanceSnapshot(
-        tuple(instance(f"agent{i:04}") for i in range(count))
-    )
-    output = render(HubSnapshot("not running", None, agents), width=80)
-    assert output.startswith(
-        f"hub not running · {count} agents · {count} running · {count} talk enabled"
-    )
-    assert "agent0000" in output and f"agent{count - 1:04}" in output
-    assert output.count("├─") + output.count("└─") == count
+    assert r"\xe9" in output
+    assert r"\-- alice" in output

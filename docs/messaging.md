@@ -48,13 +48,18 @@ too hub stop                        # Leaves agents and Redis/Valkey running.
 `too hub` prints one Hub and agent snapshot. It includes installed resident
 agents and discoverable active or unresolved visiting, roaming, and temporary
 instances; finished nonresident instances and history are excluded. The Hub
-endpoint is omitted. Summary counts are instances, confirmed running instances,
-and running instances with the recorded `talk` driver. The tree is a roster, not
-a connectivity or message delivery indicator. `STATUS` and `TALK` use the
-inspected launch record, not edited configuration or current Hub presence.
-Incomplete inspection marks the summary `partial` and prints diagnostics below
-the list. Large rosters continue in terminal scrollback. The snapshot is one-shot
-and does not start Hub or agents.
+endpoint is omitted. A ready Hub displays `hub <version>` (or `hub running` if
+its version is unknown); otherwise it displays `hub not running`. Agents appear
+in a headerless three-column tree: name, status, and Talk. A blank line and
+summary follow a nonempty list, counting instances, confirmed running instances,
+and running instances with the recorded `talk` driver. An empty list displays
+`no agents` instead of the counts. The tree is a roster, not a connectivity or
+message delivery indicator. Status and Talk use the inspected launch record,
+not edited configuration or current Hub presence. Negative agent states (`not
+running`, `disabled`, `-`) are dim; the Hub line, names, and positive states
+remain normal. Incomplete inspection marks a nonempty summary `partial` and
+prints diagnostics after the list, even when empty. Large rosters continue in
+terminal scrollback. The snapshot is one-shot and does not start Hub or agents.
 
 `too hub serve` runs in the foreground. Hub binds `127.0.0.1`; clients discover its
 actual endpoint and backend identity from the private root `hub/hub.json`
@@ -65,10 +70,9 @@ Hub returns. Background communication resumes without an agent restart; uncertai
 message sends are never automatically repeated. Isolated guests without access to
 this local Hub report unavailability.
 
-In the snapshot, Hub state remains `starting`, `running`, or `unavailable` for a
-live process; absent or stale processes show `not running`. Live records include
-the Hub source version, while absent/stale records omit it. `too hub stop --force`
-can stop a stalled startup. Missing or corrupt initialized conversation data fails
+Internally, a live Hub remains `starting`, `running`, or `unavailable` based on
+readiness; the snapshot shows a version only when ready, and `not running`
+otherwise. `too hub stop --force` can stop a stalled startup. Missing or corrupt initialized conversation data fails
 closed; Hub does not reset counters or rebuild it. Upgrade Hub and clients together
 and select a fresh Redis/Valkey dataset for conversation schema `3`. It gives DM
 and GC disjoint eight-character suffixes; older schemas are rejected without
