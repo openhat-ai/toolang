@@ -30,6 +30,18 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Changed
 
+- **Breaking:** chore identities are now eight lowercase Base32 characters
+  derived from the exact name and the owning agent, so one name yields a
+  different ID per agent and `chore_<id>` thread names are shorter.
+  `chore new` generates `auto_<8 chars>.md` names; that filename format is
+  reserved for automatic names, and two names deriving the same ID in one
+  domain are rejected during authoring and State acceptance. Renaming a chore
+  or moving it to another agent creates a new identity, so checkpoints and
+  earlier `chore_<id>` runs recorded under the old ID are not carried over;
+  the `chore/name` ref is unchanged. Integrations constructing
+  `AuthoredChores` must pass `agent_name=`, and `ChoreFile.id` becomes
+  `id_for(agent_name)`.
+
 - **Breaking:** conversation IDs move to messaging schema `3`: generated DM and GC
   suffixes now occupy disjoint bit domains under the shared 40-bit permutation,
   so a DM suffix can never equal a GC suffix, and GC allocation permits 524,288
@@ -38,7 +50,7 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   mutation: stop writers, preserve the old runtime and dataset, and select a
   fresh Redis/Valkey dataset for schema `3`. Conversation IDs, messages,
   memberships, and talk cursors are neither migrated nor imported, while
-  execution, thread, and chore IDs keep their formats.
+  execution and thread IDs keep their formats.
 
 - **Breaking:** the Talk driver no longer prepends its default handling
   instructions to a selected handler, which now receives only the JSON message
