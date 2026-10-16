@@ -968,7 +968,10 @@ class RemoteChatSession:
     async def _thread_title(self, thread_id: str) -> str | None:
         try:
             payload = await self._request_json(
-                "GET", f"/api/v1/threads/{thread_id}", operation="thread"
+                "GET",
+                f"/api/v1/threads/{thread_id}",
+                operation="thread",
+                params={"limit": 0},
             )
         except RemoteChatError:
             return None
