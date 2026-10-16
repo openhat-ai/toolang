@@ -3,7 +3,7 @@
 Run these tests explicitly, for example:
 
     uv run pytest -m live_provider --live-model \
-      'deepseek/deepseek-chat'
+      'deepseek/deepseek-v4-flash'
 """
 
 from __future__ import annotations

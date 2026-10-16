@@ -197,23 +197,26 @@ def test_open_talk_updates_composer_when_gc_membership_changes(
                 conversation.id,
             )
             try:
-                await asyncio.to_thread(tui.wait_for, "Observers(1)")
+                await asyncio.to_thread(tui.wait_for, "Observers(", "/1)")
                 assert "Type a message" not in tui.output
                 assert "owner · view only" in tui.output
                 assert tui.output.count("Talk " + displayed_toolang_version()) == 1
                 await human.join_conversation(conversation.id)
-                await asyncio.to_thread(tui.wait_for, "Observers(2)", "Type a message")
+                await asyncio.to_thread(
+                    tui.wait_for, "Observers(", "/2)", "Type a message"
+                )
                 tui.send(b"joined from another client\r")
                 async with asyncio.timeout(5):
                     while not await human.history(conversation.id):
                         await asyncio.sleep(0.05)
                 assert len(await human.history(conversation.id)) == 1
                 await human.leave_conversation(conversation.id)
-                # A fresh marker lets the PTY wait for a render after the leave.
+                # A distinct uppercase marker avoids reused character cells in
+                # the raw PTY's incremental repaint trace.
                 await alice.rename_conversation(
-                    conversation.id, "Observer again", revision=1
+                    conversation.id, "AFTERLEAVE", revision=1
                 )
-                await asyncio.to_thread(tui.wait_for, "Observer again(1)")
+                await asyncio.to_thread(tui.wait_for, "AFTERLEAVE", "/1)")
                 tui.send(b"cannot send after leaving\r\x11")
                 assert await asyncio.to_thread(tui.wait_for_exit) == 0, tui.output
                 assert len(await human.history(conversation.id)) == 1

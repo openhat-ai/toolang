@@ -35,7 +35,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         metavar="SELECTOR",
         help=(
             "run live model-provider smoke tests with this selector, for example "
-            "'deepseek/deepseek-chat[deepseek]'"
+            "'deepseek/deepseek-v4-flash'"
         ),
     )
 

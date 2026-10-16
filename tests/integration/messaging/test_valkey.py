@@ -300,9 +300,8 @@ def test_real_talk_terminal_sends_and_reads_in_the_invoking_pane(
                     break
                 time.sleep(0.02)
             assert "retained greeting" in screen(), screen()
-            assert not screen().startswith("\n"), repr(
-                target.capture_pane(start=-200, escape_sequences=True)
-            )
+            lines = target.capture_pane(start=-200)
+            assert lines[0] == "" and lines[1].startswith("╭─ Talk "), repr(lines)
             for width in (200, 60, 180):
                 window.resize(width=width, height=30)
                 for _ in range(300):
@@ -317,7 +316,7 @@ def test_real_talk_terminal_sends_and_reads_in_the_invoking_pane(
                     if len(footer.rstrip()) == min(width, 120) - 2:
                         break
                     time.sleep(0.02)
-                assert footer.startswith("  #dev(1)") and dev in footer, screen()
+                assert footer.startswith("  #dev(1/1)") and dev in footer, screen()
                 assert len(footer.rstrip()) == min(width, 120) - 2
                 target.send_keys("resize draft", enter=False)
                 for _ in range(300):
@@ -399,11 +398,17 @@ def test_real_talk_terminal_sends_and_reads_in_the_invoking_pane(
             def observed_screen():
                 return "\n".join(observer.capture_pane(start=-200))
 
-            for _ in range(300):
-                if "@alice,bob" in observed_screen() and "owner" in observed_screen():
+            # The footer renders before asynchronous history delivery. Wait for
+            # the messages before asserting the read-only observer's contents.
+            deadline = time.monotonic() + 30
+            while time.monotonic() < deadline:
+                observed = observed_screen()
+                if all(
+                    value in observed
+                    for value in ("@alice,bob", "owner", "• alice", "• bob")
+                ):
                     break
                 time.sleep(0.02)
-            observed = observed_screen()
             assert "@alice,bob" in observed and "owner" in observed, observed
             assert "Type a message" not in observed and "Enter send" not in observed
             headers = {line.strip() for line in observed.splitlines()}
