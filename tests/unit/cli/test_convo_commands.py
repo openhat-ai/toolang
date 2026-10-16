@@ -3,6 +3,7 @@
 import asyncio
 
 from typer.testing import CliRunner
+from typer._click.utils import strip_ansi
 import pytest
 
 from tests.unit.cli.test_talk import messaging_cli as messaging_cli
@@ -91,8 +92,9 @@ def test_invalid_transfer_flags_are_usage_errors(conversations, flags):
 
 
 @pytest.mark.parametrize("revision", ["latest", "00", "A" * 64])
+@pytest.mark.parametrize("force_color", [False, True])
 def test_invalid_revision_fails_before_hub_discovery_or_input(
-    conversations, monkeypatch, revision
+    conversations, monkeypatch, revision, force_color
 ):
     root, _, conversation = conversations
 
@@ -101,9 +103,16 @@ def test_invalid_revision_fails_before_hub_discovery_or_input(
 
     monkeypatch.setattr(convo, "settings", unexpected)
     monkeypatch.setattr(convo.typer, "get_binary_stream", unexpected)
+    if force_color:
+        monkeypatch.setenv("FORCE_COLOR", "1")
+        monkeypatch.delenv("NO_COLOR", raising=False)
+    else:
+        monkeypatch.delenv("FORCE_COLOR", raising=False)
+        monkeypatch.setenv("NO_COLOR", "1")
     result = invoke(root, "rules", conversation, "-u", "--revision", revision)
     assert result.exit_code == 2, result.output
-    assert "--revision" in result.output and "SHA-256" in result.output
+    output = strip_ansi(result.output)
+    assert "--revision" in output and "SHA-256" in output
 
 
 @pytest.mark.parametrize(
