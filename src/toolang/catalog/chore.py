@@ -13,9 +13,10 @@ import frontmatter
 from yaml import YAMLError
 
 from toolang.common.files import EditLock, atomic_write_text
-from toolang.common.ids import chore_id
+from toolang.common.layout import validate_agent_name
 
 from .common import normalize_meta
+from .chore_ids import chore_id, validate_chore_name
 from .errors import CatalogConflictError, CatalogNotFoundError
 
 
@@ -30,7 +31,7 @@ class ChoreFile:
     body: str
 
     def __post_init__(self) -> None:
-        chore_id(self.name)
+        validate_chore_name(self.name)
         for key in ("title", "schedule"):
             value = self.meta.get(key)
             if value is not None and (not isinstance(value, str) or not value.strip()):
@@ -38,9 +39,9 @@ class ChoreFile:
         if self.schedule is not None:
             rrulestr(self.schedule, dtstart=datetime(2026, 1, 1, tzinfo=timezone.utc))
 
-    @property
-    def id(self) -> str:
-        return chore_id(self.name)
+    def id_for(self, agent_name: str) -> str:
+        """Bind this portable definition's identity to an explicit agent."""
+        return chore_id(self.name, agent_name=agent_name)
 
     @property
     def ref(self) -> str:
@@ -107,8 +108,9 @@ class ChoreFile:
 class AuthoredChores:
     """CRUD for one definition layer, addressed by name, ref, or derived ID."""
 
-    def __init__(self, directory: Path, *, lock_path: Path) -> None:
+    def __init__(self, directory: Path, *, agent_name: str, lock_path: Path) -> None:
         self.directory = directory
+        self.agent_name = validate_agent_name(agent_name)
         self._lock = EditLock(lock_path)
 
     @property
@@ -125,7 +127,9 @@ class AuthoredChores:
         def read() -> ChoreFile | None:
             entries = self._list_files()
             matches = [
-                item for item in entries if reference in (item.name, item.ref, item.id)
+                item
+                for item in entries
+                if reference in (item.name, item.ref, item.id_for(self.agent_name))
             ]
             if len(matches) > 1:
                 raise CatalogConflictError(f"ambiguous chore reference: {reference}")
@@ -140,6 +144,7 @@ class AuthoredChores:
         with self.write_lock():
             if self.contains_name(chore.name):
                 raise CatalogConflictError(f"chore already exists: {chore.name}")
+            self._check_id(chore)
             return self._write(chore, path=self.path(chore.name))
 
     def update(self, chore: ChoreFile) -> ChoreFile:
@@ -147,7 +152,17 @@ class AuthoredChores:
             path = self.path(chore.name)
             if not path.is_file():
                 raise CatalogNotFoundError(f"chore not found: {chore.name}")
+            self._check_id(chore)
             return self._write(chore, path=path)
+
+    def _check_id(self, chore: ChoreFile) -> None:
+        identity = chore.id_for(self.agent_name)
+        for existing in self._list_files():
+            if (
+                existing.name != chore.name
+                and existing.id_for(self.agent_name) == identity
+            ):
+                raise CatalogConflictError(f"chore ID collision: {chore.name}")
 
     def remove(self, reference: str) -> ChoreFile:
         with self.write_lock():
@@ -158,7 +173,7 @@ class AuthoredChores:
             return chore
 
     def path(self, name: str) -> Path:
-        chore_id(name)
+        validate_chore_name(name)
         return self.directory / "chores" / f"{name}.md"
 
     def _write(self, chore: ChoreFile, *, path: Path) -> ChoreFile:
@@ -176,7 +191,7 @@ class AuthoredChores:
         for path in paths:
             references = {path.stem, f"chore/{path.stem}", f"chores/{path.name}"}
             try:
-                references.add(chore_id(path.stem))
+                references.add(chore_id(path.stem, agent_name=self.agent_name))
             except ValueError:
                 pass  # Invalid names remain addressable by their source path.
             if reference in references:

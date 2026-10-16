@@ -1,4 +1,4 @@
-from toolang.common.ids import chore_id
+from toolang.catalog.chore_ids import chore_id
 
 import asyncio
 from collections.abc import Callable
@@ -128,7 +128,9 @@ def test_scheduler_rejects_invalid_input_without_creating_a_run(
     )
     _create_chore(
         AuthoredChores(
-            harness.setup.layout.home, lock_path=harness.setup.layout.home_edit_lock
+            harness.setup.layout.home,
+            lock_path=harness.setup.layout.home_edit_lock,
+            agent_name=harness.setup.layout.name,
         ),
         "review",
         ":help",
@@ -204,7 +206,9 @@ def test_scheduler_submits_and_awaits_runs_on_the_execution_loop(
     )
     _create_chore(
         AuthoredChores(
-            harness.setup.layout.home, lock_path=harness.setup.layout.home_edit_lock
+            harness.setup.layout.home,
+            lock_path=harness.setup.layout.home_edit_lock,
+            agent_name=harness.setup.layout.name,
         ),
         "review",
         "/agic:review focus=security\n\nReview this.",
@@ -236,7 +240,10 @@ def test_scheduler_submits_and_awaits_runs_on_the_execution_loop(
 
             runs = harness.store.list_runs(limit=None)
             assert len(runs) == 1
-            assert str(runs[0].thread) == f"chore_{chore_id('review')}"
+            assert (
+                str(runs[0].thread)
+                == f"chore_{chore_id('review', agent_name=harness.setup.layout.name)}"
+            )
             control = harness.store.get_run_control(run_id=runs[0].id, index=0)
             assert control is not None
             assert isinstance(control.payload, RunControlPayload)
@@ -248,7 +255,7 @@ def test_scheduler_submits_and_awaits_runs_on_the_execution_loop(
                 }
             )
             created = harness.store.get_thread_control(
-                thread_id=f"chore_{chore_id('review')}",
+                thread_id=f"chore_{chore_id('review', agent_name=harness.setup.layout.name)}",
                 index=0,
             )
             assert created is not None
@@ -282,7 +289,9 @@ agic review(_: Part[], focus: Text):
     )
     _create_chore(
         AuthoredChores(
-            harness.setup.layout.home, lock_path=harness.setup.layout.home_edit_lock
+            harness.setup.layout.home,
+            lock_path=harness.setup.layout.home_edit_lock,
+            agent_name=harness.setup.layout.name,
         ),
         "nested-input",
         "/agic:review focus=nested -\nBefore\n$wrap ---\ntarget\n---\nAfter\n",
@@ -312,7 +321,9 @@ def test_scheduler_recovers_a_claim_with_no_accepted_run(tmp_path) -> None:
     )
     _create_chore(
         AuthoredChores(
-            harness.setup.layout.home, lock_path=harness.setup.layout.home_edit_lock
+            harness.setup.layout.home,
+            lock_path=harness.setup.layout.home_edit_lock,
+            agent_name=harness.setup.layout.name,
         ),
         "review",
         "/agic:review focus=recovery\n\nReview after recovery.",
@@ -366,7 +377,9 @@ def test_scheduler_accepts_blocking_controls_from_api_worker_threads(
     )
     _create_chore(
         AuthoredChores(
-            harness.setup.layout.home, lock_path=harness.setup.layout.home_edit_lock
+            harness.setup.layout.home,
+            lock_path=harness.setup.layout.home_edit_lock,
+            agent_name=harness.setup.layout.name,
         ),
         "review",
         "/agic:review focus=worker\n\nReview from a worker.",
@@ -414,7 +427,9 @@ def test_scheduler_serializes_body_changes(tmp_path) -> None:
         ],
     )
     catalog = AuthoredChores(
-        harness.setup.layout.home, lock_path=harness.setup.layout.home_edit_lock
+        harness.setup.layout.home,
+        lock_path=harness.setup.layout.home_edit_lock,
+        agent_name=harness.setup.layout.name,
     )
     authored = _create_chore(
         catalog,
@@ -458,7 +473,9 @@ def test_scheduler_serializes_body_changes(tmp_path) -> None:
                     await asyncio.sleep(0.01)
 
             runs = harness.store.list_runs(limit=None)
-            assert {str(run.thread) for run in runs} == {f"chore_{chore_id('review')}"}
+            assert {str(run.thread) for run in runs} == {
+                f"chore_{chore_id('review', agent_name=harness.setup.layout.name)}"
+            }
             assert len(harness.adapter.invocations) == 2
         finally:
             gate.release()
@@ -483,7 +500,9 @@ def test_scheduler_allows_different_chores_to_run_concurrently(tmp_path) -> None
         ],
     )
     catalog = AuthoredChores(
-        harness.setup.layout.home, lock_path=harness.setup.layout.home_edit_lock
+        harness.setup.layout.home,
+        lock_path=harness.setup.layout.home_edit_lock,
+        agent_name=harness.setup.layout.name,
     )
     _create_chore(catalog, "alpha", "/agic:review focus=alpha\n\nAlpha.")
     _create_chore(catalog, "beta", "/agic:review focus=beta\n\nBeta.")
@@ -544,7 +563,9 @@ def test_chore_selects_named_handler_before_unnamed_entry(
     )
     _create_chore(
         AuthoredChores(
-            harness.setup.layout.home, lock_path=harness.setup.layout.home_edit_lock
+            harness.setup.layout.home,
+            lock_path=harness.setup.layout.home_edit_lock,
+            agent_name=harness.setup.layout.name,
         ),
         "entry",
         "Handle this request.",
@@ -570,7 +591,9 @@ def test_chore_without_handler_or_entry_fails(tmp_path) -> None:
     )
     _create_chore(
         AuthoredChores(
-            harness.setup.layout.home, lock_path=harness.setup.layout.home_edit_lock
+            harness.setup.layout.home,
+            lock_path=harness.setup.layout.home_edit_lock,
+            agent_name=harness.setup.layout.name,
         ),
         "entry",
         "Handle this request.",
@@ -599,7 +622,11 @@ def test_chore_handler_selects_invocation_named_or_unnamed_entry(
         defaults=replace(harness.setup.defaults),
     )
     _create_chore(
-        AuthoredChores(setup.layout.home, lock_path=setup.layout.home_edit_lock),
+        AuthoredChores(
+            setup.layout.home,
+            lock_path=setup.layout.home_edit_lock,
+            agent_name=setup.layout.name,
+        ),
         "entry",
         ("/agic:other\n" if explicit else "") + "Handle this request.",
     )
@@ -628,7 +655,9 @@ def test_driver_consumes_published_state_without_reading_authored_chores(
     )
     file = _create_chore(
         AuthoredChores(
-            harness.setup.layout.home, lock_path=harness.setup.layout.home_edit_lock
+            harness.setup.layout.home,
+            lock_path=harness.setup.layout.home_edit_lock,
+            agent_name=harness.setup.layout.name,
         ),
         "review",
         "/agic:review focus=published\nReview.",
@@ -674,7 +703,9 @@ def test_invalid_edit_preserves_active_run_and_manual_cancellation(tmp_path):
         prepare_state=True,
     )
     catalog = AuthoredChores(
-        harness.setup.layout.home, lock_path=harness.setup.layout.home_edit_lock
+        harness.setup.layout.home,
+        lock_path=harness.setup.layout.home_edit_lock,
+        agent_name=harness.setup.layout.name,
     )
     original = _create_chore(catalog, "review", "/agic:review focus=active\nReview.")
     driver = _scheduler(harness)

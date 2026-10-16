@@ -468,7 +468,11 @@ class AgentState:
         )
         combined = merge_chores(
             authored_chores,
-            inline_chores(self.modules["agent"].chores, path=home / "agent.too"),
+            inline_chores(
+                self.modules["agent"].chores,
+                path=home / "agent.too",
+                agent_name=self.name,
+            ),
         )
         object.__setattr__(self, "chores", tuple(combined.values()))
         if self.revision != agent_state_revision(

@@ -54,9 +54,11 @@ Isolated guests without access to this local Hub report unavailability.
 `too hub` reports `starting` while waiting for the backend;
 `too hub stop --force` can stop a stalled startup. Missing or corrupt initialized
 conversation data fails closed; Hub does not reset counters or rebuild it.
-Upgrade Hub and clients together and select a fresh Redis/Valkey dataset for this
-schema. Old datasets remain untouched; history, drafts, and checkpoints are not
-migrated or imported.
+Upgrade Hub and clients together and select a fresh Redis/Valkey dataset for
+conversation schema `3`. It gives DM and GC disjoint eight-character suffixes;
+older schemas are rejected without mutation. Preserve the old runtime/data
+before switching datasets. Old datasets remain untouched; history, drafts, and
+checkpoints are not migrated or imported.
 
 Hub `start`/`serve` ports resolve as `--port` > `TOOLANG_HUB_PORT` >
 `teaming.hub.port` > `7001`. Resident agent `start`/`serve` uses `--port` >
@@ -315,7 +317,7 @@ With `P = too:teaming:v1`, the messaging key spaces are:
 | `P:convo:C:members` | Set | Authoritative typed participants |
 | `P:convo:C:messages` | Stream | `data` → message JSON |
 | `P:convo:name:N` | Set | IDs matching an exact name; `N` is unpadded base64url UTF-8 |
-| `P:convo:schema` | String | Schema version `2` |
+| `P:convo:schema` | String | Schema version `3` |
 | `P:convo:id:gc` | Hash | Last allocated hourly tick and sequence |
 | `P:convo:stats` | Hash | DM count, GC count, accepted message count |
 | `P:convo:system` | Hash | `all` → system GC ID |
@@ -394,11 +396,12 @@ and normalized message field maps, without raw driver commands.
 Conversation lists read metadata, membership, and previews in batches of at most
 128 IDs. Each batch applies visibility atomically. Listing remains linear in the
 directory size; ID and participant-pair lookup are constant in directory size.
-GC allocation supports 1,048,576 reservations per backend per hour (about 291/s
-averaged over an hour); this is capacity, not a measured throughput claim.
+GC allocation supports 524,288 reservations per backend per hour; this is
+capacity, not a measured throughput claim.
 
 The [conversation contract](plans/conversation-ids.md) specifies record JSON,
-atomic writes, event payloads, ID capacity, and fresh-dataset rollout.
+atomic writes, and event payloads. The [ID upgrade](plans/conversation-id-upgrade.md)
+defines schema `3` codecs, capacity, and fresh-dataset rollout.
 
 ## Activity views
 

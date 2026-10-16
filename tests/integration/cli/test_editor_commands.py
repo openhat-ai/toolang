@@ -54,7 +54,11 @@ def test_editor_failures_return_cli_errors_without_changing_authored_files(
         )
         arguments = ["alice", kind, action]
         if action == "edit":
-            AuthoredChores(home, lock_path=home_edit_lock_path(home)).create(
+            AuthoredChores(
+                home,
+                lock_path=home_edit_lock_path(home),
+                agent_name="alice",
+            ).create(
                 ChoreFile.parse(
                     "---\nid: demo\ntitle: Demo\n---\nDo the work.\n", name="demo"
                 )

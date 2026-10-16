@@ -116,7 +116,9 @@ def new_chore(ctx: typer.Context, name: ChoreName = None) -> None:
 def edit_chore(ctx: typer.Context, chore: ChoreRef) -> None:
     """Edit a chore"""
     catalog = AuthoredChores(
-        context_layout(ctx).home, lock_path=context_layout(ctx).home_edit_lock
+        context_layout(ctx).home,
+        lock_path=context_layout(ctx).home_edit_lock,
+        agent_name=context_layout(ctx).name,
     )
     path = user_call(editable_chore_path, context_layout(ctx), chore)
     text = edit_markdown(path.read_text(encoding="utf-8"))
@@ -132,7 +134,9 @@ def edit_chore(ctx: typer.Context, chore: ChoreRef) -> None:
 def delete_chore(ctx: typer.Context, chore: ChoreRef) -> None:
     """Delete a chore; keep history"""
     catalog = AuthoredChores(
-        context_layout(ctx).home, lock_path=context_layout(ctx).home_edit_lock
+        context_layout(ctx).home,
+        lock_path=context_layout(ctx).home_edit_lock,
+        agent_name=context_layout(ctx).name,
     )
     with catalog.write_lock():
         user_call(editable_chore_path, context_layout(ctx), chore)

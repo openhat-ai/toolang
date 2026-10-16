@@ -7,8 +7,8 @@ with a captured State/Setup snapshot.
 | Driver | Trigger | Thread |
 | --- | --- | --- |
 | `chat` | Interactive FastAPI requests from TUI/WebUI | `chat_` per conversation |
-| `talk` | Incoming Hub message batches | One durable `talk_` per agent |
-| `chore` | One-off, scheduled, or manual work | `chore_<name-derived-id>` |
+| `talk` | Incoming Hub message batches | `talk_` per handled batch |
+| `chore` | One-off, scheduled, or manual work | `chore_<8-character ID>` |
 
 Fresh resident start/serve enable all three by default; visiting start/serve
 enable chat/talk. Implicit resident/visiting Chat, retry/rerun, and fork/rewind

@@ -8,7 +8,7 @@ import pytest
 
 from toolang.catalog.chore import AuthoredChores, ChoreFile
 from toolang.catalog.errors import CatalogConflictError, CatalogNotFoundError
-from toolang.common.ids import chore_id
+from toolang.catalog.chore_ids import chore_id
 from toolang.common.layout import home_edit_lock_path
 
 
@@ -19,7 +19,10 @@ def test_parsing_preserves_source_and_uses_filename_identity(tmp_path: Path) -> 
     path = tmp_path / "review.md"
     item = ChoreFile.parse(content, path=path)
     assert item.name == "review"
-    assert item.id == chore_id("review")
+    assert item.id_for("alice") == chore_id(
+        "review",
+        agent_name="alice",
+    )
     assert item.ref == "chore/review"
     assert item.content == content
     assert item.meta["due"] == "2026-07-20"
@@ -31,7 +34,7 @@ def test_definition_edits_never_change_identity() -> None:
     changed = item.patch(
         {"title": "Display title", "body": "New work.", "schedule": "FREQ=DAILY"}
     )
-    assert changed.id == item.id
+    assert changed.id_for("alice") == item.id_for("alice")
     assert changed.ref == item.ref
     assert changed.schedule == "FREQ=DAILY"
     assert "id" not in changed.meta
@@ -78,15 +81,19 @@ def test_invalid_metadata_fails(metadata: str) -> None:
 
 
 def test_crud_is_flat_and_addressable_by_name_ref_and_id(tmp_path: Path) -> None:
-    catalog = AuthoredChores(tmp_path, lock_path=home_edit_lock_path(tmp_path))
+    catalog = AuthoredChores(
+        tmp_path,
+        lock_path=home_edit_lock_path(tmp_path),
+        agent_name="alice",
+    )
     assert catalog.list() == ()
     assert not catalog.lock_path.exists()
     item = catalog.create(ChoreFile.parse("Work.\n", name="cleanup"))
     assert item.path == tmp_path / "chores" / "cleanup.md"
-    for reference in (item.name, item.ref, item.id):
+    for reference in (item.name, item.ref, item.id_for("alice")):
         assert catalog.get(reference) == item
     changed = catalog.update(item.patch({"body": "Updated."}))
-    assert changed.id == item.id
+    assert changed.id_for("alice") == item.id_for("alice")
     assert catalog.remove(item.ref) == changed
     assert catalog.list() == ()
     assert item.path is not None and not item.path.exists()
@@ -94,7 +101,11 @@ def test_crud_is_flat_and_addressable_by_name_ref_and_id(tmp_path: Path) -> None
 
 
 def test_authoring_rejects_conflicts_and_missing_definitions(tmp_path: Path) -> None:
-    catalog = AuthoredChores(tmp_path, lock_path=home_edit_lock_path(tmp_path))
+    catalog = AuthoredChores(
+        tmp_path,
+        lock_path=home_edit_lock_path(tmp_path),
+        agent_name="alice",
+    )
     item = catalog.create(ChoreFile.parse("Work.", name="cleanup"))
     with pytest.raises(CatalogConflictError, match="already exists"):
         catalog.create(item)
@@ -120,7 +131,11 @@ def test_only_immediate_files_are_effective_and_reads_do_not_write(
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("Work.\n")
     before = {path: path.read_bytes() for path in paths}
-    catalog = AuthoredChores(tmp_path, lock_path=home_edit_lock_path(tmp_path))
+    catalog = AuthoredChores(
+        tmp_path,
+        lock_path=home_edit_lock_path(tmp_path),
+        agent_name="alice",
+    )
     assert [item.name for item in catalog.list()] == ["current"]
     assert catalog.get("current") is not None
     assert not catalog.lock_path.exists()
@@ -128,7 +143,11 @@ def test_only_immediate_files_are_effective_and_reads_do_not_write(
 
 
 def test_authoring_lock_is_reentrant(tmp_path: Path) -> None:
-    catalog = AuthoredChores(tmp_path, lock_path=home_edit_lock_path(tmp_path))
+    catalog = AuthoredChores(
+        tmp_path,
+        lock_path=home_edit_lock_path(tmp_path),
+        agent_name="alice",
+    )
     with catalog.write_lock():
         item = catalog.create(ChoreFile.parse("Work.", name="cleanup"))
         catalog.update(item.with_body("Updated."))

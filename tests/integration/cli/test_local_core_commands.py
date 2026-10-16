@@ -706,7 +706,11 @@ def test_chore_list_shows_scheduler_and_latest_run_state(tmp_path: Path) -> None
     root = tmp_path / "toolang"
     _create_agent(root)
     layout = AgentLayout.resident(root, "alice")
-    AuthoredChores(layout.home, lock_path=layout.home_edit_lock).create(
+    AuthoredChores(
+        layout.home,
+        lock_path=layout.home_edit_lock,
+        agent_name=layout.name,
+    ).create(
         ChoreFile.parse(
             """---
 id: maintain
@@ -4331,9 +4335,11 @@ def test_chore_mutations_target_visible_definitions(
     layout.program.write_text(
         "chore cleanup:\n  Inline body.\nflow broken:\n  run missing\n"
     )
-    hidden = AuthoredChores(layout.home, lock_path=layout.home_edit_lock).create(
-        ChoreFile.parse("Home body.", name="cleanup")
-    )
+    hidden = AuthoredChores(
+        layout.home,
+        lock_path=layout.home_edit_lock,
+        agent_name=layout.name,
+    ).create(ChoreFile.parse("Home body.", name="cleanup"))
     assert hidden.path is not None
     content = (
         "---\nschedule: invalid\n---\nBroken home source."

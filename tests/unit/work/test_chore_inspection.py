@@ -11,7 +11,11 @@ from toolang.driver.chore.store import ChoreStore
 
 def test_inspection_shows_pending_time_and_detects_unprocessed_edits(tmp_path):
     layout = AgentLayout.resident(tmp_path, "alice")
-    catalog = AuthoredChores(layout.home, lock_path=layout.home_edit_lock)
+    catalog = AuthoredChores(
+        layout.home,
+        lock_path=layout.home_edit_lock,
+        agent_name=layout.name,
+    )
     original = catalog.create(ChoreFile.parse("Original body.", name="once"))
     chore = load_chores(layout)[0]
     now = datetime(2026, 10, 11, tzinfo=timezone.utc)
@@ -70,7 +74,11 @@ def test_invalid_chore_name_is_inspected_by_source_without_execution_identity(tm
     source = inspection.get(invalid.ref)
     assert source is not None
     assert inspection.detail(source).body == "Invalid name, readable source."
-    catalog = AuthoredChores(layout.home, lock_path=layout.home_edit_lock)
+    catalog = AuthoredChores(
+        layout.home,
+        lock_path=layout.home_edit_lock,
+        agent_name=layout.name,
+    )
     assert catalog.raw_path("good") == directory / "good.md"
     assert catalog.remove_file(invalid.ref) == directory / " bad.md"
     assert catalog.remove_file("good") == directory / "good.md"
@@ -82,7 +90,11 @@ def test_invalid_agent_source_does_not_block_markdown_inspection_or_authoring(tm
     layout = AgentLayout.resident(tmp_path, "alice")
     layout.home.mkdir(parents=True)
     layout.program.write_text("flow (")
-    catalog = AuthoredChores(layout.home, lock_path=layout.home_edit_lock)
+    catalog = AuthoredChores(
+        layout.home,
+        lock_path=layout.home_edit_lock,
+        agent_name=layout.name,
+    )
     catalog.create(ChoreFile.parse("Valid home definition.", name="good"))
 
     inspection = ChoreInspection.load(layout=layout, runs=())

@@ -69,6 +69,7 @@ def _once() -> Chore:
         body="Review one.",
         schedule=None,
         path=Path("chores/review.md"),
+        agent_name="alice",
     )
 
 
@@ -82,6 +83,7 @@ def _chore(
         body="Maintain one.",
         schedule=schedule,
         path=Path("chores/maintain.md"),
+        agent_name="alice",
     )
 
 

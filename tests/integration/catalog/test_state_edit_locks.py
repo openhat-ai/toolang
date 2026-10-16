@@ -93,9 +93,11 @@ def _mutate(root, family, contended, done):
             CapRef(kind="prompt", name="new", ref="https://example.test/new.md")
         )
     elif family == "chore":
-        AuthoredChores(layout.home, lock_path=layout.home_edit_lock).create(
-            ChoreFile.parse("New.", name="new")
-        )
+        AuthoredChores(
+            layout.home,
+            lock_path=layout.home_edit_lock,
+            agent_name=layout.name,
+        ).create(ChoreFile.parse("New.", name="new"))
     elif family == "workspace":
         ConfiguredWorkspaces(layout.config, lock_path=layout.home_edit_lock).add(
             layout.home, name="repo"
@@ -177,7 +179,14 @@ def test_catalog_reads_and_unchanged_projection_do_not_create_guards(tmp_path):
     caps = CapsManager(layout)
     assert caps.root_authoring.list() == caps.home_authoring.list() == ()
     assert caps.root_configured.list() == caps.home_configured.list() == ()
-    assert AuthoredChores(layout.home, lock_path=layout.home_edit_lock).list() == ()
+    assert (
+        AuthoredChores(
+            layout.home,
+            lock_path=layout.home_edit_lock,
+            agent_name=layout.name,
+        ).list()
+        == ()
+    )
     assert (
         ConfiguredWorkspaces(layout.config, lock_path=layout.home_edit_lock).list()
         == {}

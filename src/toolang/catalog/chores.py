@@ -3,17 +3,17 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from hashlib import sha256
 from pathlib import Path
 from typing import cast
 
 from .chore import AuthoredChores, ChoreFile
 from toolang.common.files import EditLock
-from toolang.common.ids import chore_id
 from toolang.common.layout import AgentLayout
 from toolang.lang.ast import ChoreDecl, parse_chore_declarations
 from toolang.lang.errors import ToolangSourceError
+from .chore_ids import chore_id, validate_chore_name
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,10 +27,11 @@ class Chore:
     path: Path
     line: int | None = None
     source_error: str | None = None
+    agent_name: str = field(kw_only=True)
 
     @property
     def id(self) -> str:
-        return chore_id(self.name)
+        return chore_id(self.name, agent_name=self.agent_name)
 
     @property
     def ref(self) -> str:
@@ -73,11 +74,11 @@ class Chore:
             "schedule": self.schedule,
             "path": self.path.as_posix(),
         }
-        self.from_data(data)
+        self.from_data(data, agent_name=self.agent_name)
         return data
 
     @classmethod
-    def from_data(cls, data: Mapping[str, object]) -> Chore:
+    def from_data(cls, data: Mapping[str, object], *, agent_name: str) -> Chore:
         """Restore accepted terms without parsing or revalidating authored syntax."""
         if set(data) != {"name", "title", "body", "schedule", "path"}:
             raise ValueError("chore term fields do not match the schema")
@@ -88,7 +89,7 @@ class Chore:
             or not isinstance(path, str)
         ):
             raise TypeError("chore name, body, and path must be strings")
-        chore_id(name)
+        validate_chore_name(name)
         if "\\" in path or path != (Path("chores") / f"{name}.md").as_posix():
             raise ValueError("chore term path must match its home Markdown name")
         title, schedule = (data[key] for key in ("title", "schedule"))
@@ -102,7 +103,12 @@ class Chore:
                     "chore title and schedule must be normalized text or null"
                 )
         return cls(
-            name, cast(str | None, title), body, cast(str | None, schedule), Path(path)
+            name,
+            cast(str | None, title),
+            body,
+            cast(str | None, schedule),
+            Path(path),
+            agent_name=agent_name,
         )
 
 
@@ -110,8 +116,10 @@ def load_chore_files(layout: AgentLayout) -> tuple[Chore, ...]:
     """Read immediate home Markdown definitions."""
 
     return tuple(
-        file_chore(item)
-        for item in AuthoredChores(layout.home, lock_path=layout.home_edit_lock).list()
+        file_chore(item, agent_name=layout.name)
+        for item in AuthoredChores(
+            layout.home, agent_name=layout.name, lock_path=layout.home_edit_lock
+        ).list()
     )
 
 
@@ -128,6 +136,7 @@ def _load_chores(layout: AgentLayout) -> tuple[Chore, ...]:
             inline = inline_chores(
                 parse_chore_declarations(layout.program.read_text(encoding="utf-8")),
                 path=layout.program,
+                agent_name=layout.name,
             )
         except (OSError, ValueError, ToolangSourceError):
             pass
@@ -143,9 +152,17 @@ def _inspect_chore_sources(layout: AgentLayout) -> tuple[Chore, ...]:
     valid = load_chores(layout)
     accepted_names = {chore.name for chore in valid}
     invalid = tuple(
-        Chore(path.stem, None, content, None, path, source_error=error)
+        Chore(
+            path.stem,
+            None,
+            content,
+            None,
+            path,
+            source_error=error,
+            agent_name=layout.name,
+        )
         for path, content, error in AuthoredChores(
-            layout.home, lock_path=layout.home_edit_lock
+            layout.home, agent_name=layout.name, lock_path=layout.home_edit_lock
         ).sources()
         if error is not None and path.stem not in accepted_names
     )
@@ -153,7 +170,7 @@ def _inspect_chore_sources(layout: AgentLayout) -> tuple[Chore, ...]:
 
 
 def inline_chores(
-    declarations: Iterable[ChoreDecl], *, path: Path
+    declarations: Iterable[ChoreDecl], *, path: Path, agent_name: str
 ) -> tuple[Chore, ...]:
     return tuple(
         Chore(
@@ -165,12 +182,13 @@ def inline_chores(
             else None,
             path=path,
             line=decl.span.line,
+            agent_name=agent_name,
         )
         for decl in declarations
     )
 
 
-def file_chore(chore: ChoreFile) -> Chore:
+def file_chore(chore: ChoreFile, *, agent_name: str) -> Chore:
     if chore.path is None:
         raise ValueError("authored chore path is required")
     return Chore(
@@ -179,6 +197,7 @@ def file_chore(chore: ChoreFile) -> Chore:
         body=chore.body,
         schedule=chore.schedule,
         path=chore.path,
+        agent_name=agent_name,
     )
 
 
@@ -189,7 +208,10 @@ def merge_chores(*groups: Iterable[Chore]) -> dict[str, Chore]:
     for group in groups:
         for chore in group:
             previous = merged.get(chore.id)
-            if previous is not None and previous.name != chore.name:
+            if previous is not None and (previous.name, previous.agent_name) != (
+                chore.name,
+                chore.agent_name,
+            ):
                 raise ValueError(
                     f"chore ID collision {chore.id!r}: {previous.location} and {chore.location}"
                 )

@@ -2,6 +2,9 @@
 
 Status: definition confirmed on 2026-10-10. This definition ships no code.
 
+The schema `2` ID codec and capacity below are superseded by the
+[schema `3` ID upgrade](conversation-id-upgrade.md); the other contracts remain.
+
 ## Goal and scope
 
 Replace the group model with conversations throughout storage, APIs, tools,

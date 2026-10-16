@@ -11,16 +11,12 @@ from collections.abc import Callable, Mapping
 from contextlib import closing
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-import hashlib
-import json
 from pathlib import Path
 import sqlite3
 
-_ID_ALPHABET = "0123456789abcdefghjkmnpqrstvwxyz"
-_ID_EPOCH = datetime(2026, 1, 1, tzinfo=UTC)
+from .id_codec import decode_short_id, derive_id_key, encode_short_id, scramble_id
 
-_ID_LOOKUP = {char: index for index, char in enumerate(_ID_ALPHABET)}
-_ID_FEISTEL_ROUNDS = 4
+_ID_EPOCH = datetime(2026, 1, 1, tzinfo=UTC)
 
 
 @dataclass(frozen=True, slots=True)
@@ -173,7 +169,7 @@ class DecodedId:
     def archive_prefix(self) -> str:
         """Return the stable bucket prefix derived from the decoded tick."""
 
-        return _encode_fixed_width(self.tick_code, width=self.family.tick_chars)
+        return encode_short_id(self.tick_code, width=self.family.tick_chars)
 
     @property
     def bucket_started_at(self) -> datetime:
@@ -202,7 +198,7 @@ class AllocatedId:
     def archive_prefix(self) -> str:
         """Return the stable bucket prefix derived from the decoded tick."""
 
-        return _encode_fixed_width(
+        return encode_short_id(
             _affine_encode(
                 self.tick,
                 modulus=self.family.tick_modulus,
@@ -262,12 +258,12 @@ def encode_id(*, family: IdFamily, agent_name: str, tick: int, seq: int) -> str:
         offset=family.seq_offset,
     )
     raw_code = (tick_code << family.seq_bits) | seq_code
-    wire_code = _permute_wire_code(
+    wire_code = scramble_id(
         raw_code,
-        family=family,
-        agent_key=_agent_id_key(family=family, agent_name=agent_name),
+        width=family.width,
+        key=_agent_id_key(family=family, agent_name=agent_name),
     )
-    return _encode_fixed_width(wire_code, width=family.width)
+    return encode_short_id(wire_code, width=family.width)
 
 
 def decode_id(value: str, *, family: IdFamily, agent_name: str) -> DecodedId:
@@ -276,11 +272,12 @@ def decode_id(value: str, *, family: IdFamily, agent_name: str) -> DecodedId:
     text = value.strip().lower()
     if len(text) != family.width:
         raise ValueError(f"invalid {family.name} id width: {value!r}")
-    wire_code = _decode_fixed_width(text, width=family.width)
-    raw_code = _unpermute_wire_code(
+    wire_code = decode_short_id(text, width=family.width)
+    raw_code = scramble_id(
         wire_code,
-        family=family,
-        agent_key=_agent_id_key(family=family, agent_name=agent_name),
+        width=family.width,
+        key=_agent_id_key(family=family, agent_name=agent_name),
+        reverse=True,
     )
     tick_code = raw_code >> family.seq_bits
     seq_code = raw_code & (family.seq_modulus - 1)
@@ -440,79 +437,7 @@ def _agent_id_key(*, family: IdFamily, agent_name: str) -> bytes:
 
     if not agent_name or agent_name != agent_name.strip():
         raise ValueError("agent name must be nonempty and canonical")
-    material = json.dumps(
-        [family.name, agent_name], ensure_ascii=False, separators=(",", ":")
-    ).encode("utf-8")
-    return hashlib.blake2s(material).digest()
-
-
-def scramble_id(value: int, *, width: int, key: bytes, reverse: bool = False) -> int:
-    """Permute a fixed-width code without changing its capacity."""
-    bits = width * 5
-    _check_range("wire_code", value, 1 << bits)
-    if bits % 2:
-        raise ValueError("wire bits must be even")
-    half = bits // 2
-    mask = (1 << half) - 1
-    left, right = value >> half, value & mask
-    rounds = range(_ID_FEISTEL_ROUNDS)
-    for index in reversed(rounds) if reverse else rounds:
-        if reverse:
-            left, right = (
-                right
-                ^ _wire_round_function(
-                    left, agent_key=key, round_index=index, mask=mask
-                ),
-                left,
-            )
-        else:
-            left, right = (
-                right,
-                left
-                ^ _wire_round_function(
-                    right, agent_key=key, round_index=index, mask=mask
-                ),
-            )
-    return (left << half) | right
-
-
-def chore_id(name: str) -> str:
-    """Derive an 80-bit, lowercase Base32 identity from a canonical chore name."""
-    if (
-        not name
-        or name != name.strip()
-        or name in {".", ".."}
-        or any(char in name for char in ("/", "\\", "\x00"))
-    ):
-        raise ValueError(f"invalid chore name: {name!r}")
-    digest = hashlib.sha256(name.encode("utf-8")).digest()[:10]
-    return encode_short_id(int.from_bytes(digest, "big"), width=16)
-
-
-def encode_short_id(value: int, *, width: int = 8) -> str:
-    """Encode an unsigned value using the shared lowercase base32 alphabet."""
-    return _encode_fixed_width(value, width=width)
-
-
-def _permute_wire_code(value: int, *, family: IdFamily, agent_key: bytes) -> int:
-    return scramble_id(value, width=family.width, key=agent_key)
-
-
-def _unpermute_wire_code(value: int, *, family: IdFamily, agent_key: bytes) -> int:
-    return scramble_id(value, width=family.width, key=agent_key, reverse=True)
-
-
-def _wire_round_function(
-    value: int,
-    *,
-    agent_key: bytes,
-    round_index: int,
-    mask: int,
-) -> int:
-    value_width = max(1, (mask.bit_length() + 7) // 8)
-    payload = bytes((round_index,)) + value.to_bytes(value_width, "big")
-    digest = hashlib.blake2s(payload, key=agent_key).digest()
-    return int.from_bytes(digest, "big") & mask
+    return derive_id_key(family.name, agent_name)
 
 
 def _affine_encode(value: int, *, modulus: int, multiplier: int, offset: int) -> int:
@@ -522,30 +447,6 @@ def _affine_encode(value: int, *, modulus: int, multiplier: int, offset: int) ->
 def _affine_decode(value: int, *, modulus: int, multiplier: int, offset: int) -> int:
     inverse = pow(multiplier, -1, modulus)
     return (inverse * (value - offset)) % modulus
-
-
-def _encode_fixed_width(value: int, *, width: int) -> str:
-    _check_range("value", value, 1 << (width * 5))
-    chars = ["0"] * width
-    current = value
-    for index in range(width - 1, -1, -1):
-        chars[index] = _ID_ALPHABET[current & 0x1F]
-        current >>= 5
-    return "".join(chars)
-
-
-def _decode_fixed_width(value: str, *, width: int) -> int:
-    text = value.strip().lower()
-    if len(text) != width:
-        raise ValueError(f"expected {width} base32 chars, got {value!r}")
-    decoded = 0
-    for char in text:
-        try:
-            digit = _ID_LOOKUP[char]
-        except KeyError as exc:
-            raise ValueError(f"unsupported id character: {char!r}") from exc
-        decoded = (decoded << 5) | digit
-    return decoded
 
 
 def _check_range(label: str, value: int, modulus: int) -> None:

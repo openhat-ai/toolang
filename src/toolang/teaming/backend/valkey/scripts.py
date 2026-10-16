@@ -6,7 +6,12 @@ roll back an error after a write.
 """
 
 from .lua import LEASE_CHECK, STREAM_ORDER
-from ...ids import GC_EPOCH_SECONDS, GC_LIMIT
+from ...ids import (
+    CONVERSATION_SCHEMA,
+    GC_EPOCH_SECONDS,
+    GC_SEQUENCE_LIMIT,
+    GC_TICK_LIMIT,
+)
 from ...types import (
     LEASE_SECONDS,
     MESSAGE_RETENTION,
@@ -19,7 +24,9 @@ _CONSTANTS = (
         f"local {name}={value}"
         for name, value in {
             "gc_epoch": GC_EPOCH_SECONDS,
-            "gc_limit": GC_LIMIT,
+            "conversation_schema": CONVERSATION_SCHEMA,
+            "gc_tick_limit": GC_TICK_LIMIT,
+            "gc_sequence_limit": GC_SEQUENCE_LIMIT,
             "lease_millis": LEASE_SECONDS * 1000,
             "message_retention": MESSAGE_RETENTION,
             "event_retention": TEAM_EVENT_RETENTION,
@@ -167,15 +174,15 @@ local function valid()
   expect(KEYS[1],'string'); expect(KEYS[2],'hash'); expect(KEYS[3],'zset')
   expect(KEYS[4],'hash'); expect(KEYS[5],'hash'); expect(KEYS[6],'hash')
   expect(KEYS[8],'hash'); expect(KEYS[9],'hash')
-  if redis.call('GET',KEYS[1])~='2' then fail('unsupported conversation schema; use a fresh dataset') end
+  if redis.call('GET',KEYS[1])~=tostring(conversation_schema) then fail('unsupported conversation schema; use a fresh dataset') end
   for _,field in ipairs({'dm_count','gc_count','messages_total'}) do integer(redis.call('HGET',KEYS[5],field),0,max_safe_integer) end
   local dm=tonumber(redis.call('HGET',KEYS[5],'dm_count'))
   local gc=tonumber(redis.call('HGET',KEYS[5],'gc_count'))
   if dm+gc~=redis.call('HLEN',KEYS[4]) then fail('inconsistent conversation totals') end
   local system=redis.call('HGET',KEYS[8],'all')
   if gc>0 and (not system or not redis.call('HGET',KEYS[4],system)) then fail('missing system conversation') end
-  local tick=integer(redis.call('HGET',KEYS[6],'last_tick'),-1,gc_limit-1)
-  local seq=integer(redis.call('HGET',KEYS[6],'last_seq'),-1,gc_limit-1)
+  local tick=integer(redis.call('HGET',KEYS[6],'last_tick'),-1,gc_tick_limit-1)
+  local seq=integer(redis.call('HGET',KEYS[6],'last_seq'),-1,gc_sequence_limit-1)
   if (tick==-1)~=(seq==-1) then fail('invalid allocator') end
   return feed()
 end
@@ -255,7 +262,7 @@ if not redis.call('GET',KEYS[1]) then
   for i=2,8 do if redis.call('EXISTS',KEYS[i])~=0 then fail('partial conversation dataset') end end
   expect(KEYS[9],'hash')
   if redis.call('HLEN',KEYS[9])>0 then fail('partial roster dataset') end
-  redis.call('SET',KEYS[1],'2')
+  redis.call('SET',KEYS[1],tostring(conversation_schema))
   redis.call('HSET',KEYS[5],'dm_count',0,'gc_count',0,'messages_total',0)
   redis.call('HSET',KEYS[6],'last_tick',-1,'last_seq',-1)
   epoch=operation.epoch
@@ -277,7 +284,7 @@ if tick<0 then error('Clock precedes conversation epoch') end
 local last=tonumber(redis.call('HGET',KEYS[6],'last_tick'))
 local seq=0
 if tick<=last then tick=last; seq=tonumber(redis.call('HGET',KEYS[6],'last_seq'))+1 end
-if tick>=gc_limit or seq>=gc_limit then error('Conversation ID allocation exhausted') end
+if tick>=gc_tick_limit or seq>=gc_sequence_limit then error('Conversation ID allocation exhausted') end
 redis.call('HSET',KEYS[6],'last_tick',tick,'last_seq',seq)
 return {tick,seq}
 """

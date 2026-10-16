@@ -54,7 +54,11 @@ def test_job_file_keeps_identity_in_meta() -> None:
 
 
 def test_authored_jobs_crud_returns_job_files(tmp_path: Path) -> None:
-    catalog = AuthoredChores(tmp_path, lock_path=home_edit_lock_path(tmp_path))
+    catalog = AuthoredChores(
+        tmp_path,
+        lock_path=home_edit_lock_path(tmp_path),
+        agent_name="alice",
+    )
     created = catalog.create(_job("task", "review", "Review."))
     updated = catalog.update(created.with_body("Review carefully."))
     removed = catalog.remove("review")
@@ -66,7 +70,11 @@ def test_authored_jobs_crud_returns_job_files(tmp_path: Path) -> None:
 
 
 def test_job_title_does_not_rename_the_file(tmp_path: Path) -> None:
-    catalog = AuthoredChores(tmp_path, lock_path=home_edit_lock_path(tmp_path))
+    catalog = AuthoredChores(
+        tmp_path,
+        lock_path=home_edit_lock_path(tmp_path),
+        agent_name="alice",
+    )
     created = catalog.create(_job("task", "review", "Review."))
 
     updated = catalog.update(created.with_meta({**created.meta, "title": "Renamed"}))
@@ -85,12 +93,16 @@ def test_state_reads_manual_chore_without_rewriting_its_definition(
     path.write_text("---\ntitle: Manual\n---\nReview manually.\n", encoding="utf-8")
 
     jobs = load_chores(AgentLayout.resident(tmp_path, "alice"))
-    job = AuthoredChores(home, lock_path=home_edit_lock_path(home)).list()[0]
+    job = AuthoredChores(
+        home,
+        lock_path=home_edit_lock_path(home),
+        agent_name="alice",
+    ).list()[0]
 
     assert job.path == path
     assert "id" not in job.meta
     assert job.name == "manual"
-    assert jobs[0].id == job.id
+    assert jobs[0].id == job.id_for("alice")
     assert (
         path.read_text(encoding="utf-8")
         == "---\ntitle: Manual\n---\nReview manually.\n"

@@ -12,7 +12,7 @@ from toolang.base.types.message import Message
 from toolang.base.types.run import ModelCallResult
 from toolang.catalog import CapsManager, ChoresManager
 from toolang.catalog.chore import AuthoredChores, ChoreFile
-from toolang.common.ids import chore_id
+from toolang.catalog.chore_ids import chore_id
 from toolang.up.core import AgentCore
 from toolang.driver.chore.store import ChoreStore
 from toolang.catalog.chores import load_chores
@@ -29,12 +29,16 @@ def test_flat_authoring_and_inline_shadowing_with_chore_driver_disabled(tmp_path
     harness.store.close()
     core = AgentCore(layout, drivers=frozenset())
     asyncio.run(core.state.refresh())
-    root_file = AuthoredChores(layout.root, lock_path=layout.root_edit_lock).create(
-        ChoreFile.parse("Root body.", name="cleanup")
-    )
-    home_file = AuthoredChores(layout.home, lock_path=layout.home_edit_lock).create(
-        ChoreFile.parse("Home body.", name="cleanup")
-    )
+    root_file = AuthoredChores(
+        layout.root,
+        lock_path=layout.root_edit_lock,
+        agent_name=layout.name,
+    ).create(ChoreFile.parse("Root body.", name="cleanup"))
+    home_file = AuthoredChores(
+        layout.home,
+        lock_path=layout.home_edit_lock,
+        agent_name=layout.name,
+    ).create(ChoreFile.parse("Home body.", name="cleanup"))
     app = create_app(
         core, CapsManager(layout), ChoresManager(layout), cors_allowed_origins=()
     )
@@ -42,7 +46,10 @@ def test_flat_authoring_and_inline_shadowing_with_chore_driver_disabled(tmp_path
         with TestClient(app) as client:
             items = client.get("/api/v1/chores").json()
             assert len(items) == 1
-            assert items[0]["id"] == chore_id("cleanup")
+            assert items[0]["id"] == chore_id(
+                "cleanup",
+                agent_name=layout.name,
+            )
             assert items[0]["ref"] == "chore/cleanup"
             assert "stage" not in items[0] and "kind" not in items[0]
             detail = client.get("/api/v1/chores/cleanup").json()
@@ -58,10 +65,20 @@ def test_flat_authoring_and_inline_shadowing_with_chore_driver_disabled(tmp_path
             try:
                 with_store.reconcile(chores=load_chores(layout))
                 assert client.post("/api/v1/chores/once/cancel").status_code == 200
-                record = with_store.get(chore_id=chore_id("once"))
+                record = with_store.get(
+                    chore_id=chore_id(
+                        "once",
+                        agent_name=layout.name,
+                    )
+                )
                 assert record is not None and record.status == "canceled"
                 assert client.delete("/api/v1/chores/once").status_code == 204
-                record = with_store.get(chore_id=chore_id("once"))
+                record = with_store.get(
+                    chore_id=chore_id(
+                        "once",
+                        agent_name=layout.name,
+                    )
+                )
                 assert record is not None and record.status == "canceled"
             finally:
                 with_store.close()
@@ -136,9 +153,11 @@ def test_chore_inspection_reads_current_source_and_rejects_hidden_mutations(tmp_
     layout = harness.setup.layout
     harness.store.close()
     core = AgentCore(layout, drivers=frozenset())
-    home = AuthoredChores(layout.home, lock_path=layout.home_edit_lock).create(
-        ChoreFile.parse("Home body.", name="cleanup")
-    )
+    home = AuthoredChores(
+        layout.home,
+        lock_path=layout.home_edit_lock,
+        agent_name=layout.name,
+    ).create(ChoreFile.parse("Home body.", name="cleanup"))
     layout.program.write_text("chore cleanup:\n  New inline.\nflow ready:\n  pass\n")
     asyncio.run(core.state.refresh())
     app = create_app(
@@ -169,9 +188,11 @@ def test_chore_api_edits_visible_home_file_and_preserves_root(tmp_path):
     layout = harness.setup.layout
     harness.store.close()
     core = AgentCore(layout, drivers=frozenset())
-    root_file = AuthoredChores(layout.root, lock_path=layout.root_edit_lock).create(
-        ChoreFile.parse("Root body.", name="cleanup")
-    )
+    root_file = AuthoredChores(
+        layout.root,
+        lock_path=layout.root_edit_lock,
+        agent_name=layout.name,
+    ).create(ChoreFile.parse("Root body.", name="cleanup"))
     asyncio.run(core.state.refresh())
     app = create_app(
         core, CapsManager(layout), ChoresManager(layout), cors_allowed_origins=()
@@ -272,9 +293,11 @@ def test_chore_patch_reports_reconciled_runtime_state(tmp_path, changes):
     )
     layout = harness.setup.layout
     harness.store.close()
-    AuthoredChores(layout.home, lock_path=layout.home_edit_lock).create(
-        ChoreFile.parse("Original body.", name="good")
-    )
+    AuthoredChores(
+        layout.home,
+        lock_path=layout.home_edit_lock,
+        agent_name=layout.name,
+    ).create(ChoreFile.parse("Original body.", name="good"))
     core = AgentCore(layout, drivers=frozenset())
     state = asyncio.run(core.state.refresh())
     checkpoints = ChoreStore(layout.chore_store)
@@ -305,9 +328,11 @@ def test_invalid_agent_syntax_does_not_block_home_chore_api_authoring(tmp_path):
     layout = harness.setup.layout
     harness.store.close()
     layout.program.write_text("flow (")
-    AuthoredChores(layout.home, lock_path=layout.home_edit_lock).create(
-        ChoreFile.parse("Original body.", name="good")
-    )
+    AuthoredChores(
+        layout.home,
+        lock_path=layout.home_edit_lock,
+        agent_name=layout.name,
+    ).create(ChoreFile.parse("Original body.", name="good"))
     core = AgentCore(layout, drivers=frozenset())
     asyncio.run(core.state.refresh())
     app = create_app(

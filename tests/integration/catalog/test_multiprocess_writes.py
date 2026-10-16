@@ -12,10 +12,7 @@ from toolang.catalog.cap import AuthoredCaps, CapFile
 from toolang.catalog.config import CapRef, ConfiguredCaps
 from toolang.catalog.errors import CatalogConflictError
 from toolang.catalog.chore import AuthoredChores, ChoreFile
-from toolang.common.ids import (
-    LOCAL_ID_FAMILY,
-    decode_id,
-)
+from toolang.common.ids import LOCAL_ID_FAMILY, decode_id, encode_id
 from toolang.common.layout import AgentLayout
 from toolang.execution.store import RunStore
 from toolang.catalog.chore_authoring import (
@@ -50,7 +47,9 @@ def _create_same_prompt(directory: str, body: str) -> str:
 
 def _create_same_job(directory: str, kind: str) -> str:
     catalog = AuthoredChores(
-        Path(directory), lock_path=home_edit_lock_path(Path(directory))
+        Path(directory),
+        lock_path=home_edit_lock_path(Path(directory)),
+        agent_name="alice",
     )
     content = frontmatter.dumps(frontmatter.Post("Run it.", None, id="same-id"))
     job = ChoreFile.parse(content, name="same-name")
@@ -73,6 +72,7 @@ def _allocate_and_create_job(root: str) -> None:
     AuthoredChores(
         root_path / "agents" / "alice",
         lock_path=home_edit_lock_path(root_path / "agents" / "alice"),
+        agent_name="alice",
     ).create(
         new_chore_file(
             name=job_id,
@@ -95,7 +95,10 @@ def test_authored_job_ids_use_the_layout_agent_name(
 
     job_id = allocate_authored_chore_name(layout)
 
-    decoded = decode_id(job_id, family=LOCAL_ID_FAMILY, agent_name=agent_name)
+    assert job_id.startswith("chore-")
+    decoded = decode_id(
+        job_id.removeprefix("chore-"), family=LOCAL_ID_FAMILY, agent_name=agent_name
+    )
     assert (decoded.tick, decoded.seq) == (tick, 7)
 
 
@@ -181,15 +184,16 @@ def test_job_state_assignment_and_api_allocation_share_lock_order(
     jobs = AuthoredChores(
         root / "agents" / "alice",
         lock_path=home_edit_lock_path(root / "agents" / "alice"),
+        agent_name="alice",
     ).list()
     assert len(jobs) == 2
-    assert len({job.id for job in jobs}) == 2
+    assert len({job.id_for("alice") for job in jobs}) == 2
 
 
 def test_generated_chore_names_initialize_execution_storage(tmp_path: Path) -> None:
     layout = AgentLayout.resident(tmp_path, "alice")
     name = allocate_authored_chore_name(layout)
-    assert len(name) == 8
+    assert name.startswith("chore-") and len(name) == 14
     assert layout.run_store.is_file()
     assert not (layout.runtime / "ids.json").exists()
     with sqlite3.connect(layout.run_store) as connection:
@@ -201,3 +205,34 @@ def test_generated_chore_names_initialize_execution_storage(tmp_path: Path) -> N
         assert readonly.list_runs() == []
     finally:
         readonly.close()
+
+
+def test_generated_chore_names_are_unique_across_processes(tmp_path):
+    context = multiprocessing.get_context("spawn")
+    with ProcessPoolExecutor(max_workers=4, mp_context=context) as executor:
+        tuple(executor.map(_allocate_and_create_job, [str(tmp_path)] * 8))
+    layout = AgentLayout.resident(tmp_path, "alice")
+    chores = AuthoredChores(
+        layout.home, agent_name=layout.name, lock_path=layout.home_edit_lock
+    ).list()
+    assert len(chores) == len({item.id_for(layout.name) for item in chores}) == 8
+    assert all(item.name.startswith("chore-") for item in chores)
+
+
+def test_generated_name_skips_a_manually_created_matching_filename(tmp_path):
+    layout = AgentLayout.resident(tmp_path, "alice")
+    RunStore(layout.run_store).close()
+    tick = LOCAL_ID_FAMILY.tick_modulus - 1
+    with sqlite3.connect(layout.run_store) as connection:
+        connection.execute("INSERT INTO seqs VALUES ('local', ?, 6)", (tick,))
+    suffix = encode_id(family=LOCAL_ID_FAMILY, agent_name=layout.name, tick=tick, seq=7)
+    catalog = AuthoredChores(
+        layout.home, agent_name=layout.name, lock_path=layout.home_edit_lock
+    )
+    manual = catalog.create(ChoreFile.parse("Manual.", name=f"chore-{suffix}"))
+    allocated = allocate_authored_chore_name(layout)
+    decoded = decode_id(
+        allocated.removeprefix("chore-"), family=LOCAL_ID_FAMILY, agent_name=layout.name
+    )
+    assert (decoded.tick, decoded.seq) == (tick, 8)
+    assert manual.id_for(layout.name) != suffix
