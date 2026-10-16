@@ -11,7 +11,6 @@ from collections.abc import Callable, Mapping
 from contextlib import closing
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-import hashlib
 from pathlib import Path
 import sqlite3
 
@@ -439,19 +438,6 @@ def _agent_id_key(*, family: IdFamily, agent_name: str) -> bytes:
     if not agent_name or agent_name != agent_name.strip():
         raise ValueError("agent name must be nonempty and canonical")
     return derive_id_key(family.name, agent_name)
-
-
-def chore_id(name: str) -> str:
-    """Derive an 80-bit, lowercase Base32 identity from a canonical chore name."""
-    if (
-        not name
-        or name != name.strip()
-        or name in {".", ".."}
-        or any(char in name for char in ("/", "\\", "\x00"))
-    ):
-        raise ValueError(f"invalid chore name: {name!r}")
-    digest = hashlib.sha256(name.encode("utf-8")).digest()[:10]
-    return encode_short_id(int.from_bytes(digest, "big"), width=16)
 
 
 def _affine_encode(value: int, *, modulus: int, multiplier: int, offset: int) -> int:

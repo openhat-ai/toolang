@@ -176,6 +176,7 @@ def _inspection(core: AgentCore) -> ChoreInspection:
             None,
             core.layout.home / file.key,
             source_error=file.message,
+            agent_name=core.layout.name,
         )
         for file in state.files
         if file.scope == "home"
@@ -196,7 +197,7 @@ def _inspection(core: AgentCore) -> ChoreInspection:
 
 
 def _chore_detail(core: AgentCore, entry: ChoreFile) -> ChoreDetail:
-    return _inspection(core).detail(file_chore(entry))
+    return _inspection(core).detail(file_chore(entry, agent_name=core.layout.name))
 
 
 def _new_chore(*, payload: ChoreCreateRequest) -> ChoreFile:

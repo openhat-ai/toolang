@@ -138,7 +138,10 @@ def accept_sources(
                 if file.category == "chore":
                     relative = key(file.relative_path)
                     chores[relative] = replace(
-                        file_chore(ChoreFile.parse(file.read_text(), path=file.path)),
+                        file_chore(
+                            ChoreFile.parse(file.read_text(), path=file.path),
+                            agent_name=authored.agent_name,
+                        ),
                         path=Path(relative),
                     )
         except (OSError, ValueError, TypeError, YAMLError) as exc:
@@ -292,7 +295,9 @@ def accept_sources(
     for prepared in programs:
         if prepared.name == "agent" and prepared.source.authored_path not in excluded:
             for chore in inline_chores(
-                prepared.program.chores, path=Path(prepared.source.authored_path)
+                prepared.program.chores,
+                path=Path(prepared.source.authored_path),
+                agent_name=authored.agent_name,
             ):
                 chore_owners[chore.id].append(
                     (prepared.source.authored_path, chore.name)

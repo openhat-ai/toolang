@@ -24,14 +24,24 @@ def test_name_identity_shadowing_and_collision(tmp_path, monkeypatch):
     program = Program.from_source(
         "chore cleanup:\n  First.\nchore cleanup:\n  Second.\n"
     )
-    first, second = state.inline_chores(program.chores, path=tmp_path / "agent.too")
+    first, second = state.inline_chores(
+        program.chores,
+        path=tmp_path / "agent.too",
+        agent_name="alice",
+    )
     capitalized = replace(first, name="Cleanup")
     assert first.id == second.id != capitalized.id
-    assert len(first.id) == 16
+    assert len(first.id) == 8
     assert state.merge_chores((first, second))[first.id] == second
     file = ChoreFile.parse("First.", name="cleanup", path=tmp_path / "cleanup.md")
-    assert state.file_chore(file).body_hash == first.body_hash
-    assert file.id == first.id
-    monkeypatch.setattr(state, "chore_id", lambda _: "0" * 16)
+    assert (
+        state.file_chore(
+            file,
+            agent_name="alice",
+        ).body_hash
+        == first.body_hash
+    )
+    assert file.id_for("alice") == first.id
+    monkeypatch.setattr(state, "chore_id", lambda _, **kwargs: "0" * 8)
     with pytest.raises(ValueError, match="collision"):
         state.merge_chores((first, capitalized))

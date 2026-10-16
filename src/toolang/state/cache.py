@@ -183,7 +183,7 @@ def load_root_layer(layout: AgentLayout, revision: str | None = None) -> RootLay
     effective = load_current_revision(layout, "root") if revision is None else revision
     document, directory = _load_layer(layout, "root", effective)
     caps = _decode_caps(document, directory, layout.name)
-    _decode_chores(document, modules={})
+    _decode_chores(document, modules={}, agent_name=layout.name)
     return RootLayer(
         revision=effective,
         revision_dir=directory,
@@ -227,7 +227,7 @@ def load_home_layer(layout: AgentLayout, revision: str | None = None) -> HomeLay
         module_sources=sources,
         module_digests=digests,
         module_caps=local,
-        chores=_decode_chores(document, modules=modules),
+        chores=_decode_chores(document, modules=modules, agent_name=layout.name),
         module_resolutions={
             str(item["ref"]): cast(dict[str, str], item["resolution"])
             for item in _items(document, "modules")
@@ -270,7 +270,9 @@ def write_layer(
         current = load_current_revision(layout, scope)
         previous, directory = _load_layer(layout, scope, current)
         if canonical_json(_without_time(previous)) == canonical_json(document):
-            _validate_layer_dir(directory, scope=scope, revision=current)
+            _validate_layer_dir(
+                directory, scope=scope, revision=current, agent_name=layout.name
+            )
             return current
     except (OSError, KeyError, TypeError, ValueError):
         pass
@@ -290,12 +292,14 @@ def write_layer(
             destination.parent.mkdir(parents=True, exist_ok=True)
             with destination.open("xb") as output:
                 output.write(content)
-        _validate_layer_dir(staging, scope=scope, revision=revision)
+        _validate_layer_dir(
+            staging, scope=scope, revision=revision, agent_name=layout.name
+        )
         _install_revision(
             staging,
             target,
             validate=lambda path: _is_valid_layer_dir(
-                path, scope=scope, revision=revision
+                path, scope=scope, revision=revision, agent_name=layout.name
             ),
         )
     finally:
@@ -385,7 +389,10 @@ def validate_layer_revision(
     layout: AgentLayout, scope: LayerScope, revision: str
 ) -> None:
     _validate_layer_dir(
-        layer_revision_dir(layout, scope, revision), scope=scope, revision=revision
+        layer_revision_dir(layout, scope, revision),
+        scope=scope,
+        revision=revision,
+        agent_name=layout.name,
     )
 
 
@@ -882,7 +889,10 @@ def _check_resolution(
 
 
 def _decode_chores(
-    document: Mapping[str, object], *, modules: Mapping[str, Program] | None = None
+    document: Mapping[str, object],
+    *,
+    agent_name: str,
+    modules: Mapping[str, Program] | None = None,
 ) -> tuple[Chore, ...]:
     result: list[Chore] = []
     seen: set[str] = set()
@@ -931,6 +941,7 @@ def _decode_chores(
             cast(str | None, value["schedule"]),
             Path(source),
             line,
+            agent_name=agent_name,
         )
         identity = chore.id
         if identity in seen:
@@ -1030,7 +1041,10 @@ def _layer_document(
     all_caps = (*caps, *(cap for values in module_caps.values() for cap in values))
     combined = (
         merge_chores(
-            chores, inline_chores(modules["agent"].chores, path=Path("agent.too"))
+            chores,
+            inline_chores(
+                modules["agent"].chores, path=Path("agent.too"), agent_name=agent_name
+            ),
         )
         if "agent" in modules
         else {}
@@ -1136,7 +1150,7 @@ def _load_layer(
 
 
 def _validate_layer_dir(
-    directory: Path, *, scope: LayerScope, revision: str
+    directory: Path, *, scope: LayerScope, revision: str, agent_name: str
 ) -> dict[str, object]:
     _validate_top_level(
         directory, required={_LAYER_FILE, _SOURCE_DIR, _MATERIALIZED_DIR}
@@ -1169,7 +1183,7 @@ def _validate_layer_dir(
     _decode_caps(
         document, directory, "validation", modules=modules, module_sources=sources
     )
-    _decode_chores(document, modules=modules)
+    _decode_chores(document, modules=modules, agent_name=agent_name)
     return document
 
 
@@ -1221,9 +1235,11 @@ def _validate_agent_dir(directory: Path, *, revision: str) -> dict[str, object]:
     return document
 
 
-def _is_valid_layer_dir(path: Path, *, scope: LayerScope, revision: str) -> bool:
+def _is_valid_layer_dir(
+    path: Path, *, scope: LayerScope, revision: str, agent_name: str
+) -> bool:
     try:
-        _validate_layer_dir(path, scope=scope, revision=revision)
+        _validate_layer_dir(path, scope=scope, revision=revision, agent_name=agent_name)
     except (OSError, KeyError, TypeError, ValueError):
         return False
     return True

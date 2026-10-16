@@ -37,5 +37,7 @@ class ChoresManager:
 
     def __init__(self, layout: AgentLayout) -> None:
         self.home_authoring = AuthoredChores(
-            layout.home, lock_path=layout.home_edit_lock
+            layout.home,
+            lock_path=layout.home_edit_lock,
+            agent_name=layout.name,
         )

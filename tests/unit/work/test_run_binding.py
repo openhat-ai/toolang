@@ -15,6 +15,7 @@ def test_chore_claim_persists_preallocated_run_id(tmp_path: Path) -> None:
         body="",
         schedule=None,
         path=Path("agent.too"),
+        agent_name="alice",
     )
     chores = {definition.id: definition}
     store = ChoreStore(tmp_path / "chores.db")

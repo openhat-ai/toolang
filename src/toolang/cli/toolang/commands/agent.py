@@ -369,7 +369,11 @@ def _cap_counts_summary(counts: Mapping[str, int]) -> str:
 
 
 def _chores_summary(layout: AgentLayout) -> str:
-    catalog = AuthoredChores(layout.home, lock_path=layout.home_edit_lock)
+    catalog = AuthoredChores(
+        layout.home,
+        lock_path=layout.home_edit_lock,
+        agent_name=layout.name,
+    )
     return _count(len(catalog.list()), "chore")
 
 

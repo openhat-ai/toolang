@@ -50,7 +50,9 @@ def _create_same_prompt(directory: str, body: str) -> str:
 
 def _create_same_job(directory: str, kind: str) -> str:
     catalog = AuthoredChores(
-        Path(directory), lock_path=home_edit_lock_path(Path(directory))
+        Path(directory),
+        lock_path=home_edit_lock_path(Path(directory)),
+        agent_name="alice",
     )
     content = frontmatter.dumps(frontmatter.Post("Run it.", None, id="same-id"))
     job = ChoreFile.parse(content, name="same-name")
@@ -73,6 +75,7 @@ def _allocate_and_create_job(root: str) -> None:
     AuthoredChores(
         root_path / "agents" / "alice",
         lock_path=home_edit_lock_path(root_path / "agents" / "alice"),
+        agent_name="alice",
     ).create(
         new_chore_file(
             name=job_id,
@@ -95,7 +98,10 @@ def test_authored_job_ids_use_the_layout_agent_name(
 
     job_id = allocate_authored_chore_name(layout)
 
-    decoded = decode_id(job_id, family=LOCAL_ID_FAMILY, agent_name=agent_name)
+    assert job_id.startswith("auto_")
+    decoded = decode_id(
+        job_id.removeprefix("auto_"), family=LOCAL_ID_FAMILY, agent_name=agent_name
+    )
     assert (decoded.tick, decoded.seq) == (tick, 7)
 
 
@@ -181,15 +187,16 @@ def test_job_state_assignment_and_api_allocation_share_lock_order(
     jobs = AuthoredChores(
         root / "agents" / "alice",
         lock_path=home_edit_lock_path(root / "agents" / "alice"),
+        agent_name="alice",
     ).list()
     assert len(jobs) == 2
-    assert len({job.id for job in jobs}) == 2
+    assert len({job.id_for("alice") for job in jobs}) == 2
 
 
 def test_generated_chore_names_initialize_execution_storage(tmp_path: Path) -> None:
     layout = AgentLayout.resident(tmp_path, "alice")
     name = allocate_authored_chore_name(layout)
-    assert len(name) == 8
+    assert name.startswith("auto_") and len(name) == 13
     assert layout.run_store.is_file()
     assert not (layout.runtime / "ids.json").exists()
     with sqlite3.connect(layout.run_store) as connection:

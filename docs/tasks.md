@@ -22,12 +22,12 @@ chore cleanup:
 ```
 
 Names are case-sensitive declaration names or filename stems. The ref is
-`chore/cleanup`; its ID is the first 80 bits of SHA-256 of the exact UTF-8 name,
-encoded as 16 characters in Toolang's lowercase Base32 alphabet. Its thread is
-`chore_<id>`. Renaming creates a new identity; editing the body, title, schedule,
-or source location preserves identity. Root files are shadowed by home files,
-then inline declarations. Later inline declarations shadow earlier ones.
-Different names producing the same ID are rejected.
+`chore/cleanup`; its ID is eight lowercase Base32 characters derived from the
+exact name and agent. Its thread is `chore_<id>`. Renaming or changing agents
+creates a new identity; editing the body, title, schedule, or source location
+preserves identity. Inline declarations shadow home files; later inline
+declarations shadow earlier ones. Root chore files are ignored. Different names
+producing the same ID are rejected. See the [ID model](ids.md) for the codec.
 
 Definitions hold no execution state. The `chores` table in `.runtime/runs.db`
 records revisions, pending work, active runs, and schedule checkpoints. Removing
@@ -48,10 +48,12 @@ too alice chore cancel cleanup
 too alice chore delete cleanup
 ```
 
-Selectors accept the name, ref, or ID. `new` generates a name when omitted.
+Selectors accept the name, ref, or ID. `new` generates `auto_<8 chars>` when the
+name is omitted. That filename format is reserved for automatic names; all other
+names use the manual identity domain. Both domains produce eight-character IDs.
 To copy a definition, use `new` or copy a home file under a different name;
 the new name creates independent progress and context. Authoring commands edit
-home files; `list` also shows effective root and inline definitions. Edit inline
+home files; `list` also shows effective inline definitions. Edit inline
 definitions in their `.too` source.
 `run` requests a manual occurrence, including retrying a failed or completed
 one-off. `cancel` cancels active or pending work without deleting the definition.

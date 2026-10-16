@@ -3,9 +3,9 @@
 This document defines the Toolang-owned id families and allocator model.
 
 Pure Base32, key derivation, and reversible permutation live in
-`toolang.common.id_codec`. Local/run allocation and name-derived chore IDs live
-in `toolang.common.ids`; conversation and derived talk-thread codecs live in
-`toolang.teaming.ids`.
+`toolang.common.id_codec`. Local/run allocation lives in `toolang.common.ids`;
+agent-bound chore IDs live in `toolang.catalog.chore_ids`; conversation and
+derived talk-thread codecs live in `toolang.teaming.ids`.
 
 
 ## Goals
@@ -14,7 +14,7 @@ Toolang-owned ids should be:
 
 - generated automatically
 - short enough to copy and quote by hand
-- stable across authored-file rename, move, archive, and restore operations
+- stable across source moves and restores; chore renames create new identities
 - monotonic at allocation time without exposing raw time buckets directly
 - reversible for local tooling and archive bucketing
 - safe to allocate from both CLI and runtime processes
@@ -80,12 +80,32 @@ The current full identities are:
 - standalone script context: `script_<allocated-id>`
 - run: `run_<allocated-id>`
 
-Chore IDs do not use the monotonic allocator: hash the exact UTF-8 name with
-SHA-256, take its first 80 bits, and encode them in 16 lowercase Base32
-characters. Name changes create new IDs; body, title, schedule, and location
-changes preserve them. Names are case-sensitive and are not normalized.
-Different-name hash collisions are rejected. The canonical ref is `chore/name`.
+All generated thread suffixes have eight Base32 characters. Chore identities
+are derived from the exact filename stem or declaration name and the agent.
+Hash the UTF-8 name with SHA-256, take its first five bytes, and mask to 39 bits.
+Reserve the remaining bit for the name domain, then apply the shared permutation
+with the key derived from compact UTF-8 JSON `["toolang:chore:v1", agent_name]`:
 
+| Name domain | Input to the permutation |
+| --- | --- |
+| Manual | `0 | name_hash(39)` |
+| Automatic | `1 | name_hash(39)` |
+
+Automatic names reserve `auto_<8 lowercase Base32 characters>`; automatic
+authoring adds this prefix to a durable `local` allocation. A manually created
+file matching that reserved format also belongs to the automatic domain. Every
+other name is manual. The format determines the domain without origin metadata.
+The bit is set before
+permutation; it is not a literal visible `0` or `1` prefix.
+
+The logical chore ID and `chore_` suffix both have eight characters, even though
+automatic filenames are `auto_<8 chars>.md`. Names are case-sensitive and are
+not normalized. Renaming or changing the agent creates a new identity; body,
+title, schedule, and location changes preserve it. Manual/automatic domains are
+disjoint within an agent. Different-name collisions within a domain are rejected
+before catalog writes or State acceptance. Agent keys reduce cross-agent
+collisions but do not guarantee global uniqueness. The canonical ref is
+`chore/name`.
 
 ## Reversible Obfuscation
 
@@ -233,8 +253,7 @@ runs; chore identities remain name-derived.
 ## Conversation IDs
 
 Conversations use eight characters from the same base32 alphabet, prefixed by
-`dm_` or `gc_`. Execution/thread ID formats are unchanged; conversation allocation
-does not use `seqs`.
+`dm_` or `gc_`. Conversation allocation does not use the local `seqs` table.
 
 Schema `3` reserves one kind bit before the shared permutation: DM inputs are
 `0 | pair_hash(39)`; GC inputs are `1 | hourly_tick(20) | sequence(19)`. Both

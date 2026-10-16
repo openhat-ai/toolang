@@ -240,7 +240,7 @@ def test_chore_identity_collision_excludes_all_owners_and_keeps_unrelated_source
     directory.mkdir()
     for name in ("first", "second"):
         (directory / f"{name}.md").write_text("Chore body.")
-    monkeypatch.setattr(chores, "chore_id", lambda _: "shared-chore-id")
+    monkeypatch.setattr(chores, "chore_id", lambda _, **kwargs: "00000000")
     state = prepare_agent_state(layout)
     assert state.chores == ()
     assert "chat" in state.runnables
@@ -327,6 +327,22 @@ def test_historical_chore_definitions_load_without_parsing_markdown(
     monkeypatch.setattr(ChoreFile, "parse", reject_parser)
     loaded = load_agent_state(layout, state.revision)
     assert loaded.chores == state.chores
+
+
+def test_cached_chore_terms_bind_to_the_loading_agent(tmp_path):
+    ids = []
+    for name in ("alice", "bob"):
+        layout = AgentLayout.resident(tmp_path, name)
+        directory = layout.home / "chores"
+        directory.mkdir(parents=True)
+        (directory / "review.md").write_text("Review changes.")
+        state = prepare_agent_state(layout)
+        (chore,) = state.chores
+        assert chore.agent_name == name
+        loaded = load_agent_state(layout, state.revision)
+        assert loaded.chores == state.chores
+        ids.append(chore.id)
+    assert ids[0] != ids[1]
 
 
 @pytest.mark.parametrize("tamper", ["body", "missing", "duplicate"])
