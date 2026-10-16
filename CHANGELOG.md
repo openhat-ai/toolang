@@ -66,7 +66,16 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   entry, with reset restoring automatic Chat handler resolution; other sessions,
   Talk, and Chore are unaffected.
 
-- **Breaking:** `too hub` now prints the Hub endpoint, version, and readiness when
+- **Breaking:** `too hub` now replaces the prior endpoint/status line with a
+  Hub and agent instance snapshot. The Hub endpoint is omitted; scripts that
+  parsed the old line must be updated, and the CLI has no machine-readable status
+  format. The snapshot lists installed residents and discoverable preparing,
+  starting, running, or unresolved visiting, roaming, and temporary instances,
+  each with its inspected state and the `talk` driver recorded for its launch.
+  Finished nonresident instances and history are excluded, and incomplete
+  inspection marks the summary `partial` and prints diagnostics below the list.
+
+- **Breaking:** `too hub` now prints the Hub version and readiness when
   run without a command, and the `too hub status` command is removed. Use
   `too hub` instead of `too hub status`; `too hub start`, `too hub serve`, and
   `too hub stop` are unchanged, and messages that pointed to `too hub status`

@@ -31,7 +31,7 @@ Membership is stored only in the backend, never in configuration.
 
 ```sh
 too hub start                       # Background Hub; requires Redis/Valkey.
-too hub                             # Endpoint and backend readiness.
+too hub                             # Hub readiness and agent instance snapshot.
 too talk                            # List agents and conversations, including IDs and names.
 too talk alice                      # Empty human-agent DM until the first send.
 too talk alice hello                 # Send and exit after acknowledgment.
@@ -42,23 +42,35 @@ too talk alice -- hello -sdf         # Flags after target are literal message te
 too hub stop                        # Leaves agents and Redis/Valkey running.
 ```
 
+`too hub` prints one Hub and agent snapshot. It includes installed resident
+agents and discoverable active or unresolved visiting, roaming, and temporary
+instances; finished nonresident instances and history are excluded. The Hub
+endpoint is omitted. Summary counts are instances, confirmed running instances,
+and running instances with the recorded `talk` driver. The tree is a roster, not
+a connectivity or message delivery indicator. `STATUS` and `TALK` use the
+inspected launch record, not edited configuration or current Hub presence.
+Incomplete inspection marks the summary `partial` and prints diagnostics below
+the list. Large rosters continue in terminal scrollback. The snapshot is one-shot
+and does not start Hub or agents.
+
 `too hub serve` runs in the foreground. Hub binds `127.0.0.1`; clients discover its
 actual endpoint and backend identity from the private root `hub/hub.json`
 file. Calls assume trusted local clients; security authentication is deferred.
 Start Hub before using Talk or `convo` tools. Agents use it for messages, presence,
 and event export. Stopping Hub leaves agents running; communication fails until
 Hub returns. Background communication resumes without an agent restart; uncertain
-message sends are never automatically repeated.
-Isolated guests without access to this local Hub report unavailability.
+message sends are never automatically repeated. Isolated guests without access to
+this local Hub report unavailability.
 
-`too hub` reports `starting` while waiting for the backend;
-`too hub stop --force` can stop a stalled startup. Missing or corrupt initialized
-conversation data fails closed; Hub does not reset counters or rebuild it.
-Upgrade Hub and clients together and select a fresh Redis/Valkey dataset for
-conversation schema `3`. It gives DM and GC disjoint eight-character suffixes;
-older schemas are rejected without mutation. Preserve the old runtime/data
-before switching datasets. Old datasets remain untouched; history, drafts, and
-checkpoints are not migrated or imported.
+In the snapshot, Hub state remains `starting`, `running`, or `unavailable` for a
+live process; absent or stale processes show `not running`. Live records include
+the Hub source version, while absent/stale records omit it. `too hub stop --force`
+can stop a stalled startup. Missing or corrupt initialized conversation data fails
+closed; Hub does not reset counters or rebuild it. Upgrade Hub and clients together
+and select a fresh Redis/Valkey dataset for conversation schema `3`. It gives DM
+and GC disjoint eight-character suffixes; older schemas are rejected without
+mutation. Preserve the old runtime/data before switching datasets. Old datasets
+remain untouched; history, drafts, and checkpoints are not migrated or imported.
 
 Hub `start`/`serve` ports resolve as `--port` > `TOOLANG_HUB_PORT` >
 `teaming.hub.port` > `7001`. Resident agent `start`/`serve` uses `--port` >
