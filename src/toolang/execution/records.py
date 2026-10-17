@@ -58,14 +58,12 @@ from .types import (
     LoopStepNoted,
     ExecStepNoted,
     MessageTemplate,
-    ModelAccounting,
+    TokenUsage,
+    RunNoted,
     ModelCost,
-    ModelCostLine,
     ModelMessages,
-    ModelPricing,
     ModelStepGiven,
     ModelStepNoted,
-    ModelUsageMeter,
     Occurrence,
     OccurrencePosition,
     Output,
@@ -231,6 +229,7 @@ class RunRecord:
     finished_at: str | None = None
     begin_cursor: str | None = None
     end_cursor: str | None = None
+    noted: RunNoted | None = None
 
     def __post_init__(self) -> None:
         if not valid_run_id(self.id):
@@ -249,6 +248,8 @@ class RunRecord:
             raise TypeError("run state must be Run-scoped")
         if self.output is not None and not isinstance(self.output, Output):
             raise TypeError("run output requires an Output or None")
+        if self.noted is not None and not isinstance(self.noted, RunNoted):
+            raise TypeError("run noted requires RunNoted or None")
         _validate_record_error(self.error, label="run")
         validate_occurrence(self.occur)
 
@@ -1406,11 +1407,16 @@ def step_noted_from_data(kind: StepKind, data: object) -> StepNoted:
             raise ValueError("exec noted requires text control and runnable refs")
         return ExecStepNoted(ControlRef.parse(payload["control"]), payload["runnable"])
     if kind == "tool":
-        payload = _canonical_object(data, fields={"summary"}, label="tool noted")
+        payload = _canonical_object(
+            data, fields={"summary", "invoked"}, label="tool noted"
+        )
         summary = payload["summary"]
         if not isinstance(summary, str):
             raise ValueError("tool noted summary must be text")
-        return ToolStepNoted(summary=summary)
+        return ToolStepNoted(
+            summary=summary,
+            invoked=_required_bool(payload["invoked"], label="tool invoked"),
+        )
     if kind in {"value", "par"}:
         payload = _canonical_object(
             data,
@@ -1450,13 +1456,15 @@ def step_noted_from_data(kind: StepKind, data: object) -> StepNoted:
     if kind != "model":
         raise ValueError(f"{kind} Step noted must be null")
     payload = _canonical_object(
-        data, fields={"accounting", "cont"}, label="model noted"
+        data, fields={"usage", "cost", "cont", "invoked"}, label="model noted"
     )
     raw_cont = payload["cont"]
     if raw_cont is not None and not isinstance(raw_cont, Mapping):
         raise ValueError("model noted cont must be an object or null")
     return ModelStepNoted(
-        accounting=_model_accounting_from_data(payload["accounting"]),
+        usage=_token_usage_from_data(payload["usage"]),
+        cost=_model_cost_from_data(payload["cost"]),
+        invoked=_required_bool(payload["invoked"], label="model invoked"),
         continuation=dict(cast(Mapping[str, Any], raw_cont))
         if raw_cont is not None
         else None,
@@ -1474,7 +1482,7 @@ def step_noted_to_data(kind: StepKind, noted: StepNoted) -> dict[str, object] | 
     if isinstance(noted, ExecStepNoted):
         return {"control": str(noted.control), "runnable": noted.runnable}
     if isinstance(noted, ToolStepNoted):
-        return {"summary": noted.summary}
+        return {"summary": noted.summary, "invoked": noted.invoked}
     if isinstance(noted, CollectionStepNoted):
         return {
             "total_items": noted.total_items,
@@ -1487,166 +1495,69 @@ def step_noted_to_data(kind: StepKind, noted: StepNoted) -> dict[str, object] | 
             "total": noted.total,
         }
     return {
-        "accounting": _model_accounting_to_data(noted.accounting),
+        "usage": _TOKEN_USAGE_ADAPTER.dump_python(noted.usage, mode="json"),
+        "cost": _MODEL_COST_ADAPTER.dump_python(noted.cost, mode="json"),
+        "invoked": noted.invoked,
         "cont": (dict(noted.continuation) if noted.continuation is not None else None),
     }
 
 
-def _model_accounting_from_data(value: object) -> ModelAccounting | None:
-    if value is None:
-        return None
-    payload = _canonical_object(
-        value,
-        fields={"version", "usage", "pricing", "cost"},
-        label="model accounting",
-    )
-    version = _required_int(payload["version"], label="model accounting version")
-    usage = _canonical_object(
-        payload["usage"],
-        fields={"input", "output", "meters"},
-        label="model accounting usage",
-    )
-    raw_meters = usage["meters"]
-    if not isinstance(raw_meters, list):
-        raise ValueError("model accounting meters must be an array")
-    meters: list[ModelUsageMeter] = []
-    for raw_meter in raw_meters:
-        meter = _canonical_object(
-            raw_meter,
-            fields={"name", "quantity", "unit"},
-            label="model accounting meter",
+_TOKEN_USAGE_ADAPTER = TypeAdapter(TokenUsage | None)
+_MODEL_COST_ADAPTER = TypeAdapter(ModelCost | None)
+_RUN_NOTED_ADAPTER = TypeAdapter(RunNoted | None)
+
+
+def _token_usage_from_data(value: object) -> TokenUsage | None:
+    if value is not None:
+        _canonical_object(
+            value,
+            fields={
+                "input_tokens",
+                "output_tokens",
+                "cache_read_tokens",
+                "reasoning_tokens",
+            },
+            label="token usage",
         )
-        meters.append(
-            ModelUsageMeter(
-                name=_required_text(meter["name"], label="model meter name"),
-                quantity=_required_number(
-                    meter["quantity"], label="model meter quantity"
-                ),
-                unit=_required_text(meter["unit"], label="model meter unit"),
-            )
-        )
-    pricing = None
-    if payload["pricing"] is not None:
-        pricing_data = _canonical_object(
-            payload["pricing"],
-            fields={"plan", "match"},
-            label="model accounting pricing",
-        )
-        pricing = ModelPricing(
-            plan=_required_text(pricing_data["plan"], label="pricing plan"),
-            match=_required_dict(pricing_data["match"], label="pricing match"),
-        )
-    cost_data = _canonical_object(
-        payload["cost"],
-        fields={"selected", "reported", "estimate"},
-        label="model accounting cost",
-    )
-    selected = _required_text(cost_data["selected"], label="selected cost source")
-    if selected not in {"reported", "estimated", "zero", "unknown"}:
-        raise ValueError("selected cost source is invalid")
-    return ModelAccounting(
-        input_tokens=_required_int(usage["input"], label="accounting input tokens"),
-        output_tokens=_required_int(usage["output"], label="accounting output tokens"),
-        meters=tuple(meters),
-        pricing=pricing,
-        reported=_model_cost_from_data(cost_data["reported"]),
-        estimate=_model_cost_from_data(cost_data["estimate"]),
-        selected=cast(Literal["reported", "estimated", "zero", "unknown"], selected),
-        version=version,
-    )
+    return _TOKEN_USAGE_ADAPTER.validate_python(value)
 
 
 def _model_cost_from_data(value: object) -> ModelCost | None:
-    if value is None:
-        return None
-    payload = _canonical_object(
-        value,
-        fields={"amount", "currency", "complete", "lines"},
-        label="model cost",
-    )
-    raw_lines = payload["lines"]
-    if not isinstance(raw_lines, list):
-        raise ValueError("model cost lines must be an array")
-    lines: list[ModelCostLine] = []
-    for raw_line in raw_lines:
-        line = _canonical_object(
-            raw_line,
-            fields={"meter", "quantity", "unit", "rate", "per", "amount", "condition"},
-            label="model cost line",
+    if value is not None:
+        _canonical_object(
+            value,
+            fields={
+                "amount",
+                "currency",
+                "source",
+                "complete",
+                "pricing",
+                "meters",
+                "lines",
+            },
+            label="model cost",
         )
-        lines.append(
-            ModelCostLine(
-                meter=_required_text(line["meter"], label="cost line meter"),
-                quantity=_required_number(line["quantity"], label="cost line quantity"),
-                unit=_required_text(line["unit"], label="cost line unit"),
-                rate=_required_number(line["rate"], label="cost line rate"),
-                per=_required_number(line["per"], label="cost line per"),
-                amount=_required_number(line["amount"], label="cost line amount"),
-                condition=_optional_dict(
-                    line["condition"], label="cost line condition"
-                ),
-            )
+    return _MODEL_COST_ADAPTER.validate_python(value)
+
+
+def run_noted_from_data(value: object) -> RunNoted | None:
+    if value is not None:
+        _canonical_object(
+            value,
+            fields={"calls", "usage", "cost", "cost_approximate"},
+            label="run noted",
         )
-    complete = payload["complete"]
-    if not isinstance(complete, bool):
-        raise ValueError("model cost complete must be a boolean")
-    return ModelCost(
-        amount=_required_number(payload["amount"], label="model cost amount"),
-        currency=_required_text(payload["currency"], label="model cost currency"),
-        complete=complete,
-        lines=tuple(lines),
-    )
+    return _RUN_NOTED_ADAPTER.validate_python(value)
 
 
-def _model_accounting_to_data(value: ModelAccounting | None) -> object:
-    if value is None:
-        return None
-    return {
-        "version": value.version,
-        "usage": {
-            "input": value.input_tokens,
-            "output": value.output_tokens,
-            "meters": [
-                {"name": meter.name, "quantity": meter.quantity, "unit": meter.unit}
-                for meter in value.meters
-            ],
-        },
-        "pricing": (
-            {
-                "plan": value.pricing.plan,
-                "match": dict(value.pricing.match),
-            }
-            if value.pricing is not None
-            else None
-        ),
-        "cost": {
-            "selected": value.selected,
-            "reported": _model_cost_to_data(value.reported),
-            "estimate": _model_cost_to_data(value.estimate),
-        },
-    }
+def run_noted_to_data(value: RunNoted | None) -> object:
+    return _RUN_NOTED_ADAPTER.dump_python(value, mode="json")
 
 
-def _model_cost_to_data(value: ModelCost | None) -> object:
-    if value is None:
-        return None
-    return {
-        "amount": value.amount,
-        "currency": value.currency,
-        "complete": value.complete,
-        "lines": [
-            {
-                "meter": line.meter,
-                "quantity": line.quantity,
-                "unit": line.unit,
-                "rate": line.rate,
-                "per": line.per,
-                "amount": line.amount,
-                "condition": line.condition,
-            }
-            for line in value.lines
-        ],
-    }
+def _required_bool(value: object, *, label: str) -> bool:
+    if type(value) is not bool:
+        raise ValueError(f"{label} must be boolean")
+    return value
 
 
 def _canonical_object(

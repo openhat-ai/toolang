@@ -32,6 +32,7 @@ from toolang.execution.stream_client import StreamClientState
 from toolang.execution.schemas import StreamFrame
 from toolang.execution.schemas import (
     ControlInfo,
+    LiveSnapshot,
     RerunRequest,
     RunDetail,
     RunRequest,
@@ -48,6 +49,7 @@ from toolang.execution.types import (
 _LOGGER = logging.getLogger(__name__)
 _RUN_ID_HEADER = "X-Toolang-Run-ID"
 _RUN_DETAIL_ADAPTER = TypeAdapter(RunDetail)
+_LIVE_SNAPSHOT_ADAPTER = TypeAdapter(LiveSnapshot)
 _CONTROL_INFO_ADAPTER = TypeAdapter(ControlInfo)
 _THREAD_INFO_ADAPTER = TypeAdapter(ThreadInfo)
 _RUN_REQUEST_ADAPTER = TypeAdapter(RunRequest)
@@ -151,6 +153,29 @@ class RemoteRunClient:
         elif self._http is None or self._http.is_closed:
             raise RemoteRunClientError("remote run HTTP client is closed")
         self._connected = True
+
+    async def live_trees(self, *, root_run_id: str | None = None) -> LiveSnapshot:
+        self._require_connected()
+        if root_run_id is not None:
+            RunRef.parse(root_run_id)
+        response = await self._request(
+            "GET",
+            "/api/v1/runs/live",
+            operation="live trees",
+            params={"root_run_id": root_run_id} if root_run_id is not None else None,
+        )
+        payload = _response_json(response, operation="live trees")
+        try:
+            snapshot = _LIVE_SNAPSHOT_ADAPTER.validate_python(payload)
+        except ValidationError as exc:
+            raise RemoteRunClientError(
+                "remote live trees returned invalid snapshot"
+            ) from exc
+        if root_run_id is not None and any(
+            tree.root_run_id != root_run_id for tree in snapshot.trees
+        ):
+            raise RemoteRunClientError("remote live trees returned an unexpected root")
+        return snapshot
 
     async def run(
         self,

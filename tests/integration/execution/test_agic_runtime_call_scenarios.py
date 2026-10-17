@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+
 import asyncio
 from pathlib import Path
 from typing import Any, Literal
@@ -141,8 +142,10 @@ flow target(_: {type_name}, note: Part[]) -> {type_name}:
                 tracer=tracer,
             )
             assert root.status == "succeeded", root.error
-            if harness.executor._tasks:
-                await asyncio.gather(*harness.executor._tasks)
+            if harness.executor._root_runs:
+                await asyncio.gather(
+                    *(root.task for root in harness.executor._root_runs.values())
+                )
             controls = [
                 control
                 for run in harness.store.list_runs(limit=None)

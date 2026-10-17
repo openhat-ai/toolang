@@ -30,7 +30,6 @@ from toolang.cli.common.execution_progress.facts import (
 from toolang.cli.common.execution_progress.formatting import one_line as _one_line
 from toolang.base.types.message import Part, TextPart, message_text
 from toolang.lang.types import Array
-from toolang.execution.accounting import token_meter_quantity
 from toolang.execution.inspection.history import RunHistory
 from toolang.execution.inspection import (
     ChildOccurrenceTotals,
@@ -1363,15 +1362,12 @@ def _call_summary_renderables(
 
 
 def _model_usage_fact(noted: ModelStepNoted) -> str:
-    accounting = noted.accounting
-    if accounting is not None:
+    usage = noted.usage
+    if usage is not None:
         return _token_fact(
-            accounting.input_tokens,
-            accounting.output_tokens,
-            reasoning_tokens=token_meter_quantity(
-                accounting,
-                "output.reasoning",
-            ),
+            usage.input_tokens,
+            usage.output_tokens,
+            reasoning_tokens=usage.reasoning_tokens,
         )
     return ""
 

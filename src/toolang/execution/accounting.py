@@ -4,33 +4,34 @@ from __future__ import annotations
 
 from fractions import Fraction
 from collections.abc import Mapping
-from typing import Literal, cast
+from typing import cast
 
-from toolang.base.money import cost_from_rates, normalize_cost
+from toolang.base.money import cost_from_rates
 from toolang.base.types.model import (
     Model,
 )
 from toolang.base.types.run import ModelUsage
 
 from .types import (
-    ModelAccounting,
     ModelCost,
     ModelCostLine,
     ModelPricing,
     ModelUsageMeter,
+    ModelStepNoted,
+    TokenUsage,
 )
 
 _PER_MILLION = 1_000_000
 
 
-def build_model_accounting(
+def build_model_noted(
     model: Model,
     usage: ModelUsage | None,
-) -> ModelAccounting | None:
-    """Build durable accounting from observed usage and the applied model rates."""
+) -> ModelStepNoted:
+    """Normalize one result once for persistence, live statistics and Events."""
 
     if usage is None:
-        return None
+        return ModelStepNoted()
     rates, plan, match = _selected_rates(model, usage=usage)
     estimate = (
         _estimate_cost(
@@ -41,19 +42,37 @@ def build_model_accounting(
         if rates is not None
         else None
     )
-    reported = (
-        ModelCost(
-            amount=normalize_cost(usage.reported_cost),
-            currency=usage.reported_currency or "USD",
-            complete=True,
+    reported_currency = usage.reported_currency or "USD"
+    if usage.reported_cost is not None and (
+        reported_currency.upper() == "USD" or estimate is None
+    ):
+        amount, currency, source, complete = (
+            usage.reported_cost,
+            reported_currency,
+            "reported",
+            True,
         )
-        if usage.reported_cost is not None
-        else None
-    )
-    selected = _selected_cost_source(reported=reported, estimate=estimate)
-    return ModelAccounting(
-        input_tokens=usage.input_tokens,
-        output_tokens=usage.output_tokens,
+    elif estimate is not None:
+        amount, currency, source, complete = (
+            estimate.amount,
+            estimate.currency,
+            estimate.source,
+            estimate.complete,
+        )
+        if (
+            usage.reported_cost is None
+            and complete
+            and estimate.lines
+            and all(line.rate == 0 for line in estimate.lines)
+        ):
+            source = "zero"
+    else:
+        amount, currency, source, complete = None, None, "unknown", False
+    cost = ModelCost(
+        amount=amount,
+        currency=currency,
+        source=source,
+        complete=complete,
         meters=_usage_meters(usage),
         pricing=(
             ModelPricing(
@@ -63,80 +82,53 @@ def build_model_accounting(
             if rates is not None or usage.billing
             else None
         ),
-        reported=reported,
-        estimate=estimate,
-        selected=selected,
+        lines=estimate.lines if estimate is not None else (),
+    )
+    return ModelStepNoted(
+        usage=TokenUsage(
+            usage.input_tokens,
+            usage.output_tokens,
+            token_meter_quantity(cost, "input.cache_read"),
+            token_meter_quantity(cost, "output.reasoning"),
+        ),
+        cost=cost,
     )
 
 
-def selected_usd_cost(accounting: ModelAccounting | None) -> float | None:
+def selected_usd_cost(cost: ModelCost | None) -> float | None:
     """Return the selected USD amount for limits and summary projections."""
 
-    if accounting is None:
+    if cost is None or cost.currency is None or cost.currency.upper() != "USD":
         return None
-    if accounting.selected == "zero":
-        return 0.0
-    selected = (
-        accounting.reported
-        if accounting.selected == "reported"
-        else accounting.estimate
-        if accounting.selected == "estimated"
-        else None
-    )
-    if selected is None or selected.currency.upper() != "USD":
-        return None
-    return normalize_cost(float(selected.amount))
+    return cost.amount
 
 
-def _selected_cost_source(
-    *,
-    reported: ModelCost | None,
-    estimate: ModelCost | None,
-) -> Literal["reported", "estimated", "zero", "unknown"]:
-    if reported is not None and reported.currency.upper() == "USD":
-        return "reported"
-    if estimate is not None and estimate.currency.upper() == "USD":
-        if (
-            reported is None
-            and estimate.complete
-            and estimate.lines
-            and all(line.rate == 0 for line in estimate.lines)
-        ):
-            return "zero"
-        return "estimated"
-    if reported is not None:
-        return "reported"
-    if estimate is not None:
-        return "estimated"
-    return "unknown"
-
-
-def selected_cost_is_approximate(accounting: ModelAccounting | None) -> bool:
+def selected_cost_is_approximate(cost: ModelCost | None) -> bool:
     """Return whether the selected cost needs an approximation marker."""
 
-    return accounting is not None and accounting.selected in {"estimated", "unknown"}
+    return cost is not None and cost.source in {"estimated", "unknown"}
 
 
-def cache_hit_ratio(accounting: ModelAccounting | None) -> float | None:
+def cache_hit_ratio(usage: TokenUsage | None) -> float | None:
     """Return the cache-read ratio when both numerator and total are known."""
 
-    if accounting is None or accounting.input_tokens <= 0:
+    if usage is None or usage.input_tokens <= 0:
         return None
-    quantity = token_meter_quantity(accounting, "input.cache_read")
+    quantity = usage.cache_read_tokens
     if quantity is None:
         return None
-    return float(quantity) / float(accounting.input_tokens)
+    return float(quantity) / float(usage.input_tokens)
 
 
 def token_meter_quantity(
-    accounting: ModelAccounting | None,
+    cost: ModelCost | None,
     name: str,
 ) -> int | None:
     """Return one unambiguous integral token meter, or ``None`` when unknown."""
 
-    if accounting is None:
+    if cost is None:
         return None
-    meters = tuple(meter for meter in accounting.meters if meter.name == name)
+    meters = tuple(meter for meter in cost.meters if meter.name == name)
     if len(meters) != 1:
         return None
     meter = meters[0]
@@ -328,6 +320,7 @@ def _estimate_cost(
     return ModelCost(
         amount=amount,
         currency="USD",
+        source="estimated",
         complete=complete,
         lines=tuple(lines),
     )

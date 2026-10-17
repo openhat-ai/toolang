@@ -1,7 +1,5 @@
 """Internal compaction runs share ownership, events and durable recovery."""
 
-from toolang.execution.types import StepRef
-
 import asyncio
 import json
 from contextlib import closing
@@ -37,7 +35,13 @@ from toolang.execution.executor.steps import model as model_step
 from toolang.execution.inspection.history import RunHistory
 from toolang.execution.records import CompactControlPayload, StoredModelStepGiven
 from toolang.execution.store import RunStore
-from toolang.execution.types import ModelStepNoted, RunRef, ThreadPrefix, ToolStepGiven
+from toolang.execution.types import (
+    ModelStepNoted,
+    RunRef,
+    ThreadPrefix,
+    ToolStepGiven,
+    StepRef,
+)
 
 SOURCE = """agic chat(_: Part[]) -> Text:
   context = none
@@ -142,6 +146,10 @@ def test_batches_and_client_projection_share_the_normal_event_tree(
             (child,) = producers(h, thread)
             outer, following = h.store.list_steps(run_id=caller.id)
             assert child.parent == outer.ref and str(child.thread) == thread
+            assert caller.noted.calls.model_calls == 4
+            assert caller.noted.calls.tool_calls == 1
+            assert child.noted.calls.model_calls == 3
+            assert child.noted.calls.tool_calls == 0
             assert h.store.get_thread(thread_id=f"compact_{thread}") is None
             with closing(RunStore(h.store.db_path)) as store:
                 history = RunHistory(store)
@@ -152,6 +160,7 @@ def test_batches_and_client_projection_share_the_normal_event_tree(
                 steps = store.list_steps(run_id=child.id)
                 assert [s.kind for s in steps] == ["tool", "model"] * 3
                 for index, (read, model) in enumerate(zip(steps[::2], steps[1::2])):
+                    assert read.noted.invoked is False and model.noted.invoked is True
                     assert read.given.call.input["roots"] == [str(roots[index])]
                     assert isinstance(model.given, StoredModelStepGiven)
                     assert model.given.call.messages.head == model.ref
@@ -164,7 +173,7 @@ def test_batches_and_client_projection_share_the_normal_event_tree(
                         assert f"internal summary {index - 1}" in str(call.messages)
                         assert f"input {index - 1}" not in str(call.messages)
                     assert isinstance(model.noted, ModelStepNoted)
-                    assert model.noted.accounting.input_tokens == 42
+                    assert model.noted.usage.input_tokens == 42
                 (control,) = [
                     c
                     for c in store.list_run_controls(run_id=caller.id)
@@ -203,6 +212,27 @@ def test_batches_and_client_projection_share_the_normal_event_tree(
     asyncio.run(scenario())
 
 
+def _resume_execution(executor, parent, step, owner):
+    # A new process starts with zero live totals, even when compact resumes history.
+    from toolang.execution.live import LiveTree
+
+    tree = LiveTree(parent.run_id, parent.thread)
+    tree.accept_run(
+        parent.run_id,
+        parent=None,
+        runnable="agic:chat",
+        created_at=parent.created_at,
+        occurrence=parent.occurrence,
+    )
+    tree.begin_step(executor.store.get_step(ref=step))
+    owner = replace(owner, task=asyncio.current_task(), tree=tree, pending_controls={})
+    execution = _Execution(executor, root=parent, active=owner)
+    owner.execution = execution
+    executor._active_runs[parent.run_id] = owner
+    executor._root_runs[parent.run_id] = owner
+    return execution
+
+
 class ProcessCrash(BaseException):
     pass
 
@@ -237,7 +267,7 @@ def test_restart_at_durable_boundaries_preserves_child_and_checkpoint(
     original_invoke = compact_run.invoke
 
     async def capture(state, step):
-        captured.append((state, step, state.execution._active))
+        captured.append((state, step, state.execution._root_run))
         return await original_invoke(state, step)
 
     async def scenario():
@@ -298,12 +328,7 @@ def test_restart_at_durable_boundaries_preserves_child_and_checkpoint(
             # Restart at the same durable owner, with a new connection and execution state.
             with closing(RunStore(h.store.db_path)) as store:
                 executor = RunExecutor(store, h.executor.ids)
-                active = replace(
-                    old_active, task=asyncio.current_task(), controls={}, ended=set()
-                )
-                execution = _Execution(executor, root=parent, active=active)
-                active.execution = execution
-                executor._active[parent.run_id] = active
+                execution = _resume_execution(executor, parent, step, old_active)
                 state.execution = execution
                 state.prepare_model_frame = None
                 receipt = await original_invoke(state, step)
@@ -515,7 +540,7 @@ def test_context_rejection_records_attempt_then_shrinks_only_whole_roots(
             assert steps[0].given.call.input["roots"] == [str(r) for r in roots[:-1]]
             assert steps[2].given.call.input["roots"] == [str(roots[0])]
             assert steps[4].given.call.input["roots"] == [str(r) for r in roots[1:-1]]
-            assert steps[1].noted.accounting.input_tokens == 100
+            assert steps[1].noted.usage.input_tokens == 100
 
     asyncio.run(scenario())
 
@@ -654,7 +679,7 @@ def test_restart_inside_one_root_keeps_accepted_step_coverage(tmp_path, monkeypa
     invoke = compact_run.invoke
 
     async def capture(state, step):
-        captured.append((state, step, state.execution._active))
+        captured.append((state, step, state.execution._root_run))
         return await invoke(state, step)
 
     async def scenario():
@@ -738,12 +763,7 @@ def test_restart_inside_one_root_keeps_accepted_step_coverage(tmp_path, monkeypa
             with closing(RunStore(h.store.db_path)) as store:
                 executor = RunExecutor(store, h.executor.ids)
                 parent = state.prepared.run
-                active = replace(
-                    old_active, task=asyncio.current_task(), controls={}, ended=set()
-                )
-                execution = _Execution(executor, root=parent, active=active)
-                active.execution = execution
-                executor._active[parent.run_id] = active
+                execution = _resume_execution(executor, parent, step, old_active)
                 state.execution = execution
                 state.prepare_model_frame = None
                 rendered = []
@@ -774,5 +794,121 @@ def test_restart_inside_one_root_keeps_accepted_step_coverage(tmp_path, monkeypa
                     compaction.read_checkpoint(store, completed)[0]
                     == len(source_units) - 1
                 )
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("failure", ["rejected_begin", "canceled_begin"])
+def test_compact_model_begin_failure_preserves_original_outcome(
+    tmp_path, monkeypatch, failure
+):
+    h = harness_at(tmp_path)
+    original_begin = h.store.begin_step
+    original_check = _Execution._check_step_cancel
+    child_id = None
+
+    async def cancel_after_begin(execution, record):
+        if (
+            failure == "canceled_begin"
+            and record.kind == "model"
+            and h.store.get_run(run_id=record.run_id).parent is not None
+        ):
+            h.executor.cancel(run_id=record.run_id, timing="next_call")
+        await original_check(execution, record)
+
+    def reject_or_cancel(**facts):
+        nonlocal child_id
+        if facts["kind"] == "model":
+            run_id = facts["ref"].run_id
+            if h.store.get_run(run_id=run_id).parent is not None:
+                child_id = run_id
+                if failure == "rejected_begin":
+                    raise RuntimeError("injected compact begin failure")
+                return original_begin(**facts)
+        return original_begin(**facts)
+
+    async def scenario():
+        async with h:
+            thread, _ = await seed(h, monkeypatch)
+            h.adapter._responses.extend([reply()] * 4)
+            with monkeypatch.context() as patch:
+                patch.setattr(h.store, "begin_step", reject_or_cancel)
+                patch.setattr(_Execution, "_check_step_cancel", cancel_after_begin)
+                result = await current(h, thread)
+            assert child_id is not None
+            child = h.store.get_run(run_id=child_id)
+            assert child is not None and child.noted is not None
+            assert child.noted.calls.model_calls == 0
+            expected = "failed" if failure == "rejected_begin" else "canceled"
+            assert child.status == result.status == expected, (
+                h.store.resolve_error(child.error) if child.error else None
+            )
+            assert result.noted is not None and result.noted.calls.model_calls == 0
+            steps = h.store.list_steps(run_id=child.id)
+            assert all(s.status != "running" for s in steps)
+            if failure == "canceled_begin":
+                assert steps[-1].noted == ModelStepNoted()
+            with h.executor.stream.boundary() as (_, _, frames):
+                assert (
+                    sum(
+                        isinstance(f.event, RunEnd) and f.event.run == child_id
+                        for f in frames
+                    )
+                    == 1
+                )
+            assert result.error is not None
+            error = h.store.resolve_error(result.error)
+            assert (
+                "injected compact begin failure"
+                if failure == "rejected_begin"
+                else "canceled"
+            ) in error
+            assert len(h.adapter.invocations) == 4
+            assert not h.executor.live_trees().trees
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("boundary", ["part_begin", "part_end"])
+def test_compact_result_usage_is_visible_before_part_delivery(
+    tmp_path, monkeypatch, boundary
+):
+    h = harness_at(tmp_path)
+    samples = []
+
+    class CancelAtModelPart(RecordingRunTracer):
+        child = None
+
+        async def on_event(self, event):
+            await super().on_event(event)
+            if isinstance(event, RunBegin) and event.runnable == compaction.RUNNABLE:
+                self.child = event.run
+            if (
+                event.type == boundary
+                and isinstance(event, PartBegin | PartEnd)
+                and self.child == StepRef.parse(event.step).run_id
+                and h.store.get_step(ref=StepRef.parse(event.step)).kind == "model"
+            ):
+                samples.append(h.executor.live_trees().trees[0])
+                h.executor.cancel(run_id=self.child)
+                await asyncio.Future()
+
+    tracer = CancelAtModelPart()
+    h.intercept_events(tracer)
+
+    async def scenario():
+        async with h:
+            thread, _ = await seed(h, monkeypatch)
+            h.adapter._responses.extend([reply()] * 4)
+            result = await current(h, thread, tracer=tracer)
+            assert result.status == "canceled"
+            assert any(node.usage is not None for node in samples[0].nodes)
+            child = h.store.get_run(run_id=tracer.child)
+            assert child is not None and child.noted is not None
+            assert (
+                child.noted.usage is not None and child.noted.usage.input_tokens == 42
+            )
+            assert result.noted is not None and result.noted.usage == child.noted.usage
+            assert child.noted.calls.model_calls == 1
 
     asyncio.run(scenario())

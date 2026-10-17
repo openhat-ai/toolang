@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Callable, Mapping
 from dataclasses import replace
 from typing import TYPE_CHECKING, Literal
@@ -197,20 +196,22 @@ async def accept(
                             event.control, publication.cursor
                         )
                         publication.append(event)
-                    executor._publish_step_ends(
+                    completed_steps = executor._publish_step_ends(
                         publication,
                         (step,),
                         thread_id=parent.thread,
                         root_run_id=parent.root_run_id,
                     )
+            if created and execution._root_run is not None:
+                for completed in completed_steps:
+                    execution._root_run.tree.end_step(completed)
         if created:
-            if execution._active is not None:
-                execution._active.early_ends.add(step)
+            if execution._root_run is not None:
+                execution._early_ends.add(step)
             try:
                 executor._launch(
                     bound,
                     runnable,
-                    loop=asyncio.get_running_loop(),
                     tracer=None,
                     independent=True,
                 )
@@ -220,10 +221,10 @@ async def accept(
                     raise
         return handle
 
-    if execution._active is None:
+    if execution._root_run is None:
         handle = admit()
     else:
-        async with execution._active.event_lock:
+        async with execution._root_run.boundary_lock:
             handle = admit()
     return handle
 

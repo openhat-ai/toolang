@@ -153,6 +153,12 @@ class CanonicalStream:
                 self._signal.notify()
 
     @contextmanager
+    def gate(self) -> Iterator[None]:
+        """Read/update resident state without copying the canonical event ring."""
+        with self._lock:
+            yield
+
+    @contextmanager
     def boundary(
         self,
     ) -> Iterator[tuple[EventCursor, EventCursor, tuple[CanonicalEvent, ...]]]:

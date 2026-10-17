@@ -685,7 +685,7 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
         )
         assert isinstance(steps[0].given, StoredModelStepGiven)
         assert steps[0].given.model == "test/model"
-        assert steps[0].noted == ModelStepNoted()
+        assert steps[0].noted == ModelStepNoted(invoked=True)
         detail = RunHistory(store).get_run(record.id)
         assert detail is not None
         run_payload = detail.controls[0].payload

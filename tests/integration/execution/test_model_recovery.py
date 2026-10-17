@@ -97,9 +97,9 @@ def test_recovery_retains_accounting_and_replay_without_executing_failed_batch(
             ]
             failed = steps[2]
             assert isinstance(failed.noted, ModelStepNoted)
-            assert failed.noted.accounting is not None
-            assert failed.noted.accounting.input_tokens == 10
-            assert failed.noted.accounting.output_tokens == 20
+            assert failed.noted.usage is not None
+            assert failed.noted.usage.input_tokens == 10
+            assert failed.noted.usage.output_tokens == 20
             retry = harness.adapter.invocations[-1].call
             assert retry.continuation == {"opaque": "keep"}
             assert not any(
@@ -369,7 +369,7 @@ def test_failed_attempt_respects_token_accounting_limits(
             (step,) = harness.store.list_steps(run_id=run.id)
             assert step.status == "failed"
             assert isinstance(step.noted, ModelStepNoted)
-            assert (step.noted.accounting is not None) == known_usage
+            assert (step.noted.usage is not None) == known_usage
             assert_run_event_integrity(tracer.events)
 
     asyncio.run(scenario())

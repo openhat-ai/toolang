@@ -1,6 +1,7 @@
 """Agent Hub transport, recovery, and admission checks on an isolated backend."""
 
 import asyncio
+import logging
 from dataclasses import replace
 import json
 from unittest.mock import MagicMock, patch
@@ -494,6 +495,8 @@ def test_handler_errors_do_not_trigger_other_agents(tmp_path, monkeypatch):
 def test_handler_error_send_failure_is_checkpointed_without_retry(
     tmp_path, monkeypatch, caplog, fault
 ):
+    caplog.set_level(logging.ERROR)
+
     async def scenario():
         human = client(FakeServer(server_type="valkey"), CONNECTION.human)
         app = create_app(human, version="0.4.0-test")

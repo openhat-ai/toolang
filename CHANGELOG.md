@@ -9,6 +9,18 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Added
 
+- Resident execution exposes LiveTree snapshots for active Runs:
+  `GET /api/v1/runs/live` returns `LiveSnapshot(epoch, observed_at, trees)` from
+  executor memory without reading history or the Store, and local and remote
+  `RunClient` objects expose `await live_trees(root_run_id=None)`. Each tree
+  holds parent-first Run and Step nodes with compact identity, runnable or
+  operation, status, timestamps, and Run subtree call, token, and USD cost
+  totals, excluding call contexts, arguments, outputs, provider metadata, and
+  references. An optional `root_run_id` selects one root; unknown, completed,
+  and child IDs return no trees, invalid IDs return HTTP 422, and a stopped
+  executor returns 503. Treat each response as a replacement sample and use the
+  event stream when every transition is needed.
+
 - A conversation carries one optional Hub-owned `MEMBERS.md`, separate from
   workspace `AGENTS.md`: `convo.get_rules` reads the document and its revision,
   `convo.set_rules(target, content, revision)` replaces or clears it, and the
@@ -56,6 +68,20 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   requires a ref or a driver.
 
 ### Changed
+
+- **Breaking:** terminal execution statistics are recorded directly in Noted: a
+  model Step stores `usage` (input, output, cache-read, and reasoning tokens),
+  `cost`, `invoked`, and `cont` without an `accounting` envelope, a tool Step
+  stores `summary` and `invoked`, and each Run record gains terminal `noted`
+  with its subtree `calls`, `usage`, USD `cost`, and `cost_approximate`. Step
+  completion event summaries reuse `TokenUsage` and move USD cost to sibling
+  `cost` and `cost_approximate` fields. Replace record reads of
+  `noted.accounting` with `noted.usage` and `noted.cost`, and replace event
+  reads of `noted.usage.cost` and `noted.usage.approximate` with `noted.cost`
+  and `noted.cost_approximate`. Writable execution-store schema 59 rejects older
+  schemas for reads and writes with no migration or compatibility decoder, so
+  retain any required old runtime data separately and use fresh storage;
+  subscribers must upgrade and reconnect.
 
 - **Breaking:** runtime operation interpretation now uses the current `runtime`
   plugin and canonical `runtime__*` names for event metadata and receipts, CLI

@@ -45,12 +45,13 @@ records and observes only new live events.
 
 Persistence makes completed history available after process restart and for
 later model calls. Toolang does not resume an unfinished run after its owner
-process exits. The execution store writes schema version 58 and reads versions
-52–58. Writable opens upgrade schema 57 by removing retired Thread peer metadata;
-other older schemas and adjacent legacy `ids.json` files are rejected without
-modification. Stop old writers before upgrading. For unsupported stores, preserve
-the complete old runtime before explicitly starting with fresh runtime data.
-Read-only inspection of supported old stores remains available.
+process exits. The execution store reads and writes only schema 59. Older schemas
+are rejected without modification, including read-only opens; writable opens also
+reject adjacent legacy `ids.json` files. There is no migration or old-record
+compatibility path. Stop old writers, preserve any required old runtime data
+separately, and start with fresh storage. See
+[terminal usage and cost records](#terminal-usage-and-cost-records) for the current
+Noted fields.
 
 
 ## IDs And Indexes
@@ -275,8 +276,11 @@ Record-based replacement snapshots arrive in structural order from the server.
 `StepBegin.given` is an event-owned discriminated payload: model identity, tool
 identity/summary/target, or the Flow operation's presentation fields. It contains
 no complete model/tool call, Flow AST, State reference or input pointers.
-`StepEnd.noted` contains only completion facts and client usage/cost summaries;
-provider continuation and pricing details remain in records.
+`StepEnd.noted` contains only completion facts and client usage/cost summaries.
+Its `usage` is `TokenUsage(input_tokens, output_tokens, cache_read_tokens,
+reasoning_tokens)`; `cost` (USD) and `cost_approximate` are separate summary
+fields. Events reuse the normalized usage directly. Provider continuation,
+pricing, meters and cost calculation lines remain in records.
 
 `PartEnd.data` uses event-owned `PartData`: text/reasoning content, media display
 fields, or tool identity and explicit receipts (`run`, `thread`,
@@ -416,3 +420,28 @@ Each physical Step retains its executing Run's State reference. A newly accepted
 named child independently captures the latest published State and validates it
 against the caller's contract. Inline bodies retain their containing plan.
 Publication never rebinds accepted Runs. Invalid source is not published.
+
+## Terminal usage and cost records
+
+`ModelStepNoted` stores `usage: TokenUsage | None`, `cost: ModelCost | None`,
+`invoked: bool`, and continuation encoded as `cont`. `ToolStepNoted` stores
+`summary` and `invoked`. `ModelCost` holds the selected `amount`, `currency`,
+`source`, `complete`, `pricing`, `meters` and `lines`; there is no accounting
+envelope or separate reported/estimated amount wrapper. Calculation lines explain
+the catalog estimate, which can differ from a provider-reported final amount.
+
+`RunRecord.noted` is absent while pending/running. At termination it holds
+`RunNoted(calls, usage, cost, cost_approximate)` for that Run's resident subtree,
+including already pruned branches. `calls` contains only `model_calls` and
+`tool_calls`; entry counts include failed/canceled invocations and exclude skipped
+or unprepared calls. Run cost is USD only; non-USD selected charges remain in
+per-call records and make the aggregate USD amount unknown. Unknown optional
+token/cost contributions remain unknown; known zero stays zero. These are captured
+values, not a historical statistics index.
+
+This format requires Store schema 59 and fresh storage. Older schemas are rejected
+for both reads and writes; no migration or compatibility decoder is provided.
+Retain any required old runtime data separately, then use a fresh runtime database.
+Record consumers must replace `noted.accounting` with `noted.usage`/`noted.cost`.
+Event subscribers must upgrade and reconnect, replacing `noted.usage.cost` and
+`noted.usage.approximate` with `noted.cost` and `noted.cost_approximate`.

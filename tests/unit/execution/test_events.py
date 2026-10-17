@@ -2,15 +2,13 @@
 
 from __future__ import annotations
 
+
 from toolang.execution.event_projection import event_output
 
 from tests.support.observations import part_end
 
 from toolang.execution.events import ModelStepInfo
 
-from toolang.execution.types import StepRef
-
-from toolang.execution.types import ModelAccounting
 
 from typing import get_args
 
@@ -30,18 +28,6 @@ from toolang.execution.events import (
 )
 from toolang.execution.records import StepRecord
 from toolang.execution.schemas import RunControlRefData, StepData
-from toolang.execution.types import (
-    ControlRef,
-    ControlStatus,
-    FieldRef,
-    LoopStepNoted,
-    ModelStepGiven,
-    ModelStepNoted,
-    RunStatus,
-    RunRef,
-    StepStatus,
-    ToolStepGiven,
-)
 from toolang.lang.ast import RepeatStmt, RunStmt, Span
 
 from toolang.execution.events import (
@@ -53,7 +39,21 @@ from toolang.execution.event_projection import step_info, step_summary
 from tests.support.observations import step_begin, step_end, run_begin, run_end
 from toolang.lang.types import Struct, Array
 import json
-from toolang.execution.types import TypedRef
+from toolang.execution.types import (
+    TypedRef,
+    TokenUsage,
+    ModelStepNoted,
+    StepRef,
+    ControlRef,
+    ControlStatus,
+    FieldRef,
+    LoopStepNoted,
+    ModelStepGiven,
+    RunStatus,
+    RunRef,
+    StepStatus,
+    ToolStepGiven,
+)
 
 
 def test_step_schema_preserves_the_flow_statement_discriminator() -> None:
@@ -295,7 +295,8 @@ def test_errors_and_control_application_have_scalar_identity():
 def test_model_summary_excludes_continuation_and_pricing_details():
     summary = step_summary(
         ModelStepNoted(
-            ModelAccounting(10, 4), continuation={"provider": "private" * 1000}
+            usage=TokenUsage(input_tokens=10, output_tokens=4),
+            continuation={"provider": "private" * 1000},
         )
     )
     assert summary is not None and summary.usage is not None

@@ -9,7 +9,7 @@ from typing import Literal
 from toolang.base.money import add_cost, cost_text, normalize_cost
 from toolang.lang.ast import RepeatStmt
 
-from ..accounting import token_meter_quantity
+from ..accounting import selected_usd_cost, selected_cost_is_approximate
 from ..records import (
     ControlRecord,
     ExecControlPayload,
@@ -453,30 +453,17 @@ def _record_metrics(record: RunRecord | StepRecord) -> _MetricAccumulator:
     noted = record.noted if isinstance(record.noted, ModelStepNoted) else None
     if noted is None:
         return accumulator
-    if noted.accounting is not None:
+    if noted.usage is not None:
         accumulator.token_known = 1
-        accumulator.input_tokens = noted.accounting.input_tokens
-        accumulator.output_tokens = noted.accounting.output_tokens
-        reasoning = token_meter_quantity(noted.accounting, "output.reasoning")
+        accumulator.input_tokens = noted.usage.input_tokens
+        accumulator.output_tokens = noted.usage.output_tokens
+        reasoning = noted.usage.reasoning_tokens
         if reasoning is not None:
             accumulator.reasoning_known = 1
             accumulator.reasoning_tokens = reasoning
-    cost: float | None = None
-    complete = False
-    approximate = False
-    if noted.accounting is not None:
-        selected = noted.accounting.selected
-        selected_cost = (
-            noted.accounting.reported
-            if selected == "reported"
-            else noted.accounting.estimate
-            if selected in {"estimated", "zero"}
-            else None
-        )
-        if selected_cost is not None and selected_cost.currency.upper() == "USD":
-            cost = selected_cost.amount
-            complete = selected_cost.complete
-            approximate = selected == "estimated"
+    cost = selected_usd_cost(noted.cost)
+    complete = noted.cost.complete if noted.cost is not None else False
+    approximate = selected_cost_is_approximate(noted.cost)
     if cost is not None:
         try:
             accumulator.cost_usd = normalize_cost(float(cost))

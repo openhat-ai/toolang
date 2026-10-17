@@ -1,19 +1,14 @@
 from __future__ import annotations
 
+
 from tests.support.observations import part_end
 
 from toolang.execution.event_projection import step_info
 from toolang.execution.events import FlowStepInfo
 
 
-from toolang.execution.types import StepRef
-
 from tests.support.observations import run_begin, run_end, step_begin, step_end
 
-
-from toolang.execution.types import ModelCost, value_for_type
-
-from toolang.execution.types import ModelAccounting
 
 import pytest
 
@@ -47,13 +42,17 @@ from toolang.execution.types import (
     LoopStepNoted,
     LoopTermination,
     ModelStepGiven,
-    ModelStepNoted,
     Occurrence,
     OccurrencePosition,
     StepStatus,
     ToolStepGiven,
     ToolStepNoted,
     TypedRef,
+    TokenUsage,
+    ModelStepNoted,
+    StepRef,
+    ModelCost,
+    value_for_type,
 )
 from toolang.lang.ast import (
     DropStmt,
@@ -402,14 +401,13 @@ def test_model_markdown_closes_without_repeating_at_step_end() -> None:
             status="succeeded",
             output=_parts("Comparing\napproaches"),
             noted=ModelStepNoted(
-                accounting=ModelAccounting(
-                    input_tokens=3400,
-                    output_tokens=86,
-                    estimate=ModelCost(
-                        amount=float("0.002"), currency="USD", complete=True
-                    ),
-                    selected="estimated",
-                )
+                usage=TokenUsage(input_tokens=3400, output_tokens=86),
+                cost=ModelCost(
+                    amount=float("0.002"),
+                    currency="USD",
+                    complete=True,
+                    source="estimated",
+                ),
             ),
             finished_at="2026-01-01T00:00:01.800Z",
         )
@@ -646,14 +644,13 @@ def test_model_tool_call_only_output_discards_live_presentation() -> None:
             status="succeeded",
             output=_part_output(_tool_call_part()),
             noted=ModelStepNoted(
-                accounting=ModelAccounting(
-                    input_tokens=12,
-                    output_tokens=3,
-                    estimate=ModelCost(
-                        amount=float("0.001"), currency="USD", complete=True
-                    ),
-                    selected="estimated",
-                )
+                usage=TokenUsage(input_tokens=12, output_tokens=3),
+                cost=ModelCost(
+                    amount=float("0.001"),
+                    currency="USD",
+                    complete=True,
+                    source="estimated",
+                ),
             ),
         )
     )
@@ -890,14 +887,13 @@ def test_flow_run_header_wraps_real_agic_steps_without_a_wrapper_row() -> None:
             status="succeeded",
             output=_parts("Done."),
             noted=ModelStepNoted(
-                accounting=ModelAccounting(
-                    input_tokens=639,
-                    output_tokens=215,
-                    estimate=ModelCost(
-                        amount=float("0.00149"), currency="USD", complete=True
-                    ),
-                    selected="estimated",
-                )
+                usage=TokenUsage(input_tokens=639, output_tokens=215),
+                cost=ModelCost(
+                    amount=float("0.00149"),
+                    currency="USD",
+                    complete=True,
+                    source="estimated",
+                ),
             ),
         )
     )

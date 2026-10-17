@@ -1,15 +1,11 @@
 from __future__ import annotations
 
+
 from tests.support.observations import part_end
 
-from toolang.execution.types import StepRef
 
 from tests.support.observations import run_begin, run_end, step_begin, step_end
 
-
-from toolang.execution.types import ModelCost, value_for_type
-
-from toolang.execution.types import ModelAccounting
 
 import asyncio
 import re
@@ -61,8 +57,12 @@ from toolang.execution.types import (
     ErrorRef,
     FieldRef,
     ModelStepGiven,
-    ModelStepNoted,
     ToolStepGiven,
+    TokenUsage,
+    ModelStepNoted,
+    StepRef,
+    ModelCost,
+    value_for_type,
 )
 from toolang.lang.ast import RunStmt, Span
 from toolang.teaming.schemas import Message
@@ -137,14 +137,13 @@ def test_non_tty_appends_only_finalized_model_progress() -> None:
                 status="succeeded",
                 output=_parts("Use a shared reducer."),
                 noted=ModelStepNoted(
-                    accounting=ModelAccounting(
-                        input_tokens=3400,
-                        output_tokens=86,
-                        estimate=ModelCost(
-                            amount=float("0.006"), currency="USD", complete=True
-                        ),
-                        selected="estimated",
-                    )
+                    usage=TokenUsage(input_tokens=3400, output_tokens=86),
+                    cost=ModelCost(
+                        amount=float("0.006"),
+                        currency="USD",
+                        complete=True,
+                        source="estimated",
+                    ),
                 ),
                 finished_at="2026-01-01T00:00:01.800Z",
             ),

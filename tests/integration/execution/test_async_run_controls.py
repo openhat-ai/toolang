@@ -57,7 +57,7 @@ agic child(_: Text) -> Text:
                 ),
                 3,
             )
-            execution = harness.executor._active[parent.run_id].execution
+            execution = harness.executor._active_runs[parent.run_id].execution
             assert execution is not None
             source = harness.store.list_steps(run_id=parent.run_id)[0]
             assert source.output is not None
@@ -150,7 +150,7 @@ agic child() -> Text:
                 ),
                 3,
             )
-            execution = harness.executor._active[parent.run_id].execution
+            execution = harness.executor._active_runs[parent.run_id].execution
             assert execution is not None
             caller = execution._active_bindings[parent.run_id]
             source = harness.store.list_steps(run_id=parent.run_id)[0]
@@ -177,5 +177,94 @@ agic child() -> Text:
             assert result.status == "canceled"
             caller_gate.release()
             assert (await parent).status == "succeeded"
+
+    asyncio.run(scenario())
+
+
+def test_control_during_async_registration_cancels_only_the_child(
+    tmp_path, monkeypatch
+):
+    from toolang.execution.executor import awaitables
+    from toolang.execution.events import RunEnd
+    from toolang.execution.types import CallCounters, RunNoted, ErrorMessage
+    from tests.support.execution_harness import RecordingRunTracer
+    from tests.support.execution_assertions import assert_run_event_integrity
+
+    gate = AsyncGate()
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+flow parent() -> Text:
+  let job = async run child
+  run blocker
+agic blocker() -> Text:
+  user: Wait for the caller.
+agic child() -> Text:
+  user: Must not run.
+""",
+        responses=[
+            ScriptedModelTurn(
+                ModelCallResult(message=Message.assistant("done")), gate=gate
+            )
+        ],
+    )
+    start = awaitables.start
+    controls = []
+
+    def cancel_before_registration(execution, binding, runnable):
+        controls.append(
+            harness.executor.cancel(
+                run_id=binding.run_id, reason="cancel accepted child"
+            )
+        )
+        start(execution, binding, runnable)
+
+    monkeypatch.setattr(awaitables, "start", cancel_before_registration)
+
+    async def scenario():
+        async with harness:
+            tracer = RecordingRunTracer()
+            parent = harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    runnable="parent",
+                ),
+                tracer=tracer,
+            )
+            await asyncio.wait_for(gate.wait_until_entered(), 3)
+            execution = harness.executor._root_runs[parent.run_id].execution
+            assert execution is not None
+            child_id = str(controls[0].target)
+            await asyncio.gather(
+                execution._background_tasks[child_id], return_exceptions=True
+            )
+            source = harness.store.list_steps(run_id=parent.run_id)[0]
+            assert source.output is not None and isinstance(
+                source.output.value, AwaitableHandle
+            )
+            child = await awaitables.wait(
+                execution,
+                execution._active_bindings[parent.run_id],
+                source.output.value,
+            )
+            assert child.status == "canceled"
+            assert child.error == ErrorMessage("cancel accepted child")
+            assert child.noted == RunNoted()
+            caller = harness.store.get_run(run_id=parent.run_id)
+            assert caller is not None and caller.status == "running"
+            saved = harness.store.get_run_control(
+                run_id=child_id, index=controls[0].index
+            )
+            assert saved is not None and saved.status == "applied"
+            gate.release()
+            result = await parent
+            assert result.status == "succeeded"
+            assert result.noted is not None and result.noted.calls == CallCounters(1, 0)
+            assert len(harness.adapter.invocations) == 1
+            assert (
+                sum(isinstance(e, RunEnd) and e.run == child_id for e in tracer.events)
+                == 1
+            )
+            assert_run_event_integrity(tracer.events)
 
     asyncio.run(scenario())

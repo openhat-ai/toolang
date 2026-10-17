@@ -336,19 +336,19 @@ flow check(_: Text) -> Text:
             for step in steps:
                 if isinstance(step.noted, ModelStepNoted):
                     call = runtime.store.rebuild_model_call(step)
-                    accounting = step.noted.accounting
+                    accounting = step.noted
                     metrics.append(
                         {
                             "messages": len(call.messages),
-                            "input_tokens": accounting.input_tokens
-                            if accounting
+                            "input_tokens": accounting.usage.input_tokens
+                            if accounting.usage is not None
                             else None,
                             "cached": {
                                 m.name: m.quantity
-                                for m in accounting.meters
+                                for m in accounting.cost.meters
                                 if "cache_" in m.name
                             }
-                            if accounting
+                            if accounting.cost is not None
                             else {},
                         }
                     )

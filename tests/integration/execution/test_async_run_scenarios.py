@@ -2,7 +2,6 @@
 
 from toolang.execution.event_projection import direct_output, step_summary
 
-from toolang.execution.types import StepRef
 
 import asyncio
 import json
@@ -20,7 +19,11 @@ from toolang.base.types.message import Message, TextPart
 from toolang.base.types.run import ModelCallResult
 from toolang.cli.common.execution_progress.projector import ProgressProjector
 from toolang.execution.events import RunBegin, StepBegin, StepEnd
-from toolang.execution.types import AwaitableHandle, ThreadPrefix
+from toolang.execution.types import (
+    AwaitableHandle,
+    ThreadPrefix,
+    StepRef,
+)
 
 
 def test_launch_continues_and_repeated_wait_keeps_linear_steps(tmp_path: Path):
@@ -100,7 +103,7 @@ agic child(_: Text) -> Text:
                     active = None
             assert active is None
             assert projector.root_metrics.runs == 2
-            assert not harness.executor._tasks
+            assert not harness.executor._root_runs
 
     asyncio.run(scenario())
 
@@ -247,7 +250,7 @@ flow successor(_: Text) -> Text:
             for event in tracer.events:
                 update = projector.handle(event)
                 assert not projector._broken, update
-            assert not harness.executor._tasks
+            assert not harness.executor._root_runs
 
     asyncio.run(scenario())
 
@@ -288,7 +291,7 @@ agic child() -> Text:
             if failed:
                 gate.fail(RuntimeError("child failed"))
             else:
-                execution = harness.executor._active[parent.run_id].execution
+                execution = harness.executor._active_runs[parent.run_id].execution
                 assert execution is not None
                 harness.executor.cancel(run_id=handle.id)
             result = await asyncio.wait_for(parent, 3)
@@ -373,7 +376,9 @@ flow child(_: Text) -> Text:
                 for step in harness.store.list_steps(run_id=parent.id)
                 if step.kind == "tool"
             )
-            assert launch.noted == ToolStepNoted("Started child run: child")
+            assert launch.noted == ToolStepNoted(
+                "Started child run: child", invoked=True
+            )
             assert next(
                 event.noted
                 for event in tracer.events
@@ -428,7 +433,7 @@ agic child(_: Text) -> Text:
                 ),
                 3,
             )
-            execution = harness.executor._active[parent.run_id].execution
+            execution = harness.executor._active_runs[parent.run_id].execution
             assert execution is not None
             binding = execution._active_bindings[parent.run_id]
             source = harness.store.list_steps(run_id=parent.run_id)[0]
@@ -449,12 +454,12 @@ agic child(_: Text) -> Text:
                 await observer
             target = harness.store.get_run(run_id=handle.id)
             assert target is not None and target.status == "running"
-            owner = harness.executor._active.pop(handle.id)
+            owner = harness.executor._active_runs.pop(handle.id)
             try:
                 with pytest.raises(ToolangError, match="no live execution owner"):
                     await wait(execution, binding, handle)
             finally:
-                harness.executor._active[handle.id] = owner
+                harness.executor._active_runs[handle.id] = owner
             caller_gate.release()
             assert (await parent).status == "succeeded"
             assert not owner.task.done()
@@ -540,7 +545,70 @@ flow child() -> Text:
                     launch_end.status == source.status
                     and launch_end.output == direct_output(source.output)
                 )
-            assert not harness.executor._tasks
+            assert not harness.executor._root_runs
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("launch", ["run", "async run"])
+def test_accepted_child_initialization_failure_is_terminal(
+    tmp_path, monkeypatch, launch
+):
+    from toolang.execution.executor.executor import _Execution
+    from toolang.execution.events import RunEnd
+    from tests.support.execution_assertions import assert_run_event_integrity
+
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=f"""
+flow parent() -> Text:
+  {"let job = " if launch == "async run" else ""}{launch} child
+  {"await job" if launch == "async run" else ""}
+flow child() -> Text:
+  pass
+""",
+        responses=[],
+    )
+    next_step = _Execution.next_step
+
+    def fail_initialization(execution, run_id):
+        child = execution.store.get_run(run_id=run_id)
+        if child is not None and child.parent is not None:
+            raise RuntimeError("child initialization failed")
+        return next_step(execution, run_id)
+
+    monkeypatch.setattr(_Execution, "next_step", fail_initialization)
+
+    async def scenario():
+        async with harness:
+            tracer = RecordingRunTracer()
+            parent = await harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    runnable="parent",
+                ),
+                tracer=tracer,
+            )
+            tree = harness.store.list_run_tree(root_run_id=parent.id)
+            assert len(tree) == 2
+            child = next(run for run in tree if run.parent is not None)
+            assert child.status == "failed"
+            assert child.error is not None
+            assert (
+                harness.store.resolve_error(child.error)
+                == "child initialization failed"
+            )
+            assert child.noted is not None and child.noted.calls.model_calls == 0
+            assert parent.status == "failed" and parent.error is not None
+            assert "child initialization failed" in harness.store.resolve_error(
+                parent.error
+            )
+            assert (
+                sum(isinstance(e, RunEnd) and e.run == child.id for e in tracer.events)
+                == 1
+            )
+            assert not harness.executor._active_runs and not harness.executor._root_runs
+            assert_run_event_integrity(tracer.events)
 
     asyncio.run(scenario())
 
@@ -586,7 +654,7 @@ agic child(_: Text) -> Text:
                 ),
                 3,
             )
-            execution = harness.executor._active[parent.run_id].execution
+            execution = harness.executor._active_runs[parent.run_id].execution
             assert execution is not None
             child_gate.fail(RuntimeError("background failure"))
             await asyncio.gather(*execution._background_tasks.values())
@@ -813,7 +881,7 @@ agic child() -> Text:
                 )
             )
             await asyncio.wait_for(gate.wait_until_entered(), 3)
-            execution = harness.executor._active[parent.run_id].execution
+            execution = harness.executor._active_runs[parent.run_id].execution
             assert execution is not None
             caller = execution._active_bindings[parent.run_id]
             source = harness.store.list_steps(run_id=parent.run_id)[0]
@@ -825,7 +893,7 @@ agic child() -> Text:
             for target in (parent.run_id, "run_missing"):
                 with pytest.raises(ToolangError, match="unavailable or inaccessible"):
                     resolve(execution, caller, target)
-            target_execution = harness.executor._active[handle.id].execution
+            target_execution = harness.executor._active_runs[handle.id].execution
             assert target_execution is not None
             target_binding = target_execution._active_bindings[handle.id]
             with pytest.raises(ToolangError, match="unavailable or inaccessible"):

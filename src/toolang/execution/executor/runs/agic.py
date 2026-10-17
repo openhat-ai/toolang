@@ -27,7 +27,8 @@ from ...assembly import prompting
 from ...events import PartBegin, PartDelta, PartEnd
 from ...records import ControlRecord, RecallControlPayload
 from ...types import (
-    ModelAccounting,
+    ModelStepNoted,
+    TokenUsage,
     ControlRef,
     FieldRef,
     RunRef,
@@ -82,16 +83,14 @@ class _AgicState:
     before_call: Callable[[], None]
     messages: MessageBuffer
     execution: _Execution | None = None
-    account_usage: Callable[[ModelUsage | None], ModelAccounting | None] = (
-        lambda usage: (
-            ModelAccounting(usage.input_tokens, usage.output_tokens)
+    note_usage: Callable[[StepRef, ModelUsage | None], ModelStepNoted] = (
+        lambda _step, usage: ModelStepNoted(
+            usage=TokenUsage(usage.input_tokens, usage.output_tokens)
             if usage is not None
             else None
         )
     )
-    record_accounting: Callable[[ModelAccounting | None], None] = lambda _accounting: (
-        None
-    )
+    record_usage: Callable[[ModelStepNoted], None] = lambda _noted: None
     limits: RunLimits = RunLimits()
     record_output: Callable[[FieldRef], None] = lambda _ref: None
     output: FieldRef | None = None
@@ -260,12 +259,13 @@ async def execute(
         steer_before_next_step=lambda: execution.steer_before_next_step(binding.run_id),
         immediate_steer=lambda: execution.immediate_steer(binding.run_id),
         before_call=lambda: execution.raise_if_canceling(binding.run_id, call=True),
-        account_usage=lambda usage: execution.model_accounting(
+        note_usage=lambda step, usage: execution.model_noted(
+            step,
             state.prepared.model,
             usage,
         ),
-        record_accounting=lambda accounting: execution.record_model_accounting(
-            state.prepared.model, accounting
+        record_usage=lambda noted: execution.record_model_usage(
+            state.prepared.model, noted
         ),
         limits=binding.limits,
         record_output=lambda ref: execution.record_output(binding.run_id, ref),

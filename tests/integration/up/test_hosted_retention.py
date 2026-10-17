@@ -133,7 +133,12 @@ agic child(_: Text) -> Text:
             lifecycle.release("launch", "client")
             assert not lifecycle.elect_exit(harness.executor.has_owned_work)
             gate.release()
-            await asyncio.wait_for(asyncio.gather(*tuple(harness.executor._tasks)), 2)
+            await asyncio.wait_for(
+                asyncio.gather(
+                    *(root.task for root in tuple(harness.executor._root_runs.values()))
+                ),
+                2,
+            )
             await asyncio.sleep(0)
             assert lifecycle.elect_exit(harness.executor.has_owned_work)
 

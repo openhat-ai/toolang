@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from toolang.execution.types import StepRef
+from dataclasses import replace
+
 
 from toolang.base.types.model import ModelRequest
 
@@ -33,8 +34,6 @@ from toolang.execution.types import (
     IterationOccurrence,
     RunStatus,
     ModelStepGiven,
-    ModelStepNoted,
-    ModelAccounting,
     ModelCost,
     Occurrence,
     OccurrencePosition,
@@ -44,6 +43,9 @@ from toolang.execution.types import (
     StepStatus,
     ThreadRef,
     ToolStepGiven,
+    TokenUsage,
+    ModelStepNoted,
+    StepRef,
 )
 from toolang.lang.ast import (
     AskStmt,
@@ -336,7 +338,7 @@ def _step_noted(
     kind: StepKind,
     detail: Mapping[str, Any] | None,
 ) -> StepNoted:
-    """Convert legacy accounting details at the test boundary."""
+    """Build compact token usage from test result details."""
 
     if kind != "model":
         return None
@@ -345,17 +347,23 @@ def _step_noted(
     raw_cost = facts.get("cost")
     accounting = None
     if isinstance(raw_tokens, Mapping):
-        accounting = ModelAccounting(
-            input_tokens=int(raw_tokens.get("input", 0)),
-            output_tokens=int(raw_tokens.get("output", 0)),
-            estimate=ModelCost(float(raw_cost), "USD", True)
+        accounting = ModelStepNoted(
+            usage=TokenUsage(
+                input_tokens=int(raw_tokens.get("input", 0)),
+                output_tokens=int(raw_tokens.get("output", 0)),
+            ),
+            cost=ModelCost(
+                amount=float(raw_cost),
+                currency="USD",
+                complete=True,
+                source="estimated",
+            )
             if raw_cost is not None
             else None,
-            selected="estimated" if raw_cost is not None else "unknown",
         )
     raw_cont = facts.get("cont")
-    return ModelStepNoted(
-        accounting=accounting,
+    return replace(
+        accounting or ModelStepNoted(),
         continuation=dict(raw_cont) if isinstance(raw_cont, Mapping) else None,
     )
 

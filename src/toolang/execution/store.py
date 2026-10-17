@@ -78,6 +78,8 @@ from .records import (
     occurrence_to_data,
     field_refs_from_data,
     field_refs_to_data,
+    run_noted_from_data,
+    run_noted_to_data,
     step_noted_from_data,
     step_noted_to_data,
     stored_step_given_from_data,
@@ -100,6 +102,7 @@ from .types import (
     StepKind,
     StepGiven,
     StepNoted,
+    RunNoted,
     ExecStepNoted,
     LoopStepNoted,
     StepStatus,
@@ -128,9 +131,9 @@ from .values import parts_from_value
 from . import talk
 from .errors import ThreadBusy
 
-_SCHEMA_VERSION = 58
-_SUPPORTED_SCHEMA_VERSIONS = (52, 53, 54, 55, 56, 57, _SCHEMA_VERSION)
-_WRITABLE_SCHEMA_VERSIONS = (57, _SCHEMA_VERSION)
+_SCHEMA_VERSION = 59
+_SUPPORTED_SCHEMA_VERSIONS = (_SCHEMA_VERSION,)
+_WRITABLE_SCHEMA_VERSIONS = (_SCHEMA_VERSION,)
 
 
 class RunStore:
@@ -1880,13 +1883,14 @@ class RunStore:
         error: ErrorMessage | ErrorRef | None = None,
         finished_at: str | None = None,
         output: Output | None = None,
+        noted: RunNoted | None = None,
     ) -> RunRecord:
         now = finished_at or utc_now()
         with self.write_transaction():
             self._conn.execute(
                 """
                 UPDATE runs
-                SET status = ?, error = ?, output = ?, finished_at = ?
+                SET status = ?, error = ?, output = ?, finished_at = ?, noted = ?
                 WHERE id = ? AND status IN ('pending', 'running')
                 """,
                 (
@@ -1894,6 +1898,7 @@ class RunStore:
                     _dump_execution_error(error),
                     _dump_json(output_to_data(output)) if output is not None else None,
                     now,
+                    _dump_json(run_noted_to_data(noted)),
                     run_id,
                 ),
             )
@@ -1909,6 +1914,7 @@ class RunStore:
             or run.error != error
             or run.output != output
             or run.finished_at != now
+            or run.noted != noted
         ):
             raise ValueError(f"conflicting run_end event: {run_id}")
         return run
@@ -3646,7 +3652,10 @@ class RunStore:
                     error TEXT,
                     created_at TEXT NOT NULL,
                     started_at TEXT,
-                    finished_at TEXT
+                    finished_at TEXT,
+                    noted TEXT,
+                    begin_cursor TEXT,
+                    end_cursor TEXT
                 )
                 """
             )
@@ -3668,6 +3677,8 @@ class RunStore:
                     finished_at TEXT,
                     _claimed INTEGER NOT NULL DEFAULT 0,
                     _revision INTEGER NOT NULL,
+                    event_cursor TEXT,
+                    client_id TEXT,
                     UNIQUE(target, "index")
                 )
                 """
@@ -3706,45 +3717,13 @@ class RunStore:
                 ("steps", ("begin_cursor", "end_cursor")),
                 ("controls", ("event_cursor", "client_id")),
             ):
-                columns = {
-                    row[1] for row in self._conn.execute(f"PRAGMA table_info({table})")
-                }
                 for name in names:
-                    if name not in columns:
-                        self._conn.execute(
-                            f"ALTER TABLE {table} ADD COLUMN {name} TEXT"
-                        )
                     self._conn.execute(
                         f"CREATE INDEX IF NOT EXISTS idx_{table}_{name} ON {table}({name})"
                     )
-            if "peer" in {
-                row[1] for row in self._conn.execute("PRAGMA table_info(threads)")
-            }:
-                self._conn.execute("ALTER TABLE threads DROP COLUMN peer")
-            _drop_legacy_activity(self._conn)
             talk.initialize(self._conn)
             self._conn.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
             self._conn.commit()
-
-
-def _drop_legacy_activity(connection: sqlite3.Connection) -> None:
-    """Discard obsolete derived indexes without changing execution facts."""
-    for table in ("threads", "runs", "steps"):
-        for operation in ("insert", "update", "delete"):
-            connection.execute(f"DROP TRIGGER IF EXISTS activity_{table}_{operation}")
-    for table in (
-        "meta",
-        "sessions",
-        "dirty",
-        "nodes",
-        "search",
-        "attempts",
-        "owners",
-        "durations",
-        "open",
-        "buckets",
-    ):
-        connection.execute(f"DROP TABLE IF EXISTS activity_{table}")
 
 
 def _create_steps_table(connection: sqlite3.Connection) -> None:
@@ -3768,6 +3747,8 @@ def _create_steps_table(connection: sqlite3.Connection) -> None:
             created_at TEXT NOT NULL,
             started_at TEXT NOT NULL,
             finished_at TEXT,
+            begin_cursor TEXT,
+            end_cursor TEXT,
             UNIQUE(run, path)
         )
         """
@@ -3934,6 +3915,9 @@ def _run_from_row(row: sqlite3.Row) -> RunRecord:
     return RunRecord(
         begin_cursor=cast(str | None, dict(row).get("begin_cursor")),
         end_cursor=cast(str | None, dict(row).get("end_cursor")),
+        noted=run_noted_from_data(_load_json(str(row["noted"])))
+        if row["noted"] is not None
+        else None,
         id=str(row["id"]),
         parent=(
             StepRef.parse(str(row["parent"])) if row["parent"] is not None else None

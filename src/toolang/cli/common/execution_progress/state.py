@@ -242,11 +242,14 @@ class Metrics:
                 if usage.reasoning_tokens is not None:
                     self.reasoning_tokens += usage.reasoning_tokens
                     self.reasoning_known_calls += 1
-                if usage.cost is not None:
-                    self.cost = add_cost(self.cost, usage.cost)
+                if event.noted is not None and event.noted.cost is not None:
+                    self.cost = add_cost(self.cost, event.noted.cost)
                     self.cost_known = True
                 self.cost_approximate = (
-                    self.cost_approximate or usage.cost is None or usage.approximate
+                    self.cost_approximate
+                    or event.noted is None
+                    or event.noted.cost is None
+                    or event.noted.cost_approximate
                 )
             else:
                 self.cache_unknown_calls += 1

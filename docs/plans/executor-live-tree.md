@@ -1,6 +1,6 @@
 # Executor LiveTree and snapshot access
 
-Status: proposed; awaiting implementation approval. This PR contains no implementation.
+Status: approved in PR #841; implemented and verified against the acceptance scenarios below.
 
 ## Goal and scope
 
@@ -357,5 +357,5 @@ between polls; consumers needing every transition use the existing event stream.
 Terminal records preserve captured final statistics; no historical rollup or
 completed-root archive is kept in LiveTree.
 
-No open contract decisions remain in this proposal. Human approval is required
-before implementation; merging this plan does not ship runtime behavior.
+The design was approved in PR #841. Implementation and verification follow the
+contracts and acceptance scenarios above.

@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 from toolang.base.types.message import ToolResultPart
 from toolang.common.errors import ToolangError
+from toolang.common.time import utc_now
 from toolang.lang.ast import AgicDecl, FlowDecl, RunStmt
 from toolang.lang.contracts import OutputContract
 from toolang.state.state import state_program
@@ -15,6 +16,7 @@ from toolang.state.state import state_program
 from ..records import LaunchContext, RunControlPayload, RunRecord
 from ..types import (
     AwaitableHandle,
+    ErrorMessage,
     ErrorRef,
     FieldRef,
     Output,
@@ -22,7 +24,7 @@ from ..types import (
     ToolStepGiven,
     TypedRef,
 )
-from .common import BoundRun, Local, _ExecutionFailed
+from .common import BoundRun, Local, _ExecutionFailed, control_text
 
 if TYPE_CHECKING:
     from .executor import _Execution
@@ -84,54 +86,63 @@ def admission(
                 conversation=binding.conversation,
                 triggered_by=binding.parent if asynchronous else None,
             )
-            if handle is None:
-                return
-            assert binding.parent is not None
-            source = execution.store.get_step(ref=binding.parent)
-            if source is None:
-                raise RuntimeError("async admission requires its source Step")
-            if isinstance(source.given, RunStmt) and source.given.asynchronous:
-                output = Output(handle, source.given.binding)
-                noted = None
-            elif (
-                isinstance(source.given, ToolStepGiven)
-                and source.given.call.input.get("async") is True
-            ):
-                call = source.given.call
-                output = Output(
-                    ToolResultPart(
-                        tool_call_id=call.tool_call_id,
-                        call_id=call.call_id,
-                        tool_name=call.name,
-                        tool_family=call.name,
-                        output={
-                            "id": handle.id,
-                            "thread": handle.thread,
-                            "status": "pending",
-                        },
+            if handle is not None:
+                assert binding.parent is not None
+                source = execution.store.get_step(ref=binding.parent)
+                if source is None:
+                    raise RuntimeError("async admission requires its source Step")
+                if isinstance(source.given, RunStmt) and source.given.asynchronous:
+                    output = Output(handle, source.given.binding)
+                    noted = None
+                elif (
+                    isinstance(source.given, ToolStepGiven)
+                    and source.given.call.input.get("async") is True
+                ):
+                    call = source.given.call
+                    output = Output(
+                        ToolResultPart(
+                            tool_call_id=call.tool_call_id,
+                            call_id=call.call_id,
+                            tool_name=call.name,
+                            tool_family=call.name,
+                            output={
+                                "id": handle.id,
+                                "thread": handle.thread,
+                                "status": "pending",
+                            },
+                        )
                     )
+                    noted = execution.tool_admission_noted(source.ref)
+                else:
+                    raise RuntimeError("async admission requires an async run Step")
+                completed = execution.store.finish_step(
+                    ref=source.ref,
+                    kind=source.kind,
+                    status="succeeded",
+                    output=output,
+                    noted=noted,
+                    error=None,
+                    finished_at=binding.created_at,
                 )
-                noted = execution.tool_admission_noted(source.ref)
-            else:
-                raise RuntimeError("async admission requires an async run Step")
-            completed = execution.store.finish_step(
-                ref=source.ref,
-                kind=source.kind,
-                status="succeeded",
-                output=output,
-                noted=noted,
-                error=None,
-                finished_at=binding.created_at,
+                execution.executor._publish_step_ends(
+                    publication,
+                    (completed,),
+                    thread_id=binding.thread,
+                    root_run_id=binding.root_run_id,
+                )
+        if execution._root_run is not None:
+            execution._root_run.tree.accept_run(
+                binding.run_id,
+                parent=binding.parent,
+                runnable=_bound_runnable(binding),
+                created_at=binding.created_at,
+                occurrence=binding.occurrence,
             )
-            execution.executor._publish_step_ends(
-                publication,
-                (completed,),
-                thread_id=binding.thread,
-                root_run_id=binding.root_run_id,
-            )
+            if handle is not None:
+                execution._root_run.tree.end_step(completed)
 
-    if execution._active is not None:
-        execution._active.early_ends.add(source.ref)
+    if execution._root_run is not None and handle is not None:
+        execution._early_ends.add(source.ref)
 
 
 def start(
@@ -162,6 +173,31 @@ def start(
     execution._background_horizons[binding.run_id] = binding.horizon
     execution._background_tasks[binding.run_id] = task
     execution._background_owners[binding.run_id] = binding.parent.run_id
+
+    def completed(task: asyncio.Task[None]) -> None:
+        if not task.cancelled() or binding.run_id in execution._ended:
+            return
+        # Cancellation before the first turn cannot enter execute's handlers.
+        # Finish on the owner loop before Task waiters or parent draining resume.
+        control = execution.interruption_for(binding.run_id)
+        if control is None or control.kind != "cancel":
+            control = next(
+                iter(
+                    execution.store.pending_run_controls(
+                        run_id=binding.run_id, kind="cancel"
+                    )
+                ),
+                None,
+            )
+        execution._finish_run(
+            run=binding.run_id,
+            status="canceled",
+            control=control.ref if control is not None else None,
+            error=ErrorMessage(control_text(control) or "canceled"),
+            finished_at=utc_now(),
+        )
+
+    task.add_done_callback(completed)
 
 
 async def drain(execution: _Execution, owner: str) -> None:
@@ -233,8 +269,8 @@ async def wait(
     run = execution.store.get_run(run_id=handle.id)
     assert run is not None
     if run.status in {"pending", "running"}:
-        with execution.executor._active_lock:
-            active = execution.executor._active.get(handle.id)
+        with execution.executor._runs_lock:
+            active = execution.executor._active_runs.get(handle.id)
             task = (
                 active.execution._background_tasks.get(handle.id)
                 if active is not None and active.execution is not None
@@ -257,6 +293,14 @@ async def wait(
                 raise
         except Exception:
             pass  # Inspect the persisted outcome, not a task's wrapper error.
+        if task.cancelled():
+            await execution.executor._ensure_terminal(
+                handle.id,
+                finish=active.execution.finish_run
+                if active is not None and active.execution is not None
+                else None,
+                status="canceled",
+            )
         run = execution.store.get_run(run_id=handle.id)
         if run is None or run.status in {"pending", "running"}:
             raise ToolangError(f"await target has no terminal outcome: {handle.id}")

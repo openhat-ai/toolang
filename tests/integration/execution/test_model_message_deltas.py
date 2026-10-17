@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from toolang.execution.event_projection import part_data
 
-from toolang.execution.types import StepRef
 
 import asyncio
 from contextlib import closing
@@ -64,6 +63,7 @@ from toolang.execution.types import (
     SkillTriggerRecallTarget,
     ThreadPrefix,
     TypedRef,
+    StepRef,
 )
 from toolang.state.prepare import prepare_agent_state
 
@@ -374,7 +374,7 @@ def test_interrupted_model_end_preserves_referenced_output(
     blockers: list[asyncio.Task[None]] = []
 
     async def hold_event_lock(run_id: str) -> None:
-        async with harness.executor._active[run_id].event_lock:
+        async with harness.executor._active_runs[run_id].boundary_lock:
             await gate.wait()
 
     class Tracer(RecordingRunTracer):

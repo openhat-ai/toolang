@@ -2,7 +2,6 @@
 
 from types import SimpleNamespace
 
-from toolang.execution.types import StepRef
 
 import asyncio
 from pathlib import Path
@@ -37,6 +36,7 @@ from toolang.execution.types import (
     FieldRef,
     SkillRecallTarget,
     ThreadPrefix,
+    StepRef,
 )
 from toolang.state.prepare import prepare_agent_state
 
@@ -191,7 +191,7 @@ def test_controls_received_before_model_begin_enter_that_call(
     async def wait_before_begin(execution, build, *, run_id):
         if not gate.entered:
             if prepared:
-                root_id = execution._active.root_run_id
+                root_id = execution._root_run.run_id
                 expected_controls.append(
                     harness.executor.steer(
                         run_id=root_id,

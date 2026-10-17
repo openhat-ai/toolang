@@ -12,7 +12,7 @@ from toolang.base.errors import ModelResponseError, ToolangError
 from toolang.base.types.message import Part, ToolResultPart
 from toolang.base.types.model import ModelRequest, env_names
 from toolang.base.types.policy import RunBindings
-from toolang.base.types.run import ModelCallResult, ToolCall
+from toolang.base.types.run import ToolCall
 from toolang.common.time import utc_now
 from toolang.plugin.models.query import resolve_model, subset_models
 from toolang.plugin.models.resolution import resolve_model_reasoning
@@ -33,6 +33,7 @@ from ...types import (
     history_position,
     ModelStepGiven,
     ModelStepNoted,
+    ToolStepNoted,
     Output,
     RunRef,
     StepRef,
@@ -214,7 +215,13 @@ async def execute(
     for step in steps:
         if step.status == "running":
             await execution.finish_step(
-                step=step.ref, kind=step.kind, status="canceled", finished_at=utc_now()
+                step=step.ref,
+                kind=step.kind,
+                status="canceled",
+                noted=ModelStepNoted()
+                if step.kind == "model"
+                else ToolStepNoted("Canceled compact history read"),
+                finished_at=utc_now(),
             )
     cached_root: RunRef | None = None
     units: dict[RunRef | StepRef, compaction.HistoryUnit] = {}
@@ -301,7 +308,7 @@ async def execute(
             output=Output(value_for_type("Part", result), "_"),
             finished_at=utc_now(),
         )
-        response: ModelCallResult | None = None
+        noted: ModelStepNoted | None = None
         try:
             await execution.begin_step(
                 lambda _state, state_ref, commit: commit(
@@ -318,33 +325,32 @@ async def execute(
                 run_id=model.run_id,
             )
             execution.require_model_pricing(spec.model)
+            execution.begin_call(model, "model")
             response = await spec.adapter.invoke(spec.model, call, environ=spec.environ)
+            noted = execution.model_noted(model, spec.model, response.usage)
             reducer.validate_summary(response)
             assert response.message is not None
             for index, part in enumerate(response.message.parts):
                 await _emit_part(execution, model, index, part)
         except (Exception, asyncio.CancelledError) as exc:
-            usage = (
-                exc.usage
-                if isinstance(exc, ModelResponseError)
-                else response.usage
-                if response
-                else None
+            record = store.get_step(ref=model)
+            if record is None or record.status != "running":
+                raise
+            if noted is None:
+                usage = exc.usage if isinstance(exc, ModelResponseError) else None
+                noted = execution.model_noted(model, spec.model, usage)
+            await execution.finish_step(
+                step=model,
+                kind="model",
+                status="canceled"
+                if isinstance(exc, asyncio.CancelledError)
+                else "failed",
+                noted=noted,
+                error=ErrorMessage(str(exc)) if str(exc) else None,
+                finished_at=utc_now(),
             )
-            accounting = execution.model_accounting(spec.model, usage)
-            if store.get_step(ref=model) is not None:
-                await execution.finish_step(
-                    step=model,
-                    kind="model",
-                    status="canceled"
-                    if isinstance(exc, asyncio.CancelledError)
-                    else "failed",
-                    noted=ModelStepNoted(accounting=accounting),
-                    error=ErrorMessage(str(exc)) if str(exc) else None,
-                    finished_at=utc_now(),
-                )
-            if usage is not None:
-                execution.record_model_accounting(spec.model, accounting)
+            if noted.usage is not None:
+                execution.record_model_usage(spec.model, noted)
             if isinstance(exc, ModelResponseError):
                 reducer.reject(exc)
                 continue
@@ -352,8 +358,7 @@ async def execute(
                 reducer.retry_summary(exc)
                 continue
             raise
-        accounting = execution.model_accounting(spec.model, response.usage)
-        assert response.message is not None
+        assert response.message is not None and noted is not None
         try:
             await execution.finish_step(
                 step=model,
@@ -362,11 +367,11 @@ async def execute(
                 output=Output(
                     value_for_type("Part[]", tuple(response.message.parts)), "_"
                 ),
-                noted=ModelStepNoted(accounting=accounting),
+                noted=noted,
                 finished_at=utc_now(),
             )
         finally:
-            execution.record_model_accounting(spec.model, accounting)
+            execution.record_model_usage(spec.model, noted)
         reducer.accept(response)
     return Local(reducer.summary, type_name="Text")
 

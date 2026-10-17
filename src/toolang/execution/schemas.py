@@ -19,7 +19,7 @@ from typing import (
     get_type_hints,
 )
 
-from pydantic import BaseModel, BeforeValidator, TypeAdapter
+from pydantic import BaseModel, BeforeValidator, TypeAdapter, Field
 
 from toolang.base.types.compaction import CompactionResult
 from toolang.base.types.message import Part, message_summary
@@ -44,6 +44,8 @@ from .records import (
 )
 from .types import (
     DriverName,
+    CallCounters,
+    TokenUsage,
     EventCursor,
     ControlRef,
     ControlTiming,
@@ -74,6 +76,66 @@ from .types import (
     validate_step_noted,
 )
 from .values import parts_from_value
+
+
+@dataclass(frozen=True, slots=True)
+class RunNode:
+    """Small resident Run state and cumulative subtree consumption."""
+
+    id: str
+    parent: str | None
+    runnable: str
+    status: RunStatus
+    created_at: str
+    started_at: str | None = None
+    finished_at: str | None = None
+    occurrence: Occurrence | None = None
+    calls: CallCounters = field(default_factory=CallCounters)
+    usage: TokenUsage | None = None
+    cost: float | None = None
+    cost_approximate: bool = False
+    type: Literal["run"] = field(default="run", kw_only=True)
+
+
+@dataclass(frozen=True, slots=True)
+class StepNode:
+    """Current Step identity and direct invocation facts, without call bodies."""
+
+    id: str
+    parent: str
+    kind: StepKind
+    operation: str
+    status: StepStatus
+    created_at: str
+    started_at: str
+    name: str = ""
+    plugin: str = ""
+    target: str = ""
+    summary: str = ""
+    finished_at: str | None = None
+    occurrence: Occurrence | None = None
+    invoked: bool = False
+    usage: TokenUsage | None = None
+    cost: float | None = None
+    cost_approximate: bool = False
+    type: Literal["step"] = field(default="step", kw_only=True)
+
+
+LiveNode = Annotated[RunNode | StepNode, Field(discriminator="type")]
+
+
+@dataclass(frozen=True, slots=True)
+class LiveTreeSnapshot:
+    root_run_id: str
+    thread_id: str
+    nodes: tuple[LiveNode, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class LiveSnapshot:
+    epoch: str
+    observed_at: str
+    trees: tuple[LiveTreeSnapshot, ...]
 
 
 Record = ThreadRecord | ControlRecord | RunRecord | StepRecord

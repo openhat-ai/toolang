@@ -1,10 +1,10 @@
 from __future__ import annotations
 
+
 from tests.support.observations import part_end
 
 from toolang.execution.events import ControlApplied
 
-from toolang.execution.types import StepRef
 
 from tests.support.observations import run_begin, run_end, step_begin, step_end
 
@@ -14,7 +14,11 @@ import asyncio
 import threading
 from collections.abc import AsyncIterator, Callable, Collection, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field, replace
+from dataclasses import (
+    dataclass,
+    field,
+    replace,
+)
 from io import StringIO
 from types import SimpleNamespace
 from typing import Any, Literal, cast
@@ -127,18 +131,19 @@ from toolang.execution.types import (
     ErrorMessage,
     ErrorRef,
     FieldRef,
-    ModelAccounting,
-    ModelCost,
     ModelCostLine,
     ModelOverride,
     ModelStepGiven,
-    ModelStepNoted,
     ModelUsageMeter,
     Occurrence,
     OccurrencePosition,
     RunOverride,
     SessionSetting,
     ToolStepGiven,
+    ModelCost,
+    TokenUsage,
+    ModelStepNoted,
+    StepRef,
 )
 from toolang.lang.ast import MapStmt, RunStmt, Span
 from toolang.lang.input import CallInput
@@ -432,7 +437,7 @@ def test_chat_tool_call_only_model_step_vacates_live_position_for_tool() -> None
                 )
             ),
             noted=ModelStepNoted(
-                accounting=ModelAccounting(input_tokens=12, output_tokens=3)
+                usage=TokenUsage(input_tokens=12, output_tokens=3), cost=ModelCost()
             ),
         ),
         app,
@@ -742,41 +747,38 @@ def test_progress_marks_complete_zero_price_as_exact() -> None:
             kind="model",
             status="succeeded",
             noted=ModelStepNoted(
-                accounting=ModelAccounting(
-                    input_tokens=3800,
-                    output_tokens=120,
-                    estimate=ModelCost(
-                        amount=0.0,
-                        currency="USD",
-                        complete=True,
-                        lines=(
-                            ModelCostLine(
-                                meter="input",
-                                quantity=3800.0,
-                                unit="token",
-                                rate=0.0,
-                                per=1000000.0,
-                                amount=0.0,
-                            ),
-                            ModelCostLine(
-                                meter="output",
-                                quantity=120.0,
-                                unit="token",
-                                rate=0.0,
-                                per=1000000.0,
-                                amount=0.0,
-                            ),
+                usage=TokenUsage(
+                    input_tokens=3800, output_tokens=120, reasoning_tokens=0
+                ),
+                cost=ModelCost(
+                    amount=0.0,
+                    currency="USD",
+                    complete=True,
+                    lines=(
+                        ModelCostLine(
+                            meter="input",
+                            quantity=3800.0,
+                            unit="token",
+                            rate=0.0,
+                            per=1000000.0,
+                            amount=0.0,
+                        ),
+                        ModelCostLine(
+                            meter="output",
+                            quantity=120.0,
+                            unit="token",
+                            rate=0.0,
+                            per=1000000.0,
+                            amount=0.0,
                         ),
                     ),
+                    source="zero",
                     meters=(
                         ModelUsageMeter(
-                            name="output.reasoning",
-                            quantity=0.0,
-                            unit="token",
+                            name="output.reasoning", quantity=0.0, unit="token"
                         ),
                     ),
-                    selected="zero",
-                )
+                ),
             ),
         )
     )
@@ -793,26 +795,28 @@ def test_progress_marks_complete_zero_price_as_exact() -> None:
     "accounting",
     [
         None,
-        ModelAccounting(input_tokens=10, output_tokens=5),
-        ModelAccounting(
-            input_tokens=10,
-            output_tokens=5,
-            reported=ModelCost(amount=1.0, currency="EUR", complete=True),
-            selected="reported",
+        ModelStepNoted(
+            usage=TokenUsage(input_tokens=10, output_tokens=5), cost=ModelCost()
+        ),
+        ModelStepNoted(
+            usage=TokenUsage(input_tokens=10, output_tokens=5),
+            cost=ModelCost(
+                amount=1.0, currency="EUR", complete=True, source="reported"
+            ),
         ),
     ],
 )
 def test_progress_marks_incomplete_usd_totals_as_approximate(
-    accounting: ModelAccounting | None,
+    accounting: ModelStepNoted | None,
 ) -> None:
     metrics = Metrics()
     for index, item in enumerate(
         (
-            ModelAccounting(
-                input_tokens=10,
-                output_tokens=5,
-                reported=ModelCost(amount=0.03, currency="USD", complete=True),
-                selected="reported",
+            ModelStepNoted(
+                usage=TokenUsage(input_tokens=10, output_tokens=5),
+                cost=ModelCost(
+                    amount=0.03, currency="USD", complete=True, source="reported"
+                ),
             ),
             accounting,
         )
@@ -822,7 +826,7 @@ def test_progress_marks_incomplete_usd_totals_as_approximate(
                 step=StepRef.parse(f"run_1.{index}"),
                 kind="model",
                 status="succeeded",
-                noted=ModelStepNoted(accounting=item),
+                noted=item or ModelStepNoted(),
             )
         )
 
@@ -861,25 +865,28 @@ def test_progress_cost_uses_adaptive_precision(
 def test_progress_marks_partial_reasoning_as_a_lower_bound() -> None:
     metrics = Metrics()
     for accounting in (
-        ModelAccounting(
-            input_tokens=1000,
-            output_tokens=200,
-            meters=(
-                ModelUsageMeter(
-                    name="output.reasoning",
-                    quantity=150.0,
-                    unit="token",
-                ),
+        ModelStepNoted(
+            usage=TokenUsage(
+                input_tokens=1000, output_tokens=200, reasoning_tokens=150
+            ),
+            cost=ModelCost(
+                meters=(
+                    ModelUsageMeter(
+                        name="output.reasoning", quantity=150.0, unit="token"
+                    ),
+                )
             ),
         ),
-        ModelAccounting(input_tokens=100, output_tokens=20),
+        ModelStepNoted(
+            usage=TokenUsage(input_tokens=100, output_tokens=20), cost=ModelCost()
+        ),
     ):
         metrics.record_step(
             step_end(
                 step=StepRef.parse(f"run_1.{metrics.model_calls}"),
                 kind="model",
                 status="succeeded",
-                noted=ModelStepNoted(accounting=accounting),
+                noted=accounting or ModelStepNoted(),
             )
         )
 
@@ -6122,7 +6129,7 @@ def _model_step_end(
         status="succeeded",
         output=_parts(TextPart(text=output)),
         noted=ModelStepNoted(
-            accounting=ModelAccounting(input_tokens=1, output_tokens=1)
+            usage=TokenUsage(input_tokens=1, output_tokens=1), cost=ModelCost()
         ),
         finished_at=finished_at,
     )

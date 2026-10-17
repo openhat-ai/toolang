@@ -12,6 +12,7 @@ from toolang.execution.inspection.history import RunHistory
 from toolang.execution.records import ControlRecord
 from toolang.execution.schemas import (
     ControlInfo,
+    LiveSnapshot,
     RerunRequest,
     RunDetail,
     RunRequest,
@@ -34,6 +35,8 @@ class RunClient(Protocol):
     """Connectable caller operations for running and controlling runs."""
 
     async def connect(self) -> None: ...
+
+    async def live_trees(self, *, root_run_id: str | None = None) -> LiveSnapshot: ...
 
     async def run(
         self,
@@ -94,6 +97,10 @@ class LocalRunClient:
 
     async def connect(self) -> None:
         self._connected = True
+
+    async def live_trees(self, *, root_run_id: str | None = None) -> LiveSnapshot:
+        self._require_connected()
+        return self._executor.live_trees(root_run_id=root_run_id)
 
     async def run(
         self,

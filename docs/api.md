@@ -1531,6 +1531,25 @@ validation of the complete request.
 `RunDetail` with a nonempty resolved output. An unknown thread and a known
 thread without a result return distinct `404` details.
 
+### Live execution snapshots
+
+`GET /api/v1/runs/live` returns `LiveSnapshot(epoch, observed_at, trees)` from
+resident executor memory. Optional `root_run_id` selects one root; unknown,
+completed and child IDs return an empty `trees` collection. Invalid IDs return
+`422`; a stopped executor returns `503`. Local and remote RunClients expose
+`await live_trees(root_run_id=None)` after connection.
+
+Each tree has `root_run_id`, `thread_id` and parent-first `nodes`. Run nodes hold
+identity, current runnable/status/timestamps/occurrence and subtree
+`calls`, `usage`, `cost` (USD), `cost_approximate`. Step nodes hold their actual
+parent, kind/operation, compact name/plugin/target/summary, status/timestamps,
+occurrence and direct invocation/usage/cost facts. They exclude call contexts,
+arguments, output bodies, provider metadata and references. Completed leaves are
+pruned; async launch ancestors remain until their child ends. No history or Store
+read is performed. Treat each response as a replacement sample; epoch changes
+identify a different executor stream lifetime. Polls may miss short-lived Steps;
+use the existing event stream when every transition is needed.
+
 An accepted response exposes `X-Toolang-Run-ID` for compatibility; CORS exposes
 it to allowed origins. New-run POST streams begin with root `run_begin`, which
 also supplies the ID. Observation is installed before admission. Disconnecting
@@ -1595,8 +1614,13 @@ references and accounting internals stay in records and explicit inspection APIs
 Completion events carry direct `{type, value}` outputs, error text and necessary
 completion/usage summaries. `preceded_by` application facts and terminal `control`
 identify controls by `{run, index}`; `RunBegin.control` is its own Run binding control index.
-External subscribers must upgrade and reconnect for this schema; stored history
-and query/control response formats are unchanged. See [Run Events](execution.md#run-events).
+External subscribers must upgrade and reconnect for this schema. Model completion
+summaries expose four token fields under `noted.usage`; USD `noted.cost` and
+`noted.cost_approximate` are siblings. They contain no full cost evidence.
+Stored model Noted now uses `usage`, `cost`, `invoked`, `cont`, with no
+`accounting` envelope; Run records add terminal `noted`. Schema 59 requires fresh
+storage without compatibility reads. See [terminal records](execution.md#terminal-usage-and-cost-records)
+and [Run Events](execution.md#run-events).
 
 Every payload retains its canonical `type` discriminator. A `part_begin`
 payload uses `part_type` for the message-part kind so it does not collide with
@@ -1604,12 +1628,12 @@ the event discriminator.
 
 Reasoning uses these same events: `part_begin.part_type` is `"reasoning"`,
 `part_delta.delta` is `{"kind":"reasoning","text":"..."}`, and `part_end.data`
-is a canonical `ReasoningPart` with `type="reasoning"`. The call-local `part`
+contains `{"type":"reasoning","text":"..."}`. The call-local `part`
 ordinal also identifies its position in the completed Model Step's output.
-Optional `signature`, `provider`, and `provider_metadata` fields are retained on
-the Part; signatures can also occur on normal text and tool-call Parts. Signature
-fragments are not separate events. Deltas are live only; completed Parts are
-durable and available through existing output/inspection endpoints.
+Provider signatures, provider metadata, full tool arguments and arbitrary tool
+result bodies remain in durable Parts and model history; they are excluded from
+Event PartData. Deltas are live only; complete execution Parts remain available
+through explicit output/inspection endpoints.
 
 Structural cursors are persisted in the execution store; supported schemas and
 write restrictions follow [Durable Truth](execution.md#durable-truth). See the
