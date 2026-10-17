@@ -1,7 +1,8 @@
 # Execution Records And References
 
-Execution records are the durable source of truth. Run events are their
-transient projection input.
+Execution records are the durable source of truth. Run events are transient
+client notifications constructed from available execution facts and write results;
+they never drive persistence.
 
 ## References
 
@@ -46,15 +47,14 @@ Ref type and serialize to canonical text.
 ```text
 id
 origin
-created_by
-head
 created_at
 updated_at
+horizon
 ```
 
-`created_by` identifies the successful create or fork Control at index zero.
-`head` identifies the latest successful thread Control and supports optimistic
-concurrency for rewind and fork operations.
+`horizon` identifies the retained history boundary. Creation/fork provenance and
+the current control head are derived from Thread controls for caller-facing
+schemas; they are not duplicated in the canonical Thread record.
 
 ### ControlRecord
 
@@ -98,19 +98,15 @@ text. Rerun creates a new Run entry. Each persisted
 value retains its self-describing codec, without a Local/name/dim wrapper.
 References address `payload/input/_` or `payload/input/argumentName`.
 
-Writable RunStore opening uses schema 58 and upgrades schema 57 by removing the
-retired Thread peer column; schemas 52–57 remain readable
-without mutation. Writable opening removes the obsolete Activity tables and
-triggers, preserving core facts, content objects, ID counters and cursors. Stop
-old writers before this cleanup; derived Activity totals are discarded.
-Historical `retry` controls remain readable, including their effective settings
-and raw payloads, but cannot be written or resumed. Use ordinary rerun to start
-a new Run from a surviving historical invocation.
+RunStore reads and writes only schema 59. Older stores, including those with
+retired Activity indexes or retry records, are rejected without mutation. No
+upgrade, Activity cleanup, backfill or compatibility read is performed. Preserve
+required old runtime data separately and use fresh storage for new execution.
 Control kinds `execute` and `cwd` are renamed to `exec` and `chdir`, with no
 old-name aliases. The working-directory payload field remains `cwd`. Update
 control filters and consumers to the new kinds; use a fresh store for new runs.
 
-`Output` contains a complete `value: Value | TypedRef | RunHandle` and a
+`Output` contains a complete `value: Value | TypedRef | AwaitableHandle` and a
 `binding: str | None`. `"_"` is an ordinary binding name for the current local;
 `None` leaves the result unbound. `StepRecord.input` remains a list of dependency
 references. Executor locals separately retain evaluation and provenance metadata.
@@ -162,8 +158,9 @@ recorded with those handles instead of retrying or decoding the old handle recor
 
 Async run atomically commits child admission and source output, registers the
 background task, and ends the launch Step. The child retains its source Step link
-and parent Run ownership after launch completes. This link expresses provenance,
-not live UI containment. A value-kind `AwaitStmt` records the handle source and
+and parent Run ownership after launch completes. LiveTree retains that source
+Step while the child executes; awaiting the handle does not reparent the child.
+A value-kind `AwaitStmt` records the handle source and
 target identity in its input references before waiting, then stores a reference
 to the complete target result. Its public StepEnd resolves the output and error
 for observers that did not subscribe to the target. Durable result/error references
@@ -316,6 +313,6 @@ scope, target, and index. Record selection still uses the canonical ID.
 All other reference-bearing columns store the complete canonical Ref string.
 `BEGIN IMMEDIATE` serializes local index allocation and related mutations.
 
-See [Durable Truth](execution.md#durable-truth) for the current schema and supported
-read-only versions. Writable opens reject incompatible stores without migration
+See [Durable Truth](execution.md#durable-truth) for the current schema.
+Both read-only and writable opens reject incompatible stores without migration
 or reset. Reference syntax remains strict; older spellings have no alias.

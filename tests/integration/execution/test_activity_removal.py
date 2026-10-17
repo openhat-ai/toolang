@@ -1,4 +1,4 @@
-"""Removing derived indexes preserves durable execution and canonical cursors."""
+"""Retired Activity storage is rejected without rewriting execution facts."""
 
 import asyncio
 from pathlib import Path
@@ -9,6 +9,7 @@ import pytest
 from tests.support.execution_harness import ExecutionHarness
 from toolang.base.types.message import TextPart
 from toolang.execution.store import RunStore
+from toolang.execution.errors import RunStoreSchemaError
 from toolang.execution.types import ThreadPrefix
 
 LEGACY_SCHEMA = Path(__file__).parents[2] / "fixtures/execution/activity.sql"
@@ -39,7 +40,7 @@ def _activity_objects(connection):
 
 
 @pytest.mark.parametrize("read_only", [False, True])
-def test_legacy_activity_cleanup_preserves_all_execution_facts(tmp_path, read_only):
+def test_legacy_activity_store_is_rejected_without_modifying_it(tmp_path, read_only):
     async def execute():
         harness = ExecutionHarness.create(
             tmp_path, source="flow example:\n  let result = Done\n", responses=[]
@@ -57,34 +58,25 @@ def test_legacy_activity_cleanup_preserves_all_execution_facts(tmp_path, read_on
     with sqlite3.connect(path) as connection:
         assert not _activity_objects(connection)
         connection.executescript(LEGACY_SCHEMA.read_text())
-        # An unrelated extension with a similar prefix must survive cleanup.
+        # Keep both execution facts and arbitrary extensions untouched.
         connection.execute("CREATE TABLE activity_extension (value BLOB)")
         connection.execute("INSERT INTO activity_extension VALUES (?)", (b"keep",))
         connection.execute("INSERT INTO activity_meta VALUES (1, 7, 'old', 0, 1)")
+        connection.execute("PRAGMA user_version=58")
         before = _facts(connection)
         old_schema = _activity_objects(connection)
 
-    store = RunStore(path, read_only=read_only)
-    try:
+    before_bytes = path.read_bytes()
+    with pytest.raises(RunStoreSchemaError):
+        RunStore(path, read_only=read_only)
+    assert path.read_bytes() == before_bytes
+    with sqlite3.connect(path) as connection:
         # Inspect the original SQL values, including serialized typed refs,
         # content bytes, ID counters and persisted canonical cursors.
-        assert _facts(store._conn) == before
+        assert _facts(connection) == before
         assert (
-            store._conn.execute("SELECT value FROM activity_extension").fetchone()[0]
+            connection.execute("SELECT value FROM activity_extension").fetchone()[0]
             == b"keep"
         )
-        if read_only:
-            assert [tuple(row) for row in _activity_objects(store._conn)] == old_schema
-        else:
-            assert [row[1] for row in _activity_objects(store._conn)] == [
-                "activity_extension"
-            ]
-    finally:
-        store.close()
-
-    if not read_only:
-        reopened = RunStore(path)
-        try:
-            assert _facts(reopened._conn) == before
-        finally:
-            reopened.close()
+        assert _activity_objects(connection) == old_schema
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 58

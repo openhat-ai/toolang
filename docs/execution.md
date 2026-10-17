@@ -45,12 +45,13 @@ records and observes only new live events.
 
 Persistence makes completed history available after process restart and for
 later model calls. Toolang does not resume an unfinished run after its owner
-process exits. The execution store writes schema version 58 and reads versions
-52–58. Writable opens upgrade schema 57 by removing retired Thread peer metadata;
-other older schemas and adjacent legacy `ids.json` files are rejected without
-modification. Stop old writers before upgrading. For unsupported stores, preserve
-the complete old runtime before explicitly starting with fresh runtime data.
-Read-only inspection of supported old stores remains available.
+process exits. The execution store reads and writes only schema 59. Older schemas
+are rejected without modification, including read-only opens; writable opens also
+reject adjacent legacy `ids.json` files. There is no migration or old-record
+compatibility path. Stop old writers, preserve any required old runtime data
+separately, and start with fresh storage. See
+[terminal usage and cost records](#terminal-usage-and-cost-records) for the current
+Noted fields.
 
 
 ## IDs And Indexes

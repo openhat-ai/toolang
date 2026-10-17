@@ -3653,7 +3653,9 @@ class RunStore:
                     created_at TEXT NOT NULL,
                     started_at TEXT,
                     finished_at TEXT,
-                    noted TEXT
+                    noted TEXT,
+                    begin_cursor TEXT,
+                    end_cursor TEXT
                 )
                 """
             )
@@ -3675,6 +3677,8 @@ class RunStore:
                     finished_at TEXT,
                     _claimed INTEGER NOT NULL DEFAULT 0,
                     _revision INTEGER NOT NULL,
+                    event_cursor TEXT,
+                    client_id TEXT,
                     UNIQUE(target, "index")
                 )
                 """
@@ -3713,45 +3717,13 @@ class RunStore:
                 ("steps", ("begin_cursor", "end_cursor")),
                 ("controls", ("event_cursor", "client_id")),
             ):
-                columns = {
-                    row[1] for row in self._conn.execute(f"PRAGMA table_info({table})")
-                }
                 for name in names:
-                    if name not in columns:
-                        self._conn.execute(
-                            f"ALTER TABLE {table} ADD COLUMN {name} TEXT"
-                        )
                     self._conn.execute(
                         f"CREATE INDEX IF NOT EXISTS idx_{table}_{name} ON {table}({name})"
                     )
-            if "peer" in {
-                row[1] for row in self._conn.execute("PRAGMA table_info(threads)")
-            }:
-                self._conn.execute("ALTER TABLE threads DROP COLUMN peer")
-            _drop_legacy_activity(self._conn)
             talk.initialize(self._conn)
             self._conn.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
             self._conn.commit()
-
-
-def _drop_legacy_activity(connection: sqlite3.Connection) -> None:
-    """Discard obsolete derived indexes without changing execution facts."""
-    for table in ("threads", "runs", "steps"):
-        for operation in ("insert", "update", "delete"):
-            connection.execute(f"DROP TRIGGER IF EXISTS activity_{table}_{operation}")
-    for table in (
-        "meta",
-        "sessions",
-        "dirty",
-        "nodes",
-        "search",
-        "attempts",
-        "owners",
-        "durations",
-        "open",
-        "buckets",
-    ):
-        connection.execute(f"DROP TABLE IF EXISTS activity_{table}")
 
 
 def _create_steps_table(connection: sqlite3.Connection) -> None:
@@ -3775,6 +3747,8 @@ def _create_steps_table(connection: sqlite3.Connection) -> None:
             created_at TEXT NOT NULL,
             started_at TEXT NOT NULL,
             finished_at TEXT,
+            begin_cursor TEXT,
+            end_cursor TEXT,
             UNIQUE(run, path)
         )
         """

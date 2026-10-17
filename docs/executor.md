@@ -555,7 +555,7 @@ are persisted as `applied` with their effects. A later Step's `preceded_by`
 records adoption without changing those controls or their finish times.
 
 Every physical Step begin persists the executing Run's bound State reference
-under the root event lock. Named child acceptance independently captures the
+under the root boundary lock. Named child acceptance independently captures the
 latest published State once, validates its contract and authority, and persists
 its own entry revision before execution. Accepted and queued Runs never rebind.
 
@@ -573,7 +573,7 @@ boundaries under the owned tree's execution lock and canonical publication bound
 Part deltas publish directly from memory and are not persisted. Tracers consume
 bounded canonical subscriptions independently of execution. A failed core commit
 publishes no event; observer failures do not change execution truth. Parallel
-children share the tree event lock, and the stream boundary orders publication
+children share the root boundary lock, and the stream boundary orders publication
 across roots.
 
 
@@ -603,8 +603,8 @@ Persistence remains mandatory because later model calls depend on history.
 
 `RunEvent` is constructed only for subscribers, from current values and write
 results. It neither drives persistence nor supplies internal execution state.
-`_PersistSink` and the Event-driven persistence dispatcher have been removed.
-Store methods, transactions, SQL and durable record codecs are unchanged.
+Terminal Noted values use these existing completion transactions; the Store
+encodes them without querying LiveTree or calculating statistics.
 
 
 ## Streaming

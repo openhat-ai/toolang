@@ -1628,12 +1628,12 @@ the event discriminator.
 
 Reasoning uses these same events: `part_begin.part_type` is `"reasoning"`,
 `part_delta.delta` is `{"kind":"reasoning","text":"..."}`, and `part_end.data`
-is a canonical `ReasoningPart` with `type="reasoning"`. The call-local `part`
+contains `{"type":"reasoning","text":"..."}`. The call-local `part`
 ordinal also identifies its position in the completed Model Step's output.
-Optional `signature`, `provider`, and `provider_metadata` fields are retained on
-the Part; signatures can also occur on normal text and tool-call Parts. Signature
-fragments are not separate events. Deltas are live only; completed Parts are
-durable and available through existing output/inspection endpoints.
+Provider signatures, provider metadata, full tool arguments and arbitrary tool
+result bodies remain in durable Parts and model history; they are excluded from
+Event PartData. Deltas are live only; complete execution Parts remain available
+through explicit output/inspection endpoints.
 
 Structural cursors are persisted in the execution store; supported schemas and
 write restrictions follow [Durable Truth](execution.md#durable-truth). See the
