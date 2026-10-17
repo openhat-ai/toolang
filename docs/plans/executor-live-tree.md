@@ -17,8 +17,9 @@ values without calculating statistics. This follows
 the [compact-core removal](compact-execution-core.md) and
 [Event/persistence separation](executor-record-event-boundary.md).
 
-In scope: root ownership naming, LiveTree maintenance, per-Run call counts and model
-usage, terminal record fields, snapshot schemas/read interfaces and lifecycle tests.
+In scope: root ownership naming, LiveTree maintenance, per-Run call counts, token
+usage and final costs, separation of TokenUsage/ModelCost, terminal Noted fields,
+snapshot schemas/read interfaces and lifecycle tests.
 Out of scope: Top UI, Hub aggregation/discovery, a new embedded HTTP server,
 historical/Recent queries, Period/session statistics, retry, persistent indexes, new event types,
 subscription/replay protocols and generic projection frameworks. The older
@@ -67,8 +68,8 @@ order; consumers do not infer ordering from IDs or reconstruct it from history.
 
 | Node | Snapshot fields |
 | --- | --- |
-| `RunNode` | Discriminator `type="run"`, `id`, `parent`, current `runnable`, `status`, `created_at`, optional `started_at`/`finished_at`, `occurrence`, `calls: CallCounters` and `usage: Usage \| None`. |
-| `StepNode` | Discriminator `type="step"`, `id`, `parent`, `kind`, compact operation/model/tool identity, target and summary, `status`, timestamps and `occurrence`. Model/tool nodes also retain `invoked: bool` and available model `usage`; no descendant totals. |
+| `RunNode` | Discriminator `type="run"`, `id`, `parent`, current `runnable`, `status`, `created_at`, optional `started_at`/`finished_at`, `occurrence`, `calls: CallCounters`, `usage: TokenUsage \| None`, `cost: float \| None` (USD) and `cost_approximate: bool`. |
+| `StepNode` | Discriminator `type="step"`, `id`, `parent`, `kind`, compact operation/model/tool identity, target and summary, `status`, timestamps and `occurrence`. Model/tool nodes also retain `invoked: bool` and their own available model usage/final cost; no descendant totals. |
 
 Use existing scalar status/kind/occurrence vocabulary and necessary fields from
 the existing compact StepInfo shapes. Do not expose Records, full calls, ASTs,
@@ -89,7 +90,7 @@ but omit a committed terminal root from live reads. Release its tree with
 the owning lifecycle. Restart discards all trees and totals; never rebuild them
 from a database. Terminal record values do not restore live state.
 
-## Realtime call counts and reuse of model usage
+## Realtime call counts, token usage and costs
 
 Each retained Run accumulates its own calls and those of its owned descendants,
 including branches already pruned. Contributions follow only the executing Run's
@@ -115,44 +116,79 @@ error without invoking a tool. Adapter-internal transport attempts are not extra
 executor calls. Active work remains visible in unfinished Step nodes; add no
 separate active/completed-call counters.
 
-Model usage has a different update point. Reuse the in-memory
-`ModelStepNoted.accounting` produced by the existing normal/error completion paths,
-including compaction; apply its contribution once when that Noted is prepared,
-before awaiting persistence. Persist the same accounting object as today. Do not
-add duplicate usage fields to `ModelStepNoted`, read a stored Step, or move
-aggregation into generic Step completion/event-publication paths. Existing
-`ToolStepNoted` has only a summary, so no invocation fact can be reused there.
+Separate token usage from financial information and remove the `ModelAccounting`
+wrapper. Keep neutral immutable values in `execution/types.py`:
 
-`RunNode.usage` reuses the existing small `Usage` shape for cumulative available
-model accounting, independently of `calls`:
+| Type | Fields and responsibility |
+| --- | --- |
+| `TokenUsage` | Exactly `input_tokens`, `output_tokens`, `cache_read_tokens`, `reasoning_tokens`; token quantities only. Rename/move Event `Usage` from `events.py` and remove money/approximation fields. |
+| `ModelCost` | Direct final `amount: float \| None`, `currency: str \| None`, `source` (`reported`, `estimated`, `zero`, `unknown`), `complete: bool`, `pricing`, `meters` and `lines`. Pricing and calculation evidence reuse `ModelPricing`, `ModelUsageMeter` and `ModelCostLine`; billing is not restricted to tokens. |
+| `ModelStepNoted` | Direct `usage: TokenUsage \| None`, `cost: ModelCost \| None`, existing `continuation` and the invocation fact below. Remove `accounting`; add no replacement envelope. |
 
-| Usage field | Source in `ModelStepNoted.accounting` | Shared extraction rule |
+Remove the old amount-only `ModelCost` along with `ModelAccounting`; add no
+`CostAmount`, separate reported/estimated amount objects or duplicate total.
+`ModelCost` retains the selected amount and the pricing/calculation basis, not
+unused alternate totals. Calculation lines explain the catalog estimate; when
+the source is reported, the final amount may differ from their sum. Only the
+selected pricing plan/rates and necessary billing evidence are retained.
+Unknown cost has no amount/currency and is incomplete; known zero has amount
+zero and retains its currency. An estimated amount may be incomplete when some
+billing components lack prices.
+
+Replace `build_model_accounting()` with direct TokenUsage/ModelCost construction
+in existing result preparation. Normalize provider data and calculate/select
+cost once, including available error usage and compaction. The provider contract
+`base.types.run.ModelUsage` stays unchanged. Preserve these rules:
+
+| Value | Source | Normalization rule |
 | --- | --- | --- |
-| `input_tokens` | `input_tokens` | Reuse the normalized integer. |
-| `output_tokens` | `output_tokens` | Reuse the normalized integer. |
-| `cache_read_tokens` | Meter `input.cache_read` | Existing `token_meter_quantity()`. |
-| `reasoning_tokens` | Meter `output.reasoning` | Existing `token_meter_quantity()`. |
-| `cost` | Selected USD amount | Existing `selected_usd_cost()`; do not calculate prices again. |
-| `approximate` | Selected cost provenance | Existing `selected_cost_is_approximate()`; combine with logical OR. |
+| `TokenUsage.input_tokens` / `output_tokens` | Provider totals | Reuse normalized integers. |
+| `TokenUsage.cache_read_tokens` | Meter `input.cache_read` | Preserve the unique, integral token-meter rule; ambiguous/missing/wrong-unit values are unknown. |
+| `TokenUsage.reasoning_tokens` | Meter `output.reasoning` | The same token-meter rule. |
+| `ModelCost.amount` / `currency` | Selected amount | Preserve current source/currency selection, with no currency conversion. Persist the final amount once, in its selected currency. |
+| `ModelCost.source` / `complete` | Cost provenance and calculation coverage | Preserve known zero, reported/estimated and incomplete-calculation semantics. Derive approximation from source (`estimated`/`unknown`), without another stored flag. |
 
-Move `Usage` from `events.py` to `execution/types.py`. Extract the existing
-accounting-to-Usage projection into one pure helper in `accounting.py`, shared by
-LiveTree and Event summaries without changing the Event wire shape. Keep
-`ModelAccounting` and existing Noted usage fields unchanged; retain no accounting
-objects, pricing lines, continuation or billing metadata in LiveTree.
+Consume the same in-memory Noted usage and final cost once when prepared, before
+awaiting persistence. LiveTree immediately updates the executing Step and Run
+ancestors. Existing `ToolStepNoted` has no reusable invocation count. Collection
+item/iteration totals remain their existing Noted progress facts.
 
-Usage becomes visible as soon as its in-memory Noted is available; do not wait
-for Run termination or a poll to calculate it. It covers available accounting,
-not live token estimates or an assurance of complete provider billing. Before any
-accounting is available, `usage` is `None`; absent accounting adds no contribution.
-Sum known input/output tokens using integer arithmetic and costs using existing
-normalized money addition. For each optional meter/cost field, an unknown value in
-any contributed accounting makes that aggregate field `None`; known zero stays
-zero. Cache-read is included in input and reasoning in output; neither is added
-again to its parent total. Collection item/iteration totals remain existing Noted
-progress facts and are outside this scope.
+Event `StepSummary.usage` directly receives `noted.usage`; add separate
+`cost: float | None` (USD) and `cost_approximate: bool` from `noted.cost`.
+Read the selected amount only when its currency is USD; otherwise expose unknown
+USD cost, without dropping the selected currency from the durable ModelCost.
+No second TokenUsage definition, money inside TokenUsage, cost-summary DTO, meter scan,
+price selection or database read is required for Event construction. LiveTree
+retains only these small values and accumulated totals. Full ModelCost evidence stays
+with Step Noted; neither Events nor live nodes contain pricing or cost lines.
 
-Counter/usage updates belong to the actual invocation and Noted-producing
+This changes the Event wire shape: move `usage.cost`/`usage.approximate` to
+`StepSummary.cost`/`cost_approximate`. Update built-in presenters/decoders together
+and document subscriber upgrade/reconnect; add no dual Event format. Adapt limits
+and record inspection to TokenUsage/ModelCost access while preserving their policies and
+historical aggregation algorithms. Remove obsolete extraction helpers when unused;
+add no compatibility property layer or new observer/aggregation framework.
+
+New model Noted encoding has `usage`, `cost`, `cont` and `invoked`, with no
+`accounting` envelope. Persist TokenUsage and direct ModelCost fields once.
+Raw meters and cost lines preserve billing evidence, not another normalized
+TokenUsage. Implement only the new format: no old-record decoding, field aliases,
+conversion, backfill or compatibility tests. Bump the Store schema version and
+require fresh storage; reject older schemas through the existing unsupported-
+schema error, with no migration/recovery machinery.
+Record inspection/API serialization uses `noted.usage`/`noted.cost`; document
+that field migration alongside the Event migration, without legacy field aliases.
+
+Token usage and cost become visible when Noted is available; do not wait for Run end or
+a poll. They cover available results, not streaming token estimates or complete
+provider billing. With no available contribution, `usage`/`cost` is `None` and
+`cost_approximate` is false. Sum input/output using integers and costs using
+existing normalized money addition. Any unknown optional token field or selected
+USD amount in a contributed result makes its aggregate field `None`; known zero
+stays zero. Combine cost approximation with logical OR. Cache-read is included in
+input and reasoning in output; do not add either again to its parent total.
+
+Counter/usage/cost updates belong to the actual invocation and Noted-producing
 branches, not persistence, event publication or snapshot reads. Repeated receipts
 and terminal delivery add nothing. Add no cursor-based accounting, transaction
 staging, ledger, consumed-ID set or generalized callback mechanism. Limits retain
@@ -173,18 +209,18 @@ existing completion transaction, not through a second statistics writer:
 
 | Record | Terminal data | Source |
 | --- | --- | --- |
-| `ModelStepNoted.invoked` / `ToolStepNoted.invoked` | Add `bool \| None`: actual invocation entry for this Step. New terminal model/tool Steps always supply `True` or `False`; `None` means legacy/unknown. | Snapshot the Step node before terminal pruning. |
-| Existing `StepRecord.noted` fields | Retain model accounting/continuation, tool summary and other Step facts. Do not add a duplicate `Usage` payload or counters to Flow Steps. | The same in-memory model accounting used to update LiveTree. |
-| `RunRecord.noted: RunNoted \| None` | Add `RunNoted(calls: CallCounters, usage: Usage \| None)` for cumulative calls and available model usage for this Run and owned descendants. | Snapshot the Run node after existing child cleanup, before terminal pruning. |
+| `ModelStepNoted.invoked` / `ToolStepNoted.invoked` | Add `bool`: actual invocation entry for this Step. Terminal model/tool Steps supply `True` or `False`. | Snapshot the Step node before terminal pruning. |
+| `ModelStepNoted` | `usage`, full `cost`, existing `continuation` and `invoked`. Keep tool summaries and other Step Noted facts unchanged; no counters on Flow Steps. | The same in-memory TokenUsage/ModelCost used to update LiveTree. |
+| `RunRecord.noted: RunNoted \| None` | Add `RunNoted(calls: CallCounters, usage: TokenUsage \| None, cost: float \| None, cost_approximate: bool)` for this Run and owned descendants. Cost is the final USD total, with no merged prices/calculation lines. | Snapshot the Run node after existing child cleanup, before terminal pruning. |
 
 All persisted statistics belong inside a record's `noted`. Add no top-level
 `stats`, `counters`, `calls`, `usage`, token or cost fields to any Record, and no
 parallel statistics columns or indexes. Lifecycle timestamps and execution-limit
 inputs retain their existing execution meanings.
 
-`ModelAccounting` remains the per-call accounting fact; do not rebuild it from
-the smaller aggregate `Usage`. A model's accounting and call-entry count are
-different facts and must not be inferred from one another or from terminal status.
+Full ModelCost evidence remains per-call; do not rebuild it from aggregate usage/cost.
+Result usage/cost and invocation entry are different facts and must not be
+inferred from one another or from terminal status.
 An invoked failed/canceled Step records `True`; a skipped/pre-entry-canceled
 Step records `False`. New Runs ending before invocation record zero call counts.
 
@@ -193,16 +229,14 @@ Pass these immutable values into existing `RunStore.finish_step()` and
 startup/stop fallback paths. Store code only validates and encodes values; add no
 tree dependency, aggregation SQL, extra write, history scan, new table or index.
 Persist no nodes or intermediate snapshots. Keep terminal events compact and do
-not add aggregate counters/usage to RunEnd or duplicate model usage in StepEnd.
+not add aggregate statistics to RunEnd or duplicate TokenUsage/ModelCost in StepEnd.
 
-Extend the existing model/tool Noted codecs for `invoked`; add no Step column.
-Add only a nullable `noted` column to `runs`, with `RunNoted` in `types.py` and
-its codec in `records.py`, using existing schema upgrade/serialization patterns.
-Pending/running records and old records
-without captured statistics retain `None`; legacy Noted without `invoked` and
-legacy read-only databases remain readable. Do not backfill or mistake absence
-for zero. Record inspection reads captured fields without reconstructing calls;
-no new historical statistics API is included.
+Extend model/tool Noted codecs for the new fields; add no Step column. Add only
+a nullable `noted` column to `runs`, with `RunNoted` in `types.py` and its codec
+in `records.py`. Pending/running records keep `noted=None`; new zero-work terminal
+Runs record zero calls and no usage/cost contribution. Record inspection reads
+captured fields directly. No historical statistics API or old-record support is
+included.
 
 Capture each value once before terminal pruning and use the existing completion
 guards/receipt behavior. Retried delivery reuses the same final values and never
@@ -220,7 +254,7 @@ install an accepted async child before pruning its finished launch Step. Cover
 normal, startup-failure and cancellation cleanup through existing lifecycle paths.
 Install structural changes before releasing the existing publication boundary.
 
-Call counts update at invocation entry and usage at Noted preparation, independently
+Call counts update at invocation entry and usage/cost at Noted preparation, independently
 of Store commits: failure to persist an end does not undo work already performed.
 Only the detached terminal values enter the existing write transaction. Mutable
 tree data participates in neither rollback, durable cursor checks nor control
@@ -256,8 +290,8 @@ Define immutable protocol values in `execution/schemas.py`: `LiveSnapshot` has
 `thread_id` and flat parent-linked `RunNode | StepNode` values. Epoch reuses the
 executor's canonical stream epoch. Batch metadata occurs once, not on each node.
 Define executor-owned mutable maintenance in `execution/live.py` and neutral
-`CallCounters` and shared `Usage` vocabulary in `execution/types.py`; schemas do not
-depend on LiveTree.
+`CallCounters`, `TokenUsage`, `ModelCost` and `RunNoted` vocabulary
+in `execution/types.py`; schemas do not depend on LiveTree.
 
 One request returns all nonterminal roots or the exact root ID match. Validate ID
 syntax; a well-formed unknown, child or finished ID returns no trees, without a
@@ -279,12 +313,17 @@ are covered; observing scripts through a new HTTP listener is separate work.
 
 Likely files: `execution/executor/executor.py`, `common.py`, `awaitables.py`,
 `spawn.py`, `tool_runtime.py`, lifecycle producers under `runs/` and `steps/`, new
-`execution/live.py`, `types.py`, shared projection in `accounting.py`/
-`event_projection.py`, value imports in `events.py`, terminal fields/codecs in
-`records.py`/`store.py`, `schemas.py`, `client.py`, `remote.py` and `api/routers/runs.py`.
+`execution/live.py`, `types.py`, TokenUsage/ModelCost construction in `accounting.py`,
+value access in `event_projection.py`/`executor/limits.py`, schemas/imports in
+`events.py`, terminal fields/codecs in `records.py`/`store.py`, `schemas.py`,
+`client.py`, `remote.py` and `api/routers/runs.py`.
+Adapt value access in `inspection/trees.py` and CLI inspection/progress consumers;
+keep their presentation and historical aggregation algorithms. Update Event
+decoders/stream fixtures only as required by the TokenUsage/ModelCost field split.
 Update `docs/executor.md`, `docs/execution.md`, `docs/api.md` and the implementation
-changelog through the repository runnable. Limit Store changes to terminal value
-storage and compatible reads; preserve canonical retention and execution behavior.
+changelog through the repository runnable. Document the new storage format and
+fresh-data requirement. Limit Store changes to terminal value storage and its
+schema version; preserve canonical retention and execution behavior.
 
 | Scenario | Pass condition |
 | --- | --- |
@@ -292,11 +331,12 @@ storage and compatible reads; preserve canonical retention and execution behavio
 | Structure | All actual Step kinds can be leaves; nested/parallel branches and terminal async launch ancestors retain real ownership; await does not duplicate/reparent work. |
 | Actual invocation | Skipped batches, invalid arguments and pre-call cancellation add no calls; real model/tool invocations count once even when they fail; include runtime tools and compaction model calls but exclude synthetic read Steps. |
 | Realtime counts | While a real model/tool call is blocked, snapshots already include its entry in the owning Run and ancestors; completion, failure and cancellation never count it again. |
-| Accounting reuse | Existing in-memory ModelStepNoted supplies persistence and the shared Usage projection; usage is visible before awaiting its end write, including failure accounting, without duplicate Step usage, pricing calculation or history reads. |
-| Totals and pruning | Only the executing Run and ancestor Runs accumulate; pruning, child termination, same-Run exec and compaction continuation neither lose nor double-count contributions; missing accounting, unknown optional values and known zero follow the defined usage semantics. |
+| Usage/cost boundary | TokenUsage has exactly four token fields; ModelStepNoted directly holds TokenUsage/ModelCost. Events reuse TokenUsage and carry only final amount/approximation; no full ModelCost, duplicate DTO, meter scan, price selection or history read. Built-in clients consume the split Event fields. |
+| Cost persistence | New Noted round-trips TokenUsage and direct ModelCost fields, preserving the selected currency, source, completeness and pricing/calculation evidence. There is no CostAmount wrapper or duplicate final amount. Unknown/zero and token-meter ambiguity retain their semantics; limits/inspection retain behavior. |
+| Totals and pruning | Only the executing Run and ancestor Runs accumulate; pruning, child termination, same-Run exec and compaction continuation neither lose nor double-count contributions; missing usage/cost, unknown optional values and known zero follow the defined semantics. |
 | Persistence and receipts | Failed acceptance/begin creates no live node or actual call; a failed end write does not undo an executed call; repeated terminal/receipt delivery performs no counter update and preserves existing causal events. |
-| Terminal records | Model/tool Noted invocation facts and final per-Run calls/usage match live values, including skip/failure/cancel/startup and async admission/exec paths; each uses its existing terminal transaction, with no additional write. |
-| Record compatibility | Pending/legacy Run Noted remains unknown, new zero-work terminals record zero counts, legacy read-only schemas remain readable, and record selection/serialization exposes captured Noted without backfill or a history scan. |
+| Terminal records | Model/tool Noted invocation facts and final per-Run calls/usage/cost match live values, including skip/failure/cancel/startup and async admission/exec paths; each uses its existing terminal transaction, with no additional write. |
+| Record defaults | Pending/running Noted is absent; new zero-work terminals record zero calls; record selection/serialization exposes captured Noted without history reads. Old formats have no decoding, migration or compatibility path. |
 | Record boundary | All durable statistics are inside Step/Run Noted; neither Record types nor Store tables gain top-level stats/counters/calls/usage fields or parallel statistics storage. |
 | Cleanup and observers | Startup failure, normal completion, immediate steer/cancel and canceled stop finalize once; slow/failing/overflowed observers do not affect execution; terminal delivery and bounded drain still work. |
 | Snapshot isolation | Concurrent transitions produce one coherent sample; returned values cannot change runtime state; large prior model contexts and completed history do not increase snapshot content. |
