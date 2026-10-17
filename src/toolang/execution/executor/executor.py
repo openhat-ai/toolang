@@ -1065,7 +1065,7 @@ class RunExecutor:
             self.stream.close()
             observers = tuple(self._observers)
             try:
-                if monitor is not None:
+                if monitor is not None and not monitor.done():
                     await asyncio.gather(monitor, return_exceptions=True)
                 if observers:
                     await asyncio.wait(

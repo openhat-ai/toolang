@@ -251,3 +251,29 @@ def test_canceling_stop_still_finishes_runs_and_drains_terminal_events(
                 ] == ended
 
     asyncio.run(scenario())
+
+
+def test_stop_skips_a_finished_monitor_from_a_closed_owner_loop(tmp_path):
+    harness = ExecutionHarness.create(
+        tmp_path, source="flow root(_: Text) -> Text:\n  pass\n", responses=[]
+    )
+
+    async def run():
+        return await harness.executor.run(
+            harness.run_spec(
+                thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                runnable="root",
+                primary=(TextPart("ready"),),
+            )
+        )
+
+    try:
+        record = asyncio.run(run())
+        monitor = harness.executor._monitor_task
+        assert monitor is not None and monitor.done() and monitor.get_loop().is_closed()
+        asyncio.run(harness.executor.stop())
+        assert harness.executor._monitor_task is None
+        assert harness.executor.stream._closed
+        assert harness.store.get_run(run_id=record.id) == record
+    finally:
+        harness.store.close()
