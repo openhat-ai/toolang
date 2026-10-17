@@ -232,20 +232,9 @@ Thread list responses return:
 - `title`
 - `updated_at`
 - `origin`
-- `peer`
 - `parent`
 - `run_count`
 - `latest_run`
-
-`peer` defaults to:
-
-```json
-{ "type": "user", "name": "user", "thread": null }
-```
-
-Agent-to-agent threads use `peer.type = "agent"` with the peer agent name and
-that peer's local thread id when known. `parent` is a local parent thread id and
-is not used for cross-agent thread references.
 
 Thread detail returns:
 
@@ -315,7 +304,7 @@ does not expose a separate `/chat` resource.
 
 A client starts a new conversation by calling:
 
-1. `POST /api/v1/threads` with `client_id`, `request_id`, and an optional peer.
+1. `POST /api/v1/threads` with `client_id` and `request_id`.
 2. `GET /api/v1/runs/defaults` once to adopt concrete session defaults.
 3. `POST /api/v1/chat/runs/authored/stream` with the returned thread id, concrete
    runnable and model requests, authored input, and materialized policy.

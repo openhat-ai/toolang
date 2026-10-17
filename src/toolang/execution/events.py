@@ -11,7 +11,6 @@ from pydantic import Field, TypeAdapter
 from toolang.base.types.message import Delta, Part, PartType
 
 from .records import (
-    ThreadPeer,
     occurrence_from_data,
     occurrence_to_data,
     step_given_from_data,
@@ -190,7 +189,6 @@ class ThreadCreated:
     thread: str
     control: ControlRef
     origin: str
-    peer: ThreadPeer
     created_at: str
     type: Literal["thread_created"] = field(default="thread_created", init=False)
 

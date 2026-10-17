@@ -46,7 +46,6 @@ Ref type and serialize to canonical text.
 ```text
 id
 origin
-peer
 created_by
 head
 created_at
@@ -99,7 +98,8 @@ text. Rerun creates a new Run entry. Each persisted
 value retains its self-describing codec, without a Local/name/dim wrapper.
 References address `payload/input/_` or `payload/input/argumentName`.
 
-Writable RunStore opening requires schema 57; schemas 52–56 remain readable
+Writable RunStore opening uses schema 58 and upgrades schema 57 by removing the
+retired Thread peer column; schemas 52–57 remain readable
 without mutation. Writable opening removes the obsolete Activity tables and
 triggers, preserving core facts, content objects, ID counters and cursors. Stop
 old writers before this cleanup; derived Activity totals are discarded.

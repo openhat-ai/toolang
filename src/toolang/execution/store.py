@@ -52,7 +52,7 @@ from .records import (
     CompactControlPayload,
     ChdirControlPayload,
     CreateControlPayload,
-    ControlPayload,
+    ControlPayloadUnion,
     ExecControlPayload,
     ForkControlPayload,
     RecallControlPayload,
@@ -68,7 +68,6 @@ from .records import (
     StepRecord,
     StoredModelStepGiven,
     StoredStepGiven,
-    ThreadPeer,
     ThreadRecord,
     execution_error_from_data,
     execution_error_to_data,
@@ -129,8 +128,9 @@ from .values import parts_from_value
 from . import talk
 from .errors import ThreadBusy
 
-_SCHEMA_VERSION = 57
-_SUPPORTED_SCHEMA_VERSIONS = (52, 53, 54, 55, 56, _SCHEMA_VERSION)
+_SCHEMA_VERSION = 58
+_SUPPORTED_SCHEMA_VERSIONS = (52, 53, 54, 55, 56, 57, _SCHEMA_VERSION)
+_WRITABLE_SCHEMA_VERSIONS = (57, _SCHEMA_VERSION)
 
 
 class RunStore:
@@ -544,7 +544,7 @@ class RunStore:
         ref: ControlRef,
         kind: ControlKind,
         timing: ControlTiming,
-        payload: ControlPayload,
+        payload: ControlPayloadUnion,
         request: str | None,
         client_id: str | None = None,
         status: ControlStatus,
@@ -782,7 +782,6 @@ class RunStore:
         *,
         handle: AwaitableHandle,
         source: StepRef,
-        peer: ThreadPeer,
         resources: AgentResources,
         limits: RunLimits,
         state: str,
@@ -840,9 +839,13 @@ class RunStore:
                 if run is None or run.parent is not None:
                     raise ValueError(f"invalid spawn admission: {source}")
                 thread = self.get_thread(thread_id=str(run.thread))
+                creation = self.get_thread_control(thread_id=str(run.thread), index=0)
                 if (
                     thread is None
-                    or (requested_thread is None and thread.peer != peer)
+                    or (
+                        requested_thread is None
+                        and (creation is None or creation.triggered_by != source)
+                    )
                     or (
                         requested_thread is not None
                         and str(run.thread) != requested_thread
@@ -863,7 +866,6 @@ class RunStore:
                 self.create_thread(
                     thread_id=handle.thread,
                     origin="work",
-                    peer=peer,
                     created_at=created_at,
                     triggered_by=source,
                 )
@@ -1518,7 +1520,6 @@ class RunStore:
         *,
         thread_id: str,
         origin: str = "chat",
-        peer: ThreadPeer | None = None,
         request_id: str | None = None,
         client_id: str | None = None,
         created_at: str | None = None,
@@ -1530,7 +1531,6 @@ class RunStore:
             raise ValueError(f"invalid thread id: {thread_id!r}")
         _validate_request_id(request_id)
         now = created_at or utc_now()
-        effective_peer = peer or ThreadPeer()
         with self.write_transaction():
             try:
                 if request_id is not None and (
@@ -1566,14 +1566,13 @@ class RunStore:
                 self._conn.execute(
                     """
                     INSERT INTO threads(
-                        id, origin, peer,
+                        id, origin,
                         created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?)
                     """,
                     (
                         thread_id,
                         origin,
-                        _dump_json(effective_peer.to_data()),
                         now,
                         now,
                     ),
@@ -1674,14 +1673,13 @@ class RunStore:
                 self._conn.execute(
                     """
                     INSERT INTO threads(
-                        id, origin, peer,
+                        id, origin,
                         created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?)
                     """,
                     (
                         thread_id,
                         source_record.origin,
-                        _dump_json(source_record.peer.to_data()),
                         created_at,
                         created_at,
                     ),
@@ -1873,37 +1871,6 @@ class RunStore:
         if valid_thread_id(target):
             return self.get_thread_control(thread_id=target, index=index)
         raise ValueError(f"invalid control target: {target!r}")
-
-    def update_thread_peer(
-        self,
-        *,
-        thread_id: str,
-        peer: ThreadPeer,
-        updated_at: str | None = None,
-    ) -> ThreadRecord:
-        now = updated_at or utc_now()
-        with self.write_transaction():
-            row = self._conn.execute(
-                "SELECT * FROM threads WHERE id = ?",
-                (thread_id,),
-            ).fetchone()
-            if row is None:
-                raise ValueError(f"thread not found: {thread_id}")
-            self._conn.execute(
-                """
-                UPDATE threads
-                SET peer = ?, updated_at = ?
-                WHERE id = ?
-                """,
-                (_dump_json(peer.to_data()), now, thread_id),
-            )
-            updated = self._conn.execute(
-                "SELECT * FROM threads WHERE id = ?",
-                (thread_id,),
-            ).fetchone()
-        if updated is None:
-            raise RuntimeError(f"thread not found after update: {thread_id}")
-        return _thread_from_row(updated)
 
     def finish_run(
         self,
@@ -3607,11 +3574,13 @@ class RunStore:
                 raise RunStoreSchemaError(
                     version,
                     current=_SCHEMA_VERSION,
-                    supported=(_SCHEMA_VERSION,),
+                    supported=_WRITABLE_SCHEMA_VERSIONS,
                     read_only=False,
                 )
             allowed = (
-                _SUPPORTED_SCHEMA_VERSIONS if self.read_only else (0, _SCHEMA_VERSION)
+                _SUPPORTED_SCHEMA_VERSIONS
+                if self.read_only
+                else (0, *_WRITABLE_SCHEMA_VERSIONS)
             )
             if version not in allowed:
                 raise RunStoreSchemaError(
@@ -3620,7 +3589,7 @@ class RunStore:
                     supported=(
                         _SUPPORTED_SCHEMA_VERSIONS
                         if self.read_only
-                        else (_SCHEMA_VERSION,)
+                        else _WRITABLE_SCHEMA_VERSIONS
                     ),
                     read_only=self.read_only,
                 )
@@ -3632,14 +3601,14 @@ class RunStore:
             self._conn.execute("PRAGMA foreign_keys=ON;")
             self._conn.execute("BEGIN IMMEDIATE")
             version = int(self._conn.execute("PRAGMA user_version").fetchone()[0])
-            if version not in (0, _SCHEMA_VERSION) or (
+            if version not in (0, *_WRITABLE_SCHEMA_VERSIONS) or (
                 version == 0 and _database_has_user_schema(self._conn)
             ):
                 self._conn.rollback()
                 raise RunStoreSchemaError(
                     version,
                     current=_SCHEMA_VERSION,
-                    supported=(_SCHEMA_VERSION,),
+                    supported=_WRITABLE_SCHEMA_VERSIONS,
                     read_only=False,
                 )
             self._conn.execute(
@@ -3657,7 +3626,6 @@ class RunStore:
                 CREATE TABLE IF NOT EXISTS threads (
                     id TEXT PRIMARY KEY,
                     origin TEXT NOT NULL,
-                    peer TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
                     horizon TEXT
@@ -3749,6 +3717,10 @@ class RunStore:
                     self._conn.execute(
                         f"CREATE INDEX IF NOT EXISTS idx_{table}_{name} ON {table}({name})"
                     )
+            if "peer" in {
+                row[1] for row in self._conn.execute("PRAGMA table_info(threads)")
+            }:
+                self._conn.execute("ALTER TABLE threads DROP COLUMN peer")
             _drop_legacy_activity(self._conn)
             talk.initialize(self._conn)
             self._conn.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
@@ -3981,11 +3953,9 @@ def _run_from_row(row: sqlite3.Row) -> RunRecord:
 
 def _thread_from_row(row: sqlite3.Row) -> ThreadRecord:
     raw = dict(row)
-    peer_raw = _load_json(str(raw["peer"]))
     return ThreadRecord(
         id=str(raw["id"]),
         origin=str(raw["origin"]),
-        peer=ThreadPeer.from_data(peer_raw if isinstance(peer_raw, Mapping) else None),
         created_at=str(raw["created_at"]),
         updated_at=str(raw["updated_at"]),
         horizon=history_ref(str(raw["horizon"]))

@@ -200,20 +200,11 @@ class InputMessagePayload(ApiRequest):
     parts: list[InputPart]
 
 
-class ThreadPeerPayload(ApiRequest):
-    """One optional thread peer descriptor."""
-
-    type: str = Field(default="user", min_length=1)
-    name: str = Field(default="user", min_length=1)
-    thread: str | None = None
-
-
 class ThreadCreateRequest(ApiRequest):
     """Request one empty thread."""
 
     client_id: StrictText | None = Field(default=None, min_length=1)
     request_id: StrictText | None = Field(default=None, min_length=1)
-    peer: ThreadPeerPayload | None = None
 
 
 class ThreadRewindRequest(ApiRequest):

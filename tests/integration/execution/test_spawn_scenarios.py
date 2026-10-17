@@ -92,9 +92,8 @@ agic child(_: Text) -> Text:
                 r.id for r in harness.store.list_run_tree(root_run_id=parent.id)
             }
             spawned_thread = harness.store.get_thread(thread_id=handle.thread)
-            assert spawned_thread is not None and spawned_thread.peer.thread == thread
+            assert spawned_thread is not None
             assert spawned_thread.origin == "work"
-            assert spawned_thread.peer.type == "agent"
             with harness.executor.stream.boundary() as (_, _, frames):
                 created = next(
                     frame.event
@@ -102,7 +101,7 @@ agic child(_: Text) -> Text:
                     if isinstance(frame.event, ThreadCreated)
                     and frame.event.thread == handle.thread
                 )
-            assert created.origin == "work" and created.peer == spawned_thread.peer
+            assert created.origin == "work"
             entry = harness.store.get_run_control(run_id=handle.id, index=0)
             assert entry is not None and entry.triggered_by == step.ref
             assert isinstance(entry.payload, RunControlPayload)

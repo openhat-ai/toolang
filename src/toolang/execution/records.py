@@ -81,7 +81,6 @@ from .types import (
     StepNoted,
     StepRef,
     StepStatus,
-    ThreadPeerType,
     ThreadRef,
     ToolStepGiven,
     ToolStepNoted,
@@ -252,40 +251,6 @@ class RunRecord:
             raise TypeError("run output requires an Output or None")
         _validate_record_error(self.error, label="run")
         validate_occurrence(self.occur)
-
-
-@dataclass(frozen=True, slots=True)
-class ThreadPeer:
-    """One local thread peer descriptor."""
-
-    type: ThreadPeerType = "user"
-    name: str = "user"
-    thread: str | None = None
-
-    @classmethod
-    def from_data(cls, payload: Mapping[str, Any] | None) -> "ThreadPeer":
-        if payload is None:
-            return cls()
-        peer_type = str(payload.get("type", "user")).strip() or "user"
-        if peer_type not in {"user", "agent"}:
-            raise ValueError(f"unsupported thread peer type: {peer_type}")
-        name = str(payload.get("name", "user" if peer_type == "user" else "")).strip()
-        if peer_type == "agent" and not name:
-            raise ValueError("agent thread peer requires name")
-        raw_thread = payload.get("thread")
-        thread = str(raw_thread).strip() if raw_thread is not None else None
-        return cls(
-            type=cast(ThreadPeerType, peer_type),
-            name=name or "user",
-            thread=thread or None,
-        )
-
-    def to_data(self) -> dict[str, Any]:
-        return {
-            "type": self.type,
-            "name": self.name,
-            "thread": self.thread,
-        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -503,18 +468,6 @@ class RewindControlPayload:
             raise TypeError("rewind payload requires a Thread-scoped ControlRef")
 
 
-RunScopedControlPayload = (
-    RunControlPayload
-    | LegacyRetryPayloadField
-    | ChdirControlPayload
-    | CompactControlPayload
-    | ExecControlPayload
-    | SteerControlPayload
-    | CancelControlPayload
-    | RecallControlPayload
-)
-ThreadControlPayload = CreateControlPayload | ForkControlPayload | RewindControlPayload
-ControlPayload = RunScopedControlPayload | ThreadControlPayload
 _CONTROL_PAYLOAD_TYPES = {
     "run": RunControlPayload,
     "chdir": ChdirControlPayload,
@@ -544,8 +497,18 @@ def _control_payload_variant(value: object, info: ValidationInfo) -> object:
     return value
 
 
-ControlPayloadField = Annotated[
-    ControlPayload,
+ControlPayloadUnion = Annotated[
+    RunControlPayload
+    | LegacyRetryPayloadField
+    | ChdirControlPayload
+    | CompactControlPayload
+    | ExecControlPayload
+    | SteerControlPayload
+    | CancelControlPayload
+    | RecallControlPayload
+    | CreateControlPayload
+    | ForkControlPayload
+    | RewindControlPayload,
     BeforeValidator(_control_payload_variant),
 ]
 
@@ -584,7 +547,6 @@ class ThreadRecord:
 
     id: str
     origin: str
-    peer: ThreadPeer
     created_at: str
     updated_at: str
     horizon: RunRef | StepRef | None = None
@@ -719,7 +681,7 @@ class ControlRecord:
 
     id: str
     kind: ControlKind
-    payload: ControlPayloadField
+    payload: ControlPayloadUnion
     triggered_by: StepRef | None = None
     request: str | None = None
     client_id: str | None = None
@@ -957,7 +919,7 @@ def call_input_from_data(data: object) -> CallInput[Value | TypedRef]:
     )
 
 
-def control_payload_from_data(kind: ControlKind, data: object) -> ControlPayload:
+def control_payload_from_data(kind: ControlKind, data: object) -> ControlPayloadUnion:
     """Parse one typed control payload from its canonical data."""
 
     if not isinstance(data, Mapping):
@@ -1084,7 +1046,7 @@ def control_payload_from_data(kind: ControlKind, data: object) -> ControlPayload
     raise ValueError(f"unknown control kind: {kind}")
 
 
-def control_payload_to_data(payload: ControlPayload) -> dict[str, object]:
+def control_payload_to_data(payload: ControlPayloadUnion) -> dict[str, object]:
     """Serialize one typed control payload."""
 
     if isinstance(payload, RunControlPayload):

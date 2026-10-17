@@ -30,7 +30,6 @@ from toolang.execution.schemas import (
     RunDetail,
     ThreadControlRefData,
     ThreadInfo,
-    ThreadPeerInfo,
 )
 from toolang.execution.types import (
     value_for_type,
@@ -258,7 +257,6 @@ def _thread(thread_id: str = "term_remote") -> ThreadInfo:
         origin="chat",
         channel="terminal",
         status="idle",
-        peer=ThreadPeerInfo(),
         created_by=ThreadControlRefData(thread=thread_id, index=0),
         head=ThreadControlRefData(thread=thread_id, index=0),
         run_count=0,

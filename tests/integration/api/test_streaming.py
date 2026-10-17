@@ -57,7 +57,6 @@ from toolang.execution.events import (
 )
 from toolang.execution.records import (
     RunControlPayload,
-    ThreadPeer,
 )
 from toolang.execution.schemas import RunDetail, ThreadDetail
 from toolang.execution.stream import CanonicalStream
@@ -369,10 +368,19 @@ agic chat(_: Part[]) -> Part[]:
 
     try:
         with TestClient(app) as client:
+            assert (
+                client.post(
+                    "/api/v1/threads",
+                    json={"peer": {"type": "user", "name": "user"}},
+                ).status_code
+                == 422
+            )
             created = client.post(
                 "/api/v1/threads",
                 json={"client_id": "test-web"},
             )
+            assert created.status_code == 201
+            assert "peer" not in created.json()["thread"]
             thread_id = created.json()["thread"]["id"]
             response = client.post(
                 "/api/v1/runs/stream",
@@ -653,7 +661,6 @@ def test_live_relay_accepts_thread_events_from_worker_threads(tmp_path) -> None:
             thread="term_test",
             control=ControlRef.for_thread("term_test", 0),
             origin="chat",
-            peer=ThreadPeer(),
             created_at="2026-01-01T00:00:00Z",
         )
 

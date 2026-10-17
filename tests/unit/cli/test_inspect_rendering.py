@@ -13,7 +13,7 @@ from toolang.cli.toolang.commands.inspect import (
     _print_human_table,
     _render_human_rows,
 )
-from toolang.execution.records import ThreadPeer, ThreadRecord
+from toolang.execution.records import ThreadRecord
 from toolang.execution.schemas import RecordSelection
 from toolang.execution.types import Pointer, value_for_type
 from toolang.lang.types import Array, Struct
@@ -28,7 +28,7 @@ def test_human_type_labels_use_nullable_suffix() -> None:
 @pytest.mark.parametrize(
     ("value", "runtime", "render_type", "expected"),
     (
-        ({"name": "user"}, {"name": "user"}, "ThreadPeer", "fields"),
+        ({"name": "user"}, {"name": "user"}, "ExampleStruct", "fields"),
         (["value"], ["value"], "str[]", "fields"),
         ({}, {}, "Json", "value"),
         ([], [], "str[]", "value"),
@@ -45,12 +45,11 @@ def test_implicit_pointer_projector_preserves_existing_browsing_rules(
     record = ThreadRecord(
         id="term_render",
         origin="test",
-        peer=ThreadPeer(),
         created_at="",
         updated_at="",
     )
     selected = RecordSelection(
-        pointer=Pointer.parse("term_render/peer"),
+        pointer=Pointer.parse("term_render/horizon"),
         record=record,
         value=value,
         runtime=runtime,
@@ -85,11 +84,10 @@ def test_human_table_never_truncates_a_pointer_in_a_narrow_terminal() -> None:
 def test_human_multiline_cell_never_wraps_its_pointer() -> None:
     output = StringIO()
     console = Console(file=output, width=20, force_terminal=False)
-    pointer = Pointer.parse(f"term_{'x' * 80}/peer")
+    pointer = Pointer.parse(f"term_{'x' * 80}/horizon")
     record = ThreadRecord(
         id="term_render",
         origin="test",
-        peer=ThreadPeer(),
         created_at="",
         updated_at="",
     )
@@ -117,11 +115,10 @@ def test_human_resolved_pointer_marks_the_type_not_the_field() -> None:
     output = StringIO()
     console = Console(file=output, width=80, force_terminal=False)
     base = Pointer.parse("term_render")
-    pointer = base.select("peer")
+    pointer = base.select("horizon")
     record = ThreadRecord(
         id="term_render",
         origin="test",
-        peer=ThreadPeer(),
         created_at="",
         updated_at="",
     )
@@ -142,8 +139,8 @@ def test_human_resolved_pointer_marks_the_type_not_the_field() -> None:
     )
 
     rendered = output.getvalue()
-    row = next(line for line in rendered.splitlines() if "/peer" in line)
-    assert "/peer" in row
+    row = next(line for line in rendered.splitlines() if "/horizon" in line)
+    assert "/horizon" in row
     assert "*Text" in row
     assert "→" not in row
 
@@ -152,11 +149,10 @@ def test_human_parts_align_in_the_value_cell_without_a_bullet() -> None:
     output = StringIO()
     console = Console(file=output, width=80, force_terminal=False)
     base = Pointer.parse("term_render")
-    pointer = base.select("peer")
+    pointer = base.select("horizon")
     record = ThreadRecord(
         id="term_render",
         origin="test",
-        peer=ThreadPeer(),
         created_at="",
         updated_at="",
     )

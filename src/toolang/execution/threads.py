@@ -20,7 +20,6 @@ from .events import (
 from .records import (
     ForkControlPayload,
     RewindControlPayload,
-    ThreadPeer,
     ThreadRecord,
 )
 from .store import RunStore
@@ -76,7 +75,6 @@ class ThreadManager:
         prefix: ThreadPrefix,
         request_id: str | None = None,
         client_id: str | None = None,
-        peer: ThreadPeer | None = None,
     ) -> str:
         """Create an empty thread and return its id."""
 
@@ -88,7 +86,6 @@ class ThreadManager:
             thread, control = self.store.create_thread(
                 thread_id=thread_id,
                 origin=canonical_prefix.value,
-                peer=peer,
                 request_id=request_id,
                 client_id=client_id,
                 created_at=created_at,
@@ -97,7 +94,6 @@ class ThreadManager:
                 thread=thread.id,
                 control=control.ref,
                 origin=thread.origin,
-                peer=thread.peer,
                 created_at=created_at,
             )
             return thread.id, event
@@ -116,7 +112,6 @@ class ThreadManager:
                 thread=thread_id,
                 control=ControlRef.for_thread(thread_id, 0),
                 origin=thread.origin,
-                peer=thread.peer,
                 created_at=thread.created_at,
             )
 

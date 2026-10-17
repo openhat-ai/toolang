@@ -1280,7 +1280,7 @@ The HTTP API has no endpoint that accepts terminal `ChatInput` text. A chat
 client creates a thread when needed, converts the interaction to the shared
 `RunRequest` boundary, and starts each turn through the authored run stream:
 
-1. `POST /api/v1/threads` with `client_id`, `request_id`, and an optional peer descriptor.
+1. `POST /api/v1/threads` with `client_id` and `request_id`.
 2. `POST /api/v1/chat/runs/authored/stream` with the returned thread ID, client ID, request ID,
    authored input, materialized model/policy, `driver: "chat"`, and a nullable
    `runnable.ref`. A null ref leaves handler selection to execution admission;

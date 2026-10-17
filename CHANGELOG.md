@@ -57,6 +57,14 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Changed
 
+- **Breaking:** thread peer metadata is removed from execution records, events,
+  and HTTP schemas. Thread creation no longer accepts a peer, and integrations
+  must stop sending or reading peer fields. Empty thread titles now use the
+  thread origin. Writable execution-store schema 58 upgrades schema 57 by
+  transactionally deleting only `threads.peer`, preserving execution facts,
+  contents, IDs, and cursors; stop old writers before upgrading. Read-only
+  versions 52–57 remain readable without mutation.
+
 - **Breaking:** the public `ToolRuntime` tool protocol adds
   `steer(target, input, expected_control)` and
   `cancel(target, expected_control, reason)`, and `spawn` and `honor` gain the

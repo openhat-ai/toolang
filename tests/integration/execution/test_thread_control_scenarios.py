@@ -25,7 +25,6 @@ from toolang.execution.records import (
     CreateControlPayload,
     ForkControlPayload,
     RewindControlPayload,
-    ThreadPeer,
 )
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
@@ -67,7 +66,6 @@ class _FailingThreadListener(ThreadListener):
 def test_create_and_fork_controls_preserve_identity_and_anchor(
     tmp_path: Path,
 ) -> None:
-    peer = ThreadPeer(type="agent", name="bob", thread="remote-thread")
     harness = ExecutionHarness.create(
         tmp_path,
         source=_CHAT_SOURCE,
@@ -84,7 +82,6 @@ def test_create_and_fork_controls_preserve_identity_and_anchor(
             source = manager.create(
                 prefix=ThreadPrefix.CHAT,
                 request_id="thread-create-1",
-                peer=peer,
             )
             first = await harness.executor.run(
                 harness.run_spec(
@@ -116,7 +113,6 @@ def test_create_and_fork_controls_preserve_identity_and_anchor(
     created_event, forked_event = listener.events
     assert isinstance(created_event, ThreadCreated)
     assert created_event.control == ControlRef.for_thread(source, 0)
-    assert created_event.peer == peer
     assert isinstance(forked_event, ThreadForked)
     assert forked_event.control == ControlRef.for_thread(forked, 0)
     assert forked_event.source_thread == source
@@ -126,7 +122,6 @@ def test_create_and_fork_controls_preserve_identity_and_anchor(
     try:
         source_thread = reopened.get_thread(thread_id=source)
         assert source_thread is not None
-        assert source_thread.peer == peer
         assert reopened.thread_view(source).head == ControlRef.for_thread(source, 0)
         create_control = reopened.list_thread_controls(thread_id=source)
         assert len(create_control) == 1
@@ -138,7 +133,6 @@ def test_create_and_fork_controls_preserve_identity_and_anchor(
 
         forked_thread = reopened.get_thread(thread_id=forked)
         assert forked_thread is not None
-        assert forked_thread.peer == peer
         assert reopened.thread_view(forked).head == ControlRef.for_thread(forked, 0)
         fork_control = reopened.list_thread_controls(thread_id=forked)
         assert len(fork_control) == 1

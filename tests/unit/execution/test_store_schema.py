@@ -15,7 +15,7 @@ from toolang.execution.types import ContentRef
     [
         pytest.param(28, id="historical"),
         pytest.param(51, id="previous"),
-        pytest.param(58, id="future"),
+        pytest.param(59, id="future"),
     ],
 )
 @pytest.mark.parametrize("read_only", (False, True))
@@ -37,7 +37,7 @@ def test_run_store_rejects_any_other_schema_without_modifying_it(
         RunStore(path, read_only=read_only)
 
     assert raised.value.version == schema_version
-    assert raised.value.current == 57
+    assert raised.value.current == 58
     assert raised.value.read_only is read_only
     assert path.read_bytes() == before
     connection = sqlite3.connect(path)
@@ -92,7 +92,7 @@ def test_run_store_opens_the_current_schema(tmp_path: Path) -> None:
 
     connection = sqlite3.connect(path)
     try:
-        assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 57
+        assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 58
         columns = {
             table: {
                 str(row[1]) for row in connection.execute(f"PRAGMA table_info({table})")
@@ -104,7 +104,6 @@ def test_run_store_opens_the_current_schema(tmp_path: Path) -> None:
                 "horizon",
                 "id",
                 "origin",
-                "peer",
                 "created_at",
                 "updated_at",
             },
@@ -185,6 +184,108 @@ def test_run_store_opens_the_current_schema(tmp_path: Path) -> None:
         }
     finally:
         connection.close()
+
+
+@pytest.mark.parametrize("read_only", (False, True))
+def test_schema_57_peer_cleanup_preserves_execution_facts(
+    tmp_path: Path, read_only: bool
+) -> None:
+    from tests.support.execution_fixtures import accept_run
+    from toolang.base.types.message import Message
+    from toolang.execution.types import Output
+
+    path = tmp_path / "runs.db"
+    store = RunStore(path)
+    try:
+        thread, _ = store.create_thread(thread_id="chat_original", origin="chat")
+        accept_run(
+            store,
+            run_id="run_original",
+            parent=None,
+            thread=thread.id,
+            input=Message.user("original input"),
+            context={},
+            request_id="original-request",
+            created_at="2026-10-17T00:00:00Z",
+        )
+        run = store.finish_run(run_id="run_original", output=Output("original output"))
+        content = store.put_content(b"original content")
+    finally:
+        store.close()
+
+    queries = {
+        "threads": "SELECT id, origin, created_at, updated_at, horizon FROM threads",
+        **{
+            table: f"SELECT * FROM {table}"
+            for table in ("runs", "steps", "controls", "contents", "seqs")
+        },
+    }
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            "ALTER TABLE threads ADD COLUMN peer TEXT NOT NULL DEFAULT 'obsolete'"
+        )
+        connection.execute("PRAGMA user_version=57")
+        connection.execute("INSERT INTO seqs VALUES ('original-family', 123, 4)")
+        before = {
+            name: connection.execute(query).fetchall()
+            for name, query in queries.items()
+        }
+    before_bytes = path.read_bytes()
+
+    reopened = RunStore(path, read_only=read_only)
+    try:
+        assert reopened.get_thread(thread_id=thread.id) == thread
+        assert reopened.get_run(run_id=run.id) == run
+        assert reopened.get_content(content) == b"original content"
+        if not read_only:
+            reopened.create_thread(thread_id="chat_new", origin="chat")
+            reopened.fork_thread(
+                thread_id="chat_fork",
+                source=thread.id,
+                anchor=run.id,
+                request_id=None,
+                created_at="2026-10-17T01:00:00Z",
+            )
+    finally:
+        reopened.close()
+
+    with sqlite3.connect(path) as connection:
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(threads)")}
+        assert ("peer" in columns) is read_only
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == (
+            57 if read_only else 58
+        )
+        # New thread controls may be appended; existing rows stay identical.
+        for name, query in queries.items():
+            after = connection.execute(query).fetchall()
+            assert all(row in after for row in before[name])
+    if read_only:
+        assert path.read_bytes() == before_bytes
+
+
+def test_peer_schema_upgrade_rolls_back_when_column_removal_fails(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "runs.db"
+    RunStore(path).close()
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            "ALTER TABLE threads ADD COLUMN peer TEXT NOT NULL DEFAULT 'obsolete'"
+        )
+        connection.execute("PRAGMA user_version=57")
+        connection.execute(
+            "CREATE TRIGGER legacy_peer AFTER UPDATE ON threads "
+            "BEGIN SELECT NEW.peer; END"
+        )
+
+    with pytest.raises(sqlite3.OperationalError, match="peer"):
+        RunStore(path)
+
+    with sqlite3.connect(path) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 57
+        assert "peer" in {
+            row[1] for row in connection.execute("PRAGMA table_info(threads)")
+        }
 
 
 @pytest.mark.parametrize("family_name", ("local", "run"))
@@ -399,7 +500,7 @@ def test_legacy_schemas_remain_read_only_without_empty_counters(tmp_path, versio
     before = path.read_bytes()
     with pytest.raises(RunStoreSchemaError) as raised:
         RunStore(path)
-    assert raised.value.supported == (57,)
+    assert raised.value.supported == (57, 58)
     readonly = RunStore(path, read_only=True)
     try:
         assert readonly.list_threads() == []
