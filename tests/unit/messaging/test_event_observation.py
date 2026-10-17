@@ -1,5 +1,9 @@
 """Event publication, recovery, and Hub reduction with an isolated backend."""
 
+from toolang.execution.types import StepRef
+
+from tests.support.observations import run_begin, run_end, step_begin, step_end
+
 import asyncio
 import json
 from uuid import uuid4
@@ -506,7 +510,7 @@ def test_hub_filters_and_cursor_errors_have_flat_http_contract(tmp_path):
 
 
 def test_multi_origin_cached_replay_preserves_global_order_and_identity(tmp_path):
-    from toolang.execution.events import RunBegin, RunEnd
+    from toolang.execution.events import RunEnd
     from toolang.execution.stream import CanonicalEvent
     from toolang.execution.types import EventCursor, ControlRef
 
@@ -540,7 +544,7 @@ def test_multi_origin_cached_replay_preserves_global_order_and_identity(tmp_path
                 for exporter, event in (
                     (
                         exporters[0],
-                        RunBegin(
+                        run_begin(
                             "run_one",
                             ControlRef.for_run("run_one", 0),
                             thread_id="term_one",
@@ -548,14 +552,14 @@ def test_multi_origin_cached_replay_preserves_global_order_and_identity(tmp_path
                     ),
                     (
                         exporters[1],
-                        RunBegin(
+                        run_begin(
                             "run_one",
                             ControlRef.for_run("run_one", 0),
                             thread_id="term_one",
                         ),
                     ),
-                    (exporters[0], RunEnd("run_one", "succeeded")),
-                    (exporters[1], RunEnd("run_one", "failed")),
+                    (exporters[0], run_end("run_one", "succeeded")),
+                    (exporters[1], run_end("run_one", "failed")),
                 ):
                     await exporter.publish(
                         CanonicalEvent(
@@ -754,7 +758,6 @@ def test_projection_omits_optional_history_before_failing_active_budget(
     tmp_path, monkeypatch
 ):
     import toolang.teaming.records as records
-    from toolang.execution.events import RunBegin, RunEnd
     from toolang.execution.stream import CanonicalEvent
     from toolang.execution.types import ControlRef, EventCursor
 
@@ -762,7 +765,7 @@ def test_projection_omits_optional_history_before_failing_active_budget(
     monkeypatch.setattr(records, "MAX_RECENT", 2)
     for index in range(4):
         name = f"run_{index}"
-        begin = RunBegin(name, ControlRef.for_run(name, 0), thread_id="term_one")
+        begin = run_begin(name, ControlRef.for_run(name, 0), thread_id="term_one")
         projection.apply(
             CanonicalEvent(
                 EventCursor("a" * 32, index * 2 + 1), begin, "term_one", name, 0
@@ -772,7 +775,7 @@ def test_projection_omits_optional_history_before_failing_active_budget(
             projection.apply(
                 CanonicalEvent(
                     EventCursor("a" * 32, index * 2 + 2),
-                    RunEnd(
+                    run_end(
                         name, "succeeded", finished_at=f"2026-10-09T00:00:0{index}Z"
                     ),
                     "term_one",
@@ -1118,7 +1121,6 @@ def test_malformed_stored_projection_is_a_protocol_failure(stored):
 def test_hub_recovery_ignores_inherited_sse_ids(replacement):
     import httpx
     from httpx_sse import connect_sse
-    from toolang.execution.events import RunBegin
     from toolang.execution.types import ControlRef, EventCursor
     from toolang.teaming.subscriptions import envelope
 
@@ -1137,7 +1139,7 @@ def test_hub_recovery_ignores_inherited_sse_ids(replacement):
         envelope(
             "agent:alice",
             StreamFrame.source(
-                RunBegin("run_one", ControlRef.for_run("run_one", 0)),
+                run_begin("run_one", ControlRef.for_run("run_one", 0)),
                 str(EventCursor("b" * 32, 1)),
                 context=True,
             ),
@@ -1170,7 +1172,7 @@ def test_hub_recovery_ignores_inherited_sse_ids(replacement):
     event = events[-1]
     state.feed(StreamFrame(event.event, json.loads(event.data), event.id or None))
     assert state.agents["agent:alice"].snapshot().events == (
-        RunBegin("run_one", ControlRef.for_run("run_one", 0)),
+        run_begin("run_one", ControlRef.for_run("run_one", 0)),
     )
     assert state.cursor == boundary
 
@@ -1239,30 +1241,28 @@ def test_stale_exporter_cannot_remove_the_new_owners_staging(tmp_path, monkeypat
 
 def test_projection_preserves_nested_background_run_structure():
     from toolang.execution.events import (
-        RunBegin,
-        RunEnd,
-        StepBegin,
-        StepEnd,
         event_from_data,
     )
     from toolang.execution.stream import CanonicalEvent
     from toolang.execution.subscriptions import StreamScope
-    from toolang.execution.types import ControlRef, EventCursor, StepRef
+    from toolang.execution.types import ControlRef, EventCursor
     from toolang.lang.ast import RunStmt, Span
     from toolang.teaming.records import EventProjection
 
-    root = RunBegin("run_root", ControlRef.for_run("run_root", 0))
-    step = StepBegin(
+    root = run_begin("run_root", ControlRef.for_run("run_root", 0))
+    step = step_begin(
         StepRef.parse("run_root.0"),
         "run",
         RunStmt(span=Span(line=1), runnable="child", asynchronous=True),
     )
-    child = RunBegin("run_child", ControlRef.for_run("run_child", 0), parent=step.step)
-    step_end = StepEnd(step.step, "run", "succeeded")
-    root_end = RunEnd(root.run, "succeeded")
-    child_end = RunEnd(child.run, "succeeded")
+    child = run_begin("run_child", ControlRef.for_run("run_child", 0), parent=step.step)
+    step_ended = step_end(step.step, "run", "succeeded")
+    root_end = run_end(root.run, "succeeded")
+    child_end = run_end(child.run, "succeeded")
     projection = EventProjection()
-    for seq, event in enumerate((root, step, child, step_end, root_end, child_end), 1):
+    for seq, event in enumerate(
+        (root, step, child, step_ended, root_end, child_end), 1
+    ):
         projection.apply(
             CanonicalEvent(EventCursor("a" * 32, seq), event, "term_one", root.run, 0)
         )
@@ -1272,17 +1272,17 @@ def test_projection_preserves_nested_background_run_structure():
         step,
         child,
         child_end,
-        step_end,
+        step_ended,
         root_end,
     ]
 
 
 @pytest.mark.parametrize("damage", ["orphan", "cycle", "duplicate", "wrong_end"])
 def test_projection_rejects_invalid_tree_structure(damage):
-    from toolang.execution.events import RunBegin, RunEnd, event_to_data
+    from toolang.execution.events import event_to_data
     from toolang.execution.stream import CanonicalEvent
     from toolang.execution.subscriptions import StreamScope
-    from toolang.execution.types import ControlRef, EventCursor, StepRef
+    from toolang.execution.types import ControlRef, EventCursor
     from toolang.teaming.records import EventProjection, field
 
     projection = EventProjection()
@@ -1290,7 +1290,7 @@ def test_projection_rejects_invalid_tree_structure(damage):
     projection.apply(
         CanonicalEvent(
             EventCursor("a" * 32, 1),
-            RunBegin(name, ControlRef.for_run(name, 0), thread_id="term_one"),
+            run_begin(name, ControlRef.for_run(name, 0), thread_id="term_one"),
             "term_one",
             name,
             0,
@@ -1303,7 +1303,7 @@ def test_projection_rejects_invalid_tree_structure(damage):
     elif damage == "duplicate":
         projection.entities[field("run", "run_duplicate")] = dict(entity)
     else:
-        entity["end"] = event_to_data(RunEnd("run_other", "succeeded"))
+        entity["end"] = event_to_data(run_end("run_other", "succeeded"))
         entity["end_source"] = str(EventCursor("a" * 32, 2))
     with pytest.raises(EventProtocolError):
         projection.snapshot(StreamScope())

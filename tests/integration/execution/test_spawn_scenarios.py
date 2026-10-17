@@ -1,5 +1,9 @@
 """Independent root launches keep identity, ownership, and admission durable."""
 
+from toolang.execution.event_projection import direct_output, step_summary
+
+from toolang.execution.types import StepRef
+
 import asyncio
 from typing import Any, cast
 from collections.abc import Mapping
@@ -341,7 +345,7 @@ flow child(_: Text):
         ],
     )
     original_accept = spawn.accept
-    original_launch = harness.executor._launch
+    create_task = asyncio.create_task
     original_run = harness.store.accept_run
     fail_next_commit = False
 
@@ -367,10 +371,10 @@ flow child(_: Text):
         await original_accept(*args, **kwargs)
         raise asyncio.CancelledError()
 
-    def fail_dispatch(*args, **kwargs):
-        if kwargs.get("independent"):
+    def fail_dispatch(coro, **kwargs):
+        if kwargs.get("context") is not None:
             raise RuntimeError("dispatch failed")
-        return original_launch(*args, **kwargs)
+        return create_task(coro, **kwargs)
 
     def fail_admission(*args, **kwargs):
         if kwargs.get("launch_context"):
@@ -383,7 +387,7 @@ flow child(_: Text):
 
         monkeypatch.setattr(spawn_stmt, "accept", interrupt_delivery)
     elif failure == "dispatch":
-        monkeypatch.setattr(harness.executor, "_launch", fail_dispatch)
+        monkeypatch.setattr(asyncio, "create_task", fail_dispatch)
     elif failure == "commit":
         connection = harness.store._conn
         monkeypatch.setattr(harness.store, "_conn", CommitFault())
@@ -418,9 +422,9 @@ flow child(_: Text):
             end = next(
                 e
                 for e in tracer.events
-                if isinstance(e, StepEnd) and e.step == step.ref
+                if isinstance(e, StepEnd) and StepRef.parse(e.step) == step.ref
             )
-            assert end.output == step.output
+            assert end.output == direct_output(step.output)
             assert end.status == step.status
             assert end.finished_at == step.finished_at
             assert run_event_from_data(run_event_to_data(end)) == end
@@ -458,7 +462,7 @@ flow child(_: Text):
                 }
                 assert isinstance(step.noted, ToolStepNoted)
                 assert step.noted.summary == "Spawned new run: flow:child"
-                assert end.noted == step.noted
+                assert end.noted == step_summary(step.noted)
             if failure == "dispatch":
                 assert root.status == "failed"
                 assert root.error is not None
@@ -493,14 +497,14 @@ agic child() -> Text:
         ],
     )
     if dispatch_failure:
-        original_launch = harness.executor._launch
+        create_task = asyncio.create_task
 
-        def fail_dispatch(*args, **kwargs):
-            if kwargs.get("independent"):
+        def fail_dispatch(coro, **kwargs):
+            if kwargs.get("context") is not None:
                 raise RuntimeError("dispatch failed")
-            return original_launch(*args, **kwargs)
+            return create_task(coro, **kwargs)
 
-        monkeypatch.setattr(harness.executor, "_launch", fail_dispatch)
+        monkeypatch.setattr(asyncio, "create_task", fail_dispatch)
 
     async def scenario():
         async with harness:
@@ -552,7 +556,84 @@ agic child() -> Text:
             assert all(
                 not isinstance(e, RunBegin) or e.run != handle.id for e in tracer.events
             )
+            await harness.executor.stop()
+            with harness.executor.stream.boundary() as (_, _, frames):
+                assert (
+                    sum(
+                        isinstance(frame.event, RunEnd) and frame.event.run == handle.id
+                        for frame in frames
+                    )
+                    == 1
+                )
             attachment.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("caller", ["flow", "agic"])
+@pytest.mark.parametrize("error_type", [RuntimeError, ValueError])
+def test_spawn_does_not_hide_failed_startup_finalization(
+    tmp_path, monkeypatch, caller, error_type
+):
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+flow parent(_: Text):
+  spawn child
+agic driver(_: Text):
+  recall = none
+  hands = flow:child
+  user: Start the child.
+flow child(_: Text):
+  pass
+""",
+        responses=[
+            ModelCallResult(
+                tool_calls=(
+                    ToolCall(
+                        "spawn",
+                        "spawn",
+                        "runtime__spawn",
+                        {"runnable": "flow:child", "input": {"_": "input"}},
+                    ),
+                )
+            ),
+            ModelCallResult(message=Message.assistant("Started.")),
+        ]
+        if caller == "agic"
+        else [],
+    )
+    create_task = asyncio.create_task
+    finish_run = harness.executor._finish_run
+    attempted = False
+
+    def failed_task(coro, **kwargs):
+        if kwargs.get("context") is not None:
+            raise RuntimeError("task creation failed")
+        return create_task(coro, **kwargs)
+
+    def failed_terminal(*args, **kwargs):
+        nonlocal attempted
+        if not attempted:
+            attempted = True
+            raise error_type("terminal write failed")
+        return finish_run(*args, **kwargs)
+
+    monkeypatch.setattr(asyncio, "create_task", failed_task)
+    monkeypatch.setattr(harness.executor, "_finish_run", failed_terminal)
+
+    async def scenario():
+        async with harness:
+            record = await harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    runnable="driver" if caller == "agic" else "parent",
+                    primary=(TextPart("input"),),
+                )
+            )
+            assert record.status == "failed"
+            assert record.error is not None
+            assert harness.store.resolve_error(record.error) == "terminal write failed"
 
     asyncio.run(scenario())
 

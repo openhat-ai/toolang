@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 
@@ -9,7 +11,7 @@ from toolang.lang.ast import FlowStmt
 
 from ...records import ControlRecord, StepRef
 from ...types import LoopStepNoted, LoopTermination, Occurrence, StepStatus
-from ..common import BoundRun, EventEmitter, Local, StepBoundary, execute_step
+from ..common import BoundRun, Local, execute_step
 
 
 @dataclass(slots=True)
@@ -31,10 +33,13 @@ class LoopProgress:
         return LoopStepNoted(self.iterations, termination, self.total)
 
 
+if TYPE_CHECKING:
+    from ..executor import _Execution
+
+
 async def execute(
-    emit: EventEmitter,
+    execution: _Execution,
     *,
-    begin_step: StepBoundary | None = None,
     binding: BoundRun,
     path: StepRef,
     statement: FlowStmt,
@@ -47,8 +52,7 @@ async def execute(
     """Evaluate one loop Step and emit its event boundary."""
 
     return await execute_step(
-        emit,
-        begin_step=begin_step,
+        execution,
         kind="loop",
         path=path,
         binding=binding,

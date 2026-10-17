@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from toolang.execution.types import StepRef
+
 import asyncio
 from hashlib import sha256
 import logging
@@ -53,12 +55,16 @@ def _read_projection(
             event = event_from_data(frame.data)
             if isinstance(event, RunBegin):
                 roots[event.run] = (
-                    roots[event.parent.run_id] if event.parent else event.run
+                    roots[(StepRef.parse(event.parent)).run_id]
+                    if event.parent is not None
+                    else event.run
                 )
                 threads[event.run] = event.thread_id
             assert isinstance(event, RunBegin | RunEnd | StepBegin | StepEnd)
             run = (
-                event.run if isinstance(event, RunBegin | RunEnd) else event.step.run_id
+                event.run
+                if isinstance(event, RunBegin | RunEnd)
+                else StepRef.parse(event.step).run_id
             )
             # Historical records may retain null Begin cursors.
             cursor = (
@@ -68,7 +74,9 @@ def _read_projection(
             )
             projection.apply(CanonicalEvent(cursor, event, threads[run], roots[run], 0))
             identity = (
-                event.run if isinstance(event, RunBegin | RunEnd) else str(event.step)
+                event.run
+                if isinstance(event, RunBegin | RunEnd)
+                else str(StepRef.parse(event.step))
             )
             entity = projection.entities[
                 field(

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from toolang.execution.types import StepRef
+
 import asyncio
 from collections.abc import Mapping, Sequence
 from contextlib import suppress
@@ -36,7 +38,6 @@ from prompt_toolkit.styles import Style
 from rich.console import Group, RenderableType
 from rich.text import Text
 from typer._click.exceptions import ClickException
-from toolang.base.types.message import ToolResultPart
 from toolang.base.utils.workspace_paths import parse_cwd
 from toolang.cli.common.execution_progress.operations import runtime_operation_name
 from toolang.execution.events import RunObservation, RunSnapshot
@@ -1195,12 +1196,12 @@ class ChatTuiApp:
             self._status_run_id = root.run
         if (
             isinstance(event, PartEnd)
-            and event.step.run_id == self._status_run_id
-            and isinstance(event.data, ToolResultPart)
-            and runtime_operation_name(event.data.tool_name) == "chdir"
-            and event.data.error is None
+            and StepRef.parse(event.step).run_id == self._status_run_id
+            and event.data["type"] == "tool_result"
+            and runtime_operation_name(str(event.data.get("tool_name", ""))) == "chdir"
+            and event.data.get("error") is None
         ):
-            cwd = event.data.output.get("cwd")
+            cwd = event.data.get("cwd")
             if isinstance(cwd, str):
                 self.status_bar.set_run_workspace(_workspace_label(cwd))
                 self._invalidate_ui()

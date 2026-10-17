@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
-from toolang.lang.ast import RepeatStmt
-from toolang.lang.ast import FlowStmt
-from toolang.lang.description import statement_description
+from toolang.execution.events import FlowStepInfo
 from toolang.lang.types import is_generated_ref
+from toolang.lang.description import statement_description
 
 from .formatting import one_line
 
 
-def statement_header(statement: FlowStmt) -> str:
+def statement_header(statement: FlowStepInfo) -> str:
     """Return one concise presentation header from a typed Flow statement."""
 
     if statement.doc and (doc := one_line(statement.doc.strip())):
@@ -19,7 +18,7 @@ def statement_header(statement: FlowStmt) -> str:
     return statement_description(statement)
 
 
-def until_header(statement: RepeatStmt) -> str:
+def until_header(statement: FlowStepInfo) -> str:
     """Return the Repeat until boundary label without exposing generated names."""
 
     runnable = statement.runnable or ""

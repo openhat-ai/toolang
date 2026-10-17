@@ -2,28 +2,22 @@
 
 from __future__ import annotations
 
+from toolang.execution.types import StepRef
+
 from toolang.base.types.model import ModelRequest
 
 from collections.abc import Mapping, Sequence
-from typing import Any, cast
+from typing import Any
 
 from toolang.base.types.message import Message, Part
 from toolang.base.types.policy import RunBindings, RunLimits
 from toolang.base.types.run import ModelCall, ToolCall
-from toolang.execution.events import (
-    RunBegin,
-    RunEnd,
-    RunEvent,
-    StepBegin,
-    StepEnd,
-)
 from toolang.execution.records import (
     ControlRecord,
     RunRecord,
     StepRecord,
 )
 from toolang.common.time import utc_now
-from toolang.execution.executor._persist import _PersistSink
 from toolang.execution.store import RunStore
 from toolang.execution.types import (
     value_for_type,
@@ -48,7 +42,6 @@ from toolang.execution.types import (
     StepKind,
     StepNoted,
     StepStatus,
-    StepRef,
     ThreadRef,
     ToolStepGiven,
 )
@@ -66,16 +59,6 @@ from toolang.lang.types import Array
 
 
 _TEST_STATE = "0" * 64
-
-
-def persist_event(store: RunStore, event: RunEvent) -> None:
-    """Persist one trace event through the executor's internal projector."""
-
-    sink = getattr(store, "_test_event_projector", None)
-    if sink is None:
-        sink = _PersistSink(store)
-        setattr(store, "_test_event_projector", sink)
-    cast(_PersistSink, sink).on_event(event)
 
 
 def accept_run(
@@ -200,20 +183,11 @@ def project_run_start(
         created_at=created,
         state_ref=state_ref,
     )
-    persist_event(
-        store,
-        RunBegin(
-            run=run_id,
-            parent=parent_path,
-            control=ControlRef.for_run(run_id, 0),
-            runnable=(
-                f"{runnable_kind}:{runnable_name}"
-                if runnable_name is not None
-                else f"{runnable_kind}:test"
-            ),
-            occurrence=_occurrence_from_context(run_context),
-            started_at=started,
-        ),
+    store.begin_run(
+        run_id=run_id,
+        control=ControlRef.for_run(run_id, 0),
+        occurrence=_occurrence_from_context(run_context),
+        started_at=started,
     )
     store.finish_run_controls(run_id=run_id, indexes=(0,), finished_at=started)
     run = store.get_run(run_id=run_id)
@@ -282,33 +256,25 @@ def project_step(
         if parent is not None
         else StepRef.from_local(str(run_id), (resolved_index,))
     )
-    persist_event(
-        store,
-        StepBegin(
-            step=path,
-            kind=kind,
-            input=tuple(input),
-            occurrence=_occurrence_from_context(context or {}),
-            given=_step_given(kind, context),
-            started_at=started_at,
-        ),
+    store.begin_step(
+        ref=path,
+        kind=kind,
+        input=tuple(input),
+        occurrence=_occurrence_from_context(context or {}),
+        given=_step_given(kind, context),
+        started_at=started_at,
     )
     if status != "running":
-        persist_event(
-            store,
-            StepEnd(
-                step=path,
-                kind=kind,
-                status=status,
-                output=(
-                    output
-                    if isinstance(output, Output) or output is None
-                    else Output(value_for_type("Part[]", tuple(output)), "_")
-                ),
-                noted=_step_noted(kind, detail),
-                error=ErrorMessage(error) if isinstance(error, str) else error,
-                finished_at=finished_at or started_at,
-            ),
+        store.finish_step(
+            ref=path,
+            kind=kind,
+            status=status,
+            output=output
+            if isinstance(output, Output) or output is None
+            else Output(value_for_type("Part[]", tuple(output)), "_"),
+            noted=_step_noted(kind, detail),
+            error=ErrorMessage(error) if isinstance(error, str) else error,
+            finished_at=finished_at or started_at,
         )
     step = next(
         (item for item in store.list_steps(run_id=path.run_id) if item.ref == path),
@@ -458,19 +424,14 @@ def project_run_end(
 ) -> RunRecord:
     """Project one terminal run event, returning durable run truth."""
 
-    persist_event(
-        store,
-        RunEnd(
-            run=run_id,
-            status=status,
-            output=(
-                Output(value_for_type("Part[]", output), "_")
-                if isinstance(output, FieldRef)
-                else output
-            ),
-            error=ErrorMessage(error) if isinstance(error, str) else error,
-            finished_at=finished_at or utc_now(),
-        ),
+    store.finish_run(
+        run_id=run_id,
+        status=status,
+        output=Output(value_for_type("Part[]", output), "_")
+        if isinstance(output, FieldRef)
+        else output,
+        error=ErrorMessage(error) if isinstance(error, str) else error,
+        finished_at=finished_at or utc_now(),
     )
     run = store.get_run(run_id=run_id)
     if run is None:

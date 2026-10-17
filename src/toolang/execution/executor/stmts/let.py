@@ -29,8 +29,7 @@ async def execute(
         return evaluate_content(execution, binding, locals, path, statement.value)
 
     return await value_step.execute(
-        execution.emit,
-        begin_step=execution.step_starter(binding),
+        execution,
         binding=binding,
         path=path,
         statement=statement,

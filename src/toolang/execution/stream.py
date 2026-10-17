@@ -27,9 +27,8 @@ from .events import (
     ThreadForked,
     ThreadRewound,
     event_to_data,
-    observation_event,
 )
-from .types import EventCursor, StepRef
+from .types import EventCursor
 
 _LOGGER = logging.getLogger(__name__)
 OBSERVER_DRAIN_SEC = 1.0
@@ -87,7 +86,6 @@ class Publication:
         thread_id: str = "",
         root_run_id: str | None = None,
     ) -> None:
-        event = observation_event(event)
         if isinstance(event, ThreadCreated | ThreadForked | ThreadRewound):
             thread_id = event.thread
         size = len(json.dumps(event_to_data(event), ensure_ascii=False).encode())
@@ -200,8 +198,8 @@ class CanonicalStream:
         if not self._over_limit():
             return
         read_floor = self._read_floor()
-        last_part: dict[StepRef, int] = {}
-        completed: dict[StepRef, list[int]] = {}
+        last_part: dict[str, int] = {}
+        completed: dict[str, list[int]] = {}
         for frame in self._events:
             if isinstance(frame.event, PartBegin | PartDelta | PartEnd):
                 last_part[frame.event.step] = frame.cursor.seq
@@ -242,7 +240,7 @@ class CanonicalStream:
                 if reader._seq < self._floor:
                     reader._overflow()
 
-    def _compact(self, completed: dict[StepRef, list[int]], read_floor: int) -> None:
+    def _compact(self, completed: dict[str, list[int]], read_floor: int) -> None:
         consumed = {
             step: boundaries[index - 1]
             for step, boundaries in completed.items()
@@ -406,7 +404,14 @@ class TraceObserver:
     def __init__(self, reader: StreamReader, tracer: RunTracer) -> None:
         self.reader = reader
         self._deadline: asyncio.TimerHandle | None = None
-        self.task = asyncio.create_task(self._run(tracer), name="toolang-run-observer")
+        coroutine = self._run(tracer)
+        try:
+            self.task = asyncio.create_task(coroutine, name="toolang-run-observer")
+        except Exception:
+            coroutine.close()
+            reader.close()
+            raise
+        self.task.add_done_callback(lambda _task: reader.close())
 
     async def _run(self, tracer: RunTracer) -> None:
         try:

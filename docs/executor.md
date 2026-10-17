@@ -440,8 +440,8 @@ StepBegin(run)
 StepEnd(run)
 ```
 
-This distinction is made at the event source. The sink and tracer observe the
-same canonical event sequence and never filter a synthetic top-level step.
+This distinction is made at the execution boundary. Subscribers observe the
+canonical event sequence without a synthetic top-level Step.
 
 A model `runtime__run` call validates its target and atomically records a pending
 child Run and applied entry control. Its Tool Step stays open until the child ends,
@@ -552,7 +552,7 @@ Only external steer/cancel requests wait in `pending`. Runtime-created controls
 are persisted as `applied` with their effects. A later Step's `preceded_by`
 records adoption without changing those controls or their finish times.
 
-Every physical `StepBegin` persists the executing Run's bound State reference
+Every physical Step begin persists the executing Run's bound State reference
 under the root event lock. Named child acceptance independently captures the
 latest published State once, validates its contract and authority, and persists
 its own entry revision before execution. Accepted and queued Runs never rebind.
@@ -560,8 +560,8 @@ its own entry revision before execution. Accepted and queued Runs never rebind.
 
 ## Event Ordering
 
-Runtime produces typed canonical events. The executor serializes structural
-projection under the owned tree's event lock and canonical publication boundary:
+Runtime supplies internal execution facts. The executor records lifecycle
+boundaries under the owned tree's execution lock and canonical publication boundary:
 
 1. commit execution facts, referenced control changes and structural cursors in
    one Store transaction;
@@ -583,7 +583,8 @@ and runs reference that step. An exception outside a step stores its message
 directly on the run without a synthetic step. Cancellation unwinds steps and
 child runs before the root `RunEnd(canceled)`.
 
-If cancellation came from a cancel control, `RunEnd.control` references it. The
+If cancellation came from a cancel control, `RunEnd.control` carries its Run ID
+and index. The
 runtime marks that request `applied`. Every Run ending closes remaining pending
 steer/cancel requests as `wontapply` because they can no longer reach an applicable
 checkpoint. Runtime-created controls and their successful source Steps retain
@@ -592,14 +593,16 @@ their committed outcomes even when subsequent execution fails or is canceled.
 
 ## Persistence
 
-`RunExecutor` always constructs its private event projector. History is
-required for later model calls, so persistence is not a pluggable executor
-capability.
+Existing executor lifecycle coordination calls `RunStore.begin_run()`,
+`begin_step()`, `finish_step()` and `finish_run()` directly. Store owns record
+validation, compact model-call capture and durable mutations; the executor owns
+control transitions, cursor coordination and post-commit memory adoption.
+Persistence remains mandatory because later model calls depend on history.
 
-The private projector handles only run and step facts. It does not accept controls,
-change control statuses, store live events, or translate events into API/CLI
-protocols. It persists event payloads directly and owns no parallel local or
-output projection state.
+`RunEvent` is constructed only for subscribers, from current values and write
+results. It neither drives persistence nor supplies internal execution state.
+`_PersistSink` and the Event-driven persistence dispatcher have been removed.
+Store methods, transactions, SQL and durable record codecs are unchanged.
 
 
 ## Streaming

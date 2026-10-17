@@ -1,5 +1,7 @@
 """Validate bounded agent publications before any shared backend mutation."""
 
+from toolang.execution.types import StepRef
+
 from hashlib import sha256
 import json
 from typing import Any
@@ -86,10 +88,14 @@ def _entities(values: dict[str, str]) -> dict[str, Any]:
                 and begin.thread_id == value["thread"]
                 or kind == "step"
                 and isinstance(begin, StepBegin)
-                and str(begin.step) == identity
+                and str(StepRef.parse(begin.step)) == identity
             ):
                 raise ValueError("Invalid entity Begin")
-            run = begin.run if isinstance(begin, RunBegin) else begin.step.run_id
+            run = (
+                begin.run
+                if isinstance(begin, RunBegin)
+                else StepRef.parse(begin.step).run_id
+            )
             if (
                 value.get("run") != run
                 or not isinstance(value.get("root"), str)
@@ -105,7 +111,7 @@ def _entities(values: dict[str, str]) -> dict[str, Any]:
                     and begin.run == end.run
                     or isinstance(begin, StepBegin)
                     and isinstance(end, StepEnd)
-                    and begin.step == end.step
+                    and StepRef.parse(begin.step) == StepRef.parse(end.step)
                     and begin.kind == end.kind
                 ):
                     raise ValueError("Invalid entity End")

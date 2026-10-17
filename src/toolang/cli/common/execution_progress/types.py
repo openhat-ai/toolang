@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+from toolang.execution.events import FlowStepInfo, ToolStepInfo
+
+
 from dataclasses import dataclass
 from typing import Literal
 
 from toolang.execution.events import StepBegin
-from toolang.execution.types import RunStatus, ToolStepGiven
+from toolang.execution.types import RunStatus
 from toolang.base.utils.tools import decode_tool_name
-from toolang.lang.ast import FlowStmt
 
 ProgressTone = Literal["progress", "normal", "active", "error", "warning"]
 ProgressFormat = Literal["plain", "markdown"]
@@ -23,15 +25,15 @@ class StepOperation:
     begin: StepBegin
     name: str
     source: Literal["flow", "model", "tool"]
-    statement: FlowStmt | None = None
-    tool: ToolStepGiven | None = None
+    statement: FlowStepInfo | None = None
+    tool: ToolStepInfo | None = None
     runnable: str = ""
     run_scope: bool = False
     tool_marker: Literal["›", "✧"] = "›"
 
     @property
     def tool_identity(self) -> tuple[str, str] | None:
-        return decode_tool_name(self.tool.call.name) if self.tool is not None else None
+        return decode_tool_name(self.tool.name) if self.tool is not None else None
 
     @property
     def is_flow(self) -> bool:

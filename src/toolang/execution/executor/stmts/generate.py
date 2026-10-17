@@ -39,8 +39,7 @@ async def execute(
         )
 
     return await par_step.execute(
-        execution.emit,
-        begin_step=execution.step_starter(binding),
+        execution,
         binding=binding,
         path=path,
         statement=statement,

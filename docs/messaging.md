@@ -365,9 +365,11 @@ current lease and membership, cannot move backwards or past the stream tail, and
 can safely repeat the same position. Transient save failures retain pending
 progress and reconcile it with the backend before another write; confirmed or newer
 progress clears the pending state without rerunning the handler. Cursor-save errors
-during cancellation preserve the cancellation signal. Restart reconciles recorded
-ranges before reading newer messages. Orphaned talk processing ends as failed;
-committed receipts and independent admissions are preserved without replaying effects.
+during cancellation preserve the cancellation signal. Restart reads admitted
+ranges and their Run results before reading newer messages; it does not repair
+Run state or replay effects. Task startup failure after admission is finalized by
+the executor before it reports the error, preserving the committed batch receipt.
+Pending/running receipts leave the cursor unchanged without sending a failure notice.
 Failure notices are best effort, attempted at most once per batch. Uncertain sends
 are not automatically repeated. There is no atomic transaction across Hub/SQLite.
 Backend changes discard in-memory progress from the previous backend.

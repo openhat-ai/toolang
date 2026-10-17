@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from toolang.execution.events import ModelStepInfo
+
 from tests.support.setup import materialized_setup
 
 import asyncio
@@ -35,7 +37,6 @@ from toolang.common.ids import IdIssuer
 from toolang.common.layout import AgentLayout
 from toolang.execution.events import RunEvent, RunTracer, StepBegin
 from toolang.execution.executor import RunExecutor, RunSpec
-from toolang.execution.executor._persist import _PersistSink
 from toolang.execution.executor.common import BoundRun, Local, output_parts
 from toolang.execution.executor.frame import build_agic_frame
 from toolang.setup.config import resolve_compact_config
@@ -57,7 +58,6 @@ from toolang.execution.types import (
     StepRef,
     FieldRef,
     ModelStepGiven,
-    ModelStepInfo,
     ModelStepNoted,
 )
 from toolang.lang.ast import (
@@ -681,8 +681,6 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
         assert store.rebuild_model_call(steps[0]) == adapter.requests[0]
         begin = next(event for event in tracer.events if isinstance(event, StepBegin))
         assert begin.given == ModelStepInfo(
-            state=state.revision,
-            setup="test-setup",
             model="test/model",
         )
         assert isinstance(steps[0].given, StoredModelStepGiven)
@@ -716,7 +714,16 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
             payload["steps"][0]["given"]["call"],
         )
         assert model_call_from_data(serialized_call) == adapter.requests[0]
-        _PersistSink(store).on_event(replace(begin, given=detail.steps[0].given))
+        store.begin_step(
+            ref=steps[0].ref,
+            kind="model",
+            given=detail.steps[0].given,
+            state=steps[0].state,
+            input=steps[0].input,
+            preceded_by=steps[0].preceded_by,
+            occurrence=steps[0].occur,
+            started_at=steps[0].started_at,
+        )
         connection = sqlite3.connect(store.db_path)
         try:
             assert connection.execute("SELECT COUNT(*) FROM contents").fetchone() == (

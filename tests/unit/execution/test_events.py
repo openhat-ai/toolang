@@ -2,22 +2,27 @@
 
 from __future__ import annotations
 
-from toolang.execution.types import ModelAccounting, value_for_type
+from toolang.execution.event_projection import event_output
+
+from tests.support.observations import part_end
+
+from toolang.execution.events import ModelStepInfo
+
+from toolang.execution.types import StepRef
+
+from toolang.execution.types import ModelAccounting
 
 from typing import get_args
 
 import pytest
 from pydantic import TypeAdapter
 
-from toolang.base.types.message import TextDelta, TextPart
+from toolang.base.types.message import Message, ReasoningPart, TextDelta, TextPart
 from toolang.base.types.run import ModelCall, ToolCall
 from toolang.execution.events import (
     PartBegin,
     PartDelta,
-    PartEnd,
-    RunBegin,
     RunEnd,
-    RunEvent,
     StepBegin,
     StepEnd,
     run_event_from_data,
@@ -26,159 +31,29 @@ from toolang.execution.events import (
 from toolang.execution.records import StepRecord
 from toolang.execution.schemas import RunControlRefData, StepData
 from toolang.execution.types import (
-    Output,
-    CollectionStepNoted,
     ControlRef,
     ControlStatus,
-    ErrorMessage,
-    ErrorRef,
     FieldRef,
     LoopStepNoted,
     ModelStepGiven,
-    ModelStepInfo,
     ModelStepNoted,
-    Occurrence,
-    OccurrencePosition,
-    RunRef,
     RunStatus,
-    StepRef,
+    RunRef,
     StepStatus,
     ToolStepGiven,
-    ToolStepNoted,
 )
-from toolang.lang.ast import KeepStmt, RepeatStmt, RunStmt, Span
+from toolang.lang.ast import RepeatStmt, RunStmt, Span
 
-_EVENTS: tuple[RunEvent, ...] = (
-    RunBegin(
-        run="run_root",
-        control=ControlRef.for_run("run_root", 0),
-        runnable="agic:test",
-        occurrence=Occurrence(item=OccurrencePosition(index=0, count=2)),
-        started_at="2026-01-01T00:00:00Z",
-    ),
-    StepBegin(
-        step=StepRef.parse("run_root.0"),
-        kind="model",
-        state=ControlRef.for_run("run_root", 0),
-        given=ModelStepGiven(
-            setup="test-setup", model="test/model", call=ModelCall("", [])
-        ),
-        input=(
-            FieldRef.from_path(
-                ControlRef.for_run("run_root", 0), "payload", "input", "_"
-            ),
-            FieldRef.from_path(StepRef.parse("run_root.1"), "output", "value"),
-        ),
-        started_at="2026-01-01T00:00:01Z",
-    ),
-    StepBegin(
-        step=StepRef.parse("run_root.1"),
-        kind="run",
-        given=RunStmt(
-            span=Span(line=4),
-            doc="Run the child.",
-            runnable="agic:child",
-        ),
-    ),
-    StepBegin(
-        step=StepRef.parse("run_root.2"),
-        kind="tool",
-        given=ToolStepGiven(
-            plugin="shell",
-            call=ToolCall("tool-1", "call-1", "shell__execute", {"command": "pwd"}),
-        ),
-    ),
-    StepBegin(
-        step=StepRef.parse("run_root.3"),
-        kind="run",
-        input=(FieldRef.from_path(StepRef.parse("run_root.0"), "output", "value", 1),),
-        given=RunStmt(
-            binding="_",
-            runnable="flow:research",
-            span=Span(line=1),
-        ),
-    ),
-    PartBegin(step=StepRef.parse("run_root.0"), part=0, part_type="text"),
-    PartDelta(step=StepRef.parse("run_root.0"), part=0, delta=TextDelta("hello")),
-    PartEnd(step=StepRef.parse("run_root.0"), part=0, data=TextPart("hello")),
-    StepEnd(
-        step=StepRef.parse("run_root.0"),
-        kind="model",
-        status="succeeded",
-        output=Output(value_for_type("Part[]", (TextPart("hello"),)), "_"),
-        noted=ModelStepNoted(
-            accounting=ModelAccounting(input_tokens=4, output_tokens=2)
-        ),
-        finished_at="2026-01-01T00:00:02Z",
-    ),
-    RunEnd(
-        run="run_root",
-        status="succeeded",
-        output=Output(
-            value_for_type(
-                "Part[]",
-                FieldRef.from_path(StepRef.parse("run_root.0"), "output", "value"),
-            ),
-            "_",
-        ),
-        finished_at="2026-01-01T00:00:03Z",
-    ),
+from toolang.execution.events import (
+    FlowStepInfo,
+    ToolStepInfo,
+    ControlApplied,
 )
-
-
-def test_run_event_codec_round_trips_every_event_variant() -> None:
-    for event in _EVENTS:
-        assert run_event_from_data(run_event_to_data(event)) == event
-
-
-@pytest.mark.parametrize("state", [None, "test-state"])
-def test_model_observation_round_trips_without_a_call(state) -> None:
-    event = StepBegin(
-        StepRef.parse("run_root.0"),
-        "model",
-        ModelStepInfo("test/model", setup="test-setup", state=state),
-    )
-    data = run_event_to_data(event)
-    assert "call" not in data["given"]
-    assert run_event_from_data(data) == event
-
-
-@pytest.mark.parametrize("field", ["call_ref", "messages", "instructions"])
-def test_model_observation_rejects_noncanonical_given_fields(field) -> None:
-    event = StepBegin(
-        StepRef.parse("run_root.0"),
-        "model",
-        ModelStepInfo("test/model", setup="test-setup"),
-    )
-    data = run_event_to_data(event)
-    data["given"][field] = "unexpected"
-    with pytest.raises(ValueError, match="model Step info requires"):
-        run_event_from_data(data)
-
-
-def test_model_observation_cannot_be_persisted_as_a_complete_call(tmp_path) -> None:
-    from toolang.execution.executor._persist import _PersistSink
-    from toolang.execution.store import RunStore
-
-    event = StepBegin(
-        StepRef.parse("run_root.0"),
-        "model",
-        ModelStepInfo("test/model", setup="test-setup"),
-    )
-    store = RunStore(tmp_path / "runs.db")
-    try:
-        with pytest.raises(TypeError, match="complete ModelStepGiven"):
-            _PersistSink(store).on_event(event)
-    finally:
-        store.close()
-
-
-def test_step_begin_codec_rejects_malformed_state_control_reference() -> None:
-    payload = run_event_to_data(_EVENTS[1])
-    payload["state"] = "run.invalid@0"
-
-    with pytest.raises(ValueError, match="invalid thread ref"):
-        run_event_from_data(payload)
+from toolang.execution.event_projection import step_info, step_summary
+from tests.support.observations import step_begin, step_end, run_begin, run_end
+from toolang.lang.types import Struct, Array
+import json
+from toolang.execution.types import TypedRef
 
 
 def test_step_schema_preserves_the_flow_statement_discriminator() -> None:
@@ -197,107 +72,6 @@ def test_step_schema_preserves_the_flow_statement_discriminator() -> None:
     assert payload["state"] == {"run": "run_root", "index": 0}
     assert payload["given"]["kind"] == "run"
     assert TypeAdapter(StepData).validate_python(payload) == step
-
-
-def test_run_event_codec_rejects_unknown_discriminator() -> None:
-    with pytest.raises(ValueError, match="unknown"):
-        run_event_from_data(
-            {
-                "run": "run_root",
-                "input": {"index": 0, "part": None},
-                "type": "unknown",
-            }
-        )
-
-
-def test_step_events_reject_mismatched_typed_facts() -> None:
-    with pytest.raises(TypeError, match="value Step requires a compatible FlowStmt"):
-        StepBegin(
-            step=StepRef.parse("run_root.0"),
-            kind="value",
-            given=ModelStepGiven(
-                setup="test-setup", model="test/model", call=ModelCall("", [])
-            ),
-        )
-    with pytest.raises(TypeError, match="tool Step noted requires ToolStepNoted"):
-        StepEnd(
-            step=StepRef.parse("run_root.0"),
-            kind="tool",
-            status="succeeded",
-            noted=ModelStepNoted(),
-        )
-    with pytest.raises(ValueError, match="successful termination"):
-        StepEnd(
-            step=StepRef.parse("run_root.1"),
-            kind="loop",
-            status="succeeded",
-            noted=LoopStepNoted(iterations=1, termination="failed"),
-        )
-    with pytest.raises(ValueError, match="requires collection output items"):
-        StepEnd(
-            step=StepRef.parse("run_root.2"),
-            kind="value",
-            status="succeeded",
-            noted=CollectionStepNoted(total_items=2),
-        )
-    with pytest.raises(ValueError, match="cannot have collection output items"):
-        StepEnd(
-            step=StepRef.parse("run_root.3"),
-            kind="par",
-            status="failed",
-            noted=CollectionStepNoted(total_items=2, output_items=1),
-        )
-
-
-def test_loop_step_noted_round_trips_with_its_terminal_cause() -> None:
-    begin = StepBegin(
-        step=StepRef.parse("run_root.1"),
-        kind="loop",
-        given=RepeatStmt(span=Span(line=4), count=3),
-        state=ControlRef.for_run("run_root", 0),
-    )
-    end = StepEnd(
-        step=begin.step,
-        kind="loop",
-        status="succeeded",
-        noted=LoopStepNoted(iterations=3, termination="exhausted", total=3),
-    )
-
-    assert run_event_from_data(run_event_to_data(begin)) == begin
-    assert run_event_from_data(run_event_to_data(end)) == end
-
-
-def test_tool_step_summary_round_trips_and_accepts_legacy_given() -> None:
-    begin = StepBegin(
-        step=StepRef.parse("run_root.1"),
-        kind="tool",
-        given=ToolStepGiven(
-            plugin="fs",
-            call=ToolCall(
-                "tool-1",
-                "call-1",
-                "fs__read",
-                {"path": "README.md"},
-            ),
-            summary="calling fs__read README.md",
-        ),
-    )
-    end = StepEnd(
-        step=begin.step,
-        kind="tool",
-        status="succeeded",
-        noted=ToolStepNoted(summary="called fs__read README.md"),
-    )
-
-    assert run_event_from_data(run_event_to_data(begin)) == begin
-    assert run_event_from_data(run_event_to_data(end)) == end
-
-    legacy = run_event_to_data(begin)
-    del legacy["given"]["summary"]
-    parsed = run_event_from_data(legacy)
-    assert isinstance(parsed, StepBegin)
-    assert isinstance(parsed.given, ToolStepGiven)
-    assert parsed.given.summary == ""
 
 
 def test_loop_step_noted_round_trips_through_the_step_schema() -> None:
@@ -321,23 +95,6 @@ def test_loop_step_noted_round_trips_through_the_step_schema() -> None:
         "total": None,
     }
     assert adapter.validate_python(payload) == step
-
-
-def test_collection_step_noted_round_trips_with_cardinality() -> None:
-    begin = StepBegin(
-        step=StepRef.parse("run_root.1"),
-        kind="value",
-        given=KeepStmt(span=Span(line=4), position="first", count=2),
-    )
-    end = StepEnd(
-        step=begin.step,
-        kind="value",
-        status="succeeded",
-        noted=CollectionStepNoted(total_items=6, output_items=2),
-    )
-
-    assert run_event_from_data(run_event_to_data(begin)) == begin
-    assert run_event_from_data(run_event_to_data(end)) == end
 
 
 def test_step_schema_and_record_reject_mismatched_typed_facts() -> None:
@@ -375,43 +132,6 @@ def test_step_schema_and_record_reject_mismatched_typed_facts() -> None:
         TypeAdapter(StepData).validate_python(payload)
 
 
-def test_begin_events_reject_loose_occurrence_payloads() -> None:
-    with pytest.raises(TypeError, match="Occurrence or None"):
-        RunBegin(
-            run="run_root",
-            control=ControlRef.for_run("run_root", 0),
-            occurrence={  # type: ignore[arg-type]
-                "item": {"index": 0, "count": 1}
-            },
-        )
-
-
-def test_flow_given_codec_rejects_noncanonical_fields() -> None:
-    payload = run_event_to_data(
-        StepBegin(
-            step=StepRef.parse("run_root.0"),
-            kind="run",
-            given=RunStmt(span=Span(line=4), runnable="agic:child"),
-        )
-    )
-    payload["given"]["extra"] = True
-
-    with pytest.raises(ValueError, match="canonical typed fields"):
-        run_event_from_data(payload)
-
-
-def test_run_event_codec_rejects_legacy_placement() -> None:
-    with pytest.raises(ValueError, match="occurrence instead of placement"):
-        run_event_from_data(
-            {
-                "type": "run_begin",
-                "run": "run_root",
-                "control": "run_root@0",
-                "placement": {"item": 0, "items": 1},
-            }
-        )
-
-
 def test_execution_status_vocabulary_has_canonical_order() -> None:
     assert get_args(RunStatus) == (
         "pending",
@@ -433,7 +153,7 @@ def test_execution_status_vocabulary_has_canonical_order() -> None:
         "wontapply",
         "revoked",
     )
-    reserved = StepEnd(
+    reserved = step_end(
         step=StepRef.parse("run_root.0"),
         kind="value",
         status="pending",
@@ -441,62 +161,516 @@ def test_execution_status_vocabulary_has_canonical_order() -> None:
     assert run_event_from_data(run_event_to_data(reserved)) == reserved
 
 
-def test_run_event_codec_serializes_step_error_references() -> None:
-    event = RunEnd(
-        run="run_root",
-        status="failed",
-        error=ErrorRef(FieldRef.from_path(StepRef.parse("run_root.2"), "error")),
+@pytest.mark.parametrize(
+    "event",
+    [
+        run_begin("run_root", 0, "agic:test"),
+        step_begin("run_root.0", "model", ModelStepInfo("test/model")),
+        step_begin("run_root.1", "run", FlowStepInfo("run", runnable="agic:child")),
+        step_begin(
+            "run_root.2", "tool", ToolStepInfo("shell", "shell__execute", "Run command")
+        ),
+        PartBegin("run_root.0", 0, "text"),
+        PartDelta("run_root.0", 0, TextDelta("hello")),
+        part_end("run_root.0", 0, TextPart("hello")),
+        step_end(
+            "run_root.0",
+            "model",
+            "succeeded",
+            event_output("Part[]", (TextPart("hello"),)),
+        ),
+        run_end("run_root", "failed", error="timeout"),
+    ],
+)
+def test_run_event_codec_round_trips_every_event_variant(event):
+    assert (
+        run_event_from_data(json.loads(json.dumps(run_event_to_data(event)))) == event
     )
 
-    data = run_event_to_data(event)
 
-    assert data["error"] == {"type": "ref", "ref": "run_root.2/error"}
-    assert run_event_from_data(data) == event
-
-
-def test_run_event_codec_distinguishes_run_error_pointers_from_messages() -> None:
-    pointer = RunEnd(
-        run="run_root",
-        status="failed",
-        error=ErrorRef(FieldRef.from_path(RunRef.parse("run_child"), "error")),
+@pytest.mark.parametrize("field", ["call", "setup", "state", "messages"])
+def test_model_metadata_rejects_recording_details(field):
+    data = run_event_to_data(
+        step_begin("run_root.0", "model", ModelStepInfo("test/model"))
     )
-    message = RunEnd(run="run_root", status="failed", error=ErrorMessage("timeout"))
+    data["given"][field] = "unexpected"
+    with pytest.raises(ValueError, match="Unexpected keyword"):
+        run_event_from_data(data)
 
-    assert run_event_to_data(pointer)["error"] == {
-        "type": "ref",
-        "ref": "run_child/error",
+
+def test_model_metadata_size_is_independent_of_call_context():
+    def begin(size):
+        return step_begin(
+            "run_root.0",
+            "model",
+            ModelStepGiven(
+                model="test/model",
+                setup="revision",
+                call=ModelCall("instructions" * size, [Message.user("history" * size)]),
+            ),
+        )
+
+    assert run_event_to_data(begin(1)) == run_event_to_data(begin(100000))
+    assert run_event_to_data(begin(1))["given"] == {
+        "type": "model",
+        "model": "test/model",
     }
-    assert run_event_from_data(run_event_to_data(pointer)) == pointer
-    assert run_event_from_data(run_event_to_data(message)) == message
 
 
-def test_run_event_codec_round_trips_struct_output() -> None:
-    event = StepEnd(
-        step=StepRef.parse("run_root.0"),
-        kind="run",
-        status="succeeded",
-        output=Output(value_for_type("Review", {"score": 1}), "_"),
+def test_flow_and_tool_metadata_select_only_presentation_facts():
+    flow = step_info(
+        RepeatStmt(
+            span=Span(line=1),
+            count=2,
+            stmts=(RunStmt(span=Span(line=2), runnable="child"),),
+        )
+    )
+    tool = step_info(
+        ToolStepGiven(
+            "shell",
+            ToolCall("id", "call", "shell__execute", {"command": "private" * 10000}),
+            summary="Execute command",
+        )
+    )
+    assert flow == FlowStepInfo("repeat", binding=None, count=2)
+    assert tool == ToolStepInfo("shell", "shell__execute", "Execute command")
+    assert "private" not in json.dumps(
+        run_event_to_data(step_begin("run_root.0", "tool", tool))
     )
 
+
+def test_step_events_reject_internal_execution_payloads():
+    with pytest.raises(TypeError, match="client Step info"):
+        StepBegin("run_root.0", "run_root", None, 0, "model", ModelCall("", []))  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="direct data"):
+        event_output(
+            "Text",
+            TypedRef(
+                FieldRef.from_path(StepRef.parse("run_root.0"), "output", "value"),
+                "Text",
+            ),
+        )
+    with pytest.raises(TypeError, match="direct data"):
+        event_output(
+            "Json",
+            {"nested": FieldRef.from_path(StepRef.parse("run_root.0"), "output")},
+        )
+
+
+def test_event_output_preserves_literal_reference_shaped_json():
+    literal = {
+        "?": "user data",
+        "hash": "not content",
+        "nested": [{"type": "ref", "ref": "literal"}],
+    }
+    event = step_end("run_root.0", "value", "succeeded", event_output("Json", literal))
+    assert run_event_from_data(run_event_to_data(event)) == event
+    assert run_event_to_data(event)["output"] == {"type": "Json", "value": literal}
+
+
+def test_struct_output_has_concrete_type_and_direct_data():
+    event = step_end(
+        "run_root.0",
+        "run",
+        "succeeded",
+        event_output("Review", Struct("Review", {"score": 1})),
+    )
+    assert run_event_from_data(run_event_to_data(event)) == event
+    assert event.output is not None and event.output.value == {"score": 1}
+
+
+def test_errors_and_control_application_have_scalar_identity():
+    begin = step_begin(
+        "run_root.0",
+        "model",
+        ModelStepInfo("test/model"),
+        preceded_by=(ControlRef.for_run("run_root", 2),),
+    )
+    end = RunEnd("run_root", "failed", error="model failed", error_source="run_root.0")
+    assert begin.preceded_by == (ControlApplied("run_root", 2),)
+    assert run_event_from_data(run_event_to_data(end)) == end
+    assert run_event_to_data(end)["error"] == "model failed"
+
+
+def test_model_summary_excludes_continuation_and_pricing_details():
+    summary = step_summary(
+        ModelStepNoted(
+            ModelAccounting(10, 4), continuation={"provider": "private" * 1000}
+        )
+    )
+    assert summary is not None and summary.usage is not None
+    assert summary.usage.input_tokens == 10
+    data = run_event_to_data(
+        step_end("run_root.0", "model", "succeeded", noted=summary)
+    )
+    assert "continuation" not in json.dumps(data) and "private" not in json.dumps(data)
+
+
+def test_event_decoder_rejects_old_state_inputs_and_bound_output():
+    data = run_event_to_data(
+        step_begin("run_root.0", "model", ModelStepInfo("test/model"))
+    )
+    data["input"] = ["run_root@0/payload/input/_"]
+    with pytest.raises(ValueError, match="Unexpected keyword"):
+        run_event_from_data(data)
+    data = run_event_to_data(
+        run_end("run_root", "succeeded", output=event_output("Text", "done"))
+    )
+    data["output"]["binding"] = "_"
+    with pytest.raises(ValueError, match="Unexpected keyword"):
+        run_event_from_data(data)
+
+
+@pytest.mark.parametrize("name", ["ReportPart", "ReportPart[]"])
+def test_user_struct_names_are_not_inferred_as_canonical_parts(name):
+    value = (
+        {"type": "ref", "ref": "literal"} if not name.endswith("[]") else [{"score": 2}]
+    )
+    event = step_end("run_root.0", "value", "succeeded", event_output(name, value))
+    assert run_event_from_data(run_event_to_data(event)) == event
+
+
+def test_concrete_part_array_round_trips_without_losing_parts():
+    event = step_end(
+        "run_root.0",
+        "model",
+        "succeeded",
+        event_output("TextPart[]", (TextPart("hello"),)),
+    )
+    assert run_event_from_data(run_event_to_data(event)) == event
+
+
+@pytest.mark.parametrize("kind", ["Part[][]", "TextPart[][]", "Part[][][]"])
+def test_nested_part_arrays_retain_final_client_data(kind):
+    value = ((TextPart("answer"),),)
+    if kind == "Part[][][]":
+        value = (value,)
+    event = step_end("run_root.0", "value", "succeeded", event_output(kind, value))
+
+    restored = run_event_from_data(json.loads(json.dumps(run_event_to_data(event))))
+
+    assert restored == event
+    assert isinstance(restored, StepEnd)
+    assert restored.output is not None
+    expected = [[{"type": "text", "text": "answer"}]]
+    if kind == "Part[][][]":
+        expected = [expected]
+    assert restored.output.value == expected
+
+
+def test_nested_part_array_presentation_filters_reasoning_and_metadata():
+    from toolang.execution.values import parts_from_value
+    from toolang.cli.common.execution_progress.formatting import display_value
+
+    event = step_end(
+        "run_root.0",
+        "value",
+        "succeeded",
+        event_output(
+            "Part[][]",
+            (
+                (
+                    ReasoningPart("hidden"),
+                    TextPart(
+                        "answer",
+                        signature="private",
+                        provider="provider",
+                        provider_metadata={"adapter": "test", "model": "test"},
+                    ),
+                ),
+            ),
+        ),
+    )
+    restored = run_event_from_data(run_event_to_data(event))
+
+    assert isinstance(restored, StepEnd)
+    assert restored.output is not None
+    rendered = parts_from_value(
+        display_value(restored.output.value, restored.output.type), content_only=True
+    )
+    assert rendered == (TextPart('[[{"$part":{"type":"text","text":"answer"}}]]'),)
+
+
+@pytest.mark.parametrize("tool", [False, True])
+def test_await_error_is_direct_even_when_target_was_not_observed(tool):
+    from toolang.execution.event_projection import step_end_event
+    from toolang.execution.types import ErrorRef
+    from toolang.lang.ast import AwaitStmt
+
+    given = (
+        ToolStepGiven("runtime", ToolCall("call", "call", "runtime__await", {}))
+        if tool
+        else AwaitStmt(span=Span(line=1), handle="job")
+    )
+    record = StepRecord(
+        id="run_root.0",
+        kind="tool" if tool else "value",
+        input=(),
+        given=given,
+        state=ControlRef.for_run("run_root", 0),
+        output=None,
+        status="failed",
+        error=ErrorRef(FieldRef.from_path(RunRef("run_other"), "error")),
+        finished_at="now",
+    )
+    event = step_end_event(record, None, "target failed")
+    assert event.error == "target failed" and event.error_source is None
+
+
+def test_part_events_reject_internal_values_and_unselected_fields():
+    from toolang.execution.events import PartEnd
+    from toolang.base.types.message import ToolResultPart
+
+    with pytest.raises(ValueError):
+        PartEnd("run_root.1", 0, ToolResultPart("call", "tool", "tool"))  # type: ignore[arg-type]
+    with pytest.raises(ValueError):
+        PartEnd("run_root.1", 0, {"type": "text", "text": "ok", "signature": "native"})  # type: ignore[arg-type]
+    with pytest.raises(ValueError):
+        PartEnd(
+            "run_root.1",
+            0,
+            {  # type: ignore[arg-type]
+                "type": "tool_result",
+                "tool_call_id": "call",
+                "tool_name": "tool",
+                "tool_family": "tool",
+                "output": {"nested": "body"},
+            },
+        )
+
+
+@pytest.mark.parametrize("kind", ["Part", "Part[]"])
+@pytest.mark.parametrize("value", [None, 1, {}, ["invalid"]])
+def test_event_decoder_reports_malformed_part_output_as_a_value_error(kind, value):
+    payload = {
+        "type": "run_end",
+        "run": "run_root",
+        "status": "succeeded",
+        "output": {"type": kind, "value": value},
+    }
+    with pytest.raises(ValueError):
+        run_event_from_data(payload)
+
+
+@pytest.mark.parametrize("argument", ["target", "runnable"])
+def test_generic_tool_target_named_arguments_do_not_expand_metadata(argument):
+    info = step_info(
+        ToolStepGiven(
+            "shell",
+            ToolCall(
+                "id",
+                "call",
+                "shell__execute",
+                {argument: "private" * 100000, "async": True},
+            ),
+            summary="Execute command",
+        )
+    )
+    assert info == ToolStepInfo("shell", "shell__execute", "Execute command")
+    event = step_begin("run_root.0", "tool", info)
+    assert len(json.dumps(run_event_to_data(event))) < 1024
+
+
+def test_client_part_payload_excludes_native_state_and_tool_bodies():
+    from toolang.base.types.message import ToolCallPart, ToolResultPart
+    from toolang.execution.event_projection import direct_output
+    from toolang.execution.types import Output
+
+    private = "private" * 200000
+    parts = (
+        TextPart(
+            "answer",
+            signature=private,
+            provider="test",
+            provider_metadata={"adapter": "test", "model": "test"},
+        ),
+        ToolCallPart("call", "shell__execute", "shell", input={"command": private}),
+        ToolResultPart("call", "shell__execute", "shell", output={"body": private}),
+    )
+    for part in parts:
+        event = part_end("run_root.0", 0, part)
+        assert private not in json.dumps(run_event_to_data(event))
+    output = direct_output(Output(Array("Part[]", parts)))
+    event = step_end("run_root.0", "model", "succeeded", output)
+    assert private not in json.dumps(run_event_to_data(event))
+
+
+def test_event_encoder_only_serializes_already_projected_data(monkeypatch):
+    event = step_end(
+        "run_root.0",
+        "model",
+        "succeeded",
+        event_output("Part[]", (TextPart("answer"),)),
+    )
+
+    def unexpected_projection(self):
+        raise AssertionError("event serialization must not project execution values")
+
+    monkeypatch.setattr(TextPart, "to_data", unexpected_projection)
+    assert run_event_to_data(event)["output"]["value"][0]["text"] == "answer"
+
+
+@pytest.mark.parametrize(
+    ("name", "body", "receipt"),
+    [
+        (
+            "runtime__spawn",
+            {"id": "run_child", "thread": "thread_child", "status": "pending"},
+            {"run": "run_child", "thread": "thread_child"},
+        ),
+        (
+            "runtime__run",
+            {"id": "run_child", "thread": "thread_child"},
+            {"run": "run_child", "thread": "thread_child"},
+        ),
+        ("runtime__exec", {"controls": ["run_root@1"]}, {"control_applied": True}),
+        ("runtime__exec", {"controls": []}, {"control_applied": False}),
+        ("runtime__chdir", {"cwd": "/workspace"}, {"cwd": "/workspace"}),
+        (
+            "shell__execute",
+            {"cwd": "/workspace", "controls": ["literal"], "id": "literal"},
+            {},
+        ),
+    ],
+)
+def test_tool_client_data_keeps_only_explicit_receipts(name, body, receipt):
+    from toolang.base.types.message import ToolResultPart
+    from toolang.execution.event_projection import part_data
+
+    body["private"] = "large result" * 100000
+    part = ToolResultPart("call", name, name, output=body, call_id="provider-id")
+    expected = {
+        "type": "tool_result",
+        "tool_call_id": "call",
+        "tool_name": name,
+        "tool_family": name,
+        **receipt,
+    }
+    assert part_data(part) == expected
+    event = step_end(
+        "run_root.0", "tool", "succeeded", event_output("ToolResultPart", part)
+    )
+    assert event.output is not None and event.output.value == expected
+    assert run_event_from_data(run_event_to_data(event)) == event
+    assert len(json.dumps(run_event_to_data(event))) < 1024
+
+
+def test_media_event_data_preserves_display_content():
+    from toolang.base.types.message import ImagePart, AudioPart, DocumentPart
+    from toolang.execution.event_projection import part_data
+
+    for part in (
+        ImagePart(image_url="data:image/png;base64,abcd", filename="image.png"),
+        AudioPart("abcd", "wav", transcript="spoken words"),
+        DocumentPart(data="document body", filename="document.txt"),
+    ):
+        event = part_end("run_root.0", 0, part)
+        assert event.data == part.to_data() == part_data(part)
+        assert run_event_from_data(run_event_to_data(event)) == event
+
+
+def test_event_output_constructor_requires_final_protocol_data():
+    from toolang.execution.events import EventOutput
+
+    with pytest.raises(ValueError):
+        EventOutput("Part[]", [TextPart("internal")])
+    event = run_end(
+        "run_root",
+        "succeeded",
+        output=EventOutput("Part[]", [{"type": "text", "text": "answer"}]),
+    )
     assert run_event_from_data(run_event_to_data(event)) == event
 
 
 @pytest.mark.parametrize(
-    "reasoning", [None, {"effort": "high"}, {"effort": "none"}, {"budget_tokens": 1024}]
+    ("plugin", "name"),
+    [
+        ("_toolang", "_toolang__run"),
+        ("_toolang", "runtime__run"),
+        ("runtime", "_toolang__exec"),
+        ("runtime", "_toolang__execute"),
+        ("runtime", "spawn"),
+    ],
 )
-def test_model_step_begin_preserves_requested_reasoning(reasoning):
-    import json
-    from toolang.base.types.model import Reasoning
-
-    control = Reasoning(**reasoning) if reasoning is not None else None
-    event = StepBegin(
-        step=StepRef.parse("run_root.0"),
-        kind="model",
-        given=ModelStepGiven(
-            model="test/model",
-            setup="test-setup",
-            call=ModelCall("", [], reasoning=control),
-        ),
+def test_event_metadata_does_not_interpret_retired_runtime_names(plugin, name):
+    given = ToolStepGiven(
+        plugin,
+        ToolCall("call", "provider", name, {"runnable": "child", "async": True}),
+        summary="Saved action",
     )
-    payload = json.loads(json.dumps(run_event_to_data(event)))
-    assert run_event_from_data(payload) == event
+    assert step_info(given) == ToolStepInfo(plugin, name, "Saved action")
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "_toolang__run",
+        "_toolang__spawn",
+        "_toolang__exec",
+        "_toolang__execute",
+        "_toolang__chdir",
+        "spawn",
+    ],
+)
+def test_part_data_does_not_interpret_retired_runtime_receipts(name):
+    from toolang.base.types.message import ToolResultPart
+    from toolang.execution.event_projection import part_data
+
+    part = ToolResultPart(
+        "call",
+        name,
+        "runtime",
+        output={
+            "id": "run_child",
+            "thread": "spawn_child",
+            "controls": ["run_root@1"],
+            "cwd": "/workspace",
+        },
+    )
+    assert part_data(part) == {
+        "type": "tool_result",
+        "tool_call_id": "call",
+        "tool_name": name,
+        "tool_family": "runtime",
+    }
+
+
+def test_retired_await_name_keeps_its_recorded_error_origin():
+    from toolang.execution.event_projection import step_end_event
+    from toolang.execution.types import ErrorRef
+
+    step = StepRecord(
+        id="run_root.0",
+        kind="tool",
+        input=(),
+        given=ToolStepGiven(
+            "_toolang", ToolCall("call", "provider", "_toolang__await", {})
+        ),
+        state=ControlRef.for_run("run_root", 0),
+        output=None,
+        status="failed",
+        error=ErrorRef(FieldRef.from_path(RunRef("run_other"), "error")),
+    )
+    assert step_end_event(step, None, "failed").error_source == "run_other"
+
+
+def test_retired_honor_name_does_not_synthesize_a_runtime_reply():
+    from toolang.execution.assembly.tool_replies import workspace_reply_from_step
+
+    step = StepRecord(
+        id="run_root.0",
+        kind="tool",
+        input=(FieldRef.from_path(StepRef.parse("run_root.1"), "output", "value", 0),),
+        given=ToolStepGiven(
+            "_toolang",
+            ToolCall("call", "provider", "_toolang__honor", {}),
+            trigger="runtime",
+        ),
+        state=ControlRef.for_run("run_root", 0),
+        output=None,
+    )
+
+    def unexpected_read(value):
+        raise AssertionError("retired tool names must not reconstruct a runtime reply")
+
+    assert workspace_reply_from_step(step, unexpected_read) is None

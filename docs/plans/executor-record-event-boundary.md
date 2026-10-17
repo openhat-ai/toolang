@@ -1,6 +1,6 @@
 # Separate client events from executor persistence
 
-Status: proposed for review. Work type: feature definition; no implementation.
+Status: implemented. Definition approved in [PR #838](https://github.com/openhat-ai/toolang/pull/838).
 
 ## Goal and success criteria
 
@@ -38,17 +38,6 @@ projection framework or second hierarchy of internal events.
 Keep complete Given/Noted values and compact stored forms where they already
 belong. Do not duplicate them into new internal fact/command classes or rename
 the execution vocabulary as part of this work.
-
-## Verified current coupling
-
-| Location | Current coupling |
-| --- | --- |
-| [`_PersistSink.on_event()`](../../src/toolang/execution/executor/_persist.py) | Consumes `RunEvent`, writes records and resolves some refs for observers. |
-| [`RunExecutor._project_event()`](../../src/toolang/execution/executor/executor.py) | Combines persistence, control application and notification. |
-| `_Execution.begin_step()` and relation/state helpers | Prepare and manage execution through `StepBegin`, `StepEnd` and `RunEnd`. |
-| `spawn.py` dispatch failure | Calls `_PersistSink.on_event()` directly to finish an accepted root when task launch fails. |
-| [`Publication.append()`](../../src/toolang/execution/stream.py) | Converts complete model Given data to `ModelStepInfo` before retention. |
-| [`events.py`](../../src/toolang/execution/events.py) | Reuses internal Given/Noted/output schemas and reference-capable fields. |
 
 ## Persistence contract
 
@@ -100,19 +89,22 @@ client data, with the following boundaries:
 | Run/Step/control identity | Scalar IDs/indexes needed for correlation, including owning Run and parent identities. These never require a Store read. |
 | `StepGiven`, Flow AST, complete model/tool preparation | Only operation/target/model/tool facts currently consumed by clients; no complete call, AST or preparation snapshot. Formatting remains with clients, not executor/store. |
 | `FieldRef`, `TypedRef`, `ContentRef`, `ErrorRef` | Necessary resolved data or error text; no data pointers. |
-| Internal `Output` | Concrete type and actual value/Parts; no reference alternatives or local-table binding. |
+| Internal `Output` | Concrete type and final JSON value using client Part data; no reference alternatives or local-table binding. |
+| Execution `Part` | Text/reasoning and media display data, or tool identity and explicit runtime receipts; no provider state, full tool arguments or arbitrary result bodies. |
 | `StepNoted`, model accounting | Only completion facts and usage/cost consumed by existing clients; no internal pricing/accounting structures. |
 | Internal control provenance | Existing client-required application facts correlated by scalar Run ID/control index; not a persistence provenance chain or new control-event lifecycle. |
 
 Define these value-only payloads and their codecs with the Events. Scalar status,
-kind and occurrence vocabulary, canonical Parts and Deltas may be shared.
+kind and occurrence vocabulary and Deltas may be shared. Execution Parts remain
+with model calls and records; Event Parts use an explicit final-data definition.
 Choose an explicit field allowlist from existing consumers; do not replace
 `StepGiven` with an opaque metadata bag or replicate CLI rendering in the core.
 When output is required by the existing client contract, supply its actual value,
 with nested runtime refs resolved and literal user data preserved. A stored
 `Output` edge alone is not a reason to materialize it into an Event. Keep current
-content delivery; independently removing repeated Part/terminal content or
-filtering/truncating actual operation results is outside this change.
+text/media delivery; independently removing repeated Part/terminal content or
+truncating text/media results is outside this change. Project fields once before
+Event construction; encoding must not re-project output or load it from storage.
 
 Construct live notifications from execution memory and the current operation's
 write result. `Local.value` versus `Local.stored/ref` already separates actual
@@ -148,22 +140,22 @@ runnable.
 
 ## Action items and likely files
 
-- [ ] Replace Event-driven persistence with direct Store calls in existing
+- [x] Replace Event-driven persistence with direct Store calls in existing
   lifecycle coordination in `execution/executor/executor.py` and `common.py`;
   remove `_persist.py` and the `_persist` member.
-- [ ] Adapt internal lifecycle producers in `execution/executor/steps/`, `runs/`,
+- [x] Adapt internal lifecycle producers in `execution/executor/steps/`, `runs/`,
   `tool_runtime.py`, `awaitables.py` and `spawn.py`, retaining atomic admission.
-- [ ] Define value-only Events in `execution/events.py`; keep recording vocabulary
+- [x] Define value-only Events in `execution/events.py`; keep recording vocabulary
   in `types.py` and codecs in `records.py`.
-- [ ] Adapt publication and explicit snapshot field construction in
+- [x] Adapt publication and explicit snapshot field construction in
   `execution/stream.py` and `subscriptions.py`; update shared Thread event field
   access only if required. Keep `ThreadManager` behavior unchanged. Update
   `stream_client.py`, stream frame codecs, transport and CLI field access only
   as required by the Event contract.
-- [ ] Add focused acceptance coverage and update existing event/persistence docs
+- [x] Add focused acceptance coverage and update existing event/persistence docs
   in `docs/execution.md`, `docs/executor.md`, `docs/run-step-records.md` and
   `docs/api.md`; do not redesign query or recovery behavior.
-- [ ] Run `uv run ruff check .`, `uv run ruff format --check .`, `uv run ty check`
+- [x] Run `uv run ruff check .`, `uv run ruff format --check .`, `uv run ty check`
   and `uv run pytest -n auto` before implementation commits. Record practical
   test results as a short summary.
 
@@ -174,7 +166,7 @@ runnable.
 | Structural simplicity | `RunStore` behavior/signatures/SQL and durable formats are unchanged; `_PersistSink` has no replacement forwarding layer; lifecycle coordination stays centralized and gains no Event-specific state or strategy. |
 | Persistence independence | Lifecycle/control updates call existing Store methods with facts/records, without client Event objects or subscribers. |
 | Durable parity | Exact model calls, message deltas, typed references, control provenance, usage/limits and supported legacy history remain unchanged; no schema migration. |
-| Small direct Events | Live and snapshot metadata contains no internal reference-capable schemas, assembled model histories or ASTs; model-begin/summary size does not grow with earlier context. Actual operation output remains intact. |
+| Small direct Events | Live and snapshot metadata contains no internal reference-capable schemas, assembled model histories or ASTs; model-begin/summary size does not grow with earlier context. Text/media content and necessary runtime receipts remain intact; execution-only Part data stays in records. |
 | Failed commit | Acceptance, begin/end and content/control rollback publish nothing and adopt no failed candidate. |
 | Atomic admission | Native/runtime spawn, exec, await and control receipts remain atomic with source-Step completion; cancellation races do not duplicate terminal events. A failed spawn dispatch preserves acceptance and records/publishes the terminal failure once. |
 | Execution and consumers | Flow/Agic, children, parallel/loop work, state adoption, compaction, cancel/steer and local/remote presentation retain behavior without new queries, output caches or history lookups for live notifications. |
@@ -192,5 +184,12 @@ simplicity constraints as well as running tests; moving complexity into new
 helpers does not meet the goal. Event-schema changes require coordinated
 subscriber upgrades; durable compatibility is unchanged.
 
-No open scope choices remain. Human approval of this definition is required
-before implementation; this PR contains the plan only.
+No open scope choices remain.
+
+## Verification summary
+
+The default checks passed on the rebased code in a clean worktree: 11,792 tests
+passed and 127 skipped. Coverage includes atomic admission, rollback, cancellation,
+exact call replay, stream recovery and local/remote presentation. The large-context
+stream test keeps its Model Begin notification under 1 KiB. Store methods, SQL and
+Record formats have no implementation diff.

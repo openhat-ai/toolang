@@ -1,6 +1,8 @@
 """Durable control identities and Step boundary relations."""
 
 from pathlib import Path
+from toolang.execution.events import ControlApplied
+
 import asyncio
 
 import pytest
@@ -136,7 +138,9 @@ def test_child_control_relations_preserve_their_owner(tmp_path: Path) -> None:
                 assert first.preceded_by == (ControlRef.for_run(run.id, 0),)
                 assert first.aborted_by == cancel.ref
             ends = [event for event in tracer.events if isinstance(event, RunEnd)]
-            assert [event.control for event in ends] == [cancel.ref, cancel.ref]
+            assert [event.control for event in ends] == [
+                ControlApplied(str(cancel.target), cancel.index)
+            ] * 2
 
     asyncio.run(scenario())
 

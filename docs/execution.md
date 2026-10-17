@@ -177,6 +177,10 @@ the process that calls `run(spec)` accepts and executes that run. `stop()` is
 terminal and cancels the run tasks owned by that executor instance. The process
 owner closes the shared `RunStore` after the executor stops.
 
+Cancellation during `stop()`'s owned-task drain still runs terminal fallback and
+resource cleanup before it propagates. Observer cleanup also runs when its drain
+is canceled. Automatic Run completion drains its observer after terminal publication.
+
 Callers resolve the captured `AgentSetup` defaults and any session or run
 policy into `RunSpec.limits` before `run()`. Per-agic model and tool call
 limits reset on each agic invocation, while token, cost, and time limits are
@@ -195,32 +199,40 @@ rejected. A non-null request ID is unique within its control table and is never
 treated as a replay key. Clients either generate a globally unique request ID
 across run and thread controls or pass `None`.
 Talk batches and runtime dispatch use separate durable batch/Step receipts for
-reconciliation; callers do not turn arbitrary request IDs into replay commands.
+deduplication; callers do not turn arbitrary request IDs into replay commands.
+
+If task startup fails after admission, `run()` uses the ordinary terminal path to
+persist failure, close pending controls and publish one `RunEnd`, then re-raises
+the startup error. Root and spawn admission share this path in `_launch()`;
+observers drain after terminal publication, and failed task creation releases its
+coroutines and subscriptions. Owned-task initialization uses the ordinary execution
+failure path. No `RunBegin` is emitted before execution starts. Talk retains
+the accepted batch receipt and reads its Run result without repairing execution
+state or dispatching the batch again. A pending/running receipt keeps its cursor
+without generating a failure notice.
 
 
 ## Mandatory Persistence And Tracing
 
-`RunExecutor` constructs one private event projector from its `RunStore`.
-Persistence cannot be replaced or disabled by callers.
-
-For every `RunEvent`, ordering is:
+Execution boundaries call `RunStore` directly with complete internal Given/Noted
+values and compact output references. Persistence cannot be replaced or disabled.
+`RunEvent` is exclusively a subscriber contract; no persistence adapter consumes it.
 
 ```text
-runtime produces event
-  -> one transaction projects RunRecord or StepRecord
-     and updates referenced ControlRecord statuses
-  -> optional RunTracer observes the event
+prepare under the execution lock
+  -> one transaction writes records, content, control changes and cursors
+     and stages value-only notifications
+  -> commit publishes notifications to the canonical memory stream
+  -> independent subscribers deliver them to RunTracer or HTTP clients
 ```
 
-The private projector never creates or updates run controls. Tracer failures
-are logged and isolated from execution. One tracer observes the complete run
-tree started by its `run()` call, including child runs, steps, parts, and
-terminal events. Each event already contains its complete durable references
-and output edge. For accepted spawn/control Steps, the projector preserves successful
-admission through canceled delivery and emits the persisted status/output. It
-does not reconstruct runtime locals. `RunTracer.on_event()` is asynchronous. The executor
-serializes tracer calls and awaits each one on the owner event loop, so tracers
-never need to infer which worker thread emitted an event.
+Failed transactions publish nothing. Control adoption and active-run bookkeeping
+use internal facts or Store write results, never client Event payloads. Atomic
+admission can complete its source Step before ordinary cleanup; the existing end
+cursor prevents duplicate notification. Observer failures are isolated from execution.
+One tracer observes the complete run tree started by its `run()` call, including
+child runs, Steps, Parts and terminal events. Tracer calls are serialized on the
+owner event loop without making execution wait for subscribers.
 
 
 Spawned roots have independent lifecycles and may reuse an idle local thread. The host may configure
@@ -244,26 +256,54 @@ StepEnd
 RunEnd
 ```
 
-There are no waiting, starting, steering, or stopping events. Control
-acceptance is durable record truth. Control application is represented by data
-edges:
+There are no waiting, starting, steering, or stopping events. Control acceptance
+is durable record truth. Events use scalar Run/Step IDs and explicit correlation:
 
-- `RunBegin.control` references the run control;
-- `StepBegin.input` references every run control or prior step output consumed by
-  the step;
-- `RunEnd.control` references the cancel control that canceled the run.
+- `RunBegin.control` is the observed Run binding control index; `parent` is a Step ID or null.
+- `StepBegin` includes `run`, `parent`, `index` and applied controls as `{run, index}`.
+- `RunEnd.control` identifies an applied cancellation as `{run, index}`, including
+  ancestor-owned cancellation.
 
-Providers stream deltas when supported. A tracer may ignore `PartDelta` and
-observe only higher-level events.
+Producers guarantee causal order: Parts close before their Step, nested Steps and
+synchronous child Runs close before their owning Step, and owned child Runs close
+before their owning Run. An asynchronous launch Step ends when admission commits;
+its explicit `given.asynchronous` flag permits the target to outlive that Step.
+Sibling work may interleave. Live clients consume arrival order and reject a Run
+ending with an active child; they do not defer or reorder terminal notifications.
+Record-based replacement snapshots arrive in structural order from the server.
 
-Canonical observers and HTTP streams receive model `StepBegin.given` with only
-`model`, `setup`, and optional `state` revisions. Reconnection snapshots use the
-same metadata without rebuilding instructions, messages, or tool definitions.
-The internal execution event retains the complete call for persistence. Use
-`too AGENT inspect STEP call --json` to reconstruct that call on demand.
-Clients that previously read `given.call` from observation events must use this
-inspection path instead; upgrade HTTP clients and runtimes together. The event
-decoder continues to accept earlier events containing a complete call.
+`StepBegin.given` is an event-owned discriminated payload: model identity, tool
+identity/summary/target, or the Flow operation's presentation fields. It contains
+no complete model/tool call, Flow AST, State reference or input pointers.
+`StepEnd.noted` contains only completion facts and client usage/cost summaries;
+provider continuation and pricing details remain in records.
+
+`PartEnd.data` uses event-owned `PartData`: text/reasoning content, media display
+fields, or tool identity and explicit receipts (`run`, `thread`,
+`control_applied`, `cwd`, and optional error). It excludes provider signatures,
+provider metadata, invocation arguments and arbitrary tool-result bodies. These
+execution details remain in records and model history.
+
+Event outputs use `{type, value}` with final JSON data and no local binding.
+Explicitly typed Part arrays, including nested arrays, use the same `PartData`.
+`event_projection.py` selects fields from available execution values before Event
+construction; `event_to_data()` only encodes the final Event once. Neither path
+loads values from the Store. `observation.py` owns structural normalization and
+snapshot budgets; record-based snapshot reads stay in `subscriptions.py`.
+Errors are text; optional `error_source` identifies the originating Run/Step for
+presentation deduplication without a data pointer. Live notifications use values
+already available during execution, including Await results. A stored output
+reference alone does not trigger value reconstruction for a notification.
+Providers stream display content and deltas when supported; text and media
+content is preserved. A tracer may ignore deltas and observe higher-level events.
+
+Explicit reconnect/replacement snapshots read records using the same small event
+shapes and existing budgets; they never rebuild model calls. Complete calls remain
+available through `too AGENT inspect STEP call --json`.
+
+This event schema requires HTTP subscribers and runtimes to upgrade together and
+reconnect. Earlier complete-Given event payloads are not accepted. Stored history
+and explicit inspection/query formats are unchanged.
 
 
 ## Run Controls

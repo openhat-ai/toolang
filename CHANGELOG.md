@@ -57,6 +57,17 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Changed
 
+- **Breaking:** runtime operation interpretation now uses the current `runtime`
+  plugin and canonical `runtime__*` names for event metadata and receipts, CLI
+  progress, honor reply reconstruction, and compact checkpoint validation.
+  Retired `_toolang` aliases, `_toolang__execute`, and unqualified short tool
+  names are no longer interpreted as runtime operations. Existing records retain
+  their original names without a schema change. Use current runtime selections
+  and calls, restart hosts, and prepare fresh Setup; do not resume pre-upgrade
+  runs.
+
+- **Breaking:** Run subscription events now carry compact client-owned operation metadata, direct outputs without bindings or pointers, text errors, and usage summaries. Part payloads retain text/media display data and explicit runtime receipts, but exclude provider signatures, native metadata, full tool arguments, and arbitrary result bodies. EventOutput contains final JSON; serialization does not project values again or query storage. Complete model/tool calls, Flow ASTs, State/input references, and accounting internals remain in unchanged durable records and explicit inspection/query APIs. External subscribers must upgrade with the runtime and reconnect. Run/Step IDs are scalar; control application uses Run/index facts.
+
 - **Breaking:** thread peer metadata is removed from execution records, events,
   and HTTP schemas. Thread creation no longer accepts a peer, and integrations
   must stop sending or reading peer fields. Empty thread titles now use the
@@ -81,10 +92,9 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   exact input, cursor range, and Run together before handling, so restart and
   recovery resume recorded ranges without replaying effects or rebuilding a
   changed message tail. A handler may reply, ignore, steer or cancel an inspected
-  local Run, or spawn independent work; old per-batch threads are not adopted, an
-  occupied deterministic thread ID with another or no binding is rejected rather
-  than remapped, and orphaned handling ends as failed with a best-effort notice
-  attempted at most once per batch.
+  local Run, or spawn independent work; old per-batch threads are not adopted, and
+  an occupied deterministic thread ID with another or no binding is rejected
+  rather than remapped.
 
 - **Breaking:** chore identities are now eight lowercase Base32 characters
   derived from the exact name and the owning agent, so one name yields a
@@ -170,6 +180,24 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   lists (`too skill list`) and cap mutation commands are unchanged.
 
 ### Fixed
+
+- Cancellation while `stop()` drains owned tasks still runs terminal fallback and
+  monitor/observer cleanup before propagating; cancellation while draining
+  observers also releases readers. Rejected control-monitor task creation closes
+  its coroutine, and observers canceled before their first turn release their
+  subscriptions. Runtime spawn errors after admission preserve the completed Step
+  receipt and record the later error on the Run instead of creating an invalid
+  `ErrorRef`.
+
+- Root and spawned Runs share startup-failure finalization: a synchronous
+  startup error marks the Run failed, closes pending controls, publishes exactly
+  one terminal event, then re-raises the original error. Rejected task creation
+  releases its coroutine and subscriptions; owned-task initialization failures
+  use ordinary cleanup, and observers drain after publication. Talk preserves
+  durable receipts, observing pending or running receipts without false failure
+  notices or execution-state repair.
+
+- Run event producers close nested Steps and owned child Runs before their parents. Run stream clients preserve producer order and report a protocol error when a Run ends with an active owned child, rather than delaying or reordering terminal events; asynchronous launch admission and owned-child cleanup semantics are unchanged.
 
 - Large run and thread detail responses avoid expensive diagnostics from probing
   unrelated `StepGiven` variants, while preserving existing public payloads and

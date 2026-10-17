@@ -1,5 +1,7 @@
 """Progress keeps identity and lifecycle independent of persisted descriptions."""
 
+from tests.support.observations import run_begin, run_end, step_begin, step_end
+
 from io import StringIO
 
 import pytest
@@ -18,7 +20,6 @@ from toolang.cli.common.execution_progress.step_projection import (
 )
 from toolang.cli.common.script_progress.console import ProgressConsole
 from toolang.cli.toolang.commands.chat import blocks, rendering
-from toolang.execution.events import RunBegin, RunEnd, StepBegin, StepEnd
 from toolang.execution.types import (
     ControlRef,
     StepRef,
@@ -43,7 +44,7 @@ def begin(
     step="run_root.0",
     summary="Listing projects: toolang",
 ):
-    return StepBegin(
+    return step_begin(
         step=StepRef.parse(step),
         kind="tool",
         given=ToolStepGiven(
@@ -62,7 +63,7 @@ def test_alias_identity_and_saved_wording_reach_chat_tty_and_plain(status, width
     else:
         rows = trace_terminal_rows(
             operation,
-            StepEnd(
+            step_end(
                 step=event.step,
                 kind="tool",
                 status=status,
@@ -87,16 +88,15 @@ def test_alias_identity_and_saved_wording_reach_chat_tty_and_plain(status, width
     assert "[issues]" in text and "[vendor]" not in text
 
 
-@pytest.mark.parametrize("namespace", ["runtime", "_toolang"])
 @pytest.mark.parametrize("name", ["run", "spawn", "await", "exec", "compact", "honor"])
-def test_new_and_historical_runtime_rows_keep_saved_summaries(namespace, name):
-    event = begin(f"{namespace}__{name}", namespace, summary="Original saved action")
+def test_runtime_rows_keep_saved_summaries(name):
+    event = begin(f"runtime__{name}", "runtime", summary="Original saved action")
     operation = normalize_operation(event)
     assert operation.name == name
     assert "Original saved action" in trace_live_rows(operation, "")[0].text
     rows = trace_terminal_rows(
         operation,
-        StepEnd(
+        step_end(
             step=event.step,
             kind="tool",
             status="succeeded",
@@ -105,13 +105,13 @@ def test_new_and_historical_runtime_rows_keep_saved_summaries(namespace, name):
         error="",
     )
     assert "Original saved outcome" in rows[0].text
-    assert rows[0].tool_identity == (namespace, name)
+    assert rows[0].tool_identity == ("runtime", name)
     assert rows[0].tool_status == "succeeded"
 
 
-def test_former_execute_name_is_a_history_operation_only():
+def test_former_execute_name_has_no_runtime_presentation():
     operation = normalize_operation(begin("_toolang__execute", "_toolang"))
-    assert operation.name == "exec"
+    assert operation.name == "tool"
     assert operation.tool_identity == ("_toolang", "execute")
 
 
@@ -127,7 +127,7 @@ def test_unknown_identity_is_not_guessed(name):
 def test_parallel_activity_and_failed_terminal_keep_identity_and_status():
     projector = ProgressProjector(show_boundaries=False)
     projector.handle(
-        RunBegin(
+        run_begin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
             runnable="flow:parent",
@@ -135,14 +135,14 @@ def test_parallel_activity_and_failed_terminal_keep_identity_and_status():
     )
     par = StepRef.parse("run_root.0")
     projector.handle(
-        StepBegin(
+        step_begin(
             step=par,
             kind="par",
             given=MapStmt(span=Span(line=1), runnable="worker", lanes=1),
         )
     )
     projector.handle(
-        RunBegin(
+        run_begin(
             run="run_worker",
             control=ControlRef.for_run("run_worker", 0),
             parent=par,
@@ -157,7 +157,7 @@ def test_parallel_activity_and_failed_terminal_keep_identity_and_status():
     live = projector.handle(event).live[0].rows[-1]
     assert live.tool_identity == ("issues", "list") and live.tool_status == "running"
     end = projector.handle(
-        StepEnd(
+        step_end(
             step=event.step,
             kind="tool",
             status="failed",
@@ -188,30 +188,29 @@ def rendered_surfaces(block, width):
 
 
 @pytest.mark.parametrize("width", [35, 120])
-@pytest.mark.parametrize("namespace", ["runtime", "_toolang"])
 @pytest.mark.parametrize("status", ["succeeded", "failed", "canceled"])
-def test_dynamic_run_footer_renders_saved_outcome(namespace, status, width):
+def test_dynamic_run_footer_renders_saved_outcome(status, width):
     projector = ProgressProjector(show_boundaries=False)
     projector.handle(
-        RunBegin(
+        run_begin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
             runnable="agic:parent",
         )
     )
-    event = begin(f"{namespace}__run", namespace)
+    event = begin("runtime__run", "runtime")
     projector.handle(event)
     projector.handle(
-        RunBegin(
+        run_begin(
             run="run_child",
             control=ControlRef.for_run("run_child", 0),
             runnable="agic:child",
-            parent=event.step,
+            parent=StepRef.parse(event.step),
         )
     )
-    projector.handle(RunEnd(run="run_child", status=status))
+    projector.handle(run_end(run="run_child", status=status))
     terminal = projector.handle(
-        StepEnd(
+        step_end(
             step=event.step,
             kind="tool",
             status=status,
@@ -219,33 +218,32 @@ def test_dynamic_run_footer_renders_saved_outcome(namespace, status, width):
         )
     )
     for text in rendered_surfaces(terminal.committed[0], width):
-        assert f"[{namespace}]" in text
+        assert "[runtime]" in text
         assert "Saved outcome:" in text and "child" in text
         assert "run_child" in text and status in text
         assert "└" in text
 
 
-@pytest.mark.parametrize("namespace", ["runtime", "_toolang"])
 @pytest.mark.parametrize("target_starts", [True, False])
-def test_committed_exec_boundary_keeps_saved_outcome(namespace, target_starts):
+def test_committed_exec_boundary_keeps_saved_outcome(target_starts):
     projector = ProgressProjector(show_boundaries=False)
     projector.handle(
-        RunBegin(
+        run_begin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
             runnable="agic:parent",
         )
     )
-    event = begin(f"{namespace}__exec", namespace)
+    event = begin("runtime__exec", "runtime")
     projector.handle(event)
     result = ToolResultPart(
         tool_call_id="call",
-        tool_name=event.given.call.name,
-        tool_family=namespace,
+        tool_name=event.given.name,
+        tool_family=event.given.name,
         output={"controls": ["run_root@1"]},
     )
     terminal = projector.handle(
-        StepEnd(
+        step_end(
             step=event.step,
             kind="tool",
             status="succeeded",
@@ -257,13 +255,13 @@ def test_committed_exec_boundary_keeps_saved_outcome(namespace, target_starts):
     next_event = (
         begin(step="run_root.1")
         if target_starts
-        else RunEnd(run="run_root", status="succeeded")
+        else run_end(run="run_root", status="succeeded")
     )
     boundary = projector.handle(next_event).committed[0]
-    assert boundary.rows[0].tool_identity == (namespace, "exec")
+    assert boundary.rows[0].tool_identity == ("runtime", "exec")
     assert boundary.rows[0].tool_status == "succeeded"
     for text in rendered_surfaces(boundary, 80):
-        assert f"[{namespace}] Saved switch: child" in text
+        assert "[runtime] Saved switch: child" in text
 
 
 def test_narrow_chat_budgets_identity_against_actual_viewport():
@@ -282,3 +280,25 @@ def test_trailing_underscore_toolset_identity_reaches_progress():
     assert row.tool_identity == ("issues_", "list")
     for text in rendered_surfaces(ProgressBlock("tool", (row,)), 80):
         assert "[issues_]" in text
+
+
+@pytest.mark.parametrize(
+    ("plugin", "name"),
+    [
+        ("_toolang", "_toolang__run"),
+        ("_toolang", "_toolang__execute"),
+        ("_toolang", "runtime__run"),
+        ("vendor", "runtime__exec"),
+        ("runtime", "_toolang__exec"),
+        ("runtime", "runtime__execute"),
+        ("runtime", "spawn"),
+        ("runtime", "pick"),
+        ("runtime", "honor"),
+        ("runtime", "compact"),
+    ],
+)
+def test_runtime_progress_uses_only_current_plugin_and_wire_names(plugin, name):
+    operation = normalize_operation(begin(name, plugin))
+    assert operation.name == "tool"
+    assert operation.tool_marker == "›"
+    assert not operation.timed

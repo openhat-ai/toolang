@@ -482,7 +482,7 @@ class _ToolRuntime(ToolRuntime):
                             ControlInfo.from_record(run, control), mode="json"
                         ),
                     }
-                    store.finish_step(
+                    completed = store.finish_step(
                         ref=self.step,
                         kind="tool",
                         status="succeeded",
@@ -501,7 +501,7 @@ class _ToolRuntime(ToolRuntime):
                     )
                     executor._publish_step_ends(
                         publication,
-                        (self.step,),
+                        (completed,),
                         thread_id=self.state.prepared.run.thread,
                         root_run_id=self.state.prepared.run.root_run_id,
                     )
@@ -556,6 +556,12 @@ class _ToolRuntime(ToolRuntime):
         except _RunRejected as exc:
             return ToolResult(error=str(exc), output=exc.details)
         except (ToolangError, TypeError, ValueError) as exc:
+            if (
+                execution._active is not None
+                and self.step in execution._active.early_ends
+            ):
+                self.failure = exc
+                raise
             return ToolResult(error=str(exc))
         except Exception as exc:
             self.failure = exc

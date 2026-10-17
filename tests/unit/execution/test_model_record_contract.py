@@ -1,5 +1,7 @@
 """The model record contract retains call facts without duplicate projections."""
 
+from tests.support.observations import step_begin
+
 from dataclasses import fields, replace
 from contextlib import closing
 from pathlib import Path
@@ -23,7 +25,7 @@ from toolang.execution.records import (
     step_noted_to_data,
 )
 from toolang.execution.store import RunStore
-from toolang.execution.events import StepBegin, run_event_from_data, run_event_to_data
+from toolang.execution.events import run_event_from_data, run_event_to_data
 from toolang.execution.types import (
     ControlRef,
     ModelCost,
@@ -51,7 +53,7 @@ def test_call_settings_and_setup_survive_store_reopening(
         max_output_tokens=512,
         reasoning=Reasoning(budget_tokens=128),
     )
-    event = StepBegin(
+    event = step_begin(
         step=ref,
         kind="model",
         state=ControlRef.for_run(ref.run_id, 0),
@@ -60,8 +62,8 @@ def test_call_settings_and_setup_survive_store_reopening(
         given=ModelStepGiven("test/one", call, setup="setup-v1", state=state),
     )
     encoded = run_event_to_data(event)
-    assert encoded["state"] == str(event.state)
-    assert encoded["given"].get("state") == state
+    assert "state" not in encoded
+    assert encoded["given"] == {"type": "model", "model": "test/one"}
     assert "catalog_state" not in encoded["given"]
     assert run_event_from_data(encoded) == event
     with closing(RunStore(path)) as store:
@@ -78,7 +80,7 @@ def test_call_settings_and_setup_survive_store_reopening(
         assert step is not None and isinstance(step.given, StoredModelStepGiven)
         assert step.given.setup == "setup-v1"
         assert step.given.state == state
-        assert step.state == event.state
+        assert step.state == ControlRef.for_run(ref.run_id, 0)
         assert step.given.call.reasoning == call.reasoning
         assert store.rebuild_model_call(step) == call
         assert {"tokens", "price", "cost"}.isdisjoint(

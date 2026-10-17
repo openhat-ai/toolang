@@ -4,10 +4,13 @@ from __future__ import annotations
 
 from toolang.base.types.message import (
     Part,
-    ToolResultPart,
+    part_from_data,
 )
-from toolang.execution.events import StepEnd
-from toolang.lang.types import Array, display_runnable_ref
+from toolang.execution.events import StepEnd, ToolResultData
+from toolang.lang.types import authored_type
+from typing import cast
+from pydantic import JsonValue
+from toolang.lang.types import Array, Value, display_runnable_ref
 from wcwidth import wcwidth, wcswidth
 
 
@@ -105,12 +108,41 @@ def output_parts(event: StepEnd) -> tuple[Part, ...]:
 
     if event.output is None:
         return ()
+    kind = authored_type(event.output.type)
     value = event.output.value
-    if isinstance(value, ToolResultPart):
-        return (value,)
-    if isinstance(value, Array | tuple | list):
-        return tuple(part for part in value if isinstance(part, Part))
+    if kind == "Part" and isinstance(value, dict):
+        return (part_from_data(value),)
+    if kind == "Part[]" and isinstance(value, list):
+        return tuple(part_from_data(part) for part in value if isinstance(part, dict))
     return ()
+
+
+def tool_result_data(event: StepEnd) -> tuple[ToolResultData, ...]:
+    """Read explicit client receipts, without rebuilding execution results."""
+    if event.output is None or authored_type(event.output.type) not in {
+        "Part",
+        "Part[]",
+    }:
+        return ()
+    value = event.output.value
+    parts = value if isinstance(value, list) else [value]
+    return tuple(
+        cast(ToolResultData, part)
+        for part in parts
+        if isinstance(part, dict) and part.get("type") == "tool_result"
+    )
+
+
+def display_value(value: JsonValue, kind: str) -> Value:
+    """Decode explicitly typed Parts only at the presentation boundary."""
+    kind = authored_type(kind)
+    if kind.split("[", 1)[0] != "Part":
+        return value
+    if kind.endswith("[]") and isinstance(value, list):
+        return [display_value(item, kind[:-2]) for item in value]
+    if isinstance(value, dict):
+        return part_from_data(value)
+    return value
 
 
 def shape_label(event: StepEnd) -> str:

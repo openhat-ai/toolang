@@ -4,9 +4,16 @@ from __future__ import annotations
 
 import asyncio
 from contextvars import Context
-from contextlib import AbstractContextManager, nullcontext
+from contextlib import AbstractContextManager, nullcontext, asynccontextmanager
 from functools import wraps
-from collections.abc import Awaitable, Callable, Generator, Mapping, Sequence
+from collections.abc import (
+    Awaitable,
+    Callable,
+    Generator,
+    Mapping,
+    Sequence,
+    AsyncIterator,
+)
 from dataclasses import dataclass, field, replace
 import logging
 import threading
@@ -79,10 +86,7 @@ from ..events import (
     PartEnd,
     RunBegin,
     RunEnd,
-    RunEvent,
     RunTracer,
-    StepBegin,
-    StepEnd,
 )
 from ..records import (
     CompactControlPayload,
@@ -92,6 +96,7 @@ from ..records import (
     run_preparation,
     ControlRecord,
     RunRecord,
+    StepRecord,
     StoredModelStepGiven,
 )
 from ..store import RunStore
@@ -112,12 +117,15 @@ from ..types import (
     Output,
     ControlKind,
     StepRef,
+    StepGiven,
+    StepKind,
+    StepNoted,
+    StepStatus,
+    RunStatus,
     RunRef,
     AwaitableHandle,
     ModelStepNoted,
     LoopStepNoted,
-    ModelStepGiven,
-    ModelStepInfo,
     ToolStepGiven,
     ToolStepNoted,
     Occurrence,
@@ -139,7 +147,7 @@ from .common import (
     Local,
     _MISSING,
     BoundRun,
-    EventEmitter,
+    StepPreparation,
     _ExecutionFailed,
     _ExecuteCommitted,
     _RunRejected,
@@ -151,6 +159,13 @@ from .common import (
     value_parts,
     value_text,
 )
+from ..event_projection import (
+    step_begin_event,
+    step_end_event,
+    direct_output,
+    event_output,
+)
+from ..events import ControlApplied
 from ..inspection.history import RunHistory
 from ..talk import TalkBatch
 from ..compaction import CompactSpec, RUNNABLE as COMPACT_RUNNABLE
@@ -172,7 +187,6 @@ from .limits import (
     _RunLimitExceeded,
     _RunLimitState,
 )
-from ._persist import _PersistSink
 
 _LOGGER = logging.getLogger(__name__)
 _CONTROL_POLL_INTERVAL = 0.05
@@ -342,7 +356,6 @@ class RunExecutor:
         self._sync_state = sync_state
         self._include = include
         self._default_workdir_override = default_workdir
-        self._persist = _PersistSink(self.store)
         self._control_poll_interval = _CONTROL_POLL_INTERVAL
         self._active: dict[str, _ActiveRun] = {}
         self._tasks: dict[asyncio.Task[RunRecord], tuple[str, _ActiveRun]] = {}
@@ -797,41 +810,62 @@ class RunExecutor:
         tracer: RunTracer | None,
         independent: bool = False,
     ) -> LocalRunHandle:
-        observer = (
-            TraceObserver(self.stream.subscribe(root_run_id=bound.root_run_id), tracer)
-            if tracer is not None
-            else None
-        )
-        if observer is not None:
-            self._observers.add(observer)
-            observer.task.add_done_callback(
-                lambda _task: self._observers.discard(observer)
-            )
-        task = asyncio.create_task(
-            self._execute_owned(bound, runnable),
-            name=f"toolang-run-{bound.run_id}",
-            context=Context() if independent else None,
-        )
-        active = _ActiveRun(
-            task=task,
-            root_run_id=bound.root_run_id,
-            thread_id=bound.thread,
-            loop=loop,
-            observer=observer,
-        )
-        with self._active_lock:
-            self._active[bound.run_id] = active
-        self._tasks[task] = (bound.run_id, active)
-        task.add_done_callback(self._task_done)
+        observer = None
+        task = None
+        coroutine = self._execute_owned(bound, runnable)
         try:
+            observer = (
+                TraceObserver(
+                    self.stream.subscribe(root_run_id=bound.root_run_id), tracer
+                )
+                if tracer is not None
+                else None
+            )
+            if observer is not None:
+                self._observers.add(observer)
+                observer.task.add_done_callback(
+                    lambda _task: self._observers.discard(observer)
+                )
+            task = asyncio.create_task(
+                coroutine,
+                name=f"toolang-run-{bound.run_id}",
+                context=Context() if independent else None,
+            )
+            active = _ActiveRun(
+                task=task,
+                root_run_id=bound.root_run_id,
+                thread_id=bound.thread,
+                loop=loop,
+                observer=observer,
+            )
+            with self._active_lock:
+                self._active[bound.run_id] = active
+            self._tasks[task] = (bound.run_id, active)
+            task.add_done_callback(self._task_done)
             self._ensure_monitor(bound.setup.layout.name)
-        except Exception:
-            task.cancel()
-            self._tasks.pop(task, None)
+        except Exception as exc:
+            if task is None:
+                coroutine.close()
+            else:
+                task.cancel()
+                self._tasks.pop(task, None)
             with self._active_lock:
                 self._active.pop(bound.run_id, None)
-            if observer is not None:
-                observer.finish()
+            try:
+                with self.stream.publication() as publication:
+                    with self.store.write_transaction():
+                        self._finish_run(
+                            publication,
+                            run=bound.run_id,
+                            status="failed",
+                            error=ErrorMessage(str(exc) or type(exc).__name__),
+                            finished_at=utc_now(),
+                            thread_id=bound.thread,
+                            root_run_id=bound.root_run_id,
+                        )
+            finally:
+                if observer is not None:
+                    observer.finish()
             raise
         return LocalRunHandle(bound.run_id, self, task, observer)
 
@@ -845,34 +879,41 @@ class RunExecutor:
         bound: BoundRun,
         runnable: AgicDecl | FlowDecl,
     ) -> RunRecord:
-        task = asyncio.current_task()
-        if task is None:
-            raise RuntimeError("run execution requires an asyncio task")
-        with self._active_lock:
-            active = self._active.get(bound.run_id)
-        if active is None or active.task is not task:
-            raise RuntimeError(f"run ownership missing: {bound.run_id}")
         started_at = time.perf_counter()
-        emit = self._handler(active)
-        execution = _Execution(
-            self,
-            root=bound,
-            active=active,
-        )
-        with self._active_lock:
-            active.execution = execution
-        timeout = execution.schedule_time_limit(task)
+        active = None
+        execution = None
+        timeout = None
         try:
+            task = asyncio.current_task()
+            if task is None:
+                raise RuntimeError("run execution requires an asyncio task")
+            with self._active_lock:
+                active = self._active.get(bound.run_id)
+            if active is None:
+                # Eager task factories enter before _launch registers ownership.
+                await asyncio.sleep(0)
+                with self._active_lock:
+                    active = self._active.get(bound.run_id)
+            if active is None or active.task is not task:
+                raise RuntimeError(f"run ownership missing: {bound.run_id}")
+            execution = _Execution(self, root=bound, active=active)
+            with self._active_lock:
+                active.execution = execution
+            timeout = execution.schedule_time_limit(task)
             await execution.execute(
                 bound,
                 runnable,
             )
         except asyncio.CancelledError:
-            await self._ensure_terminal(bound.run_id, emit=emit, status="canceled")
+            await self._ensure_terminal(
+                bound.run_id,
+                finish=execution.finish_run if execution is not None else None,
+                status="canceled",
+            )
         except Exception as exc:
             await self._ensure_terminal(
                 bound.run_id,
-                emit=emit,
+                finish=execution.finish_run if execution is not None else None,
                 status="failed",
                 error=ErrorMessage(str(exc) or type(exc).__name__),
             )
@@ -880,9 +921,17 @@ class RunExecutor:
             if timeout is not None:
                 timeout.cancel()
             with self._active_lock:
+                if active is None:
+                    active = self._active.get(bound.run_id)
                 for run_id in tuple(self._active):
                     if self._active.get(run_id) is active:
                         self._active.pop(run_id, None)
+            if (
+                active is not None
+                and active.observer is not None
+                and bound.run_id in active.ended
+            ):
+                active.observer.finish()
         result = self.store.get_run(run_id=bound.run_id)
         if result is None:
             raise RuntimeError(f"run projection missing: {bound.run_id}")
@@ -956,66 +1005,6 @@ class RunExecutor:
         self._observe_control(control)
         return control
 
-    async def reconcile_talk(self, run_id: str) -> RunRecord:
-        """Reconcile an admitted batch under the driver's exclusive agent lease.
-
-        Preserve accepted independent roots and receipts. An orphaned processing
-        tree is closed as failed; none of its Steps are invoked again.
-        """
-        record = self.store.get_run(run_id=run_id)
-        if record is None:
-            raise ValueError(f"Talk receipt has no Run: {run_id}")
-        with self._active_lock:
-            active = self._active.get(run_id)
-            task = active.task if active is not None else None
-        if task is not None:
-            await asyncio.shield(task)
-            record = self.store.get_run(run_id=run_id)
-            assert record is not None
-        if record.status in {"pending", "running"}:
-            error = ErrorMessage(
-                "Message handler was interrupted before completing; no effects were replayed"
-            )
-            with self.stream.publication() as publication:
-                with self.store.write_transaction():
-                    for run in reversed(self.store.list_run_tree(root_run_id=run_id)):
-                        if run.status not in {"pending", "running"}:
-                            continue
-                        unfinished = []
-                        for step in self.store.list_steps(run_id=run.id):
-                            if step.status not in {"pending", "running"}:
-                                continue
-                            self.store.finish_step(
-                                ref=step.ref,
-                                kind=step.kind,
-                                status="failed",
-                                output=step.output,
-                                noted=None,
-                                error=error,
-                                finished_at=utc_now(),
-                            )
-                            unfinished.append(step.ref)
-                        self._publish_step_ends(
-                            publication,
-                            unfinished,
-                            thread_id=str(record.thread),
-                            root_run_id=run_id,
-                        )
-                        self._project_event(
-                            publication,
-                            RunEnd(
-                                run=run.id,
-                                status="failed",
-                                error=error,
-                                finished_at=utc_now(),
-                            ),
-                            thread_id=str(record.thread),
-                            root_run_id=run_id,
-                        )
-            record = self.store.get_run(run_id=run_id)
-            assert record is not None
-        return record
-
     def _require_owned_control(self, run_id: str, expected: ControlRef) -> None:
         with self._active_lock:
             active = self._active.get(run_id)
@@ -1048,38 +1037,45 @@ class RunExecutor:
         for task, _run in owned:
             if not task.done():
                 task.cancel()
-        if owned:
-            await asyncio.gather(
-                *(task for task, _run in owned),
-                return_exceptions=True,
-            )
-        await asyncio.sleep(0)
-        for _task, (run_id, active) in owned:
-            await self._ensure_terminal(
-                run_id,
-                emit=self._handler(active),
-                status="canceled",
-            )
-        with self._active_lock:
-            owned_tasks = {task for task, _run in owned}
-            for run_id, active in tuple(self._active.items()):
-                if active.task in owned_tasks:
-                    self._active.pop(run_id, None)
-        monitor = self._monitor_task
-        self._monitor_task = None
-        if monitor is not None and not monitor.done():
-            monitor.cancel()
-            await asyncio.gather(monitor, return_exceptions=True)
-        self.stream.close()
-        observers = tuple(self._observers)
-        if observers:
-            await asyncio.wait(
-                {item.task for item in observers}, timeout=OBSERVER_DRAIN_SEC
-            )
-            for observer in observers:
-                observer.reader.close()
-                if not observer.task.done():
-                    observer.task.cancel()
+        try:
+            if owned:
+                draining = asyncio.gather(
+                    *(task for task, _run in owned),
+                    return_exceptions=True,
+                )
+                try:
+                    await asyncio.shield(draining)
+                finally:
+                    await draining
+        finally:
+            for _task, (run_id, active) in owned:
+                await self._ensure_terminal(
+                    run_id,
+                    status="canceled",
+                )
+            with self._active_lock:
+                owned_tasks = {task for task, _run in owned}
+                for run_id, active in tuple(self._active.items()):
+                    if active.task in owned_tasks:
+                        self._active.pop(run_id, None)
+            monitor = self._monitor_task
+            self._monitor_task = None
+            if monitor is not None and not monitor.done():
+                monitor.cancel()
+            self.stream.close()
+            observers = tuple(self._observers)
+            try:
+                if monitor is not None and not monitor.done():
+                    await asyncio.gather(monitor, return_exceptions=True)
+                if observers:
+                    await asyncio.wait(
+                        {item.task for item in observers}, timeout=OBSERVER_DRAIN_SEC
+                    )
+            finally:
+                for observer in observers:
+                    observer.reader.close()
+                    if not observer.task.done():
+                        observer.task.cancel()
 
     def _require_available(self) -> None:
         if self._stopped:
@@ -1090,8 +1086,6 @@ class RunExecutor:
         if owned is None:
             return
         run_id, active = owned
-        if active.observer is not None and run_id in active.ended:
-            active.observer.finish()
         if not task.cancelled() and (error := task.exception()) is not None:
             _LOGGER.error(
                 "Run task failed outside runtime handling run=%s error=%r",
@@ -1103,190 +1097,109 @@ class RunExecutor:
                 if candidate is active:
                     self._active.pop(active_run_id, None)
 
-    def _handler(self, active: _ActiveRun) -> EventEmitter:
-        async def emit(event: RunEvent) -> None:
-            await self._emit_event(active, event)
-
-        return emit
-
-    async def _emit_event(self, active: _ActiveRun, event: RunEvent) -> None:
-        interruption: asyncio.CancelledError | None = None
-        while True:
-            try:
-                await active.event_lock.acquire()
-                break
-            except asyncio.CancelledError as exc:
-                if not isinstance(event, StepEnd):
-                    raise
-                step = self.store.get_step(ref=event.step)
-                if step is None or step.status == "running":
-                    raise
-                # Admission may have committed the Step before event delivery.
-                # Finish delivering that fact before propagating cancellation.
-                interruption = exc
-        try:
-            await self._emit_event_locked(active, event)
-        finally:
-            active.event_lock.release()
-        if interruption is not None:
-            raise interruption
-
-    async def _emit_event_locked(
+    def _finish_run(
         self,
-        active: _ActiveRun,
-        event: RunEvent,
-    ) -> None:
-        event_run = _run_event_id(event)
-        if event_run in active.ended:
-            return
-        if isinstance(event, PartBegin | PartDelta | PartEnd):
-            # Runtime-control admission may have already finalized its source.
-            # Its complete StepEnd replaces later disposable result Parts.
-            if event.step in active.early_ends:
-                return
-            with self.stream.publication() as publication:
-                publication.append(
-                    event, thread_id=active.thread_id, root_run_id=active.root_run_id
-                )
-            return
-        if isinstance(event, StepEnd) and event.status == "canceled":
-            interruption = (
-                active.execution.interruption_for(event.step.run_id)
-                if active.execution is not None
-                else active.interruptions.get(active.root_run_id)
+        publication: Publication,
+        *,
+        run: str,
+        status: RunStatus,
+        thread_id: str,
+        root_run_id: str,
+        control: ControlRef | None = None,
+        output: Output | None = None,
+        error: ErrorMessage | ErrorRef | None = None,
+        finished_at: str,
+        result: Local | None = None,
+        error_text: str | None = None,
+    ) -> RunRecord:
+        record = self.store.finish_run(
+            run_id=run,
+            status=status,
+            output=output,
+            error=error,
+            finished_at=finished_at,
+        )
+        if control is not None:
+            self.store.finish_run_controls(
+                run_id=str(control.target),
+                indexes=(control.index,),
+                finished_at=finished_at,
             )
-            if interruption is not None:
-                event = replace(event, aborted_by=interruption.ref)
-        if isinstance(event, RunBegin):
-            event = replace(event, thread_id=active.thread_id)
-        with self.stream.publication() as publication:
-            with self.store.write_transaction():
-                event = self._project_event(
-                    publication,
-                    event,
-                    thread_id=active.thread_id,
-                    root_run_id=active.root_run_id,
-                )
-        if isinstance(event, StepBegin) and active.execution is not None:
-            active.execution._adopt_step_relations(event)
-        if (
-            isinstance(event, StepEnd)
-            and event.kind == "tool"
-            and event.status == "succeeded"
-            and active.execution is not None
+        self.store.fail_pending_run_controls(
+            run_id=run,
+            finished_at=finished_at,
+            error="run ended before the control could be applied",
+        )
+        if self.store.record_event_cursor(
+            RunRef(run), publication.cursor, boundary="end"
         ):
-            stored = self.store.get_step(ref=event.step)
-            if (
-                stored is not None
-                and isinstance(stored.given, ToolStepGiven)
-                and stored.given.call.name == "runtime__chdir"
-            ):
-                active.execution._cwd_cache[event.step.run_id] = self.store.current_cwd(
-                    event.step.run_id
-                )
-        if isinstance(event, StepEnd):
-            active.early_ends.discard(event.step)
-        self._update_cached_control_state(event)
-        self._track_active_run(event, active)
-        if isinstance(event, RunEnd):
-            active.ended.add(event.run)
-            if active.execution is not None:
-                active.execution._active_bindings.pop(event.run, None)
-                active.execution._cwd_cache.pop(event.run, None)
-
-    def _project_event(
-        self,
-        publication: Publication,
-        event: RunEvent,
-        *,
-        thread_id: str,
-        root_run_id: str,
-    ) -> RunEvent:
-        # Admission can finish a Step atomically with the work it accepts.
-        # Its later logical emit updates execution state without republishing it.
-        previous = (
-            self.store.get_step(ref=event.step) if isinstance(event, StepEnd) else None
-        )
-        published = previous is not None and previous.end_cursor is not None
-        projected = self._persist.on_event(
-            event, cursor=None if published else publication.cursor
-        )
-        self._update_control_state(projected)
-        if not published:
-            publication.append(projected, thread_id=thread_id, root_run_id=root_run_id)
-        return projected
-
-    def _publish_step_ends(
-        self,
-        publication: Publication,
-        refs: Sequence[StepRef],
-        *,
-        thread_id: str,
-        root_run_id: str,
-    ) -> None:
-        for ref in refs:
-            step = self.store.get_step(ref=ref)
-            if step is None or step.status == "running" or step.finished_at is None:
-                raise RuntimeError(f"admission did not finish its Step: {ref}")
-            self._project_event(
-                publication,
-                StepEnd(
-                    step=ref,
-                    kind=step.kind,
-                    status=step.status,
-                    output=step.output,
-                    noted=step.noted,
-                    error=step.error,
-                    aborted_by=step.aborted_by,
-                    finished_at=step.finished_at,
+            publication.append(
+                RunEnd(
+                    run=run,
+                    status=status,
+                    control=ControlApplied(str(control.target), control.index)
+                    if control is not None
+                    else None,
+                    output=event_output(result.type_name or "Json", result.value)
+                    if result is not None and result.has_value
+                    else direct_output(output),
+                    error_source=str(error.ref.record)
+                    if isinstance(error, ErrorRef)
+                    else None,
+                    error=error.message
+                    if isinstance(error, ErrorMessage)
+                    else error_text,
+                    finished_at=finished_at,
                 ),
                 thread_id=thread_id,
                 root_run_id=root_run_id,
             )
+        return record
 
-    def _update_control_state(self, event: RunEvent) -> None:
-        if isinstance(event, StepBegin):
-            for ref in event.preceded_by:
-                self.store.finish_run_controls(
-                    run_id=str(ref.target),
-                    indexes=(ref.index,),
-                    finished_at=event.started_at,
+    def _publish_step_ends(
+        self,
+        publication: Publication,
+        steps: Sequence[StepRecord | StepRef],
+        result: Local | None = None,
+        error_text: str | None = None,
+        *,
+        thread_id: str,
+        root_run_id: str,
+    ) -> None:
+        for item in steps:
+            step = self.store.get_step(ref=item) if isinstance(item, StepRef) else item
+            if step is None:
+                raise RuntimeError(f"admission did not finish its Step: {item}")
+            if step.status == "running" or step.finished_at is None:
+                raise RuntimeError(f"admission did not finish its Step: {step.id}")
+            if step.aborted_by is not None:
+                control = self.store.get_run_control(
+                    run_id=str(step.aborted_by.target),
+                    index=step.aborted_by.index,
                 )
-            return
-        if isinstance(event, StepEnd) and event.aborted_by is not None:
-            control = self.store.get_run_control(
-                run_id=str(event.aborted_by.target), index=event.aborted_by.index
-            )
-            # An immediate steer is adopted by the next model begin, not by the
-            # interrupted end. A cancel has no subsequent input consumer.
-            if control is not None and control.kind == "cancel":
-                self.store.finish_run_controls(
-                    run_id=str(control.target),
-                    indexes=(control.index,),
-                    finished_at=event.finished_at,
+                # A steer is applied by the next begin; cancel has no consumer.
+                if control is not None and control.kind == "cancel":
+                    self.store.finish_run_controls(
+                        run_id=str(control.target),
+                        indexes=(control.index,),
+                        finished_at=step.finished_at,
+                    )
+            if self.store.record_event_cursor(
+                step.ref, publication.cursor, boundary="end"
+            ):
+                publication.append(
+                    step_end_event(
+                        step,
+                        event_output(result.type_name or "Json", result.value)
+                        if result is not None and result.has_value
+                        else direct_output(step.output),
+                        step.error.message
+                        if isinstance(step.error, ErrorMessage)
+                        else error_text,
+                    ),
+                    thread_id=thread_id,
+                    root_run_id=root_run_id,
                 )
-            return
-        if isinstance(event, RunEnd):
-            if event.control is not None:
-                self.store.finish_run_controls(
-                    run_id=str(event.control.target),
-                    indexes=(event.control.index,),
-                    finished_at=event.finished_at,
-                )
-            self.store.fail_pending_run_controls(
-                run_id=event.run,
-                finished_at=event.finished_at,
-                error="run ended before the control could be applied",
-            )
-
-    def _track_active_run(self, event: RunEvent, active: _ActiveRun) -> None:
-        if isinstance(event, RunBegin):
-            with self._active_lock:
-                self._active[event.run] = active
-        elif isinstance(event, RunEnd):
-            with self._active_lock:
-                if self._active.get(event.run) is active:
-                    self._active.pop(event.run, None)
 
     def _register_child_run(self, *, run_id: str, root_run_id: str) -> None:
         with self._active_lock:
@@ -1398,19 +1311,11 @@ class RunExecutor:
         )
         return tuple(control for control in controls if control.index in claimed)
 
-    def _update_cached_control_state(self, event: RunEvent) -> None:
-        if isinstance(event, RunBegin):
-            return
-        if isinstance(event, StepBegin):
-            run_id = event.step.run_id
-            indexes = {
-                ref.index for ref in event.preceded_by if str(ref.target) == run_id
-            }
-        elif isinstance(event, RunEnd):
-            run_id = event.run
-            indexes = None
-        else:
-            return
+    def _update_cached_control_state(
+        self,
+        run_id: str,
+        indexes: set[int] | None,
+    ) -> None:
         with self._active_lock:
             active = self._active.get(run_id)
             if active is None:
@@ -1439,9 +1344,14 @@ class RunExecutor:
 
     def _ensure_monitor(self, agent_name: str) -> None:
         if self._monitor_task is None or self._monitor_task.done():
-            self._monitor_task = asyncio.create_task(
-                self._monitor_controls(), name=f"toolang-controls-{agent_name}"
-            )
+            coroutine = self._monitor_controls()
+            try:
+                self._monitor_task = asyncio.create_task(
+                    coroutine, name=f"toolang-controls-{agent_name}"
+                )
+            except Exception:
+                coroutine.close()
+                raise
 
     async def _monitor_controls(self) -> None:
         while True:
@@ -1452,7 +1362,7 @@ class RunExecutor:
         self,
         run_id: str,
         *,
-        emit: EventEmitter,
+        finish: Callable[..., Awaitable[None]] | None = None,
         status: Literal["failed", "canceled"],
         error: ErrorMessage | ErrorRef | None = None,
     ) -> None:
@@ -1479,19 +1389,34 @@ class RunExecutor:
         ):
             # RunBegin delivery may already have applied the target's cancel.
             cancellation = interruption
-        await emit(
-            RunEnd(
+        control = cancellation.ref if cancellation is not None else None
+        error = error or ErrorMessage(control_text(cancellation) or status)
+        finished_at = utc_now()
+        if finish is not None:
+            await finish(
                 run=run_id,
                 status=status,
-                control=(
-                    ControlRef(RunRef(run_id), cancellation.index)
-                    if cancellation is not None
-                    else None
-                ),
-                error=error or ErrorMessage(control_text(cancellation) or status),
-                finished_at=utc_now(),
+                control=control,
+                error=error,
+                finished_at=finished_at,
             )
-        )
+        elif record is not None:
+            with self.stream.publication() as publication:
+                with self.store.write_transaction():
+                    self._finish_run(
+                        publication,
+                        run=run_id,
+                        status=status,
+                        control=control,
+                        error=error,
+                        finished_at=finished_at,
+                        thread_id=str(record.thread),
+                        root_run_id=active.root_run_id
+                        if active is not None
+                        else run_id,
+                    )
+        if active is not None:
+            active.ended.add(run_id)
 
 
 class _Execution:
@@ -1503,12 +1428,7 @@ class _Execution:
         *,
         root: BoundRun,
         active: _ActiveRun | None = None,
-        emit: EventEmitter | None = None,
     ) -> None:
-        if (active is None) == (emit is None):
-            raise TypeError(
-                "execution requires exactly one active run or event emitter"
-            )
         self.executor = executor
         self.setup = root.setup
         self.layout = root.setup.layout
@@ -1518,7 +1438,6 @@ class _Execution:
         self.date = root.created_at.partition("T")[0]
         self.timezone = "UTC"
         self._active = active
-        self._emit_trace = emit
         self._step_states: dict[StepRef, tuple[AgentState, ControlRef]] = {}
         self._preceding_controls: list[ControlRef] = []
         self._limits = _RunLimitState(root.limits)
@@ -2265,15 +2184,13 @@ class _Execution:
             ControlRef.for_run(binding.run_id, binding.control_index)
         )
         if not begun:
-            await self.emit(
-                RunBegin(
-                    run=binding.run_id,
-                    control=ControlRef(RunRef(binding.run_id), binding.control_index),
-                    runnable=_bound_runnable(binding),
-                    parent=binding.parent,
-                    occurrence=binding.occurrence,
-                    started_at=utc_now(),
-                )
+            await self.begin_run(
+                run=binding.run_id,
+                control=ControlRef(RunRef(binding.run_id), binding.control_index),
+                runnable=_bound_runnable(binding),
+                parent=binding.parent,
+                occurrence=binding.occurrence,
+                started_at=utc_now(),
             )
         try:
             while True:
@@ -2328,14 +2245,12 @@ class _Execution:
         except asyncio.CancelledError as exc:
             if self._limits.error is not None:
                 error = self._limits.error
-                await self.emit(
-                    RunEnd(
-                        run=binding.run_id,
-                        status="failed",
-                        output=self.run_output(binding.run_id),
-                        error=ErrorMessage(error),
-                        finished_at=utc_now(),
-                    )
+                await self.finish_run(
+                    run=binding.run_id,
+                    status="failed",
+                    output=self.run_output(binding.run_id),
+                    error=ErrorMessage(error),
+                    finished_at=utc_now(),
                 )
                 raise _RunLimitExceeded(error) from exc
             interruption = self.interruption_for(binding.run_id)
@@ -2353,47 +2268,41 @@ class _Execution:
                     None,
                 )
             )
-            await self.emit(
-                RunEnd(
-                    run=binding.run_id,
-                    status="canceled",
-                    control=control.ref if control is not None else None,
-                    output=self.run_output(binding.run_id),
-                    error=ErrorMessage(control_text(control) or "canceled"),
-                    finished_at=utc_now(),
-                )
+            await self.finish_run(
+                run=binding.run_id,
+                status="canceled",
+                control=control.ref if control is not None else None,
+                output=self.run_output(binding.run_id),
+                error=ErrorMessage(control_text(control) or "canceled"),
+                finished_at=utc_now(),
             )
             raise
         except _StepFailed as exc:
-            await self.emit(
-                RunEnd(
-                    run=binding.run_id,
-                    status="failed",
-                    output=self.run_output(binding.run_id),
-                    error=exc.error,
-                    finished_at=utc_now(),
-                )
+            await self.finish_run(
+                run=binding.run_id,
+                status="failed",
+                output=self.run_output(binding.run_id),
+                error=exc.error,
+                error_text=str(exc),
+                finished_at=utc_now(),
             )
             raise
         except Exception as exc:
             error = str(exc) or type(exc).__name__
-            await self.emit(
-                RunEnd(
-                    run=binding.run_id,
-                    status="failed",
-                    output=self.run_output(binding.run_id),
-                    error=ErrorMessage(error),
-                    finished_at=utc_now(),
-                )
-            )
-            raise
-        await self.emit(
-            RunEnd(
+            await self.finish_run(
                 run=binding.run_id,
-                status="succeeded",
-                output=_run_result_output(result, binding=output_binding),
+                status="failed",
+                output=self.run_output(binding.run_id),
+                error=ErrorMessage(error),
                 finished_at=utc_now(),
             )
+            raise
+        await self.finish_run(
+            run=binding.run_id,
+            status="succeeded",
+            output=_run_result_output(result, binding=output_binding),
+            result=result,
+            finished_at=utc_now(),
         )
         return result
 
@@ -2679,7 +2588,7 @@ class _Execution:
                         start(self, binding, runnable)
                     except Exception as exc:
                         dispatch_error = exc
-                event = RunBegin(
+                await self._begin_run(
                     run=binding.run_id,
                     control=ControlRef(RunRef(binding.run_id), binding.control_index),
                     runnable=_bound_runnable(binding),
@@ -2689,24 +2598,13 @@ class _Execution:
                     if resume and resume.started_at
                     else utc_now(),
                 )
-                if self._active is None:
-                    emit = self._emit_trace
-                    if emit is None:  # pragma: no cover - constructor invariant
-                        raise RuntimeError("execution event emitter is missing")
-                    await emit(event)
-                else:
-                    await self.executor._emit_event_locked(self._active, event)
                 if dispatch_error is not None:
-                    terminal = RunEnd(
+                    self._finish_run(
                         run=binding.run_id,
                         status="failed",
                         error=ErrorMessage(str(dispatch_error)),
                         finished_at=utc_now(),
                     )
-                    if self._active is not None:
-                        await self.executor._emit_event_locked(self._active, terminal)
-                    elif self._emit_trace is not None:
-                        await self._emit_trace(terminal)
             except BaseException as exc:
                 if isinstance(exc, asyncio.CancelledError) and (
                     not asynchronous or binding.run_id not in self._background_tasks
@@ -2714,16 +2612,13 @@ class _Execution:
                     # RunBegin is durable before observers are awaited. Close an
                     # accepted child even if cancellation prevents execute().
                     # accept() already owns event_lock, so do not acquire it again.
-                    async def emit_terminal(event: RunEvent) -> None:
-                        if self._active is not None:
-                            await self.executor._emit_event_locked(self._active, event)
-                        elif self._emit_trace is not None:
-                            await self._emit_trace(event)
+                    async def finish_terminal(**facts: Any) -> None:
+                        self._finish_run(**facts)
 
                     record = self.store.get_run(run_id=binding.run_id)
                     if record is not None:
                         await self.executor._ensure_terminal(
-                            binding.run_id, emit=emit_terminal, status="canceled"
+                            binding.run_id, finish=finish_terminal, status="canceled"
                         )
                 if not asynchronous or binding.run_id not in self._background_tasks:
                     self._active_bindings.pop(binding.run_id, None)
@@ -2731,9 +2626,7 @@ class _Execution:
                 raise
             return binding, runnable
 
-        if self._active is None:
-            return await accept(*state_snapshot)
-        async with self._active.event_lock:
+        async with self._boundary():
             return await accept(*state_snapshot)
 
     async def _execute_child_binding(
@@ -3041,77 +2934,315 @@ class _Execution:
     def run_output(self, run_id: str) -> Output | None:
         return self._run_outputs.get(run_id)
 
-    async def emit(self, event: RunEvent) -> None:
-        if isinstance(event, StepBegin):
-            await self.begin_step(
-                lambda _state, state_ref: replace(event, state=state_ref),
-                run_id=event.step.run_id,
-            )
-            return
+    @asynccontextmanager
+    async def _boundary(self, step: StepRef | None = None) -> AsyncIterator[None]:
+        """Serialize execution boundaries and finish delivery after admission."""
         if self._active is None:
-            emit = self._emit_trace
-            if emit is None:  # pragma: no cover - constructor invariant
-                raise RuntimeError("execution event emitter is missing")
-            await emit(event)
-            if isinstance(event, StepEnd):
-                self._step_states.pop(event.step, None)
-                self._handle_views.pop(event.step, None)
+            yield
             return
-        await self.executor._emit_event(self._active, event)
-        if isinstance(event, StepEnd):
-            self._step_states.pop(event.step, None)
-            self._handle_views.pop(event.step, None)
+        interruption = None
+        while True:
+            try:
+                await self._active.event_lock.acquire()
+                break
+            except asyncio.CancelledError as exc:
+                record = self.store.get_step(ref=step) if step is not None else None
+                if record is None or record.status == "running":
+                    raise
+                interruption = exc
+        try:
+            yield
+        finally:
+            self._active.event_lock.release()
+        if interruption is not None:
+            raise interruption
 
-    def step_starter(
-        self, binding: BoundRun
-    ) -> Callable[
-        [Callable[[AgentState, ControlRef], StepBegin]],
-        Awaitable[tuple[AgentState, ControlRef]],
-    ]:
-        return lambda build: self.begin_step(build, run_id=binding.run_id)
+    async def emit(self, event: PartBegin | PartDelta | PartEnd) -> None:
+        async with self._boundary():
+            if self._active is not None:
+                if (
+                    event.step.partition(".")[0] in self._active.ended
+                    or StepRef.parse(event.step) in self._active.early_ends
+                ):
+                    return
+            with self.executor.stream.publication() as publication:
+                publication.append(
+                    event, thread_id=self._thread_id, root_run_id=self._history_root
+                )
+
+    @property
+    def _thread_id(self) -> str:
+        return (
+            self._active.thread_id
+            if self._active is not None
+            else next(iter(self._active_bindings.values())).thread
+        )
+
+    async def begin_run(
+        self,
+        *,
+        run: str,
+        control: ControlRef,
+        runnable: str = "",
+        parent: StepRef | None = None,
+        occurrence: Occurrence | None = None,
+        started_at: str,
+    ) -> None:
+        async with self._boundary():
+            await self._begin_run(
+                run=run,
+                control=control,
+                runnable=runnable,
+                parent=parent,
+                occurrence=occurrence,
+                started_at=started_at,
+            )
+
+    async def _begin_run(
+        self,
+        *,
+        run: str,
+        control: ControlRef,
+        runnable: str = "",
+        parent: StepRef | None = None,
+        occurrence: Occurrence | None = None,
+        started_at: str,
+    ) -> None:
+        if self._active is not None and run in self._active.ended:
+            return
+        with self.executor.stream.publication() as publication:
+            with self.store.write_transaction():
+                self.store.begin_run(
+                    run_id=run,
+                    control=control,
+                    occurrence=occurrence,
+                    started_at=started_at,
+                )
+                self.store.record_event_cursor(
+                    RunRef(run), publication.cursor, boundary="begin"
+                )
+                publication.append(
+                    RunBegin(
+                        run=run,
+                        control=control.index,
+                        runnable=runnable,
+                        parent=str(parent) if parent is not None else None,
+                        occurrence=occurrence,
+                        started_at=started_at,
+                        thread_id=self._thread_id,
+                    ),
+                    thread_id=self._thread_id,
+                    root_run_id=self._history_root,
+                )
+        if self._active is not None:
+            with self.executor._active_lock:
+                self.executor._active[run] = self._active
+
+    async def finish_run(
+        self,
+        *,
+        run: str,
+        status: RunStatus,
+        control: ControlRef | None = None,
+        output: Output | None = None,
+        error: ErrorMessage | ErrorRef | None = None,
+        finished_at: str,
+        result: Local | None = None,
+        error_text: str | None = None,
+    ) -> None:
+        async with self._boundary():
+            self._finish_run(
+                run=run,
+                status=status,
+                control=control,
+                output=output,
+                error=error,
+                finished_at=finished_at,
+                result=result,
+                error_text=error_text,
+            )
+
+    def _finish_run(
+        self,
+        *,
+        run: str,
+        status: RunStatus,
+        control: ControlRef | None = None,
+        output: Output | None = None,
+        error: ErrorMessage | ErrorRef | None = None,
+        finished_at: str,
+        result: Local | None = None,
+        error_text: str | None = None,
+    ) -> None:
+        if self._active is not None and run in self._active.ended:
+            return
+        with self.executor.stream.publication() as publication:
+            with self.store.write_transaction():
+                self.executor._finish_run(
+                    publication,
+                    run=run,
+                    thread_id=self._thread_id,
+                    root_run_id=self._history_root,
+                    status=status,
+                    control=control,
+                    output=output,
+                    error=error,
+                    finished_at=finished_at,
+                    result=result,
+                    error_text=error_text,
+                )
+        self.executor._update_cached_control_state(run, None)
+        if self._active is not None:
+            self._active.ended.add(run)
+            with self.executor._active_lock:
+                if self.executor._active.get(run) is self._active:
+                    self.executor._active.pop(run, None)
+        self._active_bindings.pop(run, None)
+        self._cwd_cache.pop(run, None)
 
     async def begin_step(
-        self,
-        build: Callable[[AgentState, ControlRef], StepBegin],
-        *,
-        run_id: str,
+        self, build: StepPreparation, *, run_id: str
     ) -> tuple[AgentState, ControlRef]:
-        """Prepare and persist one step against one serialized State snapshot."""
-
-        if self._active is None:
-            emit = self._emit_trace
-            if emit is None:  # pragma: no cover - constructor invariant
-                raise RuntimeError("execution event emitter is missing")
+        """Prepare and record a Step under the existing serialized State boundary."""
+        async with self._boundary():
             state, state_ref = self.state_snapshot(run_id)
-            event = build(state, state_ref)
-            event = self._step_relations(event)
-            await emit(event)
-            self._adopt_step_relations(event)
-            await self._check_step_cancel(event, emit)
-            self._step_states[event.step] = (state, state_ref)
-            return state, state_ref
-        async with self._active.event_lock:
-            state, state_ref = self.state_snapshot(run_id)
-            event = build(state, state_ref)
-            event = self._step_relations(event)
-            await self.executor._emit_event_locked(self._active, event)
-            await self._check_step_cancel(
-                event,
-                lambda end: self.executor._emit_event_locked(
-                    cast(_ActiveRun, self._active), end
-                ),
-            )
-            self._step_states[event.step] = (state, state_ref)
+            record = build(state, state_ref, self._begin_step)
+            await self._check_step_cancel(record)
+            self._step_states[record.ref] = (state, state_ref)
         return state, state_ref
 
-    async def _check_step_cancel(self, event: StepBegin, emit: EventEmitter) -> None:
+    def _begin_step(
+        self,
+        *,
+        step: StepRef,
+        kind: StepKind,
+        given: StepGiven,
+        state: ControlRef | None = None,
+        input: tuple[FieldRef, ...] = (),
+        preceded_by: tuple[ControlRef, ...] = (),
+        occurrence: Occurrence | None = None,
+        started_at: str,
+    ) -> StepRecord:
+        preceded_by = self._step_relations(step, kind, preceded_by)
+        with self.executor.stream.publication() as publication:
+            with self.store.write_transaction():
+                record = self.store.begin_step(
+                    ref=step,
+                    kind=kind,
+                    given=given,
+                    state=state,
+                    input=input,
+                    preceded_by=preceded_by,
+                    occurrence=occurrence,
+                    started_at=started_at,
+                )
+                for ref in preceded_by:
+                    self.store.finish_run_controls(
+                        run_id=str(ref.target),
+                        indexes=(ref.index,),
+                        finished_at=started_at,
+                    )
+                self.store.record_event_cursor(
+                    step, publication.cursor, boundary="begin"
+                )
+                publication.append(
+                    step_begin_event(record),
+                    thread_id=self._thread_id,
+                    root_run_id=self._history_root,
+                )
+        self._adopt_step_relations(record)
+        self.executor._update_cached_control_state(
+            step.run_id,
+            {ref.index for ref in preceded_by if str(ref.target) == step.run_id},
+        )
+        return record
+
+    async def finish_step(
+        self,
+        *,
+        step: StepRef,
+        kind: StepKind,
+        status: StepStatus,
+        output: Output | None = None,
+        noted: StepNoted = None,
+        error: ErrorMessage | ErrorRef | None = None,
+        aborted_by: ControlRef | None = None,
+        finished_at: str,
+        result: Local | None = None,
+        error_text: str | None = None,
+    ) -> None:
+        async with self._boundary(step):
+            self._finish_step(
+                step=step,
+                kind=kind,
+                status=status,
+                output=output,
+                noted=noted,
+                error=error,
+                aborted_by=aborted_by,
+                finished_at=finished_at,
+                result=result,
+                error_text=error_text,
+            )
+
+    def _finish_step(
+        self,
+        *,
+        step: StepRef,
+        kind: StepKind,
+        status: StepStatus,
+        output: Output | None = None,
+        noted: StepNoted = None,
+        error: ErrorMessage | ErrorRef | None = None,
+        aborted_by: ControlRef | None = None,
+        finished_at: str,
+        result: Local | None = None,
+        error_text: str | None = None,
+    ) -> None:
+        if self._active is not None and step.run_id in self._active.ended:
+            return
+        if status == "canceled":
+            interruption = self.interruption_for(step.run_id)
+            if interruption is not None:
+                aborted_by = interruption.ref
+        with self.executor.stream.publication() as publication:
+            with self.store.write_transaction():
+                record = self.store.finish_step(
+                    ref=step,
+                    kind=kind,
+                    status=status,
+                    output=output,
+                    noted=noted,
+                    error=error,
+                    aborted_by=aborted_by,
+                    finished_at=finished_at,
+                )
+                self.executor._publish_step_ends(
+                    publication,
+                    (record,),
+                    result=result,
+                    error_text=error_text,
+                    thread_id=self._thread_id,
+                    root_run_id=self._history_root,
+                )
+        if (
+            record.kind == "tool"
+            and record.status == "succeeded"
+            and isinstance(record.given, ToolStepGiven)
+            and record.given.call.name == "runtime__chdir"
+        ):
+            self._cwd_cache[step.run_id] = self.store.current_cwd(step.run_id)
+        if self._active is not None:
+            self._active.early_ends.discard(step)
+        self._step_states.pop(step, None)
+        self._handle_views.pop(step, None)
+
+    async def _check_step_cancel(self, record: StepRecord) -> None:
         try:
             self.raise_if_canceling(
-                event.step.run_id,
-                call=isinstance(
-                    event.given, (ModelStepGiven, ModelStepInfo, ToolStepGiven)
-                )
-                or statement_has_call(event.given),
+                record.run_id,
+                call=isinstance(record.given, (StoredModelStepGiven, ToolStepGiven))
+                or statement_has_call(record.given),
             )
         except _RunCanceled as exc:
             from .steps.tool import (
@@ -3120,95 +3251,88 @@ class _Execution:
                 canceled_result,
             )
 
-            await emit(
-                StepEnd(
-                    step=event.step,
-                    kind=event.kind,
-                    status="canceled",
-                    noted=ToolStepNoted(
-                        summary=_tool_summary(
-                            _tool_summary_context(
-                                event.given.call,
-                                self.setup.tools().get(event.given.call.name),
-                            ),
-                            "canceled",
-                        )
+            given = record.given
+            self._finish_step(
+                step=record.ref,
+                kind=record.kind,
+                status="canceled",
+                noted=ToolStepNoted(
+                    summary=_tool_summary(
+                        _tool_summary_context(
+                            given.call, self.setup.tools().get(given.call.name)
+                        ),
+                        "canceled",
                     )
-                    if isinstance(event.given, ToolStepGiven)
-                    else None,
-                    output=Output(
-                        value_for_type(
-                            "ToolResultPart",
-                            canceled_result(
-                                event.given.call,
-                                reason="canceled; operation not executed",
-                            ),
-                        )
-                    )
-                    if isinstance(event.given, ToolStepGiven)
-                    else None,
-                    aborted_by=exc.control.ref,
-                    finished_at=utc_now(),
                 )
+                if isinstance(given, ToolStepGiven)
+                else None,
+                output=Output(
+                    value_for_type(
+                        "ToolResultPart",
+                        canceled_result(
+                            given.call, reason="canceled; operation not executed"
+                        ),
+                    )
+                )
+                if isinstance(given, ToolStepGiven)
+                else None,
+                aborted_by=exc.control.ref,
+                finished_at=utc_now(),
             )
             raise
 
-    def _step_relations(self, event: StepBegin) -> StepBegin:
+    def _step_relations(
+        self,
+        step: StepRef,
+        kind: StepKind,
+        preceded_by: tuple[ControlRef, ...],
+    ) -> tuple[ControlRef, ...]:
         """Prepare associations without consuming their live state."""
 
-        binding = self._active_bindings.get(event.step.run_id)
+        binding = self._active_bindings.get(step.run_id)
         if binding is not None and binding.bindings.runnable == COMPACT_RUNNABLE:
-            return replace(
-                event,
-                preceded_by=tuple(
-                    ref
-                    for ref in self._preceding_controls
-                    if ref.target == event.step.run
-                ),
+            return tuple(
+                ref for ref in self._preceding_controls if ref.target == step.run
             )
-        if event.kind != "model":
-            self.horizon_for(event.step.run_id, pending=True)
-        targets = {RunRef(event.step.run_id)}
+        if kind != "model":
+            self.horizon_for(step.run_id, pending=True)
+        targets = {RunRef(step.run_id)}
         if self._active is not None:
             targets.add(RunRef(self._active.root_run_id))
         preceding = [ref for ref in self._preceding_controls if ref.target in targets]
         compacts = tuple(
             control
-            for control in self.runtime_controls(
-                event.step.run_id, refresh=event.kind != "model"
-            )
+            for control in self.runtime_controls(step.run_id, refresh=kind != "model")
             if isinstance(control.payload, CompactControlPayload)
-            and (event.kind != "model" or control.ref in event.preceded_by)
+            and (kind != "model" or control.ref in preceded_by)
         )
         if compacts:
-            horizon = adopted_horizon(
-                self.horizon_for(event.step.run_id), compacts, event.step.run
-            )
+            horizon = adopted_horizon(self.horizon_for(step.run_id), compacts, step.run)
             self.message_history().select(horizon)
             preceding.extend(control.ref for control in compacts)
         # Root controls precede child-local controls; indexes order each scope.
         refs = tuple(
             sorted(
-                set((*preceding, *event.preceded_by)),
-                key=lambda ref: (ref.target == event.step.run, ref.index),
+                set((*preceding, *preceded_by)),
+                key=lambda ref: (ref.target == step.run, ref.index),
             )
         )
-        return replace(event, preceded_by=refs)
+        return refs
 
-    def _adopt_step_relations(self, event: StepBegin) -> None:
+    def _adopt_step_relations(self, record: StepRecord) -> None:
         """Advance control associations after begin commits, before delivery."""
 
-        self._step_horizons[event.step] = self.horizon_for(event.step.run_id)
-        refs = set(event.preceded_by)
-        available = self._runtime_controls.get(event.step.run_id, {})
+        self._step_horizons[record.ref] = self.horizon_for(record.ref.run_id)
+        refs = set(record.preceded_by)
+        available = self._runtime_controls.get(record.ref.run_id, {})
         adopted = tuple(
             control for control in available.values() if control.ref in refs
         )
         if adopted:
-            binding = self._active_bindings[event.step.run_id]
-            self._active_bindings[event.step.run_id] = replace(
+            binding = self._active_bindings[record.ref.run_id]
+            self._active_bindings[record.ref.run_id] = replace(
                 binding,
-                horizon=adopted_horizon(binding.horizon, adopted, event.step.run),
+                horizon=adopted_horizon(binding.horizon, adopted, record.ref.run),
             )
             for control in adopted:
                 available.pop(control.index)
@@ -3586,12 +3710,6 @@ def _validate_inputs(
             structs=structs,
             path=f"named input {name}",
         )
-
-
-def _run_event_id(event: RunEvent) -> str:
-    if isinstance(event, RunBegin | RunEnd):
-        return event.run
-    return event.step.run_id
 
 
 def _snapshot_input(

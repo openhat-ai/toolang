@@ -1588,6 +1588,16 @@ Canonical run progress event names are:
 - `step_end`
 - `run_end`
 
+Run/Step IDs are scalar strings. `StepBegin` includes owning `run`, parent Step ID
+and `index`; its `given.type` selects compact `model`, `tool` or `flow` information.
+Model metadata contains only the model identity. Calls, Flow ASTs, State/input
+references and accounting internals stay in records and explicit inspection APIs.
+Completion events carry direct `{type, value}` outputs, error text and necessary
+completion/usage summaries. `preceded_by` application facts and terminal `control`
+identify controls by `{run, index}`; `RunBegin.control` is its own Run binding control index.
+External subscribers must upgrade and reconnect for this schema; stored history
+and query/control response formats are unchanged. See [Run Events](execution.md#run-events).
+
 Every payload retains its canonical `type` discriminator. A `part_begin`
 payload uses `part_type` for the message-part kind so it does not collide with
 the event discriminator.

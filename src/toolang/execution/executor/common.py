@@ -7,7 +7,7 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 import json
 import re
-from typing import Any, Literal, cast
+from typing import Any, Literal, cast, TYPE_CHECKING, Protocol
 
 from toolang.base.types.message import (
     Message,
@@ -48,8 +48,12 @@ from toolang.state.state import AgentState, state_program
 from toolang.setup import AgentSetup
 
 from ..settings import RunnableSettings
-from ..events import RunEvent, StepBegin, StepEnd
-from ..records import ControlRecord, SteerControlPayload, CancelControlPayload
+from ..records import (
+    StepRecord,
+    ControlRecord,
+    SteerControlPayload,
+    CancelControlPayload,
+)
 from ..runnables import resolve_call_target
 from ..types import (
     ConversationScope,
@@ -65,19 +69,37 @@ from ..types import (
     Output,
     Occurrence,
     StepKind,
+    StepGiven,
     StepNoted,
     StepRef,
     StepStatus,
     TypedRef,
 )
 
+if TYPE_CHECKING:
+    from .executor import _Execution
+
 _MISSING = object()
 
-EventEmitter = Callable[[RunEvent], Awaitable[None]]
-StepBoundary = Callable[
-    [Callable[[AgentState, ControlRef], StepBegin]],
-    Awaitable[tuple[AgentState, ControlRef]],
-]
+
+class StepWriter(Protocol):
+    """Record prepared Step facts at the existing serialized boundary."""
+
+    def __call__(
+        self,
+        *,
+        step: StepRef,
+        kind: StepKind,
+        given: StepGiven,
+        state: ControlRef | None = None,
+        input: tuple[FieldRef, ...] = (),
+        preceded_by: tuple[ControlRef, ...] = (),
+        occurrence: Occurrence | None = None,
+        started_at: str,
+    ) -> StepRecord: ...
+
+
+StepPreparation = Callable[[AgentState, ControlRef, StepWriter], StepRecord]
 _TEMPLATE_LOCAL_RE = re.compile(
     r"{{\s*(?:[#^/]\s*)?([A-Za-z_][A-Za-z0-9_]*)(?:\.[A-Za-z_][\w-]*)*\s*}}"
 )
@@ -228,9 +250,8 @@ class _ExecuteCommitted(Exception):
 
 
 async def execute_step(
-    emit: EventEmitter,
+    execution: _Execution,
     *,
-    begin_step: StepBoundary | None = None,
     kind: StepKind,
     path: StepRef,
     binding: BoundRun,
@@ -249,7 +270,8 @@ async def execute_step(
     def build(
         agent_state: AgentState,
         state_ref: ControlRef,
-    ) -> StepBegin:
+        commit: StepWriter,
+    ) -> StepRecord:
         effective_binding = replace(
             binding,
             state=agent_state,
@@ -265,7 +287,7 @@ async def execute_step(
                 ),
             )
         )
-        return StepBegin(
+        return commit(
             step=path,
             kind=kind,
             state=state_ref,
@@ -276,85 +298,79 @@ async def execute_step(
             started_at=started_at,
         )
 
-    if begin_step is None:
-        await emit(build(binding.state, binding.state_ref))
-    else:
-        await begin_step(build)
+    await execution.begin_step(build, run_id=binding.run_id)
     try:
         evaluated = await evaluate()
         result = transform_flow_result(statement, locals, evaluated)
     except _ExecuteCommitted:
         raise
     except asyncio.CancelledError:
-        await emit(
-            StepEnd(
-                step=path,
-                kind=kind,
-                status="canceled",
-                noted=_flow_step_noted(
-                    statement,
-                    locals,
-                    status="canceled",
-                    result=None,
-                    note=note,
-                ),
-                finished_at=utc_now(),
-            )
-        )
-        raise
-    except _ExecutionFailed as exc:
-        await emit(
-            StepEnd(
-                step=path,
-                kind=kind,
-                status="failed",
-                noted=_flow_step_noted(
-                    statement,
-                    locals,
-                    status="failed",
-                    result=None,
-                    note=note,
-                ),
-                error=exc.error,
-                finished_at=utc_now(),
-            )
-        )
-        raise _StepFailed(path, exc) from exc
-    except Exception as exc:
-        message = str(exc) or type(exc).__name__
-        await emit(
-            StepEnd(
-                step=path,
-                kind=kind,
-                status="failed",
-                noted=_flow_step_noted(
-                    statement,
-                    locals,
-                    status="failed",
-                    result=None,
-                    note=note,
-                ),
-                error=ErrorMessage(message),
-                finished_at=utc_now(),
-            )
-        )
-        raise _StepFailed(path, exc) from exc
-    output = output_from_local(result, binding=statement.binding)
-    await emit(
-        StepEnd(
+        await execution.finish_step(
             step=path,
             kind=kind,
-            status="succeeded",
-            output=output,
+            status="canceled",
             noted=_flow_step_noted(
                 statement,
                 locals,
-                status="succeeded",
-                result=result,
+                status="canceled",
+                result=None,
                 note=note,
             ),
             finished_at=utc_now(),
         )
+        raise
+    except _ExecutionFailed as exc:
+        await execution.finish_step(
+            step=path,
+            kind=kind,
+            status="failed",
+            noted=_flow_step_noted(
+                statement,
+                locals,
+                status="failed",
+                result=None,
+                note=note,
+            ),
+            error=exc.error,
+            error_text=str(exc),
+            finished_at=utc_now(),
+        )
+        raise _StepFailed(path, exc) from exc
+    except Exception as exc:
+        if execution._active is not None and path in execution._active.early_ends:
+            # Admission already ended this Step; the later failure belongs to its Run.
+            raise
+        message = str(exc) or type(exc).__name__
+        await execution.finish_step(
+            step=path,
+            kind=kind,
+            status="failed",
+            noted=_flow_step_noted(
+                statement,
+                locals,
+                status="failed",
+                result=None,
+                note=note,
+            ),
+            error=ErrorMessage(message),
+            finished_at=utc_now(),
+        )
+        raise _StepFailed(path, exc) from exc
+    output = output_from_local(result, binding=statement.binding)
+    await execution.finish_step(
+        step=path,
+        kind=kind,
+        status="succeeded",
+        output=output,
+        result=result,
+        noted=_flow_step_noted(
+            statement,
+            locals,
+            status="succeeded",
+            result=result,
+            note=note,
+        ),
+        finished_at=utc_now(),
     )
     return (
         replace(

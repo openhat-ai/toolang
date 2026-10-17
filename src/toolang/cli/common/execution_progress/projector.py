@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from toolang.base.types.message import part_from_data
+
+from toolang.execution.events import ModelStepInfo
+
 from collections.abc import Callable
 from dataclasses import replace
 
@@ -21,26 +25,9 @@ from toolang.execution.events import (
     StepEnd,
 )
 from toolang.execution.types import (
-    CollectionStepNoted,
-    ErrorMessage,
-    ErrorRef,
-    FieldRef,
-    ModelStepGiven,
-    ModelStepInfo,
     Occurrence,
     RunStatus,
-    RunRef,
     StepRef,
-    ToolStepNoted,
-)
-from toolang.lang.ast import (
-    DropStmt,
-    KeepStmt,
-    MapStmt,
-    SortStmt,
-    RepeatStmt,
-    ReduceStmt,
-    GenerateStmt,
 )
 
 from .facts import elapsed_fact
@@ -97,7 +84,7 @@ class ProgressProjector:
         self._seen_runs: set[str] = set()
         self._seen_steps: set[StepRef] = set()
         self._parts: dict[tuple[StepRef, int], str] = {}
-        self._errors: dict[FieldRef, ErrorMessage | ErrorRef] = {}
+        self._errors: dict[str, str] = {}
         self._boundary_rows: dict[str, tuple[ProgressRow, ...]] = {}
         self._boundary_claims: dict[str, str] = {}
         self._committed_boundaries: set[str] = set()
@@ -134,10 +121,10 @@ class ProgressProjector:
                 isinstance(event, StepBegin)
                 and normalize_operation(event).name == "async run"
             ):
-                self._async_sources.add(event.step)
+                self._async_sources.add(StepRef.parse(event.step))
             committed = tuple(self._reduce(event))
             if isinstance(event, StepEnd):
-                self._completed_steps[event.step] = event
+                self._completed_steps[StepRef.parse(event.step)] = event
             self._note_committed(committed)
             return ProgressUpdate(
                 committed=committed,
@@ -161,7 +148,10 @@ class ProgressProjector:
             update = self.handle(event)
             # A streamed model can commit several Markdown fragments whose shape
             # differs from the single final-output block reconstructed from End.
-            if isinstance(event, StepEnd) and completed.get(event.step) == event:
+            if (
+                isinstance(event, StepEnd)
+                and completed.get(StepRef.parse(event.step)) == event
+            ):
                 continue
             committed.extend(
                 block for block in update.committed if rendered.get(block.key) != block
@@ -170,8 +160,8 @@ class ProgressProjector:
 
     def _route_background(self, event: RunEvent) -> bool:
         """Reduce background scopes independently of caller Step containment."""
-        if isinstance(event, RunBegin) and event.parent is not None:
-            parent = event.parent
+        if isinstance(event, RunBegin) and (event.parent) is not None:
+            parent = StepRef.parse(event.parent) if event.parent is not None else None
             if parent.run_id in self._background_members:
                 self._background_members[event.run] = self._background_members[
                     parent.run_id
@@ -184,7 +174,9 @@ class ProgressProjector:
                 scope.handle(replace(event, parent=None))
                 return True
         run_id = (
-            event.run if isinstance(event, RunBegin | RunEnd) else event.step.run_id
+            event.run
+            if isinstance(event, RunBegin | RunEnd)
+            else StepRef.parse(event.step).run_id
         )
         root = self._background_members.get(run_id)
         if root is None:
@@ -276,22 +268,22 @@ class ProgressProjector:
         self._seen_runs.add(event.run)
         lane_owner: LaneOwner | None = None
         dynamic_owner: StepState | None = None
-        if event.parent is None:
+        if (event.parent) is None:
             if self._root is not None:
                 raise _PresentationError("multiple root Runs in one progress stream")
             self._root = event.run
         else:
-            owner = self._active_step(event.parent)
+            owner = self._active_step((StepRef.parse(event.parent)))
             if owner.is_dynamic_run:
                 if owner.dynamic_child_run_id is not None:
                     raise _PresentationError(
-                        f"dynamic Run Step has multiple child Runs: {event.parent}"
+                        f"dynamic Run Step has multiple child Runs: {(StepRef.parse(event.parent))}"
                     )
                 owner.dynamic_child_run_id = event.run
                 dynamic_owner = owner
             if owner.begin.kind == "par" and owner.lane_owner is None:
                 lane_owner = self._direct_lane_owner(
-                    event.parent,
+                    (StepRef.parse(event.parent)),
                     event.occurrence,
                     event.run,
                 )
@@ -307,7 +299,7 @@ class ProgressProjector:
                     total_items = event.occurrence.item.count
                     if owner.par.total_items not in {None, total_items}:
                         raise _PresentationError(
-                            f"parallel item total changed for {event.parent}"
+                            f"parallel item total changed for {(StepRef.parse(event.parent))}"
                         )
                     owner.par.total_items = total_items
                 owner.par.lanes[lane_owner.lane] = LaneState(
@@ -317,7 +309,8 @@ class ProgressProjector:
             else:
                 lane_owner = owner.lane_owner
         internal = event.runnable == "_:compact" or (
-            event.parent is not None and self._runs[event.parent.run_id].internal
+            (event.parent) is not None
+            and self._runs[(StepRef.parse(event.parent)).run_id].internal
         )
         self._runs[event.run] = RunState(
             event,
@@ -327,8 +320,11 @@ class ProgressProjector:
         )
         if internal:
             return None
-        if event.parent is not None:
-            self._note_iteration(event.parent, event.occurrence)
+        if (event.parent) is not None:
+            self._note_iteration(
+                (StepRef.parse(event.parent)),
+                event.occurrence,
+            )
             if lane_owner is not None:
                 self._set_lane_activity(lane_owner, "• starting")
         if dynamic_owner is not None and dynamic_owner.lane_owner is None:
@@ -339,26 +335,34 @@ class ProgressProjector:
         run = self._runs.get(event.run)
         if run is None or run.end is not None:
             raise _PresentationError(f"RunEnd without active RunBegin for {event.run}")
-        if any(step.begin.step.run_id == event.run for step in self._steps.values()):
+        if any(
+            StepRef.parse(step.begin.step).run_id == event.run
+            for step in self._steps.values()
+        ):
             raise _PresentationError(f"RunEnd with active Step for {event.run}")
         if any(
-            child.begin.parent is not None and child.begin.parent.run_id == event.run
+            (child.begin.parent) is not None
+            and (StepRef.parse(child.begin.parent or "")).run_id == event.run
             for child in self._runs.values()
         ):
             raise _PresentationError(f"RunEnd with active child Run for {event.run}")
         run.end = event
         if event.error is not None:
-            self._errors[FieldRef.from_path(RunRef(event.run), "error")] = event.error
+            self._errors[event.run] = event.error
         execute_rows = self._finish_execute(run)
 
         owner = (
-            self._steps.get(run.begin.parent) if run.begin.parent is not None else None
+            self._steps.get((StepRef.parse(run.begin.parent or "")))
+            if (run.begin.parent) is not None
+            else None
         )
         if owner is not None:
             owner.metrics.add(run.metrics)
-            for ancestor in self._flow_ancestors_in_run(owner.begin.step):
+            for ancestor in self._flow_ancestors_in_run(
+                StepRef.parse(owner.begin.step)
+            ):
                 ancestor.metrics.add(run.metrics)
-            parent_run = self._runs.get(owner.begin.step.run_id)
+            parent_run = self._runs.get(StepRef.parse(owner.begin.step).run_id)
             if parent_run is not None:
                 parent_run.metrics.add(run.metrics)
             if owner.begin.kind == "par" and owner.lane_owner is None:
@@ -382,7 +386,7 @@ class ProgressProjector:
 
         block: ProgressBlock | None = None
         if run.lane_owner is not None:
-            if isinstance(event.error, ErrorMessage):
+            if event.error is not None and event.error_source is None:
                 self._set_lane_terminal(
                     run.lane_owner,
                     lane_run_error_lines(self._error_text(event.error)),
@@ -394,7 +398,9 @@ class ProgressProjector:
                     ("• canceled",),
                     status=event.status,
                 )
-        elif run.begin.parent is not None and isinstance(event.error, ErrorMessage):
+        elif (run.begin.parent) is not None and (
+            event.error is not None and event.error_source is None
+        ):
             if not (
                 event.status == "canceled"
                 and run.cancellation_reported
@@ -402,21 +408,24 @@ class ProgressProjector:
             ):
                 block = self._run_error_block(run, event.error)
                 if event.status == "canceled":
-                    self._mark_cancellation_reported(run.begin.parent)
-        elif run.begin.parent is None:
+                    self._mark_cancellation_reported(
+                        (StepRef.parse(run.begin.parent or ""))
+                    )
+        elif (run.begin.parent) is None:
             self._root_ended = True
-            if isinstance(event.error, ErrorMessage):
+            if event.error is not None and event.error_source is None:
                 if not (
                     event.status == "canceled"
                     and run.cancellation_reported
                     and self._is_generic_cancellation(event.error)
                 ):
                     block = self._diagnostic_block(self._error_text(event.error))
-            elif isinstance(event.error, ErrorRef) and not self._pointer_resolves(
-                event.error
+            elif (event.error_source is not None) and not self._error_source_observed(
+                event.error_source
             ):
                 block = self._diagnostic_block(
-                    f"could not resolve execution error {event.error}"
+                    event.error
+                    or f"could not resolve execution error {event.error_source}"
                 )
 
         if execute_rows:
@@ -432,25 +441,33 @@ class ProgressProjector:
                 ),
             )
 
-        if run.begin.parent is not None:
+        if (run.begin.parent) is not None:
             self._runs.pop(event.run, None)
         return block
 
     def _begin_step(self, event: StepBegin) -> ProgressBlock | None:
-        if event.step in self._seen_steps:
-            raise _PresentationError(f"duplicate StepBegin for {event.step}")
-        self._seen_steps.add(event.step)
-        run = self._runs.get(event.step.run_id)
+        if StepRef.parse(event.step) in self._seen_steps:
+            raise _PresentationError(
+                f"duplicate StepBegin for {StepRef.parse(event.step)}"
+            )
+        self._seen_steps.add(StepRef.parse(event.step))
+        run = self._runs.get(StepRef.parse(event.step).run_id)
         if run is None or run.end is not None:
-            raise _PresentationError(f"StepBegin without active Run {event.step.run}")
+            raise _PresentationError(
+                f"StepBegin without active Run {StepRef.parse(event.step).run}"
+            )
         handoff = self._advance_execute(run, event)
-        ordinal = event.step.index - (
-            run.step_origin if event.step.parent is None else 0
+        ordinal = StepRef.parse(event.step).index - (
+            run.step_origin if StepRef.parse(event.step).parent is None else 0
         )
-        parent = self._steps.get(event.step.parent) if event.step.parent else None
+        parent = (
+            self._steps.get(StepRef.parse(event.parent))
+            if event.parent is not None
+            else None
+        )
         if (
             parent is not None
-            and isinstance(parent.statement, RepeatStmt)
+            and (parent.statement is not None and parent.statement.kind in {"repeat"})
             and event.occurrence is not None
             and event.occurrence.iteration is not None
         ):
@@ -458,9 +475,9 @@ class ProgressProjector:
             self._repeat_ordinals = {
                 key: value
                 for key, value in self._repeat_ordinals.items()
-                if key[0] != parent.begin.step or key[1] == iteration
+                if key[0] != StepRef.parse(parent.begin.step) or key[1] == iteration
             }
-            key = (parent.begin.step, iteration)
+            key = (StepRef.parse(parent.begin.step), iteration)
             ordinal = self._repeat_ordinals.get(key, 0)
             self._repeat_ordinals[key] = ordinal + 1
         self._sequence += 1
@@ -471,11 +488,11 @@ class ProgressProjector:
             self._sequence,
             step_detail(event.kind),
         )
-        self._steps[event.step] = state
+        self._steps[StepRef.parse(event.step)] = state
         if run.internal:
             return None
         self._begin_execute(run, state)
-        self._note_iteration(event.step, event.occurrence)
+        self._note_iteration(StepRef.parse(event.step), event.occurrence)
 
         if state.lane_owner is not None:
             activity = lane_live_text(
@@ -509,24 +526,33 @@ class ProgressProjector:
         return self._execute_prelude(state, block, handoff)
 
     def _end_step(self, event: StepEnd) -> ProgressBlock | None:
-        state = self._steps.get(event.step)
+        state = self._steps.get(StepRef.parse(event.step))
         if state is None:
             raise _PresentationError(
-                f"StepEnd without active StepBegin for {event.step}"
+                f"StepEnd without active StepBegin for {StepRef.parse(event.step)}"
             )
         if state.begin.kind != event.kind:
             raise _PresentationError(
-                f"Step kind changed for {event.step}: "
+                f"Step kind changed for {StepRef.parse(event.step)}: "
                 f"{state.begin.kind} -> {event.kind}"
             )
-        if any(step == event.step for step, _part in self._parts):
-            raise _PresentationError(f"StepEnd with active Part for {event.step}")
-        if any(child.begin.step.parent == event.step for child in self._steps.values()):
-            raise _PresentationError(f"StepEnd with active child Step for {event.step}")
+        if any(step == StepRef.parse(event.step) for step, _part in self._parts):
+            raise _PresentationError(
+                f"StepEnd with active Part for {StepRef.parse(event.step)}"
+            )
+        if any(
+            StepRef.parse(child.begin.step).parent == StepRef.parse(event.step)
+            for child in self._steps.values()
+        ):
+            raise _PresentationError(
+                f"StepEnd with active child Step for {StepRef.parse(event.step)}"
+            )
         if any(child.begin.parent == event.step for child in self._runs.values()):
-            raise _PresentationError(f"StepEnd with active child Run for {event.step}")
+            raise _PresentationError(
+                f"StepEnd with active child Run for {StepRef.parse(event.step)}"
+            )
         if event.error is not None:
-            self._errors[FieldRef.from_path(event.step, "error")] = event.error
+            self._errors[event.step] = event.error
         if (
             event.kind == "model"
             and event.status == "succeeded"
@@ -537,18 +563,20 @@ class ProgressProjector:
             )
             if completed != output_parts(event):
                 raise _PresentationError(
-                    f"StepEnd output does not match completed Parts for {event.step}"
+                    f"StepEnd output does not match completed Parts for {StepRef.parse(event.step)}"
                 )
-        run = self._runs[event.step.run_id]
+        run = self._runs[StepRef.parse(event.step).run_id]
         run.metrics.record_step(event)
         if run.internal:
-            self._steps.pop(event.step)
+            self._steps.pop(StepRef.parse(event.step))
             return None
         execute = self._complete_execute(run, state, event)
-        if isinstance(event.noted, CollectionStepNoted) and event.kind == "par":
+        if (
+            event.noted is not None and event.noted.total_items is not None
+        ) and event.kind == "par":
             if state.par.total_items not in {None, event.noted.total_items}:
                 raise _PresentationError(
-                    f"parallel item total changed for {event.step}"
+                    f"parallel item total changed for {StepRef.parse(event.step)}"
                 )
             state.par.total_items = event.noted.total_items
         if (
@@ -557,12 +585,12 @@ class ProgressProjector:
             and state.dynamic_child_run_id is None
         ):
             raise _PresentationError(
-                f"succeeded dynamic Run Step has no child Run: {event.step}"
+                f"succeeded dynamic Run Step has no child Run: {StepRef.parse(event.step)}"
             )
 
         block: ProgressBlock | None = None
         if state.lane_owner is not None:
-            if not isinstance(event.error, ErrorRef):
+            if not (event.error_source is not None):
                 if state.is_flow:
                     terminal = flow_lane_terminal_lines(
                         state.operation,
@@ -597,7 +625,7 @@ class ProgressProjector:
             self._release_boundaries(state.boundaries)
         elif state.is_dynamic_run:
             if state.dynamic_child_run_id is None:
-                if isinstance(event.error, ErrorRef):
+                if event.error_source is not None:
                     self._release_boundaries(state.boundaries)
                 else:
                     rows = trace_terminal_rows(
@@ -606,7 +634,7 @@ class ProgressProjector:
                         error=self._error_text(event.error),
                     )
                     block = self._commit_block(state, rows) if rows else None
-            elif isinstance(event.error, ErrorRef):
+            elif event.error_source is not None:
                 rows = self._dynamic_run_terminal_rows(state, event)
                 block = self._commit_block(
                     state,
@@ -629,7 +657,7 @@ class ProgressProjector:
                     gap_before=not self._ends_with_blank,
                 )
         elif not state.is_flow:
-            if isinstance(event.error, ErrorRef):
+            if event.error_source is not None:
                 self._release_boundaries(state.boundaries)
             else:
                 rows = trace_terminal_rows(
@@ -675,43 +703,43 @@ class ProgressProjector:
             and block is not None
             and not state.cancellation_reported
         ):
-            self._mark_cancellation_reported(event.step)
+            self._mark_cancellation_reported(StepRef.parse(event.step))
 
-        self._steps.pop(event.step, None)
+        self._steps.pop(StepRef.parse(event.step), None)
         self._repeat_ordinals = {
             key: value
             for key, value in self._repeat_ordinals.items()
-            if key[0] != event.step
+            if key[0] != StepRef.parse(event.step)
         }
         return block
 
     def _begin_part(self, event: PartBegin) -> None:
-        self._active_step(event.step)
-        key = (event.step, event.part)
+        self._active_step(StepRef.parse(event.step))
+        key = (StepRef.parse(event.step), event.part)
         if key in self._parts:
             raise _PresentationError(
-                f"duplicate PartBegin for {event.step} part {event.part}"
+                f"duplicate PartBegin for {StepRef.parse(event.step)} part {event.part}"
             )
         self._parts[key] = event.part_type
 
     def _part_delta(self, event: PartDelta) -> ProgressBlock | None:
-        key = (event.step, event.part)
+        key = (StepRef.parse(event.step), event.part)
         if key not in self._parts:
             raise _PresentationError(
-                f"PartDelta without active Part for {event.step} part {event.part}"
+                f"PartDelta without active Part for {StepRef.parse(event.step)} part {event.part}"
             )
-        state = self._active_step(event.step)
+        state = self._active_step(StepRef.parse(event.step))
         if isinstance(event.delta, TextDelta) and state.begin.kind == "model":
             if self._parts[key] != "text":
                 raise _PresentationError(
-                    f"TextDelta changed Part type for {event.step} part {event.part}"
+                    f"TextDelta changed Part type for {StepRef.parse(event.step)} part {event.part}"
                 )
             state.model.text_parts[event.part] = (
                 state.model.text_parts.get(event.part, "") + event.delta.text
             )
             state.model.streamed += event.delta.text
             state.model.pending += event.delta.text
-            if self._runs[event.step.run_id].internal:
+            if self._runs[StepRef.parse(event.step).run_id].internal:
                 return None
             if state.lane_owner is not None:
                 self._set_lane_activity(
@@ -735,33 +763,34 @@ class ProgressProjector:
         return None
 
     def _end_part(self, event: PartEnd) -> ProgressBlock | None:
-        key = (event.step, event.part)
+        key = (StepRef.parse(event.step), event.part)
         if key not in self._parts:
             raise _PresentationError(
-                f"PartEnd without active Part for {event.step} part {event.part}"
+                f"PartEnd without active Part for {StepRef.parse(event.step)} part {event.part}"
             )
         part_type = self._parts.pop(key)
-        state = self._active_step(event.step)
+        state = self._active_step(StepRef.parse(event.step))
         if state.begin.kind != "model":
             return None
-        state.model.completed_parts[event.part] = event.data
-        if not isinstance(event.data, TextPart):
+        part = part_from_data(event.data)
+        state.model.completed_parts[event.part] = part
+        if not isinstance(part, TextPart):
             return None
         if part_type != "text":
             raise _PresentationError(
-                f"PartEnd changed Part type for {event.step} part {event.part}"
+                f"PartEnd changed Part type for {StepRef.parse(event.step)} part {event.part}"
             )
         streamed = state.model.text_parts.get(event.part, "")
-        if not event.data.text.startswith(streamed):
+        if not part.text.startswith(streamed):
             raise _PresentationError(
-                f"PartEnd text does not extend TextDelta for {event.step} part "
+                f"PartEnd text does not extend TextDelta for {StepRef.parse(event.step)} part "
                 f"{event.part}"
             )
-        suffix = event.data.text[len(streamed) :]
+        suffix = part.text[len(streamed) :]
         state.model.pending += suffix
         state.model.streamed += suffix
-        state.model.text_parts[event.part] = event.data.text
-        if self._runs[event.step.run_id].internal:
+        state.model.text_parts[event.part] = part.text
+        if self._runs[StepRef.parse(event.step).run_id].internal:
             return None
         if state.lane_owner is not None:
             return None
@@ -819,10 +848,13 @@ class ProgressProjector:
             )
         elif event.status == "canceled" and state.cancellation_reported:
             rows = []
-        elif isinstance(
-            statement,
-            MapStmt | GenerateStmt | KeepStmt | DropStmt | SortStmt,
-        ):
+        elif statement is not None and statement.kind in {
+            "map",
+            "drop",
+            "keep",
+            "sort",
+            "generate",
+        }:
             rows = list(
                 collection_terminal_rows(
                     statement,
@@ -830,7 +862,7 @@ class ProgressProjector:
                     error=self._error_text(event.error),
                 )
             )
-        elif isinstance(event.error, ErrorRef):
+        elif event.error_source is not None:
             rows = []
         else:
             rows = list(
@@ -843,7 +875,7 @@ class ProgressProjector:
             rows.append(
                 ProgressRow(
                     f"  {' · '.join(facts)}",
-                    right_text=str(event.step),
+                    right_text=str(StepRef.parse(event.step)),
                 )
             )
         if rows:
@@ -888,7 +920,7 @@ class ProgressProjector:
             rows.append(
                 ProgressRow(
                     f"  {' · '.join(facts)}",
-                    right_text=str(event.step),
+                    right_text=str(StepRef.parse(event.step)),
                 )
             )
         rows.append(ProgressRow(""))
@@ -925,8 +957,12 @@ class ProgressProjector:
             )
         return tuple(rows)
 
-    def _run_error_block(self, run: RunState, error: ErrorMessage) -> ProgressBlock:
-        owner = self._steps.get(run.begin.parent) if run.begin.parent else None
+    def _run_error_block(self, run: RunState, error: str) -> ProgressBlock:
+        owner = (
+            self._steps.get((StepRef.parse(run.begin.parent or "")))
+            if (StepRef.parse(run.begin.parent or ""))
+            else None
+        )
         boundaries = ()
         if owner is not None:
             boundaries = self._claim_boundaries(f"run:{run.begin.run}", owner)
@@ -970,7 +1006,7 @@ class ProgressProjector:
                     status="running",
                 )
         for state in self._steps.values():
-            if self._runs[state.begin.step.run_id].internal:
+            if self._runs[StepRef.parse(state.begin.step).run_id].internal:
                 continue
             if state.lane_owner is not None:
                 continue
@@ -1099,7 +1135,9 @@ class ProgressProjector:
         operation = state.operation
         if operation.name == "exec" and operation.source == "tool":
             run.pending_executes.append(
-                PendingExecute(state.begin.step, operation.runnable or "runnable")
+                PendingExecute(
+                    StepRef.parse(state.begin.step), operation.runnable or "runnable"
+                )
             )
 
     @staticmethod
@@ -1109,7 +1147,11 @@ class ProgressProjector:
         """Confirm or reject a normalized handoff from its committed result."""
 
         pending = next(
-            (item for item in run.pending_executes if item.step == state.begin.step),
+            (
+                item
+                for item in run.pending_executes
+                if StepRef.parse(item.step) == StepRef.parse(state.begin.step)
+            ),
             None,
         )
         target = committed_exec_target(state.operation, end)
@@ -1121,14 +1163,16 @@ class ProgressProjector:
         row = ProgressRow(
             end.noted.summary
             if state.operation.tool
-            and isinstance(end.noted, ToolStepNoted)
+            and (end.noted is not None and end.noted.summary is not None)
             and end.noted.summary
             else f"exec → {target}",
             leader="handoff",
             tool_identity=state.operation.tool_identity,
             tool_status=end.status if state.operation.tool else None,
         )
-        completed = PendingExecute(state.begin.step, target, ready=True, row=row)
+        completed = PendingExecute(
+            StepRef.parse(state.begin.step), target, ready=True, row=row
+        )
         if pending is not None:
             run.pending_executes[run.pending_executes.index(pending)] = completed
         else:
@@ -1145,8 +1189,8 @@ class ProgressProjector:
         handoff = next((item for item in run.pending_executes if item.ready), None)
         if handoff is not None:
             run.pending_executes.remove(handoff)
-            run.agic = isinstance(event.given, ModelStepGiven | ModelStepInfo)
-            run.step_origin = event.step.index
+            run.agic = isinstance(event.given, ModelStepInfo)
+            run.step_origin = StepRef.parse(event.step).index
         return handoff
 
     def _execute_prelude(
@@ -1238,7 +1282,7 @@ class ProgressProjector:
                 event.noted.summary
                 if state.operation.tool
                 and isinstance(event, StepEnd)
-                and isinstance(event.noted, ToolStepNoted)
+                and (event.noted is not None and event.noted.summary is not None)
                 else "",
                 leader="run",
                 tool_identity=state.operation.tool_identity,
@@ -1283,7 +1327,7 @@ class ProgressProjector:
             statement = step.statement
             if statement is None:
                 continue
-            key = f"stmt:{step.begin.step}"
+            key = f"stmt:{StepRef.parse(step.begin.step)}"
             candidates.append(
                 (
                     key,
@@ -1293,7 +1337,7 @@ class ProgressProjector:
                     ),
                 )
             )
-            if not isinstance(statement, RepeatStmt | ReduceStmt):
+            if not (statement is not None and statement.kind in {"repeat", "reduce"}):
                 continue
             occurrence = self._repeat_occurrence(chain, index, target)
             if occurrence is None or occurrence.iteration is None:
@@ -1302,7 +1346,9 @@ class ProgressProjector:
             if iteration.phase == "body":
                 suffix = f"/{iteration.count}" if iteration.count is not None else ""
                 boundary = f"{iteration.index + 1}{suffix}"
-                iteration_key = f"iteration:{step.begin.step}:{iteration.index}"
+                iteration_key = (
+                    f"iteration:{StepRef.parse(step.begin.step)}:{iteration.index}"
+                )
                 candidates.append(
                     (
                         iteration_key,
@@ -1310,8 +1356,8 @@ class ProgressProjector:
                     )
                 )
             else:
-                until_key = f"until:{step.begin.step}:{iteration.index}"
-                if not isinstance(statement, RepeatStmt):
+                until_key = f"until:{StepRef.parse(step.begin.step)}:{iteration.index}"
+                if not (statement is not None and statement.kind in {"repeat"}):
                     continue
                 label = until_header(statement)
                 candidates.append(
@@ -1323,12 +1369,12 @@ class ProgressProjector:
         chain: list[StepState] = []
         current: StepState | None = target if target.is_flow else None
         if current is None:
-            parent = self._parent_flow_path(target.begin.step)
+            parent = self._parent_flow_path(StepRef.parse(target.begin.step))
             current = self._steps.get(parent) if parent is not None else None
         while current is not None:
             if current.is_flow:
                 chain.append(current)
-            parent = self._parent_flow_path(current.begin.step)
+            parent = self._parent_flow_path(StepRef.parse(current.begin.step))
             current = self._steps.get(parent) if parent is not None else None
         chain.reverse()
         return chain
@@ -1348,7 +1394,11 @@ class ProgressProjector:
         if path.parent is not None and path.parent in self._steps:
             return path.parent
         run = self._runs.get(path.run_id)
-        return run.begin.parent if run is not None else None
+        return (
+            (StepRef.parse(run.begin.parent or ""))
+            if run is not None and run.begin.parent is not None
+            else None
+        )
 
     def _repeat_occurrence(
         self,
@@ -1356,19 +1406,19 @@ class ProgressProjector:
         repeat_index: int,
         target: StepState,
     ) -> Occurrence | None:
-        owner = chain[repeat_index].begin.step
+        owner = StepRef.parse(chain[repeat_index].begin.step)
         child = chain[repeat_index + 1] if repeat_index + 1 < len(chain) else target
-        if child.begin.step == owner:
+        if StepRef.parse(child.begin.step) == owner:
             return None
-        if child.begin.step.parent == owner:
+        if StepRef.parse(child.begin.step).parent == owner:
             return child.begin.occurrence
         # Named Flow conditions have ordinary Steps in their own Run. Their
         # until occurrence belongs to that Run, not to an inner loop's Steps.
-        run = self._runs.get(child.begin.step.run_id)
-        while run is not None and run.begin.parent is not None:
-            if run.begin.parent == owner:
+        run = self._runs.get(StepRef.parse(child.begin.step).run_id)
+        while run is not None and (run.begin.parent) is not None:
+            if StepRef.parse(run.begin.parent) == owner:
                 return run.begin.occurrence
-            run = self._runs.get(run.begin.parent.run_id)
+            run = self._runs.get((StepRef.parse(run.begin.parent or "")).run_id)
         return None
 
     def _rows_for_boundaries(self, keys: tuple[str, ...]) -> tuple[ProgressRow, ...]:
@@ -1398,8 +1448,8 @@ class ProgressProjector:
         if parent is None:
             run = self._runs.get(path.run_id)
             parent = (
-                self._steps.get(run.begin.parent)
-                if run is not None and run.begin.parent is not None
+                self._steps.get((StepRef.parse(run.begin.parent or "")))
+                if run is not None and (run.begin.parent) is not None
                 else None
             )
         if parent is not None and parent.begin.kind == "loop":
@@ -1506,26 +1556,16 @@ class ProgressProjector:
             raise _PresentationError(f"event requires active Step {path}")
         return state
 
-    def _pointer_resolves(self, error: ErrorRef) -> bool:
-        seen: set[FieldRef] = set()
-        current: ErrorMessage | ErrorRef = error
-        while isinstance(current, ErrorRef):
-            if current.ref in seen:
-                return False
-            seen.add(current.ref)
-            next_error = self._errors.get(current.ref)
-            if next_error is None:
-                return False
-            current = next_error
-        return True
+    def _error_source_observed(self, source: str) -> bool:
+        return source in self._errors
 
     @staticmethod
-    def _error_text(error: ErrorMessage | ErrorRef | None) -> str:
-        return error.message.strip() if isinstance(error, ErrorMessage) else ""
+    def _error_text(error: str | None) -> str:
+        return error.strip() if error is not None else ""
 
     @staticmethod
-    def _is_generic_cancellation(error: ErrorMessage) -> bool:
-        return error.message.casefold().strip(" .:!") in {
+    def _is_generic_cancellation(error: str) -> bool:
+        return error.casefold().strip(" .:!") in {
             "canceled",
             "cancelled",
             "run canceled",
@@ -1537,7 +1577,7 @@ class ProgressProjector:
     @staticmethod
     def _block_key(state: StepState) -> str:
         prefix = "par" if state.begin.kind == "par" else "step"
-        return f"{prefix}:{state.begin.step}"
+        return f"{prefix}:{StepRef.parse(state.begin.step)}"
 
     def _step_gap_before(self, state: StepState) -> bool:
         """Return whether this fragment begins a visible Step section."""

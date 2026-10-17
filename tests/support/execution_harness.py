@@ -14,7 +14,7 @@ from types import TracebackType
 from typing import Any, Self, cast
 
 from toolang.base.protocols.tool import Tool
-from toolang.base.types.message import Part, TextPart, ToolResultPart
+from toolang.base.types.message import Part, TextPart
 from toolang.base.types.model import (
     Model,
     ModelRequest,
@@ -270,9 +270,10 @@ class PublicationTracer(RecordingRunTracer):
         if (
             isinstance(event, StepEnd)
             and event.output is not None
-            and isinstance(event.output.value, ToolResultPart)
+            and isinstance(event.output.value, dict)
+            and event.output.value.get("type") == "tool_result"
         ):
-            state = self.publications.get(event.output.value.tool_call_id)
+            state = self.publications.get(str(event.output.value.get("tool_call_id")))
             if state is not None:
                 self.harness.published = state
 
@@ -333,6 +334,8 @@ class ExecutionHarness:
     executor: RunExecutor
     threads: ThreadManager
     adapter: ScriptedModelAdapter
+    _event_boundary_patch: Any = None
+    _event_begin_patch: Any = None
     published: AgentState | None = None
     model_calls: dict[StepRef, ModelCall] = field(default_factory=dict)
 
@@ -494,9 +497,24 @@ class ExecutionHarness:
         Pass it through tracer= on the chosen run. The hook executes inline at
         runtime boundaries; ordinary tracers remain independent subscribers.
         """
-        emit = self.executor._emit_event_locked
+        from contextlib import contextmanager, asynccontextmanager
+        from unittest.mock import patch
+        from toolang.execution.executor.executor import _Execution
+        from toolang.execution.events import (
+            RunBegin,
+            RunEnd,
+            StepBegin,
+            StepEnd,
+            PartBegin,
+            PartDelta,
+            PartEnd,
+        )
+
+        publication = self.executor.stream.publication
+        boundary = _Execution._boundary
         launch = self.executor._launch
         roots: set[str] = set()
+        pending = []
 
         def launch_with_probe(*args, **kwargs):
             selected = kwargs.get("tracer") is probe
@@ -508,13 +526,56 @@ class ExecutionHarness:
                 handle.task.add_done_callback(lambda _: roots.discard(handle.run_id))
             return handle
 
-        async def intercepted(active, event):
-            await emit(active, event)
-            if active.root_run_id in roots:
-                await probe.on_event(event)
+        @contextmanager
+        def capture_publication():
+            with publication() as staged:
+                yield staged
+            pending.extend(staged._pending)
 
+        @asynccontextmanager
+        async def intercepted(execution, step=None):
+            async with boundary(execution, step):
+                yield
+                if execution.executor is self.executor:
+                    while pending:
+                        frame = pending.pop(0)
+                        if frame.root_run_id in roots and isinstance(
+                            frame.event,
+                            RunBegin
+                            | RunEnd
+                            | StepBegin
+                            | StepEnd
+                            | PartBegin
+                            | PartDelta
+                            | PartEnd,
+                        ):
+                            await probe.on_event(frame.event)
+
+        begin_run = _Execution._begin_run
+
+        async def observe_begin(execution, **facts):
+            await begin_run(execution, **facts)
+            if execution.executor is self.executor:
+                while pending:
+                    frame = pending.pop(0)
+                    if frame.root_run_id in roots and isinstance(
+                        frame.event,
+                        RunBegin
+                        | RunEnd
+                        | StepBegin
+                        | StepEnd
+                        | PartBegin
+                        | PartDelta
+                        | PartEnd,
+                    ):
+                        await probe.on_event(frame.event)
+
+        self._event_begin_patch = patch.object(_Execution, "_begin_run", observe_begin)
+        self._event_begin_patch.start()
+        self._event_boundary_patch = patch.object(_Execution, "_boundary", intercepted)
+        self._event_boundary_patch.start()
         setattr(self.executor, "_launch", launch_with_probe)
-        setattr(self.executor, "_emit_event_locked", intercepted)
+        setattr(self.executor.stream, "publication", capture_publication)
 
     async def __aenter__(self) -> Self:
         return self
@@ -532,4 +593,7 @@ class ExecutionHarness:
         """Stop owned tasks before closing the durable store."""
 
         await self.executor.stop()
+        if self._event_boundary_patch is not None:
+            self._event_boundary_patch.stop()
+            self._event_begin_patch.stop()
         self.store.close()

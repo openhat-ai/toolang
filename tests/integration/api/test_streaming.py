@@ -1,5 +1,13 @@
 from __future__ import annotations
 
+from toolang.execution.event_projection import part_data
+
+
+from toolang.execution.types import StepRef
+
+from tests.support.observations import run_begin, run_end, step_begin, step_end
+
+
 import asyncio
 import json
 import threading
@@ -47,10 +55,6 @@ from toolang.execution.events import (
     PartBegin,
     PartDelta,
     PartEnd,
-    RunBegin,
-    RunEnd,
-    StepBegin,
-    StepEnd,
     ThreadCreated,
     run_event_from_data,
     run_event_to_data,
@@ -63,7 +67,6 @@ from toolang.execution.stream import CanonicalStream
 from toolang.execution.types import (
     ControlRef,
     FieldRef,
-    StepRef,
     Output,
     value_for_type,
 )
@@ -267,7 +270,7 @@ agic answer(_: Part[]) -> Part[]:
             assert isinstance(decoded[3], PartDelta)
             assert decoded[3].delta == ReasoningDelta(part.text)
             assert isinstance(decoded[5], PartEnd)
-            assert decoded[5].data == part
+            assert decoded[5].data == part_data(part)
         assert "type_" not in events[2][1]
         assert events[-1][1]["status"] == "succeeded"
         assert without_runtime_snapshots(
@@ -330,7 +333,8 @@ agic answer(_: Part[]) -> Part[]:
             detail = client.get(f"/api/v1/runs/{run_id}").json()
 
         error = f"{run_id}.0/error"
-        assert events[-1][1]["error"] == {"type": "ref", "ref": error}
+        assert events[-1][1]["error"] == "provider unavailable"
+        assert events[-1][1]["error_source"] == f"{run_id}.0"
         assert detail["error"] == {"type": "ref", "ref": error}
         assert detail["steps"][0]["error"] == {
             "type": "message",
@@ -585,46 +589,46 @@ def test_live_relay_preserves_complete_root_run_tree_order(tmp_path) -> None:
         run = run_attachment.attach(StreamScope(root="run_test"), start="new")
         thread = thread_attachment.attach(StreamScope(thread="term_test"), start="new")
         events = (
-            RunBegin(
+            run_begin(
                 run="run_test",
                 control=ControlRef.for_run("run_test", 0),
                 started_at="2026-01-01T00:00:00Z",
             ),
-            StepBegin(
+            step_begin(
                 step=StepRef.parse("run_test.0"),
                 kind="run",
                 given=RunStmt(span=Span(line=1), runnable="agic:test"),
                 started_at="2026-01-01T00:00:01Z",
             ),
-            RunBegin(
+            run_begin(
                 run="run_child",
                 control=ControlRef.for_run("run_child", 0),
                 started_at="2026-01-01T00:00:02Z",
             ),
-            StepBegin(
+            step_begin(
                 step=StepRef.parse("run_child.0"),
                 kind="value",
                 given=LetStmt(span=Span(line=1), value="test"),
                 started_at="2026-01-01T00:00:03Z",
             ),
-            StepEnd(
+            step_end(
                 step=StepRef.parse("run_child.0"),
                 kind="value",
                 status="succeeded",
                 finished_at="2026-01-01T00:00:04Z",
             ),
-            RunEnd(
+            run_end(
                 run="run_child",
                 status="succeeded",
                 finished_at="2026-01-01T00:00:05Z",
             ),
-            StepEnd(
+            step_end(
                 step=StepRef.parse("run_test.0"),
                 kind="run",
                 status="succeeded",
                 finished_at="2026-01-01T00:00:06Z",
             ),
-            RunEnd(
+            run_end(
                 run="run_test",
                 status="succeeded",
                 finished_at="2026-01-01T00:00:07Z",
@@ -716,7 +720,7 @@ def test_existing_run_stream_attaches_to_live_events(tmp_path: Path) -> None:
             return
         with core.executor.stream.publication() as publication:
             publication.append(
-                RunBegin(
+                run_begin(
                     run="run_live",
                     control=ControlRef.for_run("run_live", 0),
                     started_at="2026-01-01T00:00:00Z",
@@ -725,7 +729,7 @@ def test_existing_run_stream_attaches_to_live_events(tmp_path: Path) -> None:
                 root_run_id="run_live",
             )
             publication.append(
-                RunEnd(
+                run_end(
                     run="run_live",
                     status="succeeded",
                     finished_at="2026-01-01T00:00:01Z",
@@ -870,7 +874,7 @@ def test_sse_generator_close_removes_subscription(tmp_path) -> None:
         )
         with source.publication() as publication:
             publication.append(
-                RunBegin(
+                run_begin(
                     run="run_test",
                     control=ControlRef.for_run("run_test", 0),
                     started_at="2026-01-01T00:00:00Z",

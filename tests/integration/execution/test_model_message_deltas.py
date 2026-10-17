@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from toolang.execution.event_projection import part_data
+
+from toolang.execution.types import StepRef
+
 import asyncio
 from contextlib import closing
 from dataclasses import replace
@@ -58,7 +62,6 @@ from toolang.execution.types import (
     ServiceRecallTarget,
     SkillRecallTarget,
     SkillTriggerRecallTarget,
-    StepRef,
     ThreadPrefix,
     TypedRef,
 )
@@ -165,7 +168,7 @@ agic chat(_: Part[]) -> Part[]:
         history = RunHistory(store)
         for event in tracer.events:
             if isinstance(event, StepBegin) and event.kind == "model":
-                assert history.get_model_call(event.step) in [
+                assert history.get_model_call(StepRef.parse(event.step)) in [
                     invocation.call for invocation in harness.adapter.invocations
                 ]
     finally:
@@ -285,10 +288,13 @@ def test_interruption_during_cleanup_still_persists_adopted_output(
     class Tracer(RecordingRunTracer):
         async def on_event(self, event: RunEvent) -> None:
             await super().on_event(event)
-            if isinstance(event, PartBegin) and event.step.index == index:
+            if (
+                isinstance(event, PartBegin)
+                and StepRef.parse(event.step).index == index
+            ):
                 if not begin_gate.entered:
                     await begin_gate.wait()
-            if isinstance(event, PartEnd) and event.step.index == index:
+            if isinstance(event, PartEnd) and StepRef.parse(event.step).index == index:
                 if not end_gate.entered:
                     await end_gate.wait()
 
@@ -343,10 +349,12 @@ def test_interruption_during_cleanup_still_persists_adopted_output(
             assert step.status == "canceled"
             assert step.aborted_by == second.ref
             assert step.output is not None
-            assert parts_from_value(step.output.value) == tuple(
+            assert tuple(
+                part_data(part) for part in parts_from_value(step.output.value)
+            ) == tuple(
                 event.data
                 for event in tracer.events
-                if isinstance(event, PartEnd) and event.step == step.ref
+                if isinstance(event, PartEnd) and StepRef.parse(event.step) == step.ref
             )
             if interruption == "steer":
                 assert steps[-1].preceded_by == (first.ref, second.ref)
@@ -375,15 +383,17 @@ def test_interrupted_model_end_preserves_referenced_output(
             if at_commit:
                 if (
                     isinstance(event, PartEnd)
-                    and event.step.index == 0
+                    and StepRef.parse(event.step).index == 0
                     and event.part == len(requests)
                     and not blockers
                 ):
                     blockers.append(
-                        asyncio.create_task(hold_event_lock(event.step.run_id))
+                        asyncio.create_task(
+                            hold_event_lock(StepRef.parse(event.step).run_id)
+                        )
                     )
                     await asyncio.sleep(0)
-            elif isinstance(event, StepEnd) and event.step.index == 0:
+            elif isinstance(event, StepEnd) and StepRef.parse(event.step).index == 0:
                 await gate.wait()
 
     tool = RecordingTool("lookup__item", output={})

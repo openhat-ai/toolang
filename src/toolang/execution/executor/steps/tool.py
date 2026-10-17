@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from ...event_projection import part_data
+
 import asyncio
 from copy import deepcopy
 from dataclasses import dataclass, replace
@@ -30,8 +32,8 @@ from toolang.common.layout import AgentLayout
 from toolang.common.time import elapsed_ms, utc_now
 from toolang.state.state import AgentState
 
-from ...events import PartBegin, PartEnd, StepBegin, StepEnd
-from ...records import RecallControlPayload
+from ...events import PartBegin, PartEnd
+from ...records import StepRecord, RecallControlPayload
 from ...assembly.tool_replies import workspace_reply, workspace_reply_from_step
 from ...runnables import AgicRoutes
 from ...tools.state.types import StateToolContext
@@ -49,7 +51,7 @@ from ...types import (
     ToolStepNoted,
     StepStatus,
 )
-from ..common import _StepFailed
+from ..common import _StepFailed, StepPreparation, StepWriter
 from ..tool_runtime import _ToolRuntime
 from ..tool_history import _ToolHistory
 from ..diagnostics import log_tool_call_input, log_tool_call_output
@@ -76,7 +78,7 @@ async def _begin(
     state: _AgicState,
     step: StepRef,
     call: ToolCall,
-    build: Callable[[AgentState, ControlRef], StepBegin],
+    build: StepPreparation,
     *,
     trigger: Literal["model", "runtime"] = "model",
     canceled_summary: Callable[[], str] | None = None,
@@ -277,7 +279,8 @@ async def _execute(
     def begin_step(
         agent_state: AgentState,
         state_ref: ControlRef,
-    ) -> StepBegin:
+        commit: StepWriter,
+    ) -> StepRecord:
         nonlocal plugin_name, summary_context
         nonlocal operation, context, runtime, arguments
         runtime_tools = (
@@ -377,7 +380,7 @@ async def _execute(
                     if isinstance(control.payload, RecallControlPayload)
                 }
                 check_rules(context, paths, state.visible_recalls, pending)
-        return StepBegin(
+        return commit(
             step=StepRef.from_local(run.run_id, (step_index,)),
             kind="tool",
             state=state_ref,
@@ -435,18 +438,16 @@ async def _execute(
     except Exception as exc:
         error = str(exc) or type(exc).__name__
         await state.end_step(
-            StepEnd(
-                step=StepRef.from_local(run.run_id, (step_index,)),
-                kind="tool",
-                status="failed",
-                noted=ToolStepNoted(
-                    summary=_tool_summary(
-                        summary_context, "failed", ToolResult(error=error)
-                    )
-                ),
-                error=ErrorMessage(error),
-                finished_at=utc_now(),
+            step=StepRef.from_local(run.run_id, (step_index,)),
+            kind="tool",
+            status="failed",
+            noted=ToolStepNoted(
+                summary=_tool_summary(
+                    summary_context, "failed", ToolResult(error=error)
+                )
             ),
+            error=ErrorMessage(error),
+            finished_at=utc_now(),
             canceled_noted=ToolStepNoted(
                 summary=_tool_summary(summary_context, "canceled")
             ),
@@ -461,6 +462,14 @@ async def _execute(
             elapsed_ms(step_started),
         )
         raise _StepFailed(StepRef.from_local(run.run_id, (step_index,)), exc) from exc
+    if (
+        runtime is not None
+        and runtime.failure is not None
+        and state.execution is not None
+        and state.execution._active is not None
+        and step in state.execution._active.early_ends
+    ):
+        raise runtime.failure
     if (
         state.execution is not None
         and access is not None
@@ -544,13 +553,13 @@ async def _finish(
             "tool", FieldRef.from_path(step, "output", "value"), output
         )
         state.last_step = step.index
-    end = PartEnd(step=step, part=0, data=part)
+    end = PartEnd(step=str(step), part=0, data=part_data(part))
     ended = False
     status: StepStatus = "failed" if part.error is not None else "succeeded"
     noted = ToolStepNoted(summary=summary if summary is not None else part.tool_name)
     error = error or (ErrorMessage(part.error) if part.error is not None else None)
     try:
-        await state.emit(PartBegin(step=step, part=0, part_type=part.type))
+        await state.emit(PartBegin(step=str(step), part=0, part_type=part.type))
         ended = True
         await state.emit(end)
     except asyncio.CancelledError:
@@ -562,15 +571,14 @@ async def _finish(
         raise
     finally:
         await state.end_step(
-            StepEnd(
-                step=step,
-                kind="tool",
-                status=status,
-                output=Output(output),
-                noted=noted,
-                error=error,
-                finished_at=utc_now(),
-            ),
+            step=step,
+            kind="tool",
+            status=status,
+            output=Output(output),
+            noted=noted,
+            error=error,
+            error_text=part.error,
+            finished_at=utc_now(),
             canceled_noted=ToolStepNoted(summary=canceled_summary),
         )
 
@@ -612,15 +620,13 @@ async def _cancel(
         )
         state.last_step = step.index
     await state.end_step(
-        StepEnd(
-            step=step,
-            kind="tool",
-            status="canceled",
-            output=Output(value_for_type("ToolResultPart", part)),
-            noted=ToolStepNoted(summary=summary),
-            aborted_by=aborted_by,
-            finished_at=utc_now(),
-        ),
+        step=step,
+        kind="tool",
+        status="canceled",
+        output=Output(value_for_type("ToolResultPart", part)),
+        noted=ToolStepNoted(summary=summary),
+        aborted_by=aborted_by,
+        finished_at=utc_now(),
     )
 
 
@@ -671,7 +677,7 @@ async def skip(
                 state,
                 step,
                 call,
-                lambda _state, ref: StepBegin(
+                lambda _state, ref, commit: commit(
                     step=step,
                     kind="tool",
                     state=ref,

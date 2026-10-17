@@ -2,19 +2,24 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 
 from toolang.lang.ast import FlowStmt
 
 from ...records import ControlRecord, StepRef
 from ...types import Occurrence
-from ..common import BoundRun, EventEmitter, Local, StepBoundary, execute_step
+from ..common import BoundRun, Local, execute_step
+
+
+if TYPE_CHECKING:
+    from ..executor import _Execution
 
 
 async def execute(
-    emit: EventEmitter,
+    execution: _Execution,
     *,
-    begin_step: StepBoundary | None = None,
     binding: BoundRun,
     path: StepRef,
     statement: FlowStmt,
@@ -26,8 +31,7 @@ async def execute(
     """Produce one local value and emit its step events."""
 
     return await execute_step(
-        emit,
-        begin_step=begin_step,
+        execution,
         kind="value",
         path=path,
         binding=binding,

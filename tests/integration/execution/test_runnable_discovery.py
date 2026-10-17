@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from toolang.execution.events import ToolStepInfo
+
+
 import asyncio
 from xml.etree import ElementTree
 
@@ -25,7 +28,7 @@ from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.common.errors import ToolangError
 from toolang.common.layout import AgentLayout
 from toolang.execution.events import StepBegin, StepEnd
-from toolang.execution.types import ThreadPrefix, ToolStepGiven
+from toolang.execution.types import ThreadPrefix
 from toolang.state.prepare import prepare_agent_state
 
 
@@ -379,8 +382,8 @@ def test_discovery_keeps_the_state_captured_before_tool_step_delivery(tmp_path):
             await super().on_event(event)
             if (
                 isinstance(event, StepBegin)
-                and isinstance(event.given, ToolStepGiven)
-                and event.given.call.name == "runtime__runnables"
+                and isinstance(event.given, ToolStepInfo)
+                and event.given.name == "runtime__runnables"
                 and harness.published is None
             ):
                 harness.setup.layout.program.write_text(

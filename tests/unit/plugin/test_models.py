@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from toolang.execution.event_projection import event_output
+
+
 from tests.support.setup import materialized_setup
 from tests.support.execution_assertions import without_runtime_snapshots
 
@@ -54,11 +57,9 @@ from toolang.lang.types import Array
 from toolang.plugin.toolsets.loading import load_tools
 from toolang.execution.records import ControlRecord, SteerControlPayload
 from toolang.execution.types import (
-    value_for_type,
     AgentResources,
     AgentToolResource,
     ControlRef,
-    Output,
     StepRef,
 )
 from toolang.plugin.models.resolution import (
@@ -139,6 +140,38 @@ def test_effort_none_disables_reasoning_for_a_toggle_only_model() -> None:
     model = _reasoning_model([{"type": "toggle"}])
 
     assert resolve_model_reasoning(model, Reasoning("none")) == Reasoning("none")
+
+
+@pytest.fixture(autouse=True)
+def adapter_step_boundaries(monkeypatch):
+    """Exercise adapter candidates without a Store; durable boundaries have integration coverage."""
+    from tests.support.observations import step_begin, step_end
+
+    start = _AgicState.start_step
+    end = _AgicState.end_step
+
+    async def begin(state, build):
+        if state.execution is not None:
+            return await start(state, build)
+        run = state.prepared.run
+        facts = {}
+
+        def capture(**values):
+            facts.update(values)
+
+        build(run.state, run.state_ref, capture)
+        await state.emit(step_begin(**facts))
+        return run.state, run.state_ref
+
+    async def finish(state, **facts):
+        if state.execution is not None:
+            return await end(state, **facts)
+        facts.pop("canceled_noted", None)
+        facts.pop("error_text", None)
+        await state.emit(step_end(**facts))
+
+    monkeypatch.setattr(_AgicState, "start_step", begin)
+    monkeypatch.setattr(_AgicState, "end_step", finish)
 
 
 class _FakeTool(Tool):
@@ -1991,7 +2024,7 @@ def test_agic_preserves_multimodal_steer_and_model_output() -> None:
         ),
     )
     step_end = next(event for event in events if isinstance(event, StepEnd))
-    assert step_end.output == Output(value_for_type("Part[]", (audio,)), "_")
+    assert step_end.output == event_output("Part[]", (audio,))
     assert [event.type for event in events] == [
         "step_begin",
         "part_begin",

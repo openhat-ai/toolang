@@ -1,5 +1,9 @@
 """Model preparation stays disposable until its Step begin is committed."""
 
+from types import SimpleNamespace
+
+from toolang.execution.types import StepRef
+
 import asyncio
 from pathlib import Path
 
@@ -69,7 +73,10 @@ agic chat(_: Part[]) -> Part[]:
             before = tuple(execution._preceding_controls)
             assert before
             if boundary == "prepare":
-                build(*execution.state_snapshot(run_id))
+                build(
+                    *execution.state_snapshot(run_id),
+                    lambda **facts: SimpleNamespace(**facts),
+                )
             else:
                 with monkeypatch.context() as patch:
                     patch.setattr(harness.store, "begin_step", fail_write)
@@ -192,7 +199,10 @@ def test_controls_received_before_model_begin_enter_that_call(
                         timing="next_call",
                     )
                 )
-                build(*execution.state_snapshot(run_id))
+                build(
+                    *execution.state_snapshot(run_id),
+                    lambda **facts: SimpleNamespace(**facts),
+                )
             await gate.wait()
         return await begin(execution, build, run_id=run_id)
 
@@ -285,9 +295,13 @@ def test_reprepared_tool_loop_preserves_messages_and_input_dependencies(
         async def on_event(self, event: RunEvent) -> None:
             nonlocal steer
             await super().on_event(event)
-            if skip_tools and isinstance(event, StepEnd) and event.step.index == 0:
+            if (
+                skip_tools
+                and isinstance(event, StepEnd)
+                and StepRef.parse(event.step).index == 0
+            ):
                 steer = harness.executor.steer(
-                    run_id=event.step.run_id,
+                    run_id=StepRef.parse(event.step).run_id,
                     message=Message.user("skip tools"),
                     timing="next_step",
                 )
@@ -297,7 +311,9 @@ def test_reprepared_tool_loop_preserves_messages_and_input_dependencies(
     begin = _Execution.begin_step
 
     async def reprepare(execution, build, *, run_id):
-        build(*execution.state_snapshot(run_id))
+        build(
+            *execution.state_snapshot(run_id), lambda **facts: SimpleNamespace(**facts)
+        )
         return await begin(execution, build, run_id=run_id)
 
     monkeypatch.setattr(_Execution, "begin_step", reprepare)
@@ -384,9 +400,11 @@ flow parent() -> Text:
 
     async def wait_before_begin(execution, build, *, run_id):
         nonlocal model_run_id
-        candidate = build(*execution.state_snapshot(run_id))
+        candidate = build(
+            *execution.state_snapshot(run_id), lambda **facts: SimpleNamespace(**facts)
+        )
         if candidate.kind == "model":
-            model_run_id = candidate.step.run_id
+            model_run_id = StepRef.parse(candidate.step).run_id
             await gate.wait()
         return await begin(execution, build, run_id=run_id)
 

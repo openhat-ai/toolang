@@ -1,5 +1,7 @@
 """Async composition across completion order, ownership, and result encodings."""
 
+from toolang.execution.types import StepRef
+
 import asyncio
 from itertools import permutations
 
@@ -129,10 +131,12 @@ agic gamma() -> Text:
                 projector.handle(event)
                 assert not projector._broken
                 if isinstance(event, StepBegin):
-                    assert event.step.run_id not in active
-                    active[event.step.run_id] = event.step
+                    assert StepRef.parse(event.step).run_id not in active
+                    active[StepRef.parse(event.step).run_id] = StepRef.parse(event.step)
                 elif isinstance(event, StepEnd):
-                    assert active.pop(event.step.run_id) == event.step
+                    assert active.pop(
+                        StepRef.parse(event.step).run_id
+                    ) == StepRef.parse(event.step)
             assert not active
             assert projector.root_metrics.runs == 5
         assert_replayed(harness, tracer.events)

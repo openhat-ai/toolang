@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from toolang.execution.types import StepRef
+
 import pytest
 from pydantic import TypeAdapter
 
@@ -12,7 +14,6 @@ from toolang.execution.types import (
     PointerType,
     RunRef,
     StepPath,
-    StepRef,
     ThreadRef,
     TypedRef,
 )

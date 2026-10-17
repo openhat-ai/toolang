@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from toolang.execution.types import StepRef
+
 import asyncio
 from pathlib import Path
 
@@ -28,7 +30,6 @@ from toolang.execution.types import (
     ControlTiming,
     ErrorMessage,
     FieldRef,
-    StepRef,
     ThreadPrefix,
     ToolStepNoted,
 )

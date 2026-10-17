@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from toolang.execution.types import StepRef
+
+
 from tests.support.setup import materialized_setup
 
 import asyncio
@@ -26,13 +29,10 @@ from toolang.execution.events import (
     RunEnd,
     RunEvent,
     RunTracer,
-    StepBegin,
-    StepEnd,
     ThreadEvent,
     ThreadListener,
 )
 from toolang.execution.executor import AgentCeiling, RunExecutor, RunSpec
-from toolang.execution.executor._persist import _PersistSink
 from toolang.execution.executor.common import (
     Local,
     BoundRun,
@@ -57,7 +57,6 @@ from toolang.execution.types import (
     FieldRef,
     Occurrence,
     RunRef,
-    StepRef,
     ThreadPrefix,
 )
 from toolang.lang.ast import (
@@ -87,7 +86,11 @@ class _RecordingTracer(RunTracer):
     async def on_event(self, event: RunEvent) -> None:
         assert not self._handling
         self._handling = True
-        run_id = event.run if isinstance(event, RunBegin | RunEnd) else event.step.run
+        run_id = (
+            event.run
+            if isinstance(event, RunBegin | RunEnd)
+            else StepRef.parse(event.step).run
+        )
         assert self.store.get_run(run_id=str(run_id)) is not None
         self.thread_ids.add(threading.get_ident())
         try:
@@ -816,7 +819,7 @@ def test_parallel_children_preserve_input_and_output_types(
     async def emit(_event: RunEvent) -> None:
         return None
 
-    execution = _Execution(executor, root=binding, emit=emit)
+    execution = _Execution(executor, root=binding)
     observed_types: list[str | None] = []
 
     async def execute_child(
@@ -876,7 +879,7 @@ def test_parallel_children_reuse_the_lane_that_finished(
     async def emit(_event: RunEvent) -> None:
         return None
 
-    execution = _Execution(executor, root=binding, emit=emit)
+    execution = _Execution(executor, root=binding)
     started: asyncio.Queue[int] = asyncio.Queue()
     gates = [asyncio.Event() for _index in range(5)]
     occurrences: dict[int, Occurrence] = {}
@@ -1092,14 +1095,11 @@ def test_internal_event_projection_does_not_update_control_status(
         request_id=None,
         created_at="2026-01-01T00:00:00Z",
     )
-    sink = _PersistSink(store)
 
-    sink.on_event(
-        RunBegin(
-            run="run_test",
-            control=ControlRef.for_run("run_test", 0),
-            started_at="2026-01-01T00:00:01Z",
-        )
+    store.begin_run(
+        run_id="run_test",
+        control=ControlRef.for_run("run_test", 0),
+        started_at="2026-01-01T00:00:01Z",
     )
 
     control = store.get_run_control(run_id="run_test", index=0)
@@ -1192,23 +1192,16 @@ def test_thread_fork_and_rewind_use_control_refs_without_copying_runs(
         request_id=None,
         created_at="2026-01-01T00:00:00Z",
     )
-    sink = _PersistSink(store)
-    sink.on_event(
-        RunBegin(
-            run=anchor_id,
-            control=ControlRef.for_run(anchor_id, 0),
-            started_at="2026-01-01T00:00:01Z",
-        )
+    store.begin_run(
+        run_id=anchor_id,
+        control=ControlRef.for_run(anchor_id, 0),
+        started_at="2026-01-01T00:00:01Z",
     )
     store.finish_run_controls(
         run_id=anchor_id, indexes=(0,), finished_at="2026-01-01T00:00:01Z"
     )
-    sink.on_event(
-        RunEnd(
-            run=anchor_id,
-            status="succeeded",
-            finished_at="2026-01-01T00:00:02Z",
-        )
+    store.finish_run(
+        run_id=anchor_id, status="succeeded", finished_at="2026-01-01T00:00:02Z"
     )
 
     forked = manager.fork(thread_id=created)
@@ -1250,20 +1243,13 @@ def test_thread_fork_rejects_duplicate_request_without_starting_runs(
         request_id=None,
         created_at="2026-01-01T00:00:00Z",
     )
-    sink = _PersistSink(store)
-    sink.on_event(
-        RunBegin(
-            run="run_anchor",
-            control=ControlRef.for_run("run_anchor", 0),
-            started_at="2026-01-01T00:00:01Z",
-        )
+    store.begin_run(
+        run_id="run_anchor",
+        control=ControlRef.for_run("run_anchor", 0),
+        started_at="2026-01-01T00:00:01Z",
     )
-    sink.on_event(
-        RunEnd(
-            run="run_anchor",
-            status="succeeded",
-            finished_at="2026-01-01T00:00:02Z",
-        )
+    store.finish_run(
+        run_id="run_anchor", status="succeeded", finished_at="2026-01-01T00:00:02Z"
     )
 
     forked = manager.fork(
@@ -1297,7 +1283,6 @@ def test_rewind_uses_durable_acceptance_order_instead_of_timestamps(
     store = executor.store
     manager = ThreadManager(store, executor.ids)
     created = manager.create(prefix=ThreadPrefix.CHAT)
-    sink = _PersistSink(store)
     timestamp = "2026-01-01T00:00:00Z"
     for run_id in ("run_before", "run_anchor", "run_after"):
         accept_run(
@@ -1310,14 +1295,10 @@ def test_rewind_uses_durable_acceptance_order_instead_of_timestamps(
             request_id=None,
             created_at=timestamp,
         )
-        sink.on_event(
-            RunBegin(
-                run=run_id,
-                control=ControlRef.for_run(run_id, 0),
-                started_at=timestamp,
-            )
+        store.begin_run(
+            run_id=run_id, control=ControlRef.for_run(run_id, 0), started_at=timestamp
         )
-        sink.on_event(RunEnd(run=run_id, status="succeeded", finished_at=timestamp))
+        store.finish_run(run_id=run_id, status="succeeded", finished_at=timestamp)
 
     manager.rewind(thread_id=created, run_id="run_anchor")
 
@@ -1337,7 +1318,6 @@ def test_rewind_can_trim_inherited_fork_history(tmp_path: Path) -> None:
     store = executor.store
     manager = ThreadManager(store, executor.ids)
     source = manager.create(prefix=ThreadPrefix.CHAT)
-    sink = _PersistSink(store)
     for run_id in ("run_a", "run_b"):
         accept_run(
             store,
@@ -1349,19 +1329,13 @@ def test_rewind_can_trim_inherited_fork_history(tmp_path: Path) -> None:
             request_id=None,
             created_at="2026-01-01T00:00:00Z",
         )
-        sink.on_event(
-            RunBegin(
-                run=run_id,
-                control=ControlRef.for_run(run_id, 0),
-                started_at="2026-01-01T00:00:01Z",
-            )
+        store.begin_run(
+            run_id=run_id,
+            control=ControlRef.for_run(run_id, 0),
+            started_at="2026-01-01T00:00:01Z",
         )
-        sink.on_event(
-            RunEnd(
-                run=run_id,
-                status="succeeded",
-                finished_at="2026-01-01T00:00:02Z",
-            )
+        store.finish_run(
+            run_id=run_id, status="succeeded", finished_at="2026-01-01T00:00:02Z"
         )
 
     forked = manager.fork(thread_id=source)
@@ -1380,7 +1354,6 @@ def test_implicit_thread_anchor_ignores_child_runs(tmp_path: Path) -> None:
     store = executor.store
     manager = ThreadManager(store, executor.ids)
     source = manager.create(prefix=ThreadPrefix.CHAT)
-    sink = _PersistSink(store)
     for run_id, parent in (("run_root", None),):
         accept_run(
             store,
@@ -1392,28 +1365,24 @@ def test_implicit_thread_anchor_ignores_child_runs(tmp_path: Path) -> None:
             request_id=None,
             created_at="2026-01-01T00:00:00Z",
         )
-        sink.on_event(
-            RunBegin(
-                run=run_id,
-                control=ControlRef.for_run(run_id, 0),
-                started_at="2026-01-01T00:00:01Z",
-            )
+        store.begin_run(
+            run_id=run_id,
+            control=ControlRef.for_run(run_id, 0),
+            started_at="2026-01-01T00:00:01Z",
         )
-        sink.on_event(
-            StepBegin(
-                step=StepRef.parse("run_root.0"),
-                kind="run",
-                given=RunStmt(span=Span(line=1), runnable="flow:test"),
-                input=(
-                    FieldRef.from_path(
-                        ControlRef.for_run("run_root", 0),
-                        "payload",
-                        "input",
-                        "_",
-                    ),
+        store.begin_step(
+            ref=StepRef.parse("run_root.0"),
+            kind="run",
+            given=RunStmt(span=Span(line=1), runnable="flow:test"),
+            input=(
+                FieldRef.from_path(
+                    ControlRef.for_run("run_root", 0),
+                    "payload",
+                    "input",
+                    "_",
                 ),
-                started_at="2026-01-01T00:00:02Z",
-            )
+            ),
+            started_at="2026-01-01T00:00:02Z",
         )
 
     accept_run(
@@ -1426,34 +1395,25 @@ def test_implicit_thread_anchor_ignores_child_runs(tmp_path: Path) -> None:
         request_id=None,
         created_at="2026-01-01T00:00:03Z",
     )
-    sink.on_event(
-        RunBegin(
-            run="run_child",
-            control=ControlRef.for_run("run_child", 0),
-            started_at="2026-01-01T00:00:04Z",
-        )
+    store.begin_run(
+        run_id="run_child",
+        control=ControlRef.for_run("run_child", 0),
+        started_at="2026-01-01T00:00:04Z",
     )
-    sink.on_event(
-        RunEnd(
-            run="run_child",
-            status="succeeded",
-            finished_at="2026-01-01T00:00:05Z",
-        )
+    store.finish_run(
+        run_id="run_child", status="succeeded", finished_at="2026-01-01T00:00:05Z"
     )
-    sink.on_event(
-        StepEnd(
-            step=StepRef.parse("run_root.0"),
-            kind="run",
-            status="succeeded",
-            finished_at="2026-01-01T00:00:06Z",
-        )
+    store.finish_step(
+        ref=StepRef.parse("run_root.0"),
+        kind="run",
+        status="succeeded",
+        finished_at="2026-01-01T00:00:06Z",
+        output=None,
+        noted=None,
+        error=None,
     )
-    sink.on_event(
-        RunEnd(
-            run="run_root",
-            status="succeeded",
-            finished_at="2026-01-01T00:00:07Z",
-        )
+    store.finish_run(
+        run_id="run_root", status="succeeded", finished_at="2026-01-01T00:00:07Z"
     )
 
     forked = manager.fork(thread_id=source)
@@ -1608,12 +1568,10 @@ def test_remote_process_can_cancel_an_owned_run(
         runnable: Any,
         **_kwargs: Any,
     ) -> Any:
-        await runtime.emit(
-            RunBegin(
-                run=binding.run_id,
-                control=ControlRef.for_run(binding.run_id, 0),
-                started_at="2026-01-01T00:00:00Z",
-            )
+        await runtime.begin_run(
+            run=binding.run_id,
+            control=ControlRef.for_run(binding.run_id, 0),
+            started_at="2026-01-01T00:00:00Z",
         )
         await asyncio.sleep(30)
 
@@ -1663,12 +1621,10 @@ def test_executor_stop_cancels_and_persists_active_runs(
         runnable: Any,
         **_kwargs: Any,
     ) -> Any:
-        await runtime.emit(
-            RunBegin(
-                run=binding.run_id,
-                control=ControlRef.for_run(binding.run_id, 0),
-                started_at="2026-01-01T00:00:00Z",
-            )
+        await runtime.begin_run(
+            run=binding.run_id,
+            control=ControlRef.for_run(binding.run_id, 0),
+            started_at="2026-01-01T00:00:00Z",
         )
         await asyncio.sleep(30)
 
@@ -1741,20 +1697,15 @@ def test_thread_control_indexes_and_head_are_process_safe(tmp_path: Path) -> Non
         request_id=None,
         created_at="2026-01-01T00:00:00Z",
     )
-    sink = _PersistSink(store)
-    sink.on_event(
-        RunBegin(
-            run="run_thread_anchor",
-            control=ControlRef.for_run("run_thread_anchor", 0),
-            started_at="2026-01-01T00:00:01Z",
-        )
+    store.begin_run(
+        run_id="run_thread_anchor",
+        control=ControlRef.for_run("run_thread_anchor", 0),
+        started_at="2026-01-01T00:00:01Z",
     )
-    sink.on_event(
-        RunEnd(
-            run="run_thread_anchor",
-            status="succeeded",
-            finished_at="2026-01-01T00:00:02Z",
-        )
+    store.finish_run(
+        run_id="run_thread_anchor",
+        status="succeeded",
+        finished_at="2026-01-01T00:00:02Z",
     )
     store.close()
     context = get_context("spawn")
@@ -1788,49 +1739,42 @@ def test_private_event_projector_persists_run_and_step_records(
         request_id=None,
         created_at="2026-01-01T00:00:00Z",
     )
-    sink = _PersistSink(store)
-    sink.on_event(
-        RunBegin(
-            run="run_test",
-            control=ControlRef.for_run("run_test", 0),
-            started_at="2026-01-01T00:00:01Z",
-        )
+    store.begin_run(
+        run_id="run_test",
+        control=ControlRef.for_run("run_test", 0),
+        started_at="2026-01-01T00:00:01Z",
     )
-    sink.on_event(
-        StepBegin(
-            step=StepRef.parse("run_test.0"),
-            kind="value",
-            given=LetStmt(span=Span(line=1), value="done"),
-            input=(
-                FieldRef.from_path(
-                    ControlRef.for_run("run_test", 0), "payload", "input", "_"
-                ),
+    store.begin_step(
+        ref=StepRef.parse("run_test.0"),
+        kind="value",
+        given=LetStmt(span=Span(line=1), value="done"),
+        input=(
+            FieldRef.from_path(
+                ControlRef.for_run("run_test", 0), "payload", "input", "_"
             ),
-            started_at="2026-01-01T00:00:02Z",
-        )
+        ),
+        started_at="2026-01-01T00:00:02Z",
     )
-    sink.on_event(
-        StepEnd(
-            step=StepRef.parse("run_test.0"),
-            kind="value",
-            status="succeeded",
-            output=Output(value_for_type("Part[]", (TextPart(text="done"),)), "_"),
-            finished_at="2026-01-01T00:00:03Z",
-        )
+    store.finish_step(
+        ref=StepRef.parse("run_test.0"),
+        kind="value",
+        status="succeeded",
+        output=Output(value_for_type("Part[]", (TextPart(text="done"),)), "_"),
+        finished_at="2026-01-01T00:00:03Z",
+        noted=None,
+        error=None,
     )
-    sink.on_event(
-        RunEnd(
-            run="run_test",
-            status="succeeded",
-            output=Output(
-                value_for_type(
-                    "Part[]",
-                    FieldRef.from_path(StepRef.parse("run_test.0"), "output", "value"),
-                ),
-                "_",
+    store.finish_run(
+        run_id="run_test",
+        status="succeeded",
+        output=Output(
+            value_for_type(
+                "Part[]",
+                FieldRef.from_path(StepRef.parse("run_test.0"), "output", "value"),
             ),
-            finished_at="2026-01-01T00:00:04Z",
-        )
+            "_",
+        ),
+        finished_at="2026-01-01T00:00:04Z",
     )
 
     run = store.get_run(run_id="run_test")
@@ -1843,7 +1787,6 @@ def test_private_event_projector_persists_run_and_step_records(
 def test_step_queries_use_exact_canonical_run_ids(tmp_path: Path) -> None:
     store = RunStore(tmp_path / "runs.db")
     store.create_thread(thread_id="term_test")
-    sink = _PersistSink(store)
     for run_id, text in (("run_literal", "literal"), ("run_ax", "other")):
         accept_run(
             store,
@@ -1855,36 +1798,29 @@ def test_step_queries_use_exact_canonical_run_ids(tmp_path: Path) -> None:
             request_id=None,
             created_at="2026-01-01T00:00:00Z",
         )
-        sink.on_event(
-            RunBegin(
-                run=run_id,
-                control=ControlRef.for_run(run_id, 0),
-                started_at="2026-01-01T00:00:01Z",
-            )
+        store.begin_run(
+            run_id=run_id,
+            control=ControlRef.for_run(run_id, 0),
+            started_at="2026-01-01T00:00:01Z",
         )
-        sink.on_event(
-            StepBegin(
-                step=StepRef.parse(f"{run_id}.0"),
-                kind="value",
-                given=LetStmt(span=Span(line=1), value=text),
-                started_at="2026-01-01T00:00:02Z",
-            )
+        store.begin_step(
+            ref=StepRef.parse(f"{run_id}.0"),
+            kind="value",
+            given=LetStmt(span=Span(line=1), value=text),
+            started_at="2026-01-01T00:00:02Z",
+            input=(),
         )
-        sink.on_event(
-            StepEnd(
-                step=StepRef.parse(f"{run_id}.0"),
-                kind="value",
-                status="succeeded",
-                output=Output(value_for_type("Part[]", (TextPart(text=text),)), "_"),
-                finished_at="2026-01-01T00:00:03Z",
-            )
+        store.finish_step(
+            ref=StepRef.parse(f"{run_id}.0"),
+            kind="value",
+            status="succeeded",
+            output=Output(value_for_type("Part[]", (TextPart(text=text),)), "_"),
+            finished_at="2026-01-01T00:00:03Z",
+            noted=None,
+            error=None,
         )
-        sink.on_event(
-            RunEnd(
-                run=run_id,
-                status="succeeded",
-                finished_at="2026-01-01T00:00:04Z",
-            )
+        store.finish_run(
+            run_id=run_id, status="succeeded", finished_at="2026-01-01T00:00:04Z"
         )
 
     assert [step.ref for step in store.list_steps(run_id="run_literal")] == [

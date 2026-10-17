@@ -106,13 +106,13 @@ class StructuralSnapshot:
     def ancestors(self, event: ExecutionEvent) -> list[str | StepRef]:
         key: str | StepRef | None
         if isinstance(event, RunBegin):
-            key = event.parent
+            key = StepRef.parse(event.parent) if event.parent is not None else None
         elif isinstance(event, RunEnd):
             key = event.run
         elif isinstance(event, StepBegin):
-            key = event.step.parent or event.step.run_id
+            key = StepRef.parse(event.step).parent or StepRef.parse(event.step).run_id
         elif isinstance(event, StepEnd | PartBegin | PartDelta | PartEnd):
-            key = event.step
+            key = StepRef.parse(event.step)
         else:
             return []
         result: list[str | StepRef] = []
@@ -162,13 +162,15 @@ class StreamNormalizer:
         elif isinstance(event, RunEnd):
             self._active.discard(event.run)
         elif isinstance(event, StepBegin | StepEnd):
-            self._suppressed.discard(event.step)
+            self._suppressed.discard(StepRef.parse(event.step))
             if isinstance(event, StepBegin):
-                self._open_steps.add(event.step)
+                self._open_steps.add(StepRef.parse(event.step))
             else:
-                self._open_steps.discard(event.step)
+                self._open_steps.discard(StepRef.parse(event.step))
         self._check_state()
-        return not (isinstance(event, _PARTS) and event.step in self._suppressed)
+        return not (
+            isinstance(event, _PARTS) and StepRef.parse(event.step) in self._suppressed
+        )
 
     def replay(
         self,
@@ -181,7 +183,7 @@ class StreamNormalizer:
         seen: set[str | StepRef] = set()
         for frame in frames:
             event = frame.event
-            if isinstance(event, _PARTS) and event.step in snapshot.ends:
+            if isinstance(event, _PARTS) and StepRef.parse(event.step) in snapshot.ends:
                 continue
             for key in snapshot.ancestors(event):
                 if key in seen:
@@ -198,11 +200,14 @@ class StreamNormalizer:
                 prefix.append(StreamFrame.source(begin, cursor, context=True))
                 seen.add(key)
             if isinstance(event, StepBegin):
-                seen.add(event.step)
-                self._suppressed.discard(event.step)
+                seen.add(StepRef.parse(event.step))
+                self._suppressed.discard(StepRef.parse(event.step))
             elif isinstance(event, RunBegin):
                 seen.add(event.run)
-            if isinstance(event, _PARTS) and event.step in self._suppressed:
+            if (
+                isinstance(event, _PARTS)
+                and StepRef.parse(event.step) in self._suppressed
+            ):
                 continue
             prefix.append(StreamFrame.source(event, str(frame.cursor)))
         # An idle attachment still needs its active ancestors before future Ends.

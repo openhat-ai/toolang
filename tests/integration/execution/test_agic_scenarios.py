@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from toolang.execution.types import StepRef
+
 from tests.support.setup import replace_materialized_setup
 
 import asyncio
@@ -69,7 +71,6 @@ from toolang.execution.types import (
     ErrorRef,
     FieldRef,
     ModelStepNoted,
-    StepRef,
     ThreadPrefix,
     ToolStepNoted,
 )
@@ -1039,22 +1040,24 @@ def test_cancel_during_tool_result_delivery_preserves_output(
             )
         ],
     )
-    original_emit = harness.executor._emit_event
+    from toolang.execution.executor.executor import _Execution
+
+    original_emit = _Execution.emit
     waiting = False
 
-    async def delayed_emit(active, event):
+    async def delayed_emit(execution, event):
         nonlocal waiting
-        await original_emit(active, event)
+        await original_emit(execution, event)
         if (
             isinstance(event, (PartBegin, PartEnd))
             and event.type == boundary
-            and event.step.index == 1
+            and StepRef.parse(event.step).index == 1
             and not waiting
         ):
             waiting = True
             await gate.wait()
 
-    monkeypatch.setattr(harness.executor, "_emit_event", delayed_emit)
+    monkeypatch.setattr(_Execution, "emit", delayed_emit)
     tracer = RecordingRunTracer()
 
     async def scenario() -> None:

@@ -1,5 +1,7 @@
 """Runtime tool facts reach Script/Chat through ordinary Step events only."""
 
+from tests.support.observations import run_begin, run_end, step_begin, step_end
+
 import asyncio
 from io import StringIO
 from types import SimpleNamespace
@@ -20,7 +22,6 @@ from toolang.cli.common.script_progress import presenter as script
 from toolang.cli.common.script_progress.console import ProgressConsole
 from toolang.cli.common.execution_progress import ProgressBlock, ProgressUpdate
 from toolang.cli.toolang.commands.chat import blocks, rendering
-from toolang.execution.events import RunBegin, RunEnd, StepBegin, StepEnd
 from toolang.execution.tools.runtime import RuntimeToolset
 from toolang.execution.types import (
     value_for_type,
@@ -37,7 +38,7 @@ FINISH = "2026-01-01T00:01:20Z"
 
 
 def _root():
-    return RunBegin(
+    return run_begin(
         run="run_root",
         control=ControlRef.for_run("run_root", 0),
         runnable="agic:chat",
@@ -45,11 +46,14 @@ def _root():
     )
 
 
+_arguments_by_step = {}
+
+
 def _begin(name="compact", arguments=None):
     arguments = arguments or {}
     summary = RuntimeToolset().tools()[name].summary(arguments)
     assert summary is not None
-    return StepBegin(
+    event = step_begin(
         step=StepRef.parse("run_root.0"),
         kind="tool",
         started_at=START,
@@ -61,18 +65,23 @@ def _begin(name="compact", arguments=None):
         ),
     )
 
+    _arguments_by_step[id(event)] = arguments
+    return event
+
 
 def _end(begin, status="succeeded", output=None):
-    call = begin.given.call
+    call = ToolCall("call-1", "call-1", begin.given.name, {})
+    summary = begin.given.summary
+    name = begin.given.name.removeprefix("runtime__")
+    arguments = _arguments_by_step[id(begin)]
+    call = ToolCall("call-1", "call-1", begin.given.name, arguments)
     summary = _tool_summary(
-        _tool_summary_context(
-            call, RuntimeToolset().tools()[call.name.removeprefix("runtime__")]
-        ),
+        _tool_summary_context(call, RuntimeToolset().tools()[name]),
         status,
         ToolResult(output or {}, error="failed" if status == "failed" else None),
     )
     assert summary is not None
-    return StepEnd(
+    return step_end(
         step=begin.step,
         kind="tool",
         status=status,
@@ -183,9 +192,9 @@ def test_runtime_tool_failure_details_and_cancellation_remain_visible(name, stat
 @pytest.mark.parametrize(
     "plugin,name", [("runtime", "run"), ("runtime", "exec"), ("fs", "read")]
 )
-def test_tool_results_remain_in_events_but_not_in_progress(plugin, name):
+def test_tool_events_and_progress_exclude_raw_result_bodies(plugin, name):
     call = ToolCall("call-1", "call-1", f"{plugin}__{name}", {})
-    begin = StepBegin(
+    begin = step_begin(
         step=StepRef.parse("run_root.0"),
         kind="tool",
         started_at=START,
@@ -195,7 +204,7 @@ def test_tool_results_remain_in_events_but_not_in_progress(plugin, name):
             summary=f"Executing {name}...",
         ),
     )
-    end = StepEnd(
+    end = step_end(
         step=begin.step,
         kind="tool",
         status="succeeded",
@@ -218,8 +227,9 @@ def test_tool_results_remain_in_events_but_not_in_progress(plugin, name):
     assert rows[0].text.startswith("› ")
     assert len(rows) == 1
     assert rows[0].text == f"› Executed {name}"
-    assert end.output is not None and isinstance(end.output.value, ToolResultPart)
-    assert end.output.value.output == {"value": "Result is still available"}
+    assert end.output is not None and isinstance(end.output.value, dict)
+    assert end.output.value["tool_call_id"] == call.tool_call_id
+    assert "output" not in end.output.value and "value" not in end.output.value
 
 
 @pytest.mark.parametrize("status", ["succeeded", "failed", "canceled"])
@@ -281,7 +291,7 @@ def test_script_reuses_one_refresh_task_and_stops_it(monkeypatch, stop):
             presenter.close()
         elif stop == "run_end":
             await presenter.on_event(
-                RunEnd(run="run_root", status="failed", finished_at=FINISH)
+                run_end(run="run_root", status="failed", finished_at=FINISH)
             )
         else:
             await presenter.on_event(
@@ -336,7 +346,7 @@ def test_flow_spawn_summary_is_visible_without_child_events():
 
     projector = ProgressProjector()
     projector.handle(
-        RunBegin(
+        run_begin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
             runnable="flow:parent",
@@ -344,14 +354,14 @@ def test_flow_spawn_summary_is_visible_without_child_events():
         )
     )
     projector.handle(
-        StepBegin(
+        step_begin(
             step=StepRef.parse("run_root.0"),
             kind="spawn",
             given=SpawnStmt(span=Span(line=1), runnable="flow:research", binding="job"),
             started_at=START,
         )
     )
-    end = StepEnd(
+    end = step_end(
         step=StepRef.parse("run_root.0"),
         kind="spawn",
         status="succeeded",

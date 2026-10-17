@@ -1,5 +1,16 @@
 from __future__ import annotations
 
+from tests.support.observations import part_end
+
+from toolang.execution.event_projection import step_info
+from toolang.execution.events import FlowStepInfo
+
+
+from toolang.execution.types import StepRef
+
+from tests.support.observations import run_begin, run_end, step_begin, step_end
+
+
 from toolang.execution.types import ModelCost, value_for_type
 
 from toolang.execution.types import ModelAccounting
@@ -24,11 +35,6 @@ from toolang.cli.common.execution_progress.headers import statement_header, unti
 from toolang.execution.events import (
     PartBegin,
     PartDelta,
-    PartEnd,
-    RunBegin,
-    RunEnd,
-    StepBegin,
-    StepEnd,
 )
 from toolang.execution.types import (
     Output,
@@ -44,7 +50,6 @@ from toolang.execution.types import (
     ModelStepNoted,
     Occurrence,
     OccurrencePosition,
-    StepRef,
     StepStatus,
     ToolStepGiven,
     ToolStepNoted,
@@ -64,6 +69,12 @@ from toolang.lang.ast import (
 )
 
 SPAN = Span(line=1)
+
+
+def flow_info(statement):
+    info = step_info(statement)
+    assert isinstance(info, FlowStepInfo)
+    return info
 
 
 def _model(model: str = "deepseek/deepseek-chat") -> ModelStepGiven:
@@ -115,7 +126,10 @@ def _rows(blocks: tuple[ProgressBlock, ...]) -> list[list[str]]:
     ],
 )
 def test_until_header_explains_the_condition_run(runnable, expected) -> None:
-    assert until_header(RepeatStmt(span=SPAN, count=3, runnable=runnable)) == expected
+    assert (
+        until_header(flow_info(RepeatStmt(span=SPAN, count=3, runnable=runnable)))
+        == expected
+    )
 
 
 @pytest.mark.parametrize("runnable", ["search_web", "<agic:12>"])
@@ -124,27 +138,31 @@ def test_progress_statement_header_prefers_doc_and_preserves_runnable_name(
 ) -> None:
     assert (
         statement_header(
-            MapStmt(
-                span=SPAN,
-                runnable=runnable,
-                lanes=4,
-                doc="Search the web\nfor each query",
+            flow_info(
+                MapStmt(
+                    span=SPAN,
+                    runnable=runnable,
+                    lanes=4,
+                    doc="Search the web\nfor each query",
+                )
             )
         )
         == "Search the web for each query"
     )
     assert (
-        statement_header(MapStmt(span=SPAN, runnable="search_web", lanes=4))
+        statement_header(flow_info(MapStmt(span=SPAN, runnable="search_web", lanes=4)))
         == "Map each item with search_web, up to 4 at once"
     )
     assert (
         statement_header(
-            SortStmt(
-                span=SPAN,
-                runnable="relevance_score",
-                order="descending",
-                lanes=2,
-                binding="findings",
+            flow_info(
+                SortStmt(
+                    span=SPAN,
+                    runnable="relevance_score",
+                    order="descending",
+                    lanes=2,
+                    binding="findings",
+                )
             )
         )
         == "Sort items by relevance_score in descending order, "
@@ -163,7 +181,7 @@ def test_progress_header_preserves_doc_selection(
         "Map each item with <agic:32>, up to 2 at once, save result to findings"
     )
 
-    assert statement_header(statement) == (
+    assert statement_header(flow_info(statement)) == (
         "Search the evidence" if doc and doc.strip() else description
     )
 
@@ -206,16 +224,16 @@ def test_positional_collection_steps_describe_the_transform(
     projector = ProgressProjector(show_boundaries=False)
     path = StepRef.parse("run_root.0")
     projector.handle(
-        RunBegin(
+        run_begin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
             runnable="flow:demo",
         )
     )
-    projector.handle(StepBegin(step=path, kind="value", given=statement))
+    projector.handle(step_begin(step=path, kind="value", given=statement))
 
     terminal = projector.handle(
-        StepEnd(
+        step_end(
             step=path,
             kind="value",
             status="succeeded",
@@ -304,19 +322,19 @@ def test_parallel_collection_steps_describe_the_result(
     projector = ProgressProjector(show_boundaries=False)
     path = StepRef.parse("run_root.0")
     projector.handle(
-        RunBegin(
+        run_begin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
             runnable="flow:demo",
         )
     )
-    live = projector.handle(StepBegin(step=path, kind="par", given=statement))
+    live = projector.handle(step_begin(step=path, kind="par", given=statement))
 
     assert _rows(live.live) == [["• Running · 0 succeeded"]]
     assert live.live[0].rows[0].tone == "active"
 
     terminal = projector.handle(
-        StepEnd(
+        step_end(
             step=path,
             kind="par",
             status="succeeded",
@@ -331,7 +349,7 @@ def test_parallel_collection_steps_describe_the_result(
 def test_model_markdown_closes_without_repeating_at_step_end() -> None:
     reducer = ProgressProjector()
     reducer.handle(
-        RunBegin(
+        run_begin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
             runnable="agic:demo",
@@ -339,7 +357,7 @@ def test_model_markdown_closes_without_repeating_at_step_end() -> None:
         )
     )
     live = reducer.handle(
-        StepBegin(
+        step_begin(
             step=StepRef.parse("run_root.0"),
             kind="model",
             given=_model(),
@@ -351,14 +369,14 @@ def test_model_markdown_closes_without_repeating_at_step_end() -> None:
 
     reducer.handle(
         PartBegin(
-            step=StepRef.parse("run_root.0"),
+            step=str(StepRef.parse("run_root.0")),
             part=0,
             part_type="text",
         )
     )
     streamed = reducer.handle(
         PartDelta(
-            step=StepRef.parse("run_root.0"),
+            step=str(StepRef.parse("run_root.0")),
             part=0,
             delta=TextDelta(text="Comparing\napproaches"),
         )
@@ -367,8 +385,8 @@ def test_model_markdown_closes_without_repeating_at_step_end() -> None:
     assert streamed.live[0].rows[0].format == "markdown"
     assert streamed.live[0].rows[0].prefix == "• "
     closed = reducer.handle(
-        PartEnd(
-            step=StepRef.parse("run_root.0"),
+        part_end(
+            step=str(StepRef.parse("run_root.0")),
             part=0,
             data=TextPart("Comparing\napproaches"),
         )
@@ -378,7 +396,7 @@ def test_model_markdown_closes_without_repeating_at_step_end() -> None:
     assert closed.live == ()
 
     final = reducer.handle(
-        StepEnd(
+        step_end(
             step=StepRef.parse("run_root.0"),
             kind="model",
             status="succeeded",
@@ -405,24 +423,24 @@ def test_model_markdown_commits_stable_blocks_and_keeps_one_live_tail() -> None:
     projector = ProgressProjector(show_boundaries=False)
     path = StepRef.parse("run_root.0")
     projector.handle(
-        RunBegin(
+        run_begin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
             runnable="agic:demo",
         )
     )
-    projector.handle(StepBegin(step=path, kind="model", given=_model()))
-    projector.handle(PartBegin(step=path, part=0, part_type="text"))
+    projector.handle(step_begin(step=path, kind="model", given=_model()))
+    projector.handle(PartBegin(step=str(path), part=0, part_type="text"))
 
     heading = projector.handle(
-        PartDelta(step=path, part=0, delta=TextDelta("# Heading\n\n"))
+        PartDelta(step=str(path), part=0, delta=TextDelta("# Heading\n\n"))
     )
     assert heading.committed == ()
     assert _rows(heading.live) == [["# Heading\n\n"]]
     assert heading.live[0].rows[0].prefix == "• "
 
     paragraph = projector.handle(
-        PartDelta(step=path, part=0, delta=TextDelta("Paragraph"))
+        PartDelta(step=str(path), part=0, delta=TextDelta("Paragraph"))
     )
     assert _rows(paragraph.committed) == [["# Heading\n\n"]]
     assert paragraph.committed[0].rows[0].prefix == "• "
@@ -431,8 +449,8 @@ def test_model_markdown_commits_stable_blocks_and_keeps_one_live_tail() -> None:
     assert paragraph.live[0].rows[0].gap_before is True
 
     closed = projector.handle(
-        PartEnd(
-            step=path,
+        part_end(
+            step=str(path),
             part=0,
             data=TextPart("# Heading\n\nParagraph"),
         )
@@ -443,7 +461,7 @@ def test_model_markdown_commits_stable_blocks_and_keeps_one_live_tail() -> None:
     assert closed.live == ()
 
     ended = projector.handle(
-        StepEnd(
+        step_end(
             step=path,
             kind="model",
             status="succeeded",
@@ -458,17 +476,19 @@ def test_model_part_end_must_extend_streamed_text() -> None:
     projector = ProgressProjector(show_boundaries=False)
     path = StepRef.parse("run_root.0")
     projector.handle(
-        RunBegin(
+        run_begin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
             runnable="agic:demo",
         )
     )
-    projector.handle(StepBegin(step=path, kind="model", given=_model()))
-    projector.handle(PartBegin(step=path, part=0, part_type="text"))
-    projector.handle(PartDelta(step=path, part=0, delta=TextDelta("prefix")))
+    projector.handle(step_begin(step=path, kind="model", given=_model()))
+    projector.handle(PartBegin(step=str(path), part=0, part_type="text"))
+    projector.handle(PartDelta(step=str(path), part=0, delta=TextDelta("prefix")))
 
-    mismatch = projector.handle(PartEnd(step=path, part=0, data=TextPart("different")))
+    mismatch = projector.handle(
+        part_end(step=str(path), part=0, data=TextPart("different"))
+    )
 
     assert mismatch.live == ()
     assert _rows(mismatch.committed) == [
@@ -481,13 +501,13 @@ def test_multiple_signed_text_parts_render_without_exposing_reasoning():
     projector = ProgressProjector(show_boundaries=False)
     path = StepRef.parse("run_root.0")
     projector.handle(
-        RunBegin(
+        run_begin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
             runnable="agic:demo",
         )
     )
-    projector.handle(StepBegin(step=path, kind="model", given=_model()))
+    projector.handle(step_begin(step=path, kind="model", given=_model()))
     origin: dict[str, object] = {"adapter": "generate_content", "model": "model"}
     parts = (
         ReasoningPart("hidden", "reasoning-signature", "provider", origin),
@@ -507,22 +527,22 @@ def test_multiple_signed_text_parts_render_without_exposing_reasoning():
     )
     rendered = []
     for index, part in enumerate(parts):
-        projector.handle(PartBegin(step=path, part=index, part_type=part.type))
+        projector.handle(PartBegin(step=str(path), part=index, part_type=part.type))
         delta = (
             ReasoningDelta(part.text)
             if isinstance(part, ReasoningPart)
             else TextDelta(part.text[:3])
         )
-        update = projector.handle(PartDelta(step=path, part=index, delta=delta))
+        update = projector.handle(PartDelta(step=str(path), part=index, delta=delta))
         rendered.extend(_rows(update.committed))
         if isinstance(part, ReasoningPart):
             assert all(
                 part.text not in row.text for block in update.live for row in block.rows
             )
-        update = projector.handle(PartEnd(step=path, part=index, data=part))
+        update = projector.handle(part_end(step=str(path), part=index, data=part))
         rendered.extend(_rows(update.committed))
     update = projector.handle(
-        StepEnd(
+        step_end(
             step=path, kind="model", status="succeeded", output=_part_output(*parts)
         )
     )
@@ -534,18 +554,18 @@ def test_model_step_end_must_repeat_the_completed_parts() -> None:
     projector = ProgressProjector(show_boundaries=False)
     path = StepRef.parse("run_root.0")
     projector.handle(
-        RunBegin(
+        run_begin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
             runnable="agic:demo",
         )
     )
-    projector.handle(StepBegin(step=path, kind="model", given=_model()))
-    projector.handle(PartBegin(step=path, part=0, part_type="text"))
-    projector.handle(PartEnd(step=path, part=0, data=TextPart("authoritative")))
+    projector.handle(step_begin(step=path, kind="model", given=_model()))
+    projector.handle(PartBegin(step=str(path), part=0, part_type="text"))
+    projector.handle(part_end(step=str(path), part=0, data=TextPart("authoritative")))
 
     mismatch = projector.handle(
-        StepEnd(
+        step_end(
             step=path,
             kind="model",
             status="succeeded",
@@ -575,20 +595,22 @@ def test_partial_model_output_is_committed_before_terminal_failure(
     projector = ProgressProjector(show_boundaries=False)
     path = StepRef.parse("run_root.0")
     projector.handle(
-        RunBegin(
+        run_begin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
             runnable="agic:demo",
         )
     )
-    projector.handle(StepBegin(step=path, kind="model", given=_model()))
-    projector.handle(PartBegin(step=path, part=0, part_type="text"))
-    projector.handle(PartDelta(step=path, part=0, delta=TextDelta("partial")))
-    closed = projector.handle(PartEnd(step=path, part=0, data=TextPart("partial")))
+    projector.handle(step_begin(step=path, kind="model", given=_model()))
+    projector.handle(PartBegin(step=str(path), part=0, part_type="text"))
+    projector.handle(PartDelta(step=str(path), part=0, delta=TextDelta("partial")))
+    closed = projector.handle(
+        part_end(step=str(path), part=0, data=TextPart("partial"))
+    )
     assert _rows(closed.committed) == [["partial"]]
 
     ended = projector.handle(
-        StepEnd(
+        step_end(
             step=path,
             kind="model",
             status=status,
@@ -603,14 +625,14 @@ def test_partial_model_output_is_committed_before_terminal_failure(
 def test_model_tool_call_only_output_discards_live_presentation() -> None:
     reducer = ProgressProjector(show_boundaries=False)
     reducer.handle(
-        RunBegin(
+        run_begin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
             runnable="agic:demo",
         )
     )
     reducer.handle(
-        StepBegin(
+        step_begin(
             step=StepRef.parse("run_root.0"),
             kind="model",
             given=_model(),
@@ -618,7 +640,7 @@ def test_model_tool_call_only_output_discards_live_presentation() -> None:
     )
 
     update = reducer.handle(
-        StepEnd(
+        step_end(
             step=StepRef.parse("run_root.0"),
             kind="model",
             status="succeeded",
@@ -648,16 +670,16 @@ def test_model_mixed_output_hides_tool_calls_and_keeps_visible_parts() -> None:
     projector = ProgressProjector(show_boundaries=False)
     path = StepRef.parse("run_root.0")
     projector.handle(
-        RunBegin(
+        run_begin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
             runnable="agic:demo",
         )
     )
-    projector.handle(StepBegin(step=path, kind="model", given=_model()))
+    projector.handle(step_begin(step=path, kind="model", given=_model()))
 
     update = projector.handle(
-        StepEnd(
+        step_end(
             step=path,
             kind="model",
             status="succeeded",
@@ -676,22 +698,22 @@ def test_model_committed_text_is_not_replaced_by_later_tool_call_part() -> None:
     projector = ProgressProjector(show_boundaries=False)
     path = StepRef.parse("run_root.0")
     projector.handle(
-        RunBegin(
+        run_begin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
             runnable="agic:demo",
         )
     )
-    projector.handle(StepBegin(step=path, kind="model", given=_model()))
-    projector.handle(PartBegin(step=path, part=0, part_type="text"))
+    projector.handle(step_begin(step=path, kind="model", given=_model()))
+    projector.handle(PartBegin(step=str(path), part=0, part_type="text"))
     visible = projector.handle(
-        PartEnd(step=path, part=0, data=TextPart("Visible reasoning."))
+        part_end(step=str(path), part=0, data=TextPart("Visible reasoning."))
     )
-    projector.handle(PartBegin(step=path, part=1, part_type="tool_call"))
-    hidden = projector.handle(PartEnd(step=path, part=1, data=_tool_call_part()))
+    projector.handle(PartBegin(step=str(path), part=1, part_type="tool_call"))
+    hidden = projector.handle(part_end(step=str(path), part=1, data=_tool_call_part()))
 
     terminal = projector.handle(
-        StepEnd(
+        step_end(
             step=path,
             kind="model",
             status="succeeded",
@@ -721,16 +743,16 @@ def test_model_tool_call_output_keeps_failure_diagnostics(
     projector = ProgressProjector(show_boundaries=False)
     path = StepRef.parse("run_root.0")
     projector.handle(
-        RunBegin(
+        run_begin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
             runnable="agic:demo",
         )
     )
-    projector.handle(StepBegin(step=path, kind="model", given=_model()))
+    projector.handle(step_begin(step=path, kind="model", given=_model()))
 
     update = projector.handle(
-        StepEnd(
+        step_end(
             step=path,
             kind="model",
             status=status,
@@ -746,16 +768,16 @@ def test_model_empty_success_keeps_completed_fallback() -> None:
     projector = ProgressProjector(show_boundaries=False)
     path = StepRef.parse("run_root.0")
     projector.handle(
-        RunBegin(
+        run_begin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
             runnable="agic:demo",
         )
     )
-    projector.handle(StepBegin(step=path, kind="model", given=_model()))
+    projector.handle(step_begin(step=path, kind="model", given=_model()))
 
     update = projector.handle(
-        StepEnd(
+        step_end(
             step=path,
             kind="model",
             status="succeeded",
@@ -770,21 +792,21 @@ def test_parallel_lane_tool_call_only_model_hands_activity_to_tool_step() -> Non
     projector = ProgressProjector(show_boundaries=False)
     par = StepRef.parse("run_root.0")
     projector.handle(
-        RunBegin(
+        run_begin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
             runnable="flow:demo",
         )
     )
     projector.handle(
-        StepBegin(
+        step_begin(
             step=par,
             kind="par",
             given=MapStmt(span=SPAN, runnable="research", lanes=1),
         )
     )
     projector.handle(
-        RunBegin(
+        run_begin(
             run="run_child",
             parent=par,
             control=ControlRef.for_run("run_child", 0),
@@ -796,10 +818,10 @@ def test_parallel_lane_tool_call_only_model_hands_activity_to_tool_step() -> Non
         )
     )
     model = StepRef.parse("run_child.0")
-    projector.handle(StepBegin(step=model, kind="model", given=_model()))
+    projector.handle(step_begin(step=model, kind="model", given=_model()))
 
     hidden = projector.handle(
-        StepEnd(
+        step_end(
             step=model,
             kind="model",
             status="succeeded",
@@ -812,7 +834,7 @@ def test_parallel_lane_tool_call_only_model_hands_activity_to_tool_step() -> Non
     assert "web.search" not in " ".join(row.text for row in hidden.live[0].rows)
 
     tool = projector.handle(
-        StepBegin(
+        step_begin(
             step=StepRef.parse("run_child.1"),
             kind="tool",
             given=_tool(),
@@ -830,14 +852,14 @@ def test_parallel_lane_tool_call_only_model_hands_activity_to_tool_step() -> Non
 def test_flow_run_header_wraps_real_agic_steps_without_a_wrapper_row() -> None:
     reducer = ProgressProjector()
     reducer.handle(
-        RunBegin(
+        run_begin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
             runnable="flow:research",
         )
     )
     header = reducer.handle(
-        StepBegin(
+        step_begin(
             step=StepRef.parse("run_root.0"),
             kind="run",
             given=RunStmt(span=SPAN, runnable="summarize"),
@@ -846,7 +868,7 @@ def test_flow_run_header_wraps_real_agic_steps_without_a_wrapper_row() -> None:
     )
     assert _rows(header.committed) == [["[0] Run summarize", ""]]
     reducer.handle(
-        RunBegin(
+        run_begin(
             run="run_child",
             parent=StepRef.parse("run_root.0"),
             control=ControlRef.for_run("run_child", 0),
@@ -854,7 +876,7 @@ def test_flow_run_header_wraps_real_agic_steps_without_a_wrapper_row() -> None:
         )
     )
     live = reducer.handle(
-        StepBegin(
+        step_begin(
             step=StepRef.parse("run_child.0"),
             kind="model",
             given=_model(),
@@ -862,7 +884,7 @@ def test_flow_run_header_wraps_real_agic_steps_without_a_wrapper_row() -> None:
     )
     assert _rows(live.live) == [["• Thinking"]]
     finalized = reducer.handle(
-        StepEnd(
+        step_end(
             step=StepRef.parse("run_child.0"),
             kind="model",
             status="succeeded",
@@ -880,9 +902,9 @@ def test_flow_run_header_wraps_real_agic_steps_without_a_wrapper_row() -> None:
         )
     )
     assert _rows(finalized.committed) == [["• Done."]]
-    reducer.handle(RunEnd(run="run_child", status="succeeded"))
+    reducer.handle(run_end(run="run_child", status="succeeded"))
     wrapper = reducer.handle(
-        StepEnd(
+        step_end(
             step=StepRef.parse("run_root.0"),
             kind="run",
             status="succeeded",
@@ -912,14 +934,14 @@ def test_tool_output_is_not_projected(
 ) -> None:
     reducer = ProgressProjector(show_boundaries=False)
     reducer.handle(
-        RunBegin(
+        run_begin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
             runnable="agic:demo",
         )
     )
     live = reducer.handle(
-        StepBegin(
+        step_begin(
             step=StepRef.parse("run_root.0"),
             kind="tool",
             given=_tool(),
@@ -928,7 +950,7 @@ def test_tool_output_is_not_projected(
     assert live.live[0].rows[0].tone == "active"
     assert live.live[0].rows[0].surface == "tool_summary"
     update = reducer.handle(
-        StepEnd(
+        step_end(
             step=StepRef.parse("run_root.0"),
             kind="tool",
             status="succeeded",
@@ -957,14 +979,14 @@ def test_tool_error_is_one_indented_line() -> None:
     projector = ProgressProjector(show_boundaries=False)
     path = StepRef.parse("run_root.0")
     projector.handle(
-        RunBegin(
+        run_begin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
             runnable="agic:demo",
         )
     )
     live = projector.handle(
-        StepBegin(
+        step_begin(
             step=path,
             kind="tool",
             given=_tool(summary="calling web search for Toolang"),
@@ -973,7 +995,7 @@ def test_tool_error_is_one_indented_line() -> None:
     assert _rows(live.live) == [["› calling web search for Toolang"]]
 
     terminal = projector.handle(
-        StepEnd(
+        step_end(
             step=path,
             kind="tool",
             status="failed",
@@ -999,14 +1021,14 @@ def test_canceled_tool_has_only_its_summary() -> None:
     projector = ProgressProjector(show_boundaries=False)
     path = StepRef.parse("run_root.0")
     projector.handle(
-        RunBegin(
+        run_begin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
             runnable="agic:demo",
         )
     )
     projector.handle(
-        StepBegin(
+        step_begin(
             step=path,
             kind="tool",
             given=_tool(summary="calling web search for Toolang"),
@@ -1014,7 +1036,7 @@ def test_canceled_tool_has_only_its_summary() -> None:
     )
 
     terminal = projector.handle(
-        StepEnd(
+        step_end(
             step=path,
             kind="tool",
             status="canceled",
@@ -1032,21 +1054,21 @@ def test_canceled_tool_has_only_its_summary() -> None:
 def test_flow_scalar_output_is_displayed_in_its_normal_output_slot() -> None:
     reducer = ProgressProjector(show_boundaries=False)
     reducer.handle(
-        RunBegin(
+        run_begin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
             runnable="flow:demo",
         )
     )
     reducer.handle(
-        StepBegin(
+        step_begin(
             step=StepRef.parse("run_root.0"),
             kind="value",
             given=LetStmt(span=SPAN, binding="topic", value="agent runtimes"),
         )
     )
     update = reducer.handle(
-        StepEnd(
+        step_end(
             step=StepRef.parse("run_root.0"),
             kind="value",
             status="succeeded",
@@ -1064,14 +1086,14 @@ def test_flow_list_output_uses_presentation_data_without_storage_tags() -> None:
     projector = ProgressProjector(show_boundaries=False)
     path = StepRef.parse("run_root.0")
     projector.handle(
-        RunBegin(
+        run_begin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
             runnable="flow:demo",
         )
     )
     projector.handle(
-        StepBegin(
+        step_begin(
             step=path,
             kind="value",
             given=LetStmt(span=SPAN, binding="queries", value="[]"),
@@ -1079,7 +1101,7 @@ def test_flow_list_output_uses_presentation_data_without_storage_tags() -> None:
     )
 
     terminal = projector.handle(
-        StepEnd(
+        step_end(
             step=path,
             kind="value",
             status="succeeded",
@@ -1096,14 +1118,14 @@ def test_flow_pointer_backed_output_is_not_displayed() -> None:
     projector = ProgressProjector(show_boundaries=False)
     path = StepRef.parse("run_root.0")
     projector.handle(
-        RunBegin(
+        run_begin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
             runnable="flow:demo",
         )
     )
     projector.handle(
-        StepBegin(
+        step_begin(
             step=path,
             kind="value",
             given=LetStmt(span=SPAN, binding="topic", value="source"),
@@ -1111,7 +1133,7 @@ def test_flow_pointer_backed_output_is_not_displayed() -> None:
     )
 
     terminal = projector.handle(
-        StepEnd(
+        step_end(
             step=path,
             kind="value",
             status="succeeded",
@@ -1136,14 +1158,14 @@ def test_flow_pointer_backed_output_is_not_displayed() -> None:
 def test_unbounded_repeat_progress_uses_shared_description() -> None:
     reducer = ProgressProjector()
     reducer.handle(
-        RunBegin(
+        run_begin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
             runnable="flow:work",
         )
     )
     header = reducer.handle(
-        StepBegin(
+        step_begin(
             step=StepRef.parse("run_root.0"),
             kind="loop",
             given=RepeatStmt(span=SPAN),
@@ -1156,14 +1178,14 @@ def test_unbounded_repeat_progress_uses_shared_description() -> None:
 def test_repeat_uses_flat_iteration_and_statement_boundaries(count: int | None) -> None:
     reducer = ProgressProjector()
     reducer.handle(
-        RunBegin(
+        run_begin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
             runnable="flow:work",
         )
     )
     repeat_header = reducer.handle(
-        StepBegin(
+        step_begin(
             step=StepRef.parse("run_root.2"),
             kind="loop",
             given=RepeatStmt(span=SPAN, count=count, runnable="completion_check"),
@@ -1178,7 +1200,7 @@ def test_repeat_uses_flat_iteration_and_statement_boundaries(count: int | None) 
         ]
     ]
     iteration_header = reducer.handle(
-        StepBegin(
+        step_begin(
             step=StepRef.parse("run_root.2.0"),
             kind="run",
             given=RunStmt(span=SPAN, runnable="review"),
@@ -1197,7 +1219,7 @@ def test_repeat_uses_flat_iteration_and_statement_boundaries(count: int | None) 
     ]
     assert iteration_header.committed[0].rows[0].leader == "iteration"
     reducer.handle(
-        RunBegin(
+        run_begin(
             run="run_review",
             parent=StepRef.parse("run_root.2.0"),
             control=ControlRef.for_run("run_review", 0),
@@ -1208,7 +1230,7 @@ def test_repeat_uses_flat_iteration_and_statement_boundaries(count: int | None) 
         )
     )
     live = reducer.handle(
-        StepBegin(
+        step_begin(
             step=StepRef.parse("run_review.0"),
             kind="model",
             given=_model(),
@@ -1216,16 +1238,16 @@ def test_repeat_uses_flat_iteration_and_statement_boundaries(count: int | None) 
     )
     assert _rows(live.live) == [["• Thinking"]]
     reducer.handle(
-        StepEnd(
+        step_end(
             step=StepRef.parse("run_review.0"),
             kind="model",
             status="succeeded",
             output=_parts("revised"),
         )
     )
-    reducer.handle(RunEnd(run="run_review", status="succeeded"))
+    reducer.handle(run_end(run="run_review", status="succeeded"))
     reducer.handle(
-        StepEnd(
+        step_end(
             step=StepRef.parse("run_root.2.0"),
             kind="run",
             status="succeeded",
@@ -1233,7 +1255,7 @@ def test_repeat_uses_flat_iteration_and_statement_boundaries(count: int | None) 
         )
     )
     completed = reducer.handle(
-        StepEnd(
+        step_end(
             step=StepRef.parse("run_root.2"),
             kind="loop",
             status="succeeded",
@@ -1254,14 +1276,14 @@ def test_repeat_uses_flat_iteration_and_statement_boundaries(count: int | None) 
 def test_until_run_shows_control_boundary_and_only_real_agic_steps() -> None:
     reducer = ProgressProjector()
     reducer.handle(
-        RunBegin(
+        run_begin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
             runnable="flow:work",
         )
     )
     repeat_header = reducer.handle(
-        StepBegin(
+        step_begin(
             step=StepRef.parse("run_root.0"),
             kind="loop",
             given=RepeatStmt(span=SPAN, count=3, runnable="completion_check"),
@@ -1271,7 +1293,7 @@ def test_until_run_shows_control_boundary_and_only_real_agic_steps() -> None:
         ["[0] Repeat up to 3 times, until completion_check is true", ""]
     ]
     reducer.handle(
-        RunBegin(
+        run_begin(
             run="run_until",
             parent=StepRef.parse("run_root.0"),
             control=ControlRef.for_run("run_until", 0),
@@ -1282,7 +1304,7 @@ def test_until_run_shows_control_boundary_and_only_real_agic_steps() -> None:
         )
     )
     live = reducer.handle(
-        StepBegin(
+        step_begin(
             step=StepRef.parse("run_until.0"),
             kind="model",
             given=_model(),
@@ -1293,7 +1315,7 @@ def test_until_run_shows_control_boundary_and_only_real_agic_steps() -> None:
     ]
     assert _rows(live.live) == [["• Thinking"]]
     final = reducer.handle(
-        StepEnd(
+        step_end(
             step=StepRef.parse("run_until.0"),
             kind="model",
             status="succeeded",
@@ -1315,14 +1337,14 @@ def test_until_run_shows_control_boundary_and_only_real_agic_steps() -> None:
 def test_named_flow_condition_preserves_its_until_boundary(kind, statement, label):
     reducer = ProgressProjector()
     reducer.handle(
-        RunBegin(
+        run_begin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
             runnable="flow:work",
         )
     )
     reducer.handle(
-        StepBegin(
+        step_begin(
             step=StepRef.parse("run_root.0"),
             kind="loop",
             given=RepeatStmt(
@@ -1334,7 +1356,7 @@ def test_named_flow_condition_preserves_its_until_boundary(kind, statement, labe
         )
     )
     reducer.handle(
-        RunBegin(
+        run_begin(
             run="run_check",
             parent=StepRef.parse("run_root.0"),
             control=ControlRef.for_run("run_check", 0),
@@ -1345,7 +1367,7 @@ def test_named_flow_condition_preserves_its_until_boundary(kind, statement, labe
         )
     )
     update = reducer.handle(
-        StepBegin(step=StepRef.parse("run_check.0"), kind=kind, given=statement)
+        step_begin(step=StepRef.parse("run_check.0"), kind=kind, given=statement)
     )
     assert _rows(update.committed) == [
         ["<?> Run check to check whether to break", "", f"[0] {label}", ""]
@@ -1355,14 +1377,14 @@ def test_named_flow_condition_preserves_its_until_boundary(kind, statement, labe
 def test_parallel_lane_is_single_line_and_terminal_failure_replaces_lanes() -> None:
     reducer = ProgressProjector(show_boundaries=False)
     reducer.handle(
-        RunBegin(
+        run_begin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
             runnable="flow:work",
         )
     )
     reducer.handle(
-        StepBegin(
+        step_begin(
             step=StepRef.parse("run_root.0"),
             kind="par",
             given=MapStmt(span=SPAN, runnable="search_web", lanes=2),
@@ -1370,7 +1392,7 @@ def test_parallel_lane_is_single_line_and_terminal_failure_replaces_lanes() -> N
     )
     for item in range(2):
         reducer.handle(
-            RunBegin(
+            run_begin(
                 run=f"run_child_{item}",
                 parent=StepRef.parse("run_root.0"),
                 control=ControlRef.for_run(f"run_child_{item}", 0),
@@ -1382,7 +1404,7 @@ def test_parallel_lane_is_single_line_and_terminal_failure_replaces_lanes() -> N
             )
         )
         reducer.handle(
-            StepBegin(
+            step_begin(
                 step=StepRef.parse(f"run_child_{item}.0"),
                 kind="tool" if item == 0 else "model",
                 given=_tool("fetch_page") if item == 0 else _model(),
@@ -1390,10 +1412,10 @@ def test_parallel_lane_is_single_line_and_terminal_failure_replaces_lanes() -> N
         )
 
     model = StepRef.parse("run_child_1.0")
-    reducer.handle(PartBegin(step=model, part=0, part_type="text"))
+    reducer.handle(PartBegin(step=str(model), part=0, part_type="text"))
     streamed = reducer.handle(
         PartDelta(
-            step=model,
+            step=str(model),
             part=0,
             delta=TextDelta("first lane line\nsecond lane line"),
         )
@@ -1407,7 +1429,7 @@ def test_parallel_lane_is_single_line_and_terminal_failure_replaces_lanes() -> N
     ]
 
     failed = reducer.handle(
-        StepEnd(
+        step_end(
             step=StepRef.parse("run_child_0.0"),
             kind="tool",
             status="failed",
@@ -1422,7 +1444,7 @@ def test_parallel_lane_is_single_line_and_terminal_failure_replaces_lanes() -> N
         ]
     ]
     child_failed = reducer.handle(
-        RunEnd(
+        run_end(
             run="run_child_0",
             status="failed",
             error=ErrorRef(FieldRef.from_path(StepRef.parse("run_child_0.0"), "error")),
@@ -1436,22 +1458,22 @@ def test_parallel_lane_is_single_line_and_terminal_failure_replaces_lanes() -> N
         ]
     ]
     reducer.handle(
-        PartEnd(
-            step=model,
+        part_end(
+            step=str(model),
             part=0,
             data=TextPart("first lane line\nsecond lane line"),
         )
     )
     reducer.handle(
-        StepEnd(
+        step_end(
             step=model,
             kind="model",
             status="canceled",
         )
     )
-    reducer.handle(RunEnd(run="run_child_1", status="canceled"))
+    reducer.handle(run_end(run="run_child_1", status="canceled"))
     terminal = reducer.handle(
-        StepEnd(
+        step_end(
             step=StepRef.parse("run_root.0"),
             kind="par",
             status="failed",
@@ -1479,14 +1501,14 @@ def test_parallel_cancellation_accounts_for_items_that_never_started() -> None:
     projector = ProgressProjector(show_boundaries=False)
     par = StepRef.parse("run_root.0")
     projector.handle(
-        RunBegin(
+        run_begin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
             runnable="flow:work",
         )
     )
     projector.handle(
-        StepBegin(
+        step_begin(
             step=par,
             kind="par",
             given=MapStmt(span=SPAN, runnable="search", lanes=2),
@@ -1494,7 +1516,7 @@ def test_parallel_cancellation_accounts_for_items_that_never_started() -> None:
     )
     for item in range(2):
         projector.handle(
-            RunBegin(
+            run_begin(
                 run=f"run_child_{item}",
                 parent=par,
                 control=ControlRef.for_run(f"run_child_{item}", 0),
@@ -1505,12 +1527,12 @@ def test_parallel_cancellation_accounts_for_items_that_never_started() -> None:
                 ),
             )
         )
-    live = projector.handle(RunEnd(run="run_child_0", status="succeeded"))
+    live = projector.handle(run_end(run="run_child_0", status="succeeded"))
     assert live.live[0].rows[0].text == "• Running · 1 active · 1/4 succeeded"
 
-    live = projector.handle(RunEnd(run="run_child_1", status="canceled"))
+    live = projector.handle(run_end(run="run_child_1", status="canceled"))
     assert live.live[0].rows[0].text == "• Running · 1/4 succeeded"
-    terminal = projector.handle(StepEnd(step=par, kind="par", status="canceled"))
+    terminal = projector.handle(step_end(step=par, kind="par", status="canceled"))
     assert _rows(terminal.committed) == [
         ["• Canceled · 1 canceled · 2 not started · 1/4 succeeded", "  2 runs", ""]
     ]
@@ -1523,21 +1545,21 @@ def test_parent_error_pointers_are_silent_but_ownerless_run_errors_are_visible()
 ):
     reducer = ProgressProjector(show_boundaries=False)
     reducer.handle(
-        RunBegin(
+        run_begin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
             runnable="agic:demo",
         )
     )
     reducer.handle(
-        StepBegin(
+        step_begin(
             step=StepRef.parse("run_root.0"),
             kind="tool",
             given=_tool("fetch_page"),
         )
     )
     leaf = reducer.handle(
-        StepEnd(
+        step_end(
             step=StepRef.parse("run_root.0"),
             kind="tool",
             status="failed",
@@ -1546,7 +1568,7 @@ def test_parent_error_pointers_are_silent_but_ownerless_run_errors_are_visible()
     )
     assert "connection closed" in "\n".join(_rows(leaf.committed)[0])
     root = reducer.handle(
-        RunEnd(
+        run_end(
             run="run_root",
             status="failed",
             error=ErrorRef(FieldRef.from_path(StepRef.parse("run_root.0"), "error")),
@@ -1556,14 +1578,14 @@ def test_parent_error_pointers_are_silent_but_ownerless_run_errors_are_visible()
 
     ownerless = ProgressProjector()
     ownerless.handle(
-        RunBegin(
+        run_begin(
             run="run_other",
             control=ControlRef.for_run("run_other", 0),
             runnable="agic:demo",
         )
     )
     update = ownerless.handle(
-        RunEnd(
+        run_end(
             run="run_other",
             status="failed",
             error=ErrorMessage("progress stream ended before run completion"),
@@ -1577,14 +1599,14 @@ def test_parent_error_pointers_are_silent_but_ownerless_run_errors_are_visible()
 def test_malformed_part_sequence_becomes_one_root_diagnostic() -> None:
     reducer = ProgressProjector()
     reducer.handle(
-        RunBegin(
+        run_begin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
             runnable="agic:demo",
         )
     )
     reducer.handle(
-        StepBegin(
+        step_begin(
             step=StepRef.parse("run_root.0"),
             kind="model",
             given=_model(),
@@ -1592,7 +1614,7 @@ def test_malformed_part_sequence_becomes_one_root_diagnostic() -> None:
     )
     update = reducer.handle(
         PartDelta(
-            step=StepRef.parse("run_root.0"),
+            step=str(StepRef.parse("run_root.0")),
             part=0,
             delta=TextDelta(text="bad"),
         )
@@ -1601,19 +1623,34 @@ def test_malformed_part_sequence_becomes_one_root_diagnostic() -> None:
     assert "PartDelta without active Part" in _rows(update.committed)[0][0]
 
 
+def test_step_cannot_end_while_its_child_run_is_active() -> None:
+    projector = ProgressProjector(show_boundaries=False)
+    owner = StepRef.parse("run_root.0")
+    projector.handle(run_begin("run_root", 0, "flow:parent"))
+    projector.handle(step_begin(owner, "run", RunStmt(span=SPAN, runnable="child")))
+    projector.handle(run_begin("run_child", 0, "agic:child", parent=owner))
+
+    update = projector.handle(step_end(owner, "run", "succeeded"))
+
+    assert _rows(update.committed) == [
+        ["• StepEnd with active child Run for run_root.0"]
+    ]
+    assert update.live == ()
+
+
 def test_terminal_diagnostic_preserves_the_active_statement_header() -> None:
     projector = ProgressProjector()
     flow = StepRef.parse("run_root.0")
     model = StepRef.parse("run_child.0")
     projector.handle(
-        RunBegin(
+        run_begin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
             runnable="flow:research",
         )
     )
     projector.handle(
-        StepBegin(
+        step_begin(
             step=flow,
             kind="run",
             given=RunStmt(
@@ -1624,17 +1661,17 @@ def test_terminal_diagnostic_preserves_the_active_statement_header() -> None:
         )
     )
     projector.handle(
-        RunBegin(
+        run_begin(
             run="run_child",
             parent=flow,
             control=ControlRef.for_run("run_child", 0),
             runnable="agic:synthesize",
         )
     )
-    projector.handle(StepBegin(step=model, kind="model", given=_model()))
-    projector.handle(PartBegin(step=model, part=0, part_type="text"))
+    projector.handle(step_begin(step=model, kind="model", given=_model()))
+    projector.handle(PartBegin(step=str(model), part=0, part_type="text"))
 
-    update = projector.handle(StepEnd(step=model, kind="model", status="canceled"))
+    update = projector.handle(step_end(step=model, kind="model", status="canceled"))
 
     assert _rows(update.committed) == [["• StepEnd with active Part for run_child.0"]]
     assert update.live == ()
@@ -1644,14 +1681,14 @@ def test_parallel_lane_cannot_be_reused_while_its_run_is_active() -> None:
     projector = ProgressProjector(show_boundaries=False)
     par = StepRef.parse("run_root.0")
     projector.handle(
-        RunBegin(
+        run_begin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
             runnable="flow:demo",
         )
     )
     projector.handle(
-        StepBegin(
+        step_begin(
             step=par,
             kind="par",
             given=MapStmt(span=SPAN, runnable="work", lanes=1),
@@ -1662,7 +1699,7 @@ def test_parallel_lane_cannot_be_reused_while_its_run_is_active() -> None:
         lane=OccurrencePosition(index=0, count=1),
     )
     projector.handle(
-        RunBegin(
+        run_begin(
             run="run_first",
             parent=par,
             control=ControlRef.for_run("run_first", 0),
@@ -1672,7 +1709,7 @@ def test_parallel_lane_cannot_be_reused_while_its_run_is_active() -> None:
     )
 
     duplicate = projector.handle(
-        RunBegin(
+        run_begin(
             run="run_second",
             parent=par,
             control=ControlRef.for_run("run_second", 0),
@@ -1690,21 +1727,21 @@ def test_parallel_lane_cannot_be_reused_while_its_run_is_active() -> None:
 def test_run_end_with_active_step_clears_live_with_one_diagnostic() -> None:
     reducer = ProgressProjector()
     reducer.handle(
-        RunBegin(
+        run_begin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
             runnable="agic:demo",
         )
     )
     reducer.handle(
-        StepBegin(
+        step_begin(
             step=StepRef.parse("run_root.0"),
             kind="model",
             given=_model(),
         )
     )
 
-    update = reducer.handle(RunEnd(run="run_root", status="canceled"))
+    update = reducer.handle(run_end(run="run_root", status="canceled"))
 
     assert update.live == ()
     assert _rows(update.committed) == [["• RunEnd with active Step for run_root"]]
@@ -1717,12 +1754,12 @@ def test_nested_cancellation_is_rendered_once_at_the_leaf() -> None:
     finalized: list[ProgressBlock] = []
 
     events = (
-        RunBegin(
+        run_begin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
             runnable="flow:research",
         ),
-        StepBegin(
+        step_begin(
             step=flow,
             kind="run",
             given=RunStmt(
@@ -1732,26 +1769,26 @@ def test_nested_cancellation_is_rendered_once_at_the_leaf() -> None:
             ),
             started_at="2026-01-01T00:00:00Z",
         ),
-        RunBegin(
+        run_begin(
             run="run_child",
             parent=flow,
             control=ControlRef.for_run("run_child", 0),
             runnable="agic:expand_queries",
         ),
-        StepBegin(step=model, kind="model", given=_model()),
-        StepEnd(step=model, kind="model", status="canceled"),
-        RunEnd(
+        step_begin(step=model, kind="model", given=_model()),
+        step_end(step=model, kind="model", status="canceled"),
+        run_end(
             run="run_child",
             status="canceled",
             error=ErrorMessage("canceled"),
         ),
-        StepEnd(
+        step_end(
             step=flow,
             kind="run",
             status="canceled",
             finished_at="2026-01-01T00:00:02Z",
         ),
-        RunEnd(
+        run_end(
             run="run_root",
             status="canceled",
             error=ErrorMessage("script interrupted"),
@@ -1772,71 +1809,40 @@ def test_nested_cancellation_is_rendered_once_at_the_leaf() -> None:
     ]
 
 
-def test_cyclic_error_pointer_becomes_one_terminal_diagnostic() -> None:
-    reducer = ProgressProjector(show_boundaries=False)
-    reducer.handle(
-        RunBegin(
-            run="run_root",
-            control=ControlRef.for_run("run_root", 0),
-            runnable="agic:demo",
-        )
-    )
-    for index in range(2):
-        reducer.handle(
-            StepBegin(
-                step=StepRef.parse(f"run_root.{index}"),
-                kind="model",
-                given=_model(),
-            )
-        )
-    reducer.handle(
-        StepEnd(
-            step=StepRef.parse("run_root.0"),
-            kind="model",
-            status="failed",
-            error=ErrorRef(FieldRef.from_path(StepRef.parse("run_root.1"), "error")),
-        )
-    )
-    reducer.handle(
-        StepEnd(
-            step=StepRef.parse("run_root.1"),
-            kind="model",
-            status="failed",
-            error=ErrorRef(FieldRef.from_path(StepRef.parse("run_root.0"), "error")),
-        )
-    )
+def test_unobserved_error_source_keeps_direct_error_text() -> None:
+    from toolang.execution.events import RunEnd
 
+    reducer = ProgressProjector(show_boundaries=False)
+    reducer.handle(run_begin("run_root", 0, "agic:demo"))
     update = reducer.handle(
         RunEnd(
-            run="run_root",
-            status="failed",
-            error=ErrorRef(FieldRef.from_path(StepRef.parse("run_root.0"), "error")),
+            "run_root",
+            "failed",
+            error="nested operation failed",
+            error_source="run_other.0",
         )
     )
-
-    assert _rows(update.committed) == [
-        ["• could not resolve execution error run_root.0/error"]
-    ]
+    assert _rows(update.committed) == [["• nested operation failed"]]
 
 
 def test_compact_mode_removes_repeat_boundaries_but_keeps_agic_activity() -> None:
     reducer = ProgressProjector(show_boundaries=False)
     reducer.handle(
-        RunBegin(
+        run_begin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
             runnable="flow:work",
         )
     )
     reducer.handle(
-        StepBegin(
+        step_begin(
             step=StepRef.parse("run_root.0"),
             kind="loop",
             given=RepeatStmt(span=SPAN, count=2),
         )
     )
     reducer.handle(
-        StepBegin(
+        step_begin(
             step=StepRef.parse("run_root.0.0"),
             kind="run",
             given=RunStmt(span=SPAN, runnable="review"),
@@ -1846,7 +1852,7 @@ def test_compact_mode_removes_repeat_boundaries_but_keeps_agic_activity() -> Non
         )
     )
     reducer.handle(
-        RunBegin(
+        run_begin(
             run="run_review",
             parent=StepRef.parse("run_root.0.0"),
             control=ControlRef.for_run("run_review", 0),
@@ -1854,7 +1860,7 @@ def test_compact_mode_removes_repeat_boundaries_but_keeps_agic_activity() -> Non
         )
     )
     live = reducer.handle(
-        StepBegin(
+        step_begin(
             step=StepRef.parse("run_review.0"),
             kind="model",
             given=_model(),
@@ -1868,21 +1874,21 @@ def test_nested_flow_inside_parallel_stays_in_one_reusable_lane() -> None:
     reducer = ProgressProjector(show_boundaries=False)
     par = StepRef.parse("run_root.0")
     reducer.handle(
-        RunBegin(
+        run_begin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
             runnable="flow:work",
         )
     )
     reducer.handle(
-        StepBegin(
+        step_begin(
             step=par,
             kind="par",
             given=MapStmt(span=SPAN, runnable="child_flow", lanes=1),
         )
     )
     reducer.handle(
-        RunBegin(
+        run_begin(
             run="run_flow_0",
             parent=par,
             control=ControlRef.for_run("run_flow_0", 0),
@@ -1894,14 +1900,14 @@ def test_nested_flow_inside_parallel_stays_in_one_reusable_lane() -> None:
         )
     )
     reducer.handle(
-        StepBegin(
+        step_begin(
             step=StepRef.parse("run_flow_0.0"),
             kind="run",
             given=RunStmt(span=SPAN, runnable="fetch"),
         )
     )
     reducer.handle(
-        RunBegin(
+        run_begin(
             run="run_fetch",
             parent=StepRef.parse("run_flow_0.0"),
             control=ControlRef.for_run("run_fetch", 0),
@@ -1909,7 +1915,7 @@ def test_nested_flow_inside_parallel_stays_in_one_reusable_lane() -> None:
         )
     )
     live = reducer.handle(
-        StepBegin(
+        step_begin(
             step=StepRef.parse("run_fetch.0"),
             kind="tool",
             given=_tool("fetch_page"),
@@ -1922,7 +1928,7 @@ def test_nested_flow_inside_parallel_stays_in_one_reusable_lane() -> None:
         ]
     ]
     reducer.handle(
-        StepEnd(
+        step_end(
             step=StepRef.parse("run_fetch.0"),
             kind="tool",
             status="succeeded",
@@ -1942,9 +1948,9 @@ def test_nested_flow_inside_parallel_stays_in_one_reusable_lane() -> None:
             ),
         )
     )
-    reducer.handle(RunEnd(run="run_fetch", status="succeeded"))
+    reducer.handle(run_end(run="run_fetch", status="succeeded"))
     flow_finished = reducer.handle(
-        StepEnd(
+        step_end(
             step=StepRef.parse("run_flow_0.0"),
             kind="run",
             status="succeeded",
@@ -1954,9 +1960,9 @@ def test_nested_flow_inside_parallel_stays_in_one_reusable_lane() -> None:
     flow_live = "\n".join(_rows(flow_finished.live)[0])
     assert "executed fetch_page" in flow_live
     assert "executed tool" not in flow_live
-    reducer.handle(RunEnd(run="run_flow_0", status="succeeded"))
+    reducer.handle(run_end(run="run_flow_0", status="succeeded"))
     reused = reducer.handle(
-        RunBegin(
+        run_begin(
             run="run_flow_1",
             parent=par,
             control=ControlRef.for_run("run_flow_1", 0),
@@ -1974,9 +1980,9 @@ def test_nested_flow_inside_parallel_stays_in_one_reusable_lane() -> None:
             "  0 | #1 | • starting",
         ]
     ]
-    reducer.handle(RunEnd(run="run_flow_1", status="succeeded"))
+    reducer.handle(run_end(run="run_flow_1", status="succeeded"))
     terminal = reducer.handle(
-        StepEnd(
+        step_end(
             step=par,
             kind="par",
             status="succeeded",
@@ -1996,7 +2002,7 @@ def test_nested_flow_inside_parallel_stays_in_one_reusable_lane() -> None:
 def test_finalized_blocks_are_returned_in_step_completion_order() -> None:
     reducer = ProgressProjector(show_boundaries=False)
     reducer.handle(
-        RunBegin(
+        run_begin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
             runnable="agic:demo",
@@ -2004,7 +2010,7 @@ def test_finalized_blocks_are_returned_in_step_completion_order() -> None:
     )
     for index in range(2):
         reducer.handle(
-            StepBegin(
+            step_begin(
                 step=StepRef.parse(f"run_root.{index}"),
                 kind="model",
                 given=_model(),
@@ -2012,7 +2018,7 @@ def test_finalized_blocks_are_returned_in_step_completion_order() -> None:
         )
 
     second = reducer.handle(
-        StepEnd(
+        step_end(
             step=StepRef.parse("run_root.1"),
             kind="model",
             status="succeeded",
@@ -2020,7 +2026,7 @@ def test_finalized_blocks_are_returned_in_step_completion_order() -> None:
         )
     )
     first = reducer.handle(
-        StepEnd(
+        step_end(
             step=StepRef.parse("run_root.0"),
             kind="model",
             status="succeeded",
@@ -2035,14 +2041,14 @@ def test_finalized_blocks_are_returned_in_step_completion_order() -> None:
 def test_model_terminal_preserves_complete_multiline_output() -> None:
     projector = ProgressProjector(show_boundaries=False)
     projector.handle(
-        RunBegin(
+        run_begin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
             runnable="agic:demo",
         )
     )
     projector.handle(
-        StepBegin(
+        step_begin(
             step=StepRef.parse("run_root.0"),
             kind="model",
             given=_model(),
@@ -2051,7 +2057,7 @@ def test_model_terminal_preserves_complete_multiline_output() -> None:
     long_line = "x" * 240
 
     terminal = projector.handle(
-        StepEnd(
+        step_end(
             step=StepRef.parse("run_root.0"),
             kind="model",
             status="succeeded",
@@ -2079,14 +2085,14 @@ def test_loop_terminal_uses_typed_termination(
     projector = ProgressProjector(show_boundaries=False)
     path = StepRef.parse("run_root.0")
     projector.handle(
-        RunBegin(
+        run_begin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
             runnable="flow:demo",
         )
     )
     projector.handle(
-        StepBegin(
+        step_begin(
             step=path,
             kind="loop",
             given=RepeatStmt(span=SPAN, count=3),
@@ -2097,7 +2103,7 @@ def test_loop_terminal_uses_typed_termination(
     ]
 
     terminal = projector.handle(
-        StepEnd(
+        step_end(
             step=path,
             kind="loop",
             status=status,
@@ -2127,14 +2133,14 @@ def test_loop_direct_failure_keeps_error_and_termination_summary() -> None:
     projector = ProgressProjector(show_boundaries=False)
     path = StepRef.parse("run_root.0")
     projector.handle(
-        RunBegin(
+        run_begin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
             runnable="flow:demo",
         )
     )
     projector.handle(
-        StepBegin(
+        step_begin(
             step=path,
             kind="loop",
             given=RepeatStmt(span=SPAN, count=3),
@@ -2142,7 +2148,7 @@ def test_loop_direct_failure_keeps_error_and_termination_summary() -> None:
     )
 
     terminal = projector.handle(
-        StepEnd(
+        step_end(
             step=path,
             kind="loop",
             status="failed",
@@ -2164,14 +2170,14 @@ def test_settle_uses_the_shared_loop_iteration_boundary() -> None:
     projector = ProgressProjector()
     loop = StepRef.parse("run_root.0")
     projector.handle(
-        RunBegin(
+        run_begin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
             runnable="flow:demo",
         )
     )
     header = projector.handle(
-        StepBegin(
+        step_begin(
             step=loop,
             kind="loop",
             given=ReduceStmt(span=SPAN, runnable="merge_pair"),
@@ -2181,7 +2187,7 @@ def test_settle_uses_the_shared_loop_iteration_boundary() -> None:
         ["[0] Reduce all items into one with merge_pair sequentially", ""]
     ]
     projector.handle(
-        RunBegin(
+        run_begin(
             run="run_merge",
             parent=loop,
             control=ControlRef.for_run("run_merge", 0),
@@ -2194,7 +2200,7 @@ def test_settle_uses_the_shared_loop_iteration_boundary() -> None:
     )
 
     live = projector.handle(
-        StepBegin(
+        step_begin(
             step=StepRef.parse("run_merge.0"),
             kind="model",
             given=_model(),
@@ -2211,14 +2217,14 @@ def test_parallel_terminal_retains_each_independent_failed_lane() -> None:
     projector = ProgressProjector(show_boundaries=False)
     par = StepRef.parse("run_root.0")
     projector.handle(
-        RunBegin(
+        run_begin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
             runnable="flow:demo",
         )
     )
     projector.handle(
-        StepBegin(
+        step_begin(
             step=par,
             kind="par",
             given=MapStmt(span=SPAN, runnable="fetch", lanes=2),
@@ -2228,7 +2234,7 @@ def test_parallel_terminal_retains_each_independent_failed_lane() -> None:
         run_id = f"run_lane_{lane}"
         step = StepRef.parse(f"{run_id}.0")
         projector.handle(
-            RunBegin(
+            run_begin(
                 run=run_id,
                 parent=par,
                 control=ControlRef.for_run(run_id, 0),
@@ -2239,9 +2245,9 @@ def test_parallel_terminal_retains_each_independent_failed_lane() -> None:
                 ),
             )
         )
-        projector.handle(StepBegin(step=step, kind="model", given=_model()))
+        projector.handle(step_begin(step=step, kind="model", given=_model()))
         projector.handle(
-            StepEnd(
+            step_end(
                 step=step,
                 kind="model",
                 status="failed",
@@ -2249,7 +2255,7 @@ def test_parallel_terminal_retains_each_independent_failed_lane() -> None:
             )
         )
         projector.handle(
-            RunEnd(
+            run_end(
                 run=run_id,
                 status="failed",
                 error=ErrorRef(FieldRef.from_path(step, "error")),
@@ -2257,7 +2263,7 @@ def test_parallel_terminal_retains_each_independent_failed_lane() -> None:
         )
 
     terminal = projector.handle(
-        StepEnd(
+        step_end(
             step=par,
             kind="par",
             status="failed",
@@ -2276,21 +2282,21 @@ def test_nested_parallel_direct_error_is_preserved_by_the_outer_lane() -> None:
     outer = StepRef.parse("run_root.0")
     inner = StepRef.parse("run_child.0")
     projector.handle(
-        RunBegin(
+        run_begin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
             runnable="flow:demo",
         )
     )
     projector.handle(
-        StepBegin(
+        step_begin(
             step=outer,
             kind="par",
             given=MapStmt(span=SPAN, runnable="child", lanes=1),
         )
     )
     projector.handle(
-        RunBegin(
+        run_begin(
             run="run_child",
             parent=outer,
             control=ControlRef.for_run("run_child", 0),
@@ -2302,14 +2308,14 @@ def test_nested_parallel_direct_error_is_preserved_by_the_outer_lane() -> None:
         )
     )
     projector.handle(
-        StepBegin(
+        step_begin(
             step=inner,
             kind="par",
             given=MapStmt(span=SPAN, runnable="leaf", lanes=1),
         )
     )
     projector.handle(
-        StepEnd(
+        step_end(
             step=inner,
             kind="par",
             status="failed",
@@ -2317,7 +2323,7 @@ def test_nested_parallel_direct_error_is_preserved_by_the_outer_lane() -> None:
         )
     )
     projector.handle(
-        RunEnd(
+        run_end(
             run="run_child",
             status="failed",
             error=ErrorRef(FieldRef.from_path(inner, "error")),
@@ -2325,7 +2331,7 @@ def test_nested_parallel_direct_error_is_preserved_by_the_outer_lane() -> None:
     )
 
     terminal = projector.handle(
-        StepEnd(
+        step_end(
             step=outer,
             kind="par",
             status="failed",
@@ -2351,21 +2357,21 @@ def test_nested_parallel_boundary_error_does_not_replace_the_leaf_error() -> Non
     inner = StepRef.parse("run_child.0")
     leaf = StepRef.parse("run_leaf.0")
     projector.handle(
-        RunBegin(
+        run_begin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
             runnable="flow:demo",
         )
     )
     projector.handle(
-        StepBegin(
+        step_begin(
             step=outer,
             kind="par",
             given=MapStmt(span=SPAN, runnable="child", lanes=1),
         )
     )
     projector.handle(
-        RunBegin(
+        run_begin(
             run="run_child",
             parent=outer,
             control=ControlRef.for_run("run_child", 0),
@@ -2377,14 +2383,14 @@ def test_nested_parallel_boundary_error_does_not_replace_the_leaf_error() -> Non
         )
     )
     projector.handle(
-        StepBegin(
+        step_begin(
             step=inner,
             kind="par",
             given=MapStmt(span=SPAN, runnable="leaf", lanes=1),
         )
     )
     projector.handle(
-        RunBegin(
+        run_begin(
             run="run_leaf",
             parent=inner,
             control=ControlRef.for_run("run_leaf", 0),
@@ -2395,9 +2401,9 @@ def test_nested_parallel_boundary_error_does_not_replace_the_leaf_error() -> Non
             ),
         )
     )
-    projector.handle(StepBegin(step=leaf, kind="model", given=_model()))
+    projector.handle(step_begin(step=leaf, kind="model", given=_model()))
     projector.handle(
-        StepEnd(
+        step_end(
             step=leaf,
             kind="model",
             status="failed",
@@ -2405,14 +2411,14 @@ def test_nested_parallel_boundary_error_does_not_replace_the_leaf_error() -> Non
         )
     )
     projector.handle(
-        RunEnd(
+        run_end(
             run="run_leaf",
             status="failed",
             error=ErrorRef(FieldRef.from_path(leaf, "error")),
         )
     )
     projector.handle(
-        StepEnd(
+        step_end(
             step=inner,
             kind="par",
             status="failed",
@@ -2420,7 +2426,7 @@ def test_nested_parallel_boundary_error_does_not_replace_the_leaf_error() -> Non
         )
     )
     projector.handle(
-        RunEnd(
+        run_end(
             run="run_child",
             status="failed",
             error=ErrorRef(FieldRef.from_path(inner, "error")),
@@ -2428,7 +2434,7 @@ def test_nested_parallel_boundary_error_does_not_replace_the_leaf_error() -> Non
     )
 
     terminal = projector.handle(
-        StepEnd(
+        step_end(
             step=outer,
             kind="par",
             status="failed",
@@ -2442,44 +2448,44 @@ def test_nested_parallel_boundary_error_does_not_replace_the_leaf_error() -> Non
 
 
 def test_restore_replaces_transient_parts_without_reprinting_final_output():
-    root = RunBegin("run_test", ControlRef.for_run("run_test", 0))
-    first = StepBegin(StepRef.parse("run_test.0"), "model", _model())
-    end = StepEnd(first.step, "model", "succeeded", output=_parts("done"))
-    live = StepBegin(StepRef.parse("run_test.1"), "model", _model())
+    root = run_begin("run_test", ControlRef.for_run("run_test", 0))
+    first = step_begin(StepRef.parse("run_test.0"), "model", _model())
+    end = step_end(first.step, "model", "succeeded", output=_parts("done"))
+    live = step_begin(StepRef.parse("run_test.1"), "model", _model())
     projector = ProgressProjector()
     for event in (
         root,
         first,
         end,
         live,
-        PartBegin(live.step, 0, "text"),
-        PartDelta(live.step, 0, TextDelta("unfinished")),
+        PartBegin(str(live.step), 0, "text"),
+        PartDelta(str(live.step), 0, TextDelta("unfinished")),
     ):
         projector.handle(event)
     restored = projector.restore((root, first, end, live))
     assert not restored.committed
     assert "unfinished" not in str(restored.live)
     finished = projector.handle(
-        StepEnd(live.step, "model", "succeeded", output=_parts("new final"))
+        step_end(live.step, "model", "succeeded", output=_parts("new final"))
     )
     assert "new final" in str(finished.committed)
     assert "diagnostic" not in str(finished)
 
 
 def test_restore_does_not_repeat_finalized_streamed_markdown():
-    root = RunBegin("run_test", ControlRef.for_run("run_test", 0))
-    first = StepBegin(StepRef.parse("run_test.0"), "model", _model())
-    end = StepEnd(
+    root = run_begin("run_test", ControlRef.for_run("run_test", 0))
+    first = step_begin(StepRef.parse("run_test.0"), "model", _model())
+    end = step_end(
         first.step, "model", "succeeded", output=_parts("# Heading\n\nAnswer")
     )
-    live = StepBegin(StepRef.parse("run_test.1"), "model", _model())
+    live = step_begin(StepRef.parse("run_test.1"), "model", _model())
     projector = ProgressProjector()
     for event in (
         root,
         first,
-        PartBegin(first.step, 0, "text"),
-        PartDelta(first.step, 0, TextDelta("# Heading\n\nAnswer")),
-        PartEnd(first.step, 0, TextPart("# Heading\n\nAnswer")),
+        PartBegin(str(first.step), 0, "text"),
+        PartDelta(str(first.step), 0, TextDelta("# Heading\n\nAnswer")),
+        part_end(str(first.step), 0, TextPart("# Heading\n\nAnswer")),
         end,
         live,
     ):
