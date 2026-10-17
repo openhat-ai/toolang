@@ -33,6 +33,7 @@ from ...types import (
     history_position,
     ModelStepGiven,
     ModelStepNoted,
+    ToolStepNoted,
     Output,
     RunRef,
     StepRef,
@@ -214,7 +215,13 @@ async def execute(
     for step in steps:
         if step.status == "running":
             await execution.finish_step(
-                step=step.ref, kind=step.kind, status="canceled", finished_at=utc_now()
+                step=step.ref,
+                kind=step.kind,
+                status="canceled",
+                noted=ModelStepNoted()
+                if step.kind == "model"
+                else ToolStepNoted("Canceled compact history read"),
+                finished_at=utc_now(),
             )
     cached_root: RunRef | None = None
     units: dict[RunRef | StepRef, compaction.HistoryUnit] = {}
@@ -318,6 +325,7 @@ async def execute(
                 run_id=model.run_id,
             )
             execution.require_model_pricing(spec.model)
+            execution.begin_call(model, "model")
             response = await spec.adapter.invoke(spec.model, call, environ=spec.environ)
             reducer.validate_summary(response)
             assert response.message is not None
@@ -331,7 +339,7 @@ async def execute(
                 if response
                 else None
             )
-            accounting = execution.model_accounting(spec.model, usage)
+            noted = execution.model_noted(model, spec.model, usage)
             if store.get_step(ref=model) is not None:
                 await execution.finish_step(
                     step=model,
@@ -339,12 +347,12 @@ async def execute(
                     status="canceled"
                     if isinstance(exc, asyncio.CancelledError)
                     else "failed",
-                    noted=ModelStepNoted(accounting=accounting),
+                    noted=noted,
                     error=ErrorMessage(str(exc)) if str(exc) else None,
                     finished_at=utc_now(),
                 )
             if usage is not None:
-                execution.record_model_accounting(spec.model, accounting)
+                execution.record_model_usage(spec.model, noted)
             if isinstance(exc, ModelResponseError):
                 reducer.reject(exc)
                 continue
@@ -352,7 +360,7 @@ async def execute(
                 reducer.retry_summary(exc)
                 continue
             raise
-        accounting = execution.model_accounting(spec.model, response.usage)
+        noted = execution.model_noted(model, spec.model, response.usage)
         assert response.message is not None
         try:
             await execution.finish_step(
@@ -362,11 +370,11 @@ async def execute(
                 output=Output(
                     value_for_type("Part[]", tuple(response.message.parts)), "_"
                 ),
-                noted=ModelStepNoted(accounting=accounting),
+                noted=noted,
                 finished_at=utc_now(),
             )
         finally:
-            execution.record_model_accounting(spec.model, accounting)
+            execution.record_model_usage(spec.model, noted)
         reducer.accept(response)
     return Local(reducer.summary, type_name="Text")
 

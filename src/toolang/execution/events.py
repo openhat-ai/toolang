@@ -20,6 +20,7 @@ from .types import (
     StepKind,
     StepStatus,
     validate_occurrence,
+    TokenUsage,
 )
 
 
@@ -93,18 +94,6 @@ class ControlApplied:
 
 
 @dataclass(frozen=True, slots=True)
-class Usage:
-    """Usage and selected USD cost needed for existing client summaries."""
-
-    input_tokens: int
-    output_tokens: int
-    cache_read_tokens: int | None = None
-    reasoning_tokens: int | None = None
-    cost: float | None = None
-    approximate: bool = True
-
-
-@dataclass(frozen=True, slots=True)
 class StepSummary:
     """Completion facts consumed by presenters, without accounting or provenance."""
 
@@ -117,7 +106,9 @@ class StepSummary:
     total: int | None = None
     total_items: int | None = None
     output_items: int | None = None
-    usage: Usage | None = None
+    usage: TokenUsage | None = None
+    cost: float | None = None
+    cost_approximate: bool = False
 
 
 class TextPartData(TypedDict):
@@ -401,7 +392,7 @@ for _event_type in (
     ModelStepInfo,
     ToolStepInfo,
     ControlApplied,
-    Usage,
+    TokenUsage,
     StepSummary,
     EventOutput,
     RunBegin,

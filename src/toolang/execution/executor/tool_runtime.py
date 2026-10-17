@@ -495,7 +495,9 @@ class _ToolRuntime(ToolRuntime):
                                 output=receipt,
                             )
                         ),
-                        noted=ToolStepNoted(summary=f"Accepted {kind}: {run_id}"),
+                        noted=ToolStepNoted(
+                            summary=f"Accepted {kind}: {run_id}", invoked=True
+                        ),
                         error=None,
                         finished_at=utc_now(),
                     )
@@ -505,8 +507,10 @@ class _ToolRuntime(ToolRuntime):
                         thread_id=self.state.prepared.run.thread,
                         root_run_id=self.state.prepared.run.root_run_id,
                     )
-            if execution._active is not None:
-                execution._active.early_ends.add(self.step)
+                if execution._root_run is not None:
+                    execution._root_run.tree.end_step(completed)
+            if execution._root_run is not None:
+                execution._early_ends.add(self.step)
             executor._observe_control(control)
             return ToolResult(receipt)
         except (ToolangError, TypeError, ValueError) as exc:
@@ -556,10 +560,7 @@ class _ToolRuntime(ToolRuntime):
         except _RunRejected as exc:
             return ToolResult(error=str(exc), output=exc.details)
         except (ToolangError, TypeError, ValueError) as exc:
-            if (
-                execution._active is not None
-                and self.step in execution._active.early_ends
-            ):
+            if execution._root_run is not None and self.step in execution._early_ends:
                 self.failure = exc
                 raise
             return ToolResult(error=str(exc))

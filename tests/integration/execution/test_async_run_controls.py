@@ -57,7 +57,7 @@ agic child(_: Text) -> Text:
                 ),
                 3,
             )
-            execution = harness.executor._active[parent.run_id].execution
+            execution = harness.executor._active_runs[parent.run_id].execution
             assert execution is not None
             source = harness.store.list_steps(run_id=parent.run_id)[0]
             assert source.output is not None
@@ -150,7 +150,7 @@ agic child() -> Text:
                 ),
                 3,
             )
-            execution = harness.executor._active[parent.run_id].execution
+            execution = harness.executor._active_runs[parent.run_id].execution
             assert execution is not None
             caller = execution._active_bindings[parent.run_id]
             source = harness.store.list_steps(run_id=parent.run_id)[0]

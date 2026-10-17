@@ -730,8 +730,10 @@ def test_spawned_worker_sends_with_its_own_run_origin(tmp_path):
                     primary=(TextPart("Do work"),),
                 )
             )
-            while harness.executor._tasks:
-                await asyncio.gather(*tuple(harness.executor._tasks))
+            while harness.executor._root_runs:
+                await asyncio.gather(
+                    *(root.task for root in tuple(harness.executor._root_runs.values()))
+                )
             assert parent.status == "succeeded"
             entries = await client.history("gc_00000001")
             assert len(entries) == 1

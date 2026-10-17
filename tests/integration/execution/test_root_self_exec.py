@@ -363,7 +363,7 @@ def test_root_self_exec_rejects_while_a_descendant_is_active(tmp_path):
                 )
             )
             await asyncio.wait_for(gate.wait_until_entered(), 5)
-            execution = harness.executor._active[handle.run_id].execution
+            execution = harness.executor._active_runs[handle.run_id].execution
             assert execution is not None
             root = execution._active_bindings[handle.run_id]
             target = resolve_call_target(root.state, root.module, "grow")

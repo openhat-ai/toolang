@@ -28,7 +28,6 @@ from toolang.base.types.message import (
 from toolang.base.types.run import (
     ModelCall,
     ModelCallResult,
-    ModelContinuation,
     ModelPartDelta,
     ModelPartEnd,
     ModelPartStart,
@@ -45,7 +44,6 @@ from ...recall import required_declarations, history_variables, recall_revisions
 from ...records import StepRecord, ControlRecord, RecallControlPayload
 from ...types import (
     value_for_type,
-    ModelAccounting,
     ControlRef,
     ErrorMessage,
     FieldRef,
@@ -599,6 +597,10 @@ async def execute(state: _AgicState) -> ModelCallResult:
     )
     try:
         state.before_call()
+        if state.execution is not None:
+            state.execution.begin_call(
+                StepRef.from_local(run.run_id, (step_index,)), "model"
+            )
         if _MODEL_STREAMING:
             current = await prepared.adapter.stream(
                 prepared.model,
@@ -726,7 +728,9 @@ async def _apply_response(
             local,
         )
     state.continuation = current.continuation
-    accounting = state.account_usage(current.usage)
+    noted = state.note_usage(
+        StepRef.from_local(run.run_id, (step_index,)), current.usage
+    )
     state.last_step = step_index
     try:
         await state.end_step(
@@ -734,9 +738,11 @@ async def _apply_response(
             kind="model",
             status="succeeded",
             output=Output(local, "_") if local is not None else None,
-            noted=_model_step_noted(
-                accounting,
-                continuation=current.continuation,
+            noted=replace(
+                noted,
+                continuation=dict(current.continuation)
+                if current.continuation is not None
+                else None,
             ),
             finished_at=utc_now(),
         )
@@ -746,7 +752,7 @@ async def _apply_response(
             raise
         # The complete response is durable and already in the message prefix.
         # Return its calls so steer recovery records their skipped results.
-    state.record_accounting(accounting)
+    state.record_usage(noted)
     usage = current.usage
     _LOGGER.info(
         "Step finished thread=%s run=%s step=%s kind=model input=%s output=%s tool_calls=%s duration_ms=%s",
@@ -970,7 +976,11 @@ async def _end_incomplete(
         for part in retained.values()
         if isinstance(part, ToolCallPart)
     )
-    accounting = state.account_usage(response_error.usage) if response_error else None
+    noted = (
+        state.note_usage(step, response_error.usage)
+        if response_error
+        else ModelStepNoted()
+    )
     if retained and response_error is None:
         refs = tuple(
             TypedRef(FieldRef.from_path(step, "output", "value", index), "Part")
@@ -1001,14 +1011,12 @@ async def _end_incomplete(
                 status="failed" if error is not None else "canceled",
                 output=Output(local, "_") if local is not None else None,
                 error=error,
-                noted=_model_step_noted(accounting, continuation=None)
-                if response_error is not None
-                else None,
+                noted=noted,
                 finished_at=utc_now(),
             )
         finally:
             if response_error is not None:
-                state.record_accounting(accounting)
+                state.record_usage(noted)
             if error is None:
                 await tool_step.skip(state, calls, canceled=not state.immediate_steer())
 
@@ -1032,14 +1040,3 @@ def _partial_part(stream: _ModelStream, part_index: int) -> Part:
             input=dict(decoded) if isinstance(decoded, Mapping) else {},
         )
     raise RuntimeError(f"unsupported partial model Part type: {part_type}")
-
-
-def _model_step_noted(
-    accounting: ModelAccounting | None,
-    *,
-    continuation: ModelContinuation | None,
-) -> ModelStepNoted:
-    return ModelStepNoted(
-        accounting=accounting,
-        continuation=(dict(continuation) if continuation is not None else None),
-    )

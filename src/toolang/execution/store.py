@@ -78,6 +78,8 @@ from .records import (
     occurrence_to_data,
     field_refs_from_data,
     field_refs_to_data,
+    run_noted_from_data,
+    run_noted_to_data,
     step_noted_from_data,
     step_noted_to_data,
     stored_step_given_from_data,
@@ -100,6 +102,7 @@ from .types import (
     StepKind,
     StepGiven,
     StepNoted,
+    RunNoted,
     ExecStepNoted,
     LoopStepNoted,
     StepStatus,
@@ -128,9 +131,9 @@ from .values import parts_from_value
 from . import talk
 from .errors import ThreadBusy
 
-_SCHEMA_VERSION = 58
-_SUPPORTED_SCHEMA_VERSIONS = (52, 53, 54, 55, 56, 57, _SCHEMA_VERSION)
-_WRITABLE_SCHEMA_VERSIONS = (57, _SCHEMA_VERSION)
+_SCHEMA_VERSION = 59
+_SUPPORTED_SCHEMA_VERSIONS = (_SCHEMA_VERSION,)
+_WRITABLE_SCHEMA_VERSIONS = (_SCHEMA_VERSION,)
 
 
 class RunStore:
@@ -1880,13 +1883,14 @@ class RunStore:
         error: ErrorMessage | ErrorRef | None = None,
         finished_at: str | None = None,
         output: Output | None = None,
+        noted: RunNoted | None = None,
     ) -> RunRecord:
         now = finished_at or utc_now()
         with self.write_transaction():
             self._conn.execute(
                 """
                 UPDATE runs
-                SET status = ?, error = ?, output = ?, finished_at = ?
+                SET status = ?, error = ?, output = ?, finished_at = ?, noted = ?
                 WHERE id = ? AND status IN ('pending', 'running')
                 """,
                 (
@@ -1894,6 +1898,7 @@ class RunStore:
                     _dump_execution_error(error),
                     _dump_json(output_to_data(output)) if output is not None else None,
                     now,
+                    _dump_json(run_noted_to_data(noted)),
                     run_id,
                 ),
             )
@@ -1909,6 +1914,7 @@ class RunStore:
             or run.error != error
             or run.output != output
             or run.finished_at != now
+            or run.noted != noted
         ):
             raise ValueError(f"conflicting run_end event: {run_id}")
         return run
@@ -3646,7 +3652,8 @@ class RunStore:
                     error TEXT,
                     created_at TEXT NOT NULL,
                     started_at TEXT,
-                    finished_at TEXT
+                    finished_at TEXT,
+                    noted TEXT
                 )
                 """
             )
@@ -3934,6 +3941,9 @@ def _run_from_row(row: sqlite3.Row) -> RunRecord:
     return RunRecord(
         begin_cursor=cast(str | None, dict(row).get("begin_cursor")),
         end_cursor=cast(str | None, dict(row).get("end_cursor")),
+        noted=run_noted_from_data(_load_json(str(row["noted"])))
+        if row["noted"] is not None
+        else None,
         id=str(row["id"]),
         parent=(
             StepRef.parse(str(row["parent"])) if row["parent"] is not None else None

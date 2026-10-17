@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from toolang.execution.types import StepRef
 
 from toolang.lang.input import CallInput
 from toolang.lang.types import Array
@@ -45,6 +44,7 @@ from toolang.execution.types import (
     RunRef,
     ThreadRef,
     TypedRef,
+    StepRef,
 )
 from tests.support.execution_fixtures import (
     project_run_end,
@@ -256,6 +256,7 @@ def test_record_registry_serializes_exact_record_shapes(tmp_path: Path) -> None:
             "finished_at",
         }
         assert set(run_data) == {
+            "noted",
             "begin_cursor",
             "end_cursor",
             "id",
@@ -375,7 +376,9 @@ def test_model_step_record_serializes_compact_noted_cont_key(tmp_path: Path) -> 
         noted = record_to_data(step)["noted"]
 
         assert noted == {
-            "accounting": None,
+            "usage": None,
+            "cost": None,
+            "invoked": False,
             "cont": {"cursor": "next"},
         }
     finally:

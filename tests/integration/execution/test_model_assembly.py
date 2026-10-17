@@ -2,7 +2,6 @@
 
 from types import SimpleNamespace
 
-from toolang.execution.types import StepRef
 
 from tests.support.setup import replace_materialized_setup
 
@@ -43,6 +42,7 @@ from toolang.execution.types import (
     ContentRef,
     RunRef,
     ThreadPrefix,
+    StepRef,
 )
 from toolang.state.prepare import prepare_agent_state
 
@@ -407,7 +407,7 @@ def test_compact_preparation_survives_failed_begin(
     target = ""
 
     async def reprepare(execution, build, *, run_id):
-        if execution._active.root_run_id == target and not gate.entered:
+        if execution._root_run.run_id == target and not gate.entered:
             build(
                 *execution.state_snapshot(run_id),
                 lambda **facts: SimpleNamespace(**facts),

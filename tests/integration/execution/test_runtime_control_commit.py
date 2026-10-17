@@ -96,7 +96,9 @@ flow child(_: Text) -> Text:
                     primary=(TextPart("work"),) if caller == "flow" else None,
                 ),
             )
-            await asyncio.gather(*tuple(harness.executor._tasks))
+            await asyncio.gather(
+                *(root.task for root in tuple(harness.executor._root_runs.values()))
+            )
             observer.finish()
             await observer.drain()
             assert parent.status == (
@@ -202,7 +204,7 @@ def test_committed_tool_end_is_delivered_after_interruption_at_event_lock(
     blockers = []
 
     async def hold_event_lock(run_id):
-        async with harness.executor._active[run_id].event_lock:
+        async with harness.executor._active_runs[run_id].boundary_lock:
             await gate.wait()
 
     harness = ExecutionHarness.create(
@@ -267,7 +269,7 @@ agic child() -> Text:
             finally:
                 gate.release()
             root = await asyncio.wait_for(handle, 2)
-            await asyncio.gather(*blockers, *tuple(harness.executor._tasks))
+            await asyncio.gather(*blockers, *tuple(harness.executor._root_runs))
             assert root.status == (
                 "succeeded" if interruption == "steer" else "canceled"
             )

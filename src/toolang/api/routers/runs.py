@@ -42,7 +42,7 @@ from toolang.execution.records import (
     ControlRecord,
     RunRecord,
 )
-from toolang.execution.schemas import ControlInfo, RunDetail, RunInfo
+from toolang.execution.schemas import ControlInfo, RunDetail, RunInfo, LiveSnapshot
 from toolang.execution.types import RunStatus, ThreadPrefix
 from toolang.api.routers.threads import thread_info
 from toolang.lang.input import decode_runnable_input
@@ -394,6 +394,19 @@ def input_references(
     except (ToolangError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return InputReferencesResponse(state=state.revision, references=references)
+
+
+@router.get("/live", summary="Get Live Execution Trees")
+def live_trees(
+    core: AgentCoreDep,
+    root_run_id: Annotated[str | None, Query()] = None,
+) -> LiveSnapshot:
+    try:
+        return core.executor.live_trees(root_run_id=root_run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @router.get("/{run_id}", summary="Get Run", response_model=RunDetail)

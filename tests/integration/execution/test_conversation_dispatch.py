@@ -67,7 +67,9 @@ flow worker(_: Text) -> Text:
                 harness.run_spec(thread=source, runnable="agic:controller")
             )
             assert parent.status == "succeeded", parent.error
-            await asyncio.gather(*tuple(harness.executor._tasks))
+            await asyncio.gather(
+                *(root.task for root in tuple(harness.executor._root_runs.values()))
+            )
             receipt = last_tool_result(harness.adapter.invocations[-1].call)
             assert receipt.error is None and receipt.output["thread"] == destination
             worker = harness.store.get_run(run_id=receipt.output["id"])
@@ -223,7 +225,9 @@ flow worker(_: Text) -> Text:
             parent = await harness.executor.run(
                 harness.run_spec(thread=source, runnable="agic:controller")
             )
-            await asyncio.gather(*tuple(harness.executor._tasks))
+            await asyncio.gather(
+                *(root.task for root in tuple(harness.executor._root_runs.values()))
+            )
             receipt = last_tool_result(harness.adapter.invocations[-1].call)
             assert receipt.error is None
             child_control = harness.store.get_run_control(

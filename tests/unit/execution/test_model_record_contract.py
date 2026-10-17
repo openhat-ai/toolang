@@ -15,7 +15,7 @@ from toolang.base.types.model import Model, ModelRequest, ModelToolang, Reasonin
 from toolang.base.types.run import ModelCall, ModelUsage
 from toolang.base.types.tool import ToolDefinition
 from toolang.execution.accounting import (
-    build_model_accounting,
+    build_model_noted,
     selected_cost_is_approximate,
     selected_usd_cost,
 )
@@ -28,13 +28,13 @@ from toolang.execution.store import RunStore
 from toolang.execution.events import run_event_from_data, run_event_to_data
 from toolang.execution.types import (
     ControlRef,
-    ModelCost,
     ModelCostLine,
     ModelPricing,
     ModelStepGiven,
     ModelStepNoted,
     ModelUsageMeter,
     StepRef,
+    ModelCost,
 )
 
 
@@ -83,7 +83,7 @@ def test_call_settings_and_setup_survive_store_reopening(
         assert step.state == ControlRef.for_run(ref.run_id, 0)
         assert step.given.call.reasoning == call.reasoning
         assert store.rebuild_model_call(step) == call
-        assert {"tokens", "price", "cost"}.isdisjoint(
+        assert {"tokens", "price", "accounting"}.isdisjoint(
             item.name for item in fields(ModelStepNoted)
         )
         assert {item.name for item in fields(ModelPricing)} == {"plan", "match"}
@@ -93,7 +93,7 @@ def test_call_settings_and_setup_survive_store_reopening(
     ("rates", "usage", "selected", "amount", "complete"),
     [
         ({"input": 0, "output": 0}, ModelUsage(2, 2), "zero", 0.0, True),
-        (None, ModelUsage(2, 2), "unknown", None, None),
+        (None, ModelUsage(2, 2), "unknown", None, False),
         ({"input": 0.1, "output": 0.1}, ModelUsage(1, 1), "estimated", 0.0, True),
         ({"input": 0}, ModelUsage(2, 2), "estimated", 0.0, False),
         (
@@ -127,27 +127,31 @@ def test_cost_selection_survives_numeric_record_round_trip(
     complete: bool | None,
 ) -> None:
     model = Model("one", "One", ModelToolang(), cost=rates, provider="test")
-    accounting = build_model_accounting(model, usage)
-    assert accounting is not None and accounting.selected == selected
-    noted = ModelStepNoted(accounting=accounting, continuation={"cursor": "after"})
+    accounting = build_model_noted(model, usage)
+    assert (
+        accounting is not None
+        and accounting.cost is not None
+        and accounting.cost.source == selected
+    )
+    noted = replace(accounting, continuation={"cursor": "after"})
     data = step_noted_to_data("model", noted)
-    assert data is not None and set(data) == {"accounting", "cont"}
+    assert data is not None and set(data) == {"usage", "cost", "cont", "invoked"}
     restored = step_noted_from_data("model", data)
     assert restored == noted
-    assert isinstance(restored, ModelStepNoted) and restored.accounting is not None
-    assert selected_usd_cost(restored.accounting) == amount
-    result = restored.accounting.reported or restored.accounting.estimate
+    assert isinstance(restored, ModelStepNoted) and restored.usage is not None
+    assert selected_usd_cost(restored.cost) == amount
+    result = restored.cost
     assert (result.complete if result else None) == complete
-    assert selected_cost_is_approximate(restored.accounting) == (
+    assert selected_cost_is_approximate(restored.cost) == (
         selected in {"estimated", "unknown"}
     )
-    wire = cast(dict[str, Any], data["accounting"])
+    wire = cast(dict[str, Any], data["cost"])
     assert "reasoning" not in wire
     if wire["pricing"] is not None:
         assert set(wire["pricing"]) == {"plan", "match"}
-    for cost in (wire["cost"]["reported"], wire["cost"]["estimate"]):
-        if cost is not None:
-            assert isinstance(cost["amount"], float)
+    if wire["amount"] is not None:
+        assert isinstance(wire["amount"], float)
+    assert {"reported", "estimate", "selected", "version"}.isdisjoint(wire)
 
 
 @pytest.mark.parametrize("value", [True, -1, float("inf"), float("nan"), "1.2"])
@@ -155,7 +159,7 @@ def test_accounting_rejects_invalid_numeric_values(value: Any) -> None:
     with pytest.raises((TypeError, ValueError)):
         ModelUsageMeter("input", value)
     with pytest.raises((TypeError, ValueError)):
-        ModelCost(value, "USD", True)
+        ModelCost(amount=value, currency="USD", complete=True, source="estimated")
     line = ModelCostLine("input", 1, "token", 1, 1_000_000, 0.000001)
     for name in ("quantity", "rate", "per", "amount"):
         with pytest.raises((TypeError, ValueError)):

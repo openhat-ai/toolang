@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-from toolang.execution.types import StepRef
 
 from tests.support.observations import run_begin, run_end, step_begin, step_end
 
-
-from toolang.execution.types import ModelAccounting, value_for_type
 
 from io import StringIO
 import re
@@ -32,11 +29,15 @@ from toolang.execution.types import (
     ControlRef,
     ErrorMessage,
     ModelStepGiven,
-    ModelStepNoted,
     Occurrence,
     OccurrencePosition,
     ToolStepGiven,
     ToolStepNoted,
+    ModelCost,
+    TokenUsage,
+    ModelStepNoted,
+    StepRef,
+    value_for_type,
 )
 from toolang.lang.ast import MapStmt, RunStmt, Span
 
@@ -230,7 +231,7 @@ def test_dynamic_run_projects_a_flat_header_and_child_id_footer(source) -> None:
             status="succeeded",
             output=Output(value_for_type("Part[]", (TextPart("summary"),)), "_"),
             noted=ModelStepNoted(
-                accounting=ModelAccounting(input_tokens=4, output_tokens=2)
+                usage=TokenUsage(input_tokens=4, output_tokens=2), cost=ModelCost()
             ),
             finished_at="2026-01-01T00:00:01Z",
         )

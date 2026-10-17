@@ -1,7 +1,5 @@
 """Repeat conditions execute at their authored position without binding results."""
 
-from toolang.execution.types import StepRef
-
 import asyncio
 
 import pytest
@@ -24,7 +22,12 @@ from toolang.execution.events import RunBegin, StepBegin, StepEnd
 from toolang.execution.executor.executor import _Execution
 from toolang.execution.inspection.trees import build_execution_tree, tree_to_data
 from toolang.execution.store import RunStore
-from toolang.execution.types import LoopStepNoted, AwaitableHandle, ThreadPrefix
+from toolang.execution.types import (
+    LoopStepNoted,
+    AwaitableHandle,
+    ThreadPrefix,
+    StepRef,
+)
 from toolang.state.prepare import prepare_agent_state
 
 
@@ -621,7 +624,7 @@ def test_until_refreshes_handle_status_on_each_evaluation(tmp_path, prefix):
                 spawn.output.value, AwaitableHandle
             )
             job = spawn.output.value
-            worker = harness.executor._active[job.id].task
+            worker = harness.executor._active_runs[job.id].task
             worker_gate.release()
             assert (await asyncio.wait_for(worker, 2)).status == "succeeded"
             assert harness.store.run_handle_view(job)["status"] == "succeeded"

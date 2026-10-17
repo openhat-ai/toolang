@@ -3,25 +3,31 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+
 import pytest
 
-from toolang.base.types.model import (
-    Model,
-    ModelToolang,
-)
 from toolang.base.types.run import ModelUsage
 from toolang.execution.accounting import (
-    build_model_accounting,
+    build_model_noted,
     cache_hit_ratio,
     selected_cost_is_approximate,
     selected_usd_cost,
     token_meter_quantity,
 )
 from toolang.execution.records import step_noted_from_data, step_noted_to_data
-from toolang.execution.types import ModelAccounting, ModelStepNoted, ModelUsageMeter
+from toolang.execution.types import (
+    ModelUsageMeter,
+    ModelCost,
+    TokenUsage,
+    ModelStepNoted,
+)
 from toolang.plugin.catalogs._local import LOCAL_ZERO_COST
 
-from toolang.base.types.model import ModelProvider
+from toolang.base.types.model import (
+    ModelProvider,
+    Model,
+    ModelToolang,
+)
 
 
 def test_accounting_prices_cache_and_reasoning_without_double_counting() -> None:
@@ -45,42 +51,41 @@ def test_accounting_prices_cache_and_reasoning_without_double_counting() -> None
         ),
     )
 
-    assert accounting is not None and accounting.estimate is not None
-    assert accounting.estimate.amount == 0.00283
-    assert accounting.estimate.complete is True
-    assert [line.meter for line in accounting.estimate.lines] == [
+    assert accounting is not None and accounting.cost is not None
+    assert accounting.cost.amount == 0.00283
+    assert accounting.cost.complete is True
+    assert [line.meter for line in accounting.cost.lines] == [
         "input.cache_read",
         "input.uncached",
         "output.reasoning",
         "output.visible",
     ]
-    assert cache_hit_ratio(accounting) == 0.65
-    assert token_meter_quantity(accounting, "output.reasoning") == 150
+    assert cache_hit_ratio(accounting.usage) == 0.65
+    assert token_meter_quantity(accounting.cost, "output.reasoning") == 150
 
 
 def test_token_meter_quantity_treats_ambiguous_or_invalid_values_as_unknown() -> None:
-    duplicate = ModelAccounting(
-        input_tokens=0,
-        output_tokens=2,
-        meters=(
-            ModelUsageMeter("output.reasoning", 1.0, "token"),
-            ModelUsageMeter("output.reasoning", 1.0, "token"),
+    duplicate = ModelStepNoted(
+        usage=TokenUsage(input_tokens=0, output_tokens=2),
+        cost=ModelCost(
+            meters=(
+                ModelUsageMeter("output.reasoning", 1.0, "token"),
+                ModelUsageMeter("output.reasoning", 1.0, "token"),
+            )
         ),
     )
-    fractional = ModelAccounting(
-        input_tokens=0,
-        output_tokens=1,
-        meters=(ModelUsageMeter("output.reasoning", 0.5, "token"),),
+    fractional = ModelStepNoted(
+        usage=TokenUsage(input_tokens=0, output_tokens=1),
+        cost=ModelCost(meters=(ModelUsageMeter("output.reasoning", 0.5, "token"),)),
     )
-    other_unit = ModelAccounting(
-        input_tokens=0,
-        output_tokens=1,
-        meters=(ModelUsageMeter("output.reasoning", 1.0, "request"),),
+    other_unit = ModelStepNoted(
+        usage=TokenUsage(input_tokens=0, output_tokens=1),
+        cost=ModelCost(meters=(ModelUsageMeter("output.reasoning", 1.0, "request"),)),
     )
 
-    assert token_meter_quantity(duplicate, "output.reasoning") is None
-    assert token_meter_quantity(fractional, "output.reasoning") is None
-    assert token_meter_quantity(other_unit, "output.reasoning") is None
+    assert token_meter_quantity(duplicate.cost, "output.reasoning") is None
+    assert token_meter_quantity(fractional.cost, "output.reasoning") is None
+    assert token_meter_quantity(other_unit.cost, "output.reasoning") is None
 
 
 def test_accounting_accepts_fractional_float_rates_from_effective_resources() -> None:
@@ -90,10 +95,10 @@ def test_accounting_accepts_fractional_float_rates_from_effective_resources() ->
         _catalog({"input": 0.14, "output": 0.28}),
     )
 
-    assert accounting is not None and accounting.estimate is not None
-    assert accounting.estimate.amount == 0.000168
-    assert accounting.estimate.complete is True
-    assert [line.rate for line in accounting.estimate.lines] == [0.14, 0.28]
+    assert accounting is not None and accounting.cost is not None
+    assert accounting.cost.amount == 0.000168
+    assert accounting.cost.complete is True
+    assert [line.rate for line in accounting.cost.lines] == [0.14, 0.28]
 
 
 def test_accounting_prices_cache_writes_as_a_distinct_input_meter() -> None:
@@ -116,10 +121,10 @@ def test_accounting_prices_cache_writes_as_a_distinct_input_meter() -> None:
         ),
     )
 
-    assert accounting is not None and accounting.estimate is not None
-    assert accounting.estimate.complete is True
+    assert accounting is not None and accounting.cost is not None
+    assert accounting.cost.complete is True
     assert [
-        (line.meter, line.quantity, line.rate) for line in accounting.estimate.lines
+        (line.meter, line.quantity, line.rate) for line in accounting.cost.lines
     ] == [
         ("input.cache_read", 60, 0.2),
         ("input.cache_write", 10, 2.5),
@@ -147,10 +152,10 @@ def test_accounting_selects_context_tier_and_records_match() -> None:
         ),
     )
 
-    assert accounting is not None and accounting.estimate is not None
-    assert accounting.pricing is not None
-    assert accounting.pricing.match == {"tier": {"type": "context", "size": 200}}
-    assert [line.rate for line in accounting.estimate.lines] == [3, 4]
+    assert accounting is not None and accounting.cost is not None
+    assert accounting.cost.pricing is not None
+    assert accounting.cost.pricing.match == {"tier": {"type": "context", "size": 200}}
+    assert [line.rate for line in accounting.cost.lines] == [3, 4]
 
 
 def test_provider_reported_cost_wins_but_estimate_remains_auditable() -> None:
@@ -165,11 +170,11 @@ def test_provider_reported_cost_wins_but_estimate_remains_auditable() -> None:
         _catalog({"input": 1, "output": 2}),
     )
 
-    assert accounting is not None
-    assert accounting.selected == "reported"
-    assert accounting.reported is not None
-    assert accounting.estimate is not None
-    assert selected_usd_cost(accounting) == 0.03
+    assert accounting is not None and accounting.cost is not None
+    assert accounting.cost.source == "reported"
+    assert accounting.cost is not None
+    assert accounting.cost.lines
+    assert selected_usd_cost(accounting.cost) == 0.03
 
 
 def test_zero_prices_produce_a_complete_zero_cost() -> None:
@@ -179,16 +184,16 @@ def test_zero_prices_produce_a_complete_zero_cost() -> None:
         _catalog({"input": 0, "output": 0}),
     )
 
-    assert accounting is not None and accounting.estimate is not None
-    assert accounting.estimate.amount == 0
-    assert accounting.estimate.complete is True
-    assert [line.rate for line in accounting.estimate.lines] == [0, 0]
-    assert selected_usd_cost(accounting) == 0.0
+    assert accounting is not None and accounting.cost is not None
+    assert accounting.cost.amount == 0
+    assert accounting.cost.complete is True
+    assert [line.rate for line in accounting.cost.lines] == [0, 0]
+    assert selected_usd_cost(accounting.cost) == 0.0
 
 
 def test_local_zero_price_remains_exact_when_cache_usage_is_reported() -> None:
     model = _model(dict(LOCAL_ZERO_COST))
-    accounting = build_model_accounting(
+    accounting = build_model_noted(
         model,
         ModelUsage(
             input_tokens=4100,
@@ -198,21 +203,21 @@ def test_local_zero_price_remains_exact_when_cache_usage_is_reported() -> None:
         ),
     )
 
-    assert accounting is not None and accounting.estimate is not None
-    assert accounting.estimate.amount == 0
-    assert accounting.estimate.complete is True
-    assert selected_cost_is_approximate(accounting) is False
+    assert accounting is not None and accounting.cost is not None
+    assert accounting.cost.amount == 0
+    assert accounting.cost.complete is True
+    assert selected_cost_is_approximate(accounting.cost) is False
 
 
 def test_local_zero_price_is_exact_without_cache_breakdown() -> None:
-    accounting = build_model_accounting(
+    accounting = build_model_noted(
         _model(dict(LOCAL_ZERO_COST)),
         ModelUsage(input_tokens=4100, output_tokens=15),
     )
 
-    assert accounting is not None and accounting.estimate is not None
-    assert accounting.estimate.complete is True
-    assert accounting.selected == "zero"
+    assert accounting is not None and accounting.cost is not None
+    assert accounting.cost.complete is True
+    assert accounting.cost.source == "zero"
 
 
 @pytest.mark.parametrize(
@@ -236,25 +241,25 @@ def test_local_zero_price_is_exact_without_cache_breakdown() -> None:
 def test_incomplete_usage_breakdown_marks_estimate_partial(
     rates: dict[str, object], usage: ModelUsage
 ) -> None:
-    accounting = build_model_accounting(
+    accounting = build_model_noted(
         _model(rates),
         usage,
     )
 
-    assert accounting is not None and accounting.estimate is not None
-    assert accounting.estimate.complete is False
-    assert accounting.selected == "estimated"
+    assert accounting is not None and accounting.cost is not None
+    assert accounting.cost.complete is False
+    assert accounting.cost.source == "estimated"
 
 
 def test_unknown_cache_write_breakdown_marks_estimate_partial() -> None:
-    accounting = build_model_accounting(
+    accounting = build_model_noted(
         _model({"input": 0, "output": 0, "cache_write": 1}),
         ModelUsage(input_tokens=100, output_tokens=15),
     )
 
-    assert accounting is not None and accounting.estimate is not None
-    assert accounting.estimate.complete is False
-    assert accounting.selected == "estimated"
+    assert accounting is not None and accounting.cost is not None
+    assert accounting.cost.complete is False
+    assert accounting.cost.source == "estimated"
 
 
 @pytest.mark.parametrize("cache_rate", [None, 0.1])
@@ -264,25 +269,25 @@ def test_cache_write_usage_is_excluded_from_uncached_input(
     rates: dict[str, object] = {"input": 2, "output": 0, "cache_write": 3}
     if cache_rate is not None:
         rates["cache_read"] = cache_rate
-    accounting = build_model_accounting(
+    accounting = build_model_noted(
         _model(rates),
         ModelUsage(input_tokens=100, output_tokens=15, input_cache_write_tokens=10),
     )
 
-    assert accounting is not None and accounting.estimate is not None
-    assert accounting.estimate.amount == 0.00021
-    assert accounting.estimate.complete is (cache_rate is None)
+    assert accounting is not None and accounting.cost is not None
+    assert accounting.cost.amount == 0.00021
+    assert accounting.cost.complete is (cache_rate is None)
 
 
 def test_missing_cache_write_usage_keeps_inferred_input_partial() -> None:
-    accounting = build_model_accounting(
+    accounting = build_model_noted(
         _model({"input": 0, "output": 0, "cache_read": 0, "cache_write": 1}),
         ModelUsage(input_tokens=100, output_tokens=15, input_cache_read_tokens=20),
     )
 
-    assert accounting is not None and accounting.estimate is not None
-    assert accounting.estimate.complete is False
-    assert accounting.selected == "estimated"
+    assert accounting is not None and accounting.cost is not None
+    assert accounting.cost.complete is False
+    assert accounting.cost.source == "estimated"
 
 
 def test_non_usd_reported_cost_falls_back_to_catalog_usd_estimate() -> None:
@@ -297,13 +302,17 @@ def test_non_usd_reported_cost_falls_back_to_catalog_usd_estimate() -> None:
         _catalog({"input": 1, "output": 2}),
     )
 
-    assert accounting is not None and accounting.selected == "estimated"
-    assert accounting.reported is not None
-    assert accounting.reported.amount == 2
-    assert accounting.reported.currency == "EUR"
-    assert accounting.estimate is not None
-    assert selected_usd_cost(accounting) == 2e-05
-    assert selected_cost_is_approximate(accounting) is True
+    assert (
+        accounting is not None
+        and accounting.cost is not None
+        and accounting.cost.source == "estimated"
+    )
+    assert accounting.cost is not None
+    assert accounting.cost.amount == 2e-05
+    assert accounting.cost.currency == "USD"
+    assert accounting.cost is not None
+    assert selected_usd_cost(accounting.cost) == 2e-05
+    assert selected_cost_is_approximate(accounting.cost) is True
 
 
 def test_unknown_cache_breakdown_marks_estimate_partial() -> None:
@@ -313,9 +322,9 @@ def test_unknown_cache_breakdown_marks_estimate_partial() -> None:
         _catalog({"input": 1, "output": 2, "cache_read": 0.1}),
     )
 
-    assert accounting is not None and accounting.estimate is not None
-    assert accounting.estimate.complete is False
-    assert cache_hit_ratio(accounting) is None
+    assert accounting is not None and accounting.cost is not None
+    assert accounting.cost.complete is False
+    assert cache_hit_ratio(accounting.usage) is None
 
 
 def test_accounting_selects_advertised_mode_price() -> None:
@@ -324,16 +333,20 @@ def test_accounting_selects_advertised_mode_price() -> None:
         override=ModelProvider(mode="fast"),
         experimental={"modes": {"fast": {"cost": {"input": 3, "output": 4}}}},
     )
-    accounting = build_model_accounting(
+    accounting = build_model_noted(
         model,
         ModelUsage(input_tokens=100, output_tokens=50),
     )
 
-    assert accounting is not None and accounting.pricing is not None
-    assert accounting.pricing.plan == "fast"
-    assert accounting.pricing.match == {"mode": "fast"}
-    assert accounting.estimate is not None
-    assert [line.rate for line in accounting.estimate.lines] == [3, 4]
+    assert (
+        accounting is not None
+        and accounting.cost is not None
+        and accounting.cost.pricing is not None
+    )
+    assert accounting.cost.pricing.plan == "fast"
+    assert accounting.cost.pricing.match == {"mode": "fast"}
+    assert accounting.cost is not None
+    assert [line.rate for line in accounting.cost.lines] == [3, 4]
 
 
 def test_accounting_records_unsupported_billing_context_as_partial() -> None:
@@ -347,10 +360,10 @@ def test_accounting_records_unsupported_billing_context_as_partial() -> None:
         _catalog({"input": 1, "output": 2}),
     )
 
-    assert accounting is not None and accounting.estimate is not None
-    assert accounting.estimate.complete is False
-    assert accounting.pricing is not None
-    assert accounting.pricing.match == {
+    assert accounting is not None and accounting.cost is not None
+    assert accounting.cost.complete is False
+    assert accounting.cost.pricing is not None
+    assert accounting.cost.pricing.match == {
         "billing": {"inference_geo": "us", "service_tier": "priority"}
     }
 
@@ -366,8 +379,8 @@ def test_accounting_accepts_standard_billing_context() -> None:
         _catalog({"input": 1, "output": 2}),
     )
 
-    assert accounting is not None and accounting.estimate is not None
-    assert accounting.estimate.complete is True
+    assert accounting is not None and accounting.cost is not None
+    assert accounting.cost.complete is True
 
 
 def test_accounting_preserves_billing_context_without_catalog_price() -> None:
@@ -383,23 +396,31 @@ def test_accounting_preserves_billing_context_without_catalog_price() -> None:
         None,
     )
 
-    assert accounting is not None and accounting.pricing is not None
-    assert accounting.pricing.match == {"billing": {"service_tier": "priority"}}
-    assert accounting.reported is not None
-    assert accounting.estimate is None
+    assert (
+        accounting is not None
+        and accounting.cost is not None
+        and accounting.cost.pricing is not None
+    )
+    assert accounting.cost.pricing.match == {"billing": {"service_tier": "priority"}}
+    assert accounting.cost is not None
+    assert accounting.cost.lines == ()
 
 
 def test_accounting_records_only_applied_pricing_plan() -> None:
     model = _model({"input": 0, "output": 0})
-    accounting = build_model_accounting(
+    accounting = build_model_noted(
         model,
         ModelUsage(input_tokens=10, output_tokens=5),
     )
 
-    assert accounting is not None and accounting.pricing is not None
-    assert accounting.pricing.plan == "standard"
-    assert accounting.pricing.match == {}
-    assert accounting.selected == "zero"
+    assert (
+        accounting is not None
+        and accounting.cost is not None
+        and accounting.cost.pricing is not None
+    )
+    assert accounting.cost.pricing.plan == "standard"
+    assert accounting.cost.pricing.match == {}
+    assert accounting.cost.source == "zero"
 
 
 def test_audio_rates_replace_overlapping_base_token_rates() -> None:
@@ -421,8 +442,8 @@ def test_audio_rates_replace_overlapping_base_token_rates() -> None:
         ),
     )
 
-    assert accounting is not None and accounting.estimate is not None
-    assert [(line.meter, line.quantity) for line in accounting.estimate.lines] == [
+    assert accounting is not None and accounting.cost is not None
+    assert [(line.meter, line.quantity) for line in accounting.cost.lines] == [
         ("input.audio", 20),
         ("input", 80),
         ("output.audio", 10),
@@ -443,7 +464,7 @@ def test_durable_model_accounting_round_trips_without_repricing() -> None:
         ),
         _catalog({"input": 2, "output": 10, "cache_read": 1}),
     )
-    noted = ModelStepNoted(accounting=accounting)
+    noted = accounting or ModelStepNoted()
 
     data = step_noted_to_data("model", noted)
     restored = step_noted_from_data("model", data)
@@ -490,24 +511,24 @@ def _accounting(
     model: Model,
     usage: ModelUsage | None,
     cost: dict[str, object] | None = None,
-) -> ModelAccounting | None:
+) -> ModelStepNoted | None:
     resolved = replace(model, cost=cost) if cost is not None else model
-    return build_model_accounting(resolved, usage)
+    return build_model_noted(resolved, usage)
 
 
 def test_call_settlement_keeps_sub_micro_token_prices_until_total() -> None:
     from toolang.base.money import cost_units
 
     # Both components cost 0.4 micro-USD; round the combined call, not each line.
-    accounting = build_model_accounting(
+    accounting = build_model_noted(
         _model({"input": 0.2, "output": 0.2}),
         ModelUsage(input_tokens=2, output_tokens=2),
     )
-    assert accounting is not None and accounting.estimate is not None
-    assert accounting.estimate.amount == 0.000001
-    cost = selected_usd_cost(accounting)
+    assert accounting is not None and accounting.cost is not None
+    assert accounting.cost.amount == 0.000001
+    cost = selected_usd_cost(accounting.cost)
     assert cost is not None and cost_units(cost) == 1
-    assert all(0 < float(line.amount) < 0.000001 for line in accounting.estimate.lines)
+    assert all(0 < float(line.amount) < 0.000001 for line in accounting.cost.lines)
 
 
 @pytest.mark.parametrize(
@@ -517,11 +538,11 @@ def test_call_settlement_keeps_sub_micro_token_prices_until_total() -> None:
 def test_call_settlement_preserves_decimal_half_micro_boundaries(
     rate: float, expected: float
 ) -> None:
-    accounting = build_model_accounting(
+    accounting = build_model_noted(
         _model({"input": rate, "output": 0}),
         ModelUsage(input_tokens=25, output_tokens=0),
     )
-    assert accounting is not None and accounting.estimate is not None
-    assert accounting.estimate.amount == expected
+    assert accounting is not None and accounting.cost is not None
+    assert accounting.cost.amount == expected
     if rate == 0.58:
-        assert accounting.estimate.lines[0].amount == 0.0000145
+        assert accounting.cost.lines[0].amount == 0.0000145

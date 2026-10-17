@@ -2,7 +2,6 @@
 
 from toolang.execution.event_projection import direct_output, step_summary
 
-from toolang.execution.types import StepRef
 
 import asyncio
 from typing import Any, cast
@@ -26,7 +25,13 @@ from toolang.execution.records import (
     output_to_data,
     RunControlPayload,
 )
-from toolang.execution.types import AwaitableHandle, ThreadPrefix, Output, ToolStepNoted
+from toolang.execution.types import (
+    AwaitableHandle,
+    ThreadPrefix,
+    Output,
+    ToolStepNoted,
+    StepRef,
+)
 
 
 @pytest.mark.parametrize(
@@ -122,7 +127,7 @@ agic child(_: Text) -> Text:
             assert all(getattr(e, "run", parent.id) != handle.id for e in tracer.events)
             await harness.executor.stop()
             assert harness.store.run_handle_view(handle)["status"] == "canceled"
-            assert not harness.executor._tasks
+            assert not harness.executor._root_runs
 
     asyncio.run(scenario())
 
@@ -302,7 +307,9 @@ agic child() -> Report[]:
                 harness.store.run_handle_view(replace(handle, result_type="Text"))
             await asyncio.wait_for(gate.wait_until_entered(), 2)
             gate.release()
-            await asyncio.gather(*tuple(harness.executor._tasks))
+            await asyncio.gather(
+                *(root.task for root in tuple(harness.executor._root_runs.values()))
+            )
             assert harness.store.run_handle_view(handle)["status"] == "succeeded"
 
     asyncio.run(scenario())
@@ -755,7 +762,9 @@ flow child(_: Text) -> Text:
                 assert len(harness.store.list_runs()) == 1
                 return
             assert not reply.error
-            await asyncio.gather(*(task for task in harness.executor._tasks))
+            await asyncio.gather(
+                *(root.task for root in tuple(harness.executor._root_runs.values()))
+            )
             root = harness.store.get_run(run_id=reply.output["id"])
             assert root is not None and root.status == "succeeded"
             assert reply.output["status"] == "pending"

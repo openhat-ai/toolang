@@ -64,6 +64,8 @@ class RunExecutor:
         index: int,
     ) -> ControlRecord: ...
 
+    def live_trees(self, *, root_run_id: str | None = None) -> LiveSnapshot: ...
+
     async def stop(self) -> None: ...
 ```
 
@@ -532,7 +534,7 @@ cross-process dispatch queue.
 Every inserted or changed control receives a global monotonic revision inside
 the same SQLite write transaction. The owner process polls only revisions
 newer than its cursor. An unchanged control table returns no rows. Changed
-pending controls are merged into the matching `_ActiveRun` cache, while
+pending controls are merged into the matching `_RootRun.pending_controls` cache, while
 `applied`, `wontapply`, and `revoked` controls are removed. Runtime checkpoints
 read the cache rather than querying SQLite once per active run.
 
@@ -617,3 +619,26 @@ the next provider chunk, which makes ordering and backpressure explicit.
 
 API SSE, TUI rendering, Hub/Talk replies, and buffered responses are tracer or
 transport implementations outside `toolang.execution`.
+
+## Resident LiveTree
+
+`_root_runs` maps root IDs to `_RootRun` task owners; `_active_runs` is the flat
+Run-to-owner index used for controls. Each owner holds one `LiveTree`, with current
+Run/Step nodes and per-Run subtree totals. Finished leaves are pruned; finished
+launch Steps remain while an async child needs them. Independent spawn has its own
+root/tree. Neither nodes nor intermediate totals are stored or restored on restart.
+
+Actual model/tool invocation entry increments `CallCounters` after preparation
+and validation. Available model results construct `ModelStepNoted` once; its
+`TokenUsage` and selected cost update the Step and ancestor Runs immediately.
+This side branch does not supply limits, control decisions, or Store aggregation.
+At existing terminal writes, Step Noted captures `invoked` and Run Noted captures
+final calls/usage/USD cost. Failed writes leave resident facts unchanged.
+
+`live_trees()` samples resident state under the canonical publication gate and
+registry lock without copying the event ring or reading records/history. Immutable
+`LiveSnapshot` values contain parents before descendants, compact identities and
+240-character label/target/summary limits. A committed terminal root is omitted.
+No viewer-specific cache, task, listener, historical index or subscription is added.
+`LocalRunClient.live_trees()` and `RemoteRunClient.live_trees()` expose the same
+contract; see [the HTTP interface](api.md#live-execution-snapshots).

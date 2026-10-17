@@ -237,7 +237,7 @@ def test_canceling_stop_still_finishes_runs_and_drains_terminal_events(
             assert harness.executor._monitor_task is None
             assert harness.executor.stream._closed
             assert not harness.executor.stream._readers
-            assert not harness.executor._active and not harness.executor._tasks
+            assert not harness.executor._active_runs and not harness.executor._root_runs
             with harness.executor.stream.boundary() as (_, _, frames):
                 ended = [
                     frame.event for frame in frames if frame.root_run_id == record.id

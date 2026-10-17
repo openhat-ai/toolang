@@ -29,7 +29,12 @@ from toolang.common.layout import AgentLayout
 from toolang.execution.executor.steps import tool as tool_step
 from toolang.execution.inspection.history import RunHistory
 from toolang.execution.store import RunStore
-from toolang.execution.types import ThreadPrefix, ToolStepGiven
+from toolang.execution.types import (
+    ThreadPrefix,
+    ToolStepGiven,
+    ToolStepNoted,
+    CallCounters,
+)
 from toolang.state.prepare import prepare_agent_state
 from toolang.state.watcher import StateWatcher
 
@@ -79,6 +84,10 @@ def test_tool_binding_precedes_paths_and_keeps_raw_records(tmp_path, value):
             step = harness.store.list_steps(run_id=root.id)[1]
             assert isinstance(step.given, ToolStepGiven)
             assert step.given.call == call
+            assert isinstance(step.noted, ToolStepNoted)
+            assert step.noted.invoked is (value == "7")
+            assert root.noted is not None
+            assert root.noted.calls == CallCounters(2, int(value == "7"))
             assert step.given.summary == f"Raw count {value!r}"
             assert step.output is not None and isinstance(
                 step.output.value, ToolResultPart

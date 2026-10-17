@@ -59,6 +59,7 @@ from ..rules import _HonorRequired, check_rules
 
 if TYPE_CHECKING:
     from ..runs.agic import _AgicState
+    from ..executor import _Execution
 
 _LOGGER = logging.getLogger(__name__)
 _MAX_ARGUMENT_PREVIEW_CHARS = 80
@@ -424,7 +425,12 @@ async def _execute(
     try:
         assert operation is not None
         record = await invoke_tool_call(
-            call=call, tool=operation, context=context, arguments=arguments
+            call=call,
+            tool=operation,
+            context=context,
+            arguments=arguments,
+            execution=state.execution,
+            step=step,
         )
     except asyncio.CancelledError:
         await _cancel(
@@ -466,8 +472,8 @@ async def _execute(
         runtime is not None
         and runtime.failure is not None
         and state.execution is not None
-        and state.execution._active is not None
-        and step in state.execution._active.early_ends
+        and state.execution._root_run is not None
+        and step in state.execution._early_ends
     ):
         raise runtime.failure
     if (
@@ -873,6 +879,8 @@ async def invoke_tool_call(
     tool: Tool | Exception,
     context: ToolContext | None,
     arguments: Mapping[str, Any] | None = None,
+    execution: _Execution | None = None,
+    step: StepRef | None = None,
 ) -> ToolCallResult:
     """Translate the plugin result into an execution result with call identity."""
 
@@ -881,6 +889,19 @@ async def invoke_tool_call(
             raise tool
         assert context is not None
         bound = tool.bind_arguments(call.input) if arguments is None else arguments
+    except Exception as exc:
+        return ToolCallResult(
+            tool_call_id=call.tool_call_id,
+            call_id=call.call_id,
+            name=call.name,
+            input=dict(call.input),
+            output={},
+            error=str(exc) or type(exc).__name__,
+        )
+    if execution is not None:
+        assert step is not None
+        execution.begin_call(step, "tool")
+    try:
         result = await tool.invoke(bound, context)
         output, error = result.output, result.error
     except Exception as exc:

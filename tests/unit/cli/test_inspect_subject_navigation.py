@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+
 import pytest
 from rich.console import Console
 from typer._click import Context
@@ -20,7 +21,12 @@ from toolang.base.types.run import ModelCall
 from toolang.base.types.tool import ToolDefinition
 import toolang.cli.toolang.commands.inspect as inspect_commands
 from toolang.execution.records import model_call_to_data
-from toolang.execution.types import ModelAccounting, ModelStepNoted, ModelUsageMeter
+from toolang.execution.types import (
+    ModelUsageMeter,
+    ModelCost,
+    TokenUsage,
+    ModelStepNoted,
+)
 
 
 @pytest.mark.parametrize(
@@ -284,17 +290,16 @@ def test_model_call_human_view_omits_empty_sections() -> None:
 def test_model_call_usage_shows_known_reasoning_breakdown() -> None:
     usage = inspect_commands._model_usage_fact(
         ModelStepNoted(
-            accounting=ModelAccounting(
-                input_tokens=12_400,
-                output_tokens=2_300,
+            usage=TokenUsage(
+                input_tokens=12400, output_tokens=2300, reasoning_tokens=1800
+            ),
+            cost=ModelCost(
                 meters=(
                     ModelUsageMeter(
-                        name="output.reasoning",
-                        quantity=1800.0,
-                        unit="token",
+                        name="output.reasoning", quantity=1800.0, unit="token"
                     ),
-                ),
-            )
+                )
+            ),
         )
     )
 

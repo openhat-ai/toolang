@@ -300,12 +300,12 @@ def test_provider_usage_calibrates_future_admission() -> None:
     assert experiment._estimate_fits(698233, 1.0, 941808)
 
 
-def test_failed_run_usage_marker_uses_recorded_accounting() -> None:
+def test_failed_run_usage_marker_uses_recorded_token_usage() -> None:
     steps = (
         SimpleNamespace(
             kind="model",
             noted=SimpleNamespace(
-                accounting=SimpleNamespace(input_tokens=1200, output_tokens=30)
+                usage=SimpleNamespace(input_tokens=1200, output_tokens=30)
             ),
         ),
         SimpleNamespace(kind="tool", noted=None),

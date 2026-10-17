@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from toolang.execution.types import StepRef
-
 
 from tests.support.setup import materialized_setup
 
@@ -58,6 +56,7 @@ from toolang.execution.types import (
     Occurrence,
     RunRef,
     ThreadPrefix,
+    StepRef,
 )
 from toolang.lang.ast import (
     AgicDecl,
@@ -1650,7 +1649,7 @@ def test_executor_stop_cancels_and_persists_active_runs(
     record = asyncio.run(scenario())
 
     assert record.status == "canceled"
-    assert executor._active == {}
+    assert executor._active_runs == {}
     assert executor._monitor_task is None
     with pytest.raises(RuntimeError, match="run executor is stopped"):
         executor.cancel(run_id=record.id)
@@ -1680,7 +1679,7 @@ def test_executor_stop_persists_run_before_owner_task_starts(
 
     assert record.status == "canceled"
     assert record.started_at == ""
-    assert executor._active == {}
+    assert executor._active_runs == {}
 
 
 def test_thread_control_indexes_and_head_are_process_safe(tmp_path: Path) -> None:

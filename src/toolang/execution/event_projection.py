@@ -22,7 +22,6 @@ from .events import (
     ModelStepInfo,
     ToolStepInfo,
     StepSummary,
-    Usage,
     EventOutput,
     ControlApplied,
     StepBegin,
@@ -44,7 +43,6 @@ from .types import (
 )
 from .records import StoredStepGiven, StoredModelStepGiven, StepRecord
 from .accounting import (
-    token_meter_quantity,
     selected_usd_cost,
     selected_cost_is_approximate,
 )
@@ -144,18 +142,12 @@ def step_summary(noted: StepNoted) -> StepSummary | None:
     if noted is None:
         return None
     if isinstance(noted, ModelStepNoted):
-        accounting = noted.accounting
-        if accounting is None:
+        if noted.usage is None and noted.cost is None:
             return None
         return StepSummary(
-            usage=Usage(
-                accounting.input_tokens,
-                accounting.output_tokens,
-                token_meter_quantity(accounting, "input.cache_read"),
-                token_meter_quantity(accounting, "output.reasoning"),
-                selected_usd_cost(accounting),
-                selected_cost_is_approximate(accounting),
-            )
+            usage=noted.usage,
+            cost=selected_usd_cost(noted.cost),
+            cost_approximate=selected_cost_is_approximate(noted.cost),
         )
     if isinstance(noted, ToolStepNoted):
         return StepSummary(summary=noted.summary)

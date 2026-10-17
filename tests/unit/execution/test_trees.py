@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+
 from dataclasses import replace
+
 from pathlib import Path
 from typing import cast
 
@@ -17,13 +19,13 @@ from toolang.execution.types import (
     ErrorRef,
     FieldRef,
     IterationOccurrence,
-    ModelAccounting,
-    ModelCost,
-    ModelStepNoted,
     ModelUsageMeter,
     Occurrence,
     OccurrencePosition,
     StepRef,
+    ModelCost,
+    TokenUsage,
+    ModelStepNoted,
 )
 from toolang.lang.ast import (
     LetStmt,
@@ -305,22 +307,21 @@ def test_tree_aggregates_partial_accounting_without_inventing_values(
     finally:
         store.close()
 
-    accounting = ModelAccounting(
-        input_tokens=10,
-        output_tokens=4,
-        meters=(
-            ModelUsageMeter(
-                name="output.reasoning",
-                quantity=3.0,
-                unit="token",
+    accounting = ModelStepNoted(
+        usage=TokenUsage(input_tokens=10, output_tokens=4, reasoning_tokens=3),
+        cost=ModelCost(
+            amount=0.025,
+            currency="USD",
+            complete=True,
+            source="estimated",
+            meters=(
+                ModelUsageMeter(name="output.reasoning", quantity=3.0, unit="token"),
             ),
         ),
-        estimate=ModelCost(amount=0.025, currency="USD", complete=True),
-        selected="estimated",
     )
     known = replace(
         first,
-        noted=ModelStepNoted(accounting=accounting),
+        noted=accounting or ModelStepNoted(),
     )
     snapshot = replace(
         snapshot,
@@ -391,15 +392,14 @@ def test_tree_aggregates_exact_reasoning_through_nested_runs(tmp_path: Path) -> 
     finally:
         store.close()
 
-    accounting = ModelAccounting(
-        input_tokens=10,
-        output_tokens=4,
-        meters=(ModelUsageMeter("output.reasoning", 3.0, "token"),),
+    accounting = ModelStepNoted(
+        usage=TokenUsage(input_tokens=10, output_tokens=4, reasoning_tokens=3),
+        cost=ModelCost(meters=(ModelUsageMeter("output.reasoning", 3.0, "token"),)),
     )
     snapshot = replace(
         snapshot,
         steps=tuple(
-            replace(step, noted=ModelStepNoted(accounting=accounting))
+            replace(step, noted=accounting or ModelStepNoted())
             if step.ref == model.ref
             else step
             for step in snapshot.steps

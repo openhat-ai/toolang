@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from toolang.execution.types import StepRef
 
 import asyncio
 from pathlib import Path
@@ -32,6 +31,7 @@ from toolang.execution.types import (
     FieldRef,
     ThreadPrefix,
     ToolStepNoted,
+    StepRef,
 )
 from toolang.lang.input import resolve_input_parts
 
@@ -480,7 +480,9 @@ agic calculate(_: Part[]) -> Part[]:
                 ("model", "succeeded"),
                 ("tool", "canceled"),
             ]
-            assert steps[1].noted == ToolStepNoted(summary="Canceled slow: 3")
+            assert steps[1].noted == ToolStepNoted(
+                summary="Canceled slow: 3", invoked=True
+            )
             assert steps[1].aborted_by == control.ref
             stored_control = harness.store.get_run_control(
                 run_id=record.id,

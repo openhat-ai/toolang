@@ -194,6 +194,7 @@ control
 state
 output
 occur
+noted
 status
 error
 created_at
@@ -207,6 +208,10 @@ roots have no parent; their entry control's `triggered_by` records the source.
 `thread`, `control`, and `state` are typed references. `output` is an
 Output whose `value` may be concrete or a `TypedRef` to an explicit
 `/output/value` field.
+
+`noted` is null until terminal completion, then contains `RunNoted` with final
+subtree call counts, token usage and USD cost captured from resident execution.
+See [terminal usage and cost records](execution.md#terminal-usage-and-cost-records).
 
 ### StepRecord
 
@@ -233,7 +238,10 @@ committed at `StepEnd`. Neither repeats input, output, status, or error.
 
 Model `given` data contains normalized-call references. Large instructions,
 messages, and toolsets are content-addressed; provider request bodies and
-credentials are not stored. Model `noted` records continuation and accounting.
+credentials are not stored. Model `noted` records `usage: TokenUsage`, `cost: ModelCost`, `invoked`, and
+continuation (`cont`). Tool `noted` contains `summary` and `invoked`. All durable
+statistics live inside Noted; no snapshot nodes or parallel statistics indexes
+are persisted. Schema 59 requires fresh storage without old-record decoding.
 
 For a Repeat Step, `given.until_index` counts preceding body statements; null or
 an absent historical field means a trailing condition. Body statements are

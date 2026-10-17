@@ -1,7 +1,5 @@
 """Async composition across completion order, ownership, and result encodings."""
 
-from toolang.execution.types import StepRef
-
 import asyncio
 from itertools import permutations
 
@@ -37,6 +35,7 @@ from toolang.execution.types import (
     ThreadPrefix,
     TypedRef,
     value_to_protocol_data,
+    StepRef,
 )
 
 
@@ -109,7 +108,7 @@ agic gamma() -> Text:
                 "succeeded",
                 "running",
             ]
-            execution = harness.executor._active[parent.run_id].execution
+            execution = harness.executor._active_runs[parent.run_id].execution
             assert execution is not None
             for name in order:
                 gates[name].release()
@@ -121,7 +120,7 @@ agic gamma() -> Text:
             assert not execution._background_tasks
             assert not execution._background_owners
             assert not execution._background_horizons
-            assert not harness.executor._tasks
+            assert not harness.executor._root_runs
             assert_run_event_integrity(tracer.events)
             active = {}
             projector = ProgressProjector()
@@ -278,7 +277,7 @@ agic side() -> Text:
                 asyncio.gather(*(gate.wait_until_entered() for gate in gates.values())),
                 3,
             )
-            execution = harness.executor._active[parent.run_id].execution
+            execution = harness.executor._active_runs[parent.run_id].execution
             assert execution is not None
             steps = harness.store.list_steps(run_id=parent.run_id)
             handles = [step.output.value for step in steps[:2] if step.output]
@@ -316,7 +315,7 @@ agic side() -> Text:
             assert not execution._background_tasks
             assert not execution._background_owners
             assert not execution._background_horizons
-            assert not harness.executor._tasks
+            assert not harness.executor._root_runs
             assert_run_event_integrity(tracer.events)
             projector = ProgressProjector()
             for event in tracer.events:

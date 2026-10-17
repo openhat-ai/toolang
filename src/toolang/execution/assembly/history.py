@@ -442,10 +442,10 @@ def _run_usage(steps: Sequence[object]) -> tuple[int, int, int, int]:
         kind = getattr(step, "kind", None)
         if kind == "model":
             model_calls += 1
-            accounting = getattr(getattr(step, "noted", None), "accounting", None)
-            if accounting is not None:
-                input_tokens += int(getattr(accounting, "input_tokens", 0))
-                output_tokens += int(getattr(accounting, "output_tokens", 0))
+            usage = getattr(getattr(step, "noted", None), "usage", None)
+            if usage is not None:
+                input_tokens += int(getattr(usage, "input_tokens", 0))
+                output_tokens += int(getattr(usage, "output_tokens", 0))
         elif kind == "tool":
             tool_calls += 1
     return model_calls, tool_calls, input_tokens, output_tokens

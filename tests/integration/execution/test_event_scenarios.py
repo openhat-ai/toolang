@@ -9,7 +9,6 @@ from toolang.execution.events import FlowStepInfo
 
 from toolang.execution.events import ToolStepInfo, StepSummary
 
-from toolang.execution.types import StepRef
 
 import asyncio
 from pathlib import Path
@@ -38,6 +37,7 @@ from toolang.execution.types import (
     ThreadPrefix,
     ToolStepGiven,
     ToolStepNoted,
+    StepRef,
 )
 from toolang.lang.input import resolve_input_parts
 
@@ -127,7 +127,9 @@ agic calculate(_: Text) -> Text:
             )
             assert isinstance(stored_tool.given, ToolStepGiven)
             assert stored_tool.given.summary == "Executing double: 3"
-            assert stored_tool.noted == ToolStepNoted(summary="Executed double: 3")
+            assert stored_tool.noted == ToolStepNoted(
+                summary="Executed double: 3", invoked=True
+            )
 
     asyncio.run(scenario())
 

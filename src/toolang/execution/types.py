@@ -1572,24 +1572,6 @@ class ModelCostLine:
 
 
 @dataclass(frozen=True, slots=True)
-class ModelCost:
-    """One provider-reported or catalog-estimated monetary amount."""
-
-    amount: float
-    currency: str
-    complete: bool
-    lines: tuple[ModelCostLine, ...] = ()
-
-    def __post_init__(self) -> None:
-        _validate_accounting_number(self.amount, label="model cost amount")
-        object.__setattr__(self, "amount", normalize_cost(self.amount))
-        if not self.currency:
-            raise ValueError("model cost currency is required")
-        if not isinstance(self.complete, bool):
-            raise TypeError("model cost completeness must be a boolean")
-
-
-@dataclass(frozen=True, slots=True)
 class ModelPricing:
     """Applied pricing plan and conditions captured for one completed call."""
 
@@ -1604,53 +1586,101 @@ class ModelPricing:
 
 
 @dataclass(frozen=True, slots=True)
-class ModelAccounting:
-    """Versioned durable accounting for one completed model call."""
+class TokenUsage:
+    """Inclusive token totals and optional client-relevant components."""
 
     input_tokens: int
     output_tokens: int
-    meters: tuple[ModelUsageMeter, ...] = ()
-    pricing: ModelPricing | None = None
-    reported: ModelCost | None = None
-    estimate: ModelCost | None = None
-    selected: Literal["reported", "estimated", "zero", "unknown"] = "unknown"
-    version: int = 1
+    cache_read_tokens: int | None = None
+    reasoning_tokens: int | None = None
 
     def __post_init__(self) -> None:
-        if type(self.version) is not int or self.version != 1:
-            raise ValueError(f"unsupported model accounting version: {self.version}")
+        if type(self.input_tokens) is not int or type(self.output_tokens) is not int:
+            raise TypeError("token totals must be integers")
         if any(
-            isinstance(value, bool) or not isinstance(value, int) or value < 0
-            for value in (self.input_tokens, self.output_tokens)
+            value is not None and (type(value) is not int or value < 0)
+            for value in (
+                self.input_tokens,
+                self.output_tokens,
+                self.cache_read_tokens,
+                self.reasoning_tokens,
+            )
         ):
-            raise ValueError("model accounting totals must be non-negative integers")
-        if self.selected not in {"reported", "estimated", "zero", "unknown"}:
-            raise ValueError("invalid selected model cost source")
-        if self.selected == "zero" and not (
-            self.estimate is not None
-            and self.estimate.complete
-            and self.estimate.amount == 0
-            and bool(self.estimate.lines)
-            and all(line.rate == 0 for line in self.estimate.lines)
-            and self.estimate.currency.upper() == "USD"
-            and self.reported is None
+            raise ValueError("token usage must contain non-negative integers")
+
+
+@dataclass(frozen=True, slots=True)
+class ModelCost:
+    """Selected model charge and the pricing/calculation evidence behind it."""
+
+    amount: float | None = None
+    currency: str | None = None
+    source: Literal["reported", "estimated", "zero", "unknown"] = "unknown"
+    complete: bool = False
+    pricing: ModelPricing | None = None
+    meters: tuple[ModelUsageMeter, ...] = ()
+    lines: tuple[ModelCostLine, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.source not in {"reported", "estimated", "zero", "unknown"}:
+            raise ValueError("invalid model cost source")
+        if type(self.complete) is not bool:
+            raise TypeError("model cost completeness must be a boolean")
+        if self.source == "unknown":
+            if self.amount is not None or self.currency is not None or self.complete:
+                raise ValueError("unknown model cost cannot have an amount/currency")
+        else:
+            if self.amount is None or not self.currency:
+                raise ValueError("known model cost requires an amount and currency")
+            _validate_accounting_number(self.amount, label="model cost amount")
+            object.__setattr__(self, "amount", normalize_cost(self.amount))
+        if self.source == "zero" and (self.amount != 0 or not self.complete):
+            raise ValueError("zero model cost must be complete and zero")
+
+
+@dataclass(frozen=True, slots=True)
+class CallCounters:
+    """Actual model/tool invocation entries within one Run subtree."""
+
+    model_calls: int = 0
+    tool_calls: int = 0
+
+    def __post_init__(self) -> None:
+        if any(
+            type(value) is not int or value < 0
+            for value in (self.model_calls, self.tool_calls)
         ):
-            raise ValueError("zero model cost requires a complete free estimate")
-        if self.selected == "unknown" and (
-            self.reported is not None or self.estimate is not None
-        ):
-            raise ValueError("unknown model cost cannot select known costs")
-        if self.selected == "reported" and self.reported is None:
-            raise ValueError("reported model cost selection requires reported cost")
-        if self.selected == "estimated" and self.estimate is None:
-            raise ValueError("estimated model cost selection requires an estimate")
+            raise ValueError("call counters must be non-negative integers")
+
+
+@dataclass(frozen=True, slots=True)
+class RunNoted:
+    """Final resident statistics captured when a Run ends."""
+
+    calls: CallCounters = field(default_factory=CallCounters)
+    usage: TokenUsage | None = None
+    cost: float | None = None
+    cost_approximate: bool = False
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.calls, CallCounters):
+            raise TypeError("run calls require CallCounters")
+        if self.usage is not None and not isinstance(self.usage, TokenUsage):
+            raise TypeError("run usage requires TokenUsage")
+        if self.cost is not None:
+            _validate_accounting_number(self.cost, label="run cost")
+            object.__setattr__(self, "cost", normalize_cost(self.cost))
+        if type(self.cost_approximate) is not bool:
+            raise TypeError("run cost approximation must be boolean")
 
 
 @dataclass(frozen=True, slots=True)
 class ModelStepNoted:
-    """Accounting and continuation learned when a model Step ends."""
+    """Token usage, model cost and continuation learned by one model Step."""
 
-    accounting: ModelAccounting | None = None
+    usage: TokenUsage | None = None
+    cost: ModelCost | None = None
+    invoked: bool = False
     continuation: ModelContinuation | None = field(
         default=None,
         metadata={
@@ -1660,10 +1690,12 @@ class ModelStepNoted:
     )
 
     def __post_init__(self) -> None:
-        if self.accounting is not None and not isinstance(
-            self.accounting, ModelAccounting
-        ):
-            raise TypeError("model Step accounting requires ModelAccounting")
+        if self.usage is not None and not isinstance(self.usage, TokenUsage):
+            raise TypeError("model Step usage requires TokenUsage")
+        if self.cost is not None and not isinstance(self.cost, ModelCost):
+            raise TypeError("model Step cost requires ModelCost")
+        if type(self.invoked) is not bool:
+            raise TypeError("model Step invoked must be boolean")
         if self.continuation is not None and not isinstance(self.continuation, dict):
             raise TypeError("model Step continuation must be an object")
 
@@ -1673,9 +1705,12 @@ class ToolStepNoted:
     """Human-readable terminal summary learned when a tool Step ends."""
 
     summary: str
+    invoked: bool = False
 
     def __post_init__(self) -> None:
         _validate_step_summary(self.summary, label="tool Step noted")
+        if type(self.invoked) is not bool:
+            raise TypeError("tool Step invoked must be boolean")
 
 
 LoopTermination = Literal["exhausted", "satisfied", "exec", "failed", "canceled"]

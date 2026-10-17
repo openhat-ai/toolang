@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+
+from toolang.execution.types import (
+    TokenUsage,
+    ModelStepNoted,
+    ModelCost,
+)
+
 from dataclasses import fields
 
 import pytest
@@ -7,7 +14,7 @@ import pytest
 from toolang.base.types.model import Model, ModelToolang
 from toolang.base.types.run import ModelUsage
 from toolang.execution.executor import RunLimits
-from toolang.execution.accounting import build_model_accounting, selected_usd_cost
+from toolang.execution.accounting import build_model_noted, selected_usd_cost
 from toolang.execution.records import run_limits_to_data
 
 
@@ -68,7 +75,7 @@ def test_cost_limit_accounting_uses_estimate_for_non_usd_report() -> None:
         cost={"input": 1, "output": 2},
         provider="test",
     )
-    accounting = build_model_accounting(
+    accounting = build_model_noted(
         model,
         ModelUsage(
             input_tokens=10,
@@ -78,8 +85,12 @@ def test_cost_limit_accounting_uses_estimate_for_non_usd_report() -> None:
         ),
     )
 
-    assert selected_usd_cost(accounting) == 2e-05
-    assert accounting is not None and accounting.selected == "estimated"
+    assert selected_usd_cost(accounting.cost) == 2e-05
+    assert (
+        accounting is not None
+        and accounting.cost is not None
+        and accounting.cost.source == "estimated"
+    )
 
 
 def test_cost_budget_uses_settled_units_for_live_and_restored_totals() -> None:
@@ -88,11 +99,14 @@ def test_cost_budget_uses_settled_units_for_live_and_restored_totals() -> None:
         _RunLimitState,
     )
 
-    from toolang.execution.types import ModelAccounting, ModelCost
+    from toolang.execution.types import ModelStepNoted
 
-    def recorded_cost(amount: float) -> ModelAccounting:
-        return ModelAccounting(
-            0, 0, reported=ModelCost(amount, "USD", True), selected="reported"
+    def recorded_cost(amount: float) -> ModelStepNoted:
+        return ModelStepNoted(
+            usage=TokenUsage(input_tokens=0, output_tokens=0),
+            cost=ModelCost(
+                amount=amount, currency="USD", complete=True, source="reported"
+            ),
         )
 
     model = Model("one", "One", ModelToolang(), provider="test")
@@ -134,7 +148,7 @@ def test_cost_settles_decimal_token_prices_once() -> None:
     )
     assert (
         selected_usd_cost(
-            build_model_accounting(model, ModelUsage(input_tokens=25, output_tokens=0))
+            build_model_noted(model, ModelUsage(input_tokens=25, output_tokens=0)).cost
         )
         == 0.000015
     )

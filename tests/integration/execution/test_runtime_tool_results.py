@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+
 from toolang.execution.event_projection import part_data
 
-from toolang.execution.types import StepRef
 
 import asyncio
 from pathlib import Path
@@ -40,7 +40,12 @@ from toolang.execution.events import (
 from toolang.execution.inspection.history import RunHistory
 from toolang.execution.store import RunStore
 from toolang.execution.inspection.trees import build_execution_tree
-from toolang.execution.types import FieldRef, ThreadPrefix, ToolStepGiven
+from toolang.execution.types import (
+    FieldRef,
+    ThreadPrefix,
+    ToolStepGiven,
+    StepRef,
+)
 from toolang.execution.values import parts_from_value
 
 SOURCE = """
@@ -264,7 +269,7 @@ def test_interruption_before_result_commit_preserves_completed_result(
     blockers: list[asyncio.Task[None]] = []
 
     async def hold_event_lock(run_id: str) -> None:
-        async with harness.executor._active[run_id].event_lock:
+        async with harness.executor._active_runs[run_id].boundary_lock:
             await gate.wait()
 
     class CommitTracer(RecordingRunTracer):
@@ -630,7 +635,7 @@ def test_steer_at_tool_begin_closes_the_started_step(
     blockers: list[asyncio.Task[None]] = []
 
     async def hold_event_lock(run_id: str) -> None:
-        async with harness.executor._active[run_id].event_lock:
+        async with harness.executor._active_runs[run_id].boundary_lock:
             await gate.wait()
 
     class BeginTracer(RecordingRunTracer):

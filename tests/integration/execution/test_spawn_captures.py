@@ -55,8 +55,10 @@ flow worker(_: Text) -> Text:
                     primary=(TextPart("input"),),
                 ),
             )
-            while harness.executor._tasks:
-                await asyncio.gather(*tuple(harness.executor._tasks))
+            while harness.executor._root_runs:
+                await asyncio.gather(
+                    *(root.task for root in tuple(harness.executor._root_runs.values()))
+                )
                 await asyncio.sleep(0)
             assert parent.status == "succeeded", (
                 harness.store.resolve_error(parent.error) if parent.error else None
@@ -108,8 +110,10 @@ flow bridge(_: Text) -> Text:
                     primary=(TextPart("outer-input"),),
                 )
             )
-            while harness.executor._tasks:
-                await asyncio.gather(*tuple(harness.executor._tasks))
+            while harness.executor._root_runs:
+                await asyncio.gather(
+                    *(root.task for root in tuple(harness.executor._root_runs.values()))
+                )
                 await asyncio.sleep(0)
             assert parent.status == "succeeded"
             roots = [
@@ -167,8 +171,10 @@ agic reader(_: Text) -> Text:
                         primary=(TextPart("input"),),
                     ),
                 )
-            while harness.executor._tasks:
-                await asyncio.gather(*tuple(harness.executor._tasks))
+            while harness.executor._root_runs:
+                await asyncio.gather(
+                    *(root.task for root in tuple(harness.executor._root_runs.values()))
+                )
                 await asyncio.sleep(0)
             assert parent.status == "succeeded"
             assert all(run.status == "succeeded" for run in harness.store.list_runs())

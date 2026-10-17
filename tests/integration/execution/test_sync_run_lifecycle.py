@@ -1,7 +1,5 @@
 """Flow and model run calls contain the same synchronous child lifetime."""
 
-from toolang.execution.types import StepRef
-
 import asyncio
 
 import pytest
@@ -19,7 +17,10 @@ from tests.support.execution_harness import (
 from toolang.base.types.message import Message, ToolResultPart
 from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.execution.events import RunBegin, RunEnd, StepBegin, StepEnd
-from toolang.execution.types import ThreadPrefix
+from toolang.execution.types import (
+    ThreadPrefix,
+    StepRef,
+)
 
 
 @pytest.mark.parametrize("caller", ["flow", "agic"])
@@ -129,11 +130,11 @@ def test_child_begin_shares_admission_boundary_when_event_lock_is_contended(
     blockers = []
 
     async def hold_after_admission(run_id):
-        async with harness.executor._active[run_id].event_lock:
+        async with harness.executor._active_runs[run_id].boundary_lock:
             await gate.wait()
 
     async def queue_after_admission(run_id):
-        async with harness.executor._active[run_id].event_lock:
+        async with harness.executor._active_runs[run_id].boundary_lock:
             # Admission is waiting behind this owner. Queue another observer
             # behind admission, so a separate RunBegin would have to wait.
             await asyncio.sleep(0)
