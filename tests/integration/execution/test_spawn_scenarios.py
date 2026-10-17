@@ -345,7 +345,7 @@ flow child(_: Text):
         ],
     )
     original_accept = spawn.accept
-    original_launch = harness.executor._launch
+    create_task = asyncio.create_task
     original_run = harness.store.accept_run
     fail_next_commit = False
 
@@ -371,10 +371,10 @@ flow child(_: Text):
         await original_accept(*args, **kwargs)
         raise asyncio.CancelledError()
 
-    def fail_dispatch(*args, **kwargs):
-        if kwargs.get("independent"):
+    def fail_dispatch(coro, **kwargs):
+        if kwargs.get("context") is not None:
             raise RuntimeError("dispatch failed")
-        return original_launch(*args, **kwargs)
+        return create_task(coro, **kwargs)
 
     def fail_admission(*args, **kwargs):
         if kwargs.get("launch_context"):
@@ -387,7 +387,7 @@ flow child(_: Text):
 
         monkeypatch.setattr(spawn_stmt, "accept", interrupt_delivery)
     elif failure == "dispatch":
-        monkeypatch.setattr(harness.executor, "_launch", fail_dispatch)
+        monkeypatch.setattr(asyncio, "create_task", fail_dispatch)
     elif failure == "commit":
         connection = harness.store._conn
         monkeypatch.setattr(harness.store, "_conn", CommitFault())
@@ -497,14 +497,14 @@ agic child() -> Text:
         ],
     )
     if dispatch_failure:
-        original_launch = harness.executor._launch
+        create_task = asyncio.create_task
 
-        def fail_dispatch(*args, **kwargs):
-            if kwargs.get("independent"):
+        def fail_dispatch(coro, **kwargs):
+            if kwargs.get("context") is not None:
                 raise RuntimeError("dispatch failed")
-            return original_launch(*args, **kwargs)
+            return create_task(coro, **kwargs)
 
-        monkeypatch.setattr(harness.executor, "_launch", fail_dispatch)
+        monkeypatch.setattr(asyncio, "create_task", fail_dispatch)
 
     async def scenario():
         async with harness:
@@ -556,7 +556,57 @@ agic child() -> Text:
             assert all(
                 not isinstance(e, RunBegin) or e.run != handle.id for e in tracer.events
             )
+            await harness.executor.stop()
+            with harness.executor.stream.boundary() as (_, _, frames):
+                assert (
+                    sum(
+                        isinstance(frame.event, RunEnd) and frame.event.run == handle.id
+                        for frame in frames
+                    )
+                    == 1
+                )
             attachment.close()
+
+    asyncio.run(scenario())
+
+
+def test_spawn_does_not_hide_failed_startup_finalization(tmp_path, monkeypatch):
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="flow parent(_: Text):\n  spawn child\nflow child(_: Text):\n  pass\n",
+        responses=[],
+    )
+    create_task = asyncio.create_task
+    finish_run = harness.executor._finish_run
+    attempted = False
+
+    def failed_task(coro, **kwargs):
+        if kwargs.get("context") is not None:
+            raise RuntimeError("task creation failed")
+        return create_task(coro, **kwargs)
+
+    def failed_terminal(*args, **kwargs):
+        nonlocal attempted
+        if not attempted:
+            attempted = True
+            raise RuntimeError("terminal write failed")
+        return finish_run(*args, **kwargs)
+
+    monkeypatch.setattr(asyncio, "create_task", failed_task)
+    monkeypatch.setattr(harness.executor, "_finish_run", failed_terminal)
+
+    async def scenario():
+        async with harness:
+            record = await harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    runnable="parent",
+                    primary=(TextPart("input"),),
+                )
+            )
+            assert record.status == "failed"
+            assert record.error is not None
+            assert harness.store.resolve_error(record.error) == "terminal write failed"
 
     asyncio.run(scenario())
 

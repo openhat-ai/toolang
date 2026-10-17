@@ -547,21 +547,7 @@ class RunExecutor:
                 runtime_sources=spec.state.runtime_sources,
                 horizon=bound.horizon,
             )
-        try:
-            return self._launch(bound, runnable, loop=loop, tracer=tracer)
-        except Exception as exc:
-            with self.stream.publication() as publication:
-                with self.store.write_transaction():
-                    self._finish_run(
-                        publication,
-                        run=bound.run_id,
-                        status="failed",
-                        error=ErrorMessage(str(exc) or type(exc).__name__),
-                        finished_at=utc_now(),
-                        thread_id=bound.thread,
-                        root_run_id=bound.root_run_id,
-                    )
-            raise
+        return self._launch(bound, runnable, loop=loop, tracer=tracer)
 
     @_admitted
     def rerun(
@@ -824,41 +810,62 @@ class RunExecutor:
         tracer: RunTracer | None,
         independent: bool = False,
     ) -> LocalRunHandle:
-        observer = (
-            TraceObserver(self.stream.subscribe(root_run_id=bound.root_run_id), tracer)
-            if tracer is not None
-            else None
-        )
-        if observer is not None:
-            self._observers.add(observer)
-            observer.task.add_done_callback(
-                lambda _task: self._observers.discard(observer)
-            )
-        task = asyncio.create_task(
-            self._execute_owned(bound, runnable),
-            name=f"toolang-run-{bound.run_id}",
-            context=Context() if independent else None,
-        )
-        active = _ActiveRun(
-            task=task,
-            root_run_id=bound.root_run_id,
-            thread_id=bound.thread,
-            loop=loop,
-            observer=observer,
-        )
-        with self._active_lock:
-            self._active[bound.run_id] = active
-        self._tasks[task] = (bound.run_id, active)
-        task.add_done_callback(self._task_done)
+        observer = None
+        task = None
+        coroutine = self._execute_owned(bound, runnable)
         try:
+            observer = (
+                TraceObserver(
+                    self.stream.subscribe(root_run_id=bound.root_run_id), tracer
+                )
+                if tracer is not None
+                else None
+            )
+            if observer is not None:
+                self._observers.add(observer)
+                observer.task.add_done_callback(
+                    lambda _task: self._observers.discard(observer)
+                )
+            task = asyncio.create_task(
+                coroutine,
+                name=f"toolang-run-{bound.run_id}",
+                context=Context() if independent else None,
+            )
+            active = _ActiveRun(
+                task=task,
+                root_run_id=bound.root_run_id,
+                thread_id=bound.thread,
+                loop=loop,
+                observer=observer,
+            )
+            with self._active_lock:
+                self._active[bound.run_id] = active
+            self._tasks[task] = (bound.run_id, active)
+            task.add_done_callback(self._task_done)
             self._ensure_monitor(bound.setup.layout.name)
-        except Exception:
-            task.cancel()
-            self._tasks.pop(task, None)
+        except Exception as exc:
+            if task is None:
+                coroutine.close()
+            else:
+                task.cancel()
+                self._tasks.pop(task, None)
             with self._active_lock:
                 self._active.pop(bound.run_id, None)
-            if observer is not None:
-                observer.finish()
+            try:
+                with self.stream.publication() as publication:
+                    with self.store.write_transaction():
+                        self._finish_run(
+                            publication,
+                            run=bound.run_id,
+                            status="failed",
+                            error=ErrorMessage(str(exc) or type(exc).__name__),
+                            finished_at=utc_now(),
+                            thread_id=bound.thread,
+                            root_run_id=bound.root_run_id,
+                        )
+            finally:
+                if observer is not None:
+                    observer.finish()
             raise
         return LocalRunHandle(bound.run_id, self, task, observer)
 
@@ -872,35 +879,41 @@ class RunExecutor:
         bound: BoundRun,
         runnable: AgicDecl | FlowDecl,
     ) -> RunRecord:
-        task = asyncio.current_task()
-        if task is None:
-            raise RuntimeError("run execution requires an asyncio task")
-        with self._active_lock:
-            active = self._active.get(bound.run_id)
-        if active is None or active.task is not task:
-            raise RuntimeError(f"run ownership missing: {bound.run_id}")
         started_at = time.perf_counter()
-        execution = _Execution(
-            self,
-            root=bound,
-            active=active,
-        )
-        with self._active_lock:
-            active.execution = execution
-        timeout = execution.schedule_time_limit(task)
+        active = None
+        execution = None
+        timeout = None
         try:
+            task = asyncio.current_task()
+            if task is None:
+                raise RuntimeError("run execution requires an asyncio task")
+            with self._active_lock:
+                active = self._active.get(bound.run_id)
+            if active is None:
+                # Eager task factories enter before _launch registers ownership.
+                await asyncio.sleep(0)
+                with self._active_lock:
+                    active = self._active.get(bound.run_id)
+            if active is None or active.task is not task:
+                raise RuntimeError(f"run ownership missing: {bound.run_id}")
+            execution = _Execution(self, root=bound, active=active)
+            with self._active_lock:
+                active.execution = execution
+            timeout = execution.schedule_time_limit(task)
             await execution.execute(
                 bound,
                 runnable,
             )
         except asyncio.CancelledError:
             await self._ensure_terminal(
-                bound.run_id, finish=execution.finish_run, status="canceled"
+                bound.run_id,
+                finish=execution.finish_run if execution is not None else None,
+                status="canceled",
             )
         except Exception as exc:
             await self._ensure_terminal(
                 bound.run_id,
-                finish=execution.finish_run,
+                finish=execution.finish_run if execution is not None else None,
                 status="failed",
                 error=ErrorMessage(str(exc) or type(exc).__name__),
             )
@@ -908,9 +921,13 @@ class RunExecutor:
             if timeout is not None:
                 timeout.cancel()
             with self._active_lock:
+                if active is None:
+                    active = self._active.get(bound.run_id)
                 for run_id in tuple(self._active):
                     if self._active.get(run_id) is active:
                         self._active.pop(run_id, None)
+            if active is not None and active.observer is not None:
+                active.observer.finish()
         result = self.store.get_run(run_id=bound.run_id)
         if result is None:
             raise RuntimeError(f"run projection missing: {bound.run_id}")
@@ -1057,8 +1074,6 @@ class RunExecutor:
         if owned is None:
             return
         run_id, active = owned
-        if active.observer is not None and run_id in active.ended:
-            active.observer.finish()
         if not task.cancelled() and (error := task.exception()) is not None:
             _LOGGER.error(
                 "Run task failed outside runtime handling run=%s error=%r",

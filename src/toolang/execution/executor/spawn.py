@@ -8,7 +8,6 @@ from dataclasses import replace
 from typing import TYPE_CHECKING, Literal
 
 from toolang.common.errors import ToolangError
-from toolang.common.time import utc_now
 from toolang.common.template import template_runtime_names
 from toolang.lang.ast import (
     AgicDecl,
@@ -33,7 +32,6 @@ from ..types import (
     RunRef,
     StepRef,
     ThreadPrefix,
-    ErrorMessage,
     RunnableSettings,
 )
 from .common import BoundRun, Local, _RunRejected
@@ -216,19 +214,10 @@ async def accept(
                     tracer=None,
                     independent=True,
                 )
-            except Exception as exc:
-                # Admission is durable even when dispatch cannot create a task.
-                with executor.stream.publication() as publication:
-                    with executor.store.write_transaction():
-                        executor._finish_run(
-                            publication,
-                            run=handle.id,
-                            status="failed",
-                            error=ErrorMessage(str(exc)),
-                            finished_at=utc_now(),
-                            root_run_id=handle.id,
-                            thread_id=handle.thread,
-                        )
+            except Exception:
+                record = executor.store.get_run(run_id=handle.id)
+                if record is None or record.status != "failed":
+                    raise
         return handle
 
     if execution._active is None:

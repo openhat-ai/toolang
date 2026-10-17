@@ -369,6 +369,7 @@ during cancellation preserve the cancellation signal. Restart reads admitted
 ranges and their Run results before reading newer messages; it does not repair
 Run state or replay effects. Task startup failure after admission is finalized by
 the executor before it reports the error, preserving the committed batch receipt.
+Pending/running receipts leave the cursor unchanged without sending a failure notice.
 Failure notices are best effort, attempted at most once per batch. Uncertain sends
 are not automatically repeated. There is no atomic transaction across Hub/SQLite.
 Backend changes discard in-memory progress from the previous backend.

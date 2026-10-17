@@ -199,9 +199,13 @@ deduplication; callers do not turn arbitrary request IDs into replay commands.
 
 If task startup fails after admission, `run()` uses the ordinary terminal path to
 persist failure, close pending controls and publish one `RunEnd`, then re-raises
-the startup error. No `RunBegin` is emitted before execution starts. Talk retains
+the startup error. Root and spawn admission share this path in `_launch()`;
+observers drain after terminal publication, and failed task creation releases its
+coroutines and subscriptions. Owned-task initialization uses the ordinary execution
+failure path. No `RunBegin` is emitted before execution starts. Talk retains
 the accepted batch receipt and reads its Run result without repairing execution
-state or dispatching the batch again.
+state or dispatching the batch again. A pending/running receipt keeps its cursor
+without generating a failure notice.
 
 
 ## Mandatory Persistence And Tracing

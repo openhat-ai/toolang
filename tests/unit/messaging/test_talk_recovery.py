@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock
 from fakeredis import FakeServer
 import pytest
 
+from tests.support.execution_harness import AsyncGate, ScriptedModelTurn
 from tests.unit.messaging.test_loop import (
     harness_with_msg,
     make_client,
@@ -16,6 +17,7 @@ from tests.unit.messaging.test_loop import (
 from toolang.base.types.message import Message as ModelMessage
 from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.execution.executor import conversations
+from toolang.execution.executor.executor import _Execution
 from toolang.execution.types import ConversationScope
 from toolang.lang.input import CallInput
 from toolang.lang.types import Array
@@ -33,6 +35,59 @@ def server(monkeypatch):
         conversations, "AgentClient", lambda root, actor: make_client(server, actor)
     )
     return server
+
+
+@pytest.mark.parametrize("status", ["pending", "running"])
+def test_existing_live_batch_is_only_observed(tmp_path, server, monkeypatch, status):
+    gate = AsyncGate()
+    response = ModelCallResult(message=ModelMessage.assistant("Handled."))
+    harness = harness_with_msg(
+        tmp_path,
+        server,
+        [response if status == "pending" else ScriptedModelTurn(response, gate=gate)],
+    )
+    execute = _Execution.execute
+
+    async def pause_startup(self, *args, **kwargs):
+        await gate.wait()
+        return await execute(self, *args, **kwargs)
+
+    if status == "pending":
+        monkeypatch.setattr(_Execution, "execute", pause_startup)
+
+    async def scenario():
+        async with (
+            harness,
+            make_client(server) as alice,
+            make_client(server, "human:owner") as human,
+        ):
+            await prepare(alice, human)
+            source = await human.send("gc_00000001", body="Still being handled.")
+            handling = asyncio.create_task(make_loop(tmp_path, alice, harness).poll())
+            try:
+                await asyncio.wait_for(gate.wait_until_entered(), 2)
+                (before,) = harness.store.list_runs()
+                assert before.status == status
+                with harness.executor.stream.boundary() as (_, _, frames):
+                    before_events = frames
+                await make_loop(tmp_path, alice, harness).poll()
+                assert harness.store.get_run(run_id=before.id) == before
+                with harness.executor.stream.boundary() as (_, _, frames):
+                    assert frames == before_events
+                assert await alice.talk_cursor("gc_00000001") == "0-0"
+                messages = [
+                    Message.decode(fields["data"])
+                    for _, fields in await alice.history("gc_00000001")
+                ]
+                assert not any(message.handler_error for message in messages)
+            finally:
+                gate.release()
+                await asyncio.wait_for(handling, 2)
+            assert await alice.talk_cursor("gc_00000001") == source["stream_id"]
+            assert len(harness.adapter.invocations) == 1
+            assert len(harness.store.list_runs()) == 1
+
+    asyncio.run(scenario())
 
 
 @pytest.mark.parametrize("saved", [False, True])
@@ -163,7 +218,7 @@ def test_existing_unbound_talk_id_is_not_adopted(tmp_path, server):
 
 
 @pytest.mark.parametrize("control", ["steer", "cancel"])
-@pytest.mark.parametrize("stage", ["dispatch", "monitor"])
+@pytest.mark.parametrize("stage", ["task", "monitor"])
 def test_startup_failure_finishes_before_talk_advances_the_batch(
     tmp_path, server, monkeypatch, control, stage
 ):
@@ -173,6 +228,7 @@ def test_startup_failure_finishes_before_talk_advances_the_batch(
         [ModelCallResult(message=ModelMessage.assistant("Handled new request."))],
     )
     controls = []
+    create_task = asyncio.create_task
 
     def failed_startup(*args, **kwargs):
         (run,) = harness.store.list_runs()
@@ -192,6 +248,11 @@ def test_startup_failure_finishes_before_talk_advances_the_batch(
         )
         raise RuntimeError("task startup failed")
 
+    def failed_task(coro, **kwargs):
+        if coro.cr_code.co_name == "_execute_owned":
+            failed_startup()
+        return create_task(coro, **kwargs)
+
     async def scenario():
         async with (
             harness,
@@ -201,11 +262,10 @@ def test_startup_failure_finishes_before_talk_advances_the_batch(
             await prepare(alice, human)
             source = await human.send("gc_00000001", body="Original request.")
             with monkeypatch.context() as patch:
-                patch.setattr(
-                    harness.executor,
-                    "_launch" if stage == "dispatch" else "_ensure_monitor",
-                    failed_startup,
-                )
+                if stage == "task":
+                    patch.setattr(asyncio, "create_task", failed_task)
+                else:
+                    patch.setattr(harness.executor, "_ensure_monitor", failed_startup)
                 await make_loop(tmp_path, alice, harness).poll()
             (failed,) = harness.store.list_runs()
             assert failed.status == "failed"

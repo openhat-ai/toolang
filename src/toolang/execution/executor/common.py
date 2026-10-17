@@ -337,6 +337,9 @@ async def execute_step(
         )
         raise _StepFailed(path, exc) from exc
     except Exception as exc:
+        if execution._active is not None and path in execution._active.early_ends:
+            # Admission already ended this Step; the later failure belongs to its Run.
+            raise
         message = str(exc) or type(exc).__name__
         await execution.finish_step(
             step=path,

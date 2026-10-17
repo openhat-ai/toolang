@@ -181,10 +181,13 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Fixed
 
-- A root Run accepted before synchronous task startup fails is finalized as
-  failed, with pending controls closed and one terminal event published, before
-  the startup error is re-raised. Talk batch receipts remain durable, and the
-  driver reads the recorded Run result without executor-specific reconciliation.
+- Root and spawned Runs share startup-failure finalization: a synchronous
+  startup error marks the Run failed, closes pending controls, publishes exactly
+  one terminal event, then re-raises the original error. Rejected task creation
+  releases its coroutine and subscriptions; owned-task initialization failures
+  use ordinary cleanup, and observers drain after publication. Talk preserves
+  durable receipts, observing pending or running receipts without false failure
+  notices or execution-state repair.
 
 - Run event producers close nested Steps and owned child Runs before their parents. Run stream clients preserve producer order and report a protocol error when a Run ends with an active owned child, rather than delaying or reordering terminal events; asynchronous launch admission and owned-child cleanup semantics are unchanged.
 

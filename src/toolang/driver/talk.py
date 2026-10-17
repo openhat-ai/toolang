@@ -277,6 +277,8 @@ class MessagingLoop:
                 handle.cancel(reason="Messaging handler stopped")
                 await handle
                 raise
+        if record.status in {"pending", "running"}:
+            return
         if record.status != "succeeded":
             detail = (
                 self.executor.store.resolve_error(record.error)

@@ -404,7 +404,13 @@ class TraceObserver:
     def __init__(self, reader: StreamReader, tracer: RunTracer) -> None:
         self.reader = reader
         self._deadline: asyncio.TimerHandle | None = None
-        self.task = asyncio.create_task(self._run(tracer), name="toolang-run-observer")
+        coroutine = self._run(tracer)
+        try:
+            self.task = asyncio.create_task(coroutine, name="toolang-run-observer")
+        except Exception:
+            coroutine.close()
+            reader.close()
+            raise
 
     async def _run(self, tracer: RunTracer) -> None:
         try:
