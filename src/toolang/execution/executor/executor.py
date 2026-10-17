@@ -547,7 +547,21 @@ class RunExecutor:
                 runtime_sources=spec.state.runtime_sources,
                 horizon=bound.horizon,
             )
-        return self._launch(bound, runnable, loop=loop, tracer=tracer)
+        try:
+            return self._launch(bound, runnable, loop=loop, tracer=tracer)
+        except Exception as exc:
+            with self.stream.publication() as publication:
+                with self.store.write_transaction():
+                    self._finish_run(
+                        publication,
+                        run=bound.run_id,
+                        status="failed",
+                        error=ErrorMessage(str(exc) or type(exc).__name__),
+                        finished_at=utc_now(),
+                        thread_id=bound.thread,
+                        root_run_id=bound.root_run_id,
+                    )
+            raise
 
     @_admitted
     def rerun(
@@ -969,65 +983,6 @@ class RunExecutor:
             )
         self._observe_control(control)
         return control
-
-    async def reconcile_talk(self, run_id: str) -> RunRecord:
-        """Reconcile an admitted batch under the driver's exclusive agent lease.
-
-        Preserve accepted independent roots and receipts. An orphaned processing
-        tree is closed as failed; none of its Steps are invoked again.
-        """
-        record = self.store.get_run(run_id=run_id)
-        if record is None:
-            raise ValueError(f"Talk receipt has no Run: {run_id}")
-        with self._active_lock:
-            active = self._active.get(run_id)
-            task = active.task if active is not None else None
-        if task is not None:
-            await asyncio.shield(task)
-            record = self.store.get_run(run_id=run_id)
-            assert record is not None
-        if record.status in {"pending", "running"}:
-            error = ErrorMessage(
-                "Message handler was interrupted before completing; no effects were replayed"
-            )
-            with self.stream.publication() as publication:
-                with self.store.write_transaction():
-                    for run in reversed(self.store.list_run_tree(root_run_id=run_id)):
-                        if run.status not in {"pending", "running"}:
-                            continue
-                        unfinished = []
-                        for step in reversed(self.store.list_steps(run_id=run.id)):
-                            if step.status not in {"pending", "running"}:
-                                continue
-                            completed = self.store.finish_step(
-                                ref=step.ref,
-                                kind=step.kind,
-                                status="failed",
-                                output=step.output,
-                                noted=None,
-                                error=error,
-                                finished_at=utc_now(),
-                            )
-                            unfinished.append(completed)
-                        self._publish_step_ends(
-                            publication,
-                            unfinished,
-                            thread_id=str(record.thread),
-                            root_run_id=run_id,
-                        )
-                        self._finish_run(
-                            publication,
-                            run=run.id,
-                            status="failed",
-                            error=error,
-                            finished_at=utc_now(),
-                            thread_id=str(record.thread),
-                            root_run_id=run_id,
-                        )
-
-            record = self.store.get_run(run_id=run_id)
-            assert record is not None
-        return record
 
     def _require_owned_control(self, run_id: str, expected: ControlRef) -> None:
         with self._active_lock:

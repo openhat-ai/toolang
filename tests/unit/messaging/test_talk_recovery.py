@@ -163,80 +163,83 @@ def test_existing_unbound_talk_id_is_not_adopted(tmp_path, server):
 
 
 @pytest.mark.parametrize("control", ["steer", "cancel"])
-def test_restart_closes_admitted_orphan_without_rebuilding_its_range(
-    tmp_path, server, monkeypatch, control
+@pytest.mark.parametrize("stage", ["dispatch", "monitor"])
+def test_startup_failure_finishes_before_talk_advances_the_batch(
+    tmp_path, server, monkeypatch, control, stage
 ):
-    first = harness_with_msg(tmp_path, server, [])
+    harness = harness_with_msg(
+        tmp_path,
+        server,
+        [ModelCallResult(message=ModelMessage.assistant("Handled new request."))],
+    )
+    controls = []
+
+    def failed_startup(*args, **kwargs):
+        (run,) = harness.store.list_runs()
+        controls.append(
+            harness.store.accept_run_control(
+                run_id=run.id,
+                kind=control,
+                timing="next_call",
+                input=CallInput(
+                    {"_": Array("Part[]", ModelMessage.user("Pending direction").parts)}
+                )
+                if control == "steer"
+                else CallInput(),
+                request_id="waiting-control",
+                created_at=run.created_at,
+            )
+        )
+        raise RuntimeError("task startup failed")
 
     async def scenario():
         async with (
+            harness,
             make_client(server) as alice,
             make_client(server, "human:owner") as human,
         ):
             await prepare(alice, human)
             source = await human.send("gc_00000001", body="Original request.")
-            async with first:
-
-                def failed_launch(*args, **kwargs):
-                    raise RuntimeError("process interrupted after durable admission")
-
-                with monkeypatch.context() as patch:
-                    patch.setattr(first.executor, "_launch", failed_launch)
-                    await make_loop(tmp_path, alice, first).poll()
-                (orphan,) = first.store.list_runs()
-                assert orphan.status == "pending"
-                assert await alice.talk_cursor("gc_00000001") == "0-0"
-                pending = first.store.accept_run_control(
-                    run_id=orphan.id,
-                    kind=control,
-                    timing="next_call",
-                    input=CallInput(
-                        {
-                            "_": Array(
-                                "Part[]", ModelMessage.user("Pending direction").parts
-                            )
-                        }
-                    )
-                    if control == "steer"
-                    else CallInput(),
-                    request_id="waiting-control",
-                    created_at=orphan.created_at,
+            with monkeypatch.context() as patch:
+                patch.setattr(
+                    harness.executor,
+                    "_launch" if stage == "dispatch" else "_ensure_monitor",
+                    failed_startup,
                 )
-            await human.send("gc_00000001", body="Newer request.")
-            restarted = harness_with_msg(
-                tmp_path,
-                server,
-                [
-                    ModelCallResult(
-                        message=ModelMessage.assistant("Handled new request.")
-                    )
-                ],
+                await make_loop(tmp_path, alice, harness).poll()
+            (failed,) = harness.store.list_runs()
+            assert failed.status == "failed"
+            assert harness.store.resolve_error(failed.error) == "task startup failed"
+            assert await alice.talk_cursor("gc_00000001") == source["stream_id"]
+            assert (
+                not harness.adapter.invocations
+                and not harness.executor.has_owned_work()
             )
-            async with restarted:
-                loop = make_loop(tmp_path, alice, restarted)
-                await loop.poll()
-                recovered = restarted.store.get_run(run_id=orphan.id)
-                assert recovered is not None and recovered.status == "failed"
-                final_control = restarted.store.get_run_control(
-                    run_id=orphan.id, index=pending.index
-                )
-                assert final_control is not None and final_control.status == "wontapply"
-                assert (
-                    final_control.error
-                    == "run ended before the control could be applied"
-                )
-                assert await alice.talk_cursor("gc_00000001") == source["stream_id"]
-                assert not restarted.adapter.invocations
-                await loop.poll()
-                assert len(restarted.adapter.invocations) == 1
-                assert (
-                    len(restarted.store.list_runs()) == 2
-                    and len(restarted.store.list_threads()) == 1
-                )
-                messages = [
-                    Message.decode(fields["data"])
-                    for _, fields in await alice.history("gc_00000001")
-                ]
-                assert sum(message.handler_error for message in messages) == 1
+            (pending,) = controls
+            final = harness.store.get_run_control(run_id=failed.id, index=pending.index)
+            assert final is not None and final.status == "wontapply"
+            assert final.error == "run ended before the control could be applied"
+            assert final.finished_at == failed.finished_at
+            receipt = harness.store.talk.get(
+                ConversationScope(alice.config.identity, "gc_00000001"), "0-0"
+            )
+            assert receipt is not None and receipt.run == failed.id
+            # A new driver consumes the failure notice without dispatching the batch again.
+            loop = make_loop(tmp_path, alice, harness)
+            await loop.poll()
+            assert not harness.adapter.invocations
+            assert harness.store.get_run(run_id=failed.id) == failed
+            await human.send("gc_00000001", body="Newer request.")
+            await loop.poll()
+            assert len(harness.adapter.invocations) == 1
+            assert (
+                len(harness.store.list_runs()) == 2
+                and len(harness.store.list_threads()) == 1
+            )
+            messages = [
+                Message.decode(fields["data"])
+                for _, fields in await alice.history("gc_00000001")
+            ]
+            assert sum(message.handler_error for message in messages) == 1
 
     asyncio.run(scenario())

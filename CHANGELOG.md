@@ -92,10 +92,9 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   exact input, cursor range, and Run together before handling, so restart and
   recovery resume recorded ranges without replaying effects or rebuilding a
   changed message tail. A handler may reply, ignore, steer or cancel an inspected
-  local Run, or spawn independent work; old per-batch threads are not adopted, an
-  occupied deterministic thread ID with another or no binding is rejected rather
-  than remapped, and orphaned handling ends as failed with a best-effort notice
-  attempted at most once per batch.
+  local Run, or spawn independent work; old per-batch threads are not adopted, and
+  an occupied deterministic thread ID with another or no binding is rejected
+  rather than remapped.
 
 - **Breaking:** chore identities are now eight lowercase Base32 characters
   derived from the exact name and the owning agent, so one name yields a
@@ -182,7 +181,12 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Fixed
 
-- Interrupted message-handler reconciliation closes nested Steps before their parents. Run stream clients preserve producer order and report a protocol error when a Run ends with an active owned child, rather than delaying or reordering terminal events; asynchronous launch admission and owned-child cleanup semantics are unchanged.
+- A root Run accepted before synchronous task startup fails is finalized as
+  failed, with pending controls closed and one terminal event published, before
+  the startup error is re-raised. Talk batch receipts remain durable, and the
+  driver reads the recorded Run result without executor-specific reconciliation.
+
+- Run event producers close nested Steps and owned child Runs before their parents. Run stream clients preserve producer order and report a protocol error when a Run ends with an active owned child, rather than delaying or reordering terminal events; asynchronous launch admission and owned-child cleanup semantics are unchanged.
 
 - Large run and thread detail responses avoid expensive diagnostics from probing
   unrelated `StepGiven` variants, while preserving existing public payloads and

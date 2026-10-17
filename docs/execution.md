@@ -195,7 +195,13 @@ rejected. A non-null request ID is unique within its control table and is never
 treated as a replay key. Clients either generate a globally unique request ID
 across run and thread controls or pass `None`.
 Talk batches and runtime dispatch use separate durable batch/Step receipts for
-reconciliation; callers do not turn arbitrary request IDs into replay commands.
+deduplication; callers do not turn arbitrary request IDs into replay commands.
+
+If task startup fails after admission, `run()` uses the ordinary terminal path to
+persist failure, close pending controls and publish one `RunEnd`, then re-raises
+the startup error. No `RunBegin` is emitted before execution starts. Talk retains
+the accepted batch receipt and reads its Run result without repairing execution
+state or dispatching the batch again.
 
 
 ## Mandatory Persistence And Tracing

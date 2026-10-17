@@ -244,7 +244,9 @@ class MessagingLoop:
         after, through = batch["cursor"]["after"], batch["cursor"]["through"]
         receipt = self.executor.store.talk.get(scope, after)
         if receipt is not None:
-            record = await self.executor.reconcile_talk(receipt.run)
+            record = self.executor.store.get_run(run_id=receipt.run)
+            if record is None:
+                raise MessagingError("Stored talk receipt has no Run")
         else:
             await self.client.get_rules(conversation)
             setup, state = self.get_setup(), self.get_state()
