@@ -1067,8 +1067,13 @@ class RunExecutor:
                 )
                 try:
                     await asyncio.shield(draining)
-                finally:
-                    await draining
+                except asyncio.CancelledError:
+                    while not draining.done():
+                        try:
+                            await asyncio.shield(draining)
+                        except asyncio.CancelledError:
+                            pass
+                    raise
         finally:
             for root in owned:
                 await self._ensure_terminal(
@@ -1274,9 +1279,7 @@ class RunExecutor:
     def _observe_control(self, control: ControlRecord) -> None:
         if control.kind == "run":
             return
-        cancel: asyncio.Task[RunRecord] | asyncio.Task[None] | None = None
-        loop: asyncio.AbstractEventLoop | None = None
-        scope: str | None = None
+        immediate = False
         with self._runs_lock:
             active = self._active_runs.get(str(control.target))
             if active is None:
@@ -1285,32 +1288,35 @@ class RunExecutor:
             if control.status == "pending":
                 observed = control.index in controls
                 controls[control.index] = control
-                if (
+                immediate = (
                     not observed
                     and control.kind in {"steer", "cancel"}
                     and control.timing == "immediate"
-                ):
-                    scope = (
-                        active.execution.control_scope(str(control.target))
-                        if active.execution is not None
-                        else active.run_id
-                    )
-                    cancel = (
-                        active.execution._background_tasks.get(scope, active.task)
-                        if active.execution is not None
-                        else active.task
-                    )
-                    loop = active.task.get_loop()
+                )
             else:
                 controls.pop(control.index, None)
                 if not controls:
                     active.pending_controls.pop(str(control.target), None)
-        if cancel is not None and loop is not None and not cancel.done():
+        if immediate:
 
             def interrupt() -> None:
+                if active.task.done():
+                    return
+                # Resolve on the owner loop after any in-flight child admission.
+                # Registry critical sections contain no Store reads.
+                execution = active.execution
+                scope = (
+                    execution.control_scope(str(control.target))
+                    if execution is not None
+                    else active.run_id
+                )
+                cancel = (
+                    execution._background_tasks.get(scope, active.task)
+                    if execution is not None
+                    else active.task
+                )
                 if cancel.done():
                     return
-                assert scope is not None
                 previous = (
                     active.execution.interruption_for(str(control.target))
                     if active.execution is not None
@@ -1340,7 +1346,7 @@ class RunExecutor:
                 active.interruptions[scope] = control
                 cancel.cancel()
 
-            loop.call_soon_threadsafe(interrupt)
+            active.task.get_loop().call_soon_threadsafe(interrupt)
 
     def _pending_controls(
         self,
@@ -1438,13 +1444,13 @@ class RunExecutor:
         )
         with self._runs_lock:
             active = self._active_runs.get(run_id)
-            interruption = (
-                active.execution.interruption_for(run_id)
-                if active is not None and active.execution is not None
-                else active.interruptions.get(active.run_id)
-                if active is not None
-                else None
-            )
+        interruption = (
+            active.execution.interruption_for(run_id)
+            if active is not None and active.execution is not None
+            else active.interruptions.get(active.run_id)
+            if active is not None
+            else None
+        )
         if (
             interruption is not None
             and interruption.kind == "cancel"
@@ -2257,27 +2263,27 @@ class _Execution:
         entry_binding = binding
         entry_runnable = runnable
         transferred = False
-        current = (
-            dict(locals)
-            if locals is not None
-            else {}
-            if isinstance(runnable, CompactSpec)
-            else initial_locals(binding)
-        )
-        step_start = self.next_step(binding.run_id)
-        self._preceding_controls.append(
-            ControlRef.for_run(binding.run_id, binding.control_index)
-        )
-        if not begun:
-            await self.begin_run(
-                run=binding.run_id,
-                control=ControlRef(RunRef(binding.run_id), binding.control_index),
-                runnable=_bound_runnable(binding),
-                parent=binding.parent,
-                occurrence=binding.occurrence,
-                started_at=utc_now(),
-            )
         try:
+            current = (
+                dict(locals)
+                if locals is not None
+                else {}
+                if isinstance(runnable, CompactSpec)
+                else initial_locals(binding)
+            )
+            step_start = self.next_step(binding.run_id)
+            self._preceding_controls.append(
+                ControlRef.for_run(binding.run_id, binding.control_index)
+            )
+            if not begun:
+                await self.begin_run(
+                    run=binding.run_id,
+                    control=ControlRef(RunRef(binding.run_id), binding.control_index),
+                    runnable=_bound_runnable(binding),
+                    parent=binding.parent,
+                    occurrence=binding.occurrence,
+                    started_at=utc_now(),
+                )
             while True:
                 try:
                     try:

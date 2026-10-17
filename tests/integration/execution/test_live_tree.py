@@ -479,22 +479,12 @@ def test_terminal_statistics_do_not_deadlock_with_cross_thread_control(
         ],
     )
     harness.executor._control_poll_interval = 3600
-    registry = harness.executor._runs_lock
     finish = harness.executor._finish_run
     finish_run = _Execution.finish_run
-    control_scope = _Execution.control_scope
-    scope_entered = threading.Event()
+    observed = threading.Event()
     errors = []
     workers = []
     control = None
-
-    class BoundedRegistry:
-        def __enter__(self):
-            if not registry.acquire(timeout=3):
-                raise RuntimeError("registry acquisition blocked during completion")
-
-        def __exit__(self, *args):
-            registry.release()
 
     def observe():
         try:
@@ -502,20 +492,18 @@ def test_terminal_statistics_do_not_deadlock_with_cross_thread_control(
             harness.executor._observe_control(control)
         except BaseException as exc:
             errors.append(exc)
-
-    def scope(execution, run_id):
-        scope_entered.set()
-        return control_scope(execution, run_id)
+        finally:
+            observed.set()
 
     def finish_during_control(publication, **facts):
         if not workers:
-            # Model completion owns the Store transaction while the API/control
-            # thread owns the registry and waits for ancestry from the Store.
+            # A control thread must enqueue delivery without reading ancestry
+            # or holding the registry while completion owns the Store.
             assert harness.store._conn.in_transaction
             worker = threading.Thread(target=observe, daemon=True)
             workers.append(worker)
             worker.start()
-            assert scope_entered.wait(5)
+            assert observed.wait(5), "control observation blocked on the Store"
         return finish(publication, **facts)
 
     async def accept_control_before_terminal(execution, **facts):
@@ -541,8 +529,6 @@ def test_terminal_statistics_do_not_deadlock_with_cross_thread_control(
             )
             await asyncio.wait_for(gate.wait_until_entered(), 3)
             with monkeypatch.context() as patch:
-                patch.setattr(harness.executor, "_runs_lock", BoundedRegistry())
-                patch.setattr(_Execution, "control_scope", scope)
                 patch.setattr(_Execution, "finish_run", accept_control_before_terminal)
                 patch.setattr(harness.executor, "_finish_run", finish_during_control)
                 gate.release()

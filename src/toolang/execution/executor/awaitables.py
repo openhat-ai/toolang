@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 from toolang.base.types.message import ToolResultPart
 from toolang.common.errors import ToolangError
+from toolang.common.time import utc_now
 from toolang.lang.ast import AgicDecl, FlowDecl, RunStmt
 from toolang.lang.contracts import OutputContract
 from toolang.state.state import state_program
@@ -15,6 +16,7 @@ from toolang.state.state import state_program
 from ..records import LaunchContext, RunControlPayload, RunRecord
 from ..types import (
     AwaitableHandle,
+    ErrorMessage,
     ErrorRef,
     FieldRef,
     Output,
@@ -22,7 +24,7 @@ from ..types import (
     ToolStepGiven,
     TypedRef,
 )
-from .common import BoundRun, Local, _ExecutionFailed
+from .common import BoundRun, Local, _ExecutionFailed, control_text
 
 if TYPE_CHECKING:
     from .executor import _Execution
@@ -172,6 +174,31 @@ def start(
     execution._background_tasks[binding.run_id] = task
     execution._background_owners[binding.run_id] = binding.parent.run_id
 
+    def completed(task: asyncio.Task[None]) -> None:
+        if not task.cancelled() or binding.run_id in execution._ended:
+            return
+        # Cancellation before the first turn cannot enter execute's handlers.
+        # Finish on the owner loop before Task waiters or parent draining resume.
+        control = execution.interruption_for(binding.run_id)
+        if control is None or control.kind != "cancel":
+            control = next(
+                iter(
+                    execution.store.pending_run_controls(
+                        run_id=binding.run_id, kind="cancel"
+                    )
+                ),
+                None,
+            )
+        execution._finish_run(
+            run=binding.run_id,
+            status="canceled",
+            control=control.ref if control is not None else None,
+            error=ErrorMessage(control_text(control) or "canceled"),
+            finished_at=utc_now(),
+        )
+
+    task.add_done_callback(completed)
+
 
 async def drain(execution: _Execution, owner: str) -> None:
     """End immediate ownership, including when cleanup is interrupted again."""
@@ -266,6 +293,10 @@ async def wait(
                 raise
         except Exception:
             pass  # Inspect the persisted outcome, not a task's wrapper error.
+        if task.cancelled():
+            await execution.executor._ensure_terminal(
+                handle.id, finish=execution.finish_run, status="canceled"
+            )
         run = execution.store.get_run(run_id=handle.id)
         if run is None or run.status in {"pending", "running"}:
             raise ToolangError(f"await target has no terminal outcome: {handle.id}")

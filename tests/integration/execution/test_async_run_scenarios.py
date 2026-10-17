@@ -550,6 +550,69 @@ flow child() -> Text:
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("launch", ["run", "async run"])
+def test_accepted_child_initialization_failure_is_terminal(
+    tmp_path, monkeypatch, launch
+):
+    from toolang.execution.executor.executor import _Execution
+    from toolang.execution.events import RunEnd
+    from tests.support.execution_assertions import assert_run_event_integrity
+
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=f"""
+flow parent() -> Text:
+  {"let job = " if launch == "async run" else ""}{launch} child
+  {"await job" if launch == "async run" else ""}
+flow child() -> Text:
+  pass
+""",
+        responses=[],
+    )
+    next_step = _Execution.next_step
+
+    def fail_initialization(execution, run_id):
+        child = execution.store.get_run(run_id=run_id)
+        if child is not None and child.parent is not None:
+            raise RuntimeError("child initialization failed")
+        return next_step(execution, run_id)
+
+    monkeypatch.setattr(_Execution, "next_step", fail_initialization)
+
+    async def scenario():
+        async with harness:
+            tracer = RecordingRunTracer()
+            parent = await harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    runnable="parent",
+                ),
+                tracer=tracer,
+            )
+            tree = harness.store.list_run_tree(root_run_id=parent.id)
+            assert len(tree) == 2
+            child = next(run for run in tree if run.parent is not None)
+            assert child.status == "failed"
+            assert child.error is not None
+            assert (
+                harness.store.resolve_error(child.error)
+                == "child initialization failed"
+            )
+            assert child.noted is not None and child.noted.calls.model_calls == 0
+            assert parent.status == "failed" and parent.error is not None
+            assert "child initialization failed" in harness.store.resolve_error(
+                parent.error
+            )
+            assert (
+                sum(isinstance(e, RunEnd) and e.run == child.id for e in tracer.events)
+                == 1
+            )
+            assert not harness.executor._active_runs and not harness.executor._root_runs
+            assert_run_event_integrity(tracer.events)
+
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize(
     "launch", ["async run child", "let async run child", "let job = async run child"]
 )
