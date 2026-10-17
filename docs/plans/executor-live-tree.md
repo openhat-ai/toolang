@@ -7,21 +7,23 @@ Status: proposed; awaiting implementation approval. This PR contains no implemen
 Give every root execution one memory-only `LiveTree` containing its current
 Run/Step structure and cumulative statistics for each retained Run. Expose detached
 snapshots through the executor, local/remote RunClient and HTTP for Top and other
-consumers. Keep execution records, transactional Store and canonical publication.
+consumers. Save compact terminal statistics through existing Step/Run completion
+writes, preserving transactional Store and canonical publication.
 
 Success means reads use only resident state, completed branches release their
 nodes without losing ancestor totals, and the live side branch neither reconstructs
-calls nor participates in execution/control and persistence decisions. This follows
+calls nor controls execution or persistence decisions. The Store receives final
+values without calculating statistics. This follows
 the [compact-core removal](compact-execution-core.md) and
 [Event/persistence separation](executor-record-event-boundary.md).
 
-In scope: root ownership naming, LiveTree maintenance, per-Run execution counters,
-snapshot schemas/read interfaces and necessary lifecycle tests. Out of scope:
-Top UI, Hub aggregation/discovery, a new embedded HTTP server, historical/Recent
-queries, Period/session statistics, retry, persistent indexes, new event types,
+In scope: root ownership naming, LiveTree maintenance, per-Run call counts and model
+usage, terminal record fields, snapshot schemas/read interfaces and lifecycle tests.
+Out of scope: Top UI, Hub aggregation/discovery, a new embedded HTTP server,
+historical/Recent queries, Period/session statistics, retry, persistent indexes, new event types,
 subscription/replay protocols and generic projection frameworks. The older
 [PR #820](https://github.com/openhat-ai/toolang/pull/820) is not a dependency;
-its executor-maintained Activity, durable statistics and retry design do not apply.
+its executor-maintained Activity, statistics indexes and retry design do not apply.
 
 ## Runtime ownership
 
@@ -65,8 +67,8 @@ order; consumers do not infer ordering from IDs or reconstruct it from history.
 
 | Node | Snapshot fields |
 | --- | --- |
-| `RunNode` | Discriminator `type="run"`, `id`, `parent`, current `runnable`, `status`, `created_at`, optional `started_at`/`finished_at`, `occurrence`, and `counters`. |
-| `StepNode` | Discriminator `type="step"`, `id`, `parent`, `kind`, compact operation/model/tool identity, target and summary, `status`, timestamps and `occurrence`. No cumulative stats. |
+| `RunNode` | Discriminator `type="run"`, `id`, `parent`, current `runnable`, `status`, `created_at`, optional `started_at`/`finished_at`, `occurrence`, `calls: CallCounters` and `usage: Usage \| None`. |
+| `StepNode` | Discriminator `type="step"`, `id`, `parent`, `kind`, compact operation/model/tool identity, target and summary, `status`, timestamps and `occurrence`. Model/tool nodes also retain `invoked: bool` and available model `usage`; no descendant totals. |
 
 Use existing scalar status/kind/occurrence vocabulary and necessary fields from
 the existing compact StepInfo shapes. Do not expose Records, full calls, ASTs,
@@ -85,77 +87,124 @@ leaves and then unnecessary finished ancestors using current child membership;
 keep no archive of completed children. Keep the root node through task cleanup,
 but omit a committed terminal root from live reads. Release its tree with
 the owning lifecycle. Restart discards all trees and totals; never rebuild them
-from a database. Existing durable execution facts remain unchanged.
+from a database. Terminal record values do not restore live state.
 
-## Counters and reuse of existing facts
+## Realtime call counts and reuse of model usage
 
-Each retained `RunNode.counters: RunCounters` covers calls executed by that Run and
-its owned descendants, including branches already pruned. A contribution follows
-only the executing Run's parent chain through ancestor Runs to its root; Step
-nodes do not accumulate it. There is no Agent/Thread/session/Period aggregation,
-history scan or statistics persistence. A yearly model-call total is external work.
+Each retained Run accumulates its own calls and those of its owned descendants,
+including branches already pruned. Contributions follow only the executing Run's
+parent chain through ancestor Runs to its root. A model/tool Step retains only its
+own invocation facts; no Step aggregates child work.
+There is no Agent/Thread/session/Period aggregation, history scan or statistics
+index. A yearly model-call total is external work.
 
-The numeric fields are explicit and reuse existing single-call facts:
+`CallCounters` contains only `model_calls: int = 0` and `tool_calls: int = 0`.
+These count actual invocation entries, not Steps or completed calls:
 
-| Counter | Existing source | Existing overlap |
+| Counter | Increment point | Existing counts that must remain separate |
 | --- | --- | --- |
-| `model_calls` | Actual entry into `adapter.stream()` or `adapter.invoke()`. | `_AgicState.model_calls` is a limit reservation at Step begin, not this execution count. |
-| `tool_calls` | Actual entry into `tool.invoke()` after preparation and argument validation. | `_AgicState.tool_calls` is an Agic-local limit reservation and excludes runtime-triggered tools. |
-| `input_tokens` | `ModelStepNoted.accounting.input_tokens`. | Event `Usage`, `_RunLimitState`, CLI `Metrics`. |
-| `output_tokens` | `ModelStepNoted.accounting.output_tokens`. | Event `Usage`, `_RunLimitState`, CLI `Metrics`. |
-| `cache_read_tokens` | Accounting meter `input.cache_read`. | Event `Usage`, CLI `Metrics`. |
-| `reasoning_tokens` | Accounting meter `output.reasoning`. | Event `Usage`, CLI `Metrics`, historical `TreeMetrics`. |
-| `cost` | Existing `selected_usd_cost(accounting)`. | Event `Usage.cost`, `_RunLimitState.cost`, CLI `Metrics.cost`. |
+| `model_calls` | Immediately before the real `adapter.stream()` or `adapter.invoke()`, after `before_call()` for Agic; include compaction's adapter invocation. | `_AgicState.model_calls` reserves limits at Step begin. |
+| `tool_calls` | Immediately before the real `tool.invoke()`, after preparation and argument validation. | `_AgicState.tool_calls` reserves Agic-local limits and excludes runtime-triggered tools. |
 
-The Noted paths name in-memory values already produced by the call, not database
-reads. `ToolStepNoted` contains only a summary; it has no call counter to reuse.
+At entry, mark the Step `invoked=True` and increment its owning Run and ancestor
+Runs synchronously. A snapshot taken while the call is blocked already includes
+it. Completion, failure and cancellation do not increment again or subtract.
+Skipped tool batches, invalid arguments, pre-entry cancellation and synthetic compaction read Steps add
+zero. Calling `invoke_tool_call()` is insufficient: it can return a preparation
+error without invoking a tool. Adapter-internal transport attempts are not extra
+executor calls. Active work remains visible in unfinished Step nodes; add no
+separate active/completed-call counters.
 
-Use integer call counts and token sums; `cost` uses existing normalized USD money
-arithmetic. Token/cost totals cover completed calls with returned accounting;
-in-flight calls have not settled usage. Unknown settled contributions propagate
-`None` for the affected total; an empty contribution set is zero. Preserve the
-existing `approximate` marker with selected costs. Cache-read is included in input
-and reasoning is included in output; neither is added again to its parent total.
+Model usage has a different update point. Reuse the in-memory
+`ModelStepNoted.accounting` produced by the existing normal/error completion paths,
+including compaction; apply its contribution once when that Noted is prepared,
+before awaiting persistence. Persist the same accounting object as today. Do not
+add duplicate usage fields to `ModelStepNoted`, read a stored Step, or move
+aggregation into generic Step completion/event-publication paths. Existing
+`ToolStepNoted` has only a summary, so no invocation fact can be reused there.
 
-Keep `ModelAccounting` as the sole per-call accounting fact, built once from the
-returned usage, including available usage on model failure. Persist that same
-object through `ModelStepNoted(accounting=...)`; do not add a second durable
-`noted.counters`, change record codecs or recalculate pricing for LiveTree.
-Prepare that fact when the result/error usage becomes available, before cancellable
-presentation or persistence, and carry it through the existing Noted completion path.
-Move the existing small `Usage` value vocabulary from `events.py` to
-`execution/types.py`. One pure projection in `accounting.py` supplies these values
-to counters and the existing Event summary, preserving the Event wire shape.
-LiveTree needs selected values, not pricing lines, continuation or billing
-metadata. Collection item/iteration totals stay with their existing Noted progress
-facts and are not additive model/tool consumption counters.
+`RunNode.usage` reuses the existing small `Usage` shape for cumulative available
+model accounting, independently of `calls`:
 
-Count calls in the actual execution branches, not Run/Step persistence, event
-publication or snapshot reads. For Agic, increment after `before_call()` and before
-the adapter invocation; for compaction use its adapter invocation as well. Tool
-accounting belongs beside the real `tool.invoke()`, not before `invoke_tool_call()`
-which can return a preparation error without invoking a tool. Skipped tool batches,
-invalid arguments, pre-call cancellation and synthetic compaction read Steps do not
-add calls. Once invocation begins, failure/cancellation still counts one call.
-Adapter-internal transport attempts are not extra executor calls.
+| Usage field | Source in `ModelStepNoted.accounting` | Shared extraction rule |
+| --- | --- | --- |
+| `input_tokens` | `input_tokens` | Reuse the normalized integer. |
+| `output_tokens` | `output_tokens` | Reuse the normalized integer. |
+| `cache_read_tokens` | Meter `input.cache_read` | Existing `token_meter_quantity()`. |
+| `reasoning_tokens` | Meter `output.reasoning` | Existing `token_meter_quantity()`. |
+| `cost` | Selected USD amount | Existing `selected_usd_cost()`; do not calculate prices again. |
+| `approximate` | Selected cost provenance | Existing `selected_cost_is_approximate()`; combine with logical OR. |
 
-Consume a model's already produced accounting once in its normal/error completion
-branch. Records and counters receive the same fact; each ancestor only performs
-addition. Repeated receipt/terminal delivery is not another model/tool execution
-and performs no counter update. Do not add cursor-based accounting, transaction
-staging, a ledger, a consumed-ID set or a generalized callback mechanism.
+Move `Usage` from `events.py` to `execution/types.py`. Extract the existing
+accounting-to-Usage projection into one pure helper in `accounting.py`, shared by
+LiveTree and Event summaries without changing the Event wire shape. Keep
+`ModelAccounting` and existing Noted usage fields unchanged; retain no accounting
+objects, pricing lines, continuation or billing metadata in LiveTree.
 
-Leave limit enforcement separate: its reservation timing and compaction restoration
-have different semantics. Reuse the accounting values/helpers, not its mutable
-totals, and never make admission, limits or persistence read LiveTree counters.
-Existing CLI/historical aggregation is reference for shared fields, not an
-instruction to redesign those consumers in this change.
+Usage becomes visible as soon as its in-memory Noted is available; do not wait
+for Run termination or a poll to calculate it. It covers available accounting,
+not live token estimates or an assurance of complete provider billing. Before any
+accounting is available, `usage` is `None`; absent accounting adds no contribution.
+Sum known input/output tokens using integer arithmetic and costs using existing
+normalized money addition. For each optional meter/cost field, an unknown value in
+any contributed accounting makes that aggregate field `None`; known zero stays
+zero. Cache-read is included in input and reasoning in output; neither is added
+again to its parent total. Collection item/iteration totals remain existing Noted
+progress facts and are outside this scope.
+
+Counter/usage updates belong to the actual invocation and Noted-producing
+branches, not persistence, event publication or snapshot reads. Repeated receipts
+and terminal delivery add nothing. Add no cursor-based accounting, transaction
+staging, ledger, consumed-ID set or generalized callback mechanism. Limits retain
+their existing reservation/restoration semantics and mutable totals; admission
+and limits never read LiveTree. Completion reads final values as described below;
+the Store never reads LiveTree. Existing CLI/historical aggregation remains unchanged.
 
 Same-Run exec changes the runnable without resetting counters. An existing
 compaction Run retains resident contributions when continuing; a new Run starts
 at zero. Imported history adds none. Pruning neither subtracts consumption nor
 adds a finished child's totals again. Elapsed Run time uses its own timestamps,
 not summed child durations.
+
+## Terminal records
+
+LiveTree is the only realtime accumulator. Persist compact final values in the
+existing completion transaction, not through a second statistics writer:
+
+| Record | Terminal data | Source |
+| --- | --- | --- |
+| `ModelStepNoted.invoked` / `ToolStepNoted.invoked` | Add `bool \| None`: actual invocation entry for this Step. New terminal model/tool Steps always supply `True` or `False`; `None` means legacy/unknown. | Snapshot the Step node before terminal pruning. |
+| Existing `StepRecord.noted` fields | Retain model accounting/continuation, tool summary and other Step facts. Do not add a duplicate `Usage` payload or counters to Flow Steps. | The same in-memory model accounting used to update LiveTree. |
+| `RunRecord.calls: CallCounters \| None` | Cumulative calls for this Run and owned descendants. | Snapshot the Run node after existing child cleanup, before terminal pruning. |
+| `RunRecord.usage: Usage \| None` | Cumulative available model usage, with the semantics above. | The same Run node snapshot. |
+
+`ModelAccounting` remains the per-call accounting fact; do not rebuild it from
+the smaller aggregate `Usage`. A model's accounting and call-entry count are
+different facts and must not be inferred from one another or from terminal status.
+An invoked failed/canceled Step records `True`; a skipped/pre-entry-canceled
+Step records `False`. New Runs ending before invocation record zero call counts.
+
+Pass these immutable values into existing `RunStore.finish_step()` and
+`finish_run()` writes, including atomic async admission/exec completion and
+startup/stop fallback paths. Store code only validates and encodes values; add no
+tree dependency, aggregation SQL, extra write, history scan, new table or index.
+Persist no nodes or intermediate snapshots. Keep terminal events compact and do
+not add aggregate counters/usage to RunEnd or duplicate model usage in StepEnd.
+
+Extend the existing model/tool Noted codecs for `invoked`; add no Step column.
+Add nullable `calls` and `usage` columns to `runs` using existing schema upgrade
+and record serialization patterns. Pending/running records and old records
+without captured statistics retain `None`; legacy Noted without `invoked` and
+legacy read-only databases remain readable. Do not backfill or mistake absence
+for zero. Record inspection reads captured fields without reconstructing calls;
+no new historical statistics API is included.
+
+Capture each value once before terminal pruning and use the existing completion
+guards/receipt behavior. Retried delivery reuses the same final values and never
+adds counters; conflicting terminal values follow existing Store conflict rules.
+A failed terminal transaction leaves the live facts intact and adds no separate
+statistics recovery path. Existing async-child draining precedes Run termination;
+do not change execution scheduling or wait for independent spawned roots.
 
 ## Maintenance and snapshots
 
@@ -166,11 +215,12 @@ install an accepted async child before pruning its finished launch Step. Cover
 normal, startup-failure and cancellation cleanup through existing lifecycle paths.
 Install structural changes before releasing the existing publication boundary.
 
-Counter updates follow actual invocation/results independently of Store commits:
-failure to persist an end does not undo work already performed. Neither counters
-nor tree data participates in write transactions, rollback, durable cursor checks
-or control decisions. Preserve authoritative persistence and canonical publication
-unchanged; do not build a statistics recovery path around them.
+Call counts update at invocation entry and usage at Noted preparation, independently
+of Store commits: failure to persist an end does not undo work already performed.
+Only the detached terminal values enter the existing write transaction. Mutable
+tree data participates in neither rollback, durable cursor checks nor control
+decisions. Preserve authoritative persistence and canonical publication; do not
+build a statistics recovery path around them.
 
 Treat an unexpected LiveTree/counter invariant failure as a fatal programming error;
 fail-fast process termination is acceptable. Add no retries, reconstruction,
@@ -201,7 +251,8 @@ Define immutable protocol values in `execution/schemas.py`: `LiveSnapshot` has
 `thread_id` and flat parent-linked `RunNode | StepNode` values. Epoch reuses the
 executor's canonical stream epoch. Batch metadata occurs once, not on each node.
 Define executor-owned mutable maintenance in `execution/live.py` and neutral
-RunCounters vocabulary in `execution/types.py`; schemas do not depend on LiveTree.
+`CallCounters` and shared `Usage` vocabulary in `execution/types.py`; schemas do not
+depend on LiveTree.
 
 One request returns all nonterminal roots or the exact root ID match. Validate ID
 syntax; a well-formed unknown, child or finished ID returns no trees, without a
@@ -216,27 +267,31 @@ query responses. A new epoch replaces old state. Snapshots do not promise a
 canonical replay cursor: admission can change live state without a public event.
 Do not add per-viewer state, caches, a sampling scheduler or version negotiation
 to the executor. AgentCore already exposes its executor; add no forwarding service
-or Store method. Existing hosted endpoints and embedded local clients are covered;
-observing scripts through a new HTTP listener is separate work.
+or new Store read method. Existing hosted endpoints and embedded local clients
+are covered; observing scripts through a new HTTP listener is separate work.
 
 ## Implementation touchpoints and acceptance
 
 Likely files: `execution/executor/executor.py`, `common.py`, `awaitables.py`,
 `spawn.py`, `tool_runtime.py`, lifecycle producers under `runs/` and `steps/`, new
 `execution/live.py`, `types.py`, shared projection in `accounting.py`/
-`event_projection.py` and value imports in `events.py`, `schemas.py`, `client.py`, `remote.py`, and
-`api/routers/runs.py`. Update `docs/executor.md`, `docs/execution.md`, `docs/api.md`
-and the implementation changelog through the repository runnable. Keep Store SQL,
-record codecs, canonical retention and existing public execution behavior unchanged.
+`event_projection.py`, value imports in `events.py`, terminal fields/codecs in
+`records.py`/`store.py`, `schemas.py`, `client.py`, `remote.py` and `api/routers/runs.py`.
+Update `docs/executor.md`, `docs/execution.md`, `docs/api.md` and the implementation
+changelog through the repository runnable. Limit Store changes to terminal value
+storage and compatible reads; preserve canonical retention and execution behavior.
 
 | Scenario | Pass condition |
 | --- | --- |
 | Ownership and startup | Concurrent roots, ordinary children and spawn route controls correctly; pending work is visible before begin; rejected Task creation and pre-entry cancellation leave no live ghosts. |
 | Structure | All actual Step kinds can be leaves; nested/parallel branches and terminal async launch ancestors retain real ownership; await does not duplicate/reparent work. |
 | Actual invocation | Skipped batches, invalid arguments and pre-call cancellation add no calls; real model/tool invocations count once even when they fail; include runtime tools and compaction model calls but exclude synthetic read Steps. |
-| Accounting reuse | The same ModelAccounting supplies Noted persistence and the shared Usage projection for events/counters; pricing is computed once, with no duplicate durable counter payload or new history reads. |
-| Totals and pruning | Only the executing Run and ancestor Runs accumulate; pruning, child termination, same-Run exec and compaction continuation neither lose nor double-count contributions; optional usage/cost and approximation retain the defined semantics. |
+| Realtime counts | While a real model/tool call is blocked, snapshots already include its entry in the owning Run and ancestors; completion, failure and cancellation never count it again. |
+| Accounting reuse | Existing in-memory ModelStepNoted supplies persistence and the shared Usage projection; usage is visible before awaiting its end write, including failure accounting, without duplicate Step usage, pricing calculation or history reads. |
+| Totals and pruning | Only the executing Run and ancestor Runs accumulate; pruning, child termination, same-Run exec and compaction continuation neither lose nor double-count contributions; missing accounting, unknown optional values and known zero follow the defined usage semantics. |
 | Persistence and receipts | Failed acceptance/begin creates no live node or actual call; a failed end write does not undo an executed call; repeated terminal/receipt delivery performs no counter update and preserves existing causal events. |
+| Terminal records | Model/tool Noted invocation facts and final per-Run calls/usage match live values, including skip/failure/cancel/startup and async admission/exec paths; each uses its existing terminal transaction, with no additional write. |
+| Record compatibility | Pending/legacy statistics remain unknown, new zero-work terminals record zero counts, legacy read-only schemas remain readable, and record selection/serialization exposes captured values without backfill or a history scan. |
 | Cleanup and observers | Startup failure, normal completion, immediate steer/cancel and canceled stop finalize once; slow/failing/overflowed observers do not affect execution; terminal delivery and bounded drain still work. |
 | Snapshot isolation | Concurrent transitions produce one coherent sample; returned values cannot change runtime state; large prior model contexts and completed history do not increase snapshot content. |
 | Access parity | Local and HTTP/remote reads validate the same shapes, filtering, empty/stopped/error semantics and epoch replacement; trap Store/history/detail reads to prove they are unused. |
@@ -249,11 +304,12 @@ This definition-only PR requires source/link verification and `git diff --check`
 
 ## Risks and approval
 
-The main risks are missed atomic-admission paths, counting a committed Step twice,
-misusing pruned nodes as write guards and finishing observers before terminal
-publication. Live snapshots are process-local and can miss short-lived Steps
+The main risks are missed atomic-admission/terminal paths, counting Steps instead
+of actual calls, misusing pruned nodes as write guards and finishing observers
+before terminal publication. Live snapshots are process-local and can miss short-lived Steps
 between polls; consumers needing every transition use the existing event stream.
-No persistent historical totals or completed-root archive is promised.
+Terminal records preserve captured final statistics; no historical rollup or
+completed-root archive is kept in LiveTree.
 
 No open contract decisions remain in this proposal. Human approval is required
 before implementation; merging this plan does not ship runtime behavior.
