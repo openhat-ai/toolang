@@ -148,7 +148,7 @@ thread. Language `spawn` and `runtime/spawn` use the internal
 [spawn admission contract](run-step-records.md#spawn-admission-and-handles),
 which creates a fresh thread in the same transaction when no target is supplied.
 For model-tool spawn with an explicit existing thread, admission reuses that
-thread and its current compaction without changing its origin/peer. The caller's
+thread and its current compaction without changing its origin. The caller's
 resolved launch preparation remains authoritative.
 
 Supplying a run ID is intentionally limited to one-shot script invocation so

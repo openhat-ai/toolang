@@ -19,7 +19,7 @@ from typing import (
     get_type_hints,
 )
 
-from pydantic import BaseModel, TypeAdapter
+from pydantic import BaseModel, BeforeValidator, TypeAdapter
 
 from toolang.base.types.compaction import CompactionResult
 from toolang.base.types.message import Part, message_summary
@@ -30,13 +30,13 @@ from toolang.lang.input import CallInput, validate_runnable_input_names
 from toolang.lang.types import Array, Struct, parse_runnable_ref_parts
 from .events import ExecutionEvent, event_to_data
 from .records import (
-    ControlPayloadField,
+    _control_payload_variant,
+    ControlPayloadUnion,
     run_preparation,
     ControlRecord,
     RunRecord,
     StepRecord,
     StoredModelStepGiven,
-    ThreadPeer,
     ThreadRecord,
     stored_step_given_to_data,
     step_noted_to_data,
@@ -64,7 +64,6 @@ from .types import (
     StepRef,
     StepStatus,
     ThreadRef,
-    ThreadPeerType,
     Pointer,
     RunRef,
     RunCommand,
@@ -532,19 +531,6 @@ def _validate_restart_request(
 
 
 @dataclass(frozen=True, slots=True)
-class ThreadPeerInfo:
-    """One caller-facing thread peer."""
-
-    type: ThreadPeerType = "user"
-    name: str = "user"
-    thread: str | None = None
-
-    @classmethod
-    def from_peer(cls, peer: ThreadPeer) -> ThreadPeerInfo:
-        return cls(type=peer.type, name=peer.name, thread=peer.thread)
-
-
-@dataclass(frozen=True, slots=True)
 class ThreadRunInfo:
     """One compact run summary embedded in a thread summary."""
 
@@ -578,7 +564,6 @@ class ThreadInfo:
     origin: str
     channel: str
     status: str
-    peer: ThreadPeerInfo
     created_by: ThreadControlRefData
     head: ThreadControlRefData
     run_count: int
@@ -597,7 +582,7 @@ class ThreadInfo:
         """Build one thread summary from durable records."""
 
         if not runs:
-            title = thread.peer.name if thread.peer.type == "agent" else thread.origin
+            title = thread.origin
             return cls(
                 id=thread.id,
                 title=title,
@@ -606,7 +591,6 @@ class ThreadInfo:
                 channel=_thread_channel(thread.id, thread.origin),
                 status="idle",
                 updated_at=thread.updated_at,
-                peer=ThreadPeerInfo.from_peer(thread.peer),
                 created_by=ThreadControlRefData(thread=thread.id, index=0),
                 head=ThreadControlRefData.from_ref(head),
                 run_count=0,
@@ -624,7 +608,6 @@ class ThreadInfo:
             channel=_thread_channel(thread.id, thread.origin),
             status="running" if active is not None else "idle",
             updated_at=max(last.finished_at or last.started_at, thread.updated_at),
-            peer=ThreadPeerInfo.from_peer(thread.peer),
             created_by=ThreadControlRefData(thread=thread.id, index=0),
             head=ThreadControlRefData.from_ref(head),
             run_count=len(runs),
@@ -725,7 +708,7 @@ class ControlInfo:
     timing: ControlTiming
     request_id: str | None
     status: ControlStatus
-    payload: ControlPayloadField
+    payload: Annotated[ControlPayloadUnion, BeforeValidator(_control_payload_variant)]
     error: str | None
     created_at: str
     finished_at: str | None

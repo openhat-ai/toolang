@@ -475,7 +475,6 @@ def test_shutdown_wakes_idle_subscription_without_closing_canonical_source(tmp_p
 def test_overflow_wins_over_an_already_terminal_record(tmp_path):
     from toolang.execution.errors import StreamOverflowError
     from toolang.execution.events import ThreadCreated
-    from toolang.execution.records import ThreadPeer
     from toolang.execution.types import ControlRef
 
     harness = ExecutionHarness.create(
@@ -502,7 +501,6 @@ def test_overflow_wins_over_an_already_terminal_record(tmp_path):
                             f"term_other{index}",
                             ControlRef.for_thread(f"term_other{index}", 0),
                             "chat",
-                            ThreadPeer(),
                             "",
                         )
                     )

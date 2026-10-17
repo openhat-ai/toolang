@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import fields
 from typing import Literal, cast
 
 import pytest
@@ -21,6 +22,7 @@ from toolang.base.types.model import (
 )
 from toolang.base.types.policy import RunLimits
 from toolang.execution.records import (
+    ControlPayloadUnion,
     CancelControlPayload,
     ChdirControlPayload,
     ControlRecord,
@@ -612,6 +614,38 @@ def test_control_protocol_uses_kind_to_restore_payload_variant(
 
     assert type(restored_record.payload) is type(payload)
     assert type(restored_info.payload) is type(payload)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    (
+        SteerControlPayload(CallInput({"_": "work"})),
+        CancelControlPayload(CallInput({"_": "stop"})),
+        ExecControlPayload("a" * 64, "flow:next", CallInput({"_": "work"})),
+        ChdirControlPayload("repo://src"),
+    ),
+)
+def test_control_payload_union_validates_without_an_enclosing_record(payload):
+    assert TypeAdapter(ControlPayloadUnion).validate_python(payload) == payload
+
+
+def test_control_info_rejects_a_payload_from_a_different_kind() -> None:
+    info = ControlInfo(
+        run_id="run_test",
+        index=1,
+        kind="cancel",
+        timing="immediate",
+        request_id=None,
+        status="pending",
+        payload=SteerControlPayload(CallInput({"_": "work"})),
+        error=None,
+        created_at="",
+        finished_at=None,
+    )
+    with pytest.raises(ValueError, match="cancel control has an invalid payload"):
+        TypeAdapter(ControlInfo).validate_python(
+            {field.name: getattr(info, field.name) for field in fields(info)}
+        )
 
 
 @pytest.mark.parametrize(

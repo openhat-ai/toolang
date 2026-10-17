@@ -237,7 +237,6 @@ def test_record_registry_serializes_exact_record_shapes(tmp_path: Path) -> None:
             "horizon",
             "id",
             "origin",
-            "peer",
             "created_at",
             "updated_at",
         }

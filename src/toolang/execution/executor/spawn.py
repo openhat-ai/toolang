@@ -23,7 +23,7 @@ from toolang.lang.ast import (
 from toolang.lang.contracts import OutputContract
 from toolang.state.state import AgentState, state_program
 
-from ..records import ThreadPeer, LaunchContext
+from ..records import LaunchContext
 from ..events import ThreadCreated, RunEnd
 from ..runnables import ResolvedRunnable, resolve_call_target
 from ..settings import resolve_settings
@@ -168,11 +168,6 @@ async def accept(
                 handle, created = execution.store.accept_spawn(
                     handle=handle,
                     source=step,
-                    peer=ThreadPeer(
-                        type="agent",
-                        name=parent.setup.layout.name,
-                        thread=parent.thread,
-                    ),
                     resources=resources,
                     limits=bound.limits,
                     state=state.revision,
@@ -198,11 +193,6 @@ async def accept(
                             thread=handle.thread,
                             control=ControlRef.for_thread(handle.thread, 0),
                             origin="work",
-                            peer=ThreadPeer(
-                                type="agent",
-                                name=parent.setup.layout.name,
-                                thread=parent.thread,
-                            ),
                             created_at=bound.created_at,
                         )
                         executor.store.record_event_cursor(

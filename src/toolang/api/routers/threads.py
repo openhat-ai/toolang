@@ -13,11 +13,9 @@ from toolang.execution.subscriptions import EventSubscription, StreamScope
 from toolang.api.schemas import (
     ThreadCreateRequest,
     ThreadForkRequest,
-    ThreadPeerPayload,
     ThreadResult,
     ThreadRewindRequest,
 )
-from toolang.execution.records import ThreadPeer
 from toolang.execution.schemas import RunDetail, ThreadDetail, ThreadInfo
 from toolang.execution.types import ThreadPrefix
 from toolang.execution.values import parts_from_value
@@ -51,7 +49,6 @@ def create_thread(core: AgentCoreDep, payload: ThreadCreateRequest) -> ThreadRes
         prefix=ThreadPrefix.CHAT,
         request_id=payload.request_id,
         client_id=payload.client_id,
-        peer=parse_thread_peer(payload.peer),
     )
     return ThreadResult(thread=thread_info(core, thread_id))
 
@@ -179,17 +176,6 @@ async def thread_stream(
 ) -> AsyncIterator[ServerSentEvent]:
     async for event in sse_stream(request, subscription):
         yield event
-
-
-def parse_thread_peer(payload: ThreadPeerPayload | None) -> ThreadPeer | None:
-    """Parse one API peer payload into its execution value object."""
-
-    if payload is None:
-        return None
-    try:
-        return ThreadPeer.from_data(payload.model_dump())
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 def thread_info(core: AgentCore, thread_id: str) -> ThreadInfo:

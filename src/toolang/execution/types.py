@@ -2064,7 +2064,6 @@ ControlKind = Literal[
     "fork",
     "rewind",
 ]
-ThreadPeerType = Literal["user", "agent"]
 
 
 class ThreadPrefix(StrEnum):

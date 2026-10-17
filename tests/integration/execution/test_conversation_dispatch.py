@@ -79,9 +79,8 @@ flow worker(_: Text) -> Text:
             assert worker.thread.id == destination
             after = harness.store.get_thread(thread_id=destination)
             assert after is not None and metadata is not None
-            assert (after.origin, after.peer, after.created_at) == (
+            assert (after.origin, after.created_at) == (
                 metadata.origin,
-                metadata.peer,
                 metadata.created_at,
             )
             assert len(harness.store.list_threads()) == 2

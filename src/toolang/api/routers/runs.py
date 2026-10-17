@@ -44,7 +44,7 @@ from toolang.execution.records import (
 )
 from toolang.execution.schemas import ControlInfo, RunDetail, RunInfo
 from toolang.execution.types import RunStatus, ThreadPrefix
-from toolang.api.routers.threads import thread_info, parse_thread_peer
+from toolang.api.routers.threads import thread_info
 from toolang.lang.input import decode_runnable_input
 from toolang.lang.ast import AgicDecl
 from toolang.execution.runnables import (
@@ -73,7 +73,6 @@ def create_script_thread(
         prefix=ThreadPrefix.SCRIPT,
         client_id=payload.client_id,
         request_id=payload.request_id,
-        peer=parse_thread_peer(payload.peer),
     )
     return ThreadResult(thread=thread_info(core, thread))
 
