@@ -21,9 +21,17 @@ from tests.support.execution_harness import (
     RecordingRunTracer,
     RecordingTool,
 )
-from toolang.base.types.message import Message
+from toolang.base.types.message import Message, ReasoningPart, TextPart
 from toolang.base.types.run import ModelCallResult, ToolCall
-from toolang.execution.events import RunBegin, RunEnd, StepBegin, StepEnd
+from toolang.execution.events import (
+    RunBegin,
+    RunEnd,
+    StepBegin,
+    StepEnd,
+    run_event_from_data,
+    run_event_to_data,
+)
+from toolang.execution.subscriptions import RecordSnapshot
 from toolang.execution.types import (
     ThreadPrefix,
     ToolStepGiven,
@@ -118,6 +126,59 @@ agic calculate(_: Text) -> Text:
             assert isinstance(stored_tool.given, ToolStepGiven)
             assert stored_tool.given.summary == "Executing double: 3"
             assert stored_tool.noted == ToolStepNoted(summary="Executed double: 3")
+
+    asyncio.run(scenario())
+
+
+def test_parallel_part_results_match_live_wire_and_record_snapshots(tmp_path: Path):
+    parts = (ReasoningPart("hidden"), TextPart("answer"))
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+agic worker() -> Part[]:
+  user: Answer
+
+flow parent() -> Part[][]:
+  generate 2 in 2 lanes using worker
+""",
+        responses=[ModelCallResult(message=Message(role="assistant", parts=parts))] * 2,
+    )
+    tracer = RecordingRunTracer()
+
+    async def scenario():
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            root = await harness.executor.run(
+                harness.run_spec(thread=thread, runnable="parent"), tracer=tracer
+            )
+            assert root.status == "succeeded"
+            runs = harness.store.list_runs(thread_id=thread, limit=None)
+            snapshot = RecordSnapshot(
+                harness.store,
+                runs,
+                [
+                    step
+                    for run in runs
+                    for step in harness.store.list_steps(run_id=run.id)
+                ],
+            )
+            for identity in (StepRef.parse(f"{root.id}.0"), root.id):
+                live = next(
+                    event
+                    for event in tracer.events
+                    if isinstance(event, StepEnd)
+                    and event.step == str(identity)
+                    or isinstance(event, RunEnd)
+                    and event.run == identity
+                )
+                assert isinstance(live, StepEnd | RunEnd)
+                assert live.output is not None and live.output.type == "Part[][]"
+                assert live.output.value == (parts, parts)
+                wire = run_event_from_data(run_event_to_data(live))
+                assert wire == live
+                recorded, _cursor = snapshot.ends[identity]
+                assert isinstance(recorded, StepEnd | RunEnd)
+                assert recorded.output == live.output
 
     asyncio.run(scenario())
 

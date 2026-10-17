@@ -1620,6 +1620,21 @@ def test_malformed_part_sequence_becomes_one_root_diagnostic() -> None:
     assert "PartDelta without active Part" in _rows(update.committed)[0][0]
 
 
+def test_step_cannot_end_while_its_child_run_is_active() -> None:
+    projector = ProgressProjector(show_boundaries=False)
+    owner = StepRef.parse("run_root.0")
+    projector.handle(run_begin("run_root", 0, "flow:parent"))
+    projector.handle(step_begin(owner, "run", RunStmt(span=SPAN, runnable="child")))
+    projector.handle(run_begin("run_child", 0, "agic:child", parent=owner))
+
+    update = projector.handle(step_end(owner, "run", "succeeded"))
+
+    assert _rows(update.committed) == [
+        ["• StepEnd with active child Run for run_root.0"]
+    ]
+    assert update.live == ()
+
+
 def test_terminal_diagnostic_preserves_the_active_statement_header() -> None:
     projector = ProgressProjector()
     flow = StepRef.parse("run_root.0")

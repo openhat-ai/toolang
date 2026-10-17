@@ -545,10 +545,7 @@ class ProgressProjector:
             raise _PresentationError(
                 f"StepEnd with active child Step for {StepRef.parse(event.step)}"
             )
-        if any(
-            (child.begin.parent) == StepRef.parse(event.step)
-            for child in self._runs.values()
-        ):
+        if any(child.begin.parent == event.step for child in self._runs.values()):
             raise _PresentationError(
                 f"StepEnd with active child Run for {StepRef.parse(event.step)}"
             )

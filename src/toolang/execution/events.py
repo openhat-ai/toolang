@@ -134,6 +134,19 @@ def _value_to_data(value: Any) -> Any:
     raise TypeError(f"event output requires direct data, got {type(value).__name__}")
 
 
+def _part_value(value: Any, kind: str) -> Any:
+    """Keep canonical Parts at every dimension of an explicitly typed array."""
+    if kind.endswith("[]"):
+        if not isinstance(value, Sequence) or isinstance(value, str | bytes):
+            raise ValueError(f"event {kind} output requires an array")
+        return tuple(_part_value(item, kind[:-2]) for item in value)
+    if isinstance(value, Part):
+        return value
+    if not isinstance(value, dict):
+        raise ValueError("event Part output requires a canonical Part object")
+    return part_from_data(value)
+
+
 @dataclass(frozen=True, slots=True)
 class EventOutput:
     """A concrete output value, without local bindings or pointer alternatives."""
@@ -143,13 +156,10 @@ class EventOutput:
 
     def __post_init__(self) -> None:
         data = _value_to_data(self.value)
-        if authored_type(self.type) == "Part[]":
-            object.__setattr__(self, "value", tuple(self.value))
-        if (
-            self.type != "_Awaitable"
-            and authored_type(self.type) != "Part[]"
-            and authored_type(self.type) != "Part"
-        ):
+        kind = authored_type(self.type)
+        if kind.split("[", 1)[0] == "Part":
+            object.__setattr__(self, "value", _part_value(self.value, kind))
+        elif self.type != "_Awaitable":
             object.__setattr__(self, "value", data)
 
 
@@ -392,16 +402,6 @@ def run_event_from_data(data: object) -> RunEvent:
             raise ValueError("event output type must be text")
         if kind == "_Awaitable":
             value = AwaitableHandle.from_data(value, type_name=kind)
-        elif authored_type(kind) == "Part[]":
-            if not isinstance(value, list) or not all(
-                isinstance(item, dict) for item in value
-            ):
-                raise ValueError("event Part[] output requires canonical Part objects")
-            value = tuple(part_from_data(item) for item in value)
-        elif authored_type(kind) == "Part":
-            if not isinstance(value, dict):
-                raise ValueError("event Part output requires a canonical Part object")
-            value = part_from_data(value)
         payload["output"] = EventOutput(kind, value)
     return _RUN_EVENT_ADAPTER.validate_python(payload)
 

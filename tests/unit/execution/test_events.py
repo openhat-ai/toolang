@@ -13,7 +13,7 @@ from typing import get_args
 import pytest
 from pydantic import TypeAdapter
 
-from toolang.base.types.message import Message, TextDelta, TextPart
+from toolang.base.types.message import Message, ReasoningPart, TextDelta, TextPart
 from toolang.base.types.run import ModelCall, ToolCall
 from toolang.execution.events import (
     PartBegin,
@@ -21,6 +21,7 @@ from toolang.execution.events import (
     PartEnd,
     RunEnd,
     StepBegin,
+    StepEnd,
     run_event_from_data,
     run_event_to_data,
 )
@@ -335,6 +336,50 @@ def test_concrete_part_array_round_trips_without_losing_parts():
         EventOutput("TextPart[]", (TextPart("hello"),)),
     )
     assert run_event_from_data(run_event_to_data(event)) == event
+
+
+@pytest.mark.parametrize("kind", ["Part[][]", "TextPart[][]", "Part[][][]"])
+def test_nested_part_arrays_retain_canonical_parts(kind):
+    value = ((TextPart("answer"),),)
+    if kind == "Part[][][]":
+        value = (value,)
+    event = step_end("run_root.0", "value", "succeeded", EventOutput(kind, value))
+
+    restored = run_event_from_data(json.loads(json.dumps(run_event_to_data(event))))
+
+    assert restored == event
+    assert isinstance(restored, StepEnd)
+    assert restored.output is not None and restored.output.value == value
+
+
+def test_nested_part_array_presentation_filters_reasoning_and_metadata():
+    from toolang.execution.values import parts_from_value
+
+    event = step_end(
+        "run_root.0",
+        "value",
+        "succeeded",
+        EventOutput(
+            "Part[][]",
+            (
+                (
+                    ReasoningPart("hidden"),
+                    TextPart(
+                        "answer",
+                        signature="private",
+                        provider="provider",
+                        provider_metadata={"adapter": "test", "model": "test"},
+                    ),
+                ),
+            ),
+        ),
+    )
+    restored = run_event_from_data(run_event_to_data(event))
+
+    assert isinstance(restored, StepEnd)
+    assert restored.output is not None
+    rendered = parts_from_value(restored.output.value, content_only=True)
+    assert rendered == (TextPart('[[{"$part":{"type":"text","text":"answer"}}]]'),)
 
 
 @pytest.mark.parametrize("tool", [False, True])
