@@ -175,8 +175,12 @@ existing completion transaction, not through a second statistics writer:
 | --- | --- | --- |
 | `ModelStepNoted.invoked` / `ToolStepNoted.invoked` | Add `bool \| None`: actual invocation entry for this Step. New terminal model/tool Steps always supply `True` or `False`; `None` means legacy/unknown. | Snapshot the Step node before terminal pruning. |
 | Existing `StepRecord.noted` fields | Retain model accounting/continuation, tool summary and other Step facts. Do not add a duplicate `Usage` payload or counters to Flow Steps. | The same in-memory model accounting used to update LiveTree. |
-| `RunRecord.calls: CallCounters \| None` | Cumulative calls for this Run and owned descendants. | Snapshot the Run node after existing child cleanup, before terminal pruning. |
-| `RunRecord.usage: Usage \| None` | Cumulative available model usage, with the semantics above. | The same Run node snapshot. |
+| `RunRecord.noted: RunNoted \| None` | Add `RunNoted(calls: CallCounters, usage: Usage \| None)` for cumulative calls and available model usage for this Run and owned descendants. | Snapshot the Run node after existing child cleanup, before terminal pruning. |
+
+All persisted statistics belong inside a record's `noted`. Add no top-level
+`stats`, `counters`, `calls`, `usage`, token or cost fields to any Record, and no
+parallel statistics columns or indexes. Lifecycle timestamps and execution-limit
+inputs retain their existing execution meanings.
 
 `ModelAccounting` remains the per-call accounting fact; do not rebuild it from
 the smaller aggregate `Usage`. A model's accounting and call-entry count are
@@ -192,8 +196,9 @@ Persist no nodes or intermediate snapshots. Keep terminal events compact and do
 not add aggregate counters/usage to RunEnd or duplicate model usage in StepEnd.
 
 Extend the existing model/tool Noted codecs for `invoked`; add no Step column.
-Add nullable `calls` and `usage` columns to `runs` using existing schema upgrade
-and record serialization patterns. Pending/running records and old records
+Add only a nullable `noted` column to `runs`, with `RunNoted` in `types.py` and
+its codec in `records.py`, using existing schema upgrade/serialization patterns.
+Pending/running records and old records
 without captured statistics retain `None`; legacy Noted without `invoked` and
 legacy read-only databases remain readable. Do not backfill or mistake absence
 for zero. Record inspection reads captured fields without reconstructing calls;
@@ -291,7 +296,8 @@ storage and compatible reads; preserve canonical retention and execution behavio
 | Totals and pruning | Only the executing Run and ancestor Runs accumulate; pruning, child termination, same-Run exec and compaction continuation neither lose nor double-count contributions; missing accounting, unknown optional values and known zero follow the defined usage semantics. |
 | Persistence and receipts | Failed acceptance/begin creates no live node or actual call; a failed end write does not undo an executed call; repeated terminal/receipt delivery performs no counter update and preserves existing causal events. |
 | Terminal records | Model/tool Noted invocation facts and final per-Run calls/usage match live values, including skip/failure/cancel/startup and async admission/exec paths; each uses its existing terminal transaction, with no additional write. |
-| Record compatibility | Pending/legacy statistics remain unknown, new zero-work terminals record zero counts, legacy read-only schemas remain readable, and record selection/serialization exposes captured values without backfill or a history scan. |
+| Record compatibility | Pending/legacy Run Noted remains unknown, new zero-work terminals record zero counts, legacy read-only schemas remain readable, and record selection/serialization exposes captured Noted without backfill or a history scan. |
+| Record boundary | All durable statistics are inside Step/Run Noted; neither Record types nor Store tables gain top-level stats/counters/calls/usage fields or parallel statistics storage. |
 | Cleanup and observers | Startup failure, normal completion, immediate steer/cancel and canceled stop finalize once; slow/failing/overflowed observers do not affect execution; terminal delivery and bounded drain still work. |
 | Snapshot isolation | Concurrent transitions produce one coherent sample; returned values cannot change runtime state; large prior model contexts and completed history do not increase snapshot content. |
 | Access parity | Local and HTTP/remote reads validate the same shapes, filtering, empty/stopped/error semantics and epoch replacement; trap Store/history/detail reads to prove they are unused. |
