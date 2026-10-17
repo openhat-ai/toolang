@@ -497,7 +497,7 @@ def _control_payload_variant(value: object, info: ValidationInfo) -> object:
     return value
 
 
-ControlPayloadUnion = Annotated[
+ControlPayloadUnion: TypeAlias = (
     RunControlPayload
     | LegacyRetryPayloadField
     | ChdirControlPayload
@@ -508,9 +508,8 @@ ControlPayloadUnion = Annotated[
     | RecallControlPayload
     | CreateControlPayload
     | ForkControlPayload
-    | RewindControlPayload,
-    BeforeValidator(_control_payload_variant),
-]
+    | RewindControlPayload
+)
 
 
 def run_preparation(
@@ -681,7 +680,7 @@ class ControlRecord:
 
     id: str
     kind: ControlKind
-    payload: ControlPayloadUnion
+    payload: Annotated[ControlPayloadUnion, BeforeValidator(_control_payload_variant)]
     triggered_by: StepRef | None = None
     request: str | None = None
     client_id: str | None = None

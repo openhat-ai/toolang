@@ -19,7 +19,7 @@ from typing import (
     get_type_hints,
 )
 
-from pydantic import BaseModel, TypeAdapter
+from pydantic import BaseModel, BeforeValidator, TypeAdapter
 
 from toolang.base.types.compaction import CompactionResult
 from toolang.base.types.message import Part, message_summary
@@ -30,6 +30,7 @@ from toolang.lang.input import CallInput, validate_runnable_input_names
 from toolang.lang.types import Array, Struct, parse_runnable_ref_parts
 from .events import ExecutionEvent, event_to_data
 from .records import (
+    _control_payload_variant,
     ControlPayloadUnion,
     run_preparation,
     ControlRecord,
@@ -707,7 +708,7 @@ class ControlInfo:
     timing: ControlTiming
     request_id: str | None
     status: ControlStatus
-    payload: ControlPayloadUnion
+    payload: Annotated[ControlPayloadUnion, BeforeValidator(_control_payload_variant)]
     error: str | None
     created_at: str
     finished_at: str | None
