@@ -7,7 +7,11 @@ from contextlib import closing
 
 import pytest
 
-from tests.support.execution_harness import ExecutionHarness, RecordingRunTracer
+from tests.support.execution_harness import (
+    AsyncGate,
+    ExecutionHarness,
+    RecordingRunTracer,
+)
 from toolang.execution.executor import executor as executor_module
 from toolang.base.types.message import TextPart
 from toolang.execution.events import RunEnd
@@ -27,12 +31,14 @@ def test_failed_root_startup_is_durable_and_published_once(
     create_task = asyncio.create_task
     rejected = []
 
-    def fail_startup(*args, **kwargs):
-        raise failure
-
     def fail_task(coro, **kwargs):
-        if kwargs.get("name") == (
-            "toolang-run-observer" if stage == "observer" else "toolang-run-run_failed"
+        name = kwargs.get("name", "")
+        if (
+            name == "toolang-run-observer"
+            if stage == "observer"
+            else name.startswith("toolang-controls-")
+            if stage == "monitor"
+            else name == "toolang-run-run_failed"
         ):
             rejected.append(coro)
             raise failure
@@ -43,10 +49,7 @@ def test_failed_root_startup_is_durable_and_published_once(
             thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
             tracer = RecordingRunTracer()
             with monkeypatch.context() as patch:
-                if stage == "monitor":
-                    patch.setattr(harness.executor, "_ensure_monitor", fail_startup)
-                else:
-                    patch.setattr(asyncio, "create_task", fail_task)
+                patch.setattr(asyncio, "create_task", fail_task)
                 with pytest.raises(RuntimeError) as caught:
                     harness.executor.run(
                         harness.run_spec(
@@ -169,5 +172,82 @@ def test_eager_task_factory_cannot_start_execution_before_ownership(tmp_path):
                 assert record.status == "succeeded"
             finally:
                 loop.set_task_factory(None)
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("phase", ["runs", "observers"])
+def test_canceling_stop_still_finishes_runs_and_drains_terminal_events(
+    tmp_path, monkeypatch, phase
+):
+    harness = ExecutionHarness.create(
+        tmp_path, source="flow root(_: Text) -> Text:\n  pass\n", responses=[]
+    )
+    executing, finishing, observing = AsyncGate(), AsyncGate(), AsyncGate()
+    finish_run = executor_module._Execution.finish_run
+    completed = []
+
+    async def wait_for_cancel(self, *args, **kwargs):
+        await executing.wait()
+
+    async def pause_finish(self, **facts):
+        await finishing.wait()
+        result = await finish_run(self, **facts)
+        completed.append(facts["run"])
+        return result
+
+    monkeypatch.setattr(executor_module._Execution, "execute", wait_for_cancel)
+    monkeypatch.setattr(executor_module._Execution, "finish_run", pause_finish)
+
+    class Tracer(RecordingRunTracer):
+        async def on_event(self, event):
+            await super().on_event(event)
+            if phase == "observers":
+                await observing.wait()
+
+    async def scenario():
+        async with harness:
+            tracer = Tracer()
+            handle = harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    runnable="root",
+                    primary=(TextPart("ready"),),
+                ),
+                tracer=tracer,
+            )
+            await asyncio.wait_for(executing.wait_until_entered(), 2)
+            if phase == "observers":
+                finishing.release()
+            stopping = asyncio.create_task(harness.executor.stop())
+            await asyncio.wait_for(
+                (finishing if phase == "runs" else observing).wait_until_entered(), 2
+            )
+            if phase == "observers":
+                async with asyncio.timeout(2):
+                    while not harness.executor.stream._closed:
+                        await asyncio.sleep(0)
+            stopping.cancel()
+            finishing.release()
+            with pytest.raises(asyncio.CancelledError):
+                await stopping
+            assert handle.run_id in completed
+            record = harness.store.get_run(run_id=handle.run_id)
+            assert record is not None and record.status == "canceled"
+            assert harness.executor._monitor_task is None
+            assert harness.executor.stream._closed
+            assert not harness.executor.stream._readers
+            assert not harness.executor._active and not harness.executor._tasks
+            with harness.executor.stream.boundary() as (_, _, frames):
+                ended = [
+                    frame.event for frame in frames if frame.root_run_id == record.id
+                ]
+            assert len(ended) == 1 and isinstance(ended[0], RunEnd)
+            assert tracer.events == ended
+            await harness.executor.stop()
+            with harness.executor.stream.boundary() as (_, _, frames):
+                assert [
+                    frame.event for frame in frames if frame.root_run_id == record.id
+                ] == ended
 
     asyncio.run(scenario())

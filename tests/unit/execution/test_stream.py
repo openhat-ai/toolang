@@ -457,3 +457,19 @@ def test_stalled_tracer_has_a_bounded_drain_and_releases_its_reader(
         assert not source._signal._listeners
 
     asyncio.run(scenario())
+
+
+def test_observer_canceled_before_its_first_turn_releases_its_reader():
+    from tests.support.execution_harness import RecordingRunTracer
+    from toolang.execution.stream import TraceObserver
+
+    async def scenario():
+        source = CanonicalStream()
+        observer = TraceObserver(source.subscribe(), RecordingRunTracer())
+        observer.task.cancel()
+        await asyncio.gather(observer.task, return_exceptions=True)
+        assert observer.reader not in source._readers
+        assert not source._signal._listeners
+        source.close()
+
+    asyncio.run(scenario())

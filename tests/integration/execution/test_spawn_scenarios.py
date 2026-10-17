@@ -570,11 +570,38 @@ agic child() -> Text:
     asyncio.run(scenario())
 
 
-def test_spawn_does_not_hide_failed_startup_finalization(tmp_path, monkeypatch):
+@pytest.mark.parametrize("caller", ["flow", "agic"])
+@pytest.mark.parametrize("error_type", [RuntimeError, ValueError])
+def test_spawn_does_not_hide_failed_startup_finalization(
+    tmp_path, monkeypatch, caller, error_type
+):
     harness = ExecutionHarness.create(
         tmp_path,
-        source="flow parent(_: Text):\n  spawn child\nflow child(_: Text):\n  pass\n",
-        responses=[],
+        source="""
+flow parent(_: Text):
+  spawn child
+agic driver(_: Text):
+  recall = none
+  hands = flow:child
+  user: Start the child.
+flow child(_: Text):
+  pass
+""",
+        responses=[
+            ModelCallResult(
+                tool_calls=(
+                    ToolCall(
+                        "spawn",
+                        "spawn",
+                        "runtime__spawn",
+                        {"runnable": "flow:child", "input": {"_": "input"}},
+                    ),
+                )
+            ),
+            ModelCallResult(message=Message.assistant("Started.")),
+        ]
+        if caller == "agic"
+        else [],
     )
     create_task = asyncio.create_task
     finish_run = harness.executor._finish_run
@@ -589,7 +616,7 @@ def test_spawn_does_not_hide_failed_startup_finalization(tmp_path, monkeypatch):
         nonlocal attempted
         if not attempted:
             attempted = True
-            raise RuntimeError("terminal write failed")
+            raise error_type("terminal write failed")
         return finish_run(*args, **kwargs)
 
     monkeypatch.setattr(asyncio, "create_task", failed_task)
@@ -600,7 +627,7 @@ def test_spawn_does_not_hide_failed_startup_finalization(tmp_path, monkeypatch):
             record = await harness.executor.run(
                 harness.run_spec(
                     thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
-                    runnable="parent",
+                    runnable="driver" if caller == "agic" else "parent",
                     primary=(TextPart("input"),),
                 )
             )

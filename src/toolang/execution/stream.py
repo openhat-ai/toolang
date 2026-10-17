@@ -411,6 +411,7 @@ class TraceObserver:
             coroutine.close()
             reader.close()
             raise
+        self.task.add_done_callback(lambda _task: reader.close())
 
     async def _run(self, tracer: RunTracer) -> None:
         try:

@@ -463,6 +463,14 @@ async def _execute(
         )
         raise _StepFailed(StepRef.from_local(run.run_id, (step_index,)), exc) from exc
     if (
+        runtime is not None
+        and runtime.failure is not None
+        and state.execution is not None
+        and state.execution._active is not None
+        and step in state.execution._active.early_ends
+    ):
+        raise runtime.failure
+    if (
         state.execution is not None
         and access is not None
         and record.error is None

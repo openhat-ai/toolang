@@ -556,6 +556,12 @@ class _ToolRuntime(ToolRuntime):
         except _RunRejected as exc:
             return ToolResult(error=str(exc), output=exc.details)
         except (ToolangError, TypeError, ValueError) as exc:
+            if (
+                execution._active is not None
+                and self.step in execution._active.early_ends
+            ):
+                self.failure = exc
+                raise
             return ToolResult(error=str(exc))
         except Exception as exc:
             self.failure = exc

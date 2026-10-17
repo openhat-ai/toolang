@@ -181,6 +181,14 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Fixed
 
+- Cancellation while `stop()` drains owned tasks still runs terminal fallback and
+  monitor/observer cleanup before propagating; cancellation while draining
+  observers also releases readers. Rejected control-monitor task creation closes
+  its coroutine, and observers canceled before their first turn release their
+  subscriptions. Runtime spawn errors after admission preserve the completed Step
+  receipt and record the later error on the Run instead of creating an invalid
+  `ErrorRef`.
+
 - Root and spawned Runs share startup-failure finalization: a synchronous
   startup error marks the Run failed, closes pending controls, publishes exactly
   one terminal event, then re-raises the original error. Rejected task creation

@@ -926,7 +926,11 @@ class RunExecutor:
                 for run_id in tuple(self._active):
                     if self._active.get(run_id) is active:
                         self._active.pop(run_id, None)
-            if active is not None and active.observer is not None:
+            if (
+                active is not None
+                and active.observer is not None
+                and bound.run_id in active.ended
+            ):
                 active.observer.finish()
         result = self.store.get_run(run_id=bound.run_id)
         if result is None:
@@ -1033,37 +1037,45 @@ class RunExecutor:
         for task, _run in owned:
             if not task.done():
                 task.cancel()
-        if owned:
-            await asyncio.gather(
-                *(task for task, _run in owned),
-                return_exceptions=True,
-            )
-        await asyncio.sleep(0)
-        for _task, (run_id, active) in owned:
-            await self._ensure_terminal(
-                run_id,
-                status="canceled",
-            )
-        with self._active_lock:
-            owned_tasks = {task for task, _run in owned}
-            for run_id, active in tuple(self._active.items()):
-                if active.task in owned_tasks:
-                    self._active.pop(run_id, None)
-        monitor = self._monitor_task
-        self._monitor_task = None
-        if monitor is not None and not monitor.done():
-            monitor.cancel()
-            await asyncio.gather(monitor, return_exceptions=True)
-        self.stream.close()
-        observers = tuple(self._observers)
-        if observers:
-            await asyncio.wait(
-                {item.task for item in observers}, timeout=OBSERVER_DRAIN_SEC
-            )
-            for observer in observers:
-                observer.reader.close()
-                if not observer.task.done():
-                    observer.task.cancel()
+        try:
+            if owned:
+                draining = asyncio.gather(
+                    *(task for task, _run in owned),
+                    return_exceptions=True,
+                )
+                try:
+                    await asyncio.shield(draining)
+                finally:
+                    await draining
+        finally:
+            for _task, (run_id, active) in owned:
+                await self._ensure_terminal(
+                    run_id,
+                    status="canceled",
+                )
+            with self._active_lock:
+                owned_tasks = {task for task, _run in owned}
+                for run_id, active in tuple(self._active.items()):
+                    if active.task in owned_tasks:
+                        self._active.pop(run_id, None)
+            monitor = self._monitor_task
+            self._monitor_task = None
+            if monitor is not None and not monitor.done():
+                monitor.cancel()
+            self.stream.close()
+            observers = tuple(self._observers)
+            try:
+                if monitor is not None:
+                    await asyncio.gather(monitor, return_exceptions=True)
+                if observers:
+                    await asyncio.wait(
+                        {item.task for item in observers}, timeout=OBSERVER_DRAIN_SEC
+                    )
+            finally:
+                for observer in observers:
+                    observer.reader.close()
+                    if not observer.task.done():
+                        observer.task.cancel()
 
     def _require_available(self) -> None:
         if self._stopped:
@@ -1332,9 +1344,14 @@ class RunExecutor:
 
     def _ensure_monitor(self, agent_name: str) -> None:
         if self._monitor_task is None or self._monitor_task.done():
-            self._monitor_task = asyncio.create_task(
-                self._monitor_controls(), name=f"toolang-controls-{agent_name}"
-            )
+            coroutine = self._monitor_controls()
+            try:
+                self._monitor_task = asyncio.create_task(
+                    coroutine, name=f"toolang-controls-{agent_name}"
+                )
+            except Exception:
+                coroutine.close()
+                raise
 
     async def _monitor_controls(self) -> None:
         while True:
@@ -1398,6 +1415,8 @@ class RunExecutor:
                         if active is not None
                         else run_id,
                     )
+        if active is not None:
+            active.ended.add(run_id)
 
 
 class _Execution:

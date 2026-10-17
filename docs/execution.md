@@ -177,6 +177,10 @@ the process that calls `run(spec)` accepts and executes that run. `stop()` is
 terminal and cancels the run tasks owned by that executor instance. The process
 owner closes the shared `RunStore` after the executor stops.
 
+Cancellation during `stop()`'s owned-task drain still runs terminal fallback and
+resource cleanup before it propagates. Observer cleanup also runs when its drain
+is canceled. Automatic Run completion drains its observer after terminal publication.
+
 Callers resolve the captured `AgentSetup` defaults and any session or run
 policy into `RunSpec.limits` before `run()`. Per-agic model and tool call
 limits reset on each agic invocation, while token, cost, and time limits are
