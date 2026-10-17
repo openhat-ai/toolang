@@ -4,20 +4,21 @@ Status: proposed for review. Work type: feature definition; no implementation.
 
 ## Goal and success criteria
 
-Make `RunEvent` exclusively an external subscription contract. Keep `_PersistSink`
-as the executor's private persistence adapter, using internal facts instead of
-Event objects. Preserve compact records, exact model-call recording, transactions
-and the canonical memory stream.
+Make `RunEvent` exclusively an external subscription contract. Have the existing
+executor lifecycle coordination call `RunStore` directly with internal facts,
+removing `_PersistSink` rather than replacing it with thin forwarding methods.
+Preserve compact records, exact model-call recording, transactions and the
+canonical memory stream.
 
 Success means persistence and execution state changes do not consume client
 Event types; subscribers receive only necessary direct data after commit.
 
 ## Scope
 
-In: Event independence, `_PersistSink` implementation boundaries and the executor
-call sites required to separate recording from notification. Adapt existing
-consumers only where the changed event fields require it; retain their algorithms
-and behavior.
+In: Event independence, removal of the Event-based persistence adapter and the
+executor call sites required to separate recording from notification. Adapt
+existing consumers only where the changed event fields require it; retain their
+algorithms and behavior.
 
 Out: RunClient return types, HTTP query/control projections, Chat recovery policy,
 input-resolution restructuring, `MessageRecall`/`StateSync` ownership, Top/Hub,
@@ -29,7 +30,7 @@ projection framework or second hierarchy of internal events.
 | Component | Required structural result |
 | --- | --- |
 | `RunStore` | Keep its public methods, SQL, transactions and Record formats unchanged; use its existing return values and cursor methods. |
-| `_PersistSink` | Replace event dispatch with four thin typed operations. No duplicate validation, history reads, rendering, resolver or second state machine. |
+| Persistence adapter | Remove `_PersistSink`; add no replacement facade or four methods that only mirror Store calls. Keep lifecycle coordination in its existing executor owner. |
 | `RunExecutor` / `_Execution` | Change the existing call arguments and dependencies, not lifecycle policy. Add no state fields, caches, locks, tasks, retry branches or configurable hooks for Events. |
 | Event construction | One small, pure field-selection path per event shape; no new dispatcher, adapter hierarchy, registry or shared projection framework. |
 | Consumers | Adapt field access/decoding only; no new queries, protocol negotiation, recovery algorithms or UI redesign. |
@@ -45,25 +46,31 @@ the execution vocabulary as part of this work.
 | [`_PersistSink.on_event()`](../../src/toolang/execution/executor/_persist.py) | Consumes `RunEvent`, writes records and resolves some refs for observers. |
 | [`RunExecutor._project_event()`](../../src/toolang/execution/executor/executor.py) | Combines persistence, control application and notification. |
 | `_Execution.begin_step()` and relation/state helpers | Prepare and manage execution through `StepBegin`, `StepEnd` and `RunEnd`. |
+| `spawn.py` dispatch failure | Calls `_PersistSink.on_event()` directly to finish an accepted root when task launch fails. |
 | [`Publication.append()`](../../src/toolang/execution/stream.py) | Converts complete model Given data to `ModelStepInfo` before retention. |
 | [`events.py`](../../src/toolang/execution/events.py) | Reuses internal Given/Noted/output schemas and reference-capable fields. |
 
 ## Persistence contract
 
-Replace `_PersistSink.on_event()` with explicit methods over existing internal
-facts. Keep cursor recording and authoritative write results with the operation.
+Use the following existing Store methods from the current executor lifecycle
+coordination, with internal facts instead of Event objects. Keep cursor recording
+and authoritative write results with the operation; do not distribute this
+coordination across individual Step implementations.
 
 | Method | Inputs and responsibility | Existing Store result |
 | --- | --- | --- |
-| `begin_run(...)` | Run identity, control, occurrence and time; persist the start. | `RunRecord` |
-| `begin_step(...)` | Step identity, complete `StepGiven`, input/state/control refs, occurrence and time; persist compact Step-begin facts and model content dependencies. | `StepRecord` |
-| `finish_step(...)` | Status, internal `Output`, `StepNoted`, error, control provenance and time; persist the end. | `StepRecord` |
-| `finish_run(...)` | Run identity, terminal status, output, error and time; persist terminal facts. | `RunRecord` |
+| `RunStore.begin_run(...)` | Run identity, control, occurrence and time; persist the start. | `RunRecord` |
+| `RunStore.begin_step(...)` | Step identity, complete `StepGiven`, input/state/control refs, occurrence and time; persist compact Step-begin facts and model content dependencies. | `StepRecord` |
+| `RunStore.finish_step(...)` | Status, internal `Output`, `StepNoted`, error, control provenance and time; persist the end. | `StepRecord` |
+| `RunStore.finish_run(...)` | Run identity, terminal status, output, error and time; persist terminal facts. | `RunRecord` |
 
-The sink does not import `events.py`, construct subscriber payloads or resolve
-refs for notification. Reuse existing Store methods and durable codecs; do not
-add recording structures or perform another read merely to return a record the
-Store already returned. Cursor writes remain in the owning transaction.
+Remove `_PersistSink` and the executor's `_persist` member. Once Event dispatch
+and observer output/error resolution are removed, its remaining work is parameter
+forwarding and cursor stamping. State fallback and compact model-call capture
+already belong to `RunStore.begin_step()`; do not duplicate them. Store continues
+to know no client Event types. Use existing return values and durable codecs,
+with cursor writes in the owning transaction; do not add reads to retrieve a
+record already returned by the write.
 
 Keep State capture and Step preparation inside the existing execution lock.
 Preparation callbacks produce internal facts rather than external `StepBegin`.
@@ -71,13 +78,17 @@ Move control application, relation adoption and active-run tracking to those fac
 or write results; they must not depend on client Event fields. Use explicit
 private method parameters and existing value types, not replacement
 `InternalRunEvent` classes. Preserve the current single owner of each control
-transition in the executor, within its current transaction; the sink writes
-Run/Step facts and cursors. Do not copy control updates into both layers.
+transition in the executor, within its current transaction. Store performs the
+durable mutations; do not duplicate transition policy in a new adapter or Store.
 
 Atomic spawn, exec, await and runtime-control admission already finish some
 source Steps. Forward their completion facts to notification construction without
 re-entering persistence through a manufactured `StepEnd`. Preserve the existing
 cursor check that prevents duplicate terminal publication.
+
+Cover the accepted-spawn/task-launch-failure path as well: finish its Run through
+the existing Store method and preserve its receipt, cursor and terminal delivery
+without restoring an Event-driven persistence entry point.
 
 ## External Event contract
 
@@ -137,8 +148,9 @@ runnable.
 
 ## Action items and likely files
 
-- [ ] Separate `_PersistSink` methods and lifecycle/control updates in
-  `execution/executor/_persist.py`, `executor.py` and `common.py`.
+- [ ] Replace Event-driven persistence with direct Store calls in existing
+  lifecycle coordination in `execution/executor/executor.py` and `common.py`;
+  remove `_persist.py` and the `_persist` member.
 - [ ] Adapt internal lifecycle producers in `execution/executor/steps/`, `runs/`,
   `tool_runtime.py`, `awaitables.py` and `spawn.py`, retaining atomic admission.
 - [ ] Define value-only Events in `execution/events.py`; keep recording vocabulary
@@ -159,12 +171,12 @@ runnable.
 
 | Scenario | Pass condition |
 | --- | --- |
-| Structural simplicity | `RunStore` behavior/signatures/SQL and durable formats are unchanged; the sink is event-independent and thinner; executor gains no Event-specific state or strategy layer. No duplicate lifecycle schemas or transition logic are added. |
-| Persistence independence | Sink and internal lifecycle/control updates work with facts/records without client Event objects or subscribers. |
+| Structural simplicity | `RunStore` behavior/signatures/SQL and durable formats are unchanged; `_PersistSink` has no replacement forwarding layer; lifecycle coordination stays centralized and gains no Event-specific state or strategy. |
+| Persistence independence | Lifecycle/control updates call existing Store methods with facts/records, without client Event objects or subscribers. |
 | Durable parity | Exact model calls, message deltas, typed references, control provenance, usage/limits and supported legacy history remain unchanged; no schema migration. |
 | Small direct Events | Live and snapshot metadata contains no internal reference-capable schemas, assembled model histories or ASTs; model-begin/summary size does not grow with earlier context. Actual operation output remains intact. |
 | Failed commit | Acceptance, begin/end and content/control rollback publish nothing and adopt no failed candidate. |
-| Atomic admission | Native/runtime spawn, exec, await and control receipts remain atomic with source-Step completion; cancellation races do not duplicate terminal events. |
+| Atomic admission | Native/runtime spawn, exec, await and control receipts remain atomic with source-Step completion; cancellation races do not duplicate terminal events. A failed spawn dispatch preserves acceptance and records/publishes the terminal failure once. |
 | Execution and consumers | Flow/Agic, children, parallel/loop work, state adoption, compaction, cancel/steer and local/remote presentation retain behavior without new queries, output caches or history lookups for live notifications. |
 | Stream lifecycle | Bounded retention, overflow, cursors, replacement, observer failures and detach-without-cancel preserve existing guarantees. |
 
