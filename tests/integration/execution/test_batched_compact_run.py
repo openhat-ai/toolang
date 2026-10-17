@@ -704,6 +704,36 @@ def test_restart_inside_one_root_keeps_accepted_step_coverage(tmp_path, monkeypa
             (child,) = producers(h, thread)
             cursor, _ = compaction.read_checkpoint(h.store, child)
             assert 0 < cursor < len(source_units) - 1
+            owner = h.store.get_step(ref=child.parent)
+            assert owner is not None and isinstance(owner.given, ToolStepGiven)
+            retired_owner = replace(
+                owner,
+                given=replace(
+                    owner.given,
+                    call=replace(owner.given.call, name="_toolang__compact"),
+                ),
+            )
+            with monkeypatch.context() as patch:
+                patch.setattr(h.store, "get_step", lambda **kwargs: retired_owner)
+                with pytest.raises(ValueError, match="runtime Tool Step owner"):
+                    compaction.read_checkpoint(h.store, child)
+            steps = h.store.list_steps(run_id=child.id)
+            retired_reads = [
+                replace(
+                    s,
+                    given=replace(
+                        s.given,
+                        call=replace(s.given.call, name="_toolang__compact_read"),
+                    ),
+                )
+                if isinstance(s.given, ToolStepGiven)
+                else s
+                for s in steps
+            ]
+            with monkeypatch.context() as patch:
+                patch.setattr(h.store, "list_steps", lambda **kwargs: retired_reads)
+                with pytest.raises(ValueError, match="invalid compact checkpoint pair"):
+                    compaction.read_checkpoint(h.store, child)
             state, step, old_active = captured[0]
             with closing(RunStore(h.store.db_path)) as store:
                 executor = RunExecutor(store, h.executor.ids)

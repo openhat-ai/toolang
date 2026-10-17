@@ -88,10 +88,9 @@ def test_alias_identity_and_saved_wording_reach_chat_tty_and_plain(status, width
     assert "[issues]" in text and "[vendor]" not in text
 
 
-@pytest.mark.parametrize("namespace", ["runtime", "_toolang"])
 @pytest.mark.parametrize("name", ["run", "spawn", "await", "exec", "compact", "honor"])
-def test_new_and_historical_runtime_rows_keep_saved_summaries(namespace, name):
-    event = begin(f"{namespace}__{name}", namespace, summary="Original saved action")
+def test_runtime_rows_keep_saved_summaries(name):
+    event = begin(f"runtime__{name}", "runtime", summary="Original saved action")
     operation = normalize_operation(event)
     assert operation.name == name
     assert "Original saved action" in trace_live_rows(operation, "")[0].text
@@ -106,13 +105,13 @@ def test_new_and_historical_runtime_rows_keep_saved_summaries(namespace, name):
         error="",
     )
     assert "Original saved outcome" in rows[0].text
-    assert rows[0].tool_identity == (namespace, name)
+    assert rows[0].tool_identity == ("runtime", name)
     assert rows[0].tool_status == "succeeded"
 
 
-def test_former_execute_name_is_a_history_operation_only():
+def test_former_execute_name_has_no_runtime_presentation():
     operation = normalize_operation(begin("_toolang__execute", "_toolang"))
-    assert operation.name == "exec"
+    assert operation.name == "tool"
     assert operation.tool_identity == ("_toolang", "execute")
 
 
@@ -189,9 +188,8 @@ def rendered_surfaces(block, width):
 
 
 @pytest.mark.parametrize("width", [35, 120])
-@pytest.mark.parametrize("namespace", ["runtime", "_toolang"])
 @pytest.mark.parametrize("status", ["succeeded", "failed", "canceled"])
-def test_dynamic_run_footer_renders_saved_outcome(namespace, status, width):
+def test_dynamic_run_footer_renders_saved_outcome(status, width):
     projector = ProgressProjector(show_boundaries=False)
     projector.handle(
         run_begin(
@@ -200,7 +198,7 @@ def test_dynamic_run_footer_renders_saved_outcome(namespace, status, width):
             runnable="agic:parent",
         )
     )
-    event = begin(f"{namespace}__run", namespace)
+    event = begin("runtime__run", "runtime")
     projector.handle(event)
     projector.handle(
         run_begin(
@@ -220,15 +218,14 @@ def test_dynamic_run_footer_renders_saved_outcome(namespace, status, width):
         )
     )
     for text in rendered_surfaces(terminal.committed[0], width):
-        assert f"[{namespace}]" in text
+        assert "[runtime]" in text
         assert "Saved outcome:" in text and "child" in text
         assert "run_child" in text and status in text
         assert "└" in text
 
 
-@pytest.mark.parametrize("namespace", ["runtime", "_toolang"])
 @pytest.mark.parametrize("target_starts", [True, False])
-def test_committed_exec_boundary_keeps_saved_outcome(namespace, target_starts):
+def test_committed_exec_boundary_keeps_saved_outcome(target_starts):
     projector = ProgressProjector(show_boundaries=False)
     projector.handle(
         run_begin(
@@ -237,12 +234,12 @@ def test_committed_exec_boundary_keeps_saved_outcome(namespace, target_starts):
             runnable="agic:parent",
         )
     )
-    event = begin(f"{namespace}__exec", namespace)
+    event = begin("runtime__exec", "runtime")
     projector.handle(event)
     result = ToolResultPart(
         tool_call_id="call",
         tool_name=event.given.name,
-        tool_family=namespace,
+        tool_family=event.given.name,
         output={"controls": ["run_root@1"]},
     )
     terminal = projector.handle(
@@ -261,10 +258,10 @@ def test_committed_exec_boundary_keeps_saved_outcome(namespace, target_starts):
         else run_end(run="run_root", status="succeeded")
     )
     boundary = projector.handle(next_event).committed[0]
-    assert boundary.rows[0].tool_identity == (namespace, "exec")
+    assert boundary.rows[0].tool_identity == ("runtime", "exec")
     assert boundary.rows[0].tool_status == "succeeded"
     for text in rendered_surfaces(boundary, 80):
-        assert f"[{namespace}] Saved switch: child" in text
+        assert "[runtime] Saved switch: child" in text
 
 
 def test_narrow_chat_budgets_identity_against_actual_viewport():
@@ -283,3 +280,25 @@ def test_trailing_underscore_toolset_identity_reaches_progress():
     assert row.tool_identity == ("issues_", "list")
     for text in rendered_surfaces(ProgressBlock("tool", (row,)), 80):
         assert "[issues_]" in text
+
+
+@pytest.mark.parametrize(
+    ("plugin", "name"),
+    [
+        ("_toolang", "_toolang__run"),
+        ("_toolang", "_toolang__execute"),
+        ("_toolang", "runtime__run"),
+        ("vendor", "runtime__exec"),
+        ("runtime", "_toolang__exec"),
+        ("runtime", "runtime__execute"),
+        ("runtime", "spawn"),
+        ("runtime", "pick"),
+        ("runtime", "honor"),
+        ("runtime", "compact"),
+    ],
+)
+def test_runtime_progress_uses_only_current_plugin_and_wire_names(plugin, name):
+    operation = normalize_operation(begin(name, plugin))
+    assert operation.name == "tool"
+    assert operation.tool_marker == "›"
+    assert not operation.timed

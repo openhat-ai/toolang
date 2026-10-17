@@ -519,12 +519,12 @@ def test_event_encoder_only_serializes_already_projected_data(monkeypatch):
             {"run": "run_child", "thread": "thread_child"},
         ),
         (
-            "_toolang__run",
+            "runtime__run",
             {"id": "run_child", "thread": "thread_child"},
             {"run": "run_child", "thread": "thread_child"},
         ),
         ("runtime__exec", {"controls": ["run_root@1"]}, {"control_applied": True}),
-        ("_toolang__execute", {"controls": []}, {"control_applied": False}),
+        ("runtime__exec", {"controls": []}, {"control_applied": False}),
         ("runtime__chdir", {"cwd": "/workspace"}, {"cwd": "/workspace"}),
         (
             "shell__execute",
@@ -580,3 +580,97 @@ def test_event_output_constructor_requires_final_protocol_data():
         output=EventOutput("Part[]", [{"type": "text", "text": "answer"}]),
     )
     assert run_event_from_data(run_event_to_data(event)) == event
+
+
+@pytest.mark.parametrize(
+    ("plugin", "name"),
+    [
+        ("_toolang", "_toolang__run"),
+        ("_toolang", "runtime__run"),
+        ("runtime", "_toolang__exec"),
+        ("runtime", "_toolang__execute"),
+        ("runtime", "spawn"),
+    ],
+)
+def test_event_metadata_does_not_interpret_retired_runtime_names(plugin, name):
+    given = ToolStepGiven(
+        plugin,
+        ToolCall("call", "provider", name, {"runnable": "child", "async": True}),
+        summary="Saved action",
+    )
+    assert step_info(given) == ToolStepInfo(plugin, name, "Saved action")
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "_toolang__run",
+        "_toolang__spawn",
+        "_toolang__exec",
+        "_toolang__execute",
+        "_toolang__chdir",
+        "spawn",
+    ],
+)
+def test_part_data_does_not_interpret_retired_runtime_receipts(name):
+    from toolang.base.types.message import ToolResultPart
+    from toolang.execution.event_projection import part_data
+
+    part = ToolResultPart(
+        "call",
+        name,
+        "runtime",
+        output={
+            "id": "run_child",
+            "thread": "spawn_child",
+            "controls": ["run_root@1"],
+            "cwd": "/workspace",
+        },
+    )
+    assert part_data(part) == {
+        "type": "tool_result",
+        "tool_call_id": "call",
+        "tool_name": name,
+        "tool_family": "runtime",
+    }
+
+
+def test_retired_await_name_keeps_its_recorded_error_origin():
+    from toolang.execution.event_projection import step_end_event
+    from toolang.execution.types import ErrorRef
+
+    step = StepRecord(
+        id="run_root.0",
+        kind="tool",
+        input=(),
+        given=ToolStepGiven(
+            "_toolang", ToolCall("call", "provider", "_toolang__await", {})
+        ),
+        state=ControlRef.for_run("run_root", 0),
+        output=None,
+        status="failed",
+        error=ErrorRef(FieldRef.from_path(RunRef("run_other"), "error")),
+    )
+    assert step_end_event(step, None, "failed").error_source == "run_other"
+
+
+def test_retired_honor_name_does_not_synthesize_a_runtime_reply():
+    from toolang.execution.assembly.tool_replies import workspace_reply_from_step
+
+    step = StepRecord(
+        id="run_root.0",
+        kind="tool",
+        input=(FieldRef.from_path(StepRef.parse("run_root.1"), "output", "value", 0),),
+        given=ToolStepGiven(
+            "_toolang",
+            ToolCall("call", "provider", "_toolang__honor", {}),
+            trigger="runtime",
+        ),
+        state=ControlRef.for_run("run_root", 0),
+        output=None,
+    )
+
+    def unexpected_read(value):
+        raise AssertionError("retired tool names must not reconstruct a runtime reply")
+
+    assert workspace_reply_from_step(step, unexpected_read) is None

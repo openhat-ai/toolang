@@ -305,8 +305,8 @@ def test_dynamic_run_preaccept_failure_uses_a_trace_marker_without_boundaries() 
     ]
 
 
-@pytest.mark.parametrize("tool_name", ["runtime__exec", "_toolang__execute"])
-def test_execute_projects_a_live_marker_then_a_handoff_header(tool_name) -> None:
+def test_execute_projects_a_live_marker_then_a_handoff_header() -> None:
+    tool_name = "runtime__exec"
     projector = ProgressProjector(show_boundaries=False)
     caller = StepRef.parse("run_root.0")
     target = StepRef.parse("run_root.2")
@@ -344,7 +344,7 @@ def test_execute_projects_a_live_marker_then_a_handoff_header(tool_name) -> None
         ProgressRow(
             "Transferred",
             leader="handoff",
-            tool_identity=tuple(tool_name.split("__", 1)),
+            tool_identity=("runtime", "exec"),
             tool_status="succeeded",
         ),
         ProgressRow(""),

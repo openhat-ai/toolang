@@ -583,7 +583,7 @@ def read_checkpoint(store: RunStore, run: RunRecord) -> tuple[int, str]:
         owner is None
         or not isinstance(owner.given, ToolStepGiven)
         or owner.given.trigger != "runtime"
-        or owner.given.call.name not in {"runtime__compact", "_toolang__compact"}
+        or owner.given.call.name != "runtime__compact"
     ):
         raise ValueError("compact checkpoint requires its runtime Tool Step owner")
     request = entry.payload.input
@@ -621,7 +621,7 @@ def read_checkpoint(store: RunStore, run: RunRecord) -> tuple[int, str]:
             read.status != "succeeded"
             or not isinstance(read.given, ToolStepGiven)
             or read.given.trigger != "runtime"
-            or read.given.call.name not in {READ_TOOL, "_toolang__compact_read"}
+            or read.given.call.name != READ_TOOL
             or not isinstance(step.given, StoredModelStepGiven)
             or step.given.model != policy["model"]
             or step.given.setup != policy["setup"]

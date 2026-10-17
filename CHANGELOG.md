@@ -57,6 +57,15 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Changed
 
+- **Breaking:** runtime operation interpretation now uses the current `runtime`
+  plugin and canonical `runtime__*` names for event metadata and receipts, CLI
+  progress, honor reply reconstruction, and compact checkpoint validation.
+  Retired `_toolang` aliases, `_toolang__execute`, and unqualified short tool
+  names are no longer interpreted as runtime operations. Existing records retain
+  their original names without a schema change. Use current runtime selections
+  and calls, restart hosts, and prepare fresh Setup; do not resume pre-upgrade
+  runs.
+
 - **Breaking:** Run subscription events now carry compact client-owned operation metadata, direct outputs without bindings or pointers, text errors, and usage summaries. Part payloads retain text/media display data and explicit runtime receipts, but exclude provider signatures, native metadata, full tool arguments, and arbitrary result bodies. EventOutput contains final JSON; serialization does not project values again or query storage. Complete model/tool calls, Flow ASTs, State/input references, and accounting internals remain in unchanged durable records and explicit inspection/query APIs. External subscribers must upgrade with the runtime and reconnect. Run/Step IDs are scalar; control application uses Run/index facts.
 
 - **Breaking:** thread peer metadata is removed from execution records, events,

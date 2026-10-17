@@ -7,14 +7,10 @@ from .formatting import tool_result_data, runnable_label
 from .types import StepOperation
 
 
-_RUNTIME_MARKERS = {"spawn", "pick", "honor", "compact"}
 _TOOL_OPERATIONS: dict[str, str] = {
-    f"{namespace}__{name}": name
-    for namespace in ("runtime", "_toolang")
+    f"runtime__{name}": name
     for name in ("run", "spawn", "await", "exec", "chdir", "pick", "honor", "compact")
 }
-# Preserve the existing presentation reader for the former tool spelling.
-_TOOL_OPERATIONS["_toolang__execute"] = "exec"
 
 
 def runtime_operation_name(tool_name: str) -> str | None:
@@ -30,12 +26,7 @@ def normalize_operation(
 
     given = begin.given
     if isinstance(given, ToolStepInfo):
-        name = runtime_operation_name(given.name)
-        if given.plugin not in {"runtime", "_toolang"} and name not in {"run", "exec"}:
-            name = None
-        # Keep existing short-name recognition for runtime progress summaries.
-        if given.plugin in {"runtime", "_toolang"} and given.name in _RUNTIME_MARKERS:
-            name = given.name
+        name = runtime_operation_name(given.name) if given.plugin == "runtime" else None
         if name == "run" and given.asynchronous:
             name = "async run"
         return StepOperation(
@@ -45,10 +36,7 @@ def normalize_operation(
             tool=given,
             runnable=runnable_label(given.target),
             run_scope=name == "run",
-            tool_marker="✧"
-            if given.plugin in {"runtime", "_toolang"}
-            and name in {"pick", "honor", "compact"}
-            else "›",
+            tool_marker="✧" if name in {"pick", "honor", "compact"} else "›",
         )
     if isinstance(given, ModelStepInfo):
         return StepOperation(begin, "model", "model")

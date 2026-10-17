@@ -38,7 +38,7 @@ def test_cd_step_end_and_cwd_control_commit_atomically(tmp_path, monkeypatch):
             ref=ref,
             kind="tool",
             input=(),
-            given=ToolStepGiven("_toolang", call),
+            given=ToolStepGiven("runtime", call),
             started_at="2026-09-27T00:00:00Z",
         )
         part = ToolResultPart(

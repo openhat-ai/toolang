@@ -64,20 +64,14 @@ def part_data(part: Part) -> PartData:
         if isinstance(part, ToolResultPart):
             if part.error:
                 identity["error"] = part.error
-            runtime = part.tool_name.startswith(
-                ("runtime__", "_toolang__")
-            ) or part.tool_family in {"runtime", "_toolang"}
-            name = part.tool_name.removeprefix("runtime__").removeprefix("_toolang__")
-            if runtime and name in {"run", "spawn"}:
+            if part.tool_name in {"runtime__run", "runtime__spawn"}:
                 for source, target in (("id", "run"), ("thread", "thread")):
                     if isinstance(value := part.output.get(source), str):
                         identity[target] = value
-            if runtime and name in {"exec", "execute"}:
+            if part.tool_name == "runtime__exec":
                 identity["control_applied"] = bool(part.output.get("controls"))
-            if (
-                runtime
-                and name == "chdir"
-                and isinstance(cwd := part.output.get("cwd"), str)
+            if part.tool_name == "runtime__chdir" and isinstance(
+                cwd := part.output.get("cwd"), str
             ):
                 identity["cwd"] = cwd
         return cast(PartData, identity)
@@ -110,20 +104,13 @@ def step_info(given: StepGiven | StoredStepGiven) -> StepInfo:
         return ModelStepInfo(given.model)
     if isinstance(given, ToolStepGiven):
         name = given.call.name
-        runtime = given.plugin in {"runtime", "_toolang"}
-        awaiting = runtime and name in {"runtime__await", "_toolang__await"}
-        launching = (
-            name
-            in {
-                "runtime__run",
-                "_toolang__run",
-                "runtime__exec",
-                "_toolang__exec",
-                "_toolang__execute",
-            }
-            or runtime
-            and name in {"runtime__spawn", "_toolang__spawn", "spawn"}
-        )
+        runtime = given.plugin == "runtime"
+        awaiting = runtime and name == "runtime__await"
+        launching = runtime and name in {
+            "runtime__run",
+            "runtime__exec",
+            "runtime__spawn",
+        }
         target = (
             given.call.input.get("target" if awaiting else "runnable", "")
             if awaiting or launching
@@ -134,7 +121,8 @@ def step_info(given: StepGiven | StoredStepGiven) -> StepInfo:
             given.call.name,
             given.summary,
             target if isinstance(target, str) else "",
-            name in {"runtime__run", "_toolang__run"}
+            runtime
+            and name == "runtime__run"
             and given.call.input.get("async") is True,
         )
     return FlowStepInfo(
@@ -222,7 +210,8 @@ def step_end_event(
         and not (
             isinstance(step.given, AwaitStmt)
             or isinstance(step.given, ToolStepGiven)
-            and step.given.call.name in {"runtime__await", "_toolang__await"}
+            and step.given.plugin == "runtime"
+            and step.given.call.name == "runtime__await"
         )
         else None,
         error=error,

@@ -489,5 +489,6 @@ resolve with list/peek, and rename send to write (`body` → `message`,
 `in_reply_to` → `reply_to`, `agent:alice` → `alice`). Management leaves become
 create/rename/join/leave. Human and pair destinations require a conversation ID.
 Restart hosts and prepare fresh Setup; do not resume pre-upgrade runs. Existing
-records, summaries, and plugin rooms remain untouched, and history still recognizes
-old runtime names, including `_toolang__execute`.
+records, summaries, and plugin rooms remain untouched. Historical tool names are
+retained as recorded; runtime-specific interpretation uses current `runtime__*`
+names only.

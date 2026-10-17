@@ -3772,7 +3772,7 @@ def test_chat_tui_tracks_only_root_chdir_workspace_in_center(
             data=ToolResultPart(
                 tool_call_id="call_root",
                 tool_name="runtime__chdir",
-                tool_family="_toolang",
+                tool_family="runtime",
                 output={"cwd": "other://nested/path"},
             ),
         )
@@ -3787,7 +3787,7 @@ def test_chat_tui_tracks_only_root_chdir_workspace_in_center(
             data=ToolResultPart(
                 tool_call_id="call_child",
                 tool_name="runtime__chdir",
-                tool_family="_toolang",
+                tool_family="runtime",
                 output={"cwd": "child-workspace://"},
             ),
         )
@@ -3884,7 +3884,7 @@ def test_chat_ticker_refreshes_compact_progress_without_replacing_the_block() ->
             kind="tool",
             started_at=now[0],
             given=ToolStepGiven(
-                plugin="_toolang",
+                plugin="runtime",
                 trigger="runtime",
                 call=ToolCall("compact", "compact", "runtime__compact", {}),
                 summary="Compacting thread history...",

@@ -1209,7 +1209,7 @@ def test_script_context_separates_first_non_tty_compact_activity(prior_output) -
                 step=StepRef.parse("run_one.1"),
                 kind="tool",
                 given=ToolStepGiven(
-                    plugin="_toolang",
+                    plugin="runtime",
                     trigger="runtime",
                     call=ToolCall("compact", "compact", "runtime__compact", {}),
                     summary="Compacting thread history",
