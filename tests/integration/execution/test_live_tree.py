@@ -365,3 +365,95 @@ def test_invoked_model_failure_or_cancel_keeps_one_call(tmp_path, failure):
             assert isinstance(step.noted, ModelStepNoted) and step.noted.invoked
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("boundary", ["part_begin", "part_end"])
+def test_model_result_usage_survives_cancel_during_part_delivery(tmp_path, boundary):
+    from tests.support.execution_harness import RecordingRunTracer
+
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="agic task() -> Text:\n  user: Work\n",
+        responses=[
+            ModelCallResult(
+                message=Message.assistant("done"),
+                usage=ModelUsage(9, 4, reported_cost=0.125, reported_currency="USD"),
+            )
+        ],
+    )
+    samples = []
+
+    class CancelAtPart(RecordingRunTracer):
+        async def on_event(self, event):
+            await super().on_event(event)
+            if event.type == boundary:
+                samples.append(harness.executor.live_trees().trees[0])
+                harness.executor.cancel(run_id=samples[-1].root_run_id)
+                await asyncio.Future()
+
+    tracer = CancelAtPart()
+    harness.intercept_events(tracer)
+
+    async def scenario():
+        async with harness:
+            result = await harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    runnable="task",
+                ),
+                tracer=tracer,
+            )
+            assert result.status == "canceled"
+            root = samples[0].nodes[0]
+            assert isinstance(root, RunNode) and root.usage == TokenUsage(9, 4)
+            assert result.noted == RunNoted(CallCounters(1, 0), TokenUsage(9, 4), 0.125)
+            saved = harness.store.list_steps(run_id=result.id)[0]
+            assert isinstance(saved.noted, ModelStepNoted)
+            assert saved.noted.invoked and saved.noted.usage == TokenUsage(9, 4)
+            assert saved.noted.cost is not None and saved.noted.cost.amount == 0.125
+
+    asyncio.run(scenario())
+
+
+def test_returned_usage_survives_final_stream_validation_failure(tmp_path):
+    from toolang.base.types.run import ModelPartStart, ModelPartEnd
+
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="agic task() -> Text:\n  user: Work\n",
+        responses=[
+            ScriptedModelTurn(
+                ModelCallResult(
+                    message=Message.assistant("different final text"),
+                    usage=ModelUsage(
+                        9, 4, reported_cost=0.125, reported_currency="USD"
+                    ),
+                ),
+                updates=(
+                    ModelPartStart(0, "text"),
+                    ModelPartEnd(0, TextPart("streamed text")),
+                ),
+            )
+        ],
+        streaming=True,
+    )
+
+    async def scenario():
+        async with harness:
+            result = await harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    runnable="task",
+                )
+            )
+            assert result.status == "failed"
+            assert result.error is not None
+            assert "does not match authoritative" in harness.store.resolve_error(
+                result.error
+            )
+            assert result.noted == RunNoted(CallCounters(1, 0), TokenUsage(9, 4), 0.125)
+            saved = harness.store.list_steps(run_id=result.id)[0]
+            assert isinstance(saved.noted, ModelStepNoted)
+            assert saved.noted.usage == TokenUsage(9, 4) and saved.noted.invoked
+
+    asyncio.run(scenario())

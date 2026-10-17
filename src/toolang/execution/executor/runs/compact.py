@@ -12,7 +12,7 @@ from toolang.base.errors import ModelResponseError, ToolangError
 from toolang.base.types.message import Part, ToolResultPart
 from toolang.base.types.model import ModelRequest, env_names
 from toolang.base.types.policy import RunBindings
-from toolang.base.types.run import ModelCallResult, ToolCall
+from toolang.base.types.run import ToolCall
 from toolang.common.time import utc_now
 from toolang.plugin.models.query import resolve_model, subset_models
 from toolang.plugin.models.resolution import resolve_model_reasoning
@@ -308,7 +308,7 @@ async def execute(
             output=Output(value_for_type("Part", result), "_"),
             finished_at=utc_now(),
         )
-        response: ModelCallResult | None = None
+        noted: ModelStepNoted | None = None
         try:
             await execution.begin_step(
                 lambda _state, state_ref, commit: commit(
@@ -327,31 +327,29 @@ async def execute(
             execution.require_model_pricing(spec.model)
             execution.begin_call(model, "model")
             response = await spec.adapter.invoke(spec.model, call, environ=spec.environ)
+            noted = execution.model_noted(model, spec.model, response.usage)
             reducer.validate_summary(response)
             assert response.message is not None
             for index, part in enumerate(response.message.parts):
                 await _emit_part(execution, model, index, part)
         except (Exception, asyncio.CancelledError) as exc:
-            usage = (
-                exc.usage
-                if isinstance(exc, ModelResponseError)
-                else response.usage
-                if response
-                else None
+            record = store.get_step(ref=model)
+            if record is None or record.status != "running":
+                raise
+            if noted is None:
+                usage = exc.usage if isinstance(exc, ModelResponseError) else None
+                noted = execution.model_noted(model, spec.model, usage)
+            await execution.finish_step(
+                step=model,
+                kind="model",
+                status="canceled"
+                if isinstance(exc, asyncio.CancelledError)
+                else "failed",
+                noted=noted,
+                error=ErrorMessage(str(exc)) if str(exc) else None,
+                finished_at=utc_now(),
             )
-            noted = execution.model_noted(model, spec.model, usage)
-            if store.get_step(ref=model) is not None:
-                await execution.finish_step(
-                    step=model,
-                    kind="model",
-                    status="canceled"
-                    if isinstance(exc, asyncio.CancelledError)
-                    else "failed",
-                    noted=noted,
-                    error=ErrorMessage(str(exc)) if str(exc) else None,
-                    finished_at=utc_now(),
-                )
-            if usage is not None:
+            if noted.usage is not None:
                 execution.record_model_usage(spec.model, noted)
             if isinstance(exc, ModelResponseError):
                 reducer.reject(exc)
@@ -360,8 +358,7 @@ async def execute(
                 reducer.retry_summary(exc)
                 continue
             raise
-        noted = execution.model_noted(model, spec.model, response.usage)
-        assert response.message is not None
+        assert response.message is not None and noted is not None
         try:
             await execution.finish_step(
                 step=model,

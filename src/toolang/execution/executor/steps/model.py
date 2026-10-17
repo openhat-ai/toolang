@@ -595,6 +595,7 @@ async def execute(state: _AgicState) -> ModelCallResult:
         run_id=run.run_id,
         step_index=step_index,
     )
+    noted: ModelStepNoted | None = None
     try:
         state.before_call()
         if state.execution is not None:
@@ -614,6 +615,9 @@ async def execute(state: _AgicState) -> ModelCallResult:
                 request,
                 environ=prepared.environ,
             )
+        noted = state.note_usage(
+            StepRef.from_local(run.run_id, (step_index,)), current.usage
+        )
         _validate_stream_result(stream, current)
         output = await _emit_response_parts(state, stream, current)
         if prepared.input_budget is not None:
@@ -624,7 +628,7 @@ async def execute(state: _AgicState) -> ModelCallResult:
                 prepared.input_overhead,
             )
     except asyncio.CancelledError:
-        await _end_incomplete(state, stream)
+        await _end_incomplete(state, stream, noted=noted)
         raise
     except ModelResponseError as exc:
         # The adapter may have received more text than it emitted as deltas.
@@ -649,12 +653,12 @@ async def execute(state: _AgicState) -> ModelCallResult:
                     index = max(stream.part_types, default=-1) + 1
                     stream.completed_parts[index] = TextPart(suffix)
         await _end_incomplete(
-            state, stream, error=ErrorMessage(str(exc)), response_error=exc
+            state, stream, error=ErrorMessage(str(exc)), response_error=exc, noted=noted
         )
         raise
     except Exception as exc:
         message = str(exc) or type(exc).__name__
-        await _end_incomplete(state, stream, error=ErrorMessage(message))
+        await _end_incomplete(state, stream, error=ErrorMessage(message), noted=noted)
         _LOGGER.error(
             "Step failed thread=%s run=%s step=%s kind=model error=%r duration_ms=%s",
             run.thread,
@@ -664,12 +668,14 @@ async def execute(state: _AgicState) -> ModelCallResult:
             elapsed_ms(step_started),
         )
         raise _StepFailed(StepRef.from_local(run.run_id, (step_index,)), exc) from exc
+    assert noted is not None
     return await _apply_response(
         state,
         current,
         output,
         step_index=step_index,
         duration_ms=elapsed_ms(step_started),
+        noted=noted,
     )
 
 
@@ -714,6 +720,7 @@ async def _apply_response(
     *,
     step_index: int,
     duration_ms: int,
+    noted: ModelStepNoted,
 ) -> ModelCallResult:
     run = state.prepared.run
     local = value_for_type("Part[]", output)
@@ -728,9 +735,6 @@ async def _apply_response(
             local,
         )
     state.continuation = current.continuation
-    noted = state.note_usage(
-        StepRef.from_local(run.run_id, (step_index,)), current.usage
-    )
     state.last_step = step_index
     try:
         await state.end_step(
@@ -945,6 +949,7 @@ async def _end_incomplete(
     *,
     error: ErrorMessage | None = None,
     response_error: ModelResponseError | None = None,
+    noted: ModelStepNoted | None = None,
 ) -> None:
     """Retain execution facts even when interrupted while closing display events."""
 
@@ -976,11 +981,12 @@ async def _end_incomplete(
         for part in retained.values()
         if isinstance(part, ToolCallPart)
     )
-    noted = (
-        state.note_usage(step, response_error.usage)
-        if response_error
-        else ModelStepNoted()
-    )
+    if noted is None:
+        noted = (
+            state.note_usage(step, response_error.usage)
+            if response_error
+            else ModelStepNoted()
+        )
     if retained and response_error is None:
         refs = tuple(
             TypedRef(FieldRef.from_path(step, "output", "value", index), "Part")
@@ -1015,7 +1021,7 @@ async def _end_incomplete(
                 finished_at=utc_now(),
             )
         finally:
-            if response_error is not None:
+            if response_error is not None or noted.usage is not None:
                 state.record_usage(noted)
             if error is None:
                 await tool_step.skip(state, calls, canceled=not state.immediate_steer())

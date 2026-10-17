@@ -796,3 +796,119 @@ def test_restart_inside_one_root_keeps_accepted_step_coverage(tmp_path, monkeypa
                 )
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("failure", ["rejected_begin", "canceled_begin"])
+def test_compact_model_begin_failure_preserves_original_outcome(
+    tmp_path, monkeypatch, failure
+):
+    h = harness_at(tmp_path)
+    original_begin = h.store.begin_step
+    original_check = _Execution._check_step_cancel
+    child_id = None
+
+    async def cancel_after_begin(execution, record):
+        if (
+            failure == "canceled_begin"
+            and record.kind == "model"
+            and h.store.get_run(run_id=record.run_id).parent is not None
+        ):
+            h.executor.cancel(run_id=record.run_id, timing="next_call")
+        await original_check(execution, record)
+
+    def reject_or_cancel(**facts):
+        nonlocal child_id
+        if facts["kind"] == "model":
+            run_id = facts["ref"].run_id
+            if h.store.get_run(run_id=run_id).parent is not None:
+                child_id = run_id
+                if failure == "rejected_begin":
+                    raise RuntimeError("injected compact begin failure")
+                return original_begin(**facts)
+        return original_begin(**facts)
+
+    async def scenario():
+        async with h:
+            thread, _ = await seed(h, monkeypatch)
+            h.adapter._responses.extend([reply()] * 4)
+            with monkeypatch.context() as patch:
+                patch.setattr(h.store, "begin_step", reject_or_cancel)
+                patch.setattr(_Execution, "_check_step_cancel", cancel_after_begin)
+                result = await current(h, thread)
+            assert child_id is not None
+            child = h.store.get_run(run_id=child_id)
+            assert child is not None and child.noted is not None
+            assert child.noted.calls.model_calls == 0
+            expected = "failed" if failure == "rejected_begin" else "canceled"
+            assert child.status == result.status == expected, (
+                h.store.resolve_error(child.error) if child.error else None
+            )
+            assert result.noted is not None and result.noted.calls.model_calls == 0
+            steps = h.store.list_steps(run_id=child.id)
+            assert all(s.status != "running" for s in steps)
+            if failure == "canceled_begin":
+                assert steps[-1].noted == ModelStepNoted()
+            with h.executor.stream.boundary() as (_, _, frames):
+                assert (
+                    sum(
+                        isinstance(f.event, RunEnd) and f.event.run == child_id
+                        for f in frames
+                    )
+                    == 1
+                )
+            assert result.error is not None
+            error = h.store.resolve_error(result.error)
+            assert (
+                "injected compact begin failure"
+                if failure == "rejected_begin"
+                else "canceled"
+            ) in error
+            assert len(h.adapter.invocations) == 4
+            assert not h.executor.live_trees().trees
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("boundary", ["part_begin", "part_end"])
+def test_compact_result_usage_is_visible_before_part_delivery(
+    tmp_path, monkeypatch, boundary
+):
+    h = harness_at(tmp_path)
+    samples = []
+
+    class CancelAtModelPart(RecordingRunTracer):
+        child = None
+
+        async def on_event(self, event):
+            await super().on_event(event)
+            if isinstance(event, RunBegin) and event.runnable == compaction.RUNNABLE:
+                self.child = event.run
+            if (
+                event.type == boundary
+                and isinstance(event, PartBegin | PartEnd)
+                and self.child == StepRef.parse(event.step).run_id
+                and h.store.get_step(ref=StepRef.parse(event.step)).kind == "model"
+            ):
+                samples.append(h.executor.live_trees().trees[0])
+                h.executor.cancel(run_id=self.child)
+                await asyncio.Future()
+
+    tracer = CancelAtModelPart()
+    h.intercept_events(tracer)
+
+    async def scenario():
+        async with h:
+            thread, _ = await seed(h, monkeypatch)
+            h.adapter._responses.extend([reply()] * 4)
+            result = await current(h, thread, tracer=tracer)
+            assert result.status == "canceled"
+            assert any(node.usage is not None for node in samples[0].nodes)
+            child = h.store.get_run(run_id=tracer.child)
+            assert child is not None and child.noted is not None
+            assert (
+                child.noted.usage is not None and child.noted.usage.input_tokens == 42
+            )
+            assert result.noted is not None and result.noted.usage == child.noted.usage
+            assert child.noted.calls.model_calls == 1
+
+    asyncio.run(scenario())
