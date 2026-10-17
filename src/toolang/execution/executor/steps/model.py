@@ -38,9 +38,9 @@ from toolang.state.state import AgentState
 from ...assembly import prompting
 from ...assembly.message_buffer import MessageBuffer
 from ...assembly.utils import literal_delta
-from ...events import PartBegin, PartDelta, PartEnd, StepBegin, StepEnd
+from ...events import PartBegin, PartDelta, PartEnd
 from ...recall import required_declarations, history_variables, recall_revisions
-from ...records import ControlRecord, RecallControlPayload
+from ...records import StepRecord, ControlRecord, RecallControlPayload
 from ...types import (
     value_for_type,
     ModelAccounting,
@@ -60,7 +60,7 @@ from ...types import (
     ConvoRulesRecallTarget,
     WorkspaceRecallTarget,
 )
-from ..common import _StepFailed, control_input_pointer
+from ..common import _StepFailed, control_input_pointer, StepWriter
 from ..diagnostics import log_model_request, log_model_result, log_model_target
 from . import tool as tool_step
 
@@ -473,7 +473,8 @@ async def execute(state: _AgicState) -> ModelCallResult:
     def begin_step(
         agent_state: AgentState,
         state_ref: ControlRef,
-    ) -> StepBegin:
+        commit: StepWriter,
+    ) -> StepRecord:
         nonlocal prepared, request, next_messages
         prepared, next_messages, preceding, request, recorded = _candidate(state)
         canceling = state.execution is not None and bool(
@@ -483,7 +484,7 @@ async def execute(state: _AgicState) -> ModelCallResult:
             boundary = _boundary(state, prepared, request, preceding)
             if boundary is not None:
                 raise _NeedsCompact()
-        return StepBegin(
+        return commit(
             step=StepRef.from_local(run.run_id, (step_index,)),
             kind="model",
             state=state_ref,
@@ -575,12 +576,10 @@ async def execute(state: _AgicState) -> ModelCallResult:
             if interruption is None:
                 break
         await state.end_step(
-            StepEnd(
-                step=StepRef.from_local(run.run_id, (step_index,)),
-                kind="model",
-                status="canceled",
-                finished_at=utc_now(),
-            )
+            step=StepRef.from_local(run.run_id, (step_index,)),
+            kind="model",
+            status="canceled",
+            finished_at=utc_now(),
         )
         raise interruption
     step_started = time.perf_counter()
@@ -729,17 +728,15 @@ async def _apply_response(
     state.last_step = step_index
     try:
         await state.end_step(
-            StepEnd(
-                step=StepRef.from_local(run.run_id, (step_index,)),
-                kind="model",
-                status="succeeded",
-                output=Output(local, "_") if local is not None else None,
-                noted=_model_step_noted(
-                    accounting,
-                    continuation=current.continuation,
-                ),
-                finished_at=utc_now(),
-            )
+            step=StepRef.from_local(run.run_id, (step_index,)),
+            kind="model",
+            status="succeeded",
+            output=Output(local, "_") if local is not None else None,
+            noted=_model_step_noted(
+                accounting,
+                continuation=current.continuation,
+            ),
+            finished_at=utc_now(),
         )
     except asyncio.CancelledError:
         if not state.immediate_steer():
@@ -790,7 +787,9 @@ async def _handle_event(
         if event.delta.text:
             await state.emit(
                 PartDelta(
-                    step=StepRef.from_local(state.prepared.run.run_id, (stream.step,)),
+                    step=str(
+                        StepRef.from_local(state.prepared.run.run_id, (stream.step,))
+                    ),
                     part=event.part,
                     delta=event.delta,
                 )
@@ -892,7 +891,7 @@ async def _emit_part_begin(
     stream.part_types[part_index] = kind
     await state.emit(
         PartBegin(
-            step=StepRef.from_local(state.prepared.run.run_id, (stream.step,)),
+            step=str(StepRef.from_local(state.prepared.run.run_id, (stream.step,))),
             part=part_index,
             part_type=kind,
         )
@@ -911,7 +910,9 @@ async def _emit_part_end(
             stream.chunks[part_index].append(suffix)
             await state.emit(
                 PartDelta(
-                    step=StepRef.from_local(state.prepared.run.run_id, (stream.step,)),
+                    step=str(
+                        StepRef.from_local(state.prepared.run.run_id, (stream.step,))
+                    ),
                     part=part_index,
                     delta=ReasoningDelta(suffix)
                     if isinstance(part, ReasoningPart)
@@ -923,7 +924,7 @@ async def _emit_part_end(
     stream.ended_parts.add(part_index)
     await state.emit(
         PartEnd(
-            step=StepRef.from_local(state.prepared.run.run_id, (stream.step,)),
+            step=str(StepRef.from_local(state.prepared.run.run_id, (stream.step,))),
             part=part_index,
             data=part,
         )
@@ -993,17 +994,15 @@ async def _end_incomplete(
     finally:
         try:
             await state.end_step(
-                StepEnd(
-                    step=step,
-                    kind="model",
-                    status="failed" if error is not None else "canceled",
-                    output=Output(local, "_") if local is not None else None,
-                    error=error,
-                    noted=_model_step_noted(accounting, continuation=None)
-                    if response_error is not None
-                    else None,
-                    finished_at=utc_now(),
-                )
+                step=step,
+                kind="model",
+                status="failed" if error is not None else "canceled",
+                output=Output(local, "_") if local is not None else None,
+                error=error,
+                noted=_model_step_noted(accounting, continuation=None)
+                if response_error is not None
+                else None,
+                finished_at=utc_now(),
             )
         finally:
             if response_error is not None:

@@ -90,7 +90,9 @@ class EventProjection:
             is_run = isinstance(event, RunBegin | RunEnd)
             is_begin = isinstance(event, RunBegin | StepBegin)
             identity = (
-                event.run if isinstance(event, RunBegin | RunEnd) else str(event.step)
+                event.run
+                if isinstance(event, RunBegin | RunEnd)
+                else str(StepRef.parse(event.step))
             )
             key = field("run" if is_run else "step", identity)
             previous = self.entities.get(key)
@@ -104,7 +106,7 @@ class EventProjection:
                     "thread": frame.thread_id,
                     "run": event.run
                     if isinstance(event, RunBegin | RunEnd)
-                    else event.step.run_id,
+                    else StepRef.parse(event.step).run_id,
                 }
             )
             if is_begin:
@@ -207,11 +209,15 @@ class EventProjection:
             begin = event_from_data(value["begin"])
             if isinstance(begin, RunBegin):
                 identity: str | StepRef = begin.run
-                parent = begin.parent
+                parent = (
+                    StepRef.parse(begin.parent) if begin.parent is not None else None
+                )
                 snapshot.parents[begin.run] = parent
             elif isinstance(begin, StepBegin):
-                identity = begin.step
-                parent = begin.step.parent or begin.step.run_id
+                identity = StepRef.parse(begin.step)
+                parent = (
+                    StepRef.parse(begin.step).parent or StepRef.parse(begin.step).run_id
+                )
             else:
                 raise EventProtocolError("Invalid projection Begin")
             if key != field(
@@ -228,7 +234,7 @@ class EventProjection:
                     and begin.run == end.run
                     or isinstance(begin, StepBegin)
                     and isinstance(end, StepEnd)
-                    and begin.step == end.step
+                    and StepRef.parse(begin.step) == StepRef.parse(end.step)
                     and begin.kind == end.kind
                 ):
                     raise EventProtocolError("Projection End does not match its Begin")

@@ -1,4 +1,11 @@
 from __future__ import annotations
+
+from toolang.execution.events import ControlApplied
+
+from toolang.execution.types import StepRef
+
+from tests.support.observations import run_begin, run_end, step_begin, step_end
+
 from toolang.lang.types import Array
 
 import asyncio
@@ -130,7 +137,6 @@ from toolang.execution.types import (
     OccurrencePosition,
     RunOverride,
     SessionSetting,
-    StepRef,
     ToolStepGiven,
 )
 from toolang.lang.ast import MapStmt, RunStmt, Span
@@ -304,7 +310,14 @@ def test_chat_step_begin_finalizes_matching_steer_block() -> None:
         SteerReceipt("submission", "run_1", _steer_control(1)), app
     )
     events.handle_run_event(
-        replace(_model_step_begin(), preceded_by=(ControlRef.for_run("run_1", 1),)), app
+        replace(
+            _model_step_begin(),
+            preceded_by=tuple(
+                ControlApplied(str(ref.target), ref.index)
+                for ref in (ControlRef.for_run("run_1", 1),)
+            ),
+        ),
+        app,
     )
 
     assert steer in app.finalized
@@ -341,7 +354,7 @@ def test_chat_uses_shared_progress_blocks_for_live_and_finalized_model_output() 
 
     events.handle_run_event(
         PartBegin(
-            step=StepRef.parse("run_1.1"),
+            step=str(StepRef.parse("run_1.1")),
             part=0,
             part_type="text",
         ),
@@ -349,7 +362,7 @@ def test_chat_uses_shared_progress_blocks_for_live_and_finalized_model_output() 
     )
     events.handle_run_event(
         PartDelta(
-            step=StepRef.parse("run_1.1"),
+            step=str(StepRef.parse("run_1.1")),
             part=0,
             delta=TextDelta(text="drafting"),
         ),
@@ -360,7 +373,7 @@ def test_chat_uses_shared_progress_blocks_for_live_and_finalized_model_output() 
     assert "Thinking" not in streamed
     events.handle_run_event(
         PartEnd(
-            step=StepRef.parse("run_1.1"),
+            step=str(StepRef.parse("run_1.1")),
             part=0,
             data=TextPart("drafting"),
         ),
@@ -405,7 +418,7 @@ def test_chat_tool_call_only_model_step_vacates_live_position_for_tool() -> None
     ]
 
     events.handle_run_event(
-        StepEnd(
+        step_end(
             step=StepRef.parse("run_1.1"),
             kind="model",
             status="succeeded",
@@ -467,18 +480,18 @@ def test_chat_moves_stable_markdown_to_scrollback_while_the_tail_stays_live() ->
     events.handle_run_event(_run_begin(), app)
     events.handle_run_event(_model_step_begin(), app)
     events.handle_run_event(
-        PartBegin(step=path, part=0, part_type="text"),
+        PartBegin(step=str(path), part=0, part_type="text"),
         app,
     )
     events.handle_run_event(
-        PartDelta(step=path, part=0, delta=TextDelta("# Heading\n\n")),
+        PartDelta(step=str(path), part=0, delta=TextDelta("# Heading\n\n")),
         app,
     )
     assert app.finalized == []
     assert _render_text(app.live_blocks[0].render()).startswith("\n• Heading")
 
     events.handle_run_event(
-        PartDelta(step=path, part=0, delta=TextDelta("Paragraph")),
+        PartDelta(step=str(path), part=0, delta=TextDelta("Paragraph")),
         app,
     )
     assert len(app.finalized) == 1
@@ -490,7 +503,7 @@ def test_chat_moves_stable_markdown_to_scrollback_while_the_tail_stays_live() ->
 
     events.handle_run_event(
         PartEnd(
-            step=path,
+            step=str(path),
             part=0,
             data=TextPart("# Heading\n\nParagraph"),
         ),
@@ -516,7 +529,7 @@ def test_chat_parallel_terminal_update_replaces_every_lane_atomically() -> None:
 
     events.handle_run_event(_run_begin(runnable_kind="flow"), app)
     events.handle_run_event(
-        StepBegin(
+        step_begin(
             step=par_path,
             kind="par",
             given=MapStmt(span=Span(line=1), runnable="summarize", lanes=2),
@@ -525,7 +538,7 @@ def test_chat_parallel_terminal_update_replaces_every_lane_atomically() -> None:
     )
     for item in range(2):
         events.handle_run_event(
-            RunBegin(
+            run_begin(
                 run=f"run_child_{item}",
                 parent=par_path,
                 control=ControlRef.for_run(f"run_child_{item}", 0),
@@ -547,7 +560,7 @@ def test_chat_parallel_terminal_update_replaces_every_lane_atomically() -> None:
     assert "1 | #1 | • Thinking" in live
 
     events.handle_run_event(
-        StepEnd(
+        step_end(
             step=StepRef.parse("run_child_0.0"),
             kind="model",
             status="failed",
@@ -556,7 +569,7 @@ def test_chat_parallel_terminal_update_replaces_every_lane_atomically() -> None:
         app,
     )
     events.handle_run_event(
-        RunEnd(
+        run_end(
             run="run_child_0",
             status="failed",
             error=ErrorRef(FieldRef.from_path(StepRef.parse("run_child_0.0"), "error")),
@@ -564,16 +577,16 @@ def test_chat_parallel_terminal_update_replaces_every_lane_atomically() -> None:
         app,
     )
     events.handle_run_event(
-        StepEnd(
+        step_end(
             step=StepRef.parse("run_child_1.0"),
             kind="model",
             status="canceled",
         ),
         app,
     )
-    events.handle_run_event(RunEnd(run="run_child_1", status="canceled"), app)
+    events.handle_run_event(run_end(run="run_child_1", status="canceled"), app)
     events.handle_run_event(
-        StepEnd(
+        step_end(
             step=par_path,
             kind="par",
             status="failed",
@@ -723,7 +736,7 @@ def test_chat_root_footer_omits_zero_child_runs() -> None:
 def test_progress_marks_complete_zero_price_as_exact() -> None:
     metrics = Metrics()
     metrics.record_step(
-        StepEnd(
+        step_end(
             step=StepRef.parse("run_1.0"),
             kind="model",
             status="succeeded",
@@ -804,7 +817,7 @@ def test_progress_marks_incomplete_usd_totals_as_approximate(
         )
     ):
         metrics.record_step(
-            StepEnd(
+            step_end(
                 step=StepRef.parse(f"run_1.{index}"),
                 kind="model",
                 status="succeeded",
@@ -861,7 +874,7 @@ def test_progress_marks_partial_reasoning_as_a_lower_bound() -> None:
         ModelAccounting(input_tokens=100, output_tokens=20),
     ):
         metrics.record_step(
-            StepEnd(
+            step_end(
                 step=StepRef.parse(f"run_1.{metrics.model_calls}"),
                 kind="model",
                 status="succeeded",
@@ -3753,7 +3766,7 @@ def test_chat_tui_tracks_only_root_chdir_workspace_in_center(
 
     app.handle_run_event(
         PartEnd(
-            step=StepRef.parse("run_1.0"),
+            step=str(StepRef.parse("run_1.0")),
             part=0,
             data=ToolResultPart(
                 tool_call_id="call_root",
@@ -3768,7 +3781,7 @@ def test_chat_tui_tracks_only_root_chdir_workspace_in_center(
 
     app.handle_run_event(
         PartEnd(
-            step=StepRef.parse("run_child.0"),
+            step=str(StepRef.parse("run_child.0")),
             part=0,
             data=ToolResultPart(
                 tool_call_id="call_child",
@@ -3856,7 +3869,7 @@ def test_chat_ticker_refreshes_compact_progress_without_replacing_the_block() ->
     app._set_status_running(True)
     app._status_activity_started_at = 100.0
     app.presenter.handle(
-        RunBegin(
+        run_begin(
             run="run_compact",
             control=ControlRef.for_run("run_compact", 0),
             runnable="agic:chat",
@@ -3865,7 +3878,7 @@ def test_chat_ticker_refreshes_compact_progress_without_replacing_the_block() ->
         app.app_context,
     )
     app.presenter.handle(
-        StepBegin(
+        step_begin(
             step=StepRef.parse("run_compact.0"),
             kind="tool",
             started_at=now[0],
@@ -4079,7 +4092,7 @@ def test_chat_tui_run_lifecycle_starts_and_stops_status_activity(
         app._request_run_cancel()
         assert app.run_status_bar.running
         assert app.run_status_bar.elapsed_seconds == 80
-    app.handle_run_event(RunEnd(run="run_1", status=outcome))
+    app.handle_run_event(run_end(run="run_1", status=outcome))
 
     assert not app.run_in_flight.is_set()
     assert not app.status_bar.running
@@ -5935,7 +5948,7 @@ def test_chat_tui_replaces_failed_model_live_state_in_scrollback_transaction(
     app._commit_ui_update()
 
     app.handle_run_event(
-        StepEnd(
+        step_end(
             step=StepRef.parse("run_1.1"),
             kind="model",
             status="failed",
@@ -6041,7 +6054,7 @@ def _run_begin(
     runnable_kind: str = "agic",
     runnable_name: str = "test",
 ) -> RunBegin:
-    return RunBegin(
+    return run_begin(
         run=run_id,
         control=ControlRef.for_run(run_id, 0),
         parent=(
@@ -6058,7 +6071,7 @@ def _run_end(
     status: Literal["running", "succeeded", "failed", "canceled"],
     output_step_index: int = 1,
 ) -> RunEnd:
-    return RunEnd(
+    return run_end(
         run=run_id,
         status=status,
         output=(
@@ -6076,7 +6089,7 @@ def _model_step_begin(
     step_index: int = 1,
     model: str | None = None,
 ) -> StepBegin:
-    return StepBegin(
+    return step_begin(
         step=StepRef.parse(f"{run_id}.{step_index}"),
         kind="model",
         input=(),
@@ -6086,7 +6099,7 @@ def _model_step_begin(
 
 
 def _tool_step_begin(*, step_index: int = 1) -> StepBegin:
-    return StepBegin(
+    return step_begin(
         step=StepRef.parse(f"run_1.{step_index}"),
         kind="tool",
         input=(),
@@ -6102,7 +6115,7 @@ def _model_step_end(
     step_index: int = 1,
     finished_at: str = "2026-01-01T00:00:02Z",
 ) -> StepEnd:
-    return StepEnd(
+    return step_end(
         step=StepRef.parse(f"{run_id}.{step_index}"),
         kind="model",
         status="succeeded",
@@ -6115,7 +6128,7 @@ def _model_step_end(
 
 
 def _flow_step_begin(*, step_index: int = 1) -> StepBegin:
-    return StepBegin(
+    return step_begin(
         step=StepRef.parse(f"run_1.{step_index}"),
         kind="par",
         input=(),
@@ -6125,7 +6138,7 @@ def _flow_step_begin(*, step_index: int = 1) -> StepBegin:
 
 
 def _flow_step_end(*, step_index: int = 1) -> StepEnd:
-    return StepEnd(
+    return step_end(
         step=StepRef.parse(f"run_1.{step_index}"),
         kind="par",
         status="succeeded",
@@ -6137,7 +6150,7 @@ def _flow_step_end(*, step_index: int = 1) -> StepEnd:
 def _child_run_step_begin(
     *, step_index: int = 2, step: StepRef | str | None = None
 ) -> StepBegin:
-    return StepBegin(
+    return step_begin(
         step=StepRef.parse(step or f"run_1.{step_index}"),
         kind="run",
         input=(),
@@ -6149,7 +6162,7 @@ def _child_run_step_begin(
 def _child_run_step_end(
     *, step_index: int = 2, step: StepRef | str | None = None
 ) -> StepEnd:
-    return StepEnd(
+    return step_end(
         step=StepRef.parse(step or f"run_1.{step_index}"),
         kind="run",
         status="succeeded",
@@ -6164,7 +6177,7 @@ def _tool_step_end(
     step_index: int = 1,
     finished_at: str = "2026-01-01T00:00:02Z",
 ) -> StepEnd:
-    return StepEnd(
+    return step_end(
         step=StepRef.parse(f"{run_id}.{step_index}"),
         kind="tool",
         status="succeeded",
@@ -6443,9 +6456,12 @@ def test_chat_steers_match_receipts_and_consumption_without_changing_accents() -
     events.handle_run_event(
         replace(
             _model_step_begin(step_index=3),
-            preceded_by=(
-                ControlRef.for_run("run_1", 1),
-                ControlRef.for_run("run_1", 3),
+            preceded_by=tuple(
+                ControlApplied(str(ref.target), ref.index)
+                for ref in (
+                    ControlRef.for_run("run_1", 1),
+                    ControlRef.for_run("run_1", 3),
+                )
             ),
         ),
         app,
@@ -6457,7 +6473,10 @@ def test_chat_steers_match_receipts_and_consumption_without_changing_accents() -
     events.handle_run_event(
         replace(
             _model_step_begin(step_index=4),
-            preceded_by=(ControlRef.for_run("run_1", 2),),
+            preceded_by=tuple(
+                ControlApplied(str(ref.target), ref.index)
+                for ref in (ControlRef.for_run("run_1", 2),)
+            ),
         ),
         app,
     )
@@ -6475,7 +6494,11 @@ def test_chat_steer_consumption_before_receipt_and_replay_are_idempotent() -> No
     events.handle_run_event(_run_begin(), app)
     steer = _submit_test_steer(app, "early")
     consumed = replace(
-        _model_step_begin(), preceded_by=(ControlRef.for_run("run_1", 8),)
+        _model_step_begin(),
+        preceded_by=tuple(
+            ControlApplied(str(ref.target), ref.index)
+            for ref in (ControlRef.for_run("run_1", 8),)
+        ),
     )
     events.handle_run_event(consumed, app)
     assert steer in app.live_blocks
@@ -6962,9 +6985,12 @@ def test_chat_reordered_receipts_preserve_a_consumed_batch_in_history(
     events.handle_run_event(
         replace(
             _model_step_begin(),
-            preceded_by=(
-                ControlRef.for_run("run_1", 1),
-                ControlRef.for_run("run_1", 2),
+            preceded_by=tuple(
+                ControlApplied(str(ref.target), ref.index)
+                for ref in (
+                    ControlRef.for_run("run_1", 1),
+                    ControlRef.for_run("run_1", 2),
+                )
             ),
         ),
         app,
@@ -7095,7 +7121,7 @@ def test_chat_terminal_publication_does_not_block_ui_events() -> None:
             app.handle_ui_event(ChatUIEvent("thread_title", result))
             assert stream.getvalue().endswith("\x1b]0;alice: hello world\x07")
             before = stream.getvalue()
-            app.handle_run_event(RunEnd(run="run_1", status="succeeded"))
+            app.handle_run_event(run_end(run="run_1", status="succeeded"))
             assert results.empty() and stream.getvalue() == before
         finally:
             released.set()
@@ -7475,10 +7501,12 @@ def test_chat_palette_reaches_live_committed_and_durable_output(
     events.handle_run_event(_run_begin(), context)
     events.handle_run_event(_model_step_begin(), context)
     step = StepRef.parse("run_1.1")
-    events.handle_run_event(PartBegin(step=step, part=0, part_type="text"), context)
+    events.handle_run_event(
+        PartBegin(step=str(step), part=0, part_type="text"), context
+    )
     if streaming:
         events.handle_run_event(
-            PartDelta(step=step, part=0, delta=TextDelta(markup)), context
+            PartDelta(step=str(step), part=0, delta=TextDelta(markup)), context
         )
         assert_colors(
             Group(
@@ -7489,7 +7517,9 @@ def test_chat_palette_reaches_live_committed_and_durable_output(
                 )
             )
         )
-    events.handle_run_event(PartEnd(step=step, part=0, data=TextPart(markup)), context)
+    events.handle_run_event(
+        PartEnd(step=str(step), part=0, data=TextPart(markup)), context
+    )
     events.handle_run_event(_model_step_end(output=markup), context)
     events.handle_run_event(_run_end(status="succeeded"), context)
     assert_colors(
@@ -7524,14 +7554,14 @@ def test_snapshot_cannot_duplicate_a_completed_chat_or_replace_another_run():
 
     app = FakeApp()
     presenter = app.presenter
-    root = RunBegin("run_one", ControlRef.for_run("run_one", 0))
-    end = RunEnd("run_one", "succeeded", finished_at="2026-01-01T00:00:02Z")
+    root = run_begin("run_one", ControlRef.for_run("run_one", 0))
+    end = run_end("run_one", "succeeded", finished_at="2026-01-01T00:00:02Z")
     presenter.handle(root, app)
     presenter.handle(end, app)
     finalized = list(app.finalized)
     presenter.handle(RunSnapshot((root, end)), app)
     assert app.finalized == finalized and app.active_run is None
-    other = RunBegin("run_two", ControlRef.for_run("run_two", 0))
+    other = run_begin("run_two", ControlRef.for_run("run_two", 0))
     presenter.handle(other, app)
     live = list(app.live_blocks)
     presenter.handle(RunSnapshot((root, end)), app)

@@ -43,8 +43,7 @@ async def execute(
     if target.ref is not None:
         inputs.append(target.ref)
     return await execute_step(
-        execution.emit,
-        begin_step=execution.step_starter(binding),
+        execution,
         kind="value",
         path=path,
         binding=binding,

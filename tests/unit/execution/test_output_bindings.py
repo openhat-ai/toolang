@@ -1,5 +1,9 @@
 """Output bindings are independent of reusable complete values."""
 
+from toolang.execution.types import StepRef
+
+from tests.support.observations import run_end, step_end
+
 from contextlib import closing
 from dataclasses import FrozenInstanceError, replace
 from pathlib import Path
@@ -13,7 +17,7 @@ from tests.support.execution_fixtures import (
     project_step,
 )
 from toolang.base.types.message import Message, TextPart
-from toolang.execution.events import RunEnd, run_event_from_data, run_event_to_data
+from toolang.execution.events import run_event_from_data, run_event_to_data
 from toolang.execution.records import output_from_data, output_to_data
 from toolang.execution.store import RunStore
 from toolang.execution.types import (
@@ -61,7 +65,7 @@ def test_output_reuses_value_across_storage_and_protocol(
     adapter = TypeAdapter(Output)
     assert adapter.dump_python(output, mode="json") == data
     assert adapter.validate_json(adapter.dump_json(output)) == output
-    event = RunEnd(run="run_result", status="succeeded", output=output)
+    event = run_end(run="run_result", status="succeeded", output=output)
     assert run_event_from_data(run_event_to_data(event)) == event
 
 
@@ -164,8 +168,6 @@ def test_output_codecs_reject_removed_wrappers(data) -> None:
 )
 def test_run_handle_has_one_protocol_and_event_shape(binding, result_type):
     from toolang.execution.types import AwaitableHandle
-    from toolang.execution.events import StepEnd
-    from toolang.execution.types import StepRef
 
     handle = AwaitableHandle("run_spawned", "spawn_thread", result_type)
     output = Output(handle, binding)
@@ -186,7 +188,7 @@ def test_run_handle_has_one_protocol_and_event_shape(binding, result_type):
     adapter = TypeAdapter(Output)
     assert adapter.validate_json(adapter.dump_json(output)) == output
     assert adapter.dump_python(output, mode="json") == stored
-    event = StepEnd(
+    event = step_end(
         step=StepRef.parse("run_source.0"),
         kind="spawn",
         status="succeeded",

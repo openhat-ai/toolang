@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from toolang.execution.types import StepRef
+
 import asyncio
 import sys
 from dataclasses import replace
@@ -49,7 +51,11 @@ class ScriptRunPresenter(RunTracer):
         self._refresh_task: asyncio.Task[None] | None = None
 
     async def on_event(self, event: RunEvent) -> None:
-        if isinstance(event, RunBegin) and event.parent is None:
+        if (
+            isinstance(event, RunBegin)
+            and (StepRef.parse(event.parent) if event.parent is not None else None)
+            is None
+        ):
             if self.run_id is None:
                 self.run_id = event.run
             self._begin_root(event)
@@ -64,7 +70,10 @@ class ScriptRunPresenter(RunTracer):
                 update,
                 committed=(
                     *update.committed,
-                    ProgressBlock(f"step:{event.step}", trace_live_rows(operation, "")),
+                    ProgressBlock(
+                        f"step:{StepRef.parse(event.step)}",
+                        trace_live_rows(operation, ""),
+                    ),
                 ),
             )
         self._apply_progress(update)
@@ -75,8 +84,12 @@ class ScriptRunPresenter(RunTracer):
 
     async def on_snapshot(self, events: tuple[RunEvent, ...]) -> None:
         for event in events:
-            if isinstance(event, RunBegin) and event.parent is None:
-                if (event.run, str(event.control)) == self._completed:
+            if (
+                isinstance(event, RunBegin)
+                and (StepRef.parse(event.parent) if event.parent is not None else None)
+                is None
+            ):
+                if (event.run, f"{event.run}@{event.control}") == self._completed:
                     return
                 self.run_id = event.run
                 self._begin_root(event)
@@ -129,7 +142,7 @@ class ScriptRunPresenter(RunTracer):
             self._apply_progress(self._projector.refresh())
 
     def _begin_root(self, event: RunBegin) -> None:
-        self._root_identity = (event.run, str(event.control))
+        self._root_identity = (event.run, f"{event.run}@{event.control}")
         if self._root is not None:
             self._root.started_at = event.started_at
             return

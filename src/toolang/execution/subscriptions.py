@@ -18,23 +18,25 @@ from .errors import (
 )
 from .events import (
     ExecutionEvent,
+    ControlApplied,
     RunBegin,
     RunEnd,
-    StepBegin,
-    StepEnd,
     ThreadCreated,
     ThreadForked,
     ThreadRewound,
     event_to_data,
 )
 from .records import CreateControlPayload, ForkControlPayload, RewindControlPayload
-from .records import RunRecord, StepRecord, RunControlPayload, StoredModelStepGiven
+from .records import RunRecord, StepRecord, RunControlPayload
 from .schemas import StreamFrame
 from .store import RunStore
 from .stream import CanonicalEvent, CanonicalStream, StreamReader
-from .types import ErrorMessage, EventCursor, ModelStepInfo, StepRef
+from .types import ErrorRef, EventCursor, StepRef
 
 from .observation import (
+    step_begin_event,
+    step_end_event,
+    direct_output,
     SNAPSHOT_SECONDS,
     SNAPSHOT_BYTES,
     SnapshotBudget as _Budget,
@@ -192,9 +194,9 @@ class RecordSnapshot(StructuralSnapshot):
             self.begins[run.id] = (
                 RunBegin(
                     run.id,
-                    run.control,
+                    run.control.index,
                     runnable,
-                    run.parent,
+                    str(run.parent) if run.parent is not None else None,
                     run.occur,
                     run.started_at or "",
                     str(run.thread),
@@ -207,14 +209,17 @@ class RecordSnapshot(StructuralSnapshot):
                     RunEnd(
                         run.id,
                         run.status,
-                        run.control,
-                        store.resolve_output(run.output)
+                        ControlApplied(str(run.control.target), run.control.index),
+                        direct_output(store.resolve_output(run.output))
                         if run.output is not None
                         else None,
-                        ErrorMessage(store.resolve_error(run.error))
+                        store.resolve_error(run.error)
                         if run.error is not None
                         else None,
-                        run.finished_at or "",
+                        finished_at=run.finished_at or "",
+                        error_source=str(run.error.ref.record)
+                        if isinstance(run.error, ErrorRef)
+                        else None,
                     ),
                     run.end_cursor,
                 )
@@ -222,42 +227,21 @@ class RecordSnapshot(StructuralSnapshot):
             if run.id in self.ends:
                 budget.take(event_to_data(self.ends[run.id][0]))
         for step in steps:
-            given = step.given
-            if isinstance(given, StoredModelStepGiven):
-                given = ModelStepInfo(
-                    given.model,
-                    setup=given.setup,
-                    state=given.state,
-                )
             self.begins[step.ref] = (
-                StepBegin(
-                    step.ref,
-                    step.kind,
-                    given,
-                    step.state,
-                    step.input,
-                    step.preceded_by,
-                    step.occur,
-                    step.started_at,
-                ),
+                step_begin_event(step),
                 step.begin_cursor,
             )
             self.children[step.parent or step.run_id].append(step.ref)
             if step.status != "running":
                 self.ends[step.ref] = (
-                    StepEnd(
-                        step.ref,
-                        step.kind,
-                        step.status,
-                        store.resolve_output(step.output)
+                    step_end_event(
+                        step,
+                        direct_output(store.resolve_output(step.output))
                         if step.output is not None
                         else None,
-                        step.noted,
-                        ErrorMessage(store.resolve_error(step.error))
+                        store.resolve_error(step.error)
                         if step.error is not None
                         else None,
-                        step.aborted_by,
-                        step.finished_at or "",
                     ),
                     step.end_cursor,
                 )

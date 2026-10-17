@@ -114,7 +114,7 @@ def admission(
                 noted = execution.tool_admission_noted(source.ref)
             else:
                 raise RuntimeError("async admission requires an async run Step")
-            execution.store.finish_step(
+            completed = execution.store.finish_step(
                 ref=source.ref,
                 kind=source.kind,
                 status="succeeded",
@@ -125,7 +125,7 @@ def admission(
             )
             execution.executor._publish_step_ends(
                 publication,
-                (source.ref,),
+                (completed,),
                 thread_id=binding.thread,
                 root_run_id=binding.root_run_id,
             )
@@ -182,7 +182,7 @@ async def drain(execution: _Execution, owner: str) -> None:
         for rid in targets:
             # Cancellation before a task's first turn cannot run its finally.
             await execution.executor._ensure_terminal(
-                rid, emit=execution.emit, status="canceled"
+                rid, finish=execution.finish_run, status="canceled"
             )
             execution._background_tasks.pop(rid, None)
             execution._background_owners.pop(rid, None)

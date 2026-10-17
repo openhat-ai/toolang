@@ -1447,25 +1447,6 @@ class ModelMessages:
 
 
 @dataclass(frozen=True, slots=True)
-class ModelStepInfo:
-    """Model identity and revisions for observation without the normalized call."""
-
-    model: str
-    setup: str = field(kw_only=True)
-    state: str | None = field(default=None, kw_only=True)
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.model, str) or not self.model:
-            raise ValueError("model Step info requires a model identity")
-        if not isinstance(self.setup, str) or not self.setup:
-            raise TypeError("model Step setup must be a revision string")
-        if self.state is not None and (
-            not isinstance(self.state, str) or not self.state
-        ):
-            raise TypeError("model Step state must be a revision string")
-
-
-@dataclass(frozen=True, slots=True)
 class ModelStepGiven:
     """Resolved model identity and normalized call known at Step begin."""
 
@@ -1473,7 +1454,7 @@ class ModelStepGiven:
     call: ModelCall
     setup: str = field(kw_only=True)
     state: str | None = field(default=None, kw_only=True)
-    # Internal recording metadata; public event codecs expose only the call.
+    # Internal recording metadata; subscriber events expose only model identity.
     messages: ModelMessages | None = field(
         default=None, compare=False, repr=False, metadata={"exclude": True}
     )

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from tests.support.observations import run_begin, run_end
+
+
 import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field, replace
@@ -100,7 +103,7 @@ def _request() -> RunRequest:
 
 
 def _begin(run_id: str = "run_remote") -> RunBegin:
-    return RunBegin(
+    return run_begin(
         run=run_id,
         control=ControlRef.for_run(run_id, 0),
         runnable="agic:chat",
@@ -109,7 +112,7 @@ def _begin(run_id: str = "run_remote") -> RunBegin:
 
 
 def _end(run_id: str = "run_remote") -> RunEnd:
-    return RunEnd(
+    return run_end(
         run=run_id,
         status="succeeded",
         finished_at="2026-08-25T00:00:01Z",

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from toolang.execution.types import StepRef
+
 from tests.support.setup import replace_materialized_setup
 
 import asyncio
@@ -52,7 +54,6 @@ from toolang.execution.types import (
     Occurrence,
     OccurrencePosition,
     RunRef,
-    StepRef,
     ThreadPrefix,
     TypedRef,
 )

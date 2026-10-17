@@ -1,6 +1,6 @@
 # Separate client events from executor persistence
 
-Status: proposed for review. Work type: feature definition; no implementation.
+Status: implemented. Definition approved in [PR #838](https://github.com/openhat-ai/toolang/pull/838).
 
 ## Goal and success criteria
 
@@ -38,17 +38,6 @@ projection framework or second hierarchy of internal events.
 Keep complete Given/Noted values and compact stored forms where they already
 belong. Do not duplicate them into new internal fact/command classes or rename
 the execution vocabulary as part of this work.
-
-## Verified current coupling
-
-| Location | Current coupling |
-| --- | --- |
-| [`_PersistSink.on_event()`](../../src/toolang/execution/executor/_persist.py) | Consumes `RunEvent`, writes records and resolves some refs for observers. |
-| [`RunExecutor._project_event()`](../../src/toolang/execution/executor/executor.py) | Combines persistence, control application and notification. |
-| `_Execution.begin_step()` and relation/state helpers | Prepare and manage execution through `StepBegin`, `StepEnd` and `RunEnd`. |
-| `spawn.py` dispatch failure | Calls `_PersistSink.on_event()` directly to finish an accepted root when task launch fails. |
-| [`Publication.append()`](../../src/toolang/execution/stream.py) | Converts complete model Given data to `ModelStepInfo` before retention. |
-| [`events.py`](../../src/toolang/execution/events.py) | Reuses internal Given/Noted/output schemas and reference-capable fields. |
 
 ## Persistence contract
 
@@ -148,22 +137,22 @@ runnable.
 
 ## Action items and likely files
 
-- [ ] Replace Event-driven persistence with direct Store calls in existing
+- [x] Replace Event-driven persistence with direct Store calls in existing
   lifecycle coordination in `execution/executor/executor.py` and `common.py`;
   remove `_persist.py` and the `_persist` member.
-- [ ] Adapt internal lifecycle producers in `execution/executor/steps/`, `runs/`,
+- [x] Adapt internal lifecycle producers in `execution/executor/steps/`, `runs/`,
   `tool_runtime.py`, `awaitables.py` and `spawn.py`, retaining atomic admission.
-- [ ] Define value-only Events in `execution/events.py`; keep recording vocabulary
+- [x] Define value-only Events in `execution/events.py`; keep recording vocabulary
   in `types.py` and codecs in `records.py`.
-- [ ] Adapt publication and explicit snapshot field construction in
+- [x] Adapt publication and explicit snapshot field construction in
   `execution/stream.py` and `subscriptions.py`; update shared Thread event field
   access only if required. Keep `ThreadManager` behavior unchanged. Update
   `stream_client.py`, stream frame codecs, transport and CLI field access only
   as required by the Event contract.
-- [ ] Add focused acceptance coverage and update existing event/persistence docs
+- [x] Add focused acceptance coverage and update existing event/persistence docs
   in `docs/execution.md`, `docs/executor.md`, `docs/run-step-records.md` and
   `docs/api.md`; do not redesign query or recovery behavior.
-- [ ] Run `uv run ruff check .`, `uv run ruff format --check .`, `uv run ty check`
+- [x] Run `uv run ruff check .`, `uv run ruff format --check .`, `uv run ty check`
   and `uv run pytest -n auto` before implementation commits. Record practical
   test results as a short summary.
 
@@ -192,5 +181,12 @@ simplicity constraints as well as running tests; moving complexity into new
 helpers does not meet the goal. Event-schema changes require coordinated
 subscriber upgrades; durable compatibility is unchanged.
 
-No open scope choices remain. Human approval of this definition is required
-before implementation; this PR contains the plan only.
+No open scope choices remain.
+
+## Verification summary
+
+The default checks passed on the rebased code in a clean worktree: 11,772 tests
+passed and 127 skipped. Coverage includes atomic admission, rollback, cancellation,
+exact call replay, stream recovery and local/remote presentation. The large-context
+stream test keeps its Model Begin notification under 1 KiB. Store methods, SQL and
+Record formats have no implementation diff.

@@ -1,5 +1,9 @@
 """Historical templates, horizons, and current deltas form exact model calls."""
 
+from types import SimpleNamespace
+
+from toolang.execution.types import StepRef
+
 from tests.support.setup import replace_materialized_setup
 
 import asyncio
@@ -350,9 +354,9 @@ agic next() -> Part[]:
                 assert horizon is not None
                 compact.append(
                     harness.store.accept_compact_control(
-                        run_id=event.step.run_id,
+                        run_id=StepRef.parse(event.step).run_id,
                         horizon=horizon,
-                        triggered_by=event.step,
+                        triggered_by=StepRef.parse(event.step),
                         created_at=event.finished_at,
                     )
                 )
@@ -404,7 +408,10 @@ def test_compact_preparation_survives_failed_begin(
 
     async def reprepare(execution, build, *, run_id):
         if execution._active.root_run_id == target and not gate.entered:
-            build(*execution.state_snapshot(run_id))
+            build(
+                *execution.state_snapshot(run_id),
+                lambda **facts: SimpleNamespace(**facts),
+            )
             await gate.wait()
 
             def fail_write(**kwargs):
@@ -490,9 +497,9 @@ def test_each_call_records_context_without_rerendering_history(
             if isinstance(event, StepEnd) and event.kind == "tool" and not compacted:
                 assert horizon is not None
                 harness.store.accept_compact_control(
-                    run_id=event.step.run_id,
+                    run_id=StepRef.parse(event.step).run_id,
                     horizon=horizon,
-                    triggered_by=event.step,
+                    triggered_by=StepRef.parse(event.step),
                     created_at="2026-09-06T00:00:00Z",
                 )
                 compacted = True
@@ -988,9 +995,9 @@ def test_compact_adoption_replaces_history_and_preserves_now(tmp_path: Path) -> 
             if isinstance(event, StepEnd) and event.kind == "tool":
                 assert horizon is not None
                 compact = harness.store.accept_compact_control(
-                    run_id=event.step.run_id,
+                    run_id=StepRef.parse(event.step).run_id,
                     horizon=horizon,
-                    triggered_by=event.step,
+                    triggered_by=StepRef.parse(event.step),
                     created_at="2026-09-06T00:00:00Z",
                 )
 
@@ -1094,9 +1101,9 @@ def test_compaction_between_tools_resets_the_last_model_baseline(tmp_path):
             if isinstance(event, StepEnd) and event.kind == "tool" and not adopted:
                 assert horizon is not None
                 harness.store.accept_compact_control(
-                    run_id=event.step.run_id,
+                    run_id=StepRef.parse(event.step).run_id,
                     horizon=horizon,
-                    triggered_by=event.step,
+                    triggered_by=StepRef.parse(event.step),
                     created_at=event.finished_at,
                 )
                 adopted = True

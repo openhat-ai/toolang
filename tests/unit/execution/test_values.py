@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from toolang.execution.types import StepRef
+
 from collections.abc import Mapping
 from dataclasses import fields
 from typing import Literal, cast
@@ -43,7 +45,6 @@ from toolang.execution.types import (
     FieldRef,
     Pointer,
     RunCommand,
-    StepRef,
     TypedRef,
     Output,
     output_from_protocol_data,

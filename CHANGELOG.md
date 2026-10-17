@@ -57,6 +57,8 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Changed
 
+- **Breaking:** Run subscription events now carry compact client-owned operation metadata, direct outputs without bindings or pointers, text errors, and usage summaries. Complete model/tool calls, Flow ASTs, State/input references, and accounting internals remain in unchanged durable records and explicit inspection/query APIs. External subscribers must upgrade with the runtime and reconnect. Run/Step IDs are scalar; control application uses Run/index facts.
+
 - **Breaking:** thread peer metadata is removed from execution records, events,
   and HTTP schemas. Thread creation no longer accepts a peer, and integrations
   must stop sending or reading peer fields. Empty thread titles now use the

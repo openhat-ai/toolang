@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from toolang.execution.types import StepRef
+
 import asyncio
 from pathlib import Path
 from collections.abc import Iterable
@@ -105,7 +107,7 @@ def test_batch_runs_finish_before_replies_and_next_tools(tmp_path: Path) -> None
             if isinstance(event, RunBegin) and event.parent is not None:
                 beginnings.append(
                     (
-                        harness.store.get_step(ref=event.parent),
+                        harness.store.get_step(ref=StepRef.parse(event.parent)),
                         harness.store.get_run_control(run_id=event.run, index=0),
                     )
                 )
@@ -137,7 +139,7 @@ def test_batch_runs_finish_before_replies_and_next_tools(tmp_path: Path) -> None
                 tool_end = next(
                     i
                     for i, e in enumerate(tracer.events)
-                    if isinstance(e, StepEnd) and e.step == child.parent
+                    if isinstance(e, StepEnd) and StepRef.parse(e.step) == child.parent
                 )
                 child_begin = next(
                     i
@@ -153,8 +155,8 @@ def test_batch_runs_finish_before_replies_and_next_tools(tmp_path: Path) -> None
                     i
                     for i, e in enumerate(tracer.events)
                     if isinstance(e, StepBegin)
-                    and e.step.run_id == root.id
-                    and e.step.index == child.parent.index + 1
+                    and StepRef.parse(e.step).run_id == root.id
+                    and StepRef.parse(e.step).index == child.parent.index + 1
                 )
                 assert child_begin < child_end < tool_end < next_tool_or_model
             followup = harness.adapter.invocations[3].call

@@ -1,5 +1,9 @@
 """The same recovery contract for run, thread, and agent subscriptions."""
 
+from toolang.execution.types import StepRef
+
+from tests.support.observations import run_end
+
 import asyncio
 import json
 
@@ -19,12 +23,11 @@ from toolang.execution.types import ThreadPrefix
 def test_large_model_history_prefill_preserves_calls_without_expanding_them(
     tmp_path, monkeypatch, scope_kind
 ):
-    from tests.support.execution_fixtures import persist_event, project_run_start
-    from toolang.execution.events import RunEnd, StepBegin, StepEnd
+    from tests.support.execution_fixtures import project_run_start
     from toolang.execution.inspection.history import RunHistory
     from toolang.execution.store import RunStore
     from toolang.execution.stream import CanonicalStream
-    from toolang.execution.types import ModelStepGiven, StepRef
+    from toolang.execution.types import ModelStepGiven
 
     store = RunStore(tmp_path / "runs.db")
     call = ModelCall("context " * (256 * 1024), [Message.user("question")])
@@ -37,12 +40,23 @@ def test_large_model_history_prefill_preserves_calls_without_expanding_them(
     )
     refs = [StepRef.from_local(run.id, (index,)) for index in range(10)]
     for ref in refs:
-        persist_event(
-            store,
-            StepBegin(ref, "model", ModelStepGiven("test/model", call, setup="test")),
+        store.begin_step(
+            ref=ref,
+            kind="model",
+            given=ModelStepGiven("test/model", call, setup="test"),
+            started_at="",
+            input=(),
         )
-        persist_event(store, StepEnd(ref, "model", "succeeded"))
-    persist_event(store, RunEnd(run.id, "succeeded"))
+        store.finish_step(
+            ref=ref,
+            kind="model",
+            status="succeeded",
+            finished_at="",
+            output=None,
+            noted=None,
+            error=None,
+        )
+    store.finish_run(run_id=run.id, status="succeeded", finished_at="")
     history = RunHistory(store)
     assert history.get_model_call(refs[0]) == call
     assert history.get_model_call(refs[-1]) == call
@@ -74,7 +88,7 @@ def test_large_model_history_prefill_preserves_calls_without_expanding_them(
             model_frames = [frame for frame in frames if frame.event == "step_begin"]
             assert len(model_frames) == len(refs)
             assert all(
-                frame.data["given"] == {"model": "test/model", "setup": "test"}
+                frame.data["given"] == {"type": "model", "model": "test/model"}
                 for frame in model_frames
             )
             client = StreamClientState()
@@ -353,7 +367,7 @@ def test_mid_step_attachment_fills_ancestors_and_ignores_partial_parts(
             step = harness.store.list_steps(run_id=handle.run_id)[0]
             with source.publication() as publication:
                 publication.append(
-                    PartDelta(step.ref, 0, TextDelta("late")),
+                    PartDelta(str(step.ref), 0, TextDelta("late")),
                     thread_id=thread,
                     root_run_id=handle.run_id,
                 )
@@ -519,7 +533,6 @@ def test_root_stream_waits_for_a_child_after_recorded_root_end(tmp_path):
     from toolang.execution.events import RunEnd
     from toolang.execution.store import RunStore
     from toolang.execution.stream import CanonicalStream
-    from toolang.execution.types import StepRef
 
     store = RunStore(tmp_path / "runs.db")
     project_run_start(
@@ -573,7 +586,7 @@ def test_root_stream_waits_for_a_child_after_recorded_root_end(tmp_path):
         with source.publication() as publication:
             store.finish_run(run_id="run_child", status="succeeded")
             publication.append(
-                RunEnd("run_child", "succeeded"),
+                run_end("run_child", "succeeded"),
                 thread_id="term_tree",
                 root_run_id="run_root",
             )

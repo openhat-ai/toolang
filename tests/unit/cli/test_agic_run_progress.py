@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+from toolang.execution.types import StepRef
+
+from tests.support.observations import run_begin, run_end, step_begin, step_end
+
+
 from toolang.execution.types import ModelAccounting, value_for_type
 
 from io import StringIO
@@ -22,7 +27,6 @@ from toolang.cli.common.execution_progress.formatting import display_width
 from toolang.cli.common.execution_progress.rich_rendering import run_footer_renderable
 from toolang.cli.common.script_progress.console import ProgressConsole
 from toolang.cli.toolang.commands.chat import blocks, rendering
-from toolang.execution.events import RunBegin, RunEnd, StepBegin, StepEnd
 from toolang.execution.types import (
     Output,
     ControlRef,
@@ -31,7 +35,6 @@ from toolang.execution.types import (
     ModelStepNoted,
     Occurrence,
     OccurrencePosition,
-    StepRef,
     ToolStepGiven,
     ToolStepNoted,
 )
@@ -75,7 +78,7 @@ def _execute_step(
 ) -> ProgressUpdate:
     step = StepRef.parse("run_root.1")
     starting = projector.handle(
-        StepBegin(
+        step_begin(
             step=step,
             kind="tool",
             given=ToolStepGiven(
@@ -109,7 +112,7 @@ def _execute_step(
         output={} if error else {"controls": [f"{step.run_id}@1"]},
     )
     return projector.handle(
-        StepEnd(
+        step_end(
             step=step,
             kind="tool",
             status="failed" if error else "succeeded",
@@ -148,7 +151,7 @@ def test_dynamic_run_projects_a_flat_header_and_child_id_footer(source) -> None:
     dynamic = StepRef.parse("run_root.0")
     child_model = StepRef.parse("run_child.0")
     projector.handle(
-        RunBegin(
+        run_begin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
             runnable="agic:parent",
@@ -169,7 +172,7 @@ def test_dynamic_run_projects_a_flat_header_and_child_id_footer(source) -> None:
         )
     )
     starting = projector.handle(
-        StepBegin(
+        step_begin(
             step=dynamic, kind=kind, given=given, started_at="2026-01-01T00:00:00Z"
         )
     )
@@ -187,7 +190,7 @@ def test_dynamic_run_projects_a_flat_header_and_child_id_footer(source) -> None:
     )
 
     header = projector.handle(
-        RunBegin(
+        run_begin(
             run="run_child",
             control=ControlRef.for_run("run_child", 0),
             runnable="agic:summarize",
@@ -209,7 +212,7 @@ def test_dynamic_run_projects_a_flat_header_and_child_id_footer(source) -> None:
         ProgressRow(""),
     )
     projector.handle(
-        StepBegin(
+        step_begin(
             step=child_model,
             kind="model",
             given=ModelStepGiven(
@@ -221,7 +224,7 @@ def test_dynamic_run_projects_a_flat_header_and_child_id_footer(source) -> None:
         )
     )
     projector.handle(
-        StepEnd(
+        step_end(
             step=child_model,
             kind="model",
             status="succeeded",
@@ -233,14 +236,14 @@ def test_dynamic_run_projects_a_flat_header_and_child_id_footer(source) -> None:
         )
     )
     projector.handle(
-        RunEnd(
+        run_end(
             run="run_child",
             status="succeeded",
             finished_at="2026-01-01T00:00:01.100Z",
         )
     )
     footer = projector.handle(
-        StepEnd(
+        step_end(
             step=dynamic,
             kind=kind,
             status="succeeded",
@@ -262,14 +265,14 @@ def test_dynamic_run_preaccept_failure_uses_a_trace_marker_without_boundaries() 
     projector = ProgressProjector(show_boundaries=False)
     path = StepRef.parse("run_root.0")
     projector.handle(
-        RunBegin(
+        run_begin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
             runnable="agic:parent",
         )
     )
     starting = projector.handle(
-        StepBegin(
+        step_begin(
             step=path,
             kind="run",
             given=_run_stmt("flow:missing"),
@@ -281,7 +284,7 @@ def test_dynamic_run_preaccept_failure_uses_a_trace_marker_without_boundaries() 
     )
 
     terminal = projector.handle(
-        StepEnd(
+        step_end(
             step=path,
             kind="run",
             status="failed",
@@ -308,16 +311,16 @@ def test_execute_projects_a_live_marker_then_a_handoff_header(tool_name) -> None
     caller = StepRef.parse("run_root.0")
     target = StepRef.parse("run_root.2")
     projector.handle(
-        RunBegin(
+        run_begin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
             runnable="agic:caller",
         )
     )
-    projector.handle(StepBegin(step=caller, kind="model", given=_model_given()))
+    projector.handle(step_begin(step=caller, kind="model", given=_model_given()))
 
     starting = projector.handle(
-        StepEnd(
+        step_end(
             step=caller,
             kind="model",
             status="succeeded",
@@ -334,7 +337,7 @@ def test_execute_projects_a_live_marker_then_a_handoff_header(tool_name) -> None
     assert transferred.committed == ()
     assert transferred.live == ()
     header = projector.handle(
-        StepBegin(step=target, kind="model", given=_model_given())
+        step_begin(step=target, kind="model", given=_model_given())
     )
 
     assert header.committed[0].rows == (
@@ -446,14 +449,14 @@ def test_execution_headers_keep_dim_style(width: int, row: ProgressRow) -> None:
 def test_execute_uses_its_persisted_running_description() -> None:
     projector = ProgressProjector(show_boundaries=False)
     projector.handle(
-        RunBegin(
+        run_begin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
             runnable="agic:caller",
         )
     )
     starting = projector.handle(
-        StepBegin(
+        step_begin(
             step=StepRef.parse("run_root.0"),
             kind="tool",
             given=ToolStepGiven(
@@ -482,7 +485,7 @@ def test_uncommitted_execute_uses_its_tool_outcome(
 ) -> None:
     projector = ProgressProjector(show_boundaries=False)
     projector.handle(
-        RunBegin(
+        run_begin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
             runnable="agic:caller",
@@ -490,7 +493,7 @@ def test_uncommitted_execute_uses_its_tool_outcome(
     )
     step = StepRef.parse("run_root.0")
     projector.handle(
-        StepBegin(
+        step_begin(
             step=step,
             kind="tool",
             given=ToolStepGiven(
@@ -503,7 +506,7 @@ def test_uncommitted_execute_uses_its_tool_outcome(
     )
     summary = "Canceled transfer to next" if status == "canceled" else "Transfer failed"
     ended = projector.handle(
-        StepEnd(
+        step_end(
             step=step,
             kind="tool",
             status=status,
@@ -534,14 +537,14 @@ def test_confirmed_execute_without_target_step_is_not_reported_as_failed(
 ) -> None:
     projector = ProgressProjector(show_boundaries=False)
     projector.handle(
-        RunBegin(
+        run_begin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
             runnable="agic:caller",
         )
     )
     assert _execute_step(projector).committed == ()
-    ended = projector.handle(RunEnd(run="run_root", status=status))
+    ended = projector.handle(run_end(run="run_root", status=status))
     rows = tuple(row for block in ended.committed for row in block.rows)
     assert rows == (
         ProgressRow(
@@ -565,21 +568,21 @@ def test_confirmed_execute_stays_in_its_parallel_lane(
     par = StepRef.parse("run_root.0")
     step = StepRef.parse("run_worker.0")
     projector.handle(
-        RunBegin(
+        run_begin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
             runnable="flow:parent",
         )
     )
     projector.handle(
-        StepBegin(
+        step_begin(
             step=par,
             kind="par",
             given=MapStmt(span=Span(line=1), runnable="worker", lanes=1),
         )
     )
     projector.handle(
-        RunBegin(
+        run_begin(
             run="run_worker",
             parent=par,
             control=ControlRef.for_run("run_worker", 0),
@@ -591,7 +594,7 @@ def test_confirmed_execute_stays_in_its_parallel_lane(
         )
     )
     projector.handle(
-        StepBegin(
+        step_begin(
             step=step,
             kind="tool",
             given=ToolStepGiven(
@@ -604,7 +607,7 @@ def test_confirmed_execute_stays_in_its_parallel_lane(
         )
     )
     transferred = projector.handle(
-        StepEnd(
+        step_end(
             step=step,
             kind="tool",
             status="succeeded",
@@ -631,7 +634,7 @@ def test_confirmed_execute_stays_in_its_parallel_lane(
         )
         target = StepRef.parse("run_worker.1")
         started = projector.handle(
-            StepBegin(
+            step_begin(
                 step=target,
                 kind="tool",
                 given=ToolStepGiven(
@@ -645,7 +648,7 @@ def test_confirmed_execute_stays_in_its_parallel_lane(
         assert row.text == f"  0 | #0 | {marker} Handoff to next · {summary}"
         assert row.tone == "active" and row.surface == "tool_summary"
         completed = projector.handle(
-            StepEnd(
+            step_end(
                 step=target,
                 kind="tool",
                 status="succeeded",
@@ -654,7 +657,7 @@ def test_confirmed_execute_stays_in_its_parallel_lane(
         )
         assert completed.live[0].rows[-1].text == f"  0 | #0 | {marker} Finished"
         assert completed.live[0].rows[-1].tone == "progress"
-    ended = projector.handle(RunEnd(run="run_worker", status=status))
+    ended = projector.handle(run_end(run="run_worker", status=status))
 
     assert transferred.committed == ended.committed == ()
     assert transferred.live[0].rows[-1].text == "  0 | #0 | › Transferred to next"
@@ -666,15 +669,15 @@ def test_execute_prestart_failure_uses_a_correlated_trace_marker() -> None:
     caller = StepRef.parse("run_root.0")
     recovery = StepRef.parse("run_root.2")
     projector.handle(
-        RunBegin(
+        run_begin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
             runnable="agic:caller",
         )
     )
-    projector.handle(StepBegin(step=caller, kind="model", given=_model_given()))
+    projector.handle(step_begin(step=caller, kind="model", given=_model_given()))
     projector.handle(
-        StepEnd(
+        step_end(
             step=caller,
             kind="model",
             status="succeeded",
@@ -700,7 +703,7 @@ def test_execute_prestart_failure_uses_a_correlated_trace_marker() -> None:
     )
     assert failed.live == ()
     recovered = projector.handle(
-        StepBegin(step=recovery, kind="model", given=_model_given())
+        step_begin(step=recovery, kind="model", given=_model_given())
     )
     assert recovered.committed == ()
     assert recovered.live[0].rows == (ProgressRow("• Thinking", "active"),)
@@ -711,15 +714,15 @@ def test_handoff_to_flow_keeps_the_first_run_statement_flow_owned() -> None:
     caller = StepRef.parse("run_root.0")
     target = StepRef.parse("run_root.2")
     projector.handle(
-        RunBegin(
+        run_begin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
             runnable="agic:caller",
         )
     )
-    projector.handle(StepBegin(step=caller, kind="model", given=_model_given()))
+    projector.handle(step_begin(step=caller, kind="model", given=_model_given()))
     projector.handle(
-        StepEnd(
+        step_end(
             step=caller,
             kind="model",
             status="succeeded",
@@ -731,7 +734,7 @@ def test_handoff_to_flow_keeps_the_first_run_statement_flow_owned() -> None:
 
     assert _execute_step(projector, "flow:delegate").committed == ()
     header = projector.handle(
-        StepBegin(
+        step_begin(
             step=target,
             kind="run",
             given=_run_stmt("agic:worker"),
@@ -847,7 +850,7 @@ def test_flow_owned_run_step_keeps_numbered_header_and_step_path_footer() -> Non
     projector = ProgressProjector()
     step = StepRef.parse("run_root.0")
     projector.handle(
-        RunBegin(
+        run_begin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
             runnable="flow:publish",
@@ -855,7 +858,7 @@ def test_flow_owned_run_step_keeps_numbered_header_and_step_path_footer() -> Non
     )
 
     header = projector.handle(
-        StepBegin(step=step, kind="run", given=_run_stmt("summarize"))
+        step_begin(step=step, kind="run", given=_run_stmt("summarize"))
     )
     assert header.committed[0].rows == (
         ProgressRow("[0] Run summarize"),
@@ -863,15 +866,15 @@ def test_flow_owned_run_step_keeps_numbered_header_and_step_path_footer() -> Non
     )
 
     projector.handle(
-        RunBegin(
+        run_begin(
             run="run_child",
             control=ControlRef.for_run("run_child", 0),
             runnable="agic:summarize",
             parent=step,
         )
     )
-    projector.handle(RunEnd(run="run_child", status="succeeded"))
-    terminal = projector.handle(StepEnd(step=step, kind="run", status="succeeded"))
+    projector.handle(run_end(run="run_child", status="succeeded"))
+    terminal = projector.handle(step_end(step=step, kind="run", status="succeeded"))
 
     footer = terminal.committed[0].rows[-2]
     assert footer.right_text == "run_root.0"
@@ -885,21 +888,21 @@ def test_agic_to_flow_keeps_child_flow_run_steps_numbered() -> None:
     dynamic = StepRef.parse("run_root.0")
     authored = StepRef.parse("run_publish.0")
     projector.handle(
-        RunBegin(
+        run_begin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
             runnable="agic:parent",
         )
     )
     projector.handle(
-        StepBegin(
+        step_begin(
             step=dynamic,
             kind="run",
             given=_run_stmt("flow:publish"),
         )
     )
     outer_header = projector.handle(
-        RunBegin(
+        run_begin(
             run="run_publish",
             control=ControlRef.for_run("run_publish", 0),
             runnable="flow:publish",
@@ -908,27 +911,27 @@ def test_agic_to_flow_keeps_child_flow_run_steps_numbered() -> None:
     )
 
     flow_header = projector.handle(
-        StepBegin(
+        step_begin(
             step=authored,
             kind="run",
             given=_run_stmt("validate"),
         )
     )
     projector.handle(
-        RunBegin(
+        run_begin(
             run="run_validate",
             control=ControlRef.for_run("run_validate", 0),
             runnable="agic:validate",
             parent=authored,
         )
     )
-    projector.handle(RunEnd(run="run_validate", status="succeeded"))
+    projector.handle(run_end(run="run_validate", status="succeeded"))
     flow_footer = projector.handle(
-        StepEnd(step=authored, kind="run", status="succeeded")
+        step_end(step=authored, kind="run", status="succeeded")
     )
-    projector.handle(RunEnd(run="run_publish", status="succeeded"))
+    projector.handle(run_end(run="run_publish", status="succeeded"))
     outer_footer = projector.handle(
-        StepEnd(step=dynamic, kind="run", status="succeeded")
+        step_end(step=dynamic, kind="run", status="succeeded")
     )
 
     assert outer_header.committed[0].rows[0] == ProgressRow(
@@ -945,34 +948,38 @@ def test_nested_dynamic_run_footers_pair_with_their_direct_children() -> None:
     outer = StepRef.parse("run_root.0")
     inner = StepRef.parse("run_child.0")
     projector.handle(
-        RunBegin(
+        run_begin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
             runnable="agic:parent",
         )
     )
-    projector.handle(StepBegin(step=outer, kind="run", given=_run_stmt("agic:child")))
+    projector.handle(step_begin(step=outer, kind="run", given=_run_stmt("agic:child")))
     outer_header = projector.handle(
-        RunBegin(
+        run_begin(
             run="run_child",
             control=ControlRef.for_run("run_child", 0),
             runnable="agic:child",
             parent=outer,
         )
     )
-    projector.handle(StepBegin(step=inner, kind="run", given=_run_stmt("agic:leaf")))
+    projector.handle(step_begin(step=inner, kind="run", given=_run_stmt("agic:leaf")))
     inner_header = projector.handle(
-        RunBegin(
+        run_begin(
             run="run_leaf",
             control=ControlRef.for_run("run_leaf", 0),
             runnable="agic:leaf",
             parent=inner,
         )
     )
-    projector.handle(RunEnd(run="run_leaf", status="succeeded"))
-    inner_footer = projector.handle(StepEnd(step=inner, kind="run", status="succeeded"))
-    projector.handle(RunEnd(run="run_child", status="succeeded"))
-    outer_footer = projector.handle(StepEnd(step=outer, kind="run", status="succeeded"))
+    projector.handle(run_end(run="run_leaf", status="succeeded"))
+    inner_footer = projector.handle(
+        step_end(step=inner, kind="run", status="succeeded")
+    )
+    projector.handle(run_end(run="run_child", status="succeeded"))
+    outer_footer = projector.handle(
+        step_end(step=outer, kind="run", status="succeeded")
+    )
 
     assert outer_header.committed[0].rows[0].text == "Run agic:child"
     assert inner_header.committed[0].rows[0].text == "Run agic:leaf"
@@ -994,21 +1001,21 @@ def test_dynamic_run_inside_parallel_lane_stays_on_one_lane_row() -> None:
     parallel = StepRef.parse("run_root.0")
     dynamic = StepRef.parse("run_child.0")
     projector.handle(
-        RunBegin(
+        run_begin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
             runnable="flow:batch",
         )
     )
     projector.handle(
-        StepBegin(
+        step_begin(
             step=parallel,
             kind="par",
             given=MapStmt(span=Span(line=1), runnable="worker", lanes=1),
         )
     )
     projector.handle(
-        RunBegin(
+        run_begin(
             run="run_child",
             control=ControlRef.for_run("run_child", 0),
             runnable="agic:worker",
@@ -1021,7 +1028,7 @@ def test_dynamic_run_inside_parallel_lane_stays_on_one_lane_row() -> None:
     )
 
     update = projector.handle(
-        StepBegin(step=dynamic, kind="run", given=_run_stmt("agic:leaf"))
+        step_begin(step=dynamic, kind="run", given=_run_stmt("agic:leaf"))
     )
 
     rows = update.live[0].rows
@@ -1030,15 +1037,15 @@ def test_dynamic_run_inside_parallel_lane_stays_on_one_lane_row() -> None:
     assert all(row.leader == "none" for row in rows)
 
     projector.handle(
-        RunBegin(
+        run_begin(
             run="run_leaf",
             control=ControlRef.for_run("run_leaf", 0),
             runnable="agic:leaf",
             parent=dynamic,
         )
     )
-    projector.handle(RunEnd(run="run_leaf", status="succeeded"))
-    terminal = projector.handle(StepEnd(step=dynamic, kind="run", status="succeeded"))
+    projector.handle(run_end(run="run_leaf", status="succeeded"))
+    terminal = projector.handle(step_end(step=dynamic, kind="run", status="succeeded"))
 
     assert terminal.committed == ()
     assert terminal.live[0].rows[1].text.endswith("• Completed agic:leaf")
@@ -1101,15 +1108,15 @@ def test_dynamic_scope_suppresses_internal_call_and_protocol_result_rows() -> No
     model = StepRef.parse("run_root.0")
     dynamic = StepRef.parse("run_root.1")
     projector.handle(
-        RunBegin(
+        run_begin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
             runnable="agic:parent",
         )
     )
-    projector.handle(StepBegin(step=model, kind="model", given=_model_given()))
+    projector.handle(step_begin(step=model, kind="model", given=_model_given()))
     hidden = projector.handle(
-        StepEnd(
+        step_end(
             step=model,
             kind="model",
             status="succeeded",
@@ -1129,18 +1136,20 @@ def test_dynamic_scope_suppresses_internal_call_and_protocol_result_rows() -> No
             ),
         )
     )
-    projector.handle(StepBegin(step=dynamic, kind="run", given=_run_stmt("agic:child")))
+    projector.handle(
+        step_begin(step=dynamic, kind="run", given=_run_stmt("agic:child"))
+    )
     header = projector.handle(
-        RunBegin(
+        run_begin(
             run="run_child",
             control=ControlRef.for_run("run_child", 0),
             runnable="agic:child",
             parent=dynamic,
         )
     )
-    projector.handle(RunEnd(run="run_child", status="succeeded"))
+    projector.handle(run_end(run="run_child", status="succeeded"))
     footer = projector.handle(
-        StepEnd(
+        step_end(
             step=dynamic,
             kind="run",
             status="succeeded",
@@ -1177,7 +1186,7 @@ def test_dynamic_header_normalizes_untrusted_runnable_text() -> None:
     projector = ProgressProjector(show_boundaries=False)
     path = StepRef.parse("run_root.0")
     projector.handle(
-        RunBegin(
+        run_begin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
             runnable="agic:parent",
@@ -1185,14 +1194,14 @@ def test_dynamic_header_normalizes_untrusted_runnable_text() -> None:
     )
 
     projector.handle(
-        StepBegin(
+        step_begin(
             step=path,
             kind="run",
             given=_run_stmt("flow:\x00missing\nname" + "x" * 300),
         )
     )
     header = projector.handle(
-        RunBegin(
+        run_begin(
             run="run_child",
             control=ControlRef.for_run("run_child", 0),
             runnable="flow:missing",

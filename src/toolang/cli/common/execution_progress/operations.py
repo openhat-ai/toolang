@@ -1,13 +1,8 @@
 """Normalize native Flow and Tool Steps for presentation, without Store reads."""
 
+from toolang.execution.events import ToolStepInfo, ModelStepInfo
 from toolang.base.types.message import ToolResultPart
 from toolang.execution.events import StepBegin, StepEnd
-from toolang.execution.types import (
-    ExecStepNoted,
-    ModelStepGiven,
-    ModelStepInfo,
-    ToolStepGiven,
-)
 
 from .formatting import output_parts, runnable_label
 from .types import StepOperation
@@ -35,33 +30,28 @@ def normalize_operation(
     """Identify the operation once at StepBegin; preserve source-specific styling."""
 
     given = begin.given
-    if isinstance(given, ToolStepGiven):
-        name = runtime_operation_name(given.call.name)
+    if isinstance(given, ToolStepInfo):
+        name = runtime_operation_name(given.name)
         if given.plugin not in {"runtime", "_toolang"} and name not in {"run", "exec"}:
             name = None
         # Keep existing short-name recognition for runtime progress summaries.
-        if (
-            given.plugin in {"runtime", "_toolang"}
-            and given.call.name in _RUNTIME_MARKERS
-        ):
-            name = given.call.name
-        if name == "run" and given.call.input.get("async") is True:
+        if given.plugin in {"runtime", "_toolang"} and given.name in _RUNTIME_MARKERS:
+            name = given.name
+        if name == "run" and given.asynchronous:
             name = "async run"
         return StepOperation(
             begin,
             name or "tool",
             "tool",
             tool=given,
-            runnable=runnable_label(
-                given.call.input.get("target" if name == "await" else "runnable")
-            ),
+            runnable=runnable_label(given.target),
             run_scope=name == "run",
             tool_marker="✧"
             if given.plugin in {"runtime", "_toolang"}
             and name in {"pick", "honor", "compact"}
             else "›",
         )
-    if isinstance(given, ModelStepGiven | ModelStepInfo):
+    if isinstance(given, ModelStepInfo):
         return StepOperation(begin, "model", "model")
     return StepOperation(
         begin,
@@ -80,7 +70,7 @@ def normalize_operation(
 def committed_exec_target(operation: StepOperation, end: StepEnd) -> str | None:
     """Read one committed handoff from either native exec or its tool reply."""
 
-    if isinstance(end.noted, ExecStepNoted):
+    if end.noted is not None and end.noted.runnable is not None:
         return end.noted.runnable
     if (
         operation.name == "exec"

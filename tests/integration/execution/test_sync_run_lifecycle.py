@@ -1,5 +1,7 @@
 """Flow and model run calls contain the same synchronous child lifetime."""
 
+from toolang.execution.types import StepRef
+
 import asyncio
 
 import pytest
@@ -99,7 +101,7 @@ agic child() -> Text:
             source_end = next(
                 i
                 for i, e in enumerate(tracer.events)
-                if isinstance(e, StepEnd) and e.step == source.ref
+                if isinstance(e, StepEnd) and StepRef.parse(e.step) == source.ref
             )
             assert child_begin < child_end < source_end
             if caller == "agic":
@@ -145,7 +147,9 @@ def test_child_begin_shares_admission_boundary_when_event_lock_is_contended(
             ):
                 if not blockers:
                     blockers.append(
-                        asyncio.create_task(queue_after_admission(event.step.run_id))
+                        asyncio.create_task(
+                            queue_after_admission(StepRef.parse(event.step).run_id)
+                        )
                     )
                     await asyncio.sleep(0)
 

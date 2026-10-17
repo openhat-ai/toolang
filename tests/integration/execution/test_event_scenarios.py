@@ -2,6 +2,13 @@
 
 from __future__ import annotations
 
+from toolang.execution.events import FlowStepInfo
+
+
+from toolang.execution.events import ToolStepInfo, StepSummary
+
+from toolang.execution.types import StepRef
+
 import asyncio
 from pathlib import Path
 
@@ -18,12 +25,10 @@ from toolang.base.types.message import Message
 from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.execution.events import RunBegin, RunEnd, StepBegin, StepEnd
 from toolang.execution.types import (
-    StepRef,
     ThreadPrefix,
     ToolStepGiven,
     ToolStepNoted,
 )
-from toolang.lang.ast import GenerateStmt
 from toolang.lang.input import resolve_input_parts
 
 
@@ -100,15 +105,15 @@ agic calculate(_: Text) -> Text:
                 for event in tracer.events
                 if isinstance(event, StepEnd) and event.kind == "tool"
             )
-            assert isinstance(tool_begin.given, ToolStepGiven)
+            assert isinstance(tool_begin.given, ToolStepInfo)
             assert tool_begin.given.summary == "Executing double: 3"
-            assert isinstance(tool_end.noted, ToolStepNoted)
+            assert isinstance(tool_end.noted, StepSummary)
             assert tool_end.noted.summary == "Executed double: 3"
 
             stored_tool = next(
                 step
                 for step in harness.store.list_steps(run_id=run.id)
-                if step.ref == tool_begin.step
+                if str(step.ref) == tool_begin.step
             )
             assert isinstance(stored_tool.given, ToolStepGiven)
             assert stored_tool.given.summary == "Executing double: 3"
@@ -222,19 +227,21 @@ flow parallel(_: Text) -> Text[]:
                 next(
                     event
                     for event in tracer.events
-                    if isinstance(event, StepBegin) and event.step == root_step
+                    if isinstance(event, StepBegin)
+                    and StepRef.parse(event.step) == root_step
                 )
             )
             parent_end = tracer.events.index(
                 next(
                     event
                     for event in tracer.events
-                    if isinstance(event, StepEnd) and event.step == root_step
+                    if isinstance(event, StepEnd)
+                    and StepRef.parse(event.step) == root_step
                 )
             )
             parent_event = tracer.events[parent_begin]
             assert isinstance(parent_event, StepBegin)
-            assert isinstance(parent_event.given, GenerateStmt)
+            assert isinstance(parent_event.given, FlowStepInfo)
             assert parent_event.given.doc == "Run workers in parallel."
             for child in children:
                 begin_event = next(
@@ -249,7 +256,7 @@ flow parallel(_: Text) -> Text[]:
                     if isinstance(event, RunEnd) and event.run == child.id
                 ]
                 assert len(begin) == len(end) == 1
-                assert begin_event.parent == child.parent == root_step
+                assert begin_event.parent == str(child.parent) == str(root_step)
                 assert parent_begin < begin[0] < end[0] < parent_end
             assert sum(isinstance(event, RunBegin) for event in tracer.events) == 4
             assert sum(isinstance(event, RunEnd) for event in tracer.events) == 4

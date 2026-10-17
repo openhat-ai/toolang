@@ -1,5 +1,7 @@
 """Committed runtime operations precede execution and survive target failure."""
 
+from toolang.execution.observation import direct_output, step_summary
+
 import asyncio
 from pathlib import Path
 import sqlite3
@@ -115,15 +117,19 @@ flow child(_: Text) -> Text:
             end = next(
                 e
                 for e in tracer.events
-                if isinstance(e, StepEnd) and e.step == source.ref
+                if isinstance(e, StepEnd) and e.step == str(source.ref)
             )
             assert (
                 end.status,
                 end.output,
                 end.noted,
                 end.finished_at,
-                end.aborted_by,
-            ) == (source.status, source.output, source.noted, source.finished_at, None)
+            ) == (
+                source.status,
+                direct_output(source.output),
+                step_summary(source.noted),
+                source.finished_at,
+            )
             if operation == "spawn":
                 root = next(r for r in harness.store.list_runs() if r.id != parent.id)
                 assert root.status == ("failed" if target_fails else "succeeded")
@@ -225,15 +231,18 @@ agic child() -> Text:
             ModelCallResult(message=Message.assistant("Done")),
         ],
     )
-    original_emit = harness.executor._emit_event
+    from toolang.execution.executor.executor import _Execution
 
-    async def interruptible_emit(active, event):
-        if isinstance(event, StepEnd) and event.step.index == 1 and not blockers:
-            blockers.append(asyncio.create_task(hold_event_lock(event.step.run_id)))
+    original_finish = _Execution.finish_step
+
+    async def interruptible_finish(execution, **facts):
+        step = facts["step"]
+        if step.index == 1 and not blockers:
+            blockers.append(asyncio.create_task(hold_event_lock(step.run_id)))
             await asyncio.sleep(0)
-        await original_emit(active, event)
+        await original_finish(execution, **facts)
 
-    monkeypatch.setattr(harness.executor, "_emit_event", interruptible_emit)
+    monkeypatch.setattr(_Execution, "finish_step", interruptible_finish)
     tracer = RecordingRunTracer()
 
     async def scenario():
@@ -266,10 +275,10 @@ agic child() -> Text:
             ends = [
                 e
                 for e in tracer.events
-                if isinstance(e, StepEnd) and e.step == source.ref
+                if isinstance(e, StepEnd) and e.step == str(source.ref)
             ]
             assert len(ends) == 1
-            assert ends[0].status == "succeeded" and ends[0].aborted_by is None
+            assert ends[0].status == "succeeded"
             assert ends[0].finished_at == source.finished_at
             applied = harness.store.get_run_control(
                 run_id=handle.run_id, index=request.index

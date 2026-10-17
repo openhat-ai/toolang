@@ -1,17 +1,17 @@
 """Structural upserts and checkpoint atomicity independent of HTTP framing."""
 
+from toolang.execution.types import StepRef
+
+from tests.support.observations import run_begin, run_end, step_begin, step_end
+
 import pytest
 
 from toolang.execution.events import (
-    RunBegin,
-    RunEnd,
     RunSnapshot,
-    StepBegin,
-    StepEnd,
 )
 from toolang.execution.stream_client import StreamClientState
 from toolang.execution.schemas import StreamFrame
-from toolang.execution.types import ControlRef, EventCursor, StepRef
+from toolang.execution.types import ControlRef, EventCursor
 from toolang.lang.ast import RunStmt, Span
 
 
@@ -21,9 +21,9 @@ def cursor(seq):
 
 def test_context_begin_never_clears_an_already_applied_end():
     state = StreamClientState()
-    begin = RunBegin("run_one", ControlRef.for_run("run_one", 0))
+    begin = run_begin("run_one", ControlRef.for_run("run_one", 0))
     state.feed(StreamFrame.source(begin, cursor(1)))
-    state.feed(StreamFrame.source(RunEnd("run_one", "succeeded"), cursor(2)))
+    state.feed(StreamFrame.source(run_end("run_one", "succeeded"), cursor(2)))
     assert state.feed(StreamFrame.source(begin, cursor(1), context=True)) == ()
     assert state.complete("run_one")
     assert state.cursor == cursor(2)
@@ -41,13 +41,13 @@ def test_grouped_prefix_commits_once_despite_out_of_order_original_cursors():
         },
     )
     state.feed(replacement)
-    first = RunBegin("run_one", ControlRef.for_run("run_one", 0))
-    second = RunBegin("run_two", ControlRef.for_run("run_two", 0))
+    first = run_begin("run_one", ControlRef.for_run("run_one", 0))
+    second = run_begin("run_two", ControlRef.for_run("run_two", 0))
     prefix = [
         (first, 110),
-        (RunEnd("run_one", "succeeded"), 140),
+        (run_end("run_one", "succeeded"), 140),
         (second, 120),
-        (RunEnd("run_two", "succeeded"), 130),
+        (run_end("run_two", "succeeded"), 130),
     ]
     for event, position in prefix[:2]:
         assert (
@@ -81,39 +81,41 @@ def test_incomplete_prefill_rejects_mismatched_checkpoint():
 @pytest.mark.parametrize("prefill", [False, True])
 def test_nested_background_completion_waits_for_each_run_subtree(prefill):
     state = StreamClientState()
-    root = RunBegin("run_root", ControlRef.for_run("run_root", 0))
-    outer = StepBegin(
+    root = run_begin("run_root", ControlRef.for_run("run_root", 0))
+    outer = step_begin(
         StepRef.parse("run_root.0"),
         "run",
         RunStmt(span=Span(line=1), runnable="child", asynchronous=True),
     )
-    child = RunBegin("run_child", ControlRef.for_run("run_child", 0), parent=outer.step)
-    inner = StepBegin(
+    child = run_begin(
+        "run_child", ControlRef.for_run("run_child", 0), parent=outer.step
+    )
+    inner = step_begin(
         StepRef.parse("run_child.0"),
         "run",
         RunStmt(span=Span(line=1), runnable="leaf", asynchronous=True),
     )
-    leaf = RunBegin("run_leaf", ControlRef.for_run("run_leaf", 0), parent=inner.step)
-    side = StepBegin(
+    leaf = run_begin("run_leaf", ControlRef.for_run("run_leaf", 0), parent=inner.step)
+    side = step_begin(
         StepRef.parse("run_root.1"),
         "run",
         RunStmt(span=Span(line=1), runnable="sibling", asynchronous=True),
     )
-    sibling = RunBegin(
+    sibling = run_begin(
         "run_sibling", ControlRef.for_run("run_sibling", 0), parent=side.step
     )
-    child_end = RunEnd("run_child", "succeeded")
+    child_end = run_end("run_child", "succeeded")
     events = (
         root,
         outer,
         child,
-        StepEnd(outer.step, "run", "succeeded"),
+        step_end(outer.step, "run", "succeeded"),
         inner,
         leaf,
-        StepEnd(inner.step, "run", "succeeded"),
+        step_end(inner.step, "run", "succeeded"),
         side,
         sibling,
-        StepEnd(side.step, "run", "succeeded"),
+        step_end(side.step, "run", "succeeded"),
         child_end,
     )
     if prefill:
@@ -141,16 +143,16 @@ def test_nested_background_completion_waits_for_each_run_subtree(prefill):
     assert not state.complete(root.run)
     assert not state.complete(child.run)
 
-    leaf_end = RunEnd(leaf.run, "succeeded")
+    leaf_end = run_end(leaf.run, "succeeded")
     restored = state.feed(StreamFrame.source(leaf_end, cursor(seq + 1)))
     assert len(restored) == 1 and isinstance(restored[0], RunSnapshot)
     assert restored[0].events.index(leaf_end) < restored[0].events.index(child_end)
     assert state.complete(child.run)
     assert not state.complete(root.run)  # Its other branch is still running.
-    root_end = RunEnd(root.run, "succeeded")
+    root_end = run_end(root.run, "succeeded")
     assert state.feed(StreamFrame.source(root_end, cursor(seq + 2))) == ()
     finished = state.feed(
-        StreamFrame.source(RunEnd(sibling.run, "succeeded"), cursor(seq + 3))
+        StreamFrame.source(run_end(sibling.run, "succeeded"), cursor(seq + 3))
     )
     assert len(finished) == 1 and isinstance(finished[0], RunSnapshot)
     assert finished[0].events[-1] == root_end

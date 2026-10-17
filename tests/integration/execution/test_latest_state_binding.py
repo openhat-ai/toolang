@@ -1,5 +1,7 @@
 """Publication changes new named invocations, never accepted plans."""
 
+from toolang.execution.types import StepRef
+
 import asyncio
 
 import pytest
@@ -161,7 +163,9 @@ agic child() -> Text:
         async def on_event(self, event):
             await super().on_event(event)
             if isinstance(event, StepEnd) and event.kind == "tool":
-                tree = harness.store.list_run_tree(root_run_id=event.step.run_id)
+                tree = harness.store.list_run_tree(
+                    root_run_id=StepRef.parse(event.step).run_id
+                )
                 child = next(r for r in tree if r.parent)
                 assert child.status == "pending"
                 publish(harness, source.replace("Old child", "New child"))

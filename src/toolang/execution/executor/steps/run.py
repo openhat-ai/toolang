@@ -60,8 +60,7 @@ async def execute(
         )
 
     return await execute_step(
-        execution.emit,
-        begin_step=execution.step_starter(binding),
+        execution,
         kind="run",
         path=path,
         binding=binding,

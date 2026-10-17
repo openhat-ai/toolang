@@ -1,5 +1,7 @@
 """Live Hub guidance is scoped, trusted, recalled, and checked before effects."""
 
+from toolang.execution.types import StepRef
+
 import asyncio
 from dataclasses import replace
 
@@ -401,9 +403,9 @@ def test_source_rules_are_recalled_before_the_first_model_call_after_compaction(
             ):
                 assert horizon is not None
                 harness.store.accept_compact_control(
-                    run_id=event.step.run_id,
+                    run_id=StepRef.parse(event.step).run_id,
                     horizon=horizon,
-                    triggered_by=event.step,
+                    triggered_by=StepRef.parse(event.step),
                     created_at=event.finished_at,
                 )
 

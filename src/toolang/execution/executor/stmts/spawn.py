@@ -37,8 +37,7 @@ async def execute(
         return Local(value=handle, stored=handle)
 
     return await execute_step(
-        execution.emit,
-        begin_step=execution.step_starter(binding),
+        execution,
         kind="spawn",
         path=path,
         binding=binding,

@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING
 
 from toolang.lang.ast import ExecStmt
 
-from ...events import StepEnd
 from ...records import ControlRecord, StepRef
 from ...types import LoopStepNoted, Occurrence
 from ..common import BoundRun, Local, _ExecuteCommitted, execute_step
@@ -47,15 +46,13 @@ async def execute(
             try:
                 record = execution.store.get_step(ref=ref)
                 assert record is not None and record.finished_at is not None
-                await execution.emit(
-                    StepEnd(
-                        step=ref,
-                        kind=record.kind,
-                        status=record.status,
-                        noted=record.noted,
-                        aborted_by=record.aborted_by,
-                        finished_at=record.finished_at,
-                    )
+                await execution.finish_step(
+                    step=ref,
+                    kind=record.kind,
+                    status=record.status,
+                    noted=record.noted,
+                    aborted_by=record.aborted_by,
+                    finished_at=record.finished_at,
                 )
             except asyncio.CancelledError as exc:
                 transfer.interruption = exc
@@ -66,8 +63,7 @@ async def execute(
         raise transfer
 
     return await execute_step(
-        execution.emit,
-        begin_step=execution.step_starter(binding),
+        execution,
         kind="exec",
         path=path,
         binding=binding,

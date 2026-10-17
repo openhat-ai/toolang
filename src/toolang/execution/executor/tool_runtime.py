@@ -482,7 +482,7 @@ class _ToolRuntime(ToolRuntime):
                             ControlInfo.from_record(run, control), mode="json"
                         ),
                     }
-                    store.finish_step(
+                    completed = store.finish_step(
                         ref=self.step,
                         kind="tool",
                         status="succeeded",
@@ -501,7 +501,7 @@ class _ToolRuntime(ToolRuntime):
                     )
                     executor._publish_step_ends(
                         publication,
-                        (self.step,),
+                        (completed,),
                         thread_id=self.state.prepared.run.thread,
                         root_run_id=self.state.prepared.run.root_run_id,
                     )

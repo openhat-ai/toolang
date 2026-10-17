@@ -566,7 +566,7 @@ class _ScriptedRunRenderer:
         terminal = self._terminal
         if terminal is None or terminal.status == "succeeded":
             return None
-        return execution_error_message(terminal.error) or f"run {terminal.status}"
+        return terminal.error or f"run {terminal.status}"
 
     def reset(self) -> None:
         self._close()
@@ -583,7 +583,7 @@ class _ScriptedRunRenderer:
             for item in event.events:
                 if (
                     isinstance(item, StepEnd)
-                    and self._final_steps.get(item.step) != item
+                    and self._final_steps.get(StepRef.parse(item.step)) != item
                 ):
                     self.render(item)
                 elif isinstance(item, RunEnd):
@@ -596,12 +596,15 @@ class _ScriptedRunRenderer:
         if isinstance(event, PartDelta):
             if not isinstance(event.delta, TextDelta) or not event.delta.text:
                 return
-            self._text_delta_steps.add(event.step)
+            self._text_delta_steps.add(StepRef.parse(event.step))
             self._write(event.delta.text)
             return
         if isinstance(event, StepEnd):
-            self._final_steps[event.step] = event
-            if event.kind != "model" or event.step in self._text_delta_steps:
+            self._final_steps[StepRef.parse(event.step)] = event
+            if (
+                event.kind != "model"
+                or StepRef.parse(event.step) in self._text_delta_steps
+            ):
                 return
             value = event.output.value if event.output is not None else ()
             parts = value if isinstance(value, Array | tuple | list) else ()

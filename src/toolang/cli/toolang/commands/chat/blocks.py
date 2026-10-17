@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from toolang.execution.types import StepRef
+
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 import re
@@ -285,7 +287,12 @@ class RunControlBlock(MutableBlock):
         )
 
     def update(self, event: RunEvent) -> None:
-        if isinstance(event, RunBegin) and event.parent is None and event.runnable:
+        if (
+            isinstance(event, RunBegin)
+            and (StepRef.parse(event.parent) if event.parent is not None else None)
+            is None
+            and event.runnable
+        ):
             self.runnable = event.runnable
 
     def render(self) -> RenderableType:

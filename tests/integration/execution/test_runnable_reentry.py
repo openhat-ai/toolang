@@ -1,5 +1,7 @@
 """Reject active-path calls without treating siblings or module names as recursion."""
 
+from toolang.execution.types import StepRef
+
 import asyncio
 
 import pytest
@@ -158,7 +160,7 @@ flow outer() -> Text[]:
         async def on_event(self, event):
             await super().on_event(event)
             if isinstance(event, StepBegin) and event.kind == "model":
-                child = harness.store.get_run(run_id=event.step.run_id)
+                child = harness.store.get_run(run_id=StepRef.parse(event.step).run_id)
                 assert child is not None and child.parent is not None
                 if child.parent.indices == (1,) and harness.published is None:
                     # The first worker is already accepted; the sibling is not.

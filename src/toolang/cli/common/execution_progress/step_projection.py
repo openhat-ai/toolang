@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from toolang.execution.events import FlowStepInfo
+
 import json
 
 from toolang.base.types.message import (
@@ -12,22 +14,10 @@ from toolang.base.types.message import (
 )
 from toolang.execution.events import StepEnd
 from toolang.execution.types import (
-    CollectionStepNoted,
-    LoopStepNoted,
-    ToolStepNoted,
     AwaitableHandle,
 )
 from toolang.execution.values import parts_from_value
-from toolang.lang.ast import FlowStmt
-from toolang.lang.ast import (
-    DropStmt,
-    KeepStmt,
-    MapStmt,
-    SortStmt,
-    RepeatStmt,
-    ReduceStmt,
-    GenerateStmt,
-)
+from toolang.lang.types import authored_type
 
 from .formatting import one_line, output_parts
 from .facts import elapsed_fact
@@ -54,7 +44,9 @@ def _execution_rows(
     tool = operation.source == "tool"
     marker = "›" if tool else "•"
     summary = (
-        event.noted.summary if tool and isinstance(event.noted, ToolStepNoted) else ""
+        event.noted.summary
+        if tool and (event.noted is not None and event.noted.summary is not None)
+        else ""
     )
     summary = summary or f"{label} {operation.runnable or 'runnable'}"
     rows = [
@@ -126,7 +118,7 @@ def live_row(
         summary = (
             operation.tool.summary
             if operation.tool is not None and operation.tool.summary
-            else f"executing {operation.tool.call.name if operation.tool else 'tool'}"
+            else f"executing {operation.tool.name if operation.tool else 'tool'}"
         )
         if operation.timed and (
             elapsed := elapsed_fact(begin.started_at, now or begin.started_at)
@@ -211,8 +203,12 @@ def trace_terminal_rows(
             rows.extend(ProgressRow(f"  {line}", tone) for line in _split_lines(error))
         return tuple(rows)
 
-    label = operation.tool.call.name if operation.tool else "tool"
-    summary = event.noted.summary if isinstance(event.noted, ToolStepNoted) else ""
+    label = operation.tool.name if operation.tool else "tool"
+    summary = (
+        event.noted.summary
+        if (event.noted is not None and event.noted.summary is not None)
+        else ""
+    )
     tone = "progress"
     marker = operation.tool_marker
     if operation.timed and (
@@ -273,32 +269,40 @@ def flow_terminal_rows(
 def loop_terminal_rows(
     event: StepEnd,
     *,
-    statement: FlowStmt,
+    statement: FlowStepInfo,
     observed_iterations: int,
     error: str = "",
 ) -> tuple[ProgressRow, ...]:
     """Project one Loop Step's typed terminal cause."""
 
-    noted = event.noted if isinstance(event.noted, LoopStepNoted) else None
-    iterations = noted.iterations if noted is not None else observed_iterations
+    noted = (
+        event.noted
+        if (event.noted is not None and event.noted.iterations is not None)
+        else None
+    )
+    iterations = (
+        noted.iterations
+        if noted is not None and noted.iterations is not None
+        else observed_iterations
+    )
     total = noted.total if noted is not None else None
-    if total is None and isinstance(statement, RepeatStmt):
+    if total is None and (statement is not None and statement.kind in {"repeat"}):
         total = statement.count
     termination = (
         noted.termination
-        if noted is not None
+        if noted is not None and noted.termination is not None
         else "exhausted"
         if event.status == "succeeded"
         else event.status
     )
-    if isinstance(statement, ReduceStmt):
+    if statement is not None and statement.kind in {"reduce"}:
         text = _reduce_terminal_text(iterations, total, termination)
     else:
         text = _repeat_terminal_text(
             iterations,
             total,
             termination,
-            has_condition=isinstance(statement, RepeatStmt)
+            has_condition=(statement is not None and statement.kind in {"repeat"})
             and statement.runnable is not None,
         )
     tone: ProgressTone = (
@@ -310,7 +314,7 @@ def loop_terminal_rows(
 
 
 def collection_terminal_rows(
-    statement: FlowStmt,
+    statement: FlowStepInfo,
     event: StepEnd,
     *,
     fallback_total: int | None = None,
@@ -322,7 +326,11 @@ def collection_terminal_rows(
         return flow_error_rows(error, tone=_tone(event.status))
     if event.status == "canceled":
         return (ProgressRow("• canceled", _tone(event.status)),)
-    noted = event.noted if isinstance(event.noted, CollectionStepNoted) else None
+    noted = (
+        event.noted
+        if (event.noted is not None and event.noted.total_items is not None)
+        else None
+    )
     total = noted.total_items if noted is not None else fallback_total
     output = noted.output_items if noted is not None else None
     if total is None:
@@ -384,7 +392,13 @@ def flow_lane_terminal_lines(
             observed_iterations=observed_iterations,
             error=error,
         )
-    elif isinstance(statement, MapStmt | GenerateStmt | KeepStmt | DropStmt | SortStmt):
+    elif statement is not None and statement.kind in {
+        "map",
+        "drop",
+        "keep",
+        "sort",
+        "generate",
+    }:
         rows = collection_terminal_rows(statement, event, error=error)
     else:
         rows = flow_terminal_rows(operation, event, error=error)
@@ -435,7 +449,11 @@ def _flow_output_lines(event: StepEnd) -> list[str]:
     if event.output is None:
         return []
     try:
-        parts = parts_from_value(event.output.value, content_only=True)
+        parts = (
+            content_parts(output_parts(event))
+            if authored_type(event.output.type) == "Part[]"
+            else parts_from_value(event.output.value, content_only=True)
+        )
     except (TypeError, ValueError):
         return []
     lines: list[str] = []
@@ -486,22 +504,22 @@ def _count(value: int, noun: str) -> str:
 
 
 def _collection_success_text(
-    statement: FlowStmt,
+    statement: FlowStepInfo,
     total: int,
     output: int | None,
 ) -> str:
-    if isinstance(statement, MapStmt):
+    if statement is not None and statement.kind in {"map"}:
         return f"Mapped {_count(total, 'item')}"
-    if isinstance(statement, GenerateStmt):
+    if statement is not None and statement.kind in {"generate"}:
         return f"Generated {_count(output if output is not None else total, 'item')}"
-    if isinstance(statement, KeepStmt):
+    if statement is not None and statement.kind in {"keep"}:
         kept = output if output is not None else total
         if statement.position is not None:
             return _positional_keep_text(statement.position, total, kept)
         if kept == total:
             return f"Kept {_all_items(total)}"
         return f"Kept {kept} of {_count(total, 'item')}"
-    if isinstance(statement, DropStmt):
+    if statement is not None and statement.kind in {"drop"}:
         remaining = output if output is not None else total
         dropped = total - remaining
         if statement.position is not None:
@@ -514,7 +532,7 @@ def _collection_success_text(
         if dropped == total:
             return f"Dropped {_all_items(total)}"
         return f"Dropped {dropped} of {_count(total, 'item')}; {remaining} remaining"
-    if isinstance(statement, SortStmt):
+    if statement is not None and statement.kind in {"sort"}:
         selected = output if output is not None else total
         return f"Sorted {_count(selected, 'item')} {statement.order}"
     return ""

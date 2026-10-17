@@ -1,5 +1,7 @@
 """Message-format semantics are independent of runtime template generation."""
 
+from tests.support.observations import step_begin
+
 from toolang.lang.types import Value, value_type
 
 from dataclasses import replace
@@ -20,7 +22,7 @@ from toolang.base.types.message import (
     ToolResultPart,
 )
 from toolang.base.types.run import ModelCall
-from toolang.execution.events import StepBegin, run_event_from_data, run_event_to_data
+from toolang.execution.events import run_event_from_data, run_event_to_data
 from toolang.execution.assembly.message_buffer import MessageBuffer
 from toolang.execution.assembly.utils import literal_delta, render_delta
 from toolang.execution.records import (
@@ -242,11 +244,11 @@ def test_delta_metadata_does_not_change_public_model_events() -> None:
         ModelMessages(StepRef.parse("run_ab12.0"), literal_delta(call.messages)),
         setup="test-setup",
     )
-    event = StepBegin(StepRef.parse("run_ab12.0"), "model", given)
+    event = step_begin(StepRef.parse("run_ab12.0"), "model", given)
     payload = run_event_to_data(event)
     assert "messages" not in payload["given"]
-    assert run_event_from_data(payload) == replace(
-        event, given=replace(given, messages=None)
+    assert run_event_from_data(payload) == step_begin(
+        StepRef.parse("run_ab12.0"), "model", replace(given, messages=None)
     )
     assert "messages" not in TypeAdapter(ModelStepGiven).dump_python(given, mode="json")
 

@@ -1,5 +1,9 @@
 """Independent root launches keep identity, ownership, and admission durable."""
 
+from toolang.execution.observation import direct_output, step_summary
+
+from toolang.execution.types import StepRef
+
 import asyncio
 from typing import Any, cast
 from collections.abc import Mapping
@@ -418,9 +422,9 @@ flow child(_: Text):
             end = next(
                 e
                 for e in tracer.events
-                if isinstance(e, StepEnd) and e.step == step.ref
+                if isinstance(e, StepEnd) and StepRef.parse(e.step) == step.ref
             )
-            assert end.output == step.output
+            assert end.output == direct_output(step.output)
             assert end.status == step.status
             assert end.finished_at == step.finished_at
             assert run_event_from_data(run_event_to_data(end)) == end
@@ -458,7 +462,7 @@ flow child(_: Text):
                 }
                 assert isinstance(step.noted, ToolStepNoted)
                 assert step.noted.summary == "Spawned new run: flow:child"
-                assert end.noted == step.noted
+                assert end.noted == step_summary(step.noted)
             if failure == "dispatch":
                 assert root.status == "failed"
                 assert root.error is not None

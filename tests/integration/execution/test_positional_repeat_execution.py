@@ -1,5 +1,7 @@
 """Repeat conditions execute at their authored position without binding results."""
 
+from toolang.execution.types import StepRef
+
 import asyncio
 
 import pytest
@@ -146,7 +148,7 @@ def test_position_controls_order_count_and_retained_output(
     ] == prompts
 
     expected = [
-        event.run if isinstance(event, RunBegin) else str(event.step)
+        event.run if isinstance(event, RunBegin) else str(StepRef.parse(event.step))
         for event in tracer.events
         if isinstance(event, RunBegin | StepBegin)
     ]

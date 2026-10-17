@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+
 from collections import defaultdict
 import json
 from typing import Any
@@ -137,7 +138,9 @@ class StreamClientState:
             isinstance(event, RunBegin | StepBegin)
             and (
                 event.type,
-                event.run if isinstance(event, RunBegin) else str(event.step),
+                event.run
+                if isinstance(event, RunBegin)
+                else str(StepRef.parse(event.step)),
             )
             in self._records
         )
@@ -151,9 +154,13 @@ class StreamClientState:
             begin = self._records.get(("run_begin", event.run))
             if (
                 isinstance(begin, RunBegin)
-                and begin.parent is not None
-                and ("run_end", begin.parent.run_id) in self._records
-                and begin.parent.run_id not in incomplete
+                and (begin.parent) is not None
+                and (
+                    "run_end",
+                    (StepRef.parse(begin.parent)).run_id,
+                )
+                in self._records
+                and (StepRef.parse(begin.parent)).run_id not in incomplete
             ):
                 # Release deferred ancestor Ends in structural order, including
                 # intermediate background runs while other branches stay active.
@@ -162,7 +169,9 @@ class StreamClientState:
 
     def _incomplete_runs(self) -> set[str]:
         parents = {
-            event.run: event.parent.run_id if event.parent is not None else None
+            event.run: (StepRef.parse(event.parent)).run_id
+            if (event.parent) is not None
+            else None
             for event in self._records.values()
             if isinstance(event, RunBegin)
         }
@@ -186,7 +195,7 @@ class StreamClientState:
                 event.run
                 for event in self._records.values()
                 if isinstance(event, RunBegin)
-                and event.parent is None
+                and (event.parent) is None
                 and (
                     scope["kind"] == "agent"
                     or scope["kind"] == "run"
@@ -203,8 +212,8 @@ class StreamClientState:
         for event in self._records.values():
             if (
                 isinstance(event, RunBegin)
-                and event.parent is not None
-                and event.parent.run_id in selected
+                and (event.parent) is not None
+                and (StepRef.parse(event.parent)).run_id in selected
             ):
                 selected.add(event.run)
         return selected
@@ -214,7 +223,7 @@ class StreamClientState:
             run = (
                 event.run
                 if isinstance(event, RunBegin | RunEnd)
-                else event.step.run_id
+                else StepRef.parse(event.step).run_id
                 if isinstance(event, StepBegin | StepEnd)
                 else None
             )
@@ -225,7 +234,11 @@ class StreamClientState:
     def _apply(self, event: ExecutionEvent, cursor: str | None) -> bool:
         if not isinstance(event, RunBegin | RunEnd | StepBegin | StepEnd):
             return True
-        ref = event.run if isinstance(event, RunBegin | RunEnd) else str(event.step)
+        ref = (
+            event.run
+            if isinstance(event, RunBegin | RunEnd)
+            else str(StepRef.parse(event.step))
+        )
         key = (event.type, ref)
         previous = self._records.get(key)
         old_cursor = self._positions.get(key)
@@ -262,14 +275,18 @@ class StreamClientState:
         for event in self._records.values():
             if isinstance(event, RunBegin):
                 begins[event.run] = event
-                children[event.parent].append(event.run)
+                children[
+                    (StepRef.parse(event.parent) if event.parent is not None else None)
+                ].append(event.run)
             elif isinstance(event, StepBegin):
-                begins[event.step] = event
-                children[event.step.parent or event.step.run_id].append(event.step)
+                begins[StepRef.parse(event.step)] = event
+                children[
+                    StepRef.parse(event.step).parent or StepRef.parse(event.step).run_id
+                ].append(StepRef.parse(event.step))
             elif isinstance(event, RunEnd):
                 ends[event.run] = event
             elif isinstance(event, StepEnd):
-                ends[event.step] = event
+                ends[StepRef.parse(event.step)] = event
         events: list[RunEvent] = []
         stack = [(key, False) for key in reversed(children[None])]
         while stack:

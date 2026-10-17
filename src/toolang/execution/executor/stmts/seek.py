@@ -31,8 +31,7 @@ async def execute(
         raise ToolangError("seek requires an agent execution bridge")
 
     return await agent_step.execute(
-        execution.emit,
-        begin_step=execution.step_starter(binding),
+        execution,
         binding=binding,
         path=path,
         statement=statement,

@@ -1,5 +1,7 @@
 """Workspace rules gate real tools through durable runtime Steps and recalls."""
 
+from toolang.execution.types import StepRef
+
 import asyncio
 from contextlib import closing
 from dataclasses import replace
@@ -159,14 +161,14 @@ def test_honor_precedes_blocked_batch_and_retry_executes_once(
     class Tracer(RecordingRunTracer):
         async def on_event(self, event):
             await super().on_event(event)
-            if isinstance(event, StepEnd) and event.step.index < 4:
+            if isinstance(event, StepEnd) and StepRef.parse(event.step).index < 4:
                 early_effects.append((repo / "src/result").exists())
                 if event.kind == "tool":
                     for summary in event.output.value.output["controls"]:
                         ref = ControlRef.parse(summary["ref"])
                         assert (
                             harness.store.get_run_control(
-                                run_id=event.step.run_id, index=ref.index
+                                run_id=StepRef.parse(event.step).run_id, index=ref.index
                             )
                             is not None
                         )
@@ -282,7 +284,7 @@ def test_honor_rechecks_changes_including_empty_and_removed_rules(tmp_path, chan
             if (
                 isinstance(event, StepBegin)
                 and event.kind == "model"
-                and event.step.index == 2
+                and StepRef.parse(event.step).index == 2
             ):
                 if change == "remove":
                     file.unlink()
@@ -373,7 +375,7 @@ def test_interrupted_honor_closes_every_announced_tool_call(
             if (
                 not interrupted
                 and isinstance(event, event_type)
-                and event.step.index == 1
+                and StepRef.parse(event.step).index == 1
             ):
                 interrupted = True
                 assert handle is not None
@@ -783,9 +785,9 @@ def test_pending_revisions_follow_a_b_a_order_and_deleted_rules_can_return(tmp_p
             await super().on_event(event)
             if isinstance(event, StepEnd) and event.kind == "tool":
                 changes = {1: "B", 2: "Scoped rules.", 5: "Restored"}
-                if event.step.index in changes:
-                    file.write_text(changes[event.step.index])
-                elif event.step.index == 3:
+                if StepRef.parse(event.step).index in changes:
+                    file.write_text(changes[StepRef.parse(event.step).index])
+                elif StepRef.parse(event.step).index == 3:
                     file.unlink()
 
     tracer = Tracer()

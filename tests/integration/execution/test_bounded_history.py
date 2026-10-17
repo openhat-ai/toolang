@@ -427,7 +427,8 @@ def test_run_view_keeps_control_relationships_separate_from_input(
     )
     view = RunHistory(store).run_view("run_a")
     assert [
-        (event.step.local, event.phase, event.controls) for event in view.timeline()
+        (StepRef.parse(event.step).local, event.phase, event.controls)
+        for event in view.timeline()
     ] == [
         ("0", "begin", (ControlRef.for_run("run_a", 0),)),
         ("0", "end", (steer.ref,)),
@@ -722,7 +723,7 @@ def test_timeline_nests_container_end_after_its_child_boundaries(
         finished_at="2",
     )
     view = RunHistory(store).run_view("run_a")
-    assert [(event.step, event.phase) for event in view.timeline()] == [
+    assert [(StepRef.parse(event.step), event.phase) for event in view.timeline()] == [
         (parent.ref, "begin"),
         (child.ref, "begin"),
         (child.ref, "end"),

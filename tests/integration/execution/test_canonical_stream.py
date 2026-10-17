@@ -1,5 +1,7 @@
 """Durable canonical boundaries across run trees and thread mutations."""
 
+from toolang.execution.types import StepRef
+
 import asyncio
 import gc
 import weakref
@@ -75,7 +77,7 @@ flow child(_: Text) -> Text:
                     if isinstance(event, RunBegin):
                         assert event.thread_id == frame.thread_id
                 elif isinstance(event, StepBegin | StepEnd):
-                    record = store.get_step(ref=event.step)
+                    record = store.get_step(ref=StepRef.parse(event.step))
                 elif isinstance(event, ThreadCreated | ThreadForked | ThreadRewound):
                     record = store.get_record(Pointer(event.control))
                 else:

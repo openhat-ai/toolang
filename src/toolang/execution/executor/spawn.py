@@ -24,7 +24,7 @@ from toolang.lang.contracts import OutputContract
 from toolang.state.state import AgentState, state_program
 
 from ..records import LaunchContext
-from ..events import ThreadCreated, RunEnd
+from ..events import ThreadCreated
 from ..runnables import ResolvedRunnable, resolve_call_target
 from ..settings import resolve_settings
 from ..types import (
@@ -218,19 +218,16 @@ async def accept(
                 )
             except Exception as exc:
                 # Admission is durable even when dispatch cannot create a task.
-                dispatch_failure = RunEnd(
-                    run=handle.id,
-                    status="failed",
-                    error=ErrorMessage(str(exc)),
-                    finished_at=utc_now(),
-                )
                 with executor.stream.publication() as publication:
                     with executor.store.write_transaction():
-                        event = executor._persist.on_event(
-                            dispatch_failure, cursor=publication.cursor
-                        )
-                        publication.append(
-                            event, root_run_id=handle.id, thread_id=handle.thread
+                        executor._finish_run(
+                            publication,
+                            run=handle.id,
+                            status="failed",
+                            error=ErrorMessage(str(exc)),
+                            finished_at=utc_now(),
+                            root_run_id=handle.id,
+                            thread_id=handle.thread,
                         )
         return handle
 

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from tests.support.observations import run_begin, run_end
+
+
 import pytest
 
 from toolang.base.types.model import ModelOverride
@@ -94,14 +97,14 @@ def test_restart_observation_failure_does_not_cancel_accepted_work(
     import httpx
 
     from toolang.common.layout import AgentLayout
-    from toolang.execution.events import RunBegin, RunEnd, RunEvent, run_event_to_data
+    from toolang.execution.events import RunEvent, run_event_to_data
     from toolang.execution.remote import RemoteRunClient, RemoteRunClientError
     from toolang.execution.types import ControlRef
     from toolang.up.types import AgentServerRef
 
     run_id = "run_new"
     events: list[RunEvent] = [
-        RunBegin(
+        run_begin(
             run=run_id,
             control=ControlRef.for_run(run_id, 0),
             runnable="agic:chat",
@@ -110,7 +113,7 @@ def test_restart_observation_failure_does_not_cancel_accepted_work(
     ]
     if failure == "detail":
         events.append(
-            RunEnd(
+            run_end(
                 run=run_id,
                 status="succeeded",
                 finished_at="2026-10-08T00:00:01Z",

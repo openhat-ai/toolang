@@ -1,5 +1,7 @@
 """Internal compaction runs share ownership, events and durable recovery."""
 
+from toolang.execution.types import StepRef
+
 import asyncio
 import json
 from contextlib import closing
@@ -29,7 +31,6 @@ from toolang.execution.events import (
     StepEnd,
 )
 from toolang.execution.executor import RunExecutor
-from toolang.execution.executor._persist import _PersistSink
 from toolang.execution.executor.executor import _Execution
 from toolang.execution.executor.runs import compact as compact_run
 from toolang.execution.executor.steps import model as model_step
@@ -180,7 +181,7 @@ def test_batches_and_client_projection_share_the_normal_event_tree(
                 for e in tracer.events
                 if isinstance(e, RunBegin) and e.run == child.id
             )
-            assert begin.runnable == "_:compact" and begin.parent == outer.ref
+            assert begin.runnable == "_:compact" and begin.parent == str(outer.ref)
             assert_replayed(h, tracer.events)
             projector = ProgressProjector()
             text = []
@@ -245,16 +246,7 @@ def test_restart_at_durable_boundaries_preserves_child_and_checkpoint(
             h.adapter._responses.extend([reply()] * 6)
             original = getattr(h.store, method)
             committed = False
-            emit = h.executor._emit_event_locked
             adopt = _Execution.compact
-
-            async def crash_after_event(*args, **kwargs):
-                if committed and method == "accept_run":
-                    raise ProcessCrash()
-                result = await emit(*args, **kwargs)
-                if committed:
-                    raise ProcessCrash()
-                return result
 
             def crash_after_adoption(*args, **kwargs):
                 result = adopt(*args, **kwargs)
@@ -285,7 +277,18 @@ def test_restart_at_durable_boundaries_preserves_child_and_checkpoint(
             with monkeypatch.context() as patch:
                 patch.setattr(compact_run, "invoke", capture)
                 patch.setattr(h.store, method, crash)
-                patch.setattr(h.executor, "_emit_event_locked", crash_after_event)
+                from contextlib import asynccontextmanager
+
+                original_boundary = _Execution._boundary
+
+                @asynccontextmanager
+                async def crash_boundary(execution, step=None):
+                    async with original_boundary(execution, step):
+                        yield
+                        if committed:
+                            raise ProcessCrash()
+
+                patch.setattr(_Execution, "_boundary", crash_boundary)
                 patch.setattr(_Execution, "compact", crash_after_adoption)
                 with pytest.raises(ProcessCrash):
                     await current(h, thread)
@@ -295,7 +298,6 @@ def test_restart_at_durable_boundaries_preserves_child_and_checkpoint(
             # Restart at the same durable owner, with a new connection and execution state.
             with closing(RunStore(h.store.db_path)) as store:
                 executor = RunExecutor(store, h.executor.ids)
-                executor._persist = _PersistSink(store)
                 active = replace(
                     old_active, task=asyncio.current_task(), controls={}, ended=set()
                 )
@@ -425,22 +427,22 @@ def test_cancel_at_internal_event_boundaries_closes_lifecycle(
             self.events.append(event)
             if isinstance(event, RunBegin) and event.runnable == compaction.RUNNABLE:
                 self.child = event.run
-                self.parent = event.parent.run_id
+                self.parent = StepRef.parse(event.parent).run_id
             point = None
             if isinstance(event, RunBegin | RunEnd) and event.run == self.child:
                 point = event.type
             elif (
                 isinstance(event, StepBegin | StepEnd)
-                and event.step.run_id == self.child
+                and StepRef.parse(event.step).run_id == self.child
             ):
                 point = (
                     f"{event.kind}_{'begin' if isinstance(event, StepBegin) else 'end'}"
                 )
             elif (
                 isinstance(event, PartBegin | PartEnd)
-                and event.step.run_id == self.child
+                and StepRef.parse(event.step).run_id == self.child
             ):
-                kind = h.store.get_step(ref=event.step).kind
+                kind = h.store.get_step(ref=StepRef.parse(event.step)).kind
                 point = f"{kind}_{event.type}"
             if point == boundary and not self.fired:
                 self.fired = True
@@ -686,21 +688,17 @@ def test_restart_inside_one_root_keeps_accepted_step_coverage(tmp_path, monkeypa
                 ),
             )
             h.adapter._responses.extend([reply("Cumulative facts.")] * 16)
-            emit = h.executor._emit_event_locked
+            emit = _Execution.finish_step
 
-            async def crash_after_checkpoint(active, event):
-                result = await emit(active, event)
-                if (
-                    isinstance(event, StepEnd)
-                    and event.kind == "model"
-                    and event.status == "succeeded"
-                ):
+            async def crash_after_checkpoint(execution, **facts):
+                result = await emit(execution, **facts)
+                if facts["kind"] == "model" and facts["status"] == "succeeded":
                     raise ProcessCrash()
                 return result
 
             with monkeypatch.context() as patch:
                 patch.setattr(compact_run, "invoke", capture)
-                patch.setattr(h.executor, "_emit_event_locked", crash_after_checkpoint)
+                patch.setattr(_Execution, "finish_step", crash_after_checkpoint)
                 with pytest.raises(ProcessCrash):
                     await current(h, thread)
             (child,) = producers(h, thread)
@@ -709,7 +707,6 @@ def test_restart_inside_one_root_keeps_accepted_step_coverage(tmp_path, monkeypa
             state, step, old_active = captured[0]
             with closing(RunStore(h.store.db_path)) as store:
                 executor = RunExecutor(store, h.executor.ids)
-                executor._persist = _PersistSink(store)
                 parent = state.prepared.run
                 active = replace(
                     old_active, task=asyncio.current_task(), controls={}, ended=set()

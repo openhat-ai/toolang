@@ -121,8 +121,7 @@ async def execute(
         return accumulator
 
     return await loop_step.execute(
-        execution.emit,
-        begin_step=execution.step_starter(binding),
+        execution,
         binding=binding,
         path=path,
         statement=statement,

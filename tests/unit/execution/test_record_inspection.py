@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from toolang.execution.types import StepRef
+
 from toolang.lang.input import CallInput
 from toolang.lang.types import Array
 
@@ -41,7 +43,6 @@ from toolang.execution.types import (
     FieldRef,
     Pointer,
     RunRef,
-    StepRef,
     ThreadRef,
     TypedRef,
 )

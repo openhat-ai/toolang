@@ -1,5 +1,9 @@
 """Deterministic async launch/wait lifecycle and progress contracts."""
 
+from toolang.execution.observation import direct_output, step_summary
+
+from toolang.execution.types import StepRef
+
 import asyncio
 import json
 
@@ -82,11 +86,17 @@ agic child(_: Text) -> Text:
             for event in tracer.events:
                 update = projector.handle(event)
                 assert not projector._broken, update
-                if isinstance(event, StepBegin) and event.step.run_id == root:
+                if (
+                    isinstance(event, StepBegin)
+                    and StepRef.parse(event.step).run_id == root
+                ):
                     assert active is None
-                    active = event.step
-                if isinstance(event, StepEnd) and event.step.run_id == root:
-                    assert active == event.step
+                    active = StepRef.parse(event.step)
+                if (
+                    isinstance(event, StepEnd)
+                    and StepRef.parse(event.step).run_id == root
+                ):
+                    assert active == StepRef.parse(event.step)
                     active = None
             assert active is None
             assert projector.root_metrics.runs == 2
@@ -364,14 +374,12 @@ flow child(_: Text) -> Text:
                 if step.kind == "tool"
             )
             assert launch.noted == ToolStepNoted("Started child run: child")
-            assert (
-                next(
-                    event.noted
-                    for event in tracer.events
-                    if isinstance(event, StepEnd) and event.step == launch.ref
-                )
-                == launch.noted
-            )
+            assert next(
+                event.noted
+                for event in tracer.events
+                if isinstance(event, StepEnd)
+                and StepRef.parse(event.step) == launch.ref
+            ) == step_summary(launch.noted)
             projector = ProgressProjector()
             for event in tracer.events:
                 update = projector.handle(event)
@@ -526,11 +534,11 @@ flow child() -> Text:
                 launch_end = next(
                     e
                     for e in tracer.events
-                    if isinstance(e, StepEnd) and e.step == source.ref
+                    if isinstance(e, StepEnd) and StepRef.parse(e.step) == source.ref
                 )
                 assert (
                     launch_end.status == source.status
-                    and launch_end.output == source.output
+                    and launch_end.output == direct_output(source.output)
                 )
             assert not harness.executor._tasks
 

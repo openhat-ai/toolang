@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from toolang.execution.types import StepRef
+
 import asyncio
 from pathlib import Path
 
@@ -172,7 +174,7 @@ def test_steer_during_result_delivery_preserves_result_once(
             if (
                 isinstance(event, (PartBegin, PartEnd, StepEnd))
                 and event.type == boundary
-                and event.step.index == 1
+                and StepRef.parse(event.step).index == 1
                 and not gate.entered
             ):
                 await gate.wait()
@@ -269,10 +271,14 @@ def test_interruption_before_result_commit_preserves_completed_result(
             if (
                 isinstance(event, PartEnd)
                 and isinstance(event.data, ToolResultPart)
-                and event.step.index == 1
+                and StepRef.parse(event.step).index == 1
                 and not blockers
             ):
-                blockers.append(asyncio.create_task(hold_event_lock(event.step.run_id)))
+                blockers.append(
+                    asyncio.create_task(
+                        hold_event_lock(StepRef.parse(event.step).run_id)
+                    )
+                )
                 await asyncio.sleep(0)
 
     tool = RecordingTool("math__double", output={"value": 6})
@@ -322,7 +328,7 @@ def test_interruption_before_result_commit_preserves_completed_result(
             completed = next(
                 event.data
                 for event in tracer.events
-                if isinstance(event, PartEnd) and event.step == step.ref
+                if isinstance(event, PartEnd) and StepRef.parse(event.step) == step.ref
             )
             assert parts_from_value(step.output.value) == (completed,)
             if interruption == "steer":
@@ -513,8 +519,8 @@ def test_steer_during_execute_delivery_keeps_committed_transfer(tmp_path: Path) 
         async def on_event(self, event: RunEvent) -> None:
             await super().on_event(event)
             if (
-                isinstance(event, PartEnd)
-                and event.step.index == 1
+                isinstance(event, StepEnd)
+                and StepRef.parse(event.step).index == 1
                 and not gate.entered
             ):
                 await gate.wait()
@@ -629,9 +635,13 @@ def test_steer_at_tool_begin_closes_the_started_step(
             if (
                 boundary.endswith("queued_begin")
                 and isinstance(event, StepEnd)
-                and event.step.index == 0
+                and StepRef.parse(event.step).index == 0
             ):
-                blockers.append(asyncio.create_task(hold_event_lock(event.step.run_id)))
+                blockers.append(
+                    asyncio.create_task(
+                        hold_event_lock(StepRef.parse(event.step).run_id)
+                    )
+                )
                 await asyncio.sleep(0)
             if (
                 boundary == "step_begin"
@@ -708,7 +718,7 @@ def test_immediate_steer_during_skipped_batch_preserves_all_results(
             if (
                 isinstance(event, (StepBegin, StepEnd))
                 and event.type == boundary
-                and event.step.index == 2
+                and StepRef.parse(event.step).index == 2
                 and not skip_gate.entered
             ):
                 await skip_gate.wait()

@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+from toolang.execution.events import ModelStepInfo
+
+from toolang.execution.types import StepRef
+
+
 from collections.abc import Sequence
 from html import escape
 import re
@@ -23,10 +28,7 @@ from tests.support.execution_harness import ExecutionHarness
 from toolang.execution.types import (
     FieldRef,
     RunRef,
-    StepRef,
     TypedRef,
-    ModelStepGiven,
-    ModelStepInfo,
 )
 from toolang.execution.store import RunStore
 from toolang.lang.types import Array
@@ -97,7 +99,7 @@ def execution_snapshot(call: ModelCall) -> dict[str, str]:
 def assert_replayed(harness: ExecutionHarness, events: Sequence[RunEvent]) -> None:
     """Compare persisted replay with calls captured before observer projection."""
     begins = {
-        event.step: event.given
+        StepRef.parse(event.step): event.given
         for event in events
         if isinstance(event, StepBegin) and event.kind == "model"
     }
@@ -110,11 +112,8 @@ def assert_replayed(harness: ExecutionHarness, events: Sequence[RunEvent]) -> No
         assert set(batch) == set(begins)
         for step in saved:
             given = begins[step.ref]
-            assert isinstance(given, ModelStepGiven | ModelStepInfo)
-            if isinstance(given, ModelStepGiven):
-                original = given.call
-            else:
-                original = harness.model_calls[step.ref]
+            assert isinstance(given, ModelStepInfo)
+            original = harness.model_calls[step.ref]
             for replayed in (batch[step.ref], store.rebuild_model_call(step)):
                 assert replayed == original
                 # Message equality intentionally excludes runtime metadata.
@@ -153,15 +152,21 @@ def event_labels(events: Sequence[RunEvent]) -> list[str]:
         elif isinstance(event, RunEnd):
             labels.append(f"run_end:{event.run}:{event.status}")
         elif isinstance(event, StepBegin):
-            labels.append(f"step_begin:{event.step}:{event.kind}")
+            labels.append(f"step_begin:{StepRef.parse(event.step)}:{event.kind}")
         elif isinstance(event, StepEnd):
-            labels.append(f"step_end:{event.step}:{event.kind}:{event.status}")
+            labels.append(
+                f"step_end:{StepRef.parse(event.step)}:{event.kind}:{event.status}"
+            )
         elif isinstance(event, PartBegin):
-            labels.append(f"part_begin:{event.step}:{event.part}:{event.part_type}")
+            labels.append(
+                f"part_begin:{StepRef.parse(event.step)}:{event.part}:{event.part_type}"
+            )
         elif isinstance(event, PartDelta):
-            labels.append(f"part_delta:{event.step}:{event.part}")
+            labels.append(f"part_delta:{StepRef.parse(event.step)}:{event.part}")
         else:
-            labels.append(f"part_end:{event.step}:{event.part}:{event.data.type}")
+            labels.append(
+                f"part_end:{StepRef.parse(event.step)}:{event.part}:{event.data.type}"
+            )
     return labels
 
 
@@ -186,28 +191,34 @@ def assert_run_event_integrity(
             continue
 
         if isinstance(event, StepBegin):
-            run_id = event.step.run_id
+            run_id = StepRef.parse(event.step).run_id
             assert run_id in active_runs, f"step outside active run at {where}"
-            assert event.step not in active_steps, f"duplicate step begin at {where}"
-            assert event.step not in ended_steps, f"step restarted at {where}"
-            active_steps[event.step] = event
+            assert StepRef.parse(event.step) not in active_steps, (
+                f"duplicate step begin at {where}"
+            )
+            assert StepRef.parse(event.step) not in ended_steps, (
+                f"step restarted at {where}"
+            )
+            active_steps[StepRef.parse(event.step)] = event
             continue
 
         if isinstance(event, PartBegin):
-            key = (event.step, event.part)
-            assert event.step in active_steps, f"part outside active step at {where}"
+            key = (StepRef.parse(event.step), event.part)
+            assert StepRef.parse(event.step) in active_steps, (
+                f"part outside active step at {where}"
+            )
             assert key not in active_parts, f"duplicate part begin at {where}"
             assert key not in ended_parts, f"part restarted at {where}"
             active_parts[key] = event
             continue
 
         if isinstance(event, PartDelta):
-            key = (event.step, event.part)
+            key = (StepRef.parse(event.step), event.part)
             assert key in active_parts, f"part delta outside active part at {where}"
             continue
 
         if isinstance(event, PartEnd):
-            key = (event.step, event.part)
+            key = (StepRef.parse(event.step), event.part)
             begin = active_parts.pop(key, None)
             assert begin is not None, f"part end without begin at {where}"
             assert begin.part_type == event.data.type, (
@@ -218,15 +229,19 @@ def assert_run_event_integrity(
             continue
 
         if isinstance(event, StepEnd):
-            begin = active_steps.pop(event.step, None)
+            begin = active_steps.pop(StepRef.parse(event.step), None)
             assert begin is not None, f"step end without begin at {where}"
             assert begin.kind == event.kind, f"step kind changed before {where}"
-            assert event.step not in ended_steps, f"duplicate step end at {where}"
+            assert StepRef.parse(event.step) not in ended_steps, (
+                f"duplicate step end at {where}"
+            )
             if begin.started_at and event.finished_at:
                 assert begin.started_at <= event.finished_at, (
                     f"step finished before it started at {where}"
                 )
-            open_parts = {key for key in active_parts if key[0] == event.step}
+            open_parts = {
+                key for key in active_parts if key[0] == StepRef.parse(event.step)
+            }
             assert not open_parts, f"terminal step has incomplete parts at {where}"
             if event.status == "succeeded":
                 parts = tuple(
@@ -239,7 +254,7 @@ def assert_run_event_integrity(
                             item[0][1],
                         ),
                     )
-                    if key[0] == event.step
+                    if key[0] == StepRef.parse(event.step)
                 )
                 if parts:
                     assert event.output is not None
@@ -249,7 +264,7 @@ def assert_run_event_integrity(
                         if isinstance(output_value, Array | tuple | list)
                         else (output_value,)
                     ) == parts, f"step output differs from terminal parts at {where}"
-            ended_steps[event.step] = event
+            ended_steps[StepRef.parse(event.step)] = event
             continue
 
         assert isinstance(event, RunEnd)

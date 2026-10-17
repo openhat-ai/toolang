@@ -1,5 +1,7 @@
 """Progress keeps identity and lifecycle independent of persisted descriptions."""
 
+from tests.support.observations import run_begin, run_end, step_begin, step_end
+
 from io import StringIO
 
 import pytest
@@ -18,7 +20,6 @@ from toolang.cli.common.execution_progress.step_projection import (
 )
 from toolang.cli.common.script_progress.console import ProgressConsole
 from toolang.cli.toolang.commands.chat import blocks, rendering
-from toolang.execution.events import RunBegin, RunEnd, StepBegin, StepEnd
 from toolang.execution.types import (
     ControlRef,
     StepRef,
@@ -43,7 +44,7 @@ def begin(
     step="run_root.0",
     summary="Listing projects: toolang",
 ):
-    return StepBegin(
+    return step_begin(
         step=StepRef.parse(step),
         kind="tool",
         given=ToolStepGiven(
@@ -62,7 +63,7 @@ def test_alias_identity_and_saved_wording_reach_chat_tty_and_plain(status, width
     else:
         rows = trace_terminal_rows(
             operation,
-            StepEnd(
+            step_end(
                 step=event.step,
                 kind="tool",
                 status=status,
@@ -96,7 +97,7 @@ def test_new_and_historical_runtime_rows_keep_saved_summaries(namespace, name):
     assert "Original saved action" in trace_live_rows(operation, "")[0].text
     rows = trace_terminal_rows(
         operation,
-        StepEnd(
+        step_end(
             step=event.step,
             kind="tool",
             status="succeeded",
@@ -127,7 +128,7 @@ def test_unknown_identity_is_not_guessed(name):
 def test_parallel_activity_and_failed_terminal_keep_identity_and_status():
     projector = ProgressProjector(show_boundaries=False)
     projector.handle(
-        RunBegin(
+        run_begin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
             runnable="flow:parent",
@@ -135,14 +136,14 @@ def test_parallel_activity_and_failed_terminal_keep_identity_and_status():
     )
     par = StepRef.parse("run_root.0")
     projector.handle(
-        StepBegin(
+        step_begin(
             step=par,
             kind="par",
             given=MapStmt(span=Span(line=1), runnable="worker", lanes=1),
         )
     )
     projector.handle(
-        RunBegin(
+        run_begin(
             run="run_worker",
             control=ControlRef.for_run("run_worker", 0),
             parent=par,
@@ -157,7 +158,7 @@ def test_parallel_activity_and_failed_terminal_keep_identity_and_status():
     live = projector.handle(event).live[0].rows[-1]
     assert live.tool_identity == ("issues", "list") and live.tool_status == "running"
     end = projector.handle(
-        StepEnd(
+        step_end(
             step=event.step,
             kind="tool",
             status="failed",
@@ -193,7 +194,7 @@ def rendered_surfaces(block, width):
 def test_dynamic_run_footer_renders_saved_outcome(namespace, status, width):
     projector = ProgressProjector(show_boundaries=False)
     projector.handle(
-        RunBegin(
+        run_begin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
             runnable="agic:parent",
@@ -202,16 +203,16 @@ def test_dynamic_run_footer_renders_saved_outcome(namespace, status, width):
     event = begin(f"{namespace}__run", namespace)
     projector.handle(event)
     projector.handle(
-        RunBegin(
+        run_begin(
             run="run_child",
             control=ControlRef.for_run("run_child", 0),
             runnable="agic:child",
-            parent=event.step,
+            parent=StepRef.parse(event.step),
         )
     )
-    projector.handle(RunEnd(run="run_child", status=status))
+    projector.handle(run_end(run="run_child", status=status))
     terminal = projector.handle(
-        StepEnd(
+        step_end(
             step=event.step,
             kind="tool",
             status=status,
@@ -230,7 +231,7 @@ def test_dynamic_run_footer_renders_saved_outcome(namespace, status, width):
 def test_committed_exec_boundary_keeps_saved_outcome(namespace, target_starts):
     projector = ProgressProjector(show_boundaries=False)
     projector.handle(
-        RunBegin(
+        run_begin(
             run="run_root",
             control=ControlRef.for_run("run_root", 0),
             runnable="agic:parent",
@@ -240,12 +241,12 @@ def test_committed_exec_boundary_keeps_saved_outcome(namespace, target_starts):
     projector.handle(event)
     result = ToolResultPart(
         tool_call_id="call",
-        tool_name=event.given.call.name,
+        tool_name=event.given.name,
         tool_family=namespace,
         output={"controls": ["run_root@1"]},
     )
     terminal = projector.handle(
-        StepEnd(
+        step_end(
             step=event.step,
             kind="tool",
             status="succeeded",
@@ -257,7 +258,7 @@ def test_committed_exec_boundary_keeps_saved_outcome(namespace, target_starts):
     next_event = (
         begin(step="run_root.1")
         if target_starts
-        else RunEnd(run="run_root", status="succeeded")
+        else run_end(run="run_root", status="succeeded")
     )
     boundary = projector.handle(next_event).committed[0]
     assert boundary.rows[0].tool_identity == (namespace, "exec")

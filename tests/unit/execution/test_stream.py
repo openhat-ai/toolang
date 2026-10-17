@@ -1,5 +1,9 @@
 """Canonical ordering, bounded retention, and independent reader lifetimes."""
 
+from toolang.execution.types import StepRef
+
+from tests.support.observations import run_begin, run_end, step_begin, step_end
+
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import gc
@@ -12,18 +16,15 @@ from toolang.base.types.message import Message, TextDelta, TextPart
 from toolang.base.types.run import ModelCall
 from toolang.execution.errors import StreamGapError, StreamOverflowError
 from toolang.execution.events import (
+    ModelStepInfo,
     PartBegin,
     PartDelta,
     PartEnd,
-    RunBegin,
-    RunEnd,
-    StepBegin,
-    StepEnd,
     ThreadForked,
     event_to_data,
 )
 from toolang.execution.stream import CanonicalStream, StreamLimits
-from toolang.execution.types import ControlRef, EventCursor, ModelStepGiven, StepRef
+from toolang.execution.types import ControlRef, EventCursor, ModelStepGiven
 
 
 def emit(source, event, *, root="run_a", thread="term_a"):
@@ -36,12 +37,13 @@ def emit(source, event, *, root="run_a", thread="term_a"):
 def test_large_model_context_does_not_overflow_live_observers():
     context = "context " * (256 * 1024)
     call = ModelCall(context, [Message.user(context)])
-    event = StepBegin(
+    event = step_begin(
         StepRef.parse("run_a.0"),
         "model",
         ModelStepGiven("test/model", call, setup="test-setup", state="test-state"),
     )
-    assert len(str(event_to_data(event)).encode()) > StreamLimits().batch_bytes
+    assert len(context.encode()) > StreamLimits().batch_bytes
+    assert len(str(event_to_data(event)).encode()) < 512
 
     async def scenario():
         source = CanonicalStream()
@@ -54,11 +56,9 @@ def test_large_model_context_does_not_overflow_live_observers():
             data = event_to_data(observed.event)
             assert data["given"] == {
                 "model": "test/model",
-                "setup": "test-setup",
-                "state": "test-state",
+                "type": "model",
             }
-            assert isinstance(event.given, ModelStepGiven)
-            assert event.given.call == call
+            assert isinstance(event.given, ModelStepInfo)
         finally:
             reader.close()
             source.close()
@@ -67,17 +67,17 @@ def test_large_model_context_does_not_overflow_live_observers():
 
 
 def begin(run="run_a"):
-    return RunBegin(run=run, control=ControlRef.for_run(run, 0), thread_id="term_a")
+    return run_begin(run=run, control=ControlRef.for_run(run, 0), thread_id="term_a")
 
 
 def progress():
     step = StepRef.parse("run_a.0")
     return (
         begin(),
-        PartBegin(step, 0, "text"),
-        PartDelta(step, 0, TextDelta("hello")),
-        PartEnd(step, 0, TextPart("hello")),
-        StepEnd(step, "value", "succeeded"),
+        PartBegin(str(step), 0, "text"),
+        PartDelta(str(step), 0, TextDelta("hello")),
+        PartEnd(str(step), 0, TextPart("hello")),
+        step_end(step, "value", "succeeded"),
     )
 
 
@@ -115,7 +115,7 @@ def test_scope_filtering_advances_one_shared_order_and_close_is_independent():
         assert b.events == c.events
         assert a.cursor == b.cursor == c.cursor == source.tail
         root.close()
-        emit(source, RunEnd("run_a", "succeeded"))
+        emit(source, run_end("run_a", "succeeded"))
         assert (await agent.receive()).events == (await thread.receive()).events
         source.close()
         with pytest.raises(StopAsyncIteration):
@@ -187,7 +187,7 @@ def test_parts_survive_finalization_until_consumed_and_capacity_pressure():
         assert len(batch.events) == 5
         replay = source.subscribe(after=first)
         assert (await replay.receive()).events == batch.events
-        emit(source, RunEnd("run_a", "succeeded"))
+        emit(source, run_end("run_a", "succeeded"))
         emit(source, begin("run_b"))
         assert source.floor == first
         replay.close()
@@ -264,7 +264,7 @@ def test_lagging_reader_overflows_before_structural_cache_is_evicted():
         for event in progress():
             emit(source, event)
         await fast.receive()
-        emit(source, RunEnd("run_a", "succeeded"))
+        emit(source, run_end("run_a", "succeeded"))
         slow.check()  # Finalization alone never clears unread Parts.
         emit(source, begin("run_b"))
         with pytest.raises(StreamOverflowError):
@@ -293,7 +293,7 @@ def test_overflow_does_not_retain_finished_observer_frames():
         observer = stream.TraceObserver(source.subscribe(), tracer)
         del tracer
         emit(source, begin())
-        emit(source, RunEnd("run_a", "succeeded"))
+        emit(source, run_end("run_a", "succeeded"))
         await observer.task
         gc.collect()
         assert reference() is None
@@ -371,7 +371,7 @@ def test_finished_reader_keeps_its_acquired_batch_without_pinning_future_events(
         source = CanonicalStream(limits=StreamLimits(events=3))
         reader = source.subscribe(root_run_id="run_a")
         emit(source, begin())
-        emit(source, RunEnd("run_a", "succeeded"))
+        emit(source, run_end("run_a", "succeeded"))
         if finish_before_receive:
             reader.finish()
             emit(source, begin("run_b"), root="run_b")
@@ -402,9 +402,9 @@ def test_compaction_of_an_older_attempt_does_not_overflow_a_current_reader():
         await reader.receive()
         # The same Step path now belongs to another attempt. Its new End must
         # not prevent reclaiming the consumed Parts from the preceding attempt.
-        emit(source, PartDelta(StepRef.parse("run_a.0"), 0, TextDelta("retry")))
-        emit(source, StepEnd(StepRef.parse("run_a.0"), "value", "succeeded"))
-        emit(source, RunEnd("run_a", "succeeded"))
+        emit(source, PartDelta(str(StepRef.parse("run_a.0")), 0, TextDelta("retry")))
+        emit(source, step_end(StepRef.parse("run_a.0"), "value", "succeeded"))
+        emit(source, run_end("run_a", "succeeded"))
         batch = await reader.receive()
         assert [frame.cursor.seq for frame in batch.events] == [6, 7, 8]
         assert source.floor.seq == 0

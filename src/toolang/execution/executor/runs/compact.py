@@ -18,7 +18,7 @@ from toolang.setup.models import select_compact_model
 from ... import compaction
 from ...assembly.tool_replies import control_summary
 from ...assembly.history import render_history_unit
-from ...events import PartBegin, PartEnd, StepBegin, StepEnd
+from ...events import PartBegin, PartEnd
 from ...inspection.history import RunHistory
 from ...records import CompactControlPayload
 from ...types import (
@@ -211,13 +211,8 @@ async def execute(
     next_index = max((s.index for s in steps if s.parent is None), default=-1) + 1
     for step in steps:
         if step.status == "running":
-            await execution.emit(
-                StepEnd(
-                    step=step.ref,
-                    kind=step.kind,
-                    status="canceled",
-                    finished_at=utc_now(),
-                )
+            await execution.finish_step(
+                step=step.ref, kind=step.kind, status="canceled", finished_at=utc_now()
             )
     cached_root: RunRef | None = None
     units: dict[RunRef | StepRef, compaction.HistoryUnit] = {}
@@ -275,42 +270,39 @@ async def execute(
             },
         )
         try:
-            await execution.emit(
-                StepBegin(
+            await execution.begin_step(
+                lambda _state, state_ref, commit: commit(
                     step=read,
                     kind="tool",
                     given=ToolStepGiven("runtime", tool, trigger="runtime"),
                     started_at=utc_now(),
-                )
+                ),
+                run_id=read.run_id,
             )
             await _emit_part(execution, read, 0, result)
         except (Exception, asyncio.CancelledError) as exc:
             if store.get_step(ref=read) is not None:
-                await execution.emit(
-                    StepEnd(
-                        step=read,
-                        kind="tool",
-                        status="canceled"
-                        if isinstance(exc, asyncio.CancelledError)
-                        else "failed",
-                        error=ErrorMessage(str(exc)) if str(exc) else None,
-                        finished_at=utc_now(),
-                    )
+                await execution.finish_step(
+                    step=read,
+                    kind="tool",
+                    status="canceled"
+                    if isinstance(exc, asyncio.CancelledError)
+                    else "failed",
+                    error=ErrorMessage(str(exc)) if str(exc) else None,
+                    finished_at=utc_now(),
                 )
             raise
-        await execution.emit(
-            StepEnd(
-                step=read,
-                kind="tool",
-                status="succeeded",
-                output=Output(value_for_type("Part", result), "_"),
-                finished_at=utc_now(),
-            )
+        await execution.finish_step(
+            step=read,
+            kind="tool",
+            status="succeeded",
+            output=Output(value_for_type("Part", result), "_"),
+            finished_at=utc_now(),
         )
         response: ModelCallResult | None = None
         try:
-            await execution.emit(
-                StepBegin(
+            await execution.begin_step(
+                lambda _state, state_ref, commit: commit(
                     step=model,
                     kind="model",
                     given=ModelStepGiven(
@@ -320,7 +312,8 @@ async def execute(
                         state=binding.state.revision,
                     ),
                     started_at=utc_now(),
-                )
+                ),
+                run_id=model.run_id,
             )
             execution.require_model_pricing(spec.model)
             response = await spec.adapter.invoke(spec.model, call, environ=spec.environ)
@@ -338,17 +331,15 @@ async def execute(
             )
             accounting = execution.model_accounting(spec.model, usage)
             if store.get_step(ref=model) is not None:
-                await execution.emit(
-                    StepEnd(
-                        step=model,
-                        kind="model",
-                        status="canceled"
-                        if isinstance(exc, asyncio.CancelledError)
-                        else "failed",
-                        noted=ModelStepNoted(accounting=accounting),
-                        error=ErrorMessage(str(exc)) if str(exc) else None,
-                        finished_at=utc_now(),
-                    )
+                await execution.finish_step(
+                    step=model,
+                    kind="model",
+                    status="canceled"
+                    if isinstance(exc, asyncio.CancelledError)
+                    else "failed",
+                    noted=ModelStepNoted(accounting=accounting),
+                    error=ErrorMessage(str(exc)) if str(exc) else None,
+                    finished_at=utc_now(),
                 )
             if usage is not None:
                 execution.record_model_accounting(spec.model, accounting)
@@ -362,17 +353,15 @@ async def execute(
         accounting = execution.model_accounting(spec.model, response.usage)
         assert response.message is not None
         try:
-            await execution.emit(
-                StepEnd(
-                    step=model,
-                    kind="model",
-                    status="succeeded",
-                    output=Output(
-                        value_for_type("Part[]", tuple(response.message.parts)), "_"
-                    ),
-                    noted=ModelStepNoted(accounting=accounting),
-                    finished_at=utc_now(),
-                )
+            await execution.finish_step(
+                step=model,
+                kind="model",
+                status="succeeded",
+                output=Output(
+                    value_for_type("Part[]", tuple(response.message.parts)), "_"
+                ),
+                noted=ModelStepNoted(accounting=accounting),
+                finished_at=utc_now(),
             )
         finally:
             execution.record_model_accounting(spec.model, accounting)
@@ -385,6 +374,6 @@ async def _emit_part(
 ) -> None:
     """Close a buffered Part even when its Begin observer is canceled."""
     try:
-        await execution.emit(PartBegin(step=step, part=index, part_type=part.type))
+        await execution.emit(PartBegin(step=str(step), part=index, part_type=part.type))
     finally:
-        await execution.emit(PartEnd(step=step, part=index, data=part))
+        await execution.emit(PartEnd(step=str(step), part=index, data=part))

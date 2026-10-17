@@ -23,8 +23,8 @@ from toolang.lang.input import coerce_output
 from toolang.state.state import AgentState
 
 from ...errors import EmptyModelOutput
-from ...events import StepBegin, StepEnd
 from ...assembly import prompting
+from ...events import PartBegin, PartDelta, PartEnd
 from ...records import ControlRecord, RecallControlPayload
 from ...types import (
     ModelAccounting,
@@ -33,12 +33,17 @@ from ...types import (
     RunRef,
     RecallTarget,
     StepNoted,
+    StepKind,
+    StepStatus,
+    Output,
+    ErrorMessage,
+    ErrorRef,
     StepRef,
 )
 from ..common import (
     _StepFailed,
     BoundRun,
-    EventEmitter,
+    StepPreparation,
     Local,
     program_structs,
 )
@@ -70,7 +75,7 @@ class _AgicState:
     # The last committed frame also supplies its following tool batch.
     prepared: _AgicFrame
     layout: AgentLayout
-    emit: EventEmitter
+    emit: Callable[[PartBegin | PartDelta | PartEnd], Awaitable[None]]
     pending_inputs: Callable[[], tuple[ControlRecord, ...]]
     steer_before_next_step: Callable[[], bool]
     immediate_steer: Callable[[], bool]
@@ -107,13 +112,6 @@ class _AgicState:
     repairing_output: bool = False
     estimate: InputEstimate = field(default_factory=InputEstimate)
     context_budget: tuple[str, int] | None = None
-    begin_step: (
-        Callable[
-            [Callable[[AgentState, ControlRef], StepBegin]],
-            Awaitable[tuple[AgentState, ControlRef]],
-        ]
-        | None
-    ) = None
     prepare_model_frame: Callable[[bool], _AgicFrame] | None = None
 
     def check_model_call_limit(self) -> None:
@@ -133,41 +131,56 @@ class _AgicState:
 
     async def start_step(
         self,
-        build: Callable[[AgentState, ControlRef], StepBegin],
+        build: StepPreparation,
     ) -> tuple[AgentState, ControlRef]:
         """Commit one physical-step boundary and return its State snapshot."""
 
-        if self.begin_step is not None:
-            return await self.begin_step(build)
-        run = self.prepared.run
-        event = build(run.state, run.state_ref)
-        await self.emit(event)
-        return run.state, run.state_ref
+        if self.execution is None:
+            raise RuntimeError("Agic execution requires a Step boundary")
+        return await self.execution.begin_step(build, run_id=self.prepared.run.run_id)
 
     async def end_step(
-        self, event: StepEnd, *, canceled_noted: StepNoted | None = None
+        self,
+        *,
+        step: StepRef,
+        kind: StepKind,
+        status: StepStatus,
+        output: Output | None = None,
+        noted: StepNoted = None,
+        error: ErrorMessage | ErrorRef | None = None,
+        aborted_by: ControlRef | None = None,
+        finished_at: str,
+        canceled_noted: StepNoted | None = None,
+        error_text: str | None = None,
     ) -> None:
-        """Commit the terminal fact before propagating a delivery interruption."""
-
-        interruption: asyncio.CancelledError | None = None
+        """Record terminal facts before propagating a delivery interruption."""
+        if self.execution is None:
+            raise RuntimeError("Agic execution requires a recording boundary")
+        interruption = None
         while True:
             try:
-                await self.emit(event)
+                await self.execution.finish_step(
+                    step=step,
+                    kind=kind,
+                    status=status,
+                    output=output,
+                    noted=noted,
+                    error=error,
+                    aborted_by=aborted_by,
+                    finished_at=finished_at,
+                    error_text=error_text,
+                )
             except asyncio.CancelledError as exc:
                 interruption = exc
-                if self.execution is None:
-                    raise
-                record = self.execution.store.get_step(ref=event.step)
-                # Delivery can be interrupted after persistence. Never end it twice.
+                record = self.execution.store.get_step(ref=step)
                 if record is None or record.status != "running":
                     raise
-                if event.status != "canceled":
-                    event = replace(
-                        event,
-                        status="canceled",
-                        noted=canceled_noted or event.noted,
-                        error=None,
-                        finished_at=utc_now(),
+                if status != "canceled":
+                    status, noted, error, finished_at = (
+                        "canceled",
+                        canceled_noted or noted,
+                        None,
+                        utc_now(),
                     )
             else:
                 if interruption is not None:
@@ -265,7 +278,6 @@ async def execute(
             for _name, local in sorted(locals.items())
             if local.has_value and local.ref is not None
         ),
-        begin_step=execution.step_starter(binding),
         prepare_model_frame=prepare_model_frame,
     )
     message = await _execute(state)

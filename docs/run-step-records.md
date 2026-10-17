@@ -124,12 +124,14 @@ value type.
 An absent output (`None`) differs from `Output(value=None)`, whose value is
 JSON null. There is no Local wrapper or shape/dim flag.
 
-Durable and HTTP/event outputs share the `type`, `value`, and `binding` envelope,
+Durable and HTTP query outputs share the `type`, `value`, and `binding` envelope,
 for example `{"type": "Text", "value": "result", "binding": "_"}`. Ordinary
 durable values retain the self-describing value codec; historical outputs without
 an explicit type remain readable. Type is derived from the value or typed
 reference. References use `output/value` for the value,
 `output` for the complete Output, and `output/binding` for the destination.
+Subscriber event outputs instead use `{type, value}` with actual data and no
+binding or reference alternative. This does not alter durable output edges.
 Removed wrapper fields and old reference paths have no aliases. Removed Flow
 statement records are rejected, and executable snapshots require migrated source
 and a newly prepared state.

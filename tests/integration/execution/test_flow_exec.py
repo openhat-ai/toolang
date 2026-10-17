@@ -1,5 +1,7 @@
 """Native handoffs retain Run identity and atomically leave repeat bodies."""
 
+from toolang.execution.types import StepRef
+
 import asyncio
 
 import pytest
@@ -228,9 +230,9 @@ agic finish() -> Text:
                 assert step.aborted_by == control.ref
             assert steps[3].ref.indices == (1,)
             ends = [
-                e.step
+                StepRef.parse(e.step)
                 for e in tracer.events
-                if isinstance(e, StepEnd) and e.step.run_id == grow.id
+                if isinstance(e, StepEnd) and StepRef.parse(e.step).run_id == grow.id
             ]
             assert ends == [s.ref for s in (steps[2], steps[1], steps[0], steps[3])]
             assert all(
@@ -373,12 +375,12 @@ agic successor() -> Text:
             and event.status == "succeeded"
         ):
             # Observers cannot see a control with half-open old repeat records.
-            steps = harness.store.list_steps(run_id=event.step.run_id)
+            steps = harness.store.list_steps(run_id=StepRef.parse(event.step).run_id)
             assert all(s.status == "succeeded" for s in steps)
             assert (
                 len(
                     harness.store.list_run_controls(
-                        run_id=event.step.run_id, kind="exec"
+                        run_id=StepRef.parse(event.step).run_id, kind="exec"
                     )
                 )
                 == 1

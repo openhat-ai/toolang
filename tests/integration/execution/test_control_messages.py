@@ -2,6 +2,15 @@
 
 from __future__ import annotations
 
+from toolang.execution.types import ContentRef
+from toolang.execution.records import StoredModelStepGiven
+from toolang.execution.events import ControlApplied
+
+from toolang.execution.events import ModelStepInfo
+
+
+from toolang.execution.types import StepRef
+
 import asyncio
 import os
 import signal
@@ -28,8 +37,6 @@ from toolang.execution.types import (
     RulesRecallTarget,
     SkillRecallTarget,
     ServiceRecallTarget,
-    ModelStepGiven,
-    TypedRef,
 )
 from toolang.execution.records import RecallControlPayload
 from toolang.execution.events import StepEnd, StepBegin
@@ -163,7 +170,7 @@ def test_cancel_during_steer_skipped_batch_closes_all_calls(tmp_path: Path) -> N
             if (
                 isinstance(event, StepBegin)
                 and event.kind == "tool"
-                and event.step.index == 1
+                and StepRef.parse(event.step).index == 1
             ):
                 await tool_gate.wait()
 
@@ -241,8 +248,8 @@ agic chat(_: Part[]) -> Part[]:
                 for revision in ("old", "new"):
                     recalls.append(
                         harness.store.accept_recall_control(
-                            run_id=event.step.run_id,
-                            triggered_by=event.step,
+                            run_id=StepRef.parse(event.step).run_id,
+                            triggered_by=StepRef.parse(event.step),
                             payload=RecallControlPayload(
                                 target, revision, f"{revision} <content>"
                             ),
@@ -279,27 +286,30 @@ agic chat(_: Part[]) -> Part[]:
                 event
                 for event in tracer.events
                 if isinstance(event, StepBegin)
-                and isinstance(event.given, ModelStepGiven)
+                and isinstance(event.given, ModelStepInfo)
             ]
             assert model_events[1].preceded_by == (
-                *(item.ref for item in recalls),
-                harness.store.list_run_controls(run_id=run.id)[-1].ref,
+                *(ControlApplied(str(item.target), item.index) for item in recalls),
+                ControlApplied(
+                    run.id, harness.store.list_run_controls(run_id=run.id)[-1].index
+                ),
             )
             assert model_events[2].preceded_by == ()
-            recall_refs = [item.ref for item in recalls]
-            for event, expected in zip(model_events, ([], recall_refs, [])):
-                assert event.given.messages is not None
-                refs = [
-                    segment.ref.record
-                    for message in event.given.messages.delta
+            for event in model_events:
+                record = harness.store.get_step(ref=StepRef.parse(event.step))
+                assert record is not None and isinstance(
+                    record.given, StoredModelStepGiven
+                )
+                assert all(
+                    isinstance(segment, ContentRef)
+                    for message in record.given.call.messages.delta
                     for segment in message.content
-                    if isinstance(segment, TypedRef)
-                    and segment.ref.record in recall_refs
-                ]
-                assert refs == expected
+                )
+            recorded = harness.store.get_step(ref=StepRef.parse(model_events[1].step))
+            assert recorded is not None
             assert all(
                 ref.record not in {item.ref for item in recalls}
-                for ref in model_events[1].input
+                for ref in recorded.input
             )
             assert calls[0].messages == calls[2].messages[: len(calls[0].messages)]
             assert (

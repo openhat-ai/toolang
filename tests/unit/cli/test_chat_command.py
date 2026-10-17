@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+from toolang.execution.types import StepRef
+
+from tests.support.observations import run_end, step_end
+
+
 from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from contextlib import closing, contextmanager
 from dataclasses import replace
@@ -33,7 +38,7 @@ from toolang.cli.toolang.commands.chat.base import (
 )
 from toolang.cli.toolang.main import main as too_main
 from toolang.common.layout import AgentLayout
-from toolang.execution.events import RunEnd, RunEvent, StepEnd
+from toolang.execution.events import RunEvent
 from toolang.execution.policy import apply_session_setting
 from toolang.execution.store import RunStore
 from toolang.execution.schemas import ControlInfo, RunRequest, RunnableRequest
@@ -44,7 +49,6 @@ from toolang.execution.types import (
     ModelOverride,
     RunOverride,
     SessionSetting,
-    StepRef,
 )
 from toolang.lang.input import CallInput
 from toolang.up.types import AgentServerRef
@@ -412,7 +416,7 @@ class _FailedRunClient(_Client):
             (request.thread_id, request.runnable.input.get("_") or "", request.model)
         )
         on_event(
-            RunEnd(
+            run_end(
                 run="run_failed",
                 status="failed",
                 error=ErrorMessage("provider failed"),
@@ -642,7 +646,7 @@ def test_scripted_renderer_uses_model_step_output_without_deltas(
     renderer = chat._ScriptedRunRenderer()
 
     observations = (
-        StepEnd(
+        step_end(
             step=StepRef.parse("run_success.1"),
             kind="model",
             status="succeeded",
@@ -650,7 +654,7 @@ def test_scripted_renderer_uses_model_step_output_without_deltas(
                 value_for_type("Part[]", (TextPart("complete answer"),)), "_"
             ),
         ),
-        RunEnd(run="run_success", status="succeeded"),
+        run_end(run="run_success", status="succeeded"),
     )
     if snapshot:
         renderer.render(RunSnapshot(observations))
@@ -666,7 +670,7 @@ def test_scripted_snapshot_discards_an_invalidated_terminal_result() -> None:
     from toolang.execution.events import RunSnapshot
 
     renderer = chat._ScriptedRunRenderer()
-    renderer.render(RunEnd(run="run_retry", status="failed"))
+    renderer.render(run_end(run="run_retry", status="failed"))
     renderer.render(RunSnapshot(()))
     assert renderer.failure is None
 

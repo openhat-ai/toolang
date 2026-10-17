@@ -161,8 +161,7 @@ async def execute(
     execution.repeat_progress[path] = progress
     try:
         return await loop_step.execute(
-            execution.emit,
-            begin_step=execution.step_starter(binding),
+            execution,
             binding=binding,
             path=path,
             statement=statement,

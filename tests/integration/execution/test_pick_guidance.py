@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+from toolang.execution.events import ToolStepInfo
+
+
+from toolang.execution.types import StepRef
+
 from tests.support.setup import replace_materialized_setup
 
 import asyncio
@@ -925,12 +930,15 @@ def test_pick_sees_controls_added_at_the_tool_boundary(tmp_path: Path):
             await super().on_event(event)
             if (
                 isinstance(event, StepBegin)
-                and isinstance(event.given, ToolStepGiven)
-                and event.given.call.tool_call_id == "first"
+                and isinstance(event.given, ToolStepInfo)
+                and harness.store.get_step(
+                    ref=StepRef.parse(event.step)
+                ).given.call.tool_call_id
+                == "first"
             ):
                 harness.store.accept_recall_control(
-                    run_id=event.step.run_id,
-                    triggered_by=event.step,
+                    run_id=StepRef.parse(event.step).run_id,
+                    triggered_by=StepRef.parse(event.step),
                     payload=RecallControlPayload(
                         SkillRecallTarget("skill/testing"),
                         "b" * 64,
@@ -988,9 +996,9 @@ def test_compaction_excludes_old_guidance_even_when_far_mentions_it(
             ):
                 assert horizon is not None
                 harness.store.accept_compact_control(
-                    run_id=event.step.run_id,
+                    run_id=StepRef.parse(event.step).run_id,
                     horizon=horizon,
-                    triggered_by=event.step,
+                    triggered_by=StepRef.parse(event.step),
                     created_at=event.finished_at,
                 )
 

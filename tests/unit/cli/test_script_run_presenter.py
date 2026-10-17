@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+from toolang.execution.types import StepRef
+
+from tests.support.observations import run_begin, run_end, step_begin, step_end
+
+
 from toolang.execution.types import ModelCost, value_for_type
 
 from toolang.execution.types import ModelAccounting
@@ -46,10 +51,7 @@ from toolang.execution.events import (
     PartDelta,
     PartEnd,
     RunBegin,
-    RunEnd,
     RunEvent,
-    StepBegin,
-    StepEnd,
 )
 from toolang.execution.types import (
     Output,
@@ -59,7 +61,6 @@ from toolang.execution.types import (
     FieldRef,
     ModelStepGiven,
     ModelStepNoted,
-    StepRef,
     ToolStepGiven,
 )
 from toolang.lang.ast import RunStmt, Span
@@ -111,7 +112,7 @@ def _render(
 
 
 def _root_begin() -> RunBegin:
-    return RunBegin(
+    return run_begin(
         run="run_one",
         control=ControlRef.for_run("run_one", 0),
         runnable="agic:demo",
@@ -123,13 +124,13 @@ def test_non_tty_appends_only_finalized_model_progress() -> None:
     output = _render(
         [
             _root_begin(),
-            StepBegin(
+            step_begin(
                 step=StepRef.parse("run_one.0"),
                 kind="model",
                 given=_model(),
                 started_at="2026-01-01T00:00:00Z",
             ),
-            StepEnd(
+            step_end(
                 step=StepRef.parse("run_one.0"),
                 kind="model",
                 status="succeeded",
@@ -146,7 +147,7 @@ def test_non_tty_appends_only_finalized_model_progress() -> None:
                 ),
                 finished_at="2026-01-01T00:00:01.800Z",
             ),
-            RunEnd(
+            run_end(
                 run="run_one",
                 status="succeeded",
                 output=Output(
@@ -270,7 +271,7 @@ def test_script_root_footer_keeps_child_runs_in_the_activity_group() -> None:
 
     block.render_result(
         ProgressConsole(stream, width=120),
-        RunEnd(
+        run_end(
             run="run_one",
             status="succeeded",
             finished_at="2026-01-01T00:01:21Z",
@@ -291,11 +292,11 @@ def test_script_tool_call_only_model_step_clears_live_without_scrollback(
 
     async def scenario() -> None:
         await presenter.on_event(_root_begin())
-        await presenter.on_event(StepBegin(step=path, kind="model", given=_model()))
+        await presenter.on_event(step_begin(step=path, kind="model", given=_model()))
         assert [row.text for row in presenter.console._live_rows] == ["• Thinking"]
 
         await presenter.on_event(
-            StepEnd(
+            step_end(
                 step=path,
                 kind="model",
                 status="succeeded",
@@ -334,12 +335,12 @@ def test_tty_model_output_uses_normal_style() -> None:
     output = _render(
         [
             _root_begin(),
-            StepBegin(
+            step_begin(
                 step=StepRef.parse("run_one.0"),
                 kind="model",
                 given=_model(),
             ),
-            StepEnd(
+            step_end(
                 step=StepRef.parse("run_one.0"),
                 kind="model",
                 status="succeeded",
@@ -358,12 +359,12 @@ def test_tool_output_is_not_rendered() -> None:
     output = _render(
         [
             _root_begin(),
-            StepBegin(
+            step_begin(
                 step=StepRef.parse("run_one.0"),
                 kind="tool",
                 given=_tool(),
             ),
-            StepEnd(
+            step_end(
                 step=StepRef.parse("run_one.0"),
                 kind="tool",
                 status="succeeded",
@@ -382,7 +383,7 @@ def test_tool_output_is_not_rendered() -> None:
                     "_",
                 ),
             ),
-            RunEnd(run="run_one", status="succeeded"),
+            run_end(run="run_one", status="succeeded"),
         ]
     )
 
@@ -427,7 +428,7 @@ def test_tty_replaces_live_rows_and_clears_them_on_shutdown() -> None:
     output = _render(
         [
             _root_begin(),
-            StepBegin(
+            step_begin(
                 step=StepRef.parse("run_one.0"),
                 kind="model",
                 given=_model(),
@@ -444,18 +445,18 @@ def test_step_error_and_ownerless_run_error_use_bullet_rows() -> None:
     step_error = _render(
         [
             _root_begin(),
-            StepBegin(
+            step_begin(
                 step=StepRef.parse("run_one.0"),
                 kind="tool",
                 given=_tool(),
             ),
-            StepEnd(
+            step_end(
                 step=StepRef.parse("run_one.0"),
                 kind="tool",
                 status="failed",
                 error=ErrorMessage("provider returned status 429"),
             ),
-            RunEnd(
+            run_end(
                 run="run_one",
                 status="failed",
                 error=ErrorRef(FieldRef.from_path(StepRef.parse("run_one.0"), "error")),
@@ -465,7 +466,7 @@ def test_step_error_and_ownerless_run_error_use_bullet_rows() -> None:
     ownerless = _render(
         [
             _root_begin(),
-            RunEnd(
+            run_end(
                 run="run_one",
                 status="failed",
                 error=ErrorMessage("progress stream ended early"),
@@ -954,39 +955,39 @@ def test_single_run_gather_progressively_commits_markdown() -> None:
 
     async def scenario() -> None:
         await presenter.on_event(
-            RunBegin(
+            run_begin(
                 run="run_root",
                 control=ControlRef.for_run("run_root", 0),
                 runnable="flow:summary",
             )
         )
         await presenter.on_event(
-            StepBegin(
+            step_begin(
                 step=gather,
                 kind="run",
                 given=RunStmt(span=Span(line=1), runnable="merge"),
             )
         )
         await presenter.on_event(
-            RunBegin(
+            run_begin(
                 run="run_merge",
                 parent=gather,
                 control=ControlRef.for_run("run_merge", 0),
                 runnable="agic:merge",
             )
         )
-        await presenter.on_event(StepBegin(step=model, kind="model", given=_model()))
-        await presenter.on_event(PartBegin(step=model, part=0, part_type="text"))
+        await presenter.on_event(step_begin(step=model, kind="model", given=_model()))
+        await presenter.on_event(PartBegin(step=str(model), part=0, part_type="text"))
         await presenter.on_event(
             PartDelta(
-                step=model,
+                step=str(model),
                 part=0,
                 delta=TextDelta("# First section\n\n"),
             )
         )
         await presenter.on_event(
             PartDelta(
-                step=model,
+                step=str(model),
                 part=0,
                 delta=TextDelta("Second paragraph"),
             )
@@ -999,13 +1000,13 @@ def test_single_run_gather_progressively_commits_markdown() -> None:
 
         await presenter.on_event(
             PartEnd(
-                step=model,
+                step=str(model),
                 part=0,
                 data=TextPart("# First section\n\nSecond paragraph"),
             )
         )
         await presenter.on_event(
-            StepEnd(
+            step_end(
                 step=model,
                 kind="model",
                 status="succeeded",
@@ -1015,9 +1016,9 @@ def test_single_run_gather_progressively_commits_markdown() -> None:
 
         assert presenter.console._live_rows == []
 
-        await presenter.on_event(RunEnd(run="run_merge", status="succeeded"))
-        await presenter.on_event(StepEnd(step=gather, kind="run", status="succeeded"))
-        await presenter.on_event(RunEnd(run="run_root", status="succeeded"))
+        await presenter.on_event(run_end(run="run_merge", status="succeeded"))
+        await presenter.on_event(step_end(step=gather, kind="run", status="succeeded"))
+        await presenter.on_event(run_end(run="run_root", status="succeeded"))
         presenter.close()
 
     asyncio.run(scenario())
@@ -1121,7 +1122,7 @@ def test_script_context_preserves_long_literal_fields_at_narrow_widths(width) ->
 @pytest.mark.parametrize("status", ["succeeded", "failed", "canceled"])
 def test_script_context_is_retained_with_empty_run_footer(status) -> None:
     output = _render(
-        [_root_begin(), RunEnd(run="run_one", status=status)],
+        [_root_begin(), run_end(run="run_one", status=status)],
         context=RunContext("agic:submitted", ModelRequest("test/model")),
     )
     lines = output.splitlines()
@@ -1136,7 +1137,7 @@ def test_script_context_is_retained_with_empty_run_footer(status) -> None:
 
 def test_script_context_uses_submission_when_event_has_no_runnable() -> None:
     output = _render(
-        [RunBegin(run="run_one", control=ControlRef.for_run("run_one", 0))],
+        [run_begin(run="run_one", control=ControlRef.for_run("run_one", 0))],
         context=RunContext("flow:fallback", None),
     )
     assert output.startswith("‣ flow:fallback ")
@@ -1151,27 +1152,27 @@ def test_script_context_precedes_steps_once_and_keeps_root_snapshot() -> None:
     output = _render(
         [
             _root_begin(),
-            StepBegin(
+            step_begin(
                 step=owner,
                 kind="run",
                 given=RunStmt(span=Span(line=1), runnable="child"),
             ),
-            RunBegin(
+            run_begin(
                 run=child,
                 parent=owner,
                 control=ControlRef.for_run(child, 0),
                 runnable="agic:child",
             ),
-            StepBegin(step=StepRef.parse("run_child.0"), kind="model", given=_model()),
-            StepEnd(
+            step_begin(step=StepRef.parse("run_child.0"), kind="model", given=_model()),
+            step_end(
                 step=StepRef.parse("run_child.0"),
                 kind="model",
                 status="succeeded",
                 output=_parts("Child output."),
             ),
-            RunEnd(run=child, status="succeeded"),
-            StepEnd(step=owner, kind="run", status="succeeded"),
-            RunEnd(run="run_one", status="succeeded"),
+            run_end(run=child, status="succeeded"),
+            step_end(step=owner, kind="run", status="succeeded"),
+            run_end(run="run_one", status="succeeded"),
         ],
         context=context,
     )
@@ -1189,10 +1190,10 @@ def test_script_context_separates_first_non_tty_compact_activity(prior_output) -
     if prior_output:
         events.extend(
             [
-                StepBegin(
+                step_begin(
                     step=StepRef.parse("run_one.0"), kind="model", given=_model()
                 ),
-                StepEnd(
+                step_end(
                     step=StepRef.parse("run_one.0"),
                     kind="model",
                     status="succeeded",
@@ -1203,7 +1204,7 @@ def test_script_context_separates_first_non_tty_compact_activity(prior_output) -
     output = _render(
         [
             *events,
-            StepBegin(
+            step_begin(
                 step=StepRef.parse("run_one.1"),
                 kind="tool",
                 given=ToolStepGiven(
@@ -1230,7 +1231,7 @@ def test_repeated_terminal_snapshot_does_not_print_output_or_footer_twice():
     presenter = ScriptRunPresenter(run_id="run_one", stream=stream)
     events = (
         _root_begin(),
-        RunEnd("run_one", "succeeded", finished_at="2026-01-01T00:00:02Z"),
+        run_end("run_one", "succeeded", finished_at="2026-01-01T00:00:02Z"),
     )
 
     async def scenario():

@@ -2,23 +2,18 @@
 
 from __future__ import annotations
 
+from toolang.execution.events import FlowStepInfo
+
 from dataclasses import dataclass, field
 
 from toolang.base.money import add_cost
 from toolang.base.types.message import Part
-from toolang.execution.accounting import (
-    selected_cost_is_approximate,
-    selected_usd_cost,
-    token_meter_quantity,
-)
 from toolang.execution.events import RunBegin, RunEnd, StepBegin, StepEnd
 from toolang.execution.types import (
-    ModelStepNoted,
     RunStatus,
     StepKind,
     StepRef,
 )
-from toolang.lang.ast import FlowStmt
 
 from .facts import cost_fact, execution_count_fact, token_fact
 from .types import ProgressRow, StepOperation
@@ -155,7 +150,7 @@ class StepState:
         return self.operation.begin
 
     @property
-    def statement(self) -> FlowStmt | None:
+    def statement(self) -> FlowStepInfo | None:
         return self.operation.statement
 
     @property
@@ -236,28 +231,22 @@ class Metrics:
     def record_step(self, event: StepEnd) -> None:
         if event.kind == "model":
             self.model_calls += 1
-            noted = event.noted if isinstance(event.noted, ModelStepNoted) else None
-            if noted is not None and noted.accounting is not None:
-                accounting = noted.accounting
-                self.input_tokens += accounting.input_tokens
-                self.output_tokens += accounting.output_tokens
-                cache = token_meter_quantity(accounting, "input.cache_read")
-                if cache is None:
+            usage = event.noted.usage if event.noted is not None else None
+            if usage is not None:
+                self.input_tokens += usage.input_tokens
+                self.output_tokens += usage.output_tokens
+                if usage.cache_read_tokens is None:
                     self.cache_unknown_calls += 1
                 else:
-                    self.cache_read_tokens += cache
-                reasoning = token_meter_quantity(accounting, "output.reasoning")
-                if reasoning is not None:
-                    self.reasoning_tokens += reasoning
+                    self.cache_read_tokens += usage.cache_read_tokens
+                if usage.reasoning_tokens is not None:
+                    self.reasoning_tokens += usage.reasoning_tokens
                     self.reasoning_known_calls += 1
-                selected = selected_usd_cost(accounting)
-                if selected is not None:
-                    self.cost = add_cost(self.cost, selected)
+                if usage.cost is not None:
+                    self.cost = add_cost(self.cost, usage.cost)
                     self.cost_known = True
                 self.cost_approximate = (
-                    self.cost_approximate
-                    or selected is None
-                    or selected_cost_is_approximate(accounting)
+                    self.cost_approximate or usage.cost is None or usage.approximate
                 )
             else:
                 self.cache_unknown_calls += 1

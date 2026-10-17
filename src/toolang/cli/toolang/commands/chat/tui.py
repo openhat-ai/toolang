@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from toolang.execution.types import StepRef
+
 import asyncio
 from collections.abc import Mapping, Sequence
 from contextlib import suppress
@@ -1195,7 +1197,7 @@ class ChatTuiApp:
             self._status_run_id = root.run
         if (
             isinstance(event, PartEnd)
-            and event.step.run_id == self._status_run_id
+            and StepRef.parse(event.step).run_id == self._status_run_id
             and isinstance(event.data, ToolResultPart)
             and runtime_operation_name(event.data.tool_name) == "chdir"
             and event.data.error is None

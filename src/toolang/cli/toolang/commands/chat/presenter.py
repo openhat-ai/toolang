@@ -62,26 +62,30 @@ class ChatRunPresenter:
             )
             if root is not None and (
                 app.get_active_run() not in {None, root.run}
-                or (root.run, str(root.control)) == self._completed
+                or (root.run, f"{root.run}@{root.control}") == self._completed
             ):
                 return
             if root is not None:
                 if self._root_run_id is None:
                     self._begin_root(root, app)
                 else:
-                    self._root_identity = (root.run, str(root.control))
+                    self._root_identity = (root.run, f"{root.run}@{root.control}")
                     summary = self._run_summary(app, root.run)
                     if summary is not None:
                         summary.update(root)
                         summary.started_at = root.started_at
             self._active_steps = {
-                item.step
+                StepRef.parse(item.step)
                 for item in event.events
                 if isinstance(item, StepBegin)
-                and item.step.run_id == app.get_active_run()
-            } - {item.step for item in event.events if isinstance(item, StepEnd)}
+                and StepRef.parse(item.step).run_id == app.get_active_run()
+            } - {
+                StepRef.parse(item.step)
+                for item in event.events
+                if isinstance(item, StepEnd)
+            }
             self._consumed.update(
-                (str(ref.target), ref.index)
+                (ref.run, ref.index)
                 for item in event.events
                 if isinstance(item, StepBegin)
                 for ref in item.preceded_by
@@ -92,17 +96,19 @@ class ChatRunPresenter:
                 if isinstance(item, RunEnd) and item.run == self._root_run_id:
                     self._end_root(item, app)
             return
-        if isinstance(event, RunBegin) and event.parent is None:
+        if (
+            isinstance(event, RunBegin)
+            and (StepRef.parse(event.parent) if event.parent is not None else None)
+            is None
+        ):
             if not self._begin_root(event, app):
                 return
         elif isinstance(event, StepBegin):
-            self._consumed.update(
-                (str(ref.target), ref.index) for ref in event.preceded_by
-            )
-            if event.step.run_id == app.get_active_run():
-                self._active_steps.add(event.step)
+            self._consumed.update((ref.run, ref.index) for ref in event.preceded_by)
+            if StepRef.parse(event.step).run_id == app.get_active_run():
+                self._active_steps.add(StepRef.parse(event.step))
         elif isinstance(event, StepEnd):
-            self._active_steps.discard(event.step)
+            self._active_steps.discard(StepRef.parse(event.step))
 
         self._apply(self._projector.handle(event), app)
         self._adopt_steers(app)
@@ -310,7 +316,7 @@ class ChatRunPresenter:
         if app.get_active_run() not in {None, event.run}:
             return False
         self._root_run_id = event.run
-        self._root_identity = (event.run, str(event.control))
+        self._root_identity = (event.run, f"{event.run}@{event.control}")
         app.set_active_run(event.run)
         self._finalize_root_control(app, event)
         self._append_tail(
